@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ branding.questionnaire_title }} — {{ branding.report_subtitle }}</title>
+  <link rel="stylesheet" href="report.css" />
+  <style>
+    :root {
+      --primary: {{ branding.primary_color }};
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ================================================================
+       HEADER
+       ================================================================ -->
+  <header class="report-header">
+    <div class="header-logo">
+      {% if branding.org_logo_url %}
+        <img src="{{ branding.org_logo_url }}" alt="{{ branding.org_name }} logo" class="org-logo" />
+      {% else %}
+        <span class="org-name-text">{{ branding.org_name }}</span>
+      {% endif %}
+    </div>
+    <div class="header-titles">
+      <h1 class="report-title">{{ branding.questionnaire_title }}</h1>
+      <p class="report-subtitle">{{ branding.report_subtitle }}</p>
+    </div>
+    <div class="header-meta">
+      <p class="meta-project"><strong>Project:</strong> {{ session.project_name }}</p>
+      {% if session.business_unit %}
+        <p class="meta-bu"><strong>Business Unit:</strong> {{ session.business_unit }}</p>
+      {% endif %}
+      <p class="meta-requester">
+        <strong>Requester:</strong> {{ session.requestor_name }}
+        ({{ session.requestor_email }})
+      </p>
+      <p class="meta-generated">
+        <strong>Generated:</strong> {{ generated_at.strftime('%Y-%m-%d %H:%M UTC') }}
+      </p>
+    </div>
+    <div class="header-rule"></div>
+  </header>
+
+  <!-- ================================================================
+       EXECUTIVE SUMMARY
+       ================================================================ -->
+  <section class="report-section executive-summary" aria-labelledby="exec-heading">
+    <h2 id="exec-heading" class="section-heading">Executive Summary</h2>
+    <div class="narrative-text">
+      {{ narrative.executive_summary }}
+    </div>
+  </section>
+
+  <!-- ================================================================
+       SECTION 1 — FOR THE REQUESTER  (D-03)
+       ================================================================ -->
+  <section class="report-section requester-section" aria-labelledby="req-heading">
+    <h2 id="req-heading" class="section-heading">
+      <span class="section-badge">Section 1</span>
+      For the Requester — Meeting Preparation
+    </h2>
+    <p class="section-intro">
+      This section summarises what the project team should prepare before the
+      security architect meeting.
+    </p>
+
+    <!-- Prep checklist -->
+    {% if narrative.requester_section.prep_checklist %}
+      <h3 class="subsection-heading">Pre-Meeting Checklist</h3>
+      <ul class="checklist">
+        {% for item in narrative.requester_section.prep_checklist %}
+          <li class="checklist-item">{{ item }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    <!-- Scope decisions pending -->
+    {% if narrative.requester_section.scope_decisions_pending %}
+      <h3 class="subsection-heading">Open Scope Decisions</h3>
+      <p class="subsection-intro">
+        The following scope decisions remain unresolved and will require
+        discussion during the meeting:
+      </p>
+      <ul class="decision-list">
+        {% for decision in narrative.requester_section.scope_decisions_pending %}
+          <li class="decision-item">{{ decision }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    <!-- Supplier details flag -->
+    {% if narrative.requester_section.supplier_details_needed %}
+      <div class="callout callout-warning">
+        <strong>Supplier Details Required:</strong> One or more triggered
+        components involve external suppliers or third-party integrations.
+        Ensure relevant vendor and procurement contacts are identified before
+        the meeting.
+      </div>
+    {% endif %}
+
+    <!-- Timeline expectations -->
+    {% if narrative.requester_section.timeline_expectations %}
+      <h3 class="subsection-heading">Timeline Expectations</h3>
+      <p class="timeline-text">{{ narrative.requester_section.timeline_expectations }}</p>
+    {% endif %}
+
+  </section>
+
+  <!-- ================================================================
+       SECTION 2 — FOR THE ARCHITECT  (D-04)
+       ================================================================ -->
+  <section class="report-section architect-section" aria-labelledby="arch-heading">
+    <h2 id="arch-heading" class="section-heading">
+      <span class="section-badge">Section 2</span>
+      For the Security Architect — Scope Analysis
+    </h2>
+    <p class="section-intro">
+      This section provides the technical scope assessment and evidence trail
+      for the architect's review prior to the meeting.
+    </p>
+
+    <!-- Scope analysis -->
+    {% if narrative.architect_section.scope_analysis %}
+      <h3 class="subsection-heading">Scope Analysis</h3>
+      <div class="narrative-text scope-analysis-text">
+        {{ narrative.architect_section.scope_analysis }}
+      </div>
+    {% endif %}
+
+    <!-- Gray areas -->
+    {% if narrative.architect_section.gray_areas %}
+      <h3 class="subsection-heading">Gray Areas Requiring Discussion</h3>
+      <p class="subsection-intro">
+        The following components have insufficient or conflicting evidence.
+        These require architect judgment before the scope can be confirmed:
+      </p>
+      <table class="gray-areas-table" role="table">
+        <thead>
+          <tr>
+            <th scope="col">Component</th>
+            <th scope="col">Reasoning</th>
+            <th scope="col">Confidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for area in narrative.architect_section.gray_areas %}
+            <tr>
+              <td class="component-key">{{ area.get('component', '') }}</td>
+              <td>{{ area.get('reasoning', '') }}</td>
+              <td class="confidence-cell">{{ area.get('confidence', '') }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    <!-- Triggered sub-tasks with evidence -->
+    {% if narrative.architect_section.triggered_subtasks %}
+      <h3 class="subsection-heading">Triggered Sub-Tasks — Evidence Trail</h3>
+      <p class="subsection-intro">
+        Each triggered SbD sub-task is listed below with the answer evidence
+        that drove the classification:
+      </p>
+      <div class="triggered-list">
+        {% for subtask in narrative.architect_section.triggered_subtasks %}
+          <div class="triggered-item">
+            <div class="triggered-label">{{ subtask.get('label', '') }}</div>
+            <div class="triggered-evidence">{{ subtask.get('evidence', '') }}</div>
+            {% if subtask.get('cited_questions') %}
+              <div class="triggered-citations">
+                <strong>Cited:</strong> {{ subtask.get('cited_questions', '') }}
+              </div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <!-- Risk flags -->
+    {% if narrative.architect_section.risk_flags %}
+      <h3 class="subsection-heading">Risk Flags</h3>
+      <ul class="risk-flag-list">
+        {% for flag in narrative.architect_section.risk_flags %}
+          <li class="risk-flag-item">{{ flag }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+  </section>
+
+  <!-- ================================================================
+       APPENDIX — COMPONENT CLASSIFICATION SUMMARY
+       ================================================================ -->
+  <section class="report-section appendix-section" aria-labelledby="appendix-heading">
+    <h2 id="appendix-heading" class="section-heading">
+      Appendix — Component Classification Summary
+    </h2>
+    <p class="section-intro">
+      Full classification results for all assessed SbD sub-task components.
+    </p>
+    <table class="classification-table" role="table">
+      <thead>
+        <tr>
+          <th scope="col">Component</th>
+          <th scope="col">Classification</th>
+          <th scope="col">Confidence</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cls in classifications %}
+          <tr class="cls-row cls-{{ cls.classification }}">
+            <td class="component-key">
+              {{ subtask_map.get(cls.subtask_key, cls.subtask_key) }}
+              <span class="component-key-tag">{{ cls.subtask_key }}</span>
+            </td>
+            <td class="classification-cell classification-{{ cls.classification }}">
+              {{ cls.classification | replace('_', ' ') | title }}
+            </td>
+            <td class="confidence-cell">{{ '%.0f%%' | format(cls.confidence * 100) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ================================================================
+       FOOTER
+       ================================================================ -->
+  <footer class="report-footer">
+    <div class="footer-rule"></div>
+    <p class="footer-text">{{ branding.footer_text }}</p>
+    <p class="footer-timestamp">
+      Generated {{ generated_at.strftime('%Y-%m-%d at %H:%M UTC') }}
+      for {{ session.project_name }}.
+    </p>
+  </footer>
+
+</body>
+</html>
