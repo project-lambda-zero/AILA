@@ -1,0 +1,4396 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Dark variant — targets .dark class on <html> */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* =====================================================================
+   PHASE 176b REBUILD — THREE THEMES, UNAMBIGUOUSLY IDENTIFIABLE
+   =====================================================================
+   Themes: frutiger-aero | synthwave | vaporwave
+   Goal:   Upon seeing any surface, the user should name the theme
+           within 1 second without reading a label.
+
+   Signature checklist — each theme MUST hit these:
+     - A body-level atmosphere that reads at first glance
+     - Distinct heading treatment (chromatic, glow, or sticker)
+     - A BUTTON shape+fill recognizable to the theme era
+     - A CARD treatment (glass / neon border / Win98 bevel)
+     - Scrollbar, selection, input, table hover all tonally consistent
+   ===================================================================== */
+
+/* =====================================================================
+   SELF-HOSTED FONTS — Syne (display), Space Grotesk (body), Fira Code (mono)
+   ===================================================================== */
+
+@font-face {
+  font-family: "Syne";
+  src: url("/fonts/Syne-Variable.woff2") format("woff2");
+  font-weight: 500 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/SpaceGrotesk-Variable.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Fira Code";
+  src: url("/fonts/FiraCode-Variable.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* =====================================================================
+   SHARED TOKENS (fonts + :root fallback = synthwave default)
+   ===================================================================== */
+
+:root {
+  --font-display: "Syne", system-ui, sans-serif;
+  --font-sans: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "Fira Code", ui-monospace, "Cascadia Code", monospace;
+
+  /* STATUS tokens (Phase 176a-02) — theme-neutral defaults, kept unchanged */
+  --status-completed: #4ade80;
+  --status-running: #fbbf24;
+  --status-failed: #ef4444;
+  --status-queued: #9ca3af;
+  --status-waiting: #a78bfa;
+  --status-paused: #64748b;
+  --color-info: #60a5fa;
+}
+
+/* =====================================================================
+   THEME: SYNTHWAVE  (DEFAULT / naturally dark)
+   Signature A: magenta-pink retro sun rising from bottom of viewport
+   Signature B: perspective cyan grid floor receding to horizon
+   Signature C: chromatic aberration headings (-cyan / +magenta)
+   Signature D: transparent-fill neon-stroke buttons (no fill, glow border)
+   Signature E: scanline flicker overlay
+   ===================================================================== */
+
+:root,
+[data-theme="synthwave"] {
+  /* Surfaces */
+  --color-base: #070714;
+  --color-surface: #12122a;
+  --color-elevated: #1a1a3e;
+  --color-border: #2d2d5e;
+  --color-border-hover: #ff2d95;
+
+  /* Neon accent */
+  --color-accent: #ff2d95;
+  --color-accent-muted: #3d0f2a;
+
+  /* Secondary neons */
+  --color-peach: #ffb347;
+  --color-lavender: #b892ff;
+  --color-mint: #00f0ff;
+
+  /* Severity — neon spectrum */
+  --color-critical: #ff1744;
+  --color-high: #ff6d00;
+  --color-medium: #ffea00;
+  --color-low: #8a8aad;
+
+  /* Typography */
+  --color-text: #f4f0ff;
+  --color-text-muted: #a09ab8;
+  --color-text-peach: #ffb347;
+
+  /* Focus ring */
+  --color-focus-ring: #00f0ff;
+  --color-badge-text: #070714;
+
+  /* Sharp-edged radii — 80s arcade */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+
+  /* shadcn/ui token mapping */
+  --background: #070714;
+  --foreground: #f4f0ff;
+  --card: #12122a;
+  --card-foreground: #f4f0ff;
+  --popover: #12122a;
+  --popover-foreground: #f4f0ff;
+  --primary: #ff2d95;
+  --primary-foreground: #ffffff;
+  --secondary: #1a1a3e;
+  --secondary-foreground: #f4f0ff;
+  --muted: #1a1a3e;
+  --muted-foreground: #a09ab8;
+  --destructive: #ff1744;
+  --border: #2d2d5e;
+  --input: #2d2d5e;
+  --ring: #00f0ff;
+  --radius: 0.25rem;
+
+  /* Sidebar */
+  --sidebar-background: var(--color-surface);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-accent);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--color-elevated);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border);
+  --sidebar-ring: var(--color-focus-ring);
+
+  /* Effect knobs */
+  --glow-strength: 0.5;
+  --glow-color: #ff2d95;
+  --grid-color: rgba(0, 240, 255, 0.04);
+}
+
+/* Synthwave light mode — keep neon personality but flip surfaces */
+[data-theme="synthwave"][data-mode="light"] {
+  --color-base: #fdf4ff;
+  --color-surface: #ffffff;
+  --color-elevated: #ffffff;
+  --color-border: #e8c8e0;
+  --color-border-hover: #c5196d;
+
+  --color-accent: #c5196d;
+  --color-accent-muted: #f8e0ec;
+
+  --color-text: #1a0a2e;
+  --color-text-muted: #6a5a7e;
+
+  --background: #fdf4ff;
+  --foreground: #1a0a2e;
+  --card: #ffffff;
+  --card-foreground: #1a0a2e;
+  --popover: #ffffff;
+  --popover-foreground: #1a0a2e;
+  --primary: #c5196d;
+  --primary-foreground: #ffffff;
+  --secondary: #fbe8f2;
+  --secondary-foreground: #1a0a2e;
+  --muted: #fbe8f2;
+  --muted-foreground: #6a5a7e;
+  --destructive: #ff1744;
+  --border: #e8c8e0;
+  --input: #e8c8e0;
+  --ring: #0891b2;
+
+  --color-focus-ring: #0891b2;
+  --color-badge-text: #1a0a2e;
+
+  --glow-strength: 0.25;
+}
+
+/* =====================================================================
+   THEME: VAPORWAVE  (naturally dark)
+   Signature A: dusk purple sky + pastel checkerboard floor in perspective
+   Signature B: Win98 chunky bevel on every card (pastel light+dark insets)
+   Signature C: starfield + katakana characters + pastel pixel hr dividers
+   Signature D: pink Win95 buttons that press-in on :active
+   Signature E: dotted underlines on links with teal hover
+   ===================================================================== */
+
+[data-theme="vaporwave"] {
+  --color-base: #1a1528;
+  --color-surface: #2e2848;
+  --color-elevated: #3a3360;
+  --color-border: #3d3660;
+  --color-border-hover: #f0a8c7;
+
+  --color-accent: #f0a8c7;
+  --color-accent-muted: #3d2840;
+
+  --color-peach: #ffd1a8;
+  --color-lavender: #d2a8ff;
+  --color-mint: #a8e6e6;
+
+  /* Severity — muted washed-out nostalgic */
+  --color-critical: #ff6b8a;
+  --color-high: #ffa07a;
+  --color-medium: #e6c84a;
+  --color-low: #8b8ba0;
+
+  /* TEXT — FIXED CONTRAST (WCAG AA 4.5:1 vs #2e2848 surface) */
+  --color-text: #ffeaf5;
+  --color-text-muted: #d4b8d4;
+  --color-text-peach: #ffd1a8;
+
+  --color-focus-ring: #a8e6e6;
+  --color-badge-text: #1a0a28;
+
+  /* Chunky rounded borders — Win98 era is 0 or 2-4px */
+  --radius-sm: 0px;
+  --radius-md: 2px;
+  --radius-lg: 4px;
+
+  /* shadcn/ui */
+  --background: #1a1528;
+  --foreground: #ffeaf5;
+  --card: #2e2848;
+  --card-foreground: #ffeaf5;
+  --popover: #2e2848;
+  --popover-foreground: #ffeaf5;
+  --primary: #f0a8c7;
+  --primary-foreground: #1a0a28;
+  --secondary: #3a3360;
+  --secondary-foreground: #ffeaf5;
+  --muted: #3a3360;
+  --muted-foreground: #d4b8d4;
+  --destructive: #ff6b8a;
+  --border: #3d3660;
+  --input: #3d3660;
+  --ring: #a8e6e6;
+  --radius: 0.125rem;
+
+  /* Sidebar */
+  --sidebar-background: var(--color-surface);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-accent);
+  --sidebar-primary-foreground: #1a0a28;
+  --sidebar-accent: var(--color-elevated);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border);
+  --sidebar-ring: var(--color-focus-ring);
+
+  --glow-strength: 0.15;
+  --glow-color: #f0a8c7;
+  --grid-color: rgba(208, 175, 215, 0.03);
+
+  /* Hot pink utility for kawaii text */
+  --color-hotpink: #feb1d7;
+}
+
+/* Vaporwave light mode (cream mall lighting) */
+[data-theme="vaporwave"][data-mode="light"] {
+  --color-base: #fbf1e8;
+  --color-surface: #fff4ee;
+  --color-elevated: #ffffff;
+  --color-border: #e8c8d8;
+  --color-border-hover: #c5196d;
+
+  --color-accent: #c5196d;
+  --color-accent-muted: #f8e0ec;
+
+  --color-text: #2a1528;
+  --color-text-muted: #7a5a70;
+  --color-text-peach: #a06840;
+
+  --background: #fbf1e8;
+  --foreground: #2a1528;
+  --card: #fff4ee;
+  --card-foreground: #2a1528;
+  --popover: #fff4ee;
+  --popover-foreground: #2a1528;
+  --primary: #c5196d;
+  --primary-foreground: #ffffff;
+  --secondary: #f0e0ec;
+  --secondary-foreground: #2a1528;
+  --muted: #f0e0ec;
+  --muted-foreground: #7a5a70;
+  --destructive: #d42852;
+  --border: #e8c8d8;
+  --input: #e8c8d8;
+  --ring: #5a9fa0;
+
+  --color-focus-ring: #5a9fa0;
+  --color-badge-text: #2a1528;
+
+  --glow-strength: 0;
+}
+
+/* =====================================================================
+   THEME: FRUTIGER AERO  (naturally light) — TASTE-AUTHENTIC REBUILD
+   Signature A: Bliss-style sky gradient — cerulean -> cyan -> pale teal
+                with a low grassy horizon band + floating soft bokeh
+   Signature B: REAL aqua glass panels — triple-stop top gloss, inner
+                white ring, outer cool drop, backdrop blur+saturate
+   Signature C: Chicklet buttons — rounded 999px, vertical specular
+                highlight that catches on the top 40%, fat underbevel
+   Signature D: "Segoe UI"-era headings in Corbel/Candara stack
+   Signature E: Foliage + fish SVG silhouettes + floating bubble layer
+   ===================================================================== */
+
+[data-theme="frutiger-aero"] {
+  /* Surfaces — Bliss sky whites with a hint of cyan */
+  --color-base: #cfeaf7;
+  --color-surface: #ffffff;
+  --color-elevated: #ffffff;
+  --color-border: #a8d2ea;
+  --color-border-hover: #2aa5e6;
+
+  /* Aqua/cerulean accent palette */
+  --color-accent: #2aa5e6;
+  --color-accent-muted: #dff0fa;
+  --color-accent-deep: #0b69a3;
+
+  /* Nature palette */
+  --color-peach: #ffb37a;
+  --color-lavender: #9b7fd6;
+  --color-mint: #7fd688;
+  --color-grass: #4fae5f;
+
+  /* Severity — darkened for light bg */
+  --color-critical: #c41e3a;
+  --color-high: #cc5500;
+  --color-medium: #b38f00;
+  --color-low: #6b7280;
+
+  /* Typography — deep Prussian for contrast */
+  --color-text: #0a2133;
+  --color-text-muted: #3e627c;
+  --color-text-peach: #c47a50;
+
+  --color-focus-ring: #2aa5e6;
+  --color-badge-text: #0a2133;
+
+  /* Aero era loved soft 6-14px corners */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* Fonts — Aero-era specifier: Segoe UI / Calibri / Corbel stack */
+  --font-display: "Segoe UI", "Calibri", "Corbel", "Candara",
+    "Lucida Grande", "Trebuchet MS", system-ui, sans-serif;
+  --font-sans: "Segoe UI", "Calibri", "Corbel", "Lucida Grande",
+    "Trebuchet MS", system-ui, sans-serif;
+
+  /* shadcn/ui */
+  --background: #cfeaf7;
+  --foreground: #0a2133;
+  --card: #ffffff;
+  --card-foreground: #0a2133;
+  --popover: #ffffff;
+  --popover-foreground: #0a2133;
+  --primary: #2aa5e6;
+  --primary-foreground: #ffffff;
+  --secondary: #dff0fa;
+  --secondary-foreground: #0a2133;
+  --muted: #e8f4fc;
+  --muted-foreground: #3e627c;
+  --destructive: #c41e3a;
+  --border: #a8d2ea;
+  --input: #a8d2ea;
+  --ring: #2aa5e6;
+  --radius: 0.625rem;
+
+  /* Sidebar — translucent aqua glass */
+  --sidebar-background: rgba(255, 255, 255, 0.62);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-accent);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--color-base);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border);
+  --sidebar-ring: var(--color-focus-ring);
+
+  --glow-strength: 0;
+  --glow-color: transparent;
+  --grid-color: transparent;
+}
+
+/* Frutiger Aero dark mode — "night aquarium" variant, keeps the glass
+   but swaps sky for deep cerulean water with bioluminescent bokeh. */
+[data-theme="frutiger-aero"][data-mode="dark"] {
+  --color-base: #041526;
+  --color-surface: #0a2235;
+  --color-elevated: #10314a;
+  --color-border: #1f4a6e;
+  --color-border-hover: #2aa5e6;
+
+  --color-text: #d6edfb;
+  --color-text-muted: #7fa8c4;
+
+  --background: #041526;
+  --foreground: #d6edfb;
+  --card: #0a2235;
+  --card-foreground: #d6edfb;
+  --popover: #0a2235;
+  --popover-foreground: #d6edfb;
+  --secondary: #10314a;
+  --secondary-foreground: #d6edfb;
+  --muted: #10314a;
+  --muted-foreground: #7fa8c4;
+  --border: #1f4a6e;
+  --input: #1f4a6e;
+
+  --sidebar-background: rgba(10, 34, 53, 0.78);
+
+  --color-focus-ring: #2aa5e6;
+  --color-badge-text: #041526;
+}
+
+/* =====================================================================
+   BODY ATMOSPHERICS — this is what makes each theme UNMISTAKABLE
+   ===================================================================== */
+
+html {
+  font-family: var(--font-sans);
+  background-color: var(--color-base);
+  color: var(--color-text);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* -------- SYNTHWAVE body: retro sun + grid floor + scanlines -------- */
+
+[data-theme="synthwave"] body {
+  background:
+    radial-gradient(
+      circle 320px at 50% calc(100% - 60px),
+      #ffaa44 0%,
+      #ff4488 22%,
+      #ff2d95 42%,
+      transparent 62%
+    ),
+    linear-gradient(180deg, #070714 0%, #0f0f28 40%, #2a0a40 70%, #1a0a28 100%),
+    radial-gradient(ellipse at bottom, rgba(255, 45, 149, 0.25) 0%, transparent 60%);
+  background-attachment: fixed;
+}
+
+/* Scanline + vertical chromatic wash overlay */
+[data-theme="synthwave"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    linear-gradient(rgba(255, 45, 149, 0) 0%, rgba(255, 45, 149, 0.14) 100%),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 2px,
+      rgba(0, 240, 255, 0.025) 2px,
+      rgba(0, 240, 255, 0.025) 3px
+    );
+}
+
+/* Perspective grid floor — THE iconic synthwave element */
+@keyframes synthwave-grid-pulse {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 0.7; }
+}
+[data-theme="synthwave"] body::after {
+  content: "";
+  position: fixed;
+  left: -20%;
+  right: -20%;
+  bottom: 0;
+  height: 55vh;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 32px,
+      rgba(0, 240, 255, 0.55) 32px,
+      rgba(0, 240, 255, 0.55) 33px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 32px,
+      rgba(255, 45, 149, 0.35) 32px,
+      rgba(255, 45, 149, 0.35) 33px
+    );
+  transform: perspective(320px) rotateX(60deg);
+  transform-origin: center top;
+  animation: synthwave-grid-pulse 6s ease-in-out infinite;
+  opacity: 0.55;
+}
+
+[data-theme="synthwave"][data-mode="light"] body {
+  background:
+    radial-gradient(
+      circle 320px at 50% calc(100% - 60px),
+      rgba(255, 170, 68, 0.25) 0%,
+      rgba(255, 68, 136, 0.2) 22%,
+      rgba(197, 25, 109, 0.15) 42%,
+      transparent 62%
+    ),
+    linear-gradient(180deg, #fdf4ff 0%, #fbe8f2 100%);
+}
+[data-theme="synthwave"][data-mode="light"] body::after {
+  opacity: 0.2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="synthwave"] body::after { animation: none; }
+}
+
+/* -------- VAPORWAVE body: dusk sky + star tiled bg + perspective checker -------- */
+
+[data-theme="vaporwave"] body {
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><g fill='rgba(240,168,199,0.18)'><text x='12' y='22' font-family='serif' font-size='11'>✦</text><text x='68' y='48' font-family='serif' font-size='9'>✧</text><text x='30' y='78' font-family='serif' font-size='7'>✦</text></g></svg>"),
+    linear-gradient(180deg, #1a1528 0%, #2a1540 40%, #3d1e50 70%, #1f0f30 100%);
+  background-attachment: fixed;
+}
+
+/* Gentle vertical scan shift */
+[data-theme="vaporwave"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 3px,
+      rgba(240, 168, 199, 0.03) 3px,
+      rgba(240, 168, 199, 0.03) 4px
+    );
+}
+
+/* Perspective checkerboard floor — THE vaporwave signature */
+[data-theme="vaporwave"] body::after {
+  content: "";
+  position: fixed;
+  left: -10%;
+  right: -10%;
+  bottom: 0;
+  height: 40vh;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    linear-gradient(45deg,
+      rgba(240, 168, 199, 0.22) 25%, transparent 25%, transparent 75%, rgba(240, 168, 199, 0.22) 75%),
+    linear-gradient(45deg,
+      rgba(126, 200, 200, 0.22) 25%, transparent 25%, transparent 75%, rgba(126, 200, 200, 0.22) 75%);
+  background-size: 60px 60px;
+  background-position: 0 0, 30px 30px;
+  transform: perspective(500px) rotateX(55deg);
+  transform-origin: center top;
+  opacity: 0.5;
+}
+
+[data-theme="vaporwave"][data-mode="light"] body {
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><g fill='rgba(197,25,109,0.1)'><text x='12' y='22' font-family='serif' font-size='11'>✦</text><text x='68' y='48' font-family='serif' font-size='9'>✧</text></g></svg>"),
+    linear-gradient(180deg, #fff4ee 0%, #fbf1e8 100%);
+}
+
+/* -------- FRUTIGER AERO body: Bliss sky + rolling hills + bokeh + bubbles -------- */
+/*
+   This is the REAL Aero look. Three stacked layers:
+   1. Base background: cerulean->cyan->pale-teal sky with a convex green
+      horizon bulge (evokes the Windows XP Bliss wallpaper)
+   2. ::before = floating bokeh droplets (varied sizes, soft blur)
+   3. ::after = SVG decoration layer: two fronds, two dragonflies,
+      a fat Aero water droplet, and a rising bubble column that
+      gently animates upward.
+*/
+
+@keyframes aero-bubbles-rise {
+  0%   { transform: translateY(40px); opacity: 0; }
+  15%  { opacity: 0.9; }
+  85%  { opacity: 0.9; }
+  100% { transform: translateY(-80vh); opacity: 0; }
+}
+@keyframes aero-bokeh-drift {
+  0%, 100% { transform: translate(0, 0); }
+  50%      { transform: translate(-12px, -18px); }
+}
+
+[data-theme="frutiger-aero"] body {
+  background:
+    /* The soft grassy horizon bulge */
+    radial-gradient(ellipse 150% 28vh at 50% 100%,
+      #6ec667 0%, #8cd38a 18%, #b0dfac 40%,
+      rgba(176, 223, 172, 0) 62%),
+    /* Sun glow from upper-right */
+    radial-gradient(ellipse 60vw 40vh at 85% 0%,
+      rgba(255, 244, 190, 0.6) 0%, transparent 60%),
+    /* Main sky */
+    linear-gradient(180deg,
+      #3ba6e0 0%,
+      #5fbbe8 14%,
+      #86cfef 30%,
+      #b2e0f3 52%,
+      #d1ecf7 72%,
+      #e5f4f2 88%,
+      #d7ecd2 100%);
+  background-attachment: fixed;
+}
+
+/* Bokeh droplets — varied sizes, soft blur, gently drifting */
+[data-theme="frutiger-aero"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 12% 22%, rgba(255, 255, 255, 0.85) 0%, rgba(255,255,255,0) 4%),
+    radial-gradient(circle at 18% 35%, rgba(170, 220, 255, 0.55) 0%, transparent 3%),
+    radial-gradient(circle at 78% 12%, rgba(255, 255, 255, 0.75) 0%, transparent 3.5%),
+    radial-gradient(circle at 82% 40%, rgba(140, 210, 255, 0.5) 0%, transparent 4.5%),
+    radial-gradient(circle at 33% 72%, rgba(180, 235, 255, 0.55) 0%, transparent 5.2%),
+    radial-gradient(circle at 58% 55%, rgba(205, 180, 255, 0.4) 0%, transparent 2.8%),
+    radial-gradient(circle at 70% 80%, rgba(160, 225, 180, 0.45) 0%, transparent 4.8%),
+    radial-gradient(circle at 90% 88%, rgba(180, 230, 255, 0.45) 0%, transparent 3.5%),
+    radial-gradient(circle at 8% 88%, rgba(120, 205, 255, 0.45) 0%, transparent 3%),
+    radial-gradient(circle at 45% 28%, rgba(255, 220, 180, 0.35) 0%, transparent 2.2%);
+  filter: blur(0.6px);
+  animation: aero-bokeh-drift 22s ease-in-out infinite;
+}
+
+/* SVG decoration — dragonflies, ferns, water droplet, and rising bubbles */
+[data-theme="frutiger-aero"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 900' preserveAspectRatio='xMidYMid slice'>\
+<defs>\
+<radialGradient id='drop' cx='35%25' cy='30%25'>\
+<stop offset='0%25' stop-color='%23ffffff' stop-opacity='0.95'/>\
+<stop offset='40%25' stop-color='%23c7ecff' stop-opacity='0.6'/>\
+<stop offset='100%25' stop-color='%233a8fce' stop-opacity='0.5'/>\
+</radialGradient>\
+<radialGradient id='leaf' cx='30%25' cy='30%25'>\
+<stop offset='0%25' stop-color='%23b2e3a8' stop-opacity='0.85'/>\
+<stop offset='100%25' stop-color='%233e8f3b' stop-opacity='0.9'/>\
+</radialGradient>\
+</defs>\
+<g opacity='0.85'>\
+<path d='M 80 720 Q 60 650 90 580 Q 110 620 100 680 Q 120 700 80 720 Z M 95 640 Q 115 610 135 590 M 80 680 Q 55 650 35 650' fill='url(%23leaf)' stroke='%23326c2a' stroke-width='1.2' stroke-opacity='0.6'/>\
+<path d='M 1510 780 Q 1490 720 1520 660 Q 1540 695 1530 755 Q 1550 775 1510 790 Z' fill='url(%23leaf)' stroke='%23326c2a' stroke-width='1.2' stroke-opacity='0.6'/>\
+</g>\
+<g opacity='0.9'>\
+<circle cx='260' cy='210' r='42' fill='url(%23drop)' stroke='%23ffffff' stroke-opacity='0.6' stroke-width='1.2'/>\
+<ellipse cx='248' cy='198' rx='11' ry='6' fill='%23ffffff' fill-opacity='0.85'/>\
+</g>\
+<g stroke='%23ffffff' stroke-opacity='0.85' stroke-width='1.2' fill='none'>\
+<path d='M 1160 160 Q 1185 152 1190 170 Q 1195 152 1220 160 M 1190 170 L 1190 195 M 1175 200 L 1205 200'/>\
+<ellipse cx='1190' cy='197' rx='3' ry='5' fill='%232aa5e6'/>\
+<path d='M 520 420 Q 545 412 550 430 Q 555 412 580 420 M 550 430 L 550 455 M 536 460 L 564 460'/>\
+<ellipse cx='550' cy='457' rx='2.5' ry='4' fill='%232aa5e6'/>\
+</g>\
+<g fill='none' stroke='%234fae5f' stroke-width='0.9' opacity='0.55'>\
+<path d='M 1400 880 Q 1410 820 1405 760 Q 1400 780 1390 800 Q 1395 830 1400 880 Z'/>\
+<path d='M 200 890 Q 195 820 205 760 Q 215 790 220 830 Q 215 860 200 890 Z'/>\
+</g>\
+</svg>") center/cover no-repeat;
+  opacity: 1;
+}
+
+/* Rising-bubble column — purely decorative, animates upward.
+   Attached to html so it's always on-screen regardless of content height. */
+html[data-theme="frutiger-aero"]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(circle at 18% 100%, rgba(255,255,255,0.9) 0 4px, transparent 5px),
+    radial-gradient(circle at 42% 100%, rgba(255,255,255,0.7) 0 6px, transparent 7px),
+    radial-gradient(circle at 72% 100%, rgba(255,255,255,0.85) 0 3px, transparent 4px),
+    radial-gradient(circle at 88% 100%, rgba(255,255,255,0.8) 0 5px, transparent 6px);
+  background-repeat: no-repeat;
+  animation: aero-bubbles-rise 14s linear infinite;
+  mix-blend-mode: screen;
+}
+
+[data-theme="frutiger-aero"][data-mode="dark"] body {
+  background:
+    radial-gradient(ellipse 140% 24vh at 50% 100%,
+      rgba(22, 86, 40, 0.6) 0%,
+      rgba(22, 86, 40, 0.12) 45%,
+      transparent 75%),
+    radial-gradient(ellipse 55vw 38vh at 80% 0%,
+      rgba(42, 165, 230, 0.25) 0%, transparent 60%),
+    linear-gradient(180deg,
+      #030d1a 0%,
+      #041526 30%,
+      #062235 60%,
+      #0a2b3f 100%);
+  background-attachment: fixed;
+}
+[data-theme="frutiger-aero"][data-mode="dark"] body::after {
+  opacity: 0.55;
+}
+html[data-theme="frutiger-aero"][data-mode="dark"]::before {
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="frutiger-aero"] body::before,
+  html[data-theme="frutiger-aero"]::before { animation: none; }
+}
+
+/* =====================================================================
+   CARDS — each theme's most-visible surface treatment
+   ===================================================================== */
+
+/* -------- SYNTHWAVE cards: double pink-stroke neon border + inner glow -------- */
+
+[data-theme="synthwave"] .bg-surface,
+[data-theme="synthwave"] .bg-card,
+[data-theme="synthwave"] .bg-elevated,
+[data-theme="synthwave"] .bg-muted,
+[data-theme="synthwave"] .bg-popover {
+  box-shadow:
+    0 0 0 1px rgba(255, 45, 149, 0.5),
+    0 0 0 2px rgba(0, 240, 255, 0.15),
+    0 0 24px rgba(255, 45, 149, 0.12),
+    inset 0 0 24px rgba(255, 45, 149, 0.04);
+}
+
+/* -------- VAPORWAVE cards: Win98 chunky 3D bevel (pastel raised) -------- */
+
+[data-theme="vaporwave"] .bg-surface,
+[data-theme="vaporwave"] .bg-card,
+[data-theme="vaporwave"] .bg-elevated,
+[data-theme="vaporwave"] .bg-muted,
+[data-theme="vaporwave"] .bg-popover {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow:
+    -2px -2px 0 #f8d0e4 inset,
+    2px 2px 0 #1a0a28 inset,
+    -1px -1px 0 #fff0f5 inset,
+    1px 1px 0 #0a0015 inset,
+    0 0 0 1px #3d3660;
+  background-image: linear-gradient(180deg, rgba(240, 168, 199, 0.06) 0%, transparent 30%);
+}
+
+/* Win95 title bar on h3 inside cards (that iconic gradient header) */
+[data-theme="vaporwave"] .bg-surface h3,
+[data-theme="vaporwave"] .bg-card h3,
+[data-theme="vaporwave"] .bg-elevated h3 {
+  margin: -8px -8px 8px -8px;
+  padding: 4px 8px;
+  background: linear-gradient(90deg, #d7afd7 0%, #f0a8c7 60%, #7ec8c8 100%);
+  color: #1a0a28;
+  font-weight: 700;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.04em;
+}
+
+[data-theme="vaporwave"][data-mode="light"] .bg-surface,
+[data-theme="vaporwave"][data-mode="light"] .bg-card,
+[data-theme="vaporwave"][data-mode="light"] .bg-elevated,
+[data-theme="vaporwave"][data-mode="light"] .bg-muted,
+[data-theme="vaporwave"][data-mode="light"] .bg-popover {
+  box-shadow:
+    -2px -2px 0 #ffffff inset,
+    2px 2px 0 #2a1528 inset,
+    -1px -1px 0 #fff8fb inset,
+    1px 1px 0 #0a0015 inset,
+    0 0 0 1px #e8c8d8;
+}
+
+/* -------- FRUTIGER AERO cards: real aqua glass (triple specular, blur, cool drop) --
+
+   Aero glass has four defining visual cues — present ALL of them:
+     1. A bright white-to-translucent GLASS specular on the top edge
+     2. A triple-stop vertical tint (crisp top, glassy middle, faint bottom mist)
+     3. An inner hair-line white ring (glass meniscus)
+     4. A wide cool-cyan drop shadow below
+*/
+
+[data-theme="frutiger-aero"] .bg-surface,
+[data-theme="frutiger-aero"] .bg-card,
+[data-theme="frutiger-aero"] .bg-elevated,
+[data-theme="frutiger-aero"] .bg-muted,
+[data-theme="frutiger-aero"] .bg-popover {
+  background-image:
+    /* top specular gloss */
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.95) 0%,
+      rgba(255, 255, 255, 0.68) 28%,
+      rgba(242, 251, 255, 0.55) 50%,
+      rgba(225, 243, 252, 0.52) 100%),
+    /* faint sky-tint overlay */
+    linear-gradient(180deg,
+      rgba(135, 200, 240, 0.08) 0%,
+      rgba(135, 200, 240, 0) 60%);
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  backdrop-filter: blur(18px) saturate(1.25);
+  box-shadow:
+    /* inner glass meniscus */
+    0 1px 0 rgba(255, 255, 255, 1) inset,
+    0 2px 0 rgba(255, 255, 255, 0.6) inset,
+    0 -1px 0 rgba(120, 170, 200, 0.35) inset,
+    /* outer cool drop */
+    0 2px 4px rgba(20, 70, 110, 0.08),
+    0 10px 26px rgba(42, 165, 230, 0.18),
+    0 22px 44px rgba(42, 165, 230, 0.08);
+  border: 1px solid rgba(170, 205, 230, 0.7);
+  border-radius: var(--radius-md);
+  position: relative;
+}
+
+/* Add the top-arc gloss highlight — signature "wet" look */
+[data-theme="frutiger-aero"] .bg-surface::before,
+[data-theme="frutiger-aero"] .bg-card::before,
+[data-theme="frutiger-aero"] .bg-elevated::before {
+  content: "";
+  position: absolute;
+  inset: 1px 1px auto 1px;
+  height: 42%;
+  border-radius: calc(var(--radius-md) - 1px) calc(var(--radius-md) - 1px) 50% 50%;
+  background: linear-gradient(180deg,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0.12) 60%,
+    rgba(255, 255, 255, 0) 100%);
+  pointer-events: none;
+}
+
+[data-theme="frutiger-aero"][data-mode="dark"] .bg-surface,
+[data-theme="frutiger-aero"][data-mode="dark"] .bg-card,
+[data-theme="frutiger-aero"][data-mode="dark"] .bg-elevated,
+[data-theme="frutiger-aero"][data-mode="dark"] .bg-muted,
+[data-theme="frutiger-aero"][data-mode="dark"] .bg-popover {
+  background-image:
+    linear-gradient(180deg,
+      rgba(16, 49, 74, 0.82) 0%,
+      rgba(10, 34, 53, 0.72) 50%,
+      rgba(4, 21, 38, 0.7) 100%);
+  box-shadow:
+    0 1px 0 rgba(140, 210, 255, 0.4) inset,
+    0 -1px 0 rgba(42, 165, 230, 0.18) inset,
+    0 0 0 1px rgba(42, 165, 230, 0.25),
+    0 10px 30px rgba(0, 0, 0, 0.55),
+    0 22px 60px rgba(42, 165, 230, 0.15);
+  border: 1px solid rgba(42, 165, 230, 0.3);
+}
+[data-theme="frutiger-aero"][data-mode="dark"] .bg-surface::before,
+[data-theme="frutiger-aero"][data-mode="dark"] .bg-card::before,
+[data-theme="frutiger-aero"][data-mode="dark"] .bg-elevated::before {
+  background: linear-gradient(180deg,
+    rgba(140, 210, 255, 0.22) 0%,
+    rgba(140, 210, 255, 0.04) 60%,
+    rgba(140, 210, 255, 0) 100%);
+}
+
+/* =====================================================================
+   HEADINGS — each theme's typographic signature
+   ===================================================================== */
+
+/* Synthwave: chromatic aberration (cyan/magenta split) + letter-spacing.
+   Heading text itself is near-white so it stays legible on the dark sun-
+   gradient body — the coloured offsets ride around it as a glow, they do
+   NOT form the fill. */
+[data-theme="synthwave"] h1,
+[data-theme="synthwave"] h2 {
+  font-family: var(--font-display);
+  color: #fff5fb !important;
+  letter-spacing: 0.04em;
+  text-shadow:
+    -1.5px 0 rgba(0, 240, 255, 0.75),
+    1.5px 0 rgba(255, 45, 149, 0.75),
+    0 0 10px rgba(255, 45, 149, 0.55),
+    0 0 22px rgba(0, 240, 255, 0.25);
+}
+[data-theme="synthwave"] h3 {
+  font-family: var(--font-display);
+  color: #ffd9ec !important;
+  text-shadow: 0 0 6px rgba(255, 45, 149, 0.45);
+}
+[data-theme="synthwave"][data-mode="light"] h1,
+[data-theme="synthwave"][data-mode="light"] h2,
+[data-theme="synthwave"][data-mode="light"] h3 {
+  color: #3a0a28 !important;
+  text-shadow:
+    -1px 0 rgba(0, 180, 220, 0.55),
+    1px 0 rgba(197, 25, 109, 0.7);
+}
+
+/* Vaporwave: sticker outline + wide tracking (ᴀ ᴇ s ᴛ ʜ ᴇ ᴛ ɪ ᴄ) */
+[data-theme="vaporwave"] h1 {
+  font-family: var(--font-display);
+  letter-spacing: 0.18em;
+  color: #ffe8f5;
+  font-weight: 900;
+  text-shadow:
+    0 0 6px rgba(26, 10, 40, 0.9),
+    0 2px 4px rgba(26, 10, 40, 0.8),
+    -1px 0 rgba(240, 168, 199, 0.7),
+    1px 0 rgba(126, 200, 200, 0.6);
+}
+[data-theme="vaporwave"] h2 {
+  font-family: var(--font-display);
+  letter-spacing: 0.12em;
+  color: #ffd0e8;
+  font-weight: 700;
+  text-shadow:
+    0 0 4px rgba(26, 10, 40, 0.85),
+    0 1px 3px rgba(26, 10, 40, 0.7);
+}
+[data-theme="vaporwave"] h3 {
+  letter-spacing: 0.08em;
+}
+
+/* Frutiger Aero: Aqua-style gradient fill heading.
+   That era used cerulean → deep blue vertical gradients with a hard inner
+   white highlight ("aqua" from Apple iMac marketing decks 2004-2008).
+   We ship two variants: light uses the blue gradient; dark uses a pale
+   glow on deep cyan so it's readable against the aquarium backdrop. */
+[data-theme="frutiger-aero"] h1,
+[data-theme="frutiger-aero"] h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  background-image: linear-gradient(180deg,
+    #e8f6ff 0%,
+    #8cd3f5 28%,
+    #2aa5e6 52%,
+    #0b69a3 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.75))
+          drop-shadow(0 2px 4px rgba(42, 165, 230, 0.35));
+}
+[data-theme="frutiger-aero"] h3 {
+  font-family: var(--font-display);
+  color: #0b69a3;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+[data-theme="frutiger-aero"][data-mode="dark"] h1,
+[data-theme="frutiger-aero"][data-mode="dark"] h2 {
+  background-image: linear-gradient(180deg,
+    #ffffff 0%,
+    #c2e9ff 40%,
+    #7fc8f2 72%,
+    #2aa5e6 100%);
+  filter: drop-shadow(0 0 6px rgba(42, 165, 230, 0.6))
+          drop-shadow(0 2px 2px rgba(0, 0, 0, 0.4));
+}
+[data-theme="frutiger-aero"][data-mode="dark"] h3 {
+  color: #c2e9ff;
+  text-shadow: 0 0 4px rgba(42, 165, 230, 0.55);
+}
+
+/* =====================================================================
+   BUTTONS — each theme's primary button is UNAMBIGUOUS
+   ===================================================================== */
+
+/* -------- SYNTHWAVE: transparent fill, neon outline stroke, hover = filled glow -------- */
+
+[data-theme="synthwave"] button[type="submit"],
+[data-theme="synthwave"] .btn-primary,
+[data-theme="synthwave"] button[data-variant="default"],
+[data-theme="synthwave"] button.bg-primary {
+  background: transparent !important;
+  color: #ff2d95 !important;
+  border: 1.5px solid #ff2d95 !important;
+  text-shadow: 0 0 4px rgba(255, 45, 149, 0.8);
+  box-shadow:
+    0 0 8px rgba(255, 45, 149, 0.5),
+    inset 0 0 8px rgba(255, 45, 149, 0.15);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: all 160ms ease;
+}
+[data-theme="synthwave"] button[type="submit"]:hover:not(:disabled),
+[data-theme="synthwave"] .btn-primary:hover:not(:disabled),
+[data-theme="synthwave"] button[data-variant="default"]:hover:not(:disabled),
+[data-theme="synthwave"] button.bg-primary:hover:not(:disabled) {
+  color: #070714 !important;
+  background: #ff2d95 !important;
+  box-shadow:
+    0 0 24px rgba(255, 45, 149, 0.85),
+    0 0 48px rgba(0, 240, 255, 0.35);
+}
+
+/* -------- VAPORWAVE: Win95 chunky bevel — press-in on :active -------- */
+
+[data-theme="vaporwave"] button[type="submit"],
+[data-theme="vaporwave"] .btn-primary,
+[data-theme="vaporwave"] button.bg-primary,
+[data-theme="vaporwave"] button[data-variant="default"] {
+  border-radius: 0 !important;
+  border: none !important;
+  background-color: #f0a8c7 !important;
+  color: #1a0a28 !important;
+  font-weight: 600;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+  box-shadow:
+    inset 1px 1px 0 #fff0f5,
+    inset -1px -1px 0 #1a0a28,
+    inset 2px 2px 0 #ffc8dd,
+    inset -2px -2px 0 #5a3060;
+  transition: none;
+}
+[data-theme="vaporwave"] button[type="submit"]:hover:not(:disabled),
+[data-theme="vaporwave"] .btn-primary:hover:not(:disabled),
+[data-theme="vaporwave"] button.bg-primary:hover:not(:disabled),
+[data-theme="vaporwave"] button[data-variant="default"]:hover:not(:disabled) {
+  background-color: #f5b8d0 !important;
+}
+[data-theme="vaporwave"] button[type="submit"]:active:not(:disabled),
+[data-theme="vaporwave"] .btn-primary:active:not(:disabled),
+[data-theme="vaporwave"] button.bg-primary:active:not(:disabled),
+[data-theme="vaporwave"] button[data-variant="default"]:active:not(:disabled) {
+  box-shadow:
+    inset 1px 1px 0 #1a0a28,
+    inset -1px -1px 0 #fff0f5,
+    inset 2px 2px 0 #5a3060,
+    inset -2px -2px 0 #ffc8dd;
+}
+[data-theme="vaporwave"] button[data-variant="outline"],
+[data-theme="vaporwave"] button[data-variant="secondary"] {
+  border-radius: 0 !important;
+  box-shadow:
+    inset 1px 1px 0 #fff0f5,
+    inset -1px -1px 0 #5a3060;
+}
+[data-theme="vaporwave"] button[data-variant="outline"]:active,
+[data-theme="vaporwave"] button[data-variant="secondary"]:active {
+  box-shadow:
+    inset 1px 1px 0 #5a3060,
+    inset -1px -1px 0 #fff0f5;
+}
+
+/* -------- FRUTIGER AERO: true Aero chicklet with specular hotspot -------- */
+/*
+   Defining details: 999px radius, vertical aqua gradient, a SEPARATE
+   bright specular on the top 40% that breaks ~mid-height, and a
+   1px outer ring that's slightly darker than the rim. Pressed state
+   flips the specular direction (glass tilts).
+*/
+
+[data-theme="frutiger-aero"] button[type="submit"],
+[data-theme="frutiger-aero"] .btn-primary,
+[data-theme="frutiger-aero"] button[data-variant="default"],
+[data-theme="frutiger-aero"] button.bg-primary {
+  border-radius: 999px !important;
+  background-image:
+    /* specular highlight, only on top 42% */
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.85) 0%,
+      rgba(255, 255, 255, 0.45) 22%,
+      rgba(255, 255, 255, 0) 42%,
+      rgba(0, 0, 0, 0.06) 58%,
+      rgba(0, 0, 0, 0.18) 100%),
+    /* base aqua tint */
+    linear-gradient(180deg,
+      #6fc2ee 0%,
+      #3a9dd8 48%,
+      #2683bd 100%) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-shadow:
+    0 1px 0 rgba(5, 60, 100, 0.55),
+    0 0 2px rgba(5, 60, 100, 0.45);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.85) inset,
+    0 -1px 0 rgba(2, 56, 90, 0.35) inset,
+    0 2px 4px rgba(16, 80, 130, 0.22),
+    0 6px 14px rgba(42, 165, 230, 0.35),
+    0 10px 28px rgba(42, 165, 230, 0.18);
+  border: 1px solid rgba(18, 95, 145, 0.75) !important;
+  transition: all 140ms ease;
+}
+[data-theme="frutiger-aero"] button[type="submit"]:hover:not(:disabled),
+[data-theme="frutiger-aero"] .btn-primary:hover:not(:disabled),
+[data-theme="frutiger-aero"] button[data-variant="default"]:hover:not(:disabled),
+[data-theme="frutiger-aero"] button.bg-primary:hover:not(:disabled) {
+  background-image:
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.95) 0%,
+      rgba(255, 255, 255, 0.55) 22%,
+      rgba(255, 255, 255, 0.05) 42%,
+      rgba(0, 0, 0, 0.05) 58%,
+      rgba(0, 0, 0, 0.15) 100%),
+    linear-gradient(180deg, #8bd0f5 0%, #4aa8e0 48%, #2f8cc4 100%) !important;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 1) inset,
+    0 -1px 0 rgba(2, 56, 90, 0.32) inset,
+    0 3px 6px rgba(16, 80, 130, 0.28),
+    0 10px 22px rgba(42, 165, 230, 0.5),
+    0 16px 42px rgba(42, 165, 230, 0.25);
+}
+[data-theme="frutiger-aero"] button[type="submit"]:active:not(:disabled),
+[data-theme="frutiger-aero"] .btn-primary:active:not(:disabled),
+[data-theme="frutiger-aero"] button[data-variant="default"]:active:not(:disabled),
+[data-theme="frutiger-aero"] button.bg-primary:active:not(:disabled) {
+  background-image:
+    linear-gradient(0deg,
+      rgba(255, 255, 255, 0.6) 0%,
+      rgba(255, 255, 255, 0.15) 22%,
+      rgba(255, 255, 255, 0) 42%,
+      rgba(0, 0, 0, 0.12) 58%,
+      rgba(0, 0, 0, 0.22) 100%),
+    linear-gradient(180deg, #2683bd 0%, #1a6fa3 100%) !important;
+  box-shadow:
+    0 1px 2px rgba(5, 40, 70, 0.35) inset,
+    0 -1px 0 rgba(120, 200, 240, 0.35) inset;
+  transform: translateY(0.5px);
+}
+
+/* =====================================================================
+   INPUTS — theme-specific focus personality
+   ===================================================================== */
+
+[data-theme="synthwave"] input:focus,
+[data-theme="synthwave"] textarea:focus,
+[data-theme="synthwave"] select:focus {
+  box-shadow:
+    0 0 0 1px #ff2d95,
+    0 0 14px rgba(255, 45, 149, 0.45);
+}
+
+[data-theme="vaporwave"] input[type="text"],
+[data-theme="vaporwave"] input[type="password"],
+[data-theme="vaporwave"] input[type="email"],
+[data-theme="vaporwave"] input[type="search"],
+[data-theme="vaporwave"] textarea,
+[data-theme="vaporwave"] select {
+  border-radius: 0 !important;
+  border: none !important;
+  background-color: #fff0f5;
+  color: #1a0a28;
+  box-shadow:
+    2px 2px 0 #5a3060 inset,
+    -2px -2px 0 #fff0f5 inset,
+    1px 1px 0 #1a0a28 inset,
+    -1px -1px 0 #ffffff inset;
+  padding-left: 6px;
+}
+[data-theme="vaporwave"] input:focus,
+[data-theme="vaporwave"] textarea:focus,
+[data-theme="vaporwave"] select:focus {
+  outline: 2px dotted #af87d7;
+  outline-offset: -4px;
+}
+
+[data-theme="frutiger-aero"] input[type="text"],
+[data-theme="frutiger-aero"] input[type="password"],
+[data-theme="frutiger-aero"] input[type="email"],
+[data-theme="frutiger-aero"] input[type="search"],
+[data-theme="frutiger-aero"] textarea {
+  background-image:
+    linear-gradient(180deg, rgba(184, 212, 232, 0.28) 0%, rgba(255, 255, 255, 0) 6px, rgba(255, 255, 255, 0) 100%);
+  box-shadow: 0 1px 2px rgba(0, 40, 80, 0.06) inset;
+}
+[data-theme="frutiger-aero"] input:focus,
+[data-theme="frutiger-aero"] textarea:focus {
+  box-shadow:
+    0 0 0 3px rgba(60, 185, 255, 0.3),
+    0 1px 2px rgba(0, 40, 80, 0.06) inset;
+}
+
+/* =====================================================================
+   NAV / SIDEBAR / DIALOGS — glassy blur in Aero, neon border in Synthwave,
+   Win98 panel in Vaporwave
+   ===================================================================== */
+
+[data-theme="frutiger-aero"] [data-sidebar="sidebar"],
+[data-theme="frutiger-aero"] [role="dialog"],
+[data-theme="frutiger-aero"] [role="menu"],
+[data-theme="frutiger-aero"] [data-radix-popper-content-wrapper] {
+  -webkit-backdrop-filter: blur(16px) saturate(1.35);
+  backdrop-filter: blur(16px) saturate(1.35);
+  background-color: rgba(255, 255, 255, 0.72) !important;
+}
+[data-theme="frutiger-aero"][data-mode="dark"] [data-sidebar="sidebar"],
+[data-theme="frutiger-aero"][data-mode="dark"] [role="dialog"],
+[data-theme="frutiger-aero"][data-mode="dark"] [role="menu"] {
+  background-color: rgba(19, 32, 48, 0.75) !important;
+}
+
+[data-theme="synthwave"] [data-sidebar="sidebar"] {
+  box-shadow: inset -1px 0 0 rgba(255, 45, 149, 0.45);
+}
+[data-theme="synthwave"] [data-sidebar="menu-button"][data-active="true"] {
+  background: linear-gradient(90deg, rgba(255, 45, 149, 0.22) 0%, transparent 80%);
+  box-shadow: inset 3px 0 0 #ff2d95;
+}
+
+[data-theme="vaporwave"] [data-sidebar="menu-button"] {
+  border-radius: 0 !important;
+}
+[data-theme="vaporwave"] [data-sidebar="menu-button"][data-active="true"] {
+  background: #af87d7 !important;
+  color: #fff0f5 !important;
+  box-shadow:
+    1px 1px 0 #0a0015 inset,
+    -1px -1px 0 #d7afd7 inset;
+}
+
+[data-theme="frutiger-aero"] [data-sidebar="menu-button"][data-active="true"] {
+  background: linear-gradient(180deg, rgba(60, 185, 255, 0.28) 0%, rgba(60, 185, 255, 0.08) 100%);
+  border-radius: 999px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset;
+}
+
+/* =====================================================================
+   SCROLLBARS — each theme has its own signature
+   ===================================================================== */
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-base);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--color-base);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent);
+}
+* {
+  scrollbar-color: var(--color-border) var(--color-base);
+  scrollbar-width: thin;
+}
+
+[data-theme="synthwave"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #ff2d95, #b81a6e);
+  border: 2px solid #070714;
+  box-shadow: 0 0 8px rgba(255, 45, 149, 0.5) inset;
+}
+
+[data-theme="vaporwave"] ::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+[data-theme="vaporwave"] ::-webkit-scrollbar-track {
+  background:
+    repeating-conic-gradient(
+      rgba(61, 54, 96, 0.4) 0% 25%,
+      rgba(240, 168, 199, 0.2) 25% 50%
+    );
+  background-size: 2px 2px;
+  box-shadow: 1px 1px 0 #1a0a28 inset;
+}
+[data-theme="vaporwave"] ::-webkit-scrollbar-thumb {
+  background: #f0a8c7;
+  border: none;
+  border-radius: 0;
+  box-shadow:
+    -2px -2px 0 #fff0f5 inset,
+    2px 2px 0 #5a3060 inset;
+}
+
+[data-theme="frutiger-aero"] ::-webkit-scrollbar-thumb {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0.1) 100%),
+    linear-gradient(180deg, #7cc5f5, #3cb9ff 50%, #2e9fd9);
+  border: 1px solid #b8d4e8;
+  border-radius: 999px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset;
+}
+
+/* =====================================================================
+   SELECTION + LINKS
+   ===================================================================== */
+
+::selection {
+  background: var(--color-accent);
+  color: var(--color-badge-text);
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+  transition: color 120ms ease, text-shadow 120ms ease;
+}
+a:hover {
+  color: var(--color-border-hover);
+}
+
+[data-theme="synthwave"] a:not(.no-theme-link):hover {
+  text-shadow: -1px 0 #00f0ff, 1px 0 #ff2d95;
+}
+
+[data-theme="vaporwave"] a:not(.no-theme-link):not([data-sidebar]) {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(240, 168, 199, 0.5);
+}
+[data-theme="vaporwave"] a:not(.no-theme-link):not([data-sidebar]):hover {
+  text-decoration-style: solid;
+  text-decoration-color: #a8e6e6;
+}
+
+/* =====================================================================
+   TABLES — theme-specific row hover
+   ===================================================================== */
+
+[data-theme="synthwave"] tbody tr:hover {
+  box-shadow: inset 3px 0 0 #ff2d95;
+  background-color: rgba(255, 45, 149, 0.04) !important;
+}
+
+[data-theme="vaporwave"] table {
+  border: none;
+  box-shadow:
+    2px 2px 0 #5a3060 inset,
+    -2px -2px 0 #fff0f5 inset;
+}
+[data-theme="vaporwave"] thead {
+  background: linear-gradient(180deg, #f0a8c7 0%, #d7afd7 100%);
+  box-shadow: 0 1px 0 #1a0a28;
+}
+[data-theme="vaporwave"] thead th {
+  color: #1a0a28 !important;
+  border-right: 1px solid rgba(26, 10, 40, 0.2);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+[data-theme="vaporwave"] tbody tr {
+  border-bottom: 1px solid rgba(240, 168, 199, 0.18);
+}
+
+[data-theme="frutiger-aero"] tbody tr:hover {
+  background-image: linear-gradient(90deg, rgba(60, 185, 255, 0.12), rgba(60, 185, 255, 0));
+}
+
+/* =====================================================================
+   BADGES — theme-specific
+   ===================================================================== */
+
+[data-theme="synthwave"] [data-slot="badge"][data-variant="critical"] {
+  box-shadow: 0 0 10px rgba(255, 23, 68, 0.45);
+}
+
+[data-theme="vaporwave"] [data-slot="badge"] {
+  padding: 0 6px;
+  min-width: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 9px;
+  font-family: var(--font-sans);
+  border-radius: 0 !important;
+  box-shadow:
+    -1px -1px 0 rgba(255, 240, 245, 0.6) inset,
+    1px 1px 0 rgba(26, 10, 40, 0.6) inset;
+}
+
+/* =====================================================================
+   HR DIVIDERS
+   ===================================================================== */
+
+[data-theme="vaporwave"] hr {
+  border: none;
+  height: 4px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      #feb1d7 0 8px,
+      #d7afd7 8px 16px,
+      #a8e6e6 16px 24px
+    );
+  image-rendering: pixelated;
+  margin: 16px 0;
+}
+
+[data-theme="synthwave"] hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #ff2d95 20%, #00f0ff 50%, #ff2d95 80%, transparent);
+  box-shadow: 0 0 8px rgba(255, 45, 149, 0.4);
+  margin: 16px 0;
+}
+
+[data-theme="frutiger-aero"] hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(60, 185, 255, 0.6) 50%, transparent);
+  margin: 16px 0;
+}
+
+/* =====================================================================
+   VAPORWAVE KATAKANA / KAWAII HELPER CLASSES (optional, opt-in)
+   ===================================================================== */
+
+[data-theme="vaporwave"] .vw-wide,
+[data-theme="vaporwave"] [data-vaporwave="wide"] {
+  letter-spacing: 0.5em;
+  text-transform: uppercase;
+  word-spacing: 0.5em;
+}
+
+[data-theme="vaporwave"] .vw-jp,
+[data-theme="vaporwave"] [data-vaporwave="jp"] {
+  font-family: "MS PGothic", "Noto Sans JP", "Hiragino Kaku Gothic Pro",
+    "Yu Gothic", "Meiryo", "Space Grotesk", system-ui, sans-serif;
+}
+
+[data-theme="vaporwave"] .vw-hotpink,
+[data-theme="vaporwave"] [data-vaporwave="hotpink"] {
+  color: var(--color-hotpink);
+}
+
+[data-theme="vaporwave"] ul.vw-sparkle-list,
+[data-theme="vaporwave"] [data-vaporwave="list"] {
+  list-style: none;
+  padding-left: 0;
+}
+[data-theme="vaporwave"] ul.vw-sparkle-list li::before,
+[data-theme="vaporwave"] [data-vaporwave="list"] li::before {
+  content: "♡ ";
+  color: #feb1d7;
+  font-weight: 700;
+  margin-right: 6px;
+  text-shadow: 0 0 4px rgba(254, 177, 215, 0.6);
+}
+
+/* =====================================================================
+   SIDEBAR INSET — stays transparent so atmospherics show through
+   ===================================================================== */
+
+[data-slot="sidebar-inset"] {
+  background-color: transparent !important;
+}
+
+[data-sidebar="sidebar"] {
+  background-color: var(--color-surface);
+}
+
+/* Light themes: slight haze so bokeh/stars don't wash out text */
+[data-theme="frutiger-aero"][data-mode="light"] [data-slot="sidebar-inset"],
+[data-theme="vaporwave"][data-mode="light"] [data-slot="sidebar-inset"],
+[data-theme="synthwave"][data-mode="light"] [data-slot="sidebar-inset"] {
+  background-color: color-mix(in srgb, var(--background) 55%, transparent) !important;
+}
+
+/* Floating headings/text readability reinforcement */
+[data-slot="sidebar-inset"] h1,
+[data-slot="sidebar-inset"] h2,
+[data-slot="sidebar-inset"] h3,
+[data-slot="sidebar-inset"] p,
+[data-slot="sidebar-inset"] span,
+[data-slot="sidebar-inset"] label {
+  position: relative;
+  z-index: 1;
+}
+
+/* Dark-mode floating text gets a dark halo */
+[data-mode="dark"] [data-slot="sidebar-inset"] > main > p,
+[data-mode="dark"] [data-slot="sidebar-inset"] > main > div > p {
+  text-shadow:
+    0 0 4px rgba(0, 0, 0, 0.75),
+    0 2px 4px rgba(0, 0, 0, 0.55);
+}
+[data-mode="light"] [data-slot="sidebar-inset"] > main > p,
+[data-mode="light"] [data-slot="sidebar-inset"] > main > div > p {
+  text-shadow:
+    0 0 4px rgba(255, 255, 255, 0.85),
+    0 1px 2px rgba(255, 255, 255, 0.65);
+}
+/* Themes managing their own heading shadows — don't double-stack */
+[data-theme="synthwave"] [data-slot="sidebar-inset"] > main > h1,
+[data-theme="synthwave"] [data-slot="sidebar-inset"] > main > h2,
+[data-theme="vaporwave"] [data-slot="sidebar-inset"] > main > h1,
+[data-theme="vaporwave"] [data-slot="sidebar-inset"] > main > h2 {
+  text-shadow: revert;
+}
+
+/* =====================================================================
+   LOGIN PAGE — theme-specific panel backgrounds so the signature shows
+   even on the un-authenticated screen. The LoginPage component uses
+   .login-root / .login-left / .login-right wrappers that hardcode
+   var(--color-base)/var(--color-surface). We override those per theme
+   so the atmospheric signature is visible BEFORE sign-in.
+   ===================================================================== */
+
+/* Base login layout — restored (was stripped in 176b CSS trim).
+   Without these rules the LoginPage renders unstyled inline HTML. */
+.login-root {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 100vh;
+  width: 100vw;
+  background: var(--color-base);
+  color: var(--color-text);
+  overflow: hidden;
+}
+
+@media (max-width: 767px) {
+  .login-root {
+    grid-template-columns: 1fr;
+  }
+  .login-left {
+    display: none;
+  }
+}
+
+.login-left {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 3rem;
+  min-height: 100vh;
+  background: var(--color-surface, #0a0a0f);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.login-right {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 2rem;
+  min-height: 100vh;
+  background: var(--color-base);
+  z-index: 1;
+}
+
+.login-dot-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.08) 1px, transparent 0);
+  background-size: 24px 24px;
+  opacity: 0.5;
+  z-index: 0;
+}
+
+.login-brand {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.login-brand__wordmark {
+  font-family: var(--font-display, "Syne", sans-serif);
+  font-size: clamp(3rem, 7vw, 5rem);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: var(--color-text, #ffffff);
+}
+
+.login-brand__tagline {
+  font-family: var(--font-sans, "Space Grotesk", sans-serif);
+  font-size: 0.875rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.6));
+}
+
+.login-form-card {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.login-form-card__heading {
+  font-family: var(--font-display, "Syne", sans-serif);
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0 0 1.5rem;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.login-field__label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.login-field__input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: var(--color-elevated, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.1));
+  border-radius: 6px;
+  color: var(--color-text);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9375rem;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+.login-field__input:focus {
+  outline: none;
+  border-color: var(--color-accent, currentColor);
+  box-shadow: 0 0 0 3px var(--color-accent-soft, rgba(255, 255, 255, 0.1));
+}
+
+.login-divider {
+  position: relative;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin: 0.5rem 0;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 40%;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.login-divider::before {
+  left: 0;
+}
+
+.login-divider::after {
+  right: 0;
+}
+
+/* Make the root wrapper transparent for themed panels so body signatures show through */
+[data-theme="frutiger-aero"] .login-root,
+[data-theme="synthwave"] .login-root,
+[data-theme="vaporwave"] .login-root {
+  background: transparent !important;
+}
+
+/* ---- SYNTHWAVE login ---- */
+[data-theme="synthwave"] .login-left {
+  background:
+    radial-gradient(
+      circle 280px at 50% calc(100% - 40px),
+      #ffaa44 0%,
+      #ff4488 22%,
+      #ff2d95 42%,
+      transparent 62%
+    ),
+    linear-gradient(180deg, #070714 0%, #0f0f28 40%, #2a0a40 75%, #1a0a28 100%) !important;
+  position: relative;
+}
+[data-theme="synthwave"] .login-left::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 55%;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg,
+      transparent 0, transparent 28px,
+      rgba(0, 240, 255, 0.6) 28px, rgba(0, 240, 255, 0.6) 29px),
+    repeating-linear-gradient(90deg,
+      transparent 0, transparent 28px,
+      rgba(255, 45, 149, 0.35) 28px, rgba(255, 45, 149, 0.35) 29px);
+  transform: perspective(280px) rotateX(62deg);
+  transform-origin: center top;
+  opacity: 0.6;
+}
+[data-theme="synthwave"] .login-dot-grid {
+  opacity: 0.25;
+}
+[data-theme="synthwave"] .login-right {
+  background: rgba(7, 7, 20, 0.92) !important;
+  box-shadow: inset 1px 0 0 rgba(255, 45, 149, 0.4) !important;
+}
+[data-theme="synthwave"] .login-form-card__heading {
+  text-shadow:
+    -1.5px 0 rgba(0, 240, 255, 0.6),
+    1.5px 0 rgba(255, 45, 149, 0.6),
+    0 0 8px rgba(255, 45, 149, 0.35);
+  letter-spacing: 0.04em;
+}
+[data-theme="synthwave"] .login-brand__wordmark {
+  text-shadow:
+    -2px 0 rgba(0, 240, 255, 0.7),
+    2px 0 rgba(255, 45, 149, 0.7),
+    0 0 18px rgba(255, 45, 149, 0.5);
+}
+
+/* ---- VAPORWAVE login ---- */
+[data-theme="vaporwave"] .login-left {
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><g fill='rgba(240,168,199,0.22)'><text x='12' y='22' font-family='serif' font-size='11'>✦</text><text x='68' y='48' font-family='serif' font-size='9'>✧</text><text x='30' y='78' font-family='serif' font-size='7'>✦</text></g></svg>"),
+    linear-gradient(180deg, #1a1528 0%, #2a1540 40%, #3d1e50 75%, #1f0f30 100%) !important;
+  position: relative;
+  overflow: hidden;
+}
+[data-theme="vaporwave"] .login-left::after {
+  content: "";
+  position: absolute;
+  left: -10%; right: -10%; bottom: 0;
+  height: 45%;
+  pointer-events: none;
+  background:
+    linear-gradient(45deg,
+      rgba(240, 168, 199, 0.25) 25%, transparent 25%, transparent 75%, rgba(240, 168, 199, 0.25) 75%),
+    linear-gradient(45deg,
+      rgba(168, 230, 230, 0.25) 25%, transparent 25%, transparent 75%, rgba(168, 230, 230, 0.25) 75%);
+  background-size: 50px 50px;
+  background-position: 0 0, 25px 25px;
+  transform: perspective(400px) rotateX(55deg);
+  transform-origin: center top;
+  opacity: 0.6;
+}
+[data-theme="vaporwave"] .login-dot-grid {
+  opacity: 0.15;
+}
+[data-theme="vaporwave"] .login-right {
+  background: #2e2848 !important;
+  box-shadow:
+    -2px 0 0 #f8d0e4 inset,
+    2px 0 0 #1a0a28 inset,
+    -1px 0 0 #fff0f5 inset,
+    1px 0 0 #0a0015 inset !important;
+}
+[data-theme="vaporwave"] .login-form-card__heading {
+  letter-spacing: 0.15em;
+  text-shadow:
+    0 0 6px rgba(26, 10, 40, 0.9),
+    -1px 0 rgba(240, 168, 199, 0.7),
+    1px 0 rgba(168, 230, 230, 0.6);
+  color: #ffe8f5;
+}
+[data-theme="vaporwave"] .login-brand__wordmark {
+  letter-spacing: 0.2em;
+  color: #ffe8f5;
+  text-shadow:
+    0 0 8px rgba(26, 10, 40, 0.9),
+    -2px 0 rgba(240, 168, 199, 0.7),
+    2px 0 rgba(168, 230, 230, 0.6);
+}
+[data-theme="vaporwave"] .login-brand__tagline {
+  color: #d7afd7;
+  font-family: "MS PGothic", "Noto Sans JP", var(--font-sans);
+  letter-spacing: 0.1em;
+}
+
+/* ---- FRUTIGER AERO login ---- */
+[data-theme="frutiger-aero"] .login-left {
+  background:
+    radial-gradient(ellipse at top, rgba(135, 206, 250, 0.55) 0%, transparent 60%),
+    radial-gradient(ellipse at bottom right, rgba(152, 251, 152, 0.45) 0%, transparent 60%),
+    radial-gradient(ellipse at 15% 85%, rgba(60, 185, 255, 0.25) 0%, transparent 45%),
+    linear-gradient(180deg, #bfe4fc 0%, #d8eef7 40%, #e8f4fc 70%, #e0f0e0 100%) !important;
+  position: relative;
+  overflow: hidden;
+}
+[data-theme="frutiger-aero"] .login-left::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(60, 185, 255, 0.55) 0%, transparent 5%),
+    radial-gradient(circle at 70% 20%, rgba(60, 185, 255, 0.4) 0%, transparent 3.5%),
+    radial-gradient(circle at 40% 75%, rgba(156, 236, 165, 0.5) 0%, transparent 6%),
+    radial-gradient(circle at 85% 55%, rgba(155, 127, 214, 0.35) 0%, transparent 3%),
+    radial-gradient(circle at 15% 60%, rgba(60, 185, 255, 0.35) 0%, transparent 3.5%),
+    radial-gradient(circle at 60% 40%, rgba(255, 180, 122, 0.28) 0%, transparent 2.5%);
+  filter: blur(1.5px);
+}
+[data-theme="frutiger-aero"] .login-left::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 600'><g fill='none' stroke='rgba(42,157,110,0.22)' stroke-width='2'><path d='M100 480 Q120 440 100 400 Q80 440 100 480 M120 460 Q140 420 120 380'/><path d='M700 120 Q720 80 700 40 Q680 80 700 120'/></g><g fill='rgba(60,185,255,0.35)'><circle cx='200' cy='150' r='5'/><circle cx='600' cy='400' r='6'/><circle cx='350' cy='520' r='4.5'/><circle cx='750' cy='280' r='5.5'/></g></svg>") center/cover no-repeat;
+  opacity: 0.9;
+}
+[data-theme="frutiger-aero"] .login-dot-grid {
+  display: none;
+}
+[data-theme="frutiger-aero"] .login-right {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(240, 250, 255, 0.85) 100%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: -1px 0 0 rgba(184, 212, 232, 0.6) !important;
+}
+[data-theme="frutiger-aero"] .login-brand__wordmark {
+  background: linear-gradient(180deg, #3cb9ff 0%, #2e9fd9 50%, #1d7eb0 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 4px rgba(60, 185, 255, 0.4));
+}
+
+/* Login input box styling per theme — respect the primary signature */
+[data-theme="frutiger-aero"] .login-field__input {
+  background-color: rgba(255, 255, 255, 0.85) !important;
+  border: 1px solid rgba(184, 212, 232, 0.8) !important;
+  box-shadow: 0 1px 2px rgba(0, 40, 80, 0.04) inset !important;
+}
+[data-theme="synthwave"] .login-field__input {
+  background: rgba(15, 15, 40, 0.7) !important;
+  border: 1px solid rgba(255, 45, 149, 0.45) !important;
+}
+[data-theme="synthwave"] .login-field__input:focus {
+  border-color: #ff2d95 !important;
+  box-shadow: 0 0 14px rgba(255, 45, 149, 0.45) !important;
+}
+[data-theme="vaporwave"] .login-field__input {
+  background-color: #fff0f5 !important;
+  color: #1a0a28 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow:
+    2px 2px 0 #5a3060 inset,
+    -2px -2px 0 #fff0f5 inset,
+    1px 1px 0 #1a0a28 inset,
+    -1px -1px 0 #ffffff inset !important;
+}
+
+/* Login submit button — inherit theme's primary button style.
+   Use .login-submit selector from component if needed. */
+[data-theme="synthwave"] .login-right button[type="submit"],
+[data-theme="synthwave"] .login-right .btn-primary {
+  background: transparent !important;
+  color: #ff2d95 !important;
+  border: 1.5px solid #ff2d95 !important;
+  text-shadow: 0 0 4px rgba(255, 45, 149, 0.8);
+  box-shadow: 0 0 10px rgba(255, 45, 149, 0.5), inset 0 0 8px rgba(255, 45, 149, 0.15);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+[data-theme="vaporwave"] .login-right button[type="submit"] {
+  background-color: #f0a8c7 !important;
+  color: #1a0a28 !important;
+  border-radius: 0 !important;
+  border: none !important;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  box-shadow:
+    inset 1px 1px 0 #fff0f5,
+    inset -1px -1px 0 #1a0a28,
+    inset 2px 2px 0 #ffc8dd,
+    inset -2px -2px 0 #5a3060 !important;
+}
+[data-theme="frutiger-aero"] .login-right button[type="submit"] {
+  border-radius: 999px !important;
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0.12) 100%),
+    linear-gradient(180deg, #7cc5f5 0%, #3cb9ff 50%, #2e9fd9 100%) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  border: 1px solid rgba(46, 159, 217, 0.65) !important;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.8) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.12) inset,
+    0 3px 8px rgba(60, 185, 255, 0.45) !important;
+}
+
+/* =====================================================================
+   TAILWIND v4 @theme inline — expose tokens as utilities
+   ===================================================================== */
+
+@theme inline {
+  --color-base: var(--color-base);
+  --color-surface: var(--color-surface);
+  --color-elevated: var(--color-elevated);
+  --color-accent: var(--color-accent);
+  --color-accent-muted: var(--color-accent-muted);
+  --color-peach: var(--color-peach);
+  --color-lavender: var(--color-lavender);
+  --color-mint: var(--color-mint);
+  --color-critical: var(--color-critical);
+  --color-high: var(--color-high);
+  --color-medium: var(--color-medium);
+  --color-low: var(--color-low);
+  --color-border: var(--color-border);
+  --color-border-hover: var(--color-border-hover);
+  --color-text: var(--color-text);
+  --color-text-muted: var(--color-text-muted);
+  --color-text-peach: var(--color-text-peach);
+  --color-focus-ring: var(--color-focus-ring);
+  --color-badge-text: var(--color-badge-text);
+
+  --font-display: var(--font-display);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar-background);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* =====================================================================
+   UTILITIES — loading skeleton, focus ring, severity pulse
+   ===================================================================== */
+
+@keyframes severity-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+.animate-severity-pulse {
+  animation: severity-pulse 2s ease-in-out infinite;
+}
+
+@keyframes aila-scan {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.skeleton-aila {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--color-surface);
+  border-radius: var(--radius-sm);
+}
+.skeleton-aila::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 25%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--color-accent) 50%,
+    transparent 100%
+  );
+  opacity: 0.15;
+  animation: aila-scan 1.5s ease-in-out infinite;
+}
+
+.neon-glow {
+  text-shadow:
+    0 0 7px color-mix(in srgb, var(--glow-color) calc(var(--glow-strength) * 100%), transparent),
+    0 0 20px color-mix(in srgb, var(--glow-color) calc(var(--glow-strength) * 60%), transparent);
+}
+.neon-border {
+  box-shadow:
+    0 0 5px color-mix(in srgb, var(--glow-color) calc(var(--glow-strength) * 100%), transparent),
+    inset 0 0 5px color-mix(in srgb, var(--glow-color) calc(var(--glow-strength) * 30%), transparent);
+}
+
+.theme-grid-bg {
+  background-image:
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-severity-pulse { animation: none; }
+  .skeleton-aila::after { animation: none; opacity: 0.08; }
+}
+
+/* Glass utility (Aero) */
+[data-theme="frutiger-aero"] .glass-surface {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.92) 0%,
+    rgba(255, 255, 255, 0.7) 100%
+  );
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 1px 3px rgba(0, 40, 80, 0.08),
+    0 8px 26px rgba(60, 185, 255, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(184, 212, 232, 0.6);
+}
+
+/* Glitch text (synthwave/vaporwave) */
+@keyframes glitch-clip-1 {
+  0%    { clip-path: inset(20% 0 60% 0); transform: translateX(-4px); }
+  20%   { clip-path: inset(80% 0 5% 0);  transform: translateX(4px); }
+  40%   { clip-path: inset(40% 0 40% 0); transform: translateX(-2px); }
+  60%   { clip-path: inset(5% 0 85% 0);  transform: translateX(2px); }
+  80%   { clip-path: inset(65% 0 25% 0); transform: translateX(-4px); }
+  100%  { clip-path: inset(20% 0 60% 0); transform: translateX(0); }
+}
+@keyframes glitch-clip-2 {
+  0%    { clip-path: inset(55% 0 30% 0); transform: translateX(4px); }
+  25%   { clip-path: inset(10% 0 75% 0); transform: translateX(-4px); }
+  50%   { clip-path: inset(70% 0 10% 0); transform: translateX(2px); }
+  75%   { clip-path: inset(30% 0 50% 0); transform: translateX(-2px); }
+  100%  { clip-path: inset(55% 0 30% 0); transform: translateX(0); }
+}
+.glitch-text {
+  position: relative;
+}
+.glitch-text::before,
+.glitch-text::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+}
+.glitch-text::before {
+  animation: glitch-clip-1 2.5s infinite steps(1);
+  color: var(--color-critical);
+}
+.glitch-text::after {
+  animation: glitch-clip-2 3s infinite steps(1);
+  color: var(--color-mint);
+}
+[data-theme="frutiger-aero"] .glitch-text::before,
+[data-theme="frutiger-aero"] .glitch-text::after {
+  animation: none;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .glitch-text::before,
+  .glitch-text::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* =====================================================================
+   STATUS BADGE CLASSES (Phase 176a — unchanged)
+   ===================================================================== */
+
+.aila-badge-status-completed {
+  background-color: var(--status-completed);
+  color: var(--color-badge-text);
+  border-color: var(--status-completed);
+}
+.aila-badge-status-running {
+  background-color: var(--status-running);
+  color: var(--color-badge-text);
+  border-color: var(--status-running);
+}
+.aila-badge-status-failed {
+  background-color: var(--status-failed);
+  color: var(--color-badge-text);
+  border-color: var(--status-failed);
+}
+.aila-badge-status-queued {
+  background-color: var(--status-queued);
+  color: var(--color-badge-text);
+  border-color: var(--status-queued);
+}
+.aila-badge-status-waiting {
+  background-color: var(--status-waiting);
+  color: var(--color-badge-text);
+  border-color: var(--status-waiting);
+}
+.aila-badge-status-paused {
+  background-color: var(--status-paused);
+  color: var(--color-badge-text);
+  border-color: var(--status-paused);
+}
+
+/* =====================================================================
+   BASE LAYER
+   ===================================================================== */
+
+/* =====================================================================
+   ██████████████████████████████████████████████████████████████████████
+   EXTENDED THEME PACK — 8 NEW THEMES
+   ██████████████████████████████████████████████████████████████████████
+   Every theme below ships these slots:
+     (A) tokens light  (B) tokens dark   (C) body atmosphere
+     (D) cards         (E) headings      (F) buttons
+     (G) inputs        (H) scrollbar     (I) links/tables/hr/sidebar
+     (J) login panel signature
+   Themes were built to be recognizable from the shapes + palettes alone;
+   the named fonts reinforce rather than carry the identity.
+   ===================================================================== */
+
+
+/* =====================================================================
+   THEME: PLAYSTATION 1  (naturally light / cool gray console chassis)
+   Signature A: PS1 console-gray chassis, CD-tray slot, ventilation grid
+   Signature B: PS logo palette — red / yellow / green / blue blocks
+   Signature C: Low-poly wobble on hover (geometric jitter like untextured
+                PS1 polygon warping), dither banding, 240p scanlines
+   Signature D: FF7 menu blue dialog for popovers
+   Signature E: "Enter the World of PlayStation" cube boot fragment
+   ===================================================================== */
+
+[data-theme="ps1"] {
+  --color-base: #c7c6c1;
+  --color-surface: #d8d7d2;
+  --color-elevated: #e6e5df;
+  --color-border: #7f7e7a;
+  --color-border-hover: #2f6fbf;
+
+  --color-accent: #2f6fbf;         /* PS logo blue */
+  --color-accent-muted: #cedae9;
+
+  --color-ps1-red: #e41e26;
+  --color-ps1-green: #00a651;
+  --color-ps1-blue: #2f6fbf;
+  --color-ps1-yellow: #f9b528;
+
+  --color-peach: #f9b528;
+  --color-lavender: #5a4b7b;
+  --color-mint: #00a651;
+
+  --color-critical: #e41e26;
+  --color-high: #f9b528;
+  --color-medium: #9a8a00;
+  --color-low: #7f7e7a;
+
+  --color-text: #1a1a1a;
+  --color-text-muted: #5a5a56;
+
+  --color-focus-ring: #2f6fbf;
+  --color-badge-text: #0a0a0a;
+
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+
+  --font-display: "Michroma", "Eurostile", "Bank Gothic", "Zrnic",
+    "Arial Narrow", sans-serif;
+  --font-sans: "Michroma", "Eurostile", "Bank Gothic", "Lucida Console",
+    system-ui, sans-serif;
+
+  --background: #c7c6c1;
+  --foreground: #1a1a1a;
+  --card: #d8d7d2;
+  --card-foreground: #1a1a1a;
+  --popover: #1a1a4d;
+  --popover-foreground: #e6e5df;
+  --primary: #2f6fbf;
+  --primary-foreground: #ffffff;
+  --secondary: #9a9996;
+  --secondary-foreground: #1a1a1a;
+  --muted: #b0aeaa;
+  --muted-foreground: #5a5a56;
+  --destructive: #e41e26;
+  --border: #7f7e7a;
+  --input: #7f7e7a;
+  --ring: #2f6fbf;
+  --radius: 0;
+
+  --sidebar-background: #9a9996;
+  --sidebar-foreground: #1a1a1a;
+  --sidebar-primary: #2f6fbf;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #b0aeaa;
+  --sidebar-accent-foreground: #1a1a1a;
+  --sidebar-border: #5a5a56;
+  --sidebar-ring: #2f6fbf;
+}
+[data-theme="ps1"][data-mode="dark"] {
+  --color-base: #0e0e1a;
+  --color-surface: #1a1a2e;
+  --color-elevated: #222244;
+  --color-border: #3a3a55;
+  --color-text: #e6e6f0;
+  --color-text-muted: #8a8aa5;
+  --background: #0e0e1a;
+  --foreground: #e6e6f0;
+  --card: #1a1a2e;
+  --card-foreground: #e6e6f0;
+  --popover: #1a1a4d;
+  --popover-foreground: #e6e5df;
+  --secondary: #222244;
+  --secondary-foreground: #e6e6f0;
+  --muted: #222244;
+  --muted-foreground: #8a8aa5;
+  --border: #3a3a55;
+  --input: #3a3a55;
+  --sidebar-background: #14142a;
+  --color-badge-text: #0a0a0f;
+}
+
+@keyframes ps1-boot-flash {
+  0%   { opacity: 0; }
+  5%   { opacity: 0.4; }
+  12%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+[data-theme="ps1"] body {
+  background:
+    repeating-linear-gradient(0deg,
+      transparent 0 3px,
+      rgba(0, 0, 0, 0.025) 3px 4px),
+    radial-gradient(ellipse at center top,
+      #dad9d3 0%, #c7c6c1 55%, #aeaea9 100%);
+  background-attachment: fixed;
+}
+[data-theme="ps1"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    /* Dithered noise */
+    repeating-conic-gradient(
+      rgba(0, 0, 0, 0.025) 0% 25%,
+      rgba(255, 255, 255, 0.025) 25% 50%);
+  background-size: 2px 2px;
+  mix-blend-mode: multiply;
+  opacity: 0.6;
+}
+/* PS logo rendered as a 4-color cube field in the lower-right corner */
+[data-theme="ps1"] body::after {
+  content: "";
+  position: fixed;
+  right: 6vw;
+  bottom: 6vh;
+  width: 220px;
+  height: 220px;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>\
+<g>\
+<rect x='20' y='20' width='70' height='70' fill='%23e41e26'/>\
+<rect x='110' y='20' width='70' height='70' fill='%2300a651'/>\
+<rect x='20' y='110' width='70' height='70' fill='%232f6fbf'/>\
+<rect x='110' y='110' width='70' height='70' fill='%23f9b528'/>\
+<text x='100' y='108' text-anchor='middle' font-family='Michroma,Eurostile,sans-serif' font-size='22' font-weight='900' fill='%23ffffff' letter-spacing='0'>PS</text>\
+</g></svg>") center/contain no-repeat;
+  opacity: 0.28;
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.35));
+}
+[data-theme="ps1"][data-mode="dark"] body {
+  background:
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255,255,255,0.02) 3px 4px),
+    linear-gradient(180deg, #05051a 0%, #0e0e1f 60%, #15152b 100%);
+}
+[data-theme="ps1"][data-mode="dark"] body::before { opacity: 0.3; }
+
+/* PS1 cards = flat chassis plate with chamfered top, no radius */
+[data-theme="ps1"] .bg-surface,
+[data-theme="ps1"] .bg-card,
+[data-theme="ps1"] .bg-elevated,
+[data-theme="ps1"] .bg-muted,
+[data-theme="ps1"] .bg-popover {
+  border-radius: 0 !important;
+  background-image: linear-gradient(180deg,
+    rgba(255, 255, 255, 0.35) 0%,
+    rgba(255, 255, 255, 0) 4px,
+    rgba(255, 255, 255, 0) calc(100% - 4px),
+    rgba(0, 0, 0, 0.14) 100%);
+  box-shadow:
+    0 0 0 1px #5e5e5a,
+    1px 1px 0 #ffffff inset,
+    -1px -1px 0 rgba(0, 0, 0, 0.18) inset;
+  border: 1px solid #7f7e7a !important;
+}
+[data-theme="ps1"][data-mode="dark"] .bg-surface,
+[data-theme="ps1"][data-mode="dark"] .bg-card,
+[data-theme="ps1"][data-mode="dark"] .bg-elevated {
+  background-image: linear-gradient(180deg,
+    rgba(60, 60, 100, 0.35) 0%,
+    rgba(26, 26, 46, 0.85) 100%);
+  box-shadow:
+    0 0 0 1px #3a3a55,
+    1px 1px 0 rgba(120, 120, 170, 0.2) inset;
+  border: 1px solid #3a3a55 !important;
+}
+
+@keyframes ps1-wobble {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  25%      { transform: translate(0.4px, -0.3px) rotate(-0.08deg); }
+  50%      { transform: translate(-0.3px, 0.4px) rotate(0.06deg); }
+  75%      { transform: translate(0.2px, 0.2px) rotate(-0.04deg); }
+}
+[data-theme="ps1"] h1,
+[data-theme="ps1"] h2 {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #1a1a1a;
+  text-shadow:
+    1px 1px 0 #ffffff,
+    2px 2px 0 #2f6fbf;
+  animation: ps1-wobble 3.5s steps(3) infinite;
+}
+[data-theme="ps1"] h3 {
+  font-family: var(--font-display);
+  color: #2f6fbf;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+}
+[data-theme="ps1"][data-mode="dark"] h1,
+[data-theme="ps1"][data-mode="dark"] h2 {
+  color: #e6e6f0;
+  text-shadow:
+    1px 1px 0 #000000,
+    2px 2px 0 #2f6fbf,
+    0 0 8px rgba(47, 111, 191, 0.35);
+}
+
+/* PS1 button = chunky chassis block, rectangle, heavy bevel, no radius */
+[data-theme="ps1"] button[type="submit"],
+[data-theme="ps1"] .btn-primary,
+[data-theme="ps1"] button[data-variant="default"],
+[data-theme="ps1"] button.bg-primary {
+  border-radius: 0 !important;
+  background-image:
+    linear-gradient(180deg,
+      #b0b0ac 0%, #9a9996 48%, #7f7e7a 100%) !important;
+  color: #1a1a1a !important;
+  font-family: var(--font-display);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.6);
+  border: none !important;
+  box-shadow:
+    inset 1px 1px 0 #ffffff,
+    inset -1px -1px 0 #3a3a36,
+    inset 2px 2px 0 #d8d7d2,
+    inset -2px -2px 0 #5a5a56;
+  transition: none;
+}
+[data-theme="ps1"] button[type="submit"]:active:not(:disabled),
+[data-theme="ps1"] .btn-primary:active:not(:disabled),
+[data-theme="ps1"] button[data-variant="default"]:active:not(:disabled) {
+  box-shadow:
+    inset 1px 1px 0 #3a3a36,
+    inset -1px -1px 0 #ffffff,
+    inset 2px 2px 0 #5a5a56,
+    inset -2px -2px 0 #d8d7d2;
+}
+[data-theme="ps1"] input[type="text"],
+[data-theme="ps1"] input[type="password"],
+[data-theme="ps1"] input[type="email"],
+[data-theme="ps1"] input[type="search"],
+[data-theme="ps1"] textarea,
+[data-theme="ps1"] select {
+  border-radius: 0 !important;
+  background: #ffffff;
+  color: #000000;
+  font-family: "Lucida Console", monospace;
+  border: none !important;
+  box-shadow:
+    inset 1px 1px 0 #3a3a36,
+    inset -1px -1px 0 #ffffff,
+    inset 2px 2px 0 #7f7e7a,
+    inset -2px -2px 0 #e6e5df;
+}
+[data-theme="ps1"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #b0b0ac, #7f7e7a);
+  border: 1px solid #3a3a36;
+  border-radius: 0;
+}
+[data-theme="ps1"] hr {
+  border: none;
+  height: 4px;
+  background:
+    linear-gradient(90deg,
+      #e41e26 0 25%,
+      #00a651 25% 50%,
+      #2f6fbf 50% 75%,
+      #f9b528 75% 100%);
+}
+[data-theme="ps1"] tbody tr:hover {
+  background: #cedae9 !important;
+  box-shadow: inset 2px 0 0 #2f6fbf;
+}
+
+
+/* =====================================================================
+   THEME: PLAYSTATION 2  (naturally dark / "emotion engine" black + cyan)
+   Signature A: Deep black + PS2 boot cyan + rising-column cube field
+   Signature B: "Diavolo"-style geometric hollow-outline headings
+   Signature C: Blue-violet glow columns, subtle prism flicker
+   Signature D: Sharp right-angle cards with a single neon edge stripe
+   Signature E: The iconic "Sony Computer Entertainment" bootup mood
+   ===================================================================== */
+
+[data-theme="ps2"] {
+  --color-base: #000000;
+  --color-surface: #080814;
+  --color-elevated: #0f0f22;
+  --color-border: #1f2040;
+  --color-border-hover: #4fd8ff;
+
+  --color-accent: #4fd8ff;
+  --color-accent-muted: #0a1630;
+
+  --color-peach: #ffb347;
+  --color-lavender: #9966ff;
+  --color-mint: #4fffaa;
+
+  --color-critical: #ff2e4a;
+  --color-high: #ff8a1f;
+  --color-medium: #f5d000;
+  --color-low: #606a8a;
+
+  --color-text: #e0f2ff;
+  --color-text-muted: #7c9abc;
+
+  --color-focus-ring: #4fd8ff;
+  --color-badge-text: #000000;
+
+  --radius-sm: 0;
+  --radius-md: 2px;
+  --radius-lg: 3px;
+
+  --font-display: "Iceberg", "Bungee", "Michroma", "Eurostile", sans-serif;
+  --font-sans: "B612 Mono", "Share Tech Mono", ui-monospace, monospace;
+
+  --background: #000000;
+  --foreground: #e0f2ff;
+  --card: #080814;
+  --card-foreground: #e0f2ff;
+  --popover: #0f0f22;
+  --popover-foreground: #e0f2ff;
+  --primary: #4fd8ff;
+  --primary-foreground: #000000;
+  --secondary: #0f0f22;
+  --secondary-foreground: #e0f2ff;
+  --muted: #10102a;
+  --muted-foreground: #7c9abc;
+  --destructive: #ff2e4a;
+  --border: #1f2040;
+  --input: #1f2040;
+  --ring: #4fd8ff;
+  --radius: 2px;
+
+  --sidebar-background: #040408;
+  --sidebar-foreground: #e0f2ff;
+  --sidebar-primary: #4fd8ff;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #10102a;
+  --sidebar-accent-foreground: #e0f2ff;
+  --sidebar-border: #1f2040;
+  --sidebar-ring: #4fd8ff;
+}
+[data-theme="ps2"][data-mode="light"] {
+  --color-base: #e6edf5;
+  --color-surface: #ffffff;
+  --color-elevated: #ffffff;
+  --color-border: #b9c9df;
+  --color-text: #0a1628;
+  --color-text-muted: #3a5573;
+  --background: #e6edf5;
+  --foreground: #0a1628;
+  --card: #ffffff;
+  --card-foreground: #0a1628;
+  --popover: #ffffff;
+  --popover-foreground: #0a1628;
+  --secondary: #dbe7f2;
+  --secondary-foreground: #0a1628;
+  --muted: #e6edf5;
+  --muted-foreground: #3a5573;
+  --border: #b9c9df;
+  --input: #b9c9df;
+  --sidebar-background: #ffffff;
+  --color-badge-text: #0a1628;
+}
+
+@keyframes ps2-cubes-rise {
+  0%   { background-position: 0 100vh, 40px 120vh, 80px 110vh, 20px 130vh; }
+  100% { background-position: 0 -60vh, 40px -100vh, 80px -80vh, 20px -120vh; }
+}
+[data-theme="ps2"] body {
+  background:
+    radial-gradient(ellipse at center,
+      #001020 0%, #000000 70%);
+  background-attachment: fixed;
+}
+[data-theme="ps2"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  /* Rising translucent cubes — the PS2 boot identity */
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60'><rect x='16' y='16' width='28' height='28' fill='rgba(79,216,255,0.18)' stroke='rgba(120,230,255,0.45)'/></svg>") 0 100vh,
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><rect x='22' y='22' width='36' height='36' fill='rgba(120,90,255,0.15)' stroke='rgba(160,130,255,0.5)'/></svg>") 40px 120vh,
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><rect x='28' y='28' width='44' height='44' fill='rgba(79,216,255,0.1)' stroke='rgba(79,216,255,0.45)'/></svg>") 80px 110vh,
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='50' height='50'><rect x='12' y='12' width='26' height='26' fill='rgba(255,255,255,0.04)' stroke='rgba(200,230,255,0.35)'/></svg>") 20px 130vh;
+  background-repeat: repeat-x;
+  animation: ps2-cubes-rise 24s linear infinite;
+}
+[data-theme="ps2"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    repeating-linear-gradient(0deg,
+      rgba(79, 216, 255, 0.03) 0 2px,
+      transparent 2px 4px);
+}
+[data-theme="ps2"][data-mode="light"] body {
+  background: radial-gradient(ellipse at center, #f2f7fc 0%, #dbe7f2 100%);
+}
+[data-theme="ps2"][data-mode="light"] body::before { opacity: 0.35; }
+
+[data-theme="ps2"] .bg-surface,
+[data-theme="ps2"] .bg-card,
+[data-theme="ps2"] .bg-elevated,
+[data-theme="ps2"] .bg-muted,
+[data-theme="ps2"] .bg-popover {
+  background-color: rgba(8, 8, 20, 0.85) !important;
+  border: 1px solid #1f2040 !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(79, 216, 255, 0.06),
+    0 0 0 0 transparent,
+    0 8px 24px rgba(0, 0, 0, 0.7);
+  border-left: 2px solid #4fd8ff !important;
+  border-radius: 0 !important;
+}
+[data-theme="ps2"][data-mode="light"] .bg-surface,
+[data-theme="ps2"][data-mode="light"] .bg-card,
+[data-theme="ps2"][data-mode="light"] .bg-elevated {
+  background-color: rgba(255, 255, 255, 0.92) !important;
+  border-left: 2px solid #2a6fbf !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 6px 18px rgba(42, 111, 191, 0.08);
+}
+
+[data-theme="ps2"] h1,
+[data-theme="ps2"] h2 {
+  font-family: var(--font-display);
+  color: transparent;
+  -webkit-text-stroke: 1px #4fd8ff;
+  text-stroke: 1px #4fd8ff;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  filter: drop-shadow(0 0 8px rgba(79, 216, 255, 0.5))
+          drop-shadow(0 0 20px rgba(79, 216, 255, 0.22));
+}
+[data-theme="ps2"] h3 {
+  font-family: var(--font-display);
+  color: #4fd8ff;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+[data-theme="ps2"][data-mode="light"] h1,
+[data-theme="ps2"][data-mode="light"] h2 {
+  -webkit-text-stroke: 1px #0b3e70;
+  color: transparent;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.9));
+}
+
+[data-theme="ps2"] button[type="submit"],
+[data-theme="ps2"] .btn-primary,
+[data-theme="ps2"] button[data-variant="default"],
+[data-theme="ps2"] button.bg-primary {
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: #4fd8ff !important;
+  border: 1px solid #4fd8ff !important;
+  font-family: var(--font-display);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-weight: 700;
+  box-shadow:
+    inset 0 0 0 1px rgba(79, 216, 255, 0.2),
+    0 0 14px rgba(79, 216, 255, 0.3);
+  text-shadow: 0 0 6px rgba(79, 216, 255, 0.6);
+  transition: all 180ms ease;
+}
+[data-theme="ps2"] button[type="submit"]:hover:not(:disabled),
+[data-theme="ps2"] .btn-primary:hover:not(:disabled),
+[data-theme="ps2"] button[data-variant="default"]:hover:not(:disabled) {
+  background: rgba(79, 216, 255, 0.08) !important;
+  box-shadow:
+    inset 0 0 0 1px #4fd8ff,
+    0 0 28px rgba(79, 216, 255, 0.55),
+    0 0 60px rgba(120, 90, 255, 0.25);
+}
+[data-theme="ps2"] input:focus,
+[data-theme="ps2"] textarea:focus {
+  box-shadow: 0 0 0 1px #4fd8ff, 0 0 14px rgba(79, 216, 255, 0.45);
+}
+[data-theme="ps2"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #4fd8ff 0%, #2a6fbf 100%);
+  border: 1px solid #000;
+  border-radius: 0;
+}
+[data-theme="ps2"] hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #4fd8ff, #9966ff, #4fd8ff, transparent);
+  box-shadow: 0 0 8px rgba(79, 216, 255, 0.5);
+}
+
+
+/* =====================================================================
+   THEME: CYBERPUNK 2077  (naturally dark / chromatic RGB slice)
+   Signature A: Yellow + cyan + magenta triad on black (NCPD identity)
+   Signature B: Chromatic aberration headings with RGB slice offsets
+   Signature C: Sharp clipped-corner cards (cut-bottom-right)
+   Signature D: CRT scan + glitch flicker + holographic grid
+   Signature E: V's arm icon in corner, Kiroshi HUD crosshair on focus
+   ===================================================================== */
+
+[data-theme="cyberpunk-2077"] {
+  --color-base: #05070a;
+  --color-surface: #0c0f16;
+  --color-elevated: #12161f;
+  --color-border: #26303f;
+  --color-border-hover: #fcee0a;
+
+  --color-accent: #fcee0a;          /* NCPD yellow */
+  --color-accent-muted: #332e05;
+  --color-cyber-cyan: #00f0ff;
+  --color-cyber-magenta: #ff003c;
+  --color-cyber-yellow: #fcee0a;
+
+  --color-peach: #ff6b1a;
+  --color-lavender: #9b5cff;
+  --color-mint: #00f0ff;
+
+  --color-critical: #ff003c;
+  --color-high: #ff6b1a;
+  --color-medium: #fcee0a;
+  --color-low: #5a6a80;
+
+  --color-text: #e6eef8;
+  --color-text-muted: #7f94ab;
+
+  --color-focus-ring: #fcee0a;
+  --color-badge-text: #05070a;
+
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+
+  --font-display: "Rubik Mono One", "Bungee", "Michroma", "Eurostile", sans-serif;
+  --font-sans: "Rajdhani", "Share Tech Mono", ui-sans-serif, sans-serif;
+
+  --background: #05070a;
+  --foreground: #e6eef8;
+  --card: #0c0f16;
+  --card-foreground: #e6eef8;
+  --popover: #12161f;
+  --popover-foreground: #e6eef8;
+  --primary: #fcee0a;
+  --primary-foreground: #05070a;
+  --secondary: #12161f;
+  --secondary-foreground: #e6eef8;
+  --muted: #12161f;
+  --muted-foreground: #7f94ab;
+  --destructive: #ff003c;
+  --border: #26303f;
+  --input: #26303f;
+  --ring: #fcee0a;
+  --radius: 0;
+
+  --sidebar-background: #04060a;
+  --sidebar-foreground: #e6eef8;
+  --sidebar-primary: #fcee0a;
+  --sidebar-primary-foreground: #05070a;
+  --sidebar-accent: #12161f;
+  --sidebar-accent-foreground: #fcee0a;
+  --sidebar-border: #26303f;
+  --sidebar-ring: #fcee0a;
+}
+[data-theme="cyberpunk-2077"][data-mode="light"] {
+  --color-base: #f5f1d6;
+  --color-surface: #fffce4;
+  --color-elevated: #fffce4;
+  --color-border: #a7a077;
+  --color-text: #1a1805;
+  --color-text-muted: #5a5532;
+  --background: #f5f1d6;
+  --foreground: #1a1805;
+  --card: #fffce4;
+  --card-foreground: #1a1805;
+  --popover: #fffce4;
+  --popover-foreground: #1a1805;
+  --secondary: #e9e2b0;
+  --secondary-foreground: #1a1805;
+  --muted: #eee7c0;
+  --muted-foreground: #5a5532;
+  --border: #a7a077;
+  --input: #a7a077;
+  --sidebar-background: #fffce4;
+  --color-badge-text: #1a1805;
+}
+
+@keyframes cyber-glitch-flicker {
+  0%, 100% { opacity: 1; }
+  50.2%    { opacity: 0.98; }
+  50.4%    { opacity: 0.85; transform: translate(-0.5px, 0); }
+  50.6%    { opacity: 1; transform: translate(0, 0); }
+}
+[data-theme="cyberpunk-2077"] body {
+  background:
+    linear-gradient(180deg,
+      #04060a 0%, #06080d 50%, #0a0a0f 100%);
+  background-attachment: fixed;
+  animation: cyber-glitch-flicker 11s steps(100) infinite;
+}
+[data-theme="cyberpunk-2077"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    /* Kiroshi HUD grid */
+    repeating-linear-gradient(0deg,
+      transparent 0 38px, rgba(252, 238, 10, 0.07) 38px 39px),
+    repeating-linear-gradient(90deg,
+      transparent 0 38px, rgba(0, 240, 255, 0.06) 38px 39px),
+    /* Scanlines */
+    repeating-linear-gradient(0deg,
+      transparent 0 2px, rgba(255, 255, 255, 0.03) 2px 3px);
+}
+[data-theme="cyberpunk-2077"] body::after {
+  content: "";
+  position: fixed;
+  right: 4vw;
+  bottom: 4vh;
+  width: 220px;
+  height: 220px;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>\
+<g fill='none' stroke='%23fcee0a' stroke-width='2' opacity='0.35'>\
+<polygon points='100,20 170,60 170,140 100,180 30,140 30,60'/>\
+<polygon points='100,40 150,70 150,130 100,160 50,130 50,70'/>\
+<circle cx='100' cy='100' r='8' fill='%23fcee0a'/>\
+<text x='100' y='196' text-anchor='middle' font-family='Rubik Mono One,Bungee,sans-serif' font-size='14' fill='%23fcee0a'>NCPD</text>\
+</g></svg>") center/contain no-repeat;
+}
+[data-theme="cyberpunk-2077"][data-mode="light"] body {
+  background: linear-gradient(180deg, #f5f1d6 0%, #f2ecc0 100%);
+  animation: none;
+}
+[data-theme="cyberpunk-2077"][data-mode="light"] body::before {
+  background:
+    repeating-linear-gradient(0deg, transparent 0 38px, rgba(220, 50, 50, 0.06) 38px 39px),
+    repeating-linear-gradient(90deg, transparent 0 38px, rgba(0, 120, 170, 0.05) 38px 39px);
+}
+
+/* Clipped corner card — the "chiseled" cyberpunk card edge */
+[data-theme="cyberpunk-2077"] .bg-surface,
+[data-theme="cyberpunk-2077"] .bg-card,
+[data-theme="cyberpunk-2077"] .bg-elevated,
+[data-theme="cyberpunk-2077"] .bg-muted,
+[data-theme="cyberpunk-2077"] .bg-popover {
+  background-color: rgba(12, 15, 22, 0.92) !important;
+  border: 1px solid rgba(252, 238, 10, 0.35) !important;
+  border-radius: 0 !important;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 240, 255, 0.08),
+    0 0 18px rgba(252, 238, 10, 0.12);
+  position: relative;
+}
+[data-theme="cyberpunk-2077"][data-mode="light"] .bg-surface,
+[data-theme="cyberpunk-2077"][data-mode="light"] .bg-card,
+[data-theme="cyberpunk-2077"][data-mode="light"] .bg-elevated {
+  background-color: rgba(255, 252, 228, 0.95) !important;
+  border: 1px solid #a7a077 !important;
+}
+
+/* RGB-split heading */
+[data-theme="cyberpunk-2077"] h1,
+[data-theme="cyberpunk-2077"] h2 {
+  font-family: var(--font-display);
+  color: #fcee0a;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-shadow:
+    -2px 0 rgba(255, 0, 60, 0.9),
+    2px 0 rgba(0, 240, 255, 0.9),
+    0 0 12px rgba(252, 238, 10, 0.6);
+}
+[data-theme="cyberpunk-2077"] h3 {
+  font-family: var(--font-display);
+  color: #00f0ff;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+[data-theme="cyberpunk-2077"][data-mode="light"] h1,
+[data-theme="cyberpunk-2077"][data-mode="light"] h2 {
+  color: #1a1805;
+  text-shadow:
+    -1.5px 0 rgba(255, 0, 60, 0.7),
+    1.5px 0 rgba(0, 140, 170, 0.7);
+}
+
+/* Slanted cyberpunk button with cut corner */
+[data-theme="cyberpunk-2077"] button[type="submit"],
+[data-theme="cyberpunk-2077"] .btn-primary,
+[data-theme="cyberpunk-2077"] button[data-variant="default"],
+[data-theme="cyberpunk-2077"] button.bg-primary {
+  border-radius: 0 !important;
+  background: #fcee0a !important;
+  color: #05070a !important;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  padding: 0.5em 1.4em !important;
+  border: none !important;
+  box-shadow:
+    inset 0 -4px 0 rgba(0, 0, 0, 0.2),
+    0 0 16px rgba(252, 238, 10, 0.45);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+[data-theme="cyberpunk-2077"] button[type="submit"]:hover:not(:disabled),
+[data-theme="cyberpunk-2077"] .btn-primary:hover:not(:disabled),
+[data-theme="cyberpunk-2077"] button[data-variant="default"]:hover:not(:disabled) {
+  background: #ffffff !important;
+  color: #ff003c !important;
+  box-shadow: 0 0 32px rgba(252, 238, 10, 0.7), 0 0 64px rgba(255, 0, 60, 0.3);
+}
+[data-theme="cyberpunk-2077"] input:focus,
+[data-theme="cyberpunk-2077"] textarea:focus {
+  box-shadow:
+    0 0 0 1px #fcee0a,
+    0 0 16px rgba(252, 238, 10, 0.45);
+}
+[data-theme="cyberpunk-2077"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #fcee0a, #ff003c);
+  border: 1px solid #000;
+}
+[data-theme="cyberpunk-2077"] hr {
+  border: none;
+  height: 2px;
+  background:
+    linear-gradient(90deg,
+      #ff003c 0%, #fcee0a 50%, #00f0ff 100%);
+  box-shadow: 0 0 10px rgba(252, 238, 10, 0.5);
+}
+
+
+/* =====================================================================
+   THEME: MATRIX  (naturally dark / phosphor green on black)
+   Signature A: Vertical katakana-numeric rain
+   Signature B: Phosphor green #00ff41 CRT glow on everything
+   Signature C: Typewriter "VT323"/"Share Tech Mono" headings
+   Signature D: Black cards with a thin green scan bar at the top
+   Signature E: Follow-the-white-rabbit cursor wink (hover links)
+   ===================================================================== */
+
+[data-theme="matrix"] {
+  --color-base: #000000;
+  --color-surface: #050b05;
+  --color-elevated: #081808;
+  --color-border: #1a3a1a;
+  --color-border-hover: #00ff41;
+
+  --color-accent: #00ff41;
+  --color-accent-muted: #042a10;
+
+  --color-peach: #ffdd66;
+  --color-lavender: #7fffa3;
+  --color-mint: #00ff88;
+
+  --color-critical: #ff3344;
+  --color-high: #ffb400;
+  --color-medium: #aaff00;
+  --color-low: #2a5a2a;
+
+  --color-text: #bfffd9;
+  --color-text-muted: #4ea865;
+
+  --color-focus-ring: #00ff41;
+  --color-badge-text: #000000;
+
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+
+  --font-display: "VT323", "Share Tech Mono", "Courier New", monospace;
+  --font-sans: "Share Tech Mono", "VT323", ui-monospace, monospace;
+  --font-mono: "Share Tech Mono", "VT323", ui-monospace, monospace;
+
+  --background: #000000;
+  --foreground: #bfffd9;
+  --card: #050b05;
+  --card-foreground: #bfffd9;
+  --popover: #050b05;
+  --popover-foreground: #bfffd9;
+  --primary: #00ff41;
+  --primary-foreground: #000000;
+  --secondary: #081808;
+  --secondary-foreground: #bfffd9;
+  --muted: #0a1a0a;
+  --muted-foreground: #4ea865;
+  --destructive: #ff3344;
+  --border: #1a3a1a;
+  --input: #1a3a1a;
+  --ring: #00ff41;
+  --radius: 0;
+
+  --sidebar-background: #030603;
+  --sidebar-foreground: #bfffd9;
+  --sidebar-primary: #00ff41;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #0a1a0a;
+  --sidebar-accent-foreground: #00ff41;
+  --sidebar-border: #1a3a1a;
+  --sidebar-ring: #00ff41;
+}
+[data-theme="matrix"][data-mode="light"] {
+  --color-base: #f0f7ef;
+  --color-surface: #ffffff;
+  --color-border: #7fbe91;
+  --color-text: #042210;
+  --color-text-muted: #3a6a4a;
+  --color-accent: #0b8a2b;
+  --background: #f0f7ef;
+  --foreground: #042210;
+  --card: #ffffff;
+  --card-foreground: #042210;
+  --popover: #ffffff;
+  --popover-foreground: #042210;
+  --primary: #0b8a2b;
+  --secondary: #dff2e0;
+  --secondary-foreground: #042210;
+  --muted: #e8f4e8;
+  --muted-foreground: #3a6a4a;
+  --border: #7fbe91;
+  --input: #7fbe91;
+  --sidebar-background: #ffffff;
+  --color-badge-text: #042210;
+}
+
+@keyframes matrix-rain {
+  0%   { background-position-y: -100vh; }
+  100% { background-position-y: 100vh; }
+}
+[data-theme="matrix"] body {
+  background: #000000;
+}
+/* Digital rain — 5 columns of shifting katakana/numeric SVG */
+[data-theme="matrix"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='600'>\
+<g font-family='VT323,monospace' font-size='22'>\
+<text x='10'  y='30'  fill='%2300ff41' opacity='0.95'>0</text>\
+<text x='10'  y='60'  fill='%2300cc33' opacity='0.9'>ｱ</text>\
+<text x='10'  y='90'  fill='%23009922' opacity='0.85'>1</text>\
+<text x='10'  y='120' fill='%23007719' opacity='0.75'>ﾂ</text>\
+<text x='10'  y='150' fill='%23005a13' opacity='0.6'>0</text>\
+<text x='10'  y='180' fill='%23003a0a' opacity='0.35'>ﾁ</text>\
+<text x='50'  y='50'  fill='%2300ff41' opacity='0.9'>ｵ</text>\
+<text x='50'  y='80'  fill='%2300cc33' opacity='0.75'>7</text>\
+<text x='50'  y='110' fill='%23009922' opacity='0.6'>ﾘ</text>\
+<text x='90'  y='40'  fill='%2300ff41' opacity='0.95'>1</text>\
+<text x='90'  y='70'  fill='%2300dd37' opacity='0.85'>ﾊ</text>\
+<text x='90'  y='100' fill='%2300aa2b' opacity='0.7'>3</text>\
+<text x='90'  y='130' fill='%23008a22' opacity='0.55'>ｼ</text>\
+<text x='130' y='20'  fill='%2300ff41' opacity='0.9'>ﾓ</text>\
+<text x='130' y='50'  fill='%2300cc33' opacity='0.75'>9</text>\
+<text x='130' y='80'  fill='%23009922' opacity='0.6'>ﾇ</text>\
+<text x='130' y='110' fill='%23007719' opacity='0.45'>4</text>\
+<text x='170' y='35'  fill='%2300ff41' opacity='0.95'>ﾙ</text>\
+<text x='170' y='65'  fill='%2300cc33' opacity='0.8'>5</text>\
+<text x='170' y='95'  fill='%23009922' opacity='0.65'>ﾂ</text>\
+</g></svg>");
+  background-repeat: repeat;
+  animation: matrix-rain 9s linear infinite;
+  opacity: 0.7;
+}
+[data-theme="matrix"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    repeating-linear-gradient(0deg,
+      transparent 0 2px,
+      rgba(0, 255, 65, 0.04) 2px 3px),
+    radial-gradient(ellipse at center, transparent 30%, rgba(0, 0, 0, 0.7) 100%);
+}
+[data-theme="matrix"][data-mode="light"] body {
+  background: #f0f7ef;
+}
+[data-theme="matrix"][data-mode="light"] body::before { opacity: 0.22; filter: invert(1) hue-rotate(70deg); }
+
+[data-theme="matrix"] .bg-surface,
+[data-theme="matrix"] .bg-card,
+[data-theme="matrix"] .bg-elevated,
+[data-theme="matrix"] .bg-muted,
+[data-theme="matrix"] .bg-popover {
+  background-color: rgba(0, 10, 0, 0.85) !important;
+  border: 1px solid #1a3a1a !important;
+  border-radius: 0 !important;
+  box-shadow:
+    inset 0 2px 0 rgba(0, 255, 65, 0.45),
+    inset 0 0 40px rgba(0, 255, 65, 0.06),
+    0 0 18px rgba(0, 255, 65, 0.1);
+}
+[data-theme="matrix"][data-mode="light"] .bg-surface,
+[data-theme="matrix"][data-mode="light"] .bg-card,
+[data-theme="matrix"][data-mode="light"] .bg-elevated {
+  background-color: #ffffff !important;
+  border: 1px solid #7fbe91 !important;
+  box-shadow:
+    inset 0 2px 0 rgba(11, 138, 43, 0.4),
+    0 2px 8px rgba(11, 138, 43, 0.1);
+}
+
+[data-theme="matrix"] h1,
+[data-theme="matrix"] h2 {
+  font-family: var(--font-display);
+  color: #00ff41;
+  text-shadow:
+    0 0 4px rgba(0, 255, 65, 0.9),
+    0 0 10px rgba(0, 255, 65, 0.55),
+    0 0 24px rgba(0, 255, 65, 0.25);
+  letter-spacing: 0.05em;
+}
+[data-theme="matrix"] h3 {
+  font-family: var(--font-display);
+  color: #7fffa3;
+  text-shadow: 0 0 4px rgba(0, 255, 65, 0.45);
+}
+[data-theme="matrix"][data-mode="light"] h1,
+[data-theme="matrix"][data-mode="light"] h2,
+[data-theme="matrix"][data-mode="light"] h3 {
+  color: #0b8a2b;
+  text-shadow: none;
+}
+
+[data-theme="matrix"] button[type="submit"],
+[data-theme="matrix"] .btn-primary,
+[data-theme="matrix"] button[data-variant="default"],
+[data-theme="matrix"] button.bg-primary {
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: #00ff41 !important;
+  border: 1px solid #00ff41 !important;
+  font-family: var(--font-display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-shadow: 0 0 6px rgba(0, 255, 65, 0.7);
+  box-shadow:
+    inset 0 0 10px rgba(0, 255, 65, 0.1),
+    0 0 10px rgba(0, 255, 65, 0.35);
+}
+[data-theme="matrix"] button[type="submit"]:hover:not(:disabled),
+[data-theme="matrix"] .btn-primary:hover:not(:disabled),
+[data-theme="matrix"] button[data-variant="default"]:hover:not(:disabled) {
+  background: #00ff41 !important;
+  color: #000000 !important;
+  box-shadow: 0 0 28px rgba(0, 255, 65, 0.7), 0 0 60px rgba(0, 255, 65, 0.3);
+}
+
+[data-theme="matrix"] input,
+[data-theme="matrix"] textarea {
+  background: transparent;
+  color: #00ff41;
+  border: 1px solid #1a3a1a !important;
+  caret-color: #00ff41;
+}
+[data-theme="matrix"] input:focus,
+[data-theme="matrix"] textarea:focus {
+  border-color: #00ff41 !important;
+  box-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+}
+[data-theme="matrix"] ::-webkit-scrollbar-thumb {
+  background: #00ff41;
+  border-radius: 0;
+  border: 1px solid #000;
+  box-shadow: 0 0 6px rgba(0, 255, 65, 0.5);
+}
+[data-theme="matrix"] a:hover {
+  text-shadow: 0 0 4px #00ff41;
+}
+[data-theme="matrix"] hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #00ff41, transparent);
+  box-shadow: 0 0 6px #00ff41;
+}
+
+
+/* =====================================================================
+   THEME: TRUMAN SHOW  (naturally light / 50s suburbia too-perfect pastels)
+   Signature A: Powdery robin-egg sky + creamy sun lens flare
+   Signature B: Hidden camera vignette ring in corners
+   Signature C: White picket pastel palette — mint lawn, warm cream
+   Signature D: Serif display headings (Marcellus SC / Cormorant)
+   Signature E: "Good morning, good afternoon, good night" badge arc
+   ===================================================================== */
+
+[data-theme="truman-show"] {
+  --color-base: #e9f3f5;
+  --color-surface: #fffdf4;
+  --color-elevated: #ffffff;
+  --color-border: #c9ddd7;
+  --color-border-hover: #4fa8b0;
+
+  --color-accent: #4fa8b0;          /* dome-water teal */
+  --color-accent-muted: #dceef0;
+
+  --color-peach: #f4b38a;
+  --color-lavender: #bfa9d6;
+  --color-mint: #b6d9b3;
+
+  --color-critical: #b23a3a;
+  --color-high: #c97b3c;
+  --color-medium: #b59236;
+  --color-low: #7a8a85;
+
+  --color-text: #2a3b40;
+  --color-text-muted: #5e6f73;
+
+  --color-focus-ring: #4fa8b0;
+  --color-badge-text: #2a3b40;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 7px;
+
+  --font-display: "Marcellus SC", "IM Fell English SC",
+    "Cormorant Garamond", "Playfair Display", Georgia, serif;
+  --font-sans: "Cormorant Garamond", "Libre Baskerville", Georgia, serif;
+
+  --background: #e9f3f5;
+  --foreground: #2a3b40;
+  --card: #fffdf4;
+  --card-foreground: #2a3b40;
+  --popover: #fffdf4;
+  --popover-foreground: #2a3b40;
+  --primary: #4fa8b0;
+  --primary-foreground: #fffdf4;
+  --secondary: #dceef0;
+  --secondary-foreground: #2a3b40;
+  --muted: #e5f0ed;
+  --muted-foreground: #5e6f73;
+  --destructive: #b23a3a;
+  --border: #c9ddd7;
+  --input: #c9ddd7;
+  --ring: #4fa8b0;
+  --radius: 0.375rem;
+
+  --sidebar-background: rgba(255, 253, 244, 0.72);
+  --sidebar-foreground: #2a3b40;
+  --sidebar-primary: #4fa8b0;
+  --sidebar-primary-foreground: #fffdf4;
+  --sidebar-accent: #e9f3f5;
+  --sidebar-accent-foreground: #2a3b40;
+  --sidebar-border: #c9ddd7;
+  --sidebar-ring: #4fa8b0;
+}
+[data-theme="truman-show"][data-mode="dark"] {
+  --color-base: #0f1b1e;
+  --color-surface: #162a2c;
+  --color-elevated: #1c3638;
+  --color-border: #2d4a4c;
+  --color-text: #e9f3f5;
+  --color-text-muted: #98b0b2;
+  --background: #0f1b1e;
+  --foreground: #e9f3f5;
+  --card: #162a2c;
+  --card-foreground: #e9f3f5;
+  --popover: #162a2c;
+  --popover-foreground: #e9f3f5;
+  --secondary: #1c3638;
+  --secondary-foreground: #e9f3f5;
+  --muted: #1c3638;
+  --muted-foreground: #98b0b2;
+  --border: #2d4a4c;
+  --input: #2d4a4c;
+  --sidebar-background: rgba(22, 42, 44, 0.8);
+  --color-badge-text: #0f1b1e;
+}
+
+[data-theme="truman-show"] body {
+  background:
+    /* sun lens flare upper right */
+    radial-gradient(circle 260px at 85% 8%,
+      rgba(255, 245, 210, 0.7) 0%,
+      rgba(255, 235, 170, 0.25) 30%,
+      transparent 62%),
+    /* powdery robin-egg sky */
+    linear-gradient(180deg,
+      #bee0e5 0%,
+      #d5ebed 40%,
+      #ecf6f2 70%,
+      #d8ebc8 90%,
+      #b6d9b3 100%);
+  background-attachment: fixed;
+}
+/* Hidden-camera vignette — four soft dark corners, hint of watching */
+[data-theme="truman-show"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 3% 3%,   rgba(10, 20, 22, 0.22) 0%, transparent 22%),
+    radial-gradient(circle at 97% 3%,  rgba(10, 20, 22, 0.22) 0%, transparent 22%),
+    radial-gradient(circle at 3% 97%,  rgba(10, 20, 22, 0.22) 0%, transparent 22%),
+    radial-gradient(circle at 97% 97%, rgba(10, 20, 22, 0.22) 0%, transparent 22%);
+}
+/* White picket fence lower band + a hiding camera pinhole */
+[data-theme="truman-show"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 900' preserveAspectRatio='xMidYMid slice'>\
+<g>\
+<rect x='0' y='860' width='1600' height='40' fill='rgba(255,253,244,0.65)'/>\
+<g fill='rgba(255,253,244,0.8)'>\
+<polygon points='40,860 52,835 64,860'/>\
+<polygon points='80,860 92,835 104,860'/>\
+<polygon points='120,860 132,835 144,860'/>\
+<polygon points='160,860 172,835 184,860'/>\
+<polygon points='200,860 212,835 224,860'/>\
+<polygon points='240,860 252,835 264,860'/>\
+<polygon points='280,860 292,835 304,860'/>\
+<polygon points='320,860 332,835 344,860'/>\
+</g>\
+<circle cx='1540' cy='70' r='11' fill='rgba(20,40,40,0.55)'/>\
+<circle cx='1540' cy='70' r='3' fill='%23ffd966'/>\
+</g></svg>") center/cover no-repeat;
+  opacity: 0.7;
+}
+[data-theme="truman-show"][data-mode="dark"] body {
+  background:
+    radial-gradient(circle 260px at 85% 8%,
+      rgba(120, 150, 160, 0.25) 0%, transparent 60%),
+    linear-gradient(180deg, #0c1517 0%, #0f1b1e 60%, #13272a 100%);
+}
+[data-theme="truman-show"][data-mode="dark"] body::after { opacity: 0.45; }
+
+[data-theme="truman-show"] .bg-surface,
+[data-theme="truman-show"] .bg-card,
+[data-theme="truman-show"] .bg-elevated,
+[data-theme="truman-show"] .bg-muted,
+[data-theme="truman-show"] .bg-popover {
+  background-color: rgba(255, 253, 244, 0.92) !important;
+  border: 1px solid #c9ddd7 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 2px 0 #e5d9b5,
+    0 4px 10px rgba(42, 59, 64, 0.08);
+  border-radius: var(--radius-md);
+}
+
+[data-theme="truman-show"] h1,
+[data-theme="truman-show"] h2 {
+  font-family: var(--font-display);
+  color: #2a3b40;
+  letter-spacing: 0.08em;
+  font-weight: 400;
+  text-transform: uppercase;
+  text-shadow: 0 1px 0 rgba(255, 253, 244, 0.9);
+}
+[data-theme="truman-show"] h3 {
+  font-family: var(--font-display);
+  color: #4fa8b0;
+  letter-spacing: 0.05em;
+  font-weight: 400;
+}
+[data-theme="truman-show"][data-mode="dark"] h1,
+[data-theme="truman-show"][data-mode="dark"] h2 {
+  color: #e9f3f5;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="truman-show"] button[type="submit"],
+[data-theme="truman-show"] .btn-primary,
+[data-theme="truman-show"] button[data-variant="default"],
+[data-theme="truman-show"] button.bg-primary {
+  background: linear-gradient(180deg, #5fbac2 0%, #4fa8b0 50%, #3f9198 100%) !important;
+  color: #fffdf4 !important;
+  border: 1px solid #3f9198 !important;
+  font-family: var(--font-display);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 400;
+  border-radius: var(--radius-md) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 253, 244, 0.55),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.15),
+    0 2px 6px rgba(42, 59, 64, 0.14);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+[data-theme="truman-show"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #5fbac2, #4fa8b0);
+  border-radius: 4px;
+}
+[data-theme="truman-show"] hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #c9ddd7 50%, transparent);
+  margin: 20px 0;
+}
+
+
+/* =====================================================================
+   THEME: HALF-LIFE 1  (naturally dark / Black Mesa hazard bay)
+   Signature A: HEV orange #f9a31b on industrial charcoal
+   Signature B: Lambda logo watermark in corner
+   Signature C: Hazard-stripe borders on warnings
+   Signature D: Bank-Gothic-style condensed headings
+   Signature E: HUD-style stat plates (the orange LED look)
+   ===================================================================== */
+
+[data-theme="half-life-1"] {
+  --color-base: #0f1012;
+  --color-surface: #1a1b1f;
+  --color-elevated: #22232a;
+  --color-border: #3a3b42;
+  --color-border-hover: #f9a31b;
+
+  --color-accent: #f9a31b;
+  --color-accent-muted: #2f1f08;
+  --color-hev-green: #6abe30;
+
+  --color-peach: #ff9944;
+  --color-lavender: #a886c7;
+  --color-mint: #6abe30;
+
+  --color-critical: #e0362e;
+  --color-high: #f9a31b;
+  --color-medium: #e2b81e;
+  --color-low: #6b6d78;
+
+  --color-text: #e7e8ec;
+  --color-text-muted: #9ca0ab;
+
+  --color-focus-ring: #f9a31b;
+  --color-badge-text: #0f1012;
+
+  --radius-sm: 0;
+  --radius-md: 2px;
+  --radius-lg: 3px;
+
+  --font-display: "Bank Gothic Medium", "Michroma", "Eurostile",
+    "Impact", sans-serif;
+  --font-sans: "DM Mono", "B612 Mono", "Share Tech Mono", ui-monospace, monospace;
+
+  --background: #0f1012;
+  --foreground: #e7e8ec;
+  --card: #1a1b1f;
+  --card-foreground: #e7e8ec;
+  --popover: #22232a;
+  --popover-foreground: #e7e8ec;
+  --primary: #f9a31b;
+  --primary-foreground: #0f1012;
+  --secondary: #22232a;
+  --secondary-foreground: #e7e8ec;
+  --muted: #1a1b1f;
+  --muted-foreground: #9ca0ab;
+  --destructive: #e0362e;
+  --border: #3a3b42;
+  --input: #3a3b42;
+  --ring: #f9a31b;
+  --radius: 2px;
+
+  --sidebar-background: #0a0b0d;
+  --sidebar-foreground: #e7e8ec;
+  --sidebar-primary: #f9a31b;
+  --sidebar-primary-foreground: #0f1012;
+  --sidebar-accent: #1a1b1f;
+  --sidebar-accent-foreground: #f9a31b;
+  --sidebar-border: #3a3b42;
+  --sidebar-ring: #f9a31b;
+}
+[data-theme="half-life-1"][data-mode="light"] {
+  --color-base: #d9dade;
+  --color-surface: #ebecee;
+  --color-border: #9b9da3;
+  --color-text: #151619;
+  --color-text-muted: #4a4c55;
+  --background: #d9dade;
+  --foreground: #151619;
+  --card: #ebecee;
+  --card-foreground: #151619;
+  --popover: #ebecee;
+  --popover-foreground: #151619;
+  --secondary: #c7c9ce;
+  --secondary-foreground: #151619;
+  --muted: #dcdde0;
+  --muted-foreground: #4a4c55;
+  --border: #9b9da3;
+  --input: #9b9da3;
+  --sidebar-background: #ebecee;
+  --color-badge-text: #151619;
+}
+
+[data-theme="half-life-1"] body {
+  background:
+    linear-gradient(180deg, #0c0d0f 0%, #121316 60%, #181a1e 100%);
+  background-attachment: fixed;
+}
+[data-theme="half-life-1"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    /* vent grille texture */
+    repeating-linear-gradient(0deg,
+      transparent 0 3px,
+      rgba(255, 255, 255, 0.015) 3px 4px),
+    /* wall stains */
+    radial-gradient(ellipse at 20% 40%, rgba(249, 163, 27, 0.06) 0%, transparent 35%),
+    radial-gradient(ellipse at 80% 80%, rgba(106, 190, 48, 0.04) 0%, transparent 40%);
+}
+[data-theme="half-life-1"] body::after {
+  content: "";
+  position: fixed;
+  right: 5vw;
+  bottom: 5vh;
+  width: 180px;
+  height: 180px;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>\
+<g fill='none' stroke='%23f9a31b' stroke-width='10' stroke-linecap='square' opacity='0.32'>\
+<path d='M 50 50 L 100 160 L 150 50'/>\
+<path d='M 70 95 L 130 95' stroke-width='9'/>\
+</g></svg>") center/contain no-repeat;
+}
+[data-theme="half-life-1"][data-mode="light"] body {
+  background: linear-gradient(180deg, #e5e6ea 0%, #d9dade 60%, #cfd0d4 100%);
+}
+[data-theme="half-life-1"][data-mode="light"] body::after { opacity: 0.55; }
+
+[data-theme="half-life-1"] .bg-surface,
+[data-theme="half-life-1"] .bg-card,
+[data-theme="half-life-1"] .bg-elevated,
+[data-theme="half-life-1"] .bg-muted,
+[data-theme="half-life-1"] .bg-popover {
+  background-image: linear-gradient(180deg,
+    rgba(40, 42, 48, 0.92) 0%,
+    rgba(26, 27, 31, 0.92) 100%);
+  border: 1px solid #3a3b42 !important;
+  border-radius: 2px !important;
+  box-shadow:
+    inset 0 1px 0 rgba(249, 163, 27, 0.1),
+    0 2px 0 #0a0b0d,
+    0 6px 18px rgba(0, 0, 0, 0.6);
+}
+[data-theme="half-life-1"][data-mode="light"] .bg-surface,
+[data-theme="half-life-1"][data-mode="light"] .bg-card,
+[data-theme="half-life-1"][data-mode="light"] .bg-elevated {
+  background-image: linear-gradient(180deg, #f0f1f3 0%, #e1e2e5 100%);
+  border: 1px solid #9b9da3 !important;
+  box-shadow: inset 0 1px 0 #ffffff, 0 2px 4px rgba(0,0,0,0.1);
+}
+
+[data-theme="half-life-1"] h1,
+[data-theme="half-life-1"] h2 {
+  font-family: var(--font-display);
+  color: #f9a31b;
+  letter-spacing: 0.22em;
+  font-weight: 700;
+  text-transform: uppercase;
+  text-shadow:
+    0 0 2px rgba(249, 163, 27, 0.75),
+    0 0 14px rgba(249, 163, 27, 0.35);
+}
+[data-theme="half-life-1"] h3 {
+  font-family: var(--font-display);
+  color: #e7e8ec;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+[data-theme="half-life-1"][data-mode="light"] h1,
+[data-theme="half-life-1"][data-mode="light"] h2 {
+  color: #a65d00;
+  text-shadow: none;
+}
+
+[data-theme="half-life-1"] button[type="submit"],
+[data-theme="half-life-1"] .btn-primary,
+[data-theme="half-life-1"] button[data-variant="default"],
+[data-theme="half-life-1"] button.bg-primary {
+  border-radius: 2px !important;
+  background: linear-gradient(180deg, #fdb544 0%, #f9a31b 55%, #c47e0e 100%) !important;
+  color: #0f1012 !important;
+  border: 1px solid #a86a0a !important;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 0 14px rgba(249, 163, 27, 0.25);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+[data-theme="half-life-1"] button[type="submit"]:hover:not(:disabled),
+[data-theme="half-life-1"] .btn-primary:hover:not(:disabled),
+[data-theme="half-life-1"] button[data-variant="default"]:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffc266 0%, #ffb12e 55%, #d38913 100%) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 0 24px rgba(249, 163, 27, 0.6);
+}
+
+[data-theme="half-life-1"] input,
+[data-theme="half-life-1"] textarea {
+  background-color: rgba(10, 11, 13, 0.75);
+  border: 1px solid #3a3b42 !important;
+  color: #f9a31b;
+}
+[data-theme="half-life-1"] input:focus,
+[data-theme="half-life-1"] textarea:focus {
+  border-color: #f9a31b !important;
+  box-shadow: 0 0 0 1px #f9a31b, 0 0 12px rgba(249, 163, 27, 0.35);
+}
+[data-theme="half-life-1"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #f9a31b, #a86a0a);
+  border-radius: 0;
+  border: 1px solid #0f1012;
+}
+[data-theme="half-life-1"] hr {
+  border: none;
+  height: 8px;
+  background:
+    repeating-linear-gradient(135deg,
+      #f9a31b 0 14px,
+      #0f1012 14px 28px);
+  margin: 18px 0;
+}
+
+
+/* =====================================================================
+   THEME: Y2K FEVER  (naturally light / holographic chrome extravaganza)
+   Signature A: Holographic CD-disc rainbow + translucent iMac blueberry
+   Signature B: Rounded blobby chrome buttons, bubble type
+   Signature C: Shimmer animation that sweeps horizontally across surfaces
+   Signature D: Cyan / magenta / lime frosted windows with silver bevel
+   Signature E: "AILA 2000" bubble badge
+   ===================================================================== */
+
+[data-theme="y2k-fever"] {
+  --color-base: #e8f7ff;
+  --color-surface: #ffffff;
+  --color-elevated: #ffffff;
+  --color-border: #a8d6f0;
+  --color-border-hover: #ff5fb1;
+
+  --color-accent: #ff5fb1;
+  --color-accent-muted: #ffe1f2;
+  --color-y2k-blueberry: #5fc0d6;
+  --color-y2k-lime: #baff3d;
+  --color-y2k-tang: #ffa836;
+
+  --color-peach: #ffa836;
+  --color-lavender: #c39aff;
+  --color-mint: #7eff9a;
+
+  --color-critical: #ff2768;
+  --color-high: #ff7a1a;
+  --color-medium: #f5c71a;
+  --color-low: #8093a8;
+
+  --color-text: #1e1240;
+  --color-text-muted: #55477e;
+
+  --color-focus-ring: #ff5fb1;
+  --color-badge-text: #1e1240;
+
+  --radius-sm: 12px;
+  --radius-md: 18px;
+  --radius-lg: 26px;
+
+  --font-display: "Bungee", "Audiowide", "Monoton", sans-serif;
+  --font-sans: "Bungee", "Poppins", "Trebuchet MS", "Comic Sans MS", sans-serif;
+
+  --background: #e8f7ff;
+  --foreground: #1e1240;
+  --card: #ffffff;
+  --card-foreground: #1e1240;
+  --popover: #ffffff;
+  --popover-foreground: #1e1240;
+  --primary: #ff5fb1;
+  --primary-foreground: #ffffff;
+  --secondary: #d6f0ff;
+  --secondary-foreground: #1e1240;
+  --muted: #edf8ff;
+  --muted-foreground: #55477e;
+  --destructive: #ff2768;
+  --border: #a8d6f0;
+  --input: #a8d6f0;
+  --ring: #ff5fb1;
+  --radius: 1.125rem;
+
+  --sidebar-background: rgba(255, 255, 255, 0.55);
+  --sidebar-foreground: #1e1240;
+  --sidebar-primary: #ff5fb1;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #edf8ff;
+  --sidebar-accent-foreground: #1e1240;
+  --sidebar-border: #a8d6f0;
+  --sidebar-ring: #ff5fb1;
+}
+[data-theme="y2k-fever"][data-mode="dark"] {
+  --color-base: #0b0616;
+  --color-surface: #1a0e36;
+  --color-elevated: #24134a;
+  --color-border: #4a2a7e;
+  --color-text: #fcf6ff;
+  --color-text-muted: #c4a8e6;
+  --background: #0b0616;
+  --foreground: #fcf6ff;
+  --card: #1a0e36;
+  --card-foreground: #fcf6ff;
+  --popover: #1a0e36;
+  --popover-foreground: #fcf6ff;
+  --secondary: #24134a;
+  --secondary-foreground: #fcf6ff;
+  --muted: #24134a;
+  --muted-foreground: #c4a8e6;
+  --border: #4a2a7e;
+  --input: #4a2a7e;
+  --sidebar-background: rgba(26, 14, 54, 0.8);
+  --color-badge-text: #0b0616;
+}
+
+@keyframes y2k-holo-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+@keyframes y2k-shimmer {
+  0%   { transform: translateX(-120%); }
+  100% { transform: translateX(120%); }
+}
+
+[data-theme="y2k-fever"] body {
+  background: linear-gradient(135deg,
+    #ffdef2 0%, #cfeefb 25%, #d9ffe8 55%, #fff1cf 80%, #ffd6f0 100%);
+  background-size: 200% 200%;
+  animation: y2k-holo-shift 18s ease-in-out infinite;
+  background-attachment: fixed;
+}
+[data-theme="y2k-fever"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(255, 95, 177, 0.45) 0%, transparent 8%),
+    radial-gradient(circle at 76% 22%, rgba(95, 192, 214, 0.4) 0%, transparent 10%),
+    radial-gradient(circle at 42% 78%, rgba(186, 255, 61, 0.35) 0%, transparent 9%),
+    radial-gradient(circle at 86% 72%, rgba(255, 168, 54, 0.35) 0%, transparent 8%);
+  filter: blur(1px);
+}
+/* CD disc corner */
+[data-theme="y2k-fever"] body::after {
+  content: "";
+  position: fixed;
+  right: 4vw; top: 4vh;
+  width: 260px; height: 260px;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>\
+<defs><radialGradient id='disc' cx='50%25' cy='50%25' r='50%25'>\
+<stop offset='0%25' stop-color='%23ffffff'/>\
+<stop offset='40%25' stop-color='%23ff9acc'/>\
+<stop offset='60%25' stop-color='%23a0d8f5'/>\
+<stop offset='75%25' stop-color='%23ffd96b'/>\
+<stop offset='90%25' stop-color='%23b7ff8a'/>\
+<stop offset='100%25' stop-color='%23ff6fb3'/>\
+</radialGradient></defs>\
+<circle cx='100' cy='100' r='95' fill='url(%23disc)' opacity='0.75'/>\
+<circle cx='100' cy='100' r='28' fill='%23ffffff' opacity='0.9'/>\
+<circle cx='100' cy='100' r='8' fill='%2355477e'/>\
+</svg>") center/contain no-repeat;
+  filter: drop-shadow(0 12px 28px rgba(0,0,0,0.2));
+  opacity: 0.55;
+  transform: rotate(-18deg);
+}
+[data-theme="y2k-fever"][data-mode="dark"] body {
+  background: linear-gradient(135deg,
+    #0a0516 0%, #1a0e36 35%, #24134a 65%, #0f0624 100%);
+  background-size: 200% 200%;
+  animation: y2k-holo-shift 22s ease-in-out infinite;
+}
+[data-theme="y2k-fever"][data-mode="dark"] body::before {
+  background:
+    radial-gradient(circle at 18% 20%, rgba(255, 95, 177, 0.35) 0%, transparent 10%),
+    radial-gradient(circle at 76% 22%, rgba(95, 192, 214, 0.3) 0%, transparent 11%),
+    radial-gradient(circle at 42% 78%, rgba(186, 255, 61, 0.25) 0%, transparent 10%);
+}
+
+/* Blobby chrome card with shimmer sweep */
+[data-theme="y2k-fever"] .bg-surface,
+[data-theme="y2k-fever"] .bg-card,
+[data-theme="y2k-fever"] .bg-elevated,
+[data-theme="y2k-fever"] .bg-muted,
+[data-theme="y2k-fever"] .bg-popover {
+  background-image: linear-gradient(180deg,
+    rgba(255, 255, 255, 0.96) 0%,
+    rgba(230, 242, 255, 0.88) 100%);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  backdrop-filter: blur(22px) saturate(1.35);
+  border: 1.5px solid rgba(168, 214, 240, 0.9) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 0 rgba(120, 160, 200, 0.45),
+    0 4px 10px rgba(255, 95, 177, 0.18),
+    0 14px 38px rgba(95, 192, 214, 0.22);
+  position: relative;
+  overflow: hidden;
+}
+[data-theme="y2k-fever"] .bg-surface::after,
+[data-theme="y2k-fever"] .bg-card::after,
+[data-theme="y2k-fever"] .bg-elevated::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(100deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.6) 50%,
+    transparent 60%);
+  animation: y2k-shimmer 6s ease-in-out infinite;
+  mix-blend-mode: overlay;
+}
+[data-theme="y2k-fever"][data-mode="dark"] .bg-surface,
+[data-theme="y2k-fever"][data-mode="dark"] .bg-card,
+[data-theme="y2k-fever"][data-mode="dark"] .bg-elevated {
+  background-image: linear-gradient(180deg,
+    rgba(36, 19, 74, 0.9) 0%,
+    rgba(26, 14, 54, 0.9) 100%);
+  border: 1.5px solid rgba(255, 95, 177, 0.55) !important;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 95, 177, 0.35),
+    0 0 0 1px rgba(95, 192, 214, 0.3),
+    0 10px 30px rgba(255, 95, 177, 0.22);
+}
+
+[data-theme="y2k-fever"] h1,
+[data-theme="y2k-fever"] h2 {
+  font-family: var(--font-display);
+  background: linear-gradient(90deg,
+    #ff5fb1 0%, #ffa836 25%, #baff3d 50%, #5fc0d6 75%, #c39aff 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: 0.02em;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.9))
+          drop-shadow(0 2px 6px rgba(255, 95, 177, 0.3));
+  animation: y2k-holo-shift 12s linear infinite;
+}
+[data-theme="y2k-fever"] h3 {
+  font-family: var(--font-display);
+  color: #5fc0d6;
+  letter-spacing: 0.02em;
+}
+[data-theme="y2k-fever"][data-mode="dark"] h1,
+[data-theme="y2k-fever"][data-mode="dark"] h2 {
+  filter: drop-shadow(0 0 6px rgba(255, 95, 177, 0.7))
+          drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+}
+
+[data-theme="y2k-fever"] button[type="submit"],
+[data-theme="y2k-fever"] .btn-primary,
+[data-theme="y2k-fever"] button[data-variant="default"],
+[data-theme="y2k-fever"] button.bg-primary {
+  border-radius: 999px !important;
+  background-image:
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.85) 0%,
+      rgba(255, 255, 255, 0.35) 28%,
+      rgba(255, 255, 255, 0) 48%,
+      rgba(0, 0, 0, 0.08) 100%),
+    linear-gradient(180deg, #ff8bc7 0%, #ff5fb1 55%, #d43d91 100%) !important;
+  color: #ffffff !important;
+  border: 1.5px solid rgba(212, 61, 145, 0.85) !important;
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 0 rgba(120, 0, 60, 0.35);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.6),
+    0 4px 12px rgba(255, 95, 177, 0.45),
+    0 10px 24px rgba(255, 95, 177, 0.25);
+}
+[data-theme="y2k-fever"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #ff8bc7, #5fc0d6);
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+[data-theme="y2k-fever"] hr {
+  border: none;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ff5fb1, #ffa836, #baff3d, #5fc0d6, #c39aff);
+}
+
+
+/* =====================================================================
+   THEME: VENDETTA  (naturally dark / Fawkes blood-red propaganda)
+   Signature A: Jet black with blood-red V spill + textured paper grain
+   Signature B: V-mask silhouette corner watermark
+   Signature C: UnifrakturMaguntia blackletter headings
+   Signature D: Red-wax-stamp cards with hard drop-shadow
+   Signature E: "Remember remember" ticker-tape band
+   ===================================================================== */
+
+[data-theme="vendetta"] {
+  --color-base: #07040a;
+  --color-surface: #0d0609;
+  --color-elevated: #140a0d;
+  --color-border: #38181c;
+  --color-border-hover: #d80e1d;
+
+  --color-accent: #d80e1d;
+  --color-accent-muted: #2a080a;
+
+  --color-peach: #d47a3a;
+  --color-lavender: #7a5670;
+  --color-mint: #c0b8a0;
+
+  --color-critical: #ff1e2e;
+  --color-high: #d47a3a;
+  --color-medium: #a88f4a;
+  --color-low: #6a5f55;
+
+  --color-text: #eae2d5;
+  --color-text-muted: #8e8377;
+
+  --color-focus-ring: #d80e1d;
+  --color-badge-text: #07040a;
+
+  --radius-sm: 0;
+  --radius-md: 1px;
+  --radius-lg: 2px;
+
+  --font-display: "UnifrakturMaguntia", "IM Fell English SC",
+    "Special Elite", "Cormorant Garamond", serif;
+  --font-sans: "Special Elite", "IM Fell English SC",
+    "Cormorant Garamond", Georgia, serif;
+
+  --background: #07040a;
+  --foreground: #eae2d5;
+  --card: #0d0609;
+  --card-foreground: #eae2d5;
+  --popover: #140a0d;
+  --popover-foreground: #eae2d5;
+  --primary: #d80e1d;
+  --primary-foreground: #eae2d5;
+  --secondary: #140a0d;
+  --secondary-foreground: #eae2d5;
+  --muted: #0d0609;
+  --muted-foreground: #8e8377;
+  --destructive: #ff1e2e;
+  --border: #38181c;
+  --input: #38181c;
+  --ring: #d80e1d;
+  --radius: 1px;
+
+  --sidebar-background: #05030a;
+  --sidebar-foreground: #eae2d5;
+  --sidebar-primary: #d80e1d;
+  --sidebar-primary-foreground: #eae2d5;
+  --sidebar-accent: #0d0609;
+  --sidebar-accent-foreground: #d80e1d;
+  --sidebar-border: #38181c;
+  --sidebar-ring: #d80e1d;
+}
+[data-theme="vendetta"][data-mode="light"] {
+  --color-base: #efe6d4;
+  --color-surface: #f7f0de;
+  --color-elevated: #fdf5e2;
+  --color-border: #b8a586;
+  --color-text: #1a0608;
+  --color-text-muted: #5a4035;
+  --background: #efe6d4;
+  --foreground: #1a0608;
+  --card: #f7f0de;
+  --card-foreground: #1a0608;
+  --popover: #f7f0de;
+  --popover-foreground: #1a0608;
+  --secondary: #e6d8b8;
+  --secondary-foreground: #1a0608;
+  --muted: #e6d8b8;
+  --muted-foreground: #5a4035;
+  --border: #b8a586;
+  --input: #b8a586;
+  --sidebar-background: #f7f0de;
+  --color-badge-text: #1a0608;
+}
+
+[data-theme="vendetta"] body {
+  background:
+    /* paper grain */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'>\
+<filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/></filter>\
+<rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.22'/></svg>"),
+    /* blood spill from bottom */
+    radial-gradient(ellipse at 50% 130%,
+      #6a0410 0%, #2e0208 30%, transparent 60%),
+    linear-gradient(180deg, #07040a 0%, #0a0408 100%);
+  background-attachment: fixed;
+}
+[data-theme="vendetta"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  /* V-mask silhouette */
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 900' preserveAspectRatio='xMidYMid slice'>\
+<g transform='translate(1280 620)' opacity='0.22'>\
+<path d='M 0 0 Q -120 -20 -160 -120 Q -150 -180 -80 -200 Q 0 -215 80 -200 Q 150 -180 160 -120 Q 120 -20 0 0 Z' fill='%23eae2d5'/>\
+<path d='M -70 -130 Q -40 -100 -20 -130 M 70 -130 Q 40 -100 20 -130' stroke='%230d0609' stroke-width='3' fill='none'/>\
+<path d='M -40 -75 Q 0 -55 40 -75' stroke='%230d0609' stroke-width='3' fill='none'/>\
+<path d='M -20 -60 L 0 -20 L 20 -60' stroke='%23d80e1d' stroke-width='2' fill='none'/>\
+</g>\
+<g opacity='0.08' fill='%23eae2d5' font-family='UnifrakturMaguntia,IM Fell English SC,serif' font-size='22' letter-spacing='0.2em'>\
+<text x='40' y='880'>REMEMBER · REMEMBER · THE FIFTH OF NOVEMBER · GUNPOWDER · TREASON · AND PLOT ·</text>\
+</g>\
+</svg>") center/cover no-repeat;
+}
+[data-theme="vendetta"][data-mode="light"] body {
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'>\
+<filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/></filter>\
+<rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.14'/></svg>"),
+    linear-gradient(180deg, #f7f0de 0%, #efe6d4 100%);
+}
+[data-theme="vendetta"][data-mode="light"] body::after {
+  filter: invert(1);
+  opacity: 0.55;
+}
+
+[data-theme="vendetta"] .bg-surface,
+[data-theme="vendetta"] .bg-card,
+[data-theme="vendetta"] .bg-elevated,
+[data-theme="vendetta"] .bg-muted,
+[data-theme="vendetta"] .bg-popover {
+  background-image: linear-gradient(180deg,
+    rgba(20, 10, 13, 0.92) 0%, rgba(13, 6, 9, 0.95) 100%);
+  border: 1px solid #38181c !important;
+  border-left: 3px solid #d80e1d !important;
+  border-radius: 0 !important;
+  box-shadow:
+    6px 6px 0 rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px rgba(216, 14, 29, 0.15);
+}
+[data-theme="vendetta"][data-mode="light"] .bg-surface,
+[data-theme="vendetta"][data-mode="light"] .bg-card,
+[data-theme="vendetta"][data-mode="light"] .bg-elevated {
+  background-image: linear-gradient(180deg, #fdf5e2 0%, #f2e6c8 100%);
+  border: 1px solid #b8a586 !important;
+  border-left: 3px solid #b30b17 !important;
+  box-shadow: 4px 4px 0 rgba(90, 64, 53, 0.25);
+}
+
+[data-theme="vendetta"] h1,
+[data-theme="vendetta"] h2 {
+  font-family: var(--font-display);
+  color: #d80e1d;
+  letter-spacing: 0.02em;
+  font-weight: 400;
+  text-shadow:
+    2px 2px 0 #000000,
+    0 0 14px rgba(216, 14, 29, 0.5);
+}
+[data-theme="vendetta"] h3 {
+  font-family: var(--font-display);
+  color: #eae2d5;
+  letter-spacing: 0.04em;
+  font-weight: 400;
+}
+[data-theme="vendetta"][data-mode="light"] h1,
+[data-theme="vendetta"][data-mode="light"] h2 {
+  color: #9a0a15;
+  text-shadow: 2px 2px 0 rgba(90, 64, 53, 0.2);
+}
+
+[data-theme="vendetta"] button[type="submit"],
+[data-theme="vendetta"] .btn-primary,
+[data-theme="vendetta"] button[data-variant="default"],
+[data-theme="vendetta"] button.bg-primary {
+  border-radius: 0 !important;
+  background: #d80e1d !important;
+  color: #eae2d5 !important;
+  border: 1px solid #38181c !important;
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  font-weight: 700;
+  box-shadow:
+    4px 4px 0 #000000,
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: all 90ms ease;
+}
+[data-theme="vendetta"] button[type="submit"]:hover:not(:disabled),
+[data-theme="vendetta"] .btn-primary:hover:not(:disabled),
+[data-theme="vendetta"] button[data-variant="default"]:hover:not(:disabled) {
+  background: #ff1e2e !important;
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 #000000;
+}
+[data-theme="vendetta"] button[type="submit"]:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 #000000;
+}
+[data-theme="vendetta"] input,
+[data-theme="vendetta"] textarea {
+  background: #0d0609;
+  color: #eae2d5;
+  border: 1px solid #38181c !important;
+  border-radius: 0;
+  font-family: var(--font-sans);
+}
+[data-theme="vendetta"] input:focus,
+[data-theme="vendetta"] textarea:focus {
+  border-color: #d80e1d !important;
+  box-shadow: 0 0 0 1px #d80e1d, 0 0 10px rgba(216, 14, 29, 0.45);
+}
+[data-theme="vendetta"] ::-webkit-scrollbar-thumb {
+  background: #d80e1d;
+  border: 1px solid #38181c;
+  border-radius: 0;
+}
+[data-theme="vendetta"] hr {
+  border: none;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #d80e1d, #7a0a12, #d80e1d, transparent);
+  margin: 22px 0;
+}
+
+
+/* =====================================================================
+   GLOBAL READABILITY GUARDS — applied to any theme in dark mode
+   ===================================================================== */
+
+/* Catch-all so heading text never becomes unreadable on any dark theme */
+[data-mode="dark"] h1:not([class*="text-"]),
+[data-mode="dark"] h2:not([class*="text-"]) {
+  text-shadow: inherit;
+}
+/* Default minimum contrast for headings against a busy dark atmosphere */
+[data-mode="dark"][data-theme="ps1"] h1,
+[data-mode="dark"][data-theme="ps2"] h1,
+[data-mode="dark"][data-theme="cyberpunk-2077"] h1,
+[data-mode="dark"][data-theme="matrix"] h1,
+[data-mode="dark"][data-theme="truman-show"] h1,
+[data-mode="dark"][data-theme="half-life-1"] h1,
+[data-mode="dark"][data-theme="y2k-fever"] h1,
+[data-mode="dark"][data-theme="vendetta"] h1,
+[data-mode="dark"][data-theme="frutiger-aero"] h1 {
+  font-weight: 700;
+}
+
+
+/* =====================================================================
+   LOGIN PAGE SIGNATURES — one pass per new theme.
+   Same selectors as the original 3-theme pack; kept terse.
+   ===================================================================== */
+
+[data-theme="ps1"] .login-root,
+[data-theme="ps2"] .login-root,
+[data-theme="cyberpunk-2077"] .login-root,
+[data-theme="matrix"] .login-root,
+[data-theme="truman-show"] .login-root,
+[data-theme="half-life-1"] .login-root,
+[data-theme="y2k-fever"] .login-root,
+[data-theme="vendetta"] .login-root {
+  background: transparent !important;
+}
+
+/* PS1 */
+[data-theme="ps1"] .login-left {
+  background: linear-gradient(180deg, #d8d7d2 0%, #b0aeaa 100%) !important;
+}
+[data-theme="ps1"] .login-left::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>\
+<rect x='20' y='20' width='70' height='70' fill='%23e41e26'/>\
+<rect x='110' y='20' width='70' height='70' fill='%2300a651'/>\
+<rect x='20' y='110' width='70' height='70' fill='%232f6fbf'/>\
+<rect x='110' y='110' width='70' height='70' fill='%23f9b528'/>\
+<text x='100' y='110' text-anchor='middle' font-family='Michroma,sans-serif' font-size='28' font-weight='900' fill='%23ffffff'>PS</text>\
+</svg>") center/40% no-repeat;
+}
+[data-theme="ps1"] .login-right {
+  background: #1a1a4d !important;
+  color: #e6e5df;
+  box-shadow: inset 3px 0 0 #2f6fbf !important;
+}
+[data-theme="ps1"] .login-brand__wordmark {
+  color: #ffffff;
+  font-family: var(--font-display);
+  text-shadow: 2px 2px 0 #2f6fbf, 4px 4px 0 #e41e26;
+  letter-spacing: 0.14em;
+}
+[data-theme="ps1"] .login-form-card__heading { color: #e6e5df; font-family: var(--font-display); letter-spacing: 0.14em; }
+
+/* PS2 */
+[data-theme="ps2"] .login-left {
+  background: #000 !important;
+  position: relative;
+}
+[data-theme="ps2"] .login-left::after {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>\
+<g fill='none' stroke='%234fd8ff' stroke-width='1.2'>\
+<rect x='80' y='60'  width='46' height='46' opacity='0.7'/>\
+<rect x='160' y='120' width='70' height='70' opacity='0.5'/>\
+<rect x='250' y='220' width='34' height='34' opacity='0.85'/>\
+<rect x='90' y='260' width='60' height='60' opacity='0.4'/>\
+<rect x='300' y='80' width='28' height='28' opacity='0.6'/>\
+</g></svg>") center/contain no-repeat;
+  filter: drop-shadow(0 0 16px rgba(79,216,255,0.35));
+}
+[data-theme="ps2"] .login-right {
+  background: #080814 !important;
+  box-shadow: inset 2px 0 0 #4fd8ff !important;
+}
+[data-theme="ps2"] .login-brand__wordmark {
+  color: transparent;
+  -webkit-text-stroke: 1.5px #4fd8ff;
+  font-family: var(--font-display);
+  letter-spacing: 0.25em;
+  filter: drop-shadow(0 0 10px rgba(79,216,255,0.5));
+}
+
+/* Cyberpunk */
+[data-theme="cyberpunk-2077"] .login-left {
+  background: #05070a !important;
+}
+[data-theme="cyberpunk-2077"] .login-left::after {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 32px, rgba(252,238,10,0.08) 32px 33px),
+    repeating-linear-gradient(90deg, transparent 0 32px, rgba(0,240,255,0.07) 32px 33px);
+}
+[data-theme="cyberpunk-2077"] .login-right {
+  background: rgba(10, 12, 18, 0.94) !important;
+  box-shadow: inset 2px 0 0 #fcee0a !important;
+}
+[data-theme="cyberpunk-2077"] .login-brand__wordmark {
+  color: #fcee0a;
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+  text-shadow: -2px 0 rgba(255,0,60,0.9), 2px 0 rgba(0,240,255,0.9), 0 0 14px rgba(252,238,10,0.55);
+}
+
+/* Matrix */
+[data-theme="matrix"] .login-left {
+  background: #000 !important;
+}
+[data-theme="matrix"] .login-left::after {
+  content: "";
+  position: absolute; inset: 0;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='500'>\
+<g font-family='VT323,monospace' font-size='20'>\
+<text x='6' y='30' fill='%2300ff41'>0</text>\
+<text x='6' y='55' fill='%2300cc33' opacity='0.8'>ｱ</text>\
+<text x='6' y='80' fill='%23009922' opacity='0.6'>1</text>\
+<text x='40' y='42' fill='%2300ff41'>ﾂ</text>\
+<text x='40' y='70' fill='%2300aa2b' opacity='0.75'>0</text>\
+<text x='80' y='26' fill='%2300ff41'>ｵ</text>\
+<text x='80' y='58' fill='%2300cc33' opacity='0.8'>7</text>\
+<text x='80' y='92' fill='%23009922' opacity='0.55'>ﾘ</text>\
+</g></svg>");
+  background-repeat: repeat;
+  animation: matrix-rain 7s linear infinite;
+}
+[data-theme="matrix"] .login-right {
+  background: rgba(0, 8, 0, 0.96) !important;
+  box-shadow: inset 2px 0 0 #00ff41 !important;
+}
+[data-theme="matrix"] .login-brand__wordmark {
+  color: #00ff41;
+  font-family: var(--font-display);
+  text-shadow: 0 0 8px rgba(0,255,65,0.9), 0 0 20px rgba(0,255,65,0.5);
+}
+
+/* Truman Show */
+[data-theme="truman-show"] .login-left {
+  background: linear-gradient(180deg, #bee0e5 0%, #e5f1e1 70%, #b6d9b3 100%) !important;
+  position: relative;
+}
+[data-theme="truman-show"] .login-left::after {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(circle 200px at 80% 15%, rgba(255,245,210,0.75) 0%, transparent 55%),
+    radial-gradient(circle at 3% 3%, rgba(10,20,22,0.3) 0%, transparent 20%),
+    radial-gradient(circle at 97% 97%, rgba(10,20,22,0.3) 0%, transparent 20%);
+}
+[data-theme="truman-show"] .login-right {
+  background: #fffdf4 !important;
+  box-shadow: -1px 0 0 #c9ddd7 !important;
+}
+[data-theme="truman-show"] .login-brand__wordmark {
+  color: #2a3b40;
+  font-family: var(--font-display);
+  letter-spacing: 0.1em;
+}
+
+/* Half-Life 1 */
+[data-theme="half-life-1"] .login-left {
+  background: #0a0b0d !important;
+  position: relative;
+}
+[data-theme="half-life-1"] .login-left::after {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 4px, rgba(255,255,255,0.025) 4px 5px),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>\
+<g fill='none' stroke='%23f9a31b' stroke-width='12' stroke-linecap='square' opacity='0.32'>\
+<path d='M 50 50 L 100 160 L 150 50'/>\
+<path d='M 70 95 L 130 95' stroke-width='11'/>\
+</g></svg>") center/55% no-repeat;
+}
+[data-theme="half-life-1"] .login-right {
+  background: #131418 !important;
+  box-shadow: inset 2px 0 0 #f9a31b !important;
+}
+[data-theme="half-life-1"] .login-brand__wordmark {
+  color: #f9a31b;
+  font-family: var(--font-display);
+  letter-spacing: 0.22em;
+  text-shadow: 0 0 14px rgba(249,163,27,0.5);
+}
+
+/* Y2K */
+[data-theme="y2k-fever"] .login-left {
+  background: linear-gradient(135deg, #ffdef2 0%, #cfeefb 25%, #d9ffe8 55%, #fff1cf 80%, #ffd6f0 100%) !important;
+  background-size: 200% 200%;
+  animation: y2k-holo-shift 18s ease-in-out infinite;
+  position: relative;
+}
+[data-theme="y2k-fever"] .login-left::after {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>\
+<defs><radialGradient id='d' cx='50%25' cy='50%25' r='50%25'>\
+<stop offset='0%25' stop-color='%23ffffff'/><stop offset='45%25' stop-color='%23ff9acc'/>\
+<stop offset='62%25' stop-color='%23a0d8f5'/><stop offset='78%25' stop-color='%23ffd96b'/>\
+<stop offset='92%25' stop-color='%23b7ff8a'/><stop offset='100%25' stop-color='%23ff6fb3'/></radialGradient></defs>\
+<circle cx='100' cy='100' r='92' fill='url(%23d)' opacity='0.75'/>\
+<circle cx='100' cy='100' r='24' fill='%23ffffff'/>\
+<circle cx='100' cy='100' r='7' fill='%2355477e'/></svg>") center/50% no-repeat;
+  transform: rotate(-16deg);
+  filter: drop-shadow(0 14px 28px rgba(0,0,0,0.2));
+}
+[data-theme="y2k-fever"] .login-right {
+  background: rgba(255,255,255,0.9) !important;
+  backdrop-filter: blur(18px) saturate(1.4);
+}
+[data-theme="y2k-fever"] .login-brand__wordmark {
+  background: linear-gradient(90deg, #ff5fb1, #ffa836, #baff3d, #5fc0d6, #c39aff);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-family: var(--font-display);
+  animation: y2k-holo-shift 12s linear infinite;
+}
+
+/* Vendetta */
+[data-theme="vendetta"] .login-left {
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'>\
+<filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/></filter>\
+<rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.2'/></svg>"),
+    radial-gradient(ellipse at 50% 120%, #6a0410 0%, #2e0208 30%, transparent 60%),
+    linear-gradient(180deg, #07040a 0%, #0a0408 100%) !important;
+  position: relative;
+}
+[data-theme="vendetta"] .login-left::after {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>\
+<g transform='translate(200 220)' opacity='0.6'>\
+<path d='M 0 0 Q -120 -20 -160 -120 Q -150 -180 -80 -200 Q 0 -215 80 -200 Q 150 -180 160 -120 Q 120 -20 0 0 Z' fill='%23eae2d5'/>\
+<path d='M -70 -130 Q -40 -100 -20 -130 M 70 -130 Q 40 -100 20 -130' stroke='%230d0609' stroke-width='3' fill='none'/>\
+<path d='M -40 -75 Q 0 -55 40 -75' stroke='%230d0609' stroke-width='3' fill='none'/>\
+<path d='M -20 -60 L 0 -20 L 20 -60' stroke='%23d80e1d' stroke-width='3' fill='none'/>\
+</g></svg>") center/60% no-repeat;
+}
+[data-theme="vendetta"] .login-right {
+  background: #0d0609 !important;
+  box-shadow: inset 3px 0 0 #d80e1d !important;
+}
+[data-theme="vendetta"] .login-brand__wordmark {
+  color: #d80e1d;
+  font-family: var(--font-display);
+  text-shadow: 3px 3px 0 #000, 0 0 16px rgba(216,14,29,0.55);
+}
+
+
+/* =====================================================================
+   BASE LAYER (must remain last)
+   ===================================================================== */
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
