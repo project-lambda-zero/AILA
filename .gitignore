@@ -42,3 +42,14 @@ coverage.json
 # Oh My Pi / Claude tooling runtime
 *.rvf
 *.rvf.lock
+
+# Claude Code runtime (only .claude/CLAUDE.md is tracked)
+.claude/memory.db
+.claude/memory.db-shm
+.claude/memory.db-wal
+.claude/settings.json
+.claude/agents/
+.claude/commands/
+.claude/helpers/
+.claude/skills/
+.claude/worktrees/
