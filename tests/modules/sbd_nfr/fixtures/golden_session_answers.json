@@ -1,0 +1,102 @@
+[
+  {
+    "question_id": "SCOPE-01",
+    "answer_value": "External (APN; customer facing)",
+    "note_text": null
+  },
+  {
+    "question_id": "SCOPE-02",
+    "answer_value": "Yes",
+    "note_text": "Production SaaS platform"
+  },
+  {
+    "question_id": "SCOPE-03",
+    "answer_value": "Containerised (Kubernetes)",
+    "note_text": null
+  },
+  {
+    "question_id": "SCOPE-04",
+    "answer_value": "Cloud PaaS (AWS EKS)",
+    "note_text": null
+  },
+  {
+    "question_id": "SCOPE-05",
+    "answer_value": "Yes",
+    "note_text": "Processes user events and audit trails"
+  },
+  {
+    "question_id": "SCOPE-06",
+    "answer_value": "Yes",
+    "note_text": null
+  },
+  {
+    "question_id": "SCOPE-07",
+    "answer_value": "No",
+    "note_text": null
+  },
+  {
+    "question_id": "SCOPE-08",
+    "answer_value": "Yes",
+    "note_text": "Payment gateway (Stripe) and identity provider"
+  },
+  {
+    "question_id": "HYGN-01",
+    "answer_value": "No",
+    "note_text": "DMZ placement not yet validated"
+  },
+  {
+    "question_id": "HYGN-02",
+    "answer_value": "No",
+    "note_text": null
+  },
+  {
+    "question_id": "HYGN-03",
+    "answer_value": "Yes",
+    "note_text": null
+  },
+  {
+    "question_id": "HYGN-05",
+    "answer_value": "Yes",
+    "note_text": "Kubernetes deployment"
+  },
+  {
+    "question_id": "HYGN-06",
+    "answer_value": "No",
+    "note_text": "No previous DAST performed"
+  },
+  {
+    "question_id": "HYGN-08",
+    "answer_value": "Yes",
+    "note_text": "ArcSight SIEM integration required"
+  },
+  {
+    "question_id": "DATA-01",
+    "answer_value": "Yes",
+    "note_text": "PII stored in PostgreSQL"
+  },
+  {
+    "question_id": "DATA-03",
+    "answer_value": "Yes",
+    "note_text": "Shared with payment processor"
+  },
+  {
+    "question_id": "IDM-01",
+    "answer_value": "No",
+    "note_text": "Standard OAuth2 only"
+  },
+  {
+    "question_id": "IDM-03",
+    "answer_value": "No",
+    "note_text": null
+  },
+  {
+    "question_id": "VENDOR-01",
+    "answer_value": "Yes",
+    "note_text": "Stripe payment processing"
+  },
+  {
+    "question_id": "NET-01",
+    "answer_value": "No",
+    "note_text": "Segment placement not yet confirmed"
+  }
+]
