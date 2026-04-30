@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AILA Console</title>
+
+    <!--
+      Flash-free theme init — runs BEFORE React mounts.
+      Eleven themes are valid. Invalid / legacy stored values fall back
+      to 'synthwave' (default).
+    -->
+    <script>
+      (function () {
+        var valid = [
+          "frutiger-aero", "synthwave", "vaporwave",
+          "ps1", "ps2", "cyberpunk-2077", "matrix",
+          "truman-show", "half-life-1", "y2k-fever", "vendetta"
+        ];
+        var light = ["frutiger-aero", "ps1", "truman-show", "y2k-fever"];
+        var stored = localStorage.getItem("aila-theme");
+        var theme = valid.indexOf(stored) !== -1 ? stored : "synthwave";
+        if (stored !== theme) localStorage.setItem("aila-theme", theme);
+        var storedMode = localStorage.getItem("aila-mode");
+        var mode =
+          storedMode === "dark" || storedMode === "light"
+            ? storedMode
+            : light.indexOf(theme) !== -1
+            ? "light"
+            : "dark";
+        if (storedMode !== mode) localStorage.setItem("aila-mode", mode);
+        document.documentElement.setAttribute("data-theme", theme);
+        document.documentElement.setAttribute("data-mode", mode);
+        if (mode === "dark") document.documentElement.classList.add("dark");
+      })();
+    </script>
+
+    <!--
+      Font preload — display + body.
+    -->
+    <link
+      rel="preload"
+      href="/fonts/Syne-Variable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/SpaceGrotesk-Variable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+
+    <!--
+      Google Fonts — theme-specific display faces. Each theme's signature
+      identity partially depends on its typography, so these load up-front
+      but with swap behaviour. font-display:swap is enforced via &display=swap.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=VT323&family=Press+Start+2P&family=Share+Tech+Mono&family=UnifrakturMaguntia&family=Special+Elite&family=Marcellus+SC&family=Major+Mono+Display&family=IM+Fell+English+SC&family=Cormorant+Garamond:wght@400;700&family=Bungee&family=Bungee+Shade&family=DM+Serif+Display&family=Rubik+Glitch&family=Rubik+Mono+One&family=Monoton&family=Audiowide&family=Silkscreen&family=Pixelify+Sans:wght@400;700&family=B612+Mono&family=Iceberg&family=Michroma&display=swap"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
