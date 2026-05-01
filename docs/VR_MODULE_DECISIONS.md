@@ -290,10 +290,28 @@ Run on every VR module release. Publish results including failures.
 
 ---
 
+### D-22: IDA Pro only, no Ghidra fallback
+
+The VR module requires IDA Pro with a valid license. No Ghidra fallback.
+
+- The IDA Headless MCP is the **first deliverable** -- built before the VR module itself
+- The module assumes multi-seat IDA licensing (one license per concurrent binary analysis)
+- Machine readiness check verifies IDA installation + license validity at project creation
+- If IDA is not available, the project fails to create with a clear error: "IDA Pro is required for vulnerability research"
+- Ghidra support deferred to v1.0+. Not planned, not promised, not designed for.
+- One backend, one decompiler output format, one annotation model. No abstraction layer.
+- The IDA MCP is a platform service (`platform/`), not a VR module internal. Future modules (malware analysis) can consume it.
+
+**Build order:**
+1. IDA Headless MCP (platform service) -- standalone, testable without VR module
+2. VR module N-day PoC writer -- consumes the MCP
+3. VR module research workflow -- extends the MCP usage
+
+---
+
 ## Open Questions (Remaining)
 
-1. **IDA headless MCP architecture.** Purpose-built for VR, or shared with future malware module? Leaning shared.
-2. **Fuzzing resource management.** How does the module negotiate resource allocation on the workstation?
-3. **Human steering UX richness.** VR needs exploit-specific steering beyond forensics' `ReasoningOperatorSteering`.
-4. **GDB integration depth.** Surface (run PoC, capture crash) for v0.1, deep (breakpoints, heap inspection) for v0.3.
-5. **Multi-model split-roles.** One model vs researcher/implementer/critic split. Experiment in v0.4.
+1. **Fuzzing resource management.** How does the module negotiate resource allocation on the workstation?
+2. **Human steering UX richness.** VR needs exploit-specific steering beyond forensics' `ReasoningOperatorSteering`.
+3. **GDB integration depth.** Surface (run PoC, capture crash) for v0.1, deep (breakpoints, heap inspection) for v0.3.
+4. **Multi-model split-roles.** One model vs researcher/implementer/critic split. Experiment in v0.4.
