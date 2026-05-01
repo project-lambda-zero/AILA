@@ -157,14 +157,143 @@ Each module owns its domain. No cross-module imports. Shared infrastructure (IDA
 
 ---
 
+## v0.1 Decisions (D-07 through D-21)
+
+Answered before N-day PoC writer implementation. These are closed.
+
+### D-07: Hybrid turn + tool-time budget
+
+Turns count reasoning steps. Long-running tools (angr, exploit test runs) run on a separate wall-clock budget.
+
+- Turn budget: 30 turns for N-day (configurable per project)
+- Tool time budget: 4 hours for N-day (fuzzing campaigns, angr runs, exploit tests consume from this pool)
+- LLM sees both: "Turn 7/30. Tool time: 2h14m remaining."
+- Extending: operator can grant +15 turns or +2h tool time at any point
+
+### D-08: Same reasoning loop, trimmed action menu for N-day
+
+One reasoning loop for all workflows. N-day restricts the available action set:
+
+- N-day enabled: `decompile`, `diff_versions`, `search_code`, `run_angr`, `debug`, `write_exploit`, `analyze_crash`, `submit`, `reasoning`
+- N-day disabled: `fuzz`, `query_graph`, `write_harness`
+- System prompt goal: "Produce a working crash PoC for CVE-XXXX" (not "find vulnerabilities")
+
+No separate state machine. Same evidence graph, same obligation system, fewer action types.
+
+### D-09: IDA MCP backend per-binary
+
+The MCP manages multiple IDA instances internally, one per loaded binary. A project with an ARM blob and an x86 PE gets two backends. Diff commands (`diff_binary`) require both binaries on the same architecture — no cross-backend diff.
+
+### D-10: Operator annotations always win
+
+Annotations carry `source: "llm" | "operator"`. Rules:
+- MCP refuses LLM writes that overwrite an operator annotation
+- LLM annotations are freely overwritable by both LLM and operator
+- System prompt tells LLM: "Operator annotations are authoritative. Note disagreements in reasoning, do not overwrite."
+
+### D-11: 30 turns + 4 hours hard cap for N-day
+
+- 30 LLM turns maximum per N-day task
+- 4 hours tool-time maximum
+- At budget exhaustion: module submits what it has (partial PoC, analysis, draft advisory) and marks task `stalled`
+- Operator can extend (+15 turns, +2h) or close
+- Running cost displayed in UI — no silent overruns
+- At ~$0.50/turn: $15 max LLM cost per N-day task
+
+### D-12: Always start autonomous, downgrade on failure
+
+No pre-classification of exploit difficulty. The LLM attempts exploitation immediately.
+
+- After 3 consecutive failed exploit attempts: watchdog injects "Exploitation attempts failing. Consider operator assistance or strategy pivot."
+- After 5 consecutive failures: auto-downgrade to assist mode (propose strategies, wait for operator confirmation)
+- Operator can manually force assist mode at any time
+
+### D-13: 5/5 crash PoC, 3/5 exploit reliability
+
+- Crash PoC: must reproduce 5/5 on vulnerable version, 0/1 on patched version
+- Exploit (when developed): 3/5 acceptable for PoC-grade, 5/5 for weapon-grade
+- The module runs the reliability sweep automatically after each PoC/exploit modification
+- Operator can override threshold per engagement ("3/5 is fine")
+
+### D-14: Operator can waive any obligation
+
+- Waiver recorded as `operator_waiver` evidence node with identity + reason
+- Advisory marks findings with waived obligations: "Exploitability assessed with waiver: [reason]"
+- CRITICAL obligations require explicit waiver text
+- RECOMMENDED obligations auto-waived at 80% turn budget consumed (stop nagging about nice-to-haves)
+
+### D-15: Obligation severity for N-day
+
+| Severity | Obligations |
+|---|---|
+| CRITICAL (blocks submit) | Patch identified. Vulnerable version crash confirmed. Patched version no-crash confirmed. |
+| REQUIRED (blocks advisory) | Root cause documented. ASAN/crash report captured. Mitigation analysis (checksec). PoC reliability 5/5. |
+| RECOMMENDED (logged as gap) | CVSS vector computed. CWE mapped. Affected version range. KEV/EPSS checked. |
+
+### D-16: Obligations visible but not prescriptive in prompt
+
+The LLM sees outstanding obligations in the user prompt:
+```
+Outstanding obligations (3):
+  - CRITICAL: patch_diff_exists
+  - REQUIRED: mitigation_analysis
+  - REQUIRED: poc_reliability_verified
+```
+It sees WHAT is needed, not HOW to satisfy it. Prevents gaming while giving enough info to plan.
+
+### D-17: One VRNdayTask per (CVE, target_id)
+
+One CVE on three builds = three separate N-day tasks. Each has its own PoC, obligation chain, and advisory. The CVE string is a shared field, not a foreign key. "CVE-level view" is a query aggregation, not a schema change.
+
+### D-18: Crash dedup via symbol-based stack hash
+
+Signature: `SHA256(crash_type + "|" + top5_frame_symbols)`
+
+- Symbols for non-stripped binaries (function names)
+- Function+offset for stripped binaries (ASLR-stable)
+- Canonicalization runs in crash triage tool, not DB
+- Raw ASAN report stored in `details_json` for manual dedup review
+
+### D-19: Closed exploit primitive vocabulary
+
+The LLM must use standardized terms:
+```
+OVERFLOW_STACK, OVERFLOW_HEAP, UAF, DOUBLE_FREE, TYPE_CONFUSION,
+FORMAT_STRING, INTEGER_OVERFLOW, NULL_DEREF, OOB_READ, OOB_WRITE,
+ARW, AAR, AAW, RIP_CONTROL,
+LEAK_STACK, LEAK_HEAP, LEAK_LIBC, LEAK_PIE,
+INFO_DISCLOSURE, CMD_INJECTION, DESER_GADGET, SSTI, SQLI, SSRF
+```
+Adjudicator rejects free-form descriptions. "Memory corruption" without a specific primitive triggers `primitive_unclassified` obligation.
+
+### D-20: Long-lived workstation for v0.1, VM snapshots for v0.3+
+
+- v0.1: PoC test runner launches target binary as subprocess, feeds trigger input, observes crash (exit code + ASAN). Workstation stays stable.
+- v0.3+: Full exploitation (shell, privesc) runs in per-target VM with snapshot/rollback.
+- Crash PoCs are safe (they crash the target process, not the host).
+
+### D-21: Benchmark suite of 20 retired CVEs
+
+Curated test suite with known patches and known PoCs:
+
+- 10 Tier 1 (obvious trigger), 7 Tier 2 (needs analysis), 3 Tier 3 (complex)
+- Mix: stack overflow, heap overflow, UAF, integer overflow, format string, logic bug
+- All CVEs have public patch commits + buildable vulnerable versions
+
+Metrics:
+- Detection rate: root cause identified (out of 20)
+- PoC rate: working crash PoC produced (out of 20)
+- Turn efficiency: turns to reach working PoC
+- False claims: "exploitable" claimed incorrectly (obligation system should catch)
+
+Run on every VR module release. Publish results including failures.
+
+---
+
 ## Open Questions (Remaining)
 
-1. **IDA headless MCP architecture.** Purpose-built for VR, or shared with future malware module? Leaning shared — both need decompilation, xrefs, pattern search. The MCP is a platform service; modules consume it.
-
-2. **Exploit testing isolation.** Running a PoC on the research workstation could crash the workstation. Should the module spin up a disposable VM for exploit testing? Or is the researcher responsible for isolation?
-
-3. **Fuzzing resource management.** AFL++ on 16 cores for 8 hours generates heat. How does the module negotiate resource allocation with other work on the research workstation?
-
-4. **Human steering UX.** The forensics module uses `ReasoningOperatorSteering` (confirmed facts, disproved hypotheses, guidance, strategy pins). VR needs the same + exploit-specific steering ("try heap spray at offset 0x40", "the target uses jemalloc not ptmalloc"). How rich does the steering contract need to be?
-
-5. **GDB integration depth.** Surface level (run PoC, capture crash) vs deep (set breakpoints, inspect heap, single-step). Deep GDB integration is a significant tool to build. Defer to v0.3?
+1. **IDA headless MCP architecture.** Purpose-built for VR, or shared with future malware module? Leaning shared.
+2. **Fuzzing resource management.** How does the module negotiate resource allocation on the workstation?
+3. **Human steering UX richness.** VR needs exploit-specific steering beyond forensics' `ReasoningOperatorSteering`.
+4. **GDB integration depth.** Surface (run PoC, capture crash) for v0.1, deep (breakpoints, heap inspection) for v0.3.
+5. **Multi-model split-roles.** One model vs researcher/implementer/critic split. Experiment in v0.4.
