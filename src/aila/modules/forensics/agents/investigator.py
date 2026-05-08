@@ -721,10 +721,13 @@ call target-query as a CLI — it is not on PATH. Use Python dissect.target
 directly.
 
 dissect.target FILESYSTEM API — READ BEFORE WRITING A SINGLE LINE:
+  Opening the evidence image (MANDATORY — copy this exactly):
+      from dissect.target import Target
+      t = Target.open(evidence_path)   # ALWAYS .open(), NEVER Target(path)
+
   ``t.fs`` is a ``RootFilesystem`` ATTRIBUTE (a property), NOT a method.
   Calling ``t.fs()`` or ``t.fs(path)`` raises
-  ``TypeError: 'RootFilesystem' object is not callable``. This is the
-  single most common mistake — do not make it.
+  ``TypeError: 'RootFilesystem' object is not callable``.
 
   Correct primitives (all on ``t.fs`` directly, no parentheses after fs):
       t.fs.path(P)          -> TargetPath (pathlib-like)
@@ -772,6 +775,9 @@ dissect.target FILESYSTEM API — READ BEFORE WRITING A SINGLE LINE:
       t.fs().path(path)         # same error
       t.filesystem.path(path)   # no attribute 'filesystem'
       Path(path).exists()       # this is the HOST filesystem, not the image
+      Path(root).rglob('*')     # HOST filesystem, not the image
+      t.fs.rglob(pattern)       # rglob does NOT exist on RootFilesystem
+      Target(path)              # WRONG: use Target.open(path)
 
 dissect.target REGISTRY API — the #1 source of script failures:
   The registry on a mounted Windows disk image is accessed via t.registry.
@@ -2169,6 +2175,22 @@ class HonestInvestigator:
             msg = f'SyntaxError before execution (line {syn_err.lineno}): {syn_err.msg}'
             _log.warning('script syntax error for investigation %s: %s', self.investigation_id, msg)
             return {'stdout': '', 'stderr': msg, 'exit_code': 1}
+
+        # Pre-flight dissect API lint — catch the top mistakes before SSH.
+        _dissect_mistakes = [
+            ('Target(', 'Target.open(', 'Use Target.open(path), not Target(path)'),
+            ('.rglob(', '.walk(', 'RootFilesystem has no rglob(). Use t.fs.walk() or t.fs.path().iterdir()'),
+            ('.get_value(', '.value(', 'RegfKey has no get_value(). Use key.value(name)'),
+            ('.iter_values(', '.values()', 'RegfKey has no iter_values(). Use key.values()'),
+            ('.get_subkey(', '.subkeys()', 'RegfKey has no get_subkey(). Use key.subkeys()'),
+            ('hive.get_key(', 't.registry.key(', 'Do not open raw regf hives. Use t.registry.key(path)'),
+            ('RegistryHive(', 't.registry.key(', 'Do not open raw regf hives. Use t.registry.key(path)'),
+        ]
+        for bad, good, explanation in _dissect_mistakes:
+            if bad in script_content and f'Target.open(' not in script_content.split(bad)[0][-20:] if bad == 'Target(' else True:
+                msg = f'API mistake: found `{bad}` — {explanation}. Use `{good}` instead.'
+                _log.warning('script API lint for investigation %s: %s', self.investigation_id, msg)
+                return {'stdout': '', 'stderr': msg, 'exit_code': 1}
 
         from aila.modules.forensics.config_schema import FORENSICS_DEFAULTS
         from aila.modules.forensics.tools.script_tool import ScriptExecutorTool
