@@ -811,11 +811,25 @@ dissect.target REGISTRY API — the #1 source of script failures:
       key.get_subkey("name")      # AttributeError: no get_subkey method
       t.registry.value(k, "name") # TypeError: wrong call signature
       t.registry.open(path)        # AttributeError: no open method
+      hive.get_key(path)           # WRONG: do not open raw regf hives.
+                                    # Use t.registry.key(path) instead.
+      RegistryHive(fh).get_key()   # WRONG: same mistake with raw hive.
+
+  NEVER import dissect.regf directly. ALWAYS use t.registry which handles
+  hive merging, transaction logs, and virtual key mapping automatically.
 
   Registry path format:
       - Use HKLM, HKCU, HKU prefixes (case-insensitive)
       - Use backslashes in raw strings: r"HKLM\\SYSTEM\\..."
       - Or forward slashes: "HKLM/SYSTEM/..."
+
+SCRIPT QUALITY (CRITICAL — scripts with syntax errors waste a turn):
+  Before emitting script_content, mentally verify:
+  1. Every indentation level uses exactly 4 spaces (no tabs, no 2-space).
+  2. Every `try:` has a matching `except:`. Every `if:` has a body.
+  3. Every string literal is properly closed.
+  4. No mixing of f-strings and .format() in the same expression.
+  If you are uncertain about indentation, write FLAT code with no nesting.
 
 
 capa (capabilities analysis — OPERATIONAL, 1000+ rules installed):
@@ -2146,6 +2160,15 @@ class HonestInvestigator:
         if rejection is not None:
             _log.warning("script blocked for investigation %s: %s", self.investigation_id, rejection)
             return {"stdout": "", "stderr": rejection, "exit_code": 1}
+
+        # Pre-flight syntax check — catch IndentationError/SyntaxError before
+        # wasting an SSH round-trip and a turn on broken Python.
+        try:
+            compile(script_content, '<investigator_script>', 'exec')
+        except SyntaxError as syn_err:
+            msg = f'SyntaxError before execution (line {syn_err.lineno}): {syn_err.msg}'
+            _log.warning('script syntax error for investigation %s: %s', self.investigation_id, msg)
+            return {'stdout': '', 'stderr': msg, 'exit_code': 1}
 
         from aila.modules.forensics.config_schema import FORENSICS_DEFAULTS
         from aila.modules.forensics.tools.script_tool import ScriptExecutorTool
