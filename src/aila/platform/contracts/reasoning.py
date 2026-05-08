@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 __all__ = [
     "ReasoningAction",
@@ -184,8 +184,3 @@ class ReasoningTurnDecision(BaseModel):
     answer: str | None = None
     confidence: ReasoningConfidence | None = None
     provenance: EvidenceProvenance = Field(default_factory=EvidenceProvenance)
-
-    @field_validator('expected_observation', mode='before')
-    @classmethod
-    def _coerce_expected_observation(cls, v: Any) -> str:
-        return str(v) if v is not None else ''
