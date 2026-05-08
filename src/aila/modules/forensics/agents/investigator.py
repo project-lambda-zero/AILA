@@ -773,6 +773,51 @@ dissect.target FILESYSTEM API — READ BEFORE WRITING A SINGLE LINE:
       t.filesystem.path(path)   # no attribute 'filesystem'
       Path(path).exists()       # this is the HOST filesystem, not the image
 
+dissect.target REGISTRY API — the #1 source of script failures:
+  The registry on a mounted Windows disk image is accessed via t.registry.
+  Registry keys are dissect.regf.RegistryKey objects (NOT dict-like).
+
+  Correct patterns:
+      from dissect.target import Target
+      t = Target.open(evidence_path)
+
+      # List all registry keys under a path:
+      key = t.registry.key(r"HKLM\\SYSTEM\\CurrentControlSet\\Control\\TimeZoneInformation")
+      print(key.name, key.path, key.timestamp)
+
+      # Read a specific value from a key:
+      val = key.value("StandardName")   # returns RegistryValue
+      print(val.name, val.value)          # .value is the actual data
+
+      # Iterate all values in a key:
+      for val in key.values():
+          print(val.name, val.value)
+
+      # Iterate subkeys:
+      for subkey in key.subkeys():
+          print(subkey.name)
+
+      # Safe pattern with error handling:
+      try:
+          key = t.registry.key(r"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run")
+          for val in key.values():
+              print(f"{val.name} = {val.value}")
+      except Exception as e:
+          print(f"Registry key not found: {e}")
+
+  WRONG (these ALL fail — do NOT use them):
+      key.get_value("name")       # AttributeError: no get_value method
+      key.iter_values()            # AttributeError: no iter_values method
+      key.get_subkey("name")      # AttributeError: no get_subkey method
+      t.registry.value(k, "name") # TypeError: wrong call signature
+      t.registry.open(path)        # AttributeError: no open method
+
+  Registry path format:
+      - Use HKLM, HKCU, HKU prefixes (case-insensitive)
+      - Use backslashes in raw strings: r"HKLM\\SYSTEM\\..."
+      - Or forward slashes: "HKLM/SYSTEM/..."
+
+
 capa (capabilities analysis — OPERATIONAL, 1000+ rules installed):
   capa is the FLARE team's static capability matcher. The rules and
   signatures directories are configured per-environment; resolve them
