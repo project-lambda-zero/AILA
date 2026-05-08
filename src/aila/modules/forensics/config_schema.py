@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 __all__ = ["ForensicsConfigSchema", "FORENSICS_DEFAULTS"]
 
 
-FORENSICS_LLM_MODEL = "cu/claude-4.6-opus-high-thinking"
+FORENSICS_LLM_MODEL = "antigravity/claude-opus-4-6-thinking"
 
 
 class ForensicsConfigSchema(BaseModel):

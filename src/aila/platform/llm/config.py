@@ -105,7 +105,7 @@ class LLMConfigProvider:
         default = await self._registry.get("platform", "llm_default_model")
         if default is not None and str(default).strip():
             return str(default)
-        return "cu/claude-4.6-opus-high-thinking"
+        return "antigravity/claude-opus-4-6-thinking"
 
     async def resolve_base_url(self) -> str:
         """Resolve API base URL from ConfigRegistry.
