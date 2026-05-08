@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
+
+_log = logging.getLogger(__name__)
 
 from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
@@ -109,7 +112,19 @@ class CyberReasoningEngine:
         )
         if response.disabled:
             raise RuntimeError("LLM kill-switch active")
-        return ReasoningTurnDecision.model_validate(self._extract_json_object(response.content))
+        raw = self._extract_json_object(response.content)
+        # LLMs sometimes return null for required string fields.
+        # Patch the raw dict so validation doesn't crash the turn,
+        # but log a warning — the model should be producing these.
+        for str_field in ('expected_observation', 'reasoning'):
+            if str_field in raw and raw[str_field] is None:
+                _log.warning(
+                    'LLM returned null for required field %s — defaulting to empty string. '
+                    'This indicates the model is not reasoning properly.',
+                    str_field,
+                )
+                raw[str_field] = ''
+        return ReasoningTurnDecision.model_validate(raw)
 
     def absorb(
         self,
