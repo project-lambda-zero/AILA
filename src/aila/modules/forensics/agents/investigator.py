@@ -85,9 +85,9 @@ Response contract (top-level JSON object — no prose outside it):
   ],
   "rejected": [{"id": "H?", "claim": "...", "reason": "..."}],
   "observables": {"key": "value", ...},
-  "action": "script_execute|tool_run|reasoning|submit",
+  "action": "script_execute|tool_run|artifact_query|reasoning|submit",
   "script_content": "python script body, only when action=script_execute",
-  "command": "shell/python command string, only when action=tool_run",
+  "command": "shell command (tool_run) OR search text (artifact_query)",
   "expected_observation": "what a successful run would show AND how it narrows hypotheses",
   "answer": null,
   "confidence": null,
@@ -109,6 +109,11 @@ Rules:
   Prefer concrete primitives (dissect.target, volatility3, tshark,
   strings, sha256sum, pylnk3, ELF parsing) over shell guesswork.
 - Do NOT retry a command that failed the same way in a prior turn.
+- Before writing a new script, check if the information already exists in
+  project artifacts: use action="artifact_query" with "command" set to a
+  search string (IP, hostname, hash, filename, registry key). This is FREE
+  (no SSH, no script execution) and returns structured data instantly.
+  Set observables._artifact_family or _artifact_type to filter by category.
 - "rejected" carries hypotheses you have eliminated with evidence. Always
   carry prior rejects forward so the agent doesn't re-explore dead ends.
 - "observables" is cumulative: include new facts AND any you want to
@@ -2022,6 +2027,37 @@ class HonestInvestigator:
                         "stdout": exec_res.get("stdout"),
                         "stderr": exec_res.get("stderr"),
                     },
+                )
+            return result
+
+        if action == 'artifact_query':
+            # Let the agent search/filter project artifacts by family, type, or text.
+            search_text = (decision.command or '').strip()  # reuse command field for search query
+            family_filter = self.observables.get('_artifact_family', '')
+            type_filter = self.observables.get('_artifact_type', '')
+            from aila.modules.forensics.tools.artifact_query import ArtifactQueryTool
+            tool = ArtifactQueryTool(self.settings)
+            try:
+                query_result = await tool.forward(
+                    action='search' if search_text else 'list',
+                    project_id=self.project_id,
+                    artifact_family=family_filter or None,
+                    artifact_type=type_filter or None,
+                    search_text=search_text or None,
+                    limit=20,
+                )
+                import json as _json
+                result['stdout'] = _json.dumps(query_result, default=str)[:_STDOUT_KEEP_BYTES]
+                result['exit_code'] = 0
+                result['command'] = f'artifact_query search={search_text!r} family={family_filter!r} type={type_filter!r}'
+            except (ValueError, RuntimeError, OSError, KeyError) as exc:
+                result['stderr'] = f'artifact_query failed: {exc}'
+                result['exit_code'] = 1
+            if emitter:
+                await emitter.emit(
+                    'freeflow',
+                    f'Turn {turn}: artifact query — {search_text or "list all"} ({result.get("exit_code")})',
+                    {'stage': 'artifact_query', 'step': turn},
                 )
             return result
 
