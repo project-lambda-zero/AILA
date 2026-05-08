@@ -135,13 +135,40 @@ async def state_freeflow(
             data.investigation_id, len(steps_list),
         )
 
+    # Set investigation status BEFORE returning to downstream states.
+    # Previously relied on response_emit terminal state, but if writeup
+    # or any downstream state crashes, the investigation stays 'running' forever.
+    has_answer = bool(result.get('answer'))
+    if has_answer:
+        final_status = InvestigationStatus.COMPLETED.value
+    elif cancelled:
+        final_status = InvestigationStatus.CANCELLED.value if hasattr(InvestigationStatus, 'CANCELLED') else 'cancelled'
+    else:
+        final_status = InvestigationStatus.FAILED.value
+    try:
+        async with UnitOfWork() as status_uow:
+            inv = (await status_uow.session.exec(
+                _select(InvestigationRunRecord).where(
+                    InvestigationRunRecord.id == data.investigation_id
+                )
+            )).first()
+            if inv is not None:
+                inv.status = final_status
+                if has_answer:
+                    inv.final_answer = str(result.get('answer', ''))[:2000]
+                    inv.confidence = result.get('confidence', 'caveated')
+                status_uow.session.add(inv)
+                await status_uow.commit()
+    except (OSError, RuntimeError, AILAError):
+        _log.exception('Failed to set investigation status=%s', final_status)
+
     await services.emitter.emit(
-        "freeflow",
-        f"Investigation complete. Answer confidence: {result.get('confidence', 'none')}.",
-        {"attempts_used": result.get("attempts_used", 0)},
+        'freeflow',
+        f'Investigation {final_status}. Answer confidence: {result.get("confidence", "none")}.',
+        {'attempts_used': result.get('attempts_used', 0), 'status': final_status},
     )
 
-    _log.info("state_freeflow COMPLETE: inv_id=%s", data.investigation_id)
+    _log.info('state_freeflow %s: inv_id=%s', final_status, data.investigation_id)
     return StateResult(
         next_state="writeup",
         output={
