@@ -147,7 +147,7 @@ async def update_config_value(
     registry = get_config_registry(request)
 
     async def _update() -> ConfigEntryRecord | None:
-        registry.set(namespace, key, body.value)
+        await registry.set(namespace, key, body.value)
         async with async_session_scope() as session:
             stmt = select(ConfigEntryRecord).where(
                 ConfigEntryRecord.namespace == namespace,
