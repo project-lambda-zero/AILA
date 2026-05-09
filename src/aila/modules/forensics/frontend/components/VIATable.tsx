@@ -31,7 +31,7 @@ export function VIATable({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="border border-border rounded-md overflow-x-auto">
+    <div className="border border-border rounded-md bg-card text-card-foreground overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-surface-secondary">
           <tr>

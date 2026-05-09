@@ -220,7 +220,7 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
       />
 
       {/* Table */}
-      <div className="border border-border rounded-lg overflow-hidden">
+      <div className="border border-border rounded-lg bg-card text-card-foreground overflow-hidden">
         <div className="overflow-y-auto max-h-[500px]">
           <table className="w-full text-xs">
             <thead className="bg-surface-secondary sticky top-0 z-10">

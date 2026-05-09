@@ -278,7 +278,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
       ) : structuredEntries.length > 0 || nestedObservables ? (
         <div className="space-y-3">
           {structuredEntries.length > 0 && (
-            <div className="rounded border border-border overflow-hidden">
+            <div className="rounded border border-border bg-card text-card-foreground overflow-hidden">
               <table className="w-full text-xs">
                 <tbody>
                   {structuredEntries.map(([k, v]) => (
@@ -308,7 +308,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
             </div>
           )}
           {nestedObservables && Object.keys(nestedObservables).length > 0 && (
-            <div className="rounded border border-border overflow-hidden">
+            <div className="rounded border border-border bg-card text-card-foreground overflow-hidden">
               <div className="px-3 py-1.5 bg-surface-secondary text-xs font-mono text-text-muted border-b border-border">
                 observables ({Object.keys(nestedObservables).length})
               </div>
@@ -474,7 +474,7 @@ export function ArtifactExplorer({ projectId }: { projectId: string }) {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h3 className="text-sm font-semibold text-foreground">Artifacts ({total})</h3>
         <div className="flex items-center gap-2">
-          <div className="flex items-center text-xs border border-border rounded-md overflow-hidden">
+          <div className="flex items-center text-xs border border-border rounded-md bg-card text-card-foreground overflow-hidden">
             {([
               { key: "", label: "All" },
               { key: "collectors", label: "Collectors" },
