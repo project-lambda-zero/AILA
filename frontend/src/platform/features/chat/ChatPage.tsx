@@ -9,7 +9,7 @@
  * AilaBadge + LoadingSkeleton + shadcn Button/Textarea, no new CSS classes.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import {
   ChatCircleDots,
   Plus,
