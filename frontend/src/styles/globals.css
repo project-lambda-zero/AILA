@@ -66,17 +66,6 @@
   --color-info: #60a5fa;
 }
 
-/*
- * MAIN CONTENT AREA — always uses card background, not body/desktop background.
- * Without this, themes with colored --background (teal, sky, black) show through
- * transparent content panels, making tables and text unreadable.
- * The sidebar and body keep --background; only the main content well gets --card.
- */
-main {
-  background-color: var(--card) !important;
-  color: var(--card-foreground);
-}
-
 /* =====================================================================
    THEME: SYNTHWAVE  (DEFAULT / naturally dark)
    Signature A: magenta-pink retro sun rising from bottom of viewport
