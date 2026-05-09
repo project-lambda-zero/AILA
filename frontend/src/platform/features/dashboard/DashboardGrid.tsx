@@ -29,6 +29,20 @@ export function DashboardGrid({
   onRemoveWidget,
 }: DashboardGridProps) {
   const { width, containerRef, mounted } = useContainerWidth();
+  const [rowHeight, setRowHeight] = React.useState(80);
+
+  React.useEffect(() => {
+    function updateRowHeight() {
+      // Calculate available height: viewport minus header (~64px) and padding (~96px)
+      const availableHeight = window.innerHeight - 160;
+      // Target 5 rows. 5 rows means 4 gaps of 16px (64px total margin).
+      const calculated = Math.floor((availableHeight - 64) / 5);
+      setRowHeight(Math.max(80, calculated)); // Floor of 80px
+    }
+    updateRowHeight();
+    window.addEventListener("resize", updateRowHeight);
+    return () => window.removeEventListener("resize", updateRowHeight);
+  }, []);
 
   function handleLayoutChange(rglLayout: Layout) {
     const mapped: DashboardLayoutItem[] = rglLayout.map((item) => {
@@ -86,9 +100,9 @@ export function DashboardGrid({
         {mounted && (
           <Responsive
             layouts={layouts}
-            breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
+            breakpoints={{ lg: 1024, md: 768, sm: 640, xs: 480 }}
             cols={{ lg: 12, md: 8, sm: 4, xs: 2 }}
-            rowHeight={80}
+            rowHeight={rowHeight}
             margin={[16, 16]}
             containerPadding={[0, 0]}
             compactor={verticalCompactor}
