@@ -63,7 +63,7 @@ def main() -> int:
     procs: dict[str, subprocess.Popen] = {}
 
     # 1. DB init (blocking — must finish before workers start)
-    print(f"\033[97m[init]\033[0m Initializing database...")
+    print("\033[97m[init]\033[0m Initializing database...")
     subprocess.call(
         [sys.executable, str(ROOT / "scripts" / "db_init.py")],
         cwd=str(ROOT),
@@ -99,11 +99,11 @@ def main() -> int:
 
     # 6. Wait — Ctrl+C kills all
     print(f"\n\033[97m{'='*60}")
-    print(f"  AILA running \u2014 7 services")
-    print(f"  Backend:  http://localhost:8000")
-    print(f"  Frontend: http://localhost:3000")
-    print(f"  Workers:  default, vulnerability, forensics, sbd_nfr, vr")
-    print(f"  Press Ctrl+C to stop everything")
+    print("  AILA running \u2014 7 services")
+    print("  Backend:  http://localhost:8000")
+    print("  Frontend: http://localhost:3000")
+    print("  Workers:  default, vulnerability, forensics, sbd_nfr, vr")
+    print("  Press Ctrl+C to stop everything")
     print(f"{'='*60}{RESET}\n")
 
     try:
@@ -120,7 +120,7 @@ def main() -> int:
                 return 1
             time.sleep(1)
     except KeyboardInterrupt:
-        print(f"\n\033[97m[shutdown]\033[0m Stopping all services...")
+        print("\n\033[97m[shutdown]\033[0m Stopping all services...")
         for name, proc in procs.items():
             try:
                 if sys.platform == "win32":

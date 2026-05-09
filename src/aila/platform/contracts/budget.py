@@ -22,6 +22,7 @@ class BudgetConfig(BaseModel):
     auto_waive_recommended_at: float = 0.8  # waive RECOMMENDED obligations at 80% turns
     extension_turns: int = 15
     extension_tool_time_seconds: float = 7200.0  # 2 hours
+    cost_per_turn_usd: float = 0.0  # 0 = cost tracking disabled
 
 
 class BudgetState(BaseModel):
@@ -89,15 +90,23 @@ class BudgetState(BaseModel):
         """Grant one extension — bumps both ceilings, leaves consumption alone."""
         self.extensions_granted += 1
 
+    @property
+    def estimated_cost_usd(self) -> float:
+        """Estimated cost based on turns consumed multiplied by cost_per_turn_usd."""
+        return self.turns_used * self.config.cost_per_turn_usd
+
     def summary_for_prompt(self) -> str:
         """One-line status for the LLM system prompt.
 
-        Example: 'Turn 7/30. Tool time: 2h14m remaining.'
+        Example: 'Turn 7/30. Tool time: 2h14m remaining. Est. cost: $1.40.'
         """
-        return (
+        base = (
             f"Turn {self.turns_used}/{self._max_turns}. "
             f"Tool time: {_format_duration(self.tool_time_remaining_seconds)} remaining."
         )
+        if self.config.cost_per_turn_usd > 0:
+            base += f" Est. cost: ${self.estimated_cost_usd:.2f}."
+        return base
 
     def to_json(self) -> dict:
         """JSON-serializable snapshot for workflow state persistence."""
