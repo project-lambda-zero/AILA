@@ -184,15 +184,14 @@ class StateSpec:
                     f"got {exc_type!r}"
                 )
         # Phase 183 Plan 06: output_schema validation.
-        if self.output_schema is not None:
-            if not (
-                isinstance(self.output_schema, type)
-                and issubclass(self.output_schema, BaseModel)
-            ):
-                raise TypeError(
-                    "output_schema must be a BaseModel subclass; "
-                    f"got {self.output_schema!r}"
-                )
+        if self.output_schema is not None and not (
+            isinstance(self.output_schema, type)
+            and issubclass(self.output_schema, BaseModel)
+        ):
+            raise TypeError(
+                "output_schema must be a BaseModel subclass; "
+                f"got {self.output_schema!r}"
+            )
 
 
 # ---- State (frozen dataclass, engine-internal) -----------------------------

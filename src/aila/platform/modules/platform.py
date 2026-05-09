@@ -434,7 +434,7 @@ class PlatformModule(ModuleProtocol):
         del tool_registry, settings, schema_registry
 
     def build_runtime(self, context: ModuleContext) -> ModuleRuntime:
-        runtime = PlatformModuleRuntime(
+        return PlatformModuleRuntime(
             module_id=self.module_id,
             registry_tool=context.tool_registry.require("registry.systems", SystemRegistryTool),
             memory_tool=context.tool_registry.require("memory.permanent", PermanentMemoryTool),
@@ -446,7 +446,6 @@ class PlatformModule(ModuleProtocol):
             delete_action_id=self.delete_action_id,
             execute_command_action_id=self.execute_command_action_id,
         )
-        return runtime
 
     def filter_report_rows(
         self,

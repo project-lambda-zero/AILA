@@ -200,9 +200,8 @@ def compute_section_scores(
         if q.answer_type == "compliance":
             if raw_answer is not None:
                 score = _score_compliance_answer(raw_answer)
-        elif q.answer_type == "maturity_tier":
-            if raw_answer is not None:
-                score = _score_maturity_tier_answer(raw_answer)
+        elif q.answer_type == "maturity_tier" and raw_answer is not None:
+            score = _score_maturity_tier_answer(raw_answer)
         # scope, free_text, none → score remains None (excluded)
 
         if score is not None:

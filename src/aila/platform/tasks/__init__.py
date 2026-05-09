@@ -30,7 +30,7 @@ _log = logging.getLogger(__name__)
 
 # Phase 179 registry bootstrap:
 # Modules that declare @platform_task handlers register themselves at
-# import time. The bootstrap lives in :mod:`aila.platform.tasks.worker`
+# module import time. The bootstrap lives in :mod:`aila.platform.tasks.worker`
 # (invoked at ARQ worker start) rather than here, because importing
 # router modules from this package init triggers a circular chain via
 # ``db_models.py``. worker.py:_bootstrap_platform_tasks() discovers

@@ -562,7 +562,7 @@ async def _run_zeek_carve(
         return [], {}
 
     # Pull metadata from the files.log so we can cross-reference hashes
-    # with connection info (src/dst/protocol, filename if HTTP).
+    # against connection info (src/dst/protocol, filename if HTTP).
     try:
         files_log_text = await ssh.run_command(
             integration, cat_files_log, timeout_seconds=30.0,

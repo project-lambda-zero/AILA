@@ -87,7 +87,7 @@ def _build_dd_command(
         "disk_info": (
             f"fdisk -l {source} 2>/dev/null || parted {source} print 2>/dev/null"
             if analyzer_os != "windows"
-            else f'powershell -Command "Get-Disk | Format-List; Get-Partition | Format-List"'
+            else 'powershell -Command "Get-Disk | Format-List; Get-Partition | Format-List"'
         ),
     }
 

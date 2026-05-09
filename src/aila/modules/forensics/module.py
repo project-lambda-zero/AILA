@@ -307,7 +307,7 @@ class ForensicsModule(ModuleProtocol):
                         if "aila-health-probe" in output:
                             return {"status": "up", "detail": f"SSH reachable: {system.name} ({system.host})"}
                         last_error = f"unexpected output: {output.strip()[:80]}"
-                    except Exception as exc:
+                    except (OSError, TimeoutError, ConnectionError, RuntimeError, ValueError) as exc:
                         last_error = f"{type(exc).__name__}: {exc}"
                         _log.debug("forensics.ssh_reachability: %s (%s) — %s", system.name, system.host, last_error)
 
@@ -317,7 +317,7 @@ class ForensicsModule(ModuleProtocol):
                     "detail": f"SSH probe failed on all {len(systems)} forensics system(s). Last: {last_error}",
                 }
 
-            except Exception as exc:
+            except (OSError, TimeoutError, ConnectionError, RuntimeError, ValueError) as exc:
                 detail = f"Health probe error: {type(exc).__name__}: {exc}"
                 _log.warning("forensics.ssh_reachability outer: %s", detail)
                 return {"status": "degraded", "detail": detail}

@@ -334,9 +334,8 @@ def _walk_string_values(
     elif isinstance(data, str):
         if data and not _path_is_scanner_metadata(path):
             out.append((path, data))
-    elif isinstance(data, (int, float, bool)):
-        if not _path_is_scanner_metadata(path):
-            out.append((path, str(data)))
+    elif isinstance(data, (int, float, bool)) and not _path_is_scanner_metadata(path):
+        out.append((path, str(data)))
     return out
 
 

@@ -328,9 +328,8 @@ def _is_stub_body(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     stmts = func.body
     if len(stmts) == 1:
         stmt = stmts[0]
-        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
-            if stmt.value.value is ...:
-                return True
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and stmt.value.value is ...:
+            return True
     return False
 
 
@@ -461,9 +460,12 @@ def _parameter_is_framework_used(
     decorator_ids = _decorator_identifiers(func)
     arg_map = _parameter_arg_map(func)
     arg_node = arg_map.get(param_name)
-    if param_name == "request" and _is_request_annotation(arg_node.annotation if arg_node else None):
-        if "limit" in decorator_ids or func.name.endswith("_handler"):
-            return True
+    if (
+        param_name == "request"
+        and _is_request_annotation(arg_node.annotation if arg_node else None)
+        and ("limit" in decorator_ids or func.name.endswith("_handler"))
+    ):
+        return True
 
     if param_name == "ctx":
         return True
@@ -709,9 +711,8 @@ class _HonestyVisitor(ast.NodeVisitor):
         # Build a map of param_name → annotation_type_name
         typed_params: dict[str, str] = {}
         for arg in list(func.args.args) + list(func.args.kwonlyargs):
-            if arg.annotation and isinstance(arg.annotation, ast.Name):
-                if arg.annotation.id in _TYPED_BUILTINS:
-                    typed_params[arg.arg] = arg.annotation.id
+            if arg.annotation and isinstance(arg.annotation, ast.Name) and arg.annotation.id in _TYPED_BUILTINS:
+                typed_params[arg.arg] = arg.annotation.id
 
         if not typed_params:
             return
@@ -754,10 +755,13 @@ class _HonestyVisitor(ast.NodeVisitor):
                     branch_count += 1
                 # Check normalized_action pattern
                 for name_node in ast.walk(node):
-                    if isinstance(name_node, ast.Name) and "action" in name_node.id.lower():
-                        if any(isinstance(c, ast.Constant) and isinstance(c.value, str) for c in node.comparators):
-                            branch_count += 1
-                            break
+                    if (
+                        isinstance(name_node, ast.Name)
+                        and "action" in name_node.id.lower()
+                        and any(isinstance(c, ast.Constant) and isinstance(c.value, str) for c in node.comparators)
+                    ):
+                        branch_count += 1
+                        break
 
         # CRUD tools (upsert/list/get/delete on one resource) are acceptable
         # at 3-5 branches. Flag only when branches exceed 6 — indicating
@@ -781,14 +785,17 @@ class _HonestyVisitor(ast.NodeVisitor):
                 if not isinstance(node.value, (ast.List, ast.Tuple)):
                     continue
                 for elt in node.value.elts:
-                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                        if elt.value.startswith("_"):
-                            self._emit(
-                                elt.lineno if hasattr(elt, "lineno") else node.lineno,
-                                "private_in_all",
-                                f"'__all__' exports private name '{elt.value}' — "
-                                f"underscore prefix contradicts public API declaration",
-                            )
+                    if (
+                        isinstance(elt, ast.Constant)
+                        and isinstance(elt.value, str)
+                        and elt.value.startswith("_")
+                    ):
+                        self._emit(
+                            elt.lineno if hasattr(elt, "lineno") else node.lineno,
+                            "private_in_all",
+                            f"'__all__' exports private name '{elt.value}' \u2014 "
+                            "underscore prefix contradicts public API declaration",
+                        )
 
     def _check_bare_exception_wrap(self, tree: ast.Module) -> None:
         """Rule: bare_exception_wrap — except Exception that raises a less-specific type."""
@@ -802,16 +809,20 @@ class _HonestyVisitor(ast.NodeVisitor):
                 continue
             # Check if the handler body raises RuntimeError (destroys type info)
             for stmt in ast.walk(ast.Module(body=node.body, type_ignores=[])):
-                if isinstance(stmt, ast.Raise) and stmt.exc is not None:
-                    if isinstance(stmt.exc, ast.Call) and isinstance(stmt.exc.func, ast.Name):
-                        if stmt.exc.func.id == "RuntimeError":
-                            self._emit(
-                                node.lineno,
-                                "bare_exception_wrap",
-                                f"'except Exception' catches typed errors then raises "
-                                f"RuntimeError — original exception type is destroyed",
-                            )
-                            break
+                if (
+                    isinstance(stmt, ast.Raise)
+                    and stmt.exc is not None
+                    and isinstance(stmt.exc, ast.Call)
+                    and isinstance(stmt.exc.func, ast.Name)
+                    and stmt.exc.func.id == "RuntimeError"
+                ):
+                    self._emit(
+                        node.lineno,
+                        "bare_exception_wrap",
+                        "'except Exception' catches typed errors then raises "
+                        "RuntimeError \u2014 original exception type is destroyed",
+                    )
+                    break
 
     def _check_todo_in_code(self, source: str) -> None:
         """Rule: todo_in_code — TODO/FIXME/HACK/XXX in production source.
@@ -841,9 +852,8 @@ class _HonestyVisitor(ast.NodeVisitor):
         # Build a set of line ranges for __del__ methods — silent cleanup is standard there.
         del_ranges: set[range] = set()
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name == "__del__":
-                    del_ranges.add(range(node.lineno, node.end_lineno + 1 if node.end_lineno else node.lineno + 50))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "__del__":
+                del_ranges.add(range(node.lineno, node.end_lineno + 1 if node.end_lineno else node.lineno + 50))
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
@@ -882,16 +892,15 @@ class _HonestyVisitor(ast.NodeVisitor):
                 stmt = body[0]
                 if isinstance(stmt, ast.Pass):
                     is_silent = True
-                elif isinstance(stmt, ast.Assign):
+                elif isinstance(stmt, ast.Assign) and isinstance(stmt.value, (ast.Dict, ast.List, ast.Constant)):
                     # bare default assignment like `x = {}` or `x = []` or `x = None`
-                    if isinstance(stmt.value, (ast.Dict, ast.List, ast.Constant)):
-                        is_silent = True
+                    is_silent = True
 
             if is_silent:
                 self._emit(
                     node.lineno,
                     "silent_exception",
-                    f"'except Exception' silently swallows errors with no logging or re-raise",
+                    "'except Exception' silently swallows errors with no logging or re-raise",
                 )
 
     def _check_production_assert(self, tree: ast.Module) -> None:
@@ -905,7 +914,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                 self._emit(
                     node.lineno,
                     "production_assert",
-                    f"'assert' in production code — stripped under python -O, use explicit raise",
+                    "'assert' in production code — stripped under python -O, use explicit raise",
                 )
 
     def _check_do_nothing_wrapper(
@@ -1192,14 +1201,13 @@ class _HonestyVisitor(ast.NodeVisitor):
                             f"asyncio_in_module: '.{attr}()' call — "
                             f"threading belongs to the platform layer, not modules",
                         )
-            elif isinstance(func_node, ast.Name):
-                if func_node.id in _THREAD_CLASS_NAMES:
-                    self._emit(
-                        node.lineno,
-                        "asyncio_in_module",
-                        f"asyncio_in_module: '{func_node.id}()' construction — "
-                        f"threading belongs to the platform layer, not modules",
-                    )
+            elif isinstance(func_node, ast.Name) and func_node.id in _THREAD_CLASS_NAMES:
+                self._emit(
+                    node.lineno,
+                    "asyncio_in_module",
+                    f"asyncio_in_module: '{func_node.id}()' construction \u2014 "
+                    "threading belongs to the platform layer, not modules",
+                )
 
     def _check_http_client_in_module(self, tree: ast.Module) -> None:
         """Rule 22: http_client_in_module — direct HTTP client imports in modules/.
@@ -1315,8 +1323,8 @@ class _HonestyVisitor(ast.NodeVisitor):
             self._emit(
                 lineno,
                 "commented_out_code",
-                f"commented_out_code: line looks like commented-out Python — "
-                f"delete dead code instead of commenting it out",
+                "commented_out_code: line looks like commented-out Python — "
+                "delete dead code instead of commenting it out",
             )
 
     def _check_except_return_default(self, tree: ast.Module) -> None:
@@ -1342,8 +1350,8 @@ class _HonestyVisitor(ast.NodeVisitor):
                 self._emit(
                     node.lineno,
                     "except_return_default",
-                    f"except_return_default: except returns empty default — "
-                    f"this silently hides failures; log or propagate instead",
+                    "except_return_default: except returns empty default — "
+                    "this silently hides failures; log or propagate instead",
                 )
 
     def _check_nested_if_collapsible(self, tree: ast.Module) -> None:
@@ -1360,8 +1368,8 @@ class _HonestyVisitor(ast.NodeVisitor):
                 self._emit(
                     node.lineno,
                     "nested_if_collapsible",
-                    f"nested_if_collapsible: nested if with no else on either branch "
-                    f"— combine with 'and' for readability",
+                    "nested_if_collapsible: nested if with no else on either branch "
+                    "— combine with 'and' for readability",
                 )
 
     def _check_pointless_pass(self, tree: ast.Module) -> None:
@@ -1411,8 +1419,8 @@ class _HonestyVisitor(ast.NodeVisitor):
                 self._emit(
                     node.lineno,
                     "f_string_no_interpolation",
-                    f"f_string_no_interpolation: f-string has no interpolated expressions "
-                    f"\u2014 use a plain string instead",
+                    "f_string_no_interpolation: f-string has no interpolated expressions "
+                    "\u2014 use a plain string instead",
                 )
 
     def _check_single_use_variable(self, tree: ast.Module) -> None:
@@ -1508,8 +1516,8 @@ class _HonestyVisitor(ast.NodeVisitor):
             self._emit(
                 node.lineno,
                 "broad_exception_catch",
-                f"broad_exception_catch: 'except Exception' catches everything indiscriminately "
-                f"— catch specific exception types",
+                "broad_exception_catch: 'except Exception' catches everything indiscriminately "
+                "— catch specific exception types",
             )
 
     def _check_response_model_dict(self, tree: ast.Module) -> None:
@@ -1585,10 +1593,9 @@ class _HonestyVisitor(ast.NodeVisitor):
                     if dec.func.attr in {"get", "post", "put", "delete", "patch"}:
                         is_endpoint = True
                         break
-                elif isinstance(dec, ast.Attribute):
-                    if dec.attr in {"get", "post", "put", "delete", "patch"}:
-                        is_endpoint = True
-                        break
+                elif isinstance(dec, ast.Attribute) and dec.attr in {"get", "post", "put", "delete", "patch"}:
+                    is_endpoint = True
+                    break
 
             if not is_endpoint:
                 continue

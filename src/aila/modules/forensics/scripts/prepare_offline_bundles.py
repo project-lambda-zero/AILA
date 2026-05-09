@@ -77,7 +77,7 @@ def _download(url: str, dest: Path) -> bool:
     except urllib.error.HTTPError as exc:
         _err(f"HTTP {exc.code} downloading {url}")
         return False
-    except Exception as exc:
+    except (urllib.error.URLError, OSError, ConnectionError, TimeoutError) as exc:
         _err(f"Download failed for {url}: {exc}")
         return False
 
@@ -95,7 +95,7 @@ def _get_github_latest_asset_url(api_url: str, pattern: str) -> str | None:
             name: str = asset["name"]
             if all(p in name.lower() for p in pattern.lower().split("*")):
                 return asset["browser_download_url"]
-    except Exception as exc:
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TimeoutError) as exc:
         _err(f"GitHub API query failed ({api_url}): {exc}")
     return None
 
@@ -114,7 +114,7 @@ def _prepare_pip_wheels(package: str, target_os: str) -> bool:
     _log(f"  pip download {package} to {wheels_dir}")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
-        _log(f"  [warn] platform-specific pip download failed - retrying without platform flags")
+        _log("  [warn] platform-specific pip download failed - retrying without platform flags")
         cmd_fallback = ["pip", "download", "--dest", str(wheels_dir), package]
         result = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:

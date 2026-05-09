@@ -2157,7 +2157,7 @@ def create_forensics_router() -> APIRouter:
                     if event.get("stage"):
                         latest_stage = event["stage"]
                 resume_from = "$"
-            except Exception as exc:
+            except (RuntimeError, OSError, TimeoutError, ConnectionError) as exc:
                 _log.warning("Investigation SSE catchup failed for %s: %s", task_id, exc)
 
             current_status = await _fetch_inv_status()
@@ -2525,7 +2525,7 @@ def create_forensics_router() -> APIRouter:
         local_tmp = _Path(fd.name)
         try:
             await ssh.download_file(integration, remote_path, local_tmp, timeout_seconds=600.0)
-        except Exception as exc:
+        except (OSError, TimeoutError, ConnectionError, RuntimeError) as exc:
             try:
                 local_tmp.unlink()
             except OSError:

@@ -2223,7 +2223,7 @@ class HonestInvestigator:
             ('RegistryHive(', 't.registry.key(', 'Do not open raw regf hives. Use t.registry.key(path)'),
         ]
         for bad, good, explanation in _dissect_mistakes:
-            if bad in script_content and f'Target.open(' not in script_content.split(bad)[0][-20:] if bad == 'Target(' else True:
+            if bad in script_content and 'Target.open(' not in script_content.split(bad)[0][-20:] if bad == 'Target(' else True:
                 msg = f'API mistake: found `{bad}` — {explanation}. Use `{good}` instead.'
                 _log.warning('script API lint for investigation %s: %s', self.investigation_id, msg)
                 return {'stdout': '', 'stderr': msg, 'exit_code': 1}

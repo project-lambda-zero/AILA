@@ -212,7 +212,7 @@ async def assign_system_tag(
     body: TagAssignRequest,
     auth: AuthContext = Depends(_require_operator),
 ) -> DataEnvelope[TagResponse]:
-    """Assign a tag to a system."""
+    """Attach a vocabulary tag to the system, creating the row if absent."""
     async with async_session_scope() as session:
         sys_record = await session.get(ManagedSystemRecord, system_id)
         if sys_record is None:

@@ -115,7 +115,7 @@ class ScriptExecutorTool(Tool):
                 "exit_code": 0,
                 "script_hash": script_hash,
             }
-        except Exception as exc:
+        except (OSError, TimeoutError, ConnectionError, RuntimeError) as exc:
             return {
                 "stdout": "",
                 "stderr": str(exc),

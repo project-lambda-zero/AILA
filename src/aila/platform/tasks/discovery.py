@@ -52,7 +52,7 @@ _CMD_CONNECTIONS = "ss -tnp"
 _CMD_SERVICES = "systemctl list-units --type=service --state=running --no-pager --plain"
 
 # Phase 176d: per-system metadata probes. Each command is hardcoded and runs
-# with a tight timeout so a single slow host cannot stall the scan.
+# under a tight timeout so a single slow host cannot stall the scan.
 _CMD_IP_ROUTE = "ip route show default"
 _CMD_OS_RELEASE = "cat /etc/os-release"
 _CMD_UNAME_R = "uname -r"
@@ -581,13 +581,15 @@ async def _collect_system_metadata(
 
     raw_ext_ip = external_ip_out.strip().splitlines()[-1] if external_ip_out.strip() else ""
     external_ip: str | None = None
-    if raw_ext_ip and raw_ext_ip.lower() != "unknown":
+    if (
+        raw_ext_ip
+        and raw_ext_ip.lower() != "unknown"
         # Guard against HTML error pages leaking through: only accept values
         # that look like plausible IPs (digits/colons/dots, <= 45 chars).
-        if len(raw_ext_ip) <= 45 and all(
-            c.isdigit() or c in ".:abcdefABCDEF" for c in raw_ext_ip
-        ):
-            external_ip = raw_ext_ip
+        and len(raw_ext_ip) <= 45
+        and all(c.isdigit() or c in ".:abcdefABCDEF" for c in raw_ext_ip)
+    ):
+        external_ip = raw_ext_ip
 
     return {
         "gateway_ip": gateway_ip,

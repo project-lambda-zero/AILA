@@ -136,7 +136,7 @@ class WorkflowRunRecord(TeamScopedMixin, SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
     completed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     # Phase 178 (D-07, D-38): nullable JSONB column holding the frozen plan
-    # for a run.  Populated by Phase 179's @platform_task wrapper; Phase 178
+    # belonging to a run.  Populated by Phase 179's @platform_task wrapper; Phase 178
     # adds only the column (migration 025).
     plan_json: dict[str, Any] | None = Field(
         default=None,

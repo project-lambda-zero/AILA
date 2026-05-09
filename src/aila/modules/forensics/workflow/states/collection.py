@@ -137,8 +137,8 @@ async def state_collection(
 
     # Pre-fetch every (source_evidence_id, artifact_type, source_tool) tuple
     # already persisted for this project so we skip queries that have results
-    # from a prior run. Incremental collection is the rule — "full analysis
-    # from scratch" is only what the very first run does.
+    # carried over from a prior run. Incremental collection is the rule —
+    # "full analysis from scratch" is only what the very first run does.
     async with UnitOfWork() as uow_prefetch:
         existing_rows = (await uow_prefetch.session.exec(
             _select(
@@ -191,7 +191,7 @@ async def state_collection(
             # Pre-flight reachability check. Fails the single file with a
             # clear actionable diagnostic instead of letting every tool
             # invocation (vol, dissect, tshark, ...) independently fail
-            # with a cryptic ``drive not found`` / ``no such file``.
+            # describing a cryptic ``drive not found`` / ``no such file``.
             if ssh is not None:
                 ok, diag = await _evidence_is_reachable(ssh, integration, path, analyzer_os)
                 if not ok:
@@ -240,7 +240,7 @@ async def state_collection(
 
             try:
                 # memory collector needs project_id to evaluate directives
-                # for Tier 3 (credential-extraction) gating. Other lanes
+                # explanation: Tier 3 (credential-extraction) gating. Other lanes
                 # don't accept the kwarg.
                 if lane == "memory":
                     await collector(

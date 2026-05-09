@@ -206,7 +206,7 @@ async def run_resolution(session_id: str) -> None:
                 )
                 if attempt < MAX_RETRIES:
                     _log.info("_run_resolution_async: retrying (attempt %d)", attempt + 2)
-            except Exception as exc:
+            except (RuntimeError, ValueError, OSError) as exc:
                 last_error = str(exc)
                 _log.error(
                     "_run_resolution_async: LLM error (attempt %d/%d) for session %r: %s",

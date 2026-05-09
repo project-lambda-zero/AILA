@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 # Platform config constants — public re-exports for modules
 #
 # Modules that need to look up platform config keys (e.g. redis_url) must
-# import these from aila.platform.contracts.platform, NOT from
+# obtain them via aila.platform.contracts.platform, NOT via
 # aila.platform.tasks.constants which is a platform-internal module.
 # ---------------------------------------------------------------------------
 

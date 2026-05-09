@@ -380,7 +380,7 @@ async def _load_artefacts_by_family(project_id: str) -> dict[str, list[dict[str,
                 "data": payload_obj,
             })
         return dict(grouped)
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         _log.warning("Failed to load artefacts_by_family for %s", project_id, exc_info=True)
         return {}
 
