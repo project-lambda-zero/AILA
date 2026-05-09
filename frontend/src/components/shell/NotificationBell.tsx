@@ -14,7 +14,7 @@
  * Per T-138-18: all queries are user-scoped on the backend.
  * Per D-12 (146-CONTEXT): polling removed, SSE invalidation drives updates.
  */
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check } from "@phosphor-icons/react";
 

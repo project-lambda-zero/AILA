@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { Palette, SignOut, User, Sun, Moon } from "@phosphor-icons/react";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";

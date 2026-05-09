@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { fetchOidcAuthorizeUrl } from "@platform/api/auth";

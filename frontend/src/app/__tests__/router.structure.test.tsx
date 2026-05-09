@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { RouteObject } from "react-router-dom";
+import type { RouteObject } from "react-router";
 import { isValidElement } from "react";
 
 // Load modules for the extension registry return an empty array so the
