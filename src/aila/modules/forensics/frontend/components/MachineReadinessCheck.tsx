@@ -60,7 +60,7 @@ export function MachineReadinessCheck({ readinessResult, isLoading, onRetry, onC
 
         <p className="text-sm text-text-muted">{readinessResult.message}</p>
 
-        <div className="border border-border rounded-md overflow-hidden">
+        <div className="border border-border rounded-md bg-card text-card-foreground overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-surface-secondary">
               <tr>

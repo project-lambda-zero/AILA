@@ -43,7 +43,7 @@ function ConfidenceSelector({
   onChange: (c: Confidence) => void;
 }) {
   return (
-    <div className="flex items-center text-xs border border-border rounded overflow-hidden">
+    <div className="flex items-center text-xs border border-border rounded bg-card text-card-foreground overflow-hidden">
       {(["low", "medium", "high"] as Confidence[]).map((c) => (
         <button
           key={c}
@@ -242,7 +242,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
             </p>
           </AilaCard>
         ) : (
-          <div className="border border-border rounded-lg overflow-hidden">
+          <div className="border border-border rounded-lg overflow-hidden bg-card text-card-foreground">
             <div className="overflow-y-auto max-h-[500px]">
               <table className="w-full text-xs">
                 <thead className="bg-surface-secondary sticky top-0 z-10">
@@ -356,7 +356,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
             </p>
           </AilaCard>
         ) : (
-          <div className="border border-border rounded-lg overflow-hidden">
+          <div className="border border-border rounded-lg overflow-hidden bg-card text-card-foreground">
             <div className="overflow-y-auto max-h-[500px]">
               <table className="w-full text-xs">
                 <thead className="bg-surface-secondary sticky top-0 z-10">
