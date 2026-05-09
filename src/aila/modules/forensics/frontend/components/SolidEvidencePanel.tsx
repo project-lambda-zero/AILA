@@ -84,7 +84,7 @@ export function SolidEvidencePanel({ projectId }: Props) {
         <span className="text-emerald-400">TRUE: {trueCount}</span>
         <span className="text-amber-400">FALSE: {falseCount}</span>
       </div>
-      <div className="rounded-md border border-border overflow-hidden">
+      <div className="rounded-md border border-border overflow-hidden bg-card text-card-foreground">
         <table className="w-full text-sm">
           <thead className="bg-surface-secondary text-xs text-text-muted">
             <tr>
