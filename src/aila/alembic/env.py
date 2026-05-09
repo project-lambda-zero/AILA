@@ -12,13 +12,20 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
 
+from aila._dotenv import load_project_env as _load_project_env
+
+_load_project_env()
+
 # --- Import ALL models so SQLModel.metadata is complete (per D-07) ---
 # Platform models
 from aila.storage import db_models as _platform_models  # noqa: F401
 
-# Module models — add new modules here as they are created
+# Module models — add new modules here as they are created.
+# Every module with DB tables MUST be imported here AND in scripts/db_init.py,
+# otherwise create_all/autogenerate won't see those tables.
 from aila.modules.vulnerability import db_models as _vuln_models  # noqa: F401
 from aila.modules.sbd_nfr import db_models as _sbd_models  # noqa: F401
+from aila.modules.forensics import db_models as _forensics_models  # noqa: F401
 
 target_metadata = SQLModel.metadata
 

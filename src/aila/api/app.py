@@ -24,6 +24,10 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from aila._dotenv import load_project_env as _load_project_env
+
+_load_project_env()
+
 from aila.api.constants import ROLE_ADMIN
 from aila.api.limiter import limiter
 from aila.config import get_settings
