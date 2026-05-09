@@ -476,7 +476,7 @@ class OfflineInstallerService:
                 return actual
             gz_fallback = Path(str(archive_path).replace(".tar.gz", ".tar.gz"))
             return gz_fallback if gz_fallback.exists() else None
-        except (OSError, IOError):
+        except OSError:
             _log.error("Failed to pack directory %s", directory, exc_info=True)
             return None
 

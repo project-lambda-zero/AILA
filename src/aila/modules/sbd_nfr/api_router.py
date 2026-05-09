@@ -44,6 +44,7 @@ import logging
 import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator
+from datetime import UTC
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
@@ -486,12 +487,12 @@ async def get_schema_version(
             .limit(1)
         )).first()
         if row is None:
-            from datetime import datetime, timezone
+            from datetime import datetime
             return SchemaVersionResponse(
                 version=0,
                 change_summary="",
                 changed_by="",
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
             )
         version, change_summary, changed_by, created_at = row
         return SchemaVersionResponse(
@@ -1437,8 +1438,8 @@ async def save_as_template(
 
     Only the session owner or admin may save a session as a template.
     """
-    from sqlmodel import select as sa_select
     from sqlalchemy import update as sa_update
+    from sqlmodel import select as sa_select
 
     from aila.platform.contracts._common import utc_now
 

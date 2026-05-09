@@ -137,7 +137,7 @@ class HelloWorldModule(ModuleProtocol):
         del filters
         return list(rows)
 
-    async def seed_data(self, session: "Any") -> None:
+    async def seed_data(self, session: Any) -> None:
         """Seed initial data for this module. Called once after create_all().
 
         Idempotent: checks SeedVersionRecord before inserting. Hello_world
@@ -165,7 +165,7 @@ class HelloWorldModule(ModuleProtocol):
             session.add(existing)
         await session.commit()
 
-    async def system_summary(self, system_id: int, session: "Any") -> dict[str, Any]:
+    async def system_summary(self, system_id: int, session: Any) -> dict[str, Any]:
         """Return module-contributed dashboard data for a system.
 
         Args:
@@ -178,7 +178,7 @@ class HelloWorldModule(ModuleProtocol):
         del system_id, session
         return {}
 
-    async def report_count(self, run_id: str, session: "Any") -> dict[str, Any]:
+    async def report_count(self, run_id: str, session: Any) -> dict[str, Any]:
         """Return semantic count breakdown for a report.
 
         Args:

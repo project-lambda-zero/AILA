@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from aila.platform.contracts._common import JsonObject
 from aila.platform.contracts.runtime import PlatformResponse
@@ -14,7 +14,7 @@ from aila.platform.contracts.runtime import PlatformResponse
 __all__ = ["HelloWorldWorkflow"]
 
 
-class HelloWorldStage(str, Enum):
+class HelloWorldStage(StrEnum):
     """Lifecycle stages for the hello_world workflow."""
 
     PREPARE = "prepare"

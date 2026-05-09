@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Protocol, TypeVar, runtime_checkable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel
-
 
 _T = TypeVar("_T", bound=SQLModel)
 

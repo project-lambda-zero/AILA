@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from aila.platform.services.factory import ServiceFactory
@@ -199,7 +199,7 @@ async def build_writeup(
 
     artifacts_referenced = [s.get("primary_artifact_id") for s in steps if s.get("primary_artifact_id")]
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     title = f"Investigation: {question[:80]}" if question else f"Analysis Report — {timestamp}"
 
     return {
@@ -342,7 +342,7 @@ def _section_case_header(
         lines.append(f"evidence_domain: {contract.get('evidence_domain','-')}")
     lines.append(f"tools_used: {', '.join(tools_used) or '-'}")
     lines.append(f"step_count: {step_count}")
-    lines.append(f"report_generated_utc: {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
+    lines.append(f"report_generated_utc: {datetime.now(UTC).isoformat(timespec='seconds')}")
     return "\n".join(lines)
 
 
@@ -610,7 +610,7 @@ def _build_template_writeup(
     kill-switched / offline write-up still carries the same shape an
     analyst can complete by hand.
     """
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     out: list[str] = []
     out.append("# Forensic Investigation Report")
     out.append(f"*Generated {timestamp} — LLM unavailable, template fallback.*")

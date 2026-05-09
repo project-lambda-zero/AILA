@@ -13,7 +13,6 @@ State machine (server-side enforcement):
 """
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 
@@ -21,9 +20,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlmodel import select
 
-from aila.api.limiter import limiter
 from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_OPERATOR
+from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import (
     ALL_STATES,
     VALID_TRANSITIONS,

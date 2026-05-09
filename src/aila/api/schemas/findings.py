@@ -114,7 +114,7 @@ class BulkStatusUpdateRequest(APIModel):
     )
 
     @model_validator(mode="after")
-    def _validate_fields(self) -> "BulkStatusUpdateRequest":
+    def _validate_fields(self) -> BulkStatusUpdateRequest:
         if self.status is None and self.workflow_state is None:
             raise ValueError("At least one of 'status' or 'workflow_state' must be provided")
         if self.status is not None and self.status not in BULK_ALLOWED_STATUSES:
@@ -145,7 +145,7 @@ class FindingFeedbackRequest(APIModel):
     notes: str = Field(default="", description="Optional free-text notes (max 500 chars)")
 
     @model_validator(mode="after")
-    def _validate_reason(self) -> "FindingFeedbackRequest":
+    def _validate_reason(self) -> FindingFeedbackRequest:
         if self.reason not in FEEDBACK_ALLOWED_REASONS:
             raise ValueError(f"reason must be one of {FEEDBACK_ALLOWED_REASONS}")
         if len(self.notes) > 500:

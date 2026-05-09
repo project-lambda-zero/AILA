@@ -13,14 +13,11 @@ to ensure auth is applied at router level — no per-route drift (RESEARCH Pitfa
 """
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from starlette.requests import Request
 from sqlmodel import select
-
-from aila.api.limiter import limiter
+from starlette.requests import Request
 
 from aila.api.auth import (
     AuthContext,
@@ -45,6 +42,7 @@ from aila.api.constants import (
     TOKEN_TYPE_BEARER,
     VALID_ROLES,
 )
+from aila.api.limiter import limiter
 from aila.api.schemas.auth import (
     ApiKeyCreateRequest,
     ApiKeyCreateResponse,

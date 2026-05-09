@@ -38,13 +38,13 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, R
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
-from aila.api.limiter import limiter
 from aila.api.auth import (
     issue_user_jwt,
     issue_user_refresh_token,
     require_role,
 )
 from aila.api.constants import JWT_ALGORITHM, ROLE_ADMIN
+from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import OIDCAuthorizeResponse
 from aila.api.schemas.envelope import DataEnvelope
 from aila.api.schemas.users import TokenResponse

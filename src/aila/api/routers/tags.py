@@ -8,14 +8,13 @@ Per D-31: slowapi rate limiting.
 """
 from __future__ import annotations
 
-
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
-from aila.api.limiter import limiter
 from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN, ROLE_OPERATOR
+from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import TagAssignRequest, TagResponse, TagVocabCreate, TagVocabResponse
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.storage.database import async_session_scope

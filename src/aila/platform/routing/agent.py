@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -25,7 +25,7 @@ def _register_agent_schema(agent_name: str, model_cls: type[BaseModel]) -> None:
     entry = {
         "schema_name": model_cls.__name__,
         "schema_hash": schema_hash,
-        "registered_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "registered_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     _AGENT_SCHEMA_REGISTRY.setdefault(agent_name, [])
     existing_hashes = {e["schema_hash"] for e in _AGENT_SCHEMA_REGISTRY[agent_name]}

@@ -69,12 +69,12 @@ def _build_registry_command(
     if hive and not registry_key:
         effective_key = _HIVE_ROOTS.get(hive.upper())
 
-    _NAV_BUILDERS = {
+    _nav_builders = {
         "list_keys": lambda: _list_keys(py, evidence, effective_key),
         "read_value": lambda: _read_value(py, evidence, effective_key or _require("registry_key")),
         "search": lambda: _search(py, evidence, search_pattern or _require("search_pattern")),
     }
-    builder = _NAV_BUILDERS.get(action)
+    builder = _nav_builders.get(action)
     if builder is None:
         raise ValueError(f"Unknown registry action '{action}'. Supported: {_ACTIONS}.")
     return builder()

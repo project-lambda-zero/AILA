@@ -77,8 +77,9 @@ async def state_resolution(
 
     if question_families:
         try:
-            from aila.modules.forensics.agents.resolver_agent import ResolverAgent
             import time as _time
+
+            from aila.modules.forensics.agents.resolver_agent import ResolverAgent
 
             resolver = ResolverAgent(services.settings, project_id)
             families_to_try = sorted(question_families)[:10]

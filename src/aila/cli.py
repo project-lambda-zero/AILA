@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -16,12 +17,11 @@ from ._dotenv import load_project_env as _load_project_env
 _load_project_env()
 
 __all__ = ["app", "main"]
+import sqlalchemy.exc
 from sqlmodel import delete as sqlmodel_delete
 from sqlmodel import select as sqlmodel_select
 
 from .config import get_settings
-from .storage.provider_config import ProviderConfigStore
-from .storage.secrets import SecretStore
 from .logging import configure_logging, get_logger
 from .modules.vulnerability.config_schema import VulnerabilityConfigSchema
 from .modules.vulnerability.contracts import (
@@ -60,9 +60,9 @@ from .modules.vulnerability.tools.what_if import what_if_patch as _what_if_patch
 from .modules.vulnerability.workflow.planning import resolve_dry_run_targets
 from .platform.config import PlatformConfigSchema, build_platform_settings
 from .platform.contracts.platform import ProgressUpdate, SSHIntegrationInput
+from .platform.exceptions import AILAError
 from .platform.modules import load_builtin_modules
 from .platform.routing import get_agent_stats, get_registered_schemas
-from .platform.exceptions import AILAError
 from .platform.runtime import AILAPlatform
 from .platform.runtime.tools import ToolRegistry
 from .platform.services.audit import record_audit_event
@@ -81,9 +81,9 @@ from .platform.tools import (
     SSHCommandTool,
     SystemRegistryTool,
 )
-import sqlalchemy.exc
-
 from .storage.database import async_session_scope, backup_database, init_db
+from .storage.provider_config import ProviderConfigStore
+from .storage.secrets import SecretStore
 
 
 def _run_async(coro):
@@ -143,10 +143,8 @@ def session_scope(settings=None):
         loop.run_until_complete(ctx.__aexit__(None, None, None))
         loop.close()
 from .storage.db_models import AuditEventRecord, ManagedSystemRecord, ReportArtifactRecord
-from .storage.provider_config import ProviderConfigStore
 from .storage.registry import ConfigRegistry
 from .storage.report_repository import ReportRepository
-from .storage.secrets import SecretStore
 
 app = typer.Typer(add_completion=False)
 
@@ -290,13 +288,13 @@ def worker_start(
     Example:
         aila worker --queue vulnerability_scan
     """
-    import arq
-
-    from aila.platform.tasks.worker import WorkerSettings, reaper
-
     # Resolve Redis URL: CLI arg > env var > safe IPv4 fallback
     import os
     from urllib.parse import urlparse
+
+    import arq
+
+    from aila.platform.tasks.worker import WorkerSettings, reaper
     _resolved_url = redis_url or os.environ.get("AILA_PLATFORM_REDIS_URL") or "redis://127.0.0.1:6379"
     parsed = urlparse(_resolved_url)
     redis_host = parsed.hostname or "127.0.0.1"
@@ -699,10 +697,10 @@ def _parse_retention_cutoff(retention: str) -> datetime:
     normalized = retention.strip().lower()
     if normalized.endswith("d"):
         days = int(normalized[:-1])
-        return datetime.now(timezone.utc) - timedelta(days=days)
+        return datetime.now(UTC) - timedelta(days=days)
     if normalized.endswith("h"):
         hours = int(normalized[:-1])
-        return datetime.now(timezone.utc) - timedelta(hours=hours)
+        return datetime.now(UTC) - timedelta(hours=hours)
     raise ValueError(
         f"Unrecognised retention format {retention!r}. Use a number followed by 'd' (days) or 'h' (hours), e.g. '30d'."
     )

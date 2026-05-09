@@ -434,11 +434,11 @@ class SbdNfrModule(ModuleProtocol):
         await session.commit()
         _log.info("sbd_nfr: seed_data() complete (schema_version=%d)", schema_version)
 
-    async def system_summary(self, system_id: int, session: "Session") -> dict[str, Any]:
+    async def system_summary(self, system_id: int, session: Session) -> dict[str, Any]:
         del system_id, session
         return {}
 
-    async def report_count(self, run_id: str, session: "Session") -> dict[str, Any]:
+    async def report_count(self, run_id: str, session: Session) -> dict[str, Any]:
         del run_id, session
         return {}
 

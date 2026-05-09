@@ -446,6 +446,7 @@ async def _credential_directive_allows(project_id: str | None) -> tuple[bool, st
         return False, "no_project_id"
     try:
         from sqlmodel import select as _select
+
         from aila.modules.forensics.db_models.directive import AnalystDirectiveRecord
         from aila.platform.uow import UnitOfWork
 

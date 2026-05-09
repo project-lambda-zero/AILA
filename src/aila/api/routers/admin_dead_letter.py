@@ -30,9 +30,9 @@ from datetime import datetime
 from typing import Any
 
 import structlog
-from redis.exceptions import RedisError as _AnyRedisError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
+from redis.exceptions import RedisError as _AnyRedisError
 from sqlalchemy import update as sa_update
 from sqlmodel import select
 

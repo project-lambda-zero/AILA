@@ -23,18 +23,18 @@ import asyncio
 import json
 import logging
 import time as _time_mod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy.exc
-
-from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, RateLimitError
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, RateLimitError
 from pydantic import BaseModel, ValidationError
 
-from .config import LLMConfigProvider
-from .errors import LLMDisabledError, LLMError
-from .pipeline import PipelineRunner
 from ..exceptions import AILAError
+from .config import LLMConfigProvider
+from .errors import LLMError
+from .pipeline import PipelineRunner
 
 if TYPE_CHECKING:
     from ...storage.registry import ConfigRegistry
@@ -81,9 +81,10 @@ def _get_rejection_markers() -> tuple[str, ...]:
         return _resolved_markers
     # 2. Config DB entry
     try:
+        from sqlmodel import select
+
         from aila.storage.database import session_scope
         from aila.storage.db_models import ConfigEntryRecord
-        from sqlmodel import select
         with session_scope() as session:
             row = session.exec(
                 select(ConfigEntryRecord).where(
@@ -762,7 +763,7 @@ class AilaLLMClient:
             kwargs["tools"] = tools
 
         # OBS-02: Instrument the core LLM API call with Prometheus metrics.
-        from aila.api.metrics import LLM_CALL_TOTAL, LLM_CALL_DURATION, LLM_TOKENS_TOTAL
+        from aila.api.metrics import LLM_CALL_DURATION, LLM_CALL_TOTAL, LLM_TOKENS_TOTAL
 
         _metrics_start = _time_mod.perf_counter()
         try:
@@ -903,7 +904,7 @@ class AilaLLMClient:
                 kwargs["response_format"] = response_format
 
             # OBS-02: Instrument tool-loop LLM calls with Prometheus metrics.
-            from aila.api.metrics import LLM_CALL_TOTAL, LLM_CALL_DURATION, LLM_TOKENS_TOTAL
+            from aila.api.metrics import LLM_CALL_DURATION, LLM_CALL_TOTAL, LLM_TOKENS_TOTAL
 
             _tl_start = _time_mod.perf_counter()
             try:

@@ -150,7 +150,7 @@ class AuditLogTool(Tool):
                     statement = statement.where(AuditEventRecord.target == normalized_target)
                 if normalized_user_id:
                     statement = statement.where(AuditEventRecord.user_id == normalized_user_id)
-                records = list((await session.exec(statement.limit(normalized_limit))))
+                records = list(await session.exec(statement.limit(normalized_limit)))
                 return {
                     "count": len(records),
                     "returned": len(records),

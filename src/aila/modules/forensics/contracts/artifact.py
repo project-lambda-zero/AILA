@@ -1,7 +1,7 @@
 """Artifact contract models for the forensics module."""
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,7 +12,7 @@ __all__ = [
 ]
 
 
-class ArtifactFamily(str, Enum):
+class ArtifactFamily(StrEnum):
     """Top-level classification of normalized artifacts."""
 
     HOST = "host"

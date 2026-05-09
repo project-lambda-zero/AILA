@@ -13,16 +13,14 @@ __all__ = ["AutomationRunner"]
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+import sqlalchemy.exc
 from croniter import croniter
 from sqlmodel import select
 
-import sqlalchemy.exc
-
 from aila.platform.automation.models import AutomationScheduleRecord
 from aila.platform.automation.registry import AutomationRegistry
-from aila.platform.contracts._common import utc_now
 from aila.platform.exceptions import AILAError
 from aila.platform.tasks.queue import TaskQueue
 from aila.storage.database import async_session_scope
@@ -45,7 +43,7 @@ class AutomationRunner:
 
     async def tick(self) -> int:
         """Evaluate all enabled schedules. Return count of jobs submitted."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         submitted = 0
 
         async with async_session_scope() as session:

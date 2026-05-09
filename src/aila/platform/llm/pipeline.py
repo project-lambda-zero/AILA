@@ -14,7 +14,8 @@ When no steps are registered, pipeline is a transparent pass-through.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from .config import LLMConfigProvider, LLMRouting
 from .errors import ClassificationBlockedError, ConfidenceRejectedError, LLMError

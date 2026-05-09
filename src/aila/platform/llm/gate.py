@@ -12,18 +12,18 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable, Awaitable, TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from openai import AsyncOpenAI
 
+from ..exceptions import AILAError
 from .config import LLMConfigProvider, LLMRouting
 from .errors import ConfidenceRejectedError
-from ..exceptions import AILAError
 
 if TYPE_CHECKING:
     from ..events.emitter import EventEmitter
-    from .client import LLMResponse
 
 logger = logging.getLogger(__name__)
 

@@ -28,7 +28,6 @@ from .pipeline import PipelineRunner
 from .run_memory import RunMemory
 from .sanitize import register_injection_pattern, sanitize_input, sanitize_output
 from .seal import compute_seal, make_seal_step
-from .verify import make_verify_step
 from .validate import (
     CitationResult,
     EvidenceValidationReport,
@@ -36,6 +35,7 @@ from .validate import (
     ValidationResult,
     make_validate_step,
 )
+from .verify import make_verify_step
 
 # Backwards-compatible alias -- platform code uses "LLMClient" in
 # TYPE_CHECKING blocks.  Points to AilaLLMClient (the only client).

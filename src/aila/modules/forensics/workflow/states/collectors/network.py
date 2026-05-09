@@ -19,7 +19,7 @@ import json
 import logging
 import re
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from aila.modules.forensics.services.pcap_enrich import (
@@ -35,7 +35,6 @@ from aila.modules.forensics.services.pcap_enrich import (
     rank_top,
 )
 from aila.platform.exceptions import AILAError
-
 from aila.platform.services.factory import ServiceFactory
 
 from ._helpers import err_sink, safe_emit, sq
@@ -109,7 +108,7 @@ def _epoch_to_iso(s: str) -> str:
     if not raw:
         return ""
     try:
-        dt = datetime.fromtimestamp(float(raw), tz=timezone.utc)
+        dt = datetime.fromtimestamp(float(raw), tz=UTC)
     except (ValueError, OSError, OverflowError):
         return raw  # preserve whatever tshark gave us rather than losing it
     return dt.isoformat(timespec="microseconds").replace("+00:00", "Z")

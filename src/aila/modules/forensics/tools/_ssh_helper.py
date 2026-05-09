@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import tempfile
 import uuid
-from pathlib import Path
 from typing import Any
 
 from aila.config import Settings

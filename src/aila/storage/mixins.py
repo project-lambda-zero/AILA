@@ -10,8 +10,6 @@ via StorageService.save() auto-stamping (D-07).
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from sqlmodel import Field
 
 
@@ -35,7 +33,7 @@ class TeamScopedMixin:
 
     __allow_unmapped__ = True
 
-    team_id: Optional[str] = Field(
+    team_id: str | None = Field(
         default=None,
         sa_column_kwargs={"nullable": True, "index": True},
     )

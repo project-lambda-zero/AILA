@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from jinja2 import Environment, PackageLoader, select_autoescape
@@ -83,7 +83,7 @@ async def generate_report_html(session_id: str) -> str:
     )
     template = env.get_template("report.html")
 
-    generated_at = datetime.now(timezone.utc)
+    generated_at = datetime.now(UTC)
 
     html_str: str = template.render(
         narrative=narrative,

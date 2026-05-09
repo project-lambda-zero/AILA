@@ -153,6 +153,7 @@ def build_emitter(
             return
         try:
             import os
+
             import redis
 
             from aila.platform.contracts._common import utc_now

@@ -28,7 +28,7 @@ __all__ = [
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 _log = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ async def emit_platform_event(
             "type": event_type,
             "data": data,
             "user_id": user_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     )
     queue = await get_user_queue(user_id)

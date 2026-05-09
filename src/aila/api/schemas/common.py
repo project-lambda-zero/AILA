@@ -42,7 +42,7 @@ class PaginatedResponse(APIModel, Generic[T]):
     items: list[T]
 
     @model_validator(mode="after")
-    def _compute_pages(self) -> "PaginatedResponse[T]":
+    def _compute_pages(self) -> PaginatedResponse[T]:
         """Recompute pages from total and page_size if pages=0 and total > 0."""
         if self.pages == 0 and self.total > 0:
             object.__setattr__(self, "pages", math.ceil(self.total / self.page_size))

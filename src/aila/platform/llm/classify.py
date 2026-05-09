@@ -21,16 +21,16 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .errors import ClassificationBlockedError
 
 if TYPE_CHECKING:
-    from .config import LLMRouting
     from ...storage.registry import ConfigRegistry
     from ..events.emitter import EventEmitter
+    from .config import LLMRouting
 
 logger = logging.getLogger(__name__)
 

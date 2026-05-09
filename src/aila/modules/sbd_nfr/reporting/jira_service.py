@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+
 from fastapi import HTTPException
 from sqlmodel import select
 

@@ -28,12 +28,12 @@ Thread-safety:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import delete, update
-from sqlmodel import select
 from sqlalchemy.exc import IntegrityError
+from sqlmodel import select
 
 from aila.modules.sbd_nfr.contracts.schema import (
     MappingCreateRequest,
@@ -104,7 +104,7 @@ __all__ = [
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 async def _record_activity(

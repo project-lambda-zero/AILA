@@ -18,12 +18,10 @@ from __future__ import annotations
 
 import subprocess
 import threading
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager, contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
-
-from contextlib import contextmanager
 
 from sqlalchemy import create_engine as _create_sync_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -224,7 +222,7 @@ async def backup_database(
     """
     active_settings = settings or get_settings()
     url = active_settings.database_url
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     dest = Path(destination) if destination else Path(f"backups/aila-{timestamp}.dump")
     dest.parent.mkdir(parents=True, exist_ok=True)
     # pg_dump requires a libpq-compatible URL (no +asyncpg driver prefix).

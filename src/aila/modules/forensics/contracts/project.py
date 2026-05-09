@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,14 +16,14 @@ __all__ = [
 ]
 
 
-class AnalyzerOS(str, Enum):
+class AnalyzerOS(StrEnum):
     """Operating system of the analyzer machine."""
 
     LINUX = "linux"
     WINDOWS = "windows"
 
 
-class ProjectKind(str, Enum):
+class ProjectKind(StrEnum):
     """High-level shape of the evidence the project points at.
 
     ``disk_evidence`` is the default: the evidence directory contains
@@ -41,7 +41,7 @@ class ProjectKind(str, Enum):
     RAW_DIRECTORY = "raw_directory"
 
 
-class EvidenceType(str, Enum):
+class EvidenceType(StrEnum):
     """Classification of forensic evidence files."""
 
     DISK_IMAGE = "disk_image"

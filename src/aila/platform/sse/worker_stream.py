@@ -60,7 +60,7 @@ async def stream_from_worker(
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=heartbeat_interval)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield f"data: {json.dumps({'stage': 'heartbeat', 'message': 'working...'})}\n\n"
                 continue
 

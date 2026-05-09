@@ -7,12 +7,13 @@ Ghidra headless function listing (on PE/ELF binaries where Ghidra is
 available on the analyzer machine).
 """
 from __future__ import annotations
-from aila.platform.exceptions import AILAError
 
 import json
 import logging
 import re
 from typing import Any
+
+from aila.platform.exceptions import AILAError
 
 __all__ = ["state_deep_analysis"]
 

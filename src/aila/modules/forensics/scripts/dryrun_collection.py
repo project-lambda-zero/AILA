@@ -21,11 +21,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path
 from typing import Any
 
 from aila.modules.forensics.workflow.states.collectors.disk import (
-    _COMMON_QUERIES, _LINUX_QUERIES, _MACOS_QUERIES, _WINDOWS_QUERIES,
+    _COMMON_QUERIES,
+    _LINUX_QUERIES,
+    _MACOS_QUERIES,
+    _WINDOWS_QUERIES,
     _mark_suspicious,
 )
 
@@ -58,7 +60,7 @@ def _run_dissect_query(disk_path: str, qfunc: str) -> tuple[str, float, int]:
 
 def _parse_and_enrich(qfunc: str, output: str) -> dict[str, Any]:
     """Replay the orchestrator's parse+aggregate+enrich logic on raw output."""
-    MAX_RECORDS = 1000
+    max_records = 1000
     parsed: list[dict[str, Any]] = []
     parse_errors = 0
     total = 0
@@ -88,23 +90,23 @@ def _parse_and_enrich(qfunc: str, output: str) -> dict[str, Any]:
                 exe = exe.get("executable", "<?>")
             slot = by_exe.setdefault(str(exe), {"executable": str(exe), "files_accessed_count": 0})
             slot["files_accessed_count"] += 1
-        records = list(by_exe.values())[:MAX_RECORDS]
+        records = list(by_exe.values())[:max_records]
     elif qfunc == "shellbags":
         by_path: dict[str, dict[str, Any]] = {}
         for rec in parsed:
             p = rec.get("path") or rec.get("full_path") or "<?>"
             slot = by_path.setdefault(str(p), {"path": str(p), "access_count": 0})
             slot["access_count"] += 1
-        records = list(by_path.values())[:MAX_RECORDS]
+        records = list(by_path.values())[:max_records]
     elif qfunc in ("runkeys", "services", "startupinfo", "tasks",
                    "mru.recentdocs", "powershell_history", "recyclebin"):
         for rec in parsed:
             _mark_suspicious(rec, candidate_fields=(
                 "command", "path", "executable", "image_path", "name", "servicedll",
             ))
-        records = parsed[:MAX_RECORDS]
+        records = parsed[:max_records]
     else:
-        records = parsed[:MAX_RECORDS]
+        records = parsed[:max_records]
 
     suspicious = sum(1 for r in records if r.get("suspicious_reasons"))
     return {

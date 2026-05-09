@@ -21,7 +21,6 @@ from uuid import uuid4
 from sqlmodel import select
 
 from aila.platform.contracts._common import utc_now
-from aila.platform.uow import UnitOfWork
 
 from ..contracts.stats import ActivityResponse
 from ..db_models import SbdNfrActivityRecord

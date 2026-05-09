@@ -207,7 +207,7 @@ async def stream_scan_events(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    _TERMINAL_STATUSES = frozenset({
+    _terminal_statuses = frozenset({
         TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.DEAD_LETTER,
     })
 
@@ -247,7 +247,7 @@ async def stream_scan_events(
 
         # Check if task already terminal after catchup
         status, _ = await _fetch_task_state(run_id)
-        if status in _TERMINAL_STATUSES:
+        if status in _terminal_statuses:
             yield f"event: done\ndata: {json.dumps({'status': status})}\n\n"
             return
 
@@ -259,7 +259,7 @@ async def stream_scan_events(
                 # and intel enrichment can run for minutes without emitting
                 # progress; this keeps the UI honest.
                 status, hb = await _fetch_task_state(run_id)
-                if status in _TERMINAL_STATUSES:
+                if status in _terminal_statuses:
                     yield f"event: done\ndata: {json.dumps({'status': status})}\n\n"
                     return
                 hb_age_s: float | None = None

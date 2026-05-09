@@ -304,7 +304,7 @@ class ArtifactSearchTool(Tool):
                 statement = statement.where(ArtifactRecord.target_name == normalized_target_name)
             if normalized_target_host:
                 statement = statement.where(ArtifactRecord.target_host == normalized_target_host)
-            records = list((await session.exec(statement.offset(normalized_offset).limit(normalized_limit))))
+            records = list(await session.exec(statement.offset(normalized_offset).limit(normalized_limit)))
         return {
             "count": len(records),
             "returned": len(records),

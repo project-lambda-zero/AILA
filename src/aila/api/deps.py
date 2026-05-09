@@ -105,6 +105,7 @@ def get_task_queue(module_id: str, request: Request) -> AsyncTaskQueue:
         HTTPException(503): If the platform runtime or config registry is unavailable.
     """
     from fastapi import HTTPException, status
+
     from aila.platform.tasks.queue import TaskQueue
 
     platform: AILAPlatform | None = request.app.state.platform

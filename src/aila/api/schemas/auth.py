@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from aila.api.constants import ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER, TOKEN_TYPE_BEARER
+from aila.api.constants import ROLE_READER, TOKEN_TYPE_BEARER
 
 from .common import APIModel
 
