@@ -79,7 +79,9 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
     ``binary_id`` once upload succeeds). Re-uses an existing analysis if
     the MCP server already has the binary cached (state=READY immediately).
     """
-    upload = ida_bridge.forward(action="upload", file_path=file_path)
+    upload = await asyncio.to_thread(
+        ida_bridge.forward, action="upload", file_path=file_path,
+    )
     if upload.get("status") == "error":
         raise RuntimeError(f"upload failed for {file_path}: {upload.get('error')}")
     binary_id = upload.get("binary_id") or upload.get("id")
@@ -91,7 +93,9 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
     while waited < _POLL_BUDGET_S:
         if upload.get("analysis_ready") or upload.get("state") in ("READY", "INDEXED"):
             return last
-        last = ida_bridge.forward(action="poll_analysis", binary_id=binary_id)
+        last = await asyncio.to_thread(
+            ida_bridge.forward, action="poll_analysis", binary_id=binary_id,
+        )
         if last.get("status") == "error":
             raise RuntimeError(f"poll_analysis error: {last.get('error')}")
         if last.get("analysis_ready") or last.get("state") in ("READY", "INDEXED"):
@@ -136,8 +140,8 @@ async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
         patched_meta = await _upload_and_wait(services.ida_bridge, str(patched_path))
         patched_binary_id = str(patched_meta.get("binary_id") or "") or None
 
-    checksec_result = services.ida_bridge.forward(
-        action="checksec", binary_id=binary_id,
+    checksec_result = await asyncio.to_thread(
+        services.ida_bridge.forward, action="checksec", binary_id=binary_id,
     )
     mitigations: dict[str, Any] = {}
     if checksec_result.get("status") == "ready":
