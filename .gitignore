@@ -29,6 +29,17 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 
+# pnpm workspace
+.pnpm-store/
+src/aila/modules/*/frontend/node_modules/
+packages/*/node_modules/
+
+# Vite caches anywhere in the workspace
+**/.vite/
+
+# Storybook static output
+storybook-static/
+
 
 # Runtime artifacts
 scratch/

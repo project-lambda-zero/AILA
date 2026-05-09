@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { isAllowedRole } from "@platform/auth/roles";

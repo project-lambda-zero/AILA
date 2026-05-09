@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { useRecentlyViewed } from "@/hooks/useRecentlyViewed";
 import { useSidebar } from "@/components/ui/sidebar";

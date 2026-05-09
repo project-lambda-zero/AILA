@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { CheckCircle, Desktop, Crosshair, ArrowRight } from "@phosphor-icons/react";
 
 import {

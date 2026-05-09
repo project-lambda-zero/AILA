@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router";
 
 import { exchangeOidcCode } from "@platform/api/auth";
 import { useAuthStore } from "@platform/auth/useAuthStore";
