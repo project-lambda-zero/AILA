@@ -13,7 +13,9 @@ from .finding import (
     VRFinding,
 )
 from .project import (
+    InputSource,
     TargetClass,
+    TargetFormat,
     VRProjectCreate,
     VRProjectStatus,
     VRProjectSummary,
@@ -26,8 +28,10 @@ __all__ = [
     "CrashSignature",
     "CrashType",
     "DisclosureStatus",
+    "InputSource",
     "PoCResult",
     "TargetClass",
+    "TargetFormat",
     "VRAdvisory",
     "VRFinding",
     "VRProjectCreate",
