@@ -27,6 +27,8 @@ COLORS = {
     "worker":   "\033[93m",   # yellow
     "vuln":     "\033[91m",   # red
     "forensic": "\033[92m",   # green
+    "sbd":      "\033[94m",   # blue
+    "vr":       "\033[33m",   # dark yellow
 }
 RESET = "\033[0m"
 
@@ -89,7 +91,7 @@ def main() -> int:
     )
 
     # 5. Start workers
-    for name, queue in [("worker", "default"), ("vuln", "vulnerability"), ("forensic", "forensics")]:
+    for name, queue in [("worker", "default"), ("vuln", "vulnerability"), ("forensic", "forensics"), ("sbd", "sbd_nfr"), ("vr", "vr")]:
         cmd = [sys.executable, "-m", "aila", "worker"]
         if queue != "default":
             cmd += ["-q", queue]
@@ -97,10 +99,10 @@ def main() -> int:
 
     # 6. Wait — Ctrl+C kills all
     print(f"\n\033[97m{'='*60}")
-    print(f"  AILA running — 5 services")
+    print(f"  AILA running \u2014 7 services")
     print(f"  Backend:  http://localhost:8000")
     print(f"  Frontend: http://localhost:3000")
-    print(f"  Workers:  default, vulnerability, forensics")
+    print(f"  Workers:  default, vulnerability, forensics, sbd_nfr, vr")
     print(f"  Press Ctrl+C to stop everything")
     print(f"{'='*60}{RESET}\n")
 
