@@ -119,7 +119,7 @@ export function RegistryViewer({ projectId }: { projectId: string }) {
       </div>
 
       {/* Data display */}
-      <div className="border border-border rounded-b-lg">
+      <div className="border border-border rounded-b-lg bg-surface text-foreground">
         {activeData.length === 0 ? (
           <div className="py-12 text-center">
             <p className="text-sm text-text-muted">

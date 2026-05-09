@@ -146,7 +146,7 @@ function AilaChart({
   if (type === "bar") {
     return (
       <div className={containerClass} role="img" aria-label={ariaLabel ?? `Bar chart: ${dataKey}`}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
           <BarChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid {...GRID_STYLE} />
             <XAxis dataKey={xKey} tick={AXIS_STYLE} axisLine={{ stroke: "var(--color-border)" }} tickLine={false} />
@@ -163,7 +163,7 @@ function AilaChart({
   if (type === "line") {
     return (
       <div className={containerClass} role="img" aria-label={ariaLabel ?? `Line chart: ${dataKey}`}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
           <LineChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid {...GRID_STYLE} />
             <XAxis dataKey={xKey} tick={AXIS_STYLE} axisLine={{ stroke: "var(--color-border)" }} tickLine={false} />
@@ -187,7 +187,7 @@ function AilaChart({
   if (type === "area") {
     return (
       <div className={containerClass} role="img" aria-label={ariaLabel ?? `Area chart: ${dataKey}`}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
           <AreaChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="aila-area-gradient" x1="0" y1="0" x2="0" y2="1">
@@ -216,7 +216,7 @@ function AilaChart({
   if (type === "pie") {
     return (
       <div className={containerClass} role="img" aria-label={ariaLabel ?? `Pie chart: ${dataKey}`}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
           <PieChart>
             <Pie
               data={data}
