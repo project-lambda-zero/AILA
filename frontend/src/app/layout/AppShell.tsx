@@ -46,7 +46,7 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
       <SidebarInset>
         <AppHeader />
         <OfflineBanner />
-        <main className="flex-1 overflow-auto p-3 sm:p-4 lg:p-6 bg-card text-card-foreground">
+        <main className="flex-1 overflow-auto p-3 sm:p-4 lg:p-6">
           {children}
         </main>
       </SidebarInset>
