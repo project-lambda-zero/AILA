@@ -331,7 +331,7 @@ function WriteUpCard({
             )}
 
             <div
-              className="prose prose-sm prose-invert max-w-none text-sm text-foreground writeup-md"
+              className="prose prose-sm max-w-none text-sm text-foreground writeup-md [&_h1]:text-foreground [&_h2]:text-foreground [&_h3]:text-foreground [&_h4]:text-foreground [&_strong]:text-foreground [&_code]:text-foreground [&_a]:text-accent"
               dangerouslySetInnerHTML={{
                 __html: renderMarkdown(writeup.content_markdown || ""),
               }}
