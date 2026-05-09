@@ -121,4 +121,31 @@ HONESTY_WHITELIST = [
     # Category (g): VRModule.health_checks probes the IDA MCP over HTTP.
     # This is a one-line httpx import inside an async closure, not a general HTTP client.
     ("vr/module.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
+
+    # Category (f): ModuleProtocol interface methods — returning [] or {} is the
+    # correct no-op implementation for optional protocol methods. These are not
+    # placeholder stubs; they are intentional "this module doesn't use this feature".
+    ("protocol.py", "placeholder_return", "returns empty"),
+    ("protocol.py", "placeholder_return", "returns empty dict"),
+    ("platform.py", "placeholder_return", "returns empty"),
+    ("_template/module.py", "placeholder_return", "returns empty"),
+    ("hello_world/module.py", "placeholder_return", "returns empty"),
+    ("forensics/module.py", "placeholder_return", "returns empty"),
+    ("sbd_nfr/module.py", "placeholder_return", "returns empty"),
+    ("vr/module.py", "placeholder_return", "returns empty"),
+    ("vr/agents/nday_researcher.py", "placeholder_return", "returns empty"),
+
+    # Category (f): Alembic baseline stamp — upgrade/downgrade are intentionally empty
+    # because the baseline migration just stamps the version, no DDL needed.
+    ("001_baseline_stamp.py", "pointless_pass", "implement or mark"),
+
+    # Category (f): Service __init__ stubs — base classes with empty __init__ bodies
+    # that subclasses override. Not abstract because they're usable as-is.
+    ("platform/services/storage.py", "pointless_pass", "implement or mark"),
+    ("platform/services/system.py", "pointless_pass", "implement or mark"),
+
+    # Category (h): Template file has commented-out code as intentional examples.
+    ("_template/module.py", "commented_out_code", "commented-out Python"),
+    ("_template/module.py", "commented_out_code", "commented-out Python"),
+    ("_template/module.py", "commented_out_code", "commented-out Python"),
 ]
