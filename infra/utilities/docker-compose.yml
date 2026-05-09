@@ -1,0 +1,61 @@
+# AILA developer infrastructure.
+#
+# Brings up the two services AILA needs to run locally:
+#   - postgres (with pgvector extension)
+#   - redis
+#
+# The credentials and ports here MUST match the defaults in .env.example.
+# If you change one, change the other.
+#
+# Usage:
+#   make dev-up      # start postgres + redis (detached, idempotent)
+#   make dev-down    # stop both services (preserves volumes)
+#   make dev-reset   # stop AND wipe data volumes (fresh DB)
+#   make dev-logs    # follow service logs
+
+name: aila-dev
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aila-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: aila
+      # Postgres listens on 0.0.0.0 inside the container; we only expose 5432
+      # to localhost on the host so production-like deployments don't bind
+      # globally by accident.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - aila_postgres_data:/var/lib/postgresql/data
+      - ../postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aila"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: aila-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - aila_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  aila_postgres_data:
+    name: aila_postgres_data
+  aila_redis_data:
+    name: aila_redis_data
