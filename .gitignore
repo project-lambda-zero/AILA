@@ -67,3 +67,4 @@ coverage.json
 .mcp.json
 docs/SESSION_HANDOFF.md
 debug*.png
+dump.rdb
