@@ -55,3 +55,4 @@ coverage.json
 .claude/worktrees/dump.rdb
 .mcp.json
 docs/SESSION_HANDOFF.md
+debug*.png
