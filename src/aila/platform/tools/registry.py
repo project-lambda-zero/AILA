@@ -113,7 +113,7 @@ class SystemRegistryTool(Tool):
             if action == "delete":
                 if not names:
                     raise ValueError("Deleting integrations requires at least one system name.")
-                records = list((await session.exec(select(ManagedSystemRecord).where(ManagedSystemRecord.name.in_(names)))))
+                records = list(await session.exec(select(ManagedSystemRecord).where(ManagedSystemRecord.name.in_(names))))
                 deleted_names = sorted(record.name for record in records)
                 for record in records:
                     if record.password_secret_id:
@@ -130,14 +130,14 @@ class SystemRegistryTool(Tool):
             if action == "get" and names:
                 requested_names = [str(name) for name in names]
                 records = list(
-                    (await session.exec(
+                    await session.exec(
                         select(ManagedSystemRecord).where(
                             or_(
                                 ManagedSystemRecord.name.in_(requested_names),
                                 ManagedSystemRecord.host.in_(requested_names),
                             )
                         )
-                    ))
+                    )
                 )
                 systems = [self._to_schema(record) for record in records]
                 resolved_names = self._resolved_request_names(systems, requested_names)
@@ -153,7 +153,7 @@ class SystemRegistryTool(Tool):
                     "duplicate_requested_names": duplicate_requested_names,
                 }
 
-            records = list((await session.exec(select(ManagedSystemRecord).order_by(ManagedSystemRecord.name))))
+            records = list(await session.exec(select(ManagedSystemRecord).order_by(ManagedSystemRecord.name)))
             systems = [self._to_schema(record) for record in records]
             return {
                 "message": f"Loaded {len(systems)} registered SSH integrations.",

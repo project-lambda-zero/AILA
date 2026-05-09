@@ -22,8 +22,8 @@ import argparse
 import json
 import subprocess
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 _ROOT = Path(__file__).parent.parent
@@ -131,7 +131,6 @@ def _prepare_bundle(tool_name: str, os_block: dict, target_os: str) -> bool:
     bundle_filename: str | None = os_block.get("offline_bundle")
     download_url: str | None = os_block.get("offline_download_url")
     github_api: str | None = os_block.get("offline_github_api")
-    offline_type: str = os_block.get("offline_type", "zip")
 
     if not bundle_filename:
         _err(f"No offline_bundle defined for {tool_name} ({target_os})")

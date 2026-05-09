@@ -105,6 +105,7 @@ async def require_session_access(
     """
     # Lazy import to avoid circular dependency — db_models pulls in SQLModel.
     from sqlmodel import select
+
     from aila.modules.sbd_nfr.db_models import SbdNfrSessionRecord
 
     # --- Load session ---
@@ -202,6 +203,7 @@ async def require_jwt_session_owner(
         HTTPException(404): Session not found or soft-deleted.
     """
     from sqlmodel import select
+
     from aila.modules.sbd_nfr.db_models import SbdNfrSessionRecord
 
     session_record: SbdNfrSessionRecord | None = None

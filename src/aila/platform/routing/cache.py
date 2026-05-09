@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from aila.storage.memory import PermanentMemoryStore
@@ -66,13 +66,13 @@ class DecisionCache:
         return CachedDecision(
             payload=dict(payload),
             source="model",
-            updated_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(UTC),
         )
 
     def _is_expired(self, updated_at: datetime) -> bool:
         if self.ttl_hours <= 0:
             return True
-        age = datetime.now(timezone.utc) - updated_at.astimezone(timezone.utc)
+        age = datetime.now(UTC) - updated_at.astimezone(UTC)
         return age > timedelta(hours=self.ttl_hours)
 
 

@@ -36,16 +36,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from filelock import FileLock
-
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from filelock import FileLock
 from sqlmodel import select
 
 _log = logging.getLogger(__name__)
 
 from ..config import get_settings
 from ..platform.contracts._common import utc_now
-from .database import async_session_scope, init_db
+from .database import async_session_scope
 from .db_models import SecretRecord
 
 
@@ -437,7 +436,7 @@ class SecretStore:
         )
         if limit is not None:
             statement = statement.limit(limit)
-        records = list((await session.exec(statement)))
+        records = list(await session.exec(statement))
         return [
             {
                 "id": record.id,

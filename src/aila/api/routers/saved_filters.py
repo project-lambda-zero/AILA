@@ -14,8 +14,8 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import or_, select
 
-from aila.api.limiter import limiter
 from aila.api.auth import AuthContext, require_user_or_api_key
+from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import SavedFilterCreate, SavedFilterResponse, SavedFilterUpdate
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.platform.contracts._common import utc_now

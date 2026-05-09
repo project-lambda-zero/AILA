@@ -19,11 +19,11 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from .config import LLMRouting
     from ..events.emitter import EventEmitter
+    from .config import LLMRouting
 
 logger = logging.getLogger(__name__)
 

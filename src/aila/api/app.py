@@ -10,8 +10,8 @@ from __future__ import annotations
 
 __all__ = ["app", "create_app", "lifespan", "limiter"]
 
-import importlib.metadata as _importlib_metadata
 import asyncio
+import importlib.metadata as _importlib_metadata
 import os
 import time
 from collections.abc import AsyncGenerator
@@ -165,8 +165,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 1. DB connectivity
     try:
-        from sqlalchemy import text as _sa_text
         import sqlalchemy.exc as _sa_exc
+        from sqlalchemy import text as _sa_text
 
         async with async_session_scope() as _check_session:
             await _check_session.execute(_sa_text("SELECT 1"))
@@ -234,6 +234,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         async def _tick_loop() -> None:
             import sqlalchemy.exc as _sa_exc
+
             from aila.platform.exceptions import AILAError as _AILAError
             while True:
                 try:

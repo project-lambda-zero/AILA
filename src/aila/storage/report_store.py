@@ -21,7 +21,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlmodel import Session, select
+from sqlmodel import select
 
 from aila.platform.contracts.reporting import normalize_report_summary_payload
 
@@ -99,7 +99,7 @@ class ReportArtifactStore:
             List of created ReportArtifactRecord instances (flushed but not committed).
         """
         existing_records = list(
-            (await session.exec(select(ReportArtifactRecord).where(ReportArtifactRecord.run_id == run_id)))
+            await session.exec(select(ReportArtifactRecord).where(ReportArtifactRecord.run_id == run_id))
         )
         for record in existing_records:
             await session.delete(record)
@@ -200,11 +200,11 @@ class ReportArtifactStore:
             List of ReportArtifactRecord ordered (scope asc, artifact_type asc).
         """
         return list(
-            (await session.exec(
+            await session.exec(
                 select(ReportArtifactRecord)
                 .where(ReportArtifactRecord.run_id == run_id)
                 .order_by(ReportArtifactRecord.scope.asc(), ReportArtifactRecord.artifact_type.asc())
-            ))
+            )
         )
 
     @staticmethod

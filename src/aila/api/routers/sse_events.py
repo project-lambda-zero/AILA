@@ -98,7 +98,6 @@ async def stream_events(
                     break
 
                 # Drain all available events without blocking
-                drained = False
                 while True:
                     try:
                         raw_payload = queue.get_nowait()
@@ -110,7 +109,6 @@ async def stream_events(
                         yield f"event: {event_type}\ndata: {raw_payload}\n\n"
                     except (json.JSONDecodeError, TypeError) as exc:
                         _log.warning("Malformed event payload dropped: %s", exc)
-                    drained = True
 
                 # Wait 1 second before checking again
                 await asyncio.sleep(1.0)

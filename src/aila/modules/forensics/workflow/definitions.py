@@ -90,9 +90,10 @@ async def _state_response_emit(
     investigation_id = input.get("investigation_id")
 
     if project_id or investigation_id:
+        from sqlmodel import select as _select
+
         from aila.modules.forensics.db_models import ForensicsProjectRecord, InvestigationRunRecord
         from aila.platform.uow import UnitOfWork
-        from sqlmodel import select as _select
 
         async with UnitOfWork() as uow:
             if project_id and not investigation_id:

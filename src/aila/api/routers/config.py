@@ -9,14 +9,12 @@ the write path to ensure type validation through the registry.
 """
 from __future__ import annotations
 
-import asyncio
 import math
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_role, require_user_or_api_key
-from aila.api.limiter import limiter
 from aila.api.constants import (
     AUDIT_ACTION_CONFIG_UPDATE,
     AUDIT_STAGE_CONFIG,
@@ -24,6 +22,7 @@ from aila.api.constants import (
     ROLE_ADMIN,
 )
 from aila.api.deps import get_config_registry
+from aila.api.limiter import limiter
 from aila.api.schemas.config import ConfigEntryResponse, ConfigListResponse, ConfigUpdateRequest
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope

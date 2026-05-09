@@ -47,8 +47,8 @@ from aila.modules.sbd_nfr.services.activity_service import (
     EVENT_RESOLUTION_STARTED,
     log_activity,
 )
-from aila.modules.sbd_nfr.services.session_service import _update_session_status
 from aila.modules.sbd_nfr.services.event_stream import SessionEventStream
+from aila.modules.sbd_nfr.services.session_service import _update_session_status
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
 

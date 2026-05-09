@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TypeAlias
 
 JsonScalar: TypeAlias = str | int | float | bool | None
@@ -22,4 +22,4 @@ def utc_now() -> datetime:
     This is the authoritative timestamp source for all DB writes and audit
     records — always UTC, always timezone-aware, never reliant on local clock settings.
     """
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)

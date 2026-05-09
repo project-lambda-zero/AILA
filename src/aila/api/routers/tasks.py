@@ -452,13 +452,13 @@ async def stream_task_events(
             },
         )
 
-    _TERMINAL_STATUSES = frozenset({TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED})
+    _terminal_statuses = frozenset({TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED})
 
     async def _check_terminal(tid: str) -> str | None:
         """Return the task status if terminal, else None."""
         async with async_session_scope() as session:
             task = (await session.exec(select(TaskRecord).where(TaskRecord.id == tid))).first()
-            if task and task.status in _TERMINAL_STATUSES:
+            if task and task.status in _terminal_statuses:
                 return task.status
         return None
 

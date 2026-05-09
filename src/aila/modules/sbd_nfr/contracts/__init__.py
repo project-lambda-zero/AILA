@@ -15,7 +15,6 @@ package surface:
 
 from __future__ import annotations
 
-from .config import SbdNfrConfig
 from .artifacts import (
     ArchitectSection,
     ArtifactMetadataResponse,
@@ -24,6 +23,7 @@ from .artifacts import (
     ReportNarrativeResponse,
     RequesterSection,
 )
+from .config import SbdNfrConfig
 from .resolution import (
     AssistRequest,
     AssistResponse,

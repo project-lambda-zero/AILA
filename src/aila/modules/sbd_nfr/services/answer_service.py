@@ -19,7 +19,7 @@ Key design decisions:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from sqlmodel import select
@@ -56,7 +56,7 @@ _DRAFT_EXPIRY_DAYS: int = 30
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _draft_expires_at() -> datetime:

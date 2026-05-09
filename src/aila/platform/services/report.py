@@ -17,8 +17,8 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, select
 
-from ...storage.report_repository import ReportRepository
 from ...storage.database import async_session_scope
+from ...storage.report_repository import ReportRepository
 from ..contracts.persist import PersistContract
 from ..exceptions import NotFoundError
 

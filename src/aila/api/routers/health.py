@@ -13,6 +13,7 @@ import importlib.metadata as _importlib_metadata
 import inspect
 import logging
 import time
+from datetime import UTC
 
 import sqlalchemy.exc
 from fastapi import APIRouter, Depends, Request
@@ -282,6 +283,9 @@ async def get_comprehensive_health(
             detail="Comprehensive health requires 'admin' role",
         )
 
+    import time as _time
+    from datetime import datetime as _datetime
+
     from aila.platform.services.health_probes import (
         probe_arch_security,
         probe_arq_worker,
@@ -292,10 +296,7 @@ async def get_comprehensive_health(
         probe_ssh_reachability,
     )
 
-    import time as _time
-    from datetime import datetime as _datetime, timezone as _timezone
-
-    started_at = _datetime.now(tz=_timezone.utc)
+    started_at = _datetime.now(tz=UTC)
     probe_deadline = _time.monotonic() + 10.0  # hard upper bound for whole batch
 
     systems = await _load_team_systems_for_ssh_probe(auth_ctx.team_id)
@@ -330,7 +331,7 @@ async def get_comprehensive_health(
                 SubsystemHealth(
                     name="unknown",
                     status="error",
-                    last_checked_at=_datetime.now(tz=_timezone.utc),
+                    last_checked_at=_datetime.now(tz=UTC),
                     message=f"probe raised: {type(raw).__name__}",
                 )
             )

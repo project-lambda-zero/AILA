@@ -261,9 +261,9 @@ async def decode_and_blacklist_check(token: str, expected_typ: str = JWT_TYP_ACC
 
     actual_typ = payload.get("typ")
     # Accept user_access tokens wherever access tokens are expected (unified auth)
-    _ACCESS_TYPES = {JWT_TYP_ACCESS, JWT_TYP_USER_ACCESS}
-    if expected_typ in _ACCESS_TYPES:
-        if actual_typ not in _ACCESS_TYPES:
+    _access_types = {JWT_TYP_ACCESS, JWT_TYP_USER_ACCESS}
+    if expected_typ in _access_types:
+        if actual_typ not in _access_types:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Expected access token but received '{actual_typ}'",

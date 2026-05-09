@@ -11,7 +11,6 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from aila.api.auth import AuthContext, require_role, require_user_or_api_key
-from aila.api.limiter import limiter
 from aila.api.constants import (
     AUDIT_ACTION_TOOL_INVOKE,
     AUDIT_STAGE_TOOL,
@@ -20,14 +19,15 @@ from aila.api.constants import (
     TRACK_PLATFORM,
 )
 from aila.api.deps import get_tool_registry
+from aila.api.limiter import limiter
 from aila.api.schemas.tools import (
     ToolDetailResponse,
     ToolInvokeRequest,
     ToolInvokeResponse,
     ToolSummaryResponse,
 )
-from aila.platform.services.audit import record_audit_event
 from aila.platform.runtime.tools import ToolRegistry
+from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 
 __all__ = ["router"]
@@ -43,7 +43,7 @@ router = APIRouter(
 
 def _module_id_from_key(tool_key: str) -> str:
     """Derive module_id from tool key prefix (e.g. 'vuln.query_cves' -> 'vuln')."""
-    return tool_key.split(".")[0] if "." in tool_key else TRACK_PLATFORM
+    return tool_key.split(".", maxsplit=1)[0] if "." in tool_key else TRACK_PLATFORM
 
 
 @router.get("", response_model=list[ToolSummaryResponse], summary="List registered tools")

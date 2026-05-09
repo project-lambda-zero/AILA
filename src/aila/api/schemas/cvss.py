@@ -290,7 +290,7 @@ class CveIntelResponse(APIModel):
         knowledge: object,
         *,
         cvss_vector: str | None = None,
-    ) -> "CveIntelResponse":
+    ) -> CveIntelResponse:
         """Build the response envelope from a `CVEKnowledge` plus parsed vector.
 
         The explicit `cvss_vector` override takes precedence when provided —

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from ...storage.database import async_session_scope
 from ...storage.memory import PermanentMemoryStore
@@ -133,7 +133,7 @@ class DecisionCacheTool(Tool):
 def _is_expired(updated_at: datetime, *, ttl_hours: int) -> bool:
     if ttl_hours <= 0:
         return True
-    age = datetime.now(timezone.utc) - updated_at.astimezone(timezone.utc)
+    age = datetime.now(UTC) - updated_at.astimezone(UTC)
     return age > timedelta(hours=ttl_hours)
 
 

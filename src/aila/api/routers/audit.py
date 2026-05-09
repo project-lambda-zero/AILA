@@ -9,7 +9,6 @@ cryptographic seal records. Both require admin auth (require_role("admin")).
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import math
 from datetime import datetime

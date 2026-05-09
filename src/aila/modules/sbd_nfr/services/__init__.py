@@ -39,10 +39,16 @@ from .answer_service import (
     validate_answer,
     validate_completion,
 )
+from .assist_service import handle_assist
 from .auth import (
     SessionAccessContext,
     require_jwt_session_owner,
     require_session_access,
+)
+from .resolution_service import (
+    CONFIDENCE_THRESHOLD,
+    get_resolution_results,
+    run_resolution,
 )
 from .schema_service import (
     create_question,
@@ -55,6 +61,7 @@ from .schema_service import (
     update_question,
     update_section,
 )
+from .search_service import smart_search
 from .session_service import (
     PaginatedResponse,
     SessionListFilters,
@@ -77,14 +84,7 @@ from .skip_logic import (
     compute_visible_question_ids,
     compute_visible_section_ids,
 )
-from .search_service import smart_search
 from .stats_service import get_dashboard_stats
-from .resolution_service import (
-    CONFIDENCE_THRESHOLD,
-    get_resolution_results,
-    run_resolution,
-)
-from .assist_service import handle_assist
 
 __all__ = [
     # activity_service.py

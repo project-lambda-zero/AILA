@@ -251,12 +251,13 @@ class ForensicsModule(ModuleProtocol):
 
         async def _ssh_reachability() -> dict[str, object]:
             try:
+                from sqlmodel import select
+
                 from aila.config import get_settings
                 from aila.modules.forensics.db_models import ForensicsProjectRecord
                 from aila.modules.forensics.tools._ssh_helper import get_ssh_service
                 from aila.platform.uow import UnitOfWork
                 from aila.storage.db_models import ManagedSystemRecord
-                from sqlmodel import select
 
                 # Only probe systems that are actually used by forensics projects.
                 async with UnitOfWork() as uow:

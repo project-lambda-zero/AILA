@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from aila.modules.forensics.workflow.definitions import FORENSICS_DISPATCHER_V1
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
-from aila.modules.forensics.workflow.definitions import FORENSICS_DISPATCHER_V1
 
 __all__ = ["run_forensics_analysis", "run_forensics_investigation"]
 

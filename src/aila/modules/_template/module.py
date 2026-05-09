@@ -172,7 +172,7 @@ class TemplateModule(ModuleProtocol):
         return filtered_rows
 
 
-    async def seed_data(self, session: "Any") -> None:
+    async def seed_data(self, session: Any) -> None:
         """Seed initial data for this module (per MODULE_STANDARD.md D-06/D-07).
 
         Idempotent: checks SeedVersionRecord first. Skips entirely if this

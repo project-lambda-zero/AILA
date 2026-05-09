@@ -15,7 +15,8 @@ as gate.py's consensus retry: fresh client, bypass pipeline via call_fn.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Awaitable, TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from openai import AsyncOpenAI
 
@@ -211,8 +212,8 @@ def make_verify_step(
             final_verdict = first_level if agreement else "REVIEW_REQUIRED"
 
             # Store verification record
-            from ...storage.db_models import VerificationRecord
             from ...storage.database import async_session_scope
+            from ...storage.db_models import VerificationRecord
 
             async with async_session_scope() as session:
                 record = VerificationRecord(

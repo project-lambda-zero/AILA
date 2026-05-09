@@ -5,7 +5,6 @@ import logging
 import re
 from typing import Any
 
-
 # --- Forensic enrichment helpers ------------------------------------------
 
 # Living-Off-The-Land Binaries / Scripts — legitimate signed Windows tools
@@ -368,6 +367,7 @@ async def collect_disk_artifacts(
     # Per-query collection
     import json as _json
     import time as _time
+
     from aila.modules.forensics.tools._ssh_helper import run_command_via_file
     queries = _queries_for_image(image_os)
     await safe_emit(emitter, "disk_queries_begin", f"disk: {len(queries)} dissect queries on {path}", {"path": path, "query_count": len(queries)})
@@ -390,7 +390,7 @@ async def collect_disk_artifacts(
             head_sample = "\n".join(output.strip().splitlines()[:5])[:500]
             tail_sample = "\n".join(output.strip().splitlines()[-5:])[:500]
             if output.strip():
-                MAX_RECORDS = 1000
+                max_records = 1000
                 total_records = 0
                 parsed_records: list[dict[str, Any]] = []
                 parse_errors = 0
@@ -469,7 +469,7 @@ async def collect_disk_artifacts(
                         by_exe.values(),
                         key=lambda r: (0 if r.get("suspicious_reasons") else 1, -(r.get("run_count") or 0)),
                     )
-                    records = sorted_exe[:MAX_RECORDS]
+                    records = sorted_exe[:max_records]
                     truncated = len(sorted_exe) > len(records)
                     total_records = len(sorted_exe)
                 elif qfunc == "shellbags":
@@ -500,7 +500,7 @@ async def collect_disk_artifacts(
                         key=lambda r: (0 if r.get("suspicious_reasons") else 1, r.get("last_seen") or ""),
                         reverse=False,
                     )
-                    records = sorted_path[:MAX_RECORDS]
+                    records = sorted_path[:max_records]
                     truncated = len(sorted_path) > len(records)
                     total_records = len(sorted_path)
                 elif qfunc in ("runkeys", "services", "startupinfo", "tasks", "mru.recentdocs", "powershell_history", "recyclebin"):
@@ -512,11 +512,11 @@ async def collect_disk_artifacts(
                         ), kind=qfunc)
                         enriched.append(rec)
                     enriched.sort(key=lambda r: 0 if r.get("suspicious_reasons") else 1)
-                    records = enriched[:MAX_RECORDS]
+                    records = enriched[:max_records]
                     truncated = len(enriched) > len(records)
                     total_records = len(enriched)
                 else:
-                    records = parsed_records[:MAX_RECORDS]
+                    records = parsed_records[:max_records]
                     truncated = len(parsed_records) > len(records)
                     # `total_records` above counted every stdout line including
                     # dissect's stderr warnings (merged via 2>&1). Re-ground

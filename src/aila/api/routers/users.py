@@ -33,9 +33,6 @@ from uuid import uuid4
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-
-from aila.api.limiter import limiter
-from aila.api.metrics import SILENT_FAILURE_TOTAL
 from sqlmodel import func, select
 
 from aila.api.auth import (
@@ -54,7 +51,9 @@ from aila.api.constants import (
     ROLE_ADMIN,
     VALID_ROLES,
 )
-from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
+from aila.api.limiter import limiter
+from aila.api.metrics import SILENT_FAILURE_TOTAL
+from aila.api.schemas.envelope import DataEnvelope
 from aila.api.schemas.users import (
     LoginRequest,
     LogoutResponse,
@@ -161,7 +160,7 @@ async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenRespo
     Per D-46: login events (success and failure) dual-written to structlog AND AuditEventRecord.
     """
     # Generic failure response to prevent username enumeration (T-138-10)
-    _INVALID = HTTPException(
+    _invalid = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid credentials",
     )
@@ -184,7 +183,7 @@ async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenRespo
                 details={"reason": "user_not_found_or_inactive"},
             )
             await session.commit()
-            raise _INVALID
+            raise _invalid
 
         if user.hashed_password is None:
             # OIDC-only account — cannot login with password
@@ -200,7 +199,7 @@ async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenRespo
                 details={"reason": "oidc_only_account"},
             )
             await session.commit()
-            raise _INVALID
+            raise _invalid
 
         if not verify_user_password(body.password, user.hashed_password):
             _slog.info("login_failed", username=body.username, reason="wrong_password")
@@ -215,7 +214,7 @@ async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenRespo
                 details={"reason": "wrong_password"},
             )
             await session.commit()
-            raise _INVALID
+            raise _invalid
 
         # Update last_login_at
         user.last_login_at = datetime.now(UTC)
@@ -269,9 +268,10 @@ async def refresh_user_token(request: Request, refresh_token: str = Query(..., d
     """
     settings = get_settings()
     import jwt as _jwt
+
     from aila.api.constants import JWT_ALGORITHM
 
-    _INVALID_REFRESH = HTTPException(
+    _invalid_refresh = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired refresh token",
     )
@@ -279,16 +279,16 @@ async def refresh_user_token(request: Request, refresh_token: str = Query(..., d
     try:
         payload = _jwt.decode(refresh_token, settings.jwt_secret_key, algorithms=[JWT_ALGORITHM])
     except _jwt.ExpiredSignatureError:
-        raise _INVALID_REFRESH
+        raise _invalid_refresh
     except _jwt.InvalidTokenError:
-        raise _INVALID_REFRESH
+        raise _invalid_refresh
 
     if payload.get("typ") != JWT_TYP_USER_REFRESH:
-        raise _INVALID_REFRESH
+        raise _invalid_refresh
 
     user_id = payload.get("user_id")
     if not user_id:
-        raise _INVALID_REFRESH
+        raise _invalid_refresh
 
     # Check token hash is in DB and not revoked
     token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
@@ -298,12 +298,12 @@ async def refresh_user_token(request: Request, refresh_token: str = Query(..., d
         record: RefreshTokenRecord | None = result.first()
 
         if record is None or record.revoked_at is not None:
-            raise _INVALID_REFRESH
+            raise _invalid_refresh
 
         # Validate user still active
         user: UserRecord | None = await session.get(UserRecord, user_id)
         if user is None or not user.is_active:
-            raise _INVALID_REFRESH
+            raise _invalid_refresh
 
         role = user.role
         team_id = getattr(user, "team_id", None)  # TEAM-02: from UserRecord

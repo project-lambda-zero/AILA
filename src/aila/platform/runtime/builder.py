@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+from ...modules.vulnerability.evidence_validator import VulnEvidenceValidator
 from ...storage.registry import ConfigRegistry, SchemaRegistry
 from ...storage.secrets import SecretStore
 from ..config import ApplicationSettings, PlatformConfigSchema, PlatformSettings
 from ..llm import AilaLLMClient
-from ..llm.cost import CostTracker
-from ..llm.run_memory import RunMemory
 from ..llm.classify import make_classify_step
+from ..llm.cost import CostTracker
 from ..llm.gate import make_gate_step
+from ..llm.run_memory import RunMemory
 from ..llm.seal import make_seal_step
 from ..llm.validate import make_validate_step
 from ..llm.verify import make_verify_step
-from ...modules.vulnerability.evidence_validator import VulnEvidenceValidator
 from ..modules import ModuleContext, ModuleRegistry, register_builtin_modules
 from ..tools import (
     ArtifactSearchTool,

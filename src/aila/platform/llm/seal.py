@@ -14,21 +14,20 @@ clause -- no background job needed.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import json
 import logging
 import secrets
-from datetime import datetime, timedelta, timezone
-from typing import Any, TYPE_CHECKING
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy.exc
 from cryptography.exceptions import InvalidTag
 
 if TYPE_CHECKING:
-    from .config import LLMConfigProvider, LLMRouting
     from ..events.emitter import EventEmitter
+    from .config import LLMConfigProvider, LLMRouting
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +222,7 @@ def make_seal_step(
         key = await _resolve_hmac_key(config_provider)
 
         # Build timestamp
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
 
         # Read pipeline chain outputs from ctx (D-08, D-09)
         posture_mode = ctx.get("posture_mode", "standard")
@@ -322,13 +321,14 @@ def make_seal_step(
         # Write to DB and prune expired records (D-13, D-14)
         retention_days = await _resolve_retention_days(config_provider)
 
-        from ...storage.database import async_session_scope
         from sqlmodel import delete as sqlmodel_delete
+
+        from ...storage.database import async_session_scope
 
         async with async_session_scope() as session:
             session.add(record)
             # Prune expired records in same session
-            cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+            cutoff = datetime.now(UTC) - timedelta(days=retention_days)
             stmt = sqlmodel_delete(AuditSealRecord).where(
                 AuditSealRecord.created_at < cutoff  # type: ignore[operator]
             )

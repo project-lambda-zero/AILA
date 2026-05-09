@@ -49,7 +49,6 @@ class ArtifactQueryTool(Tool):
         Returns:
             Dict with 'artifacts' list and 'total' count.
         """
-        import json
 
         from sqlmodel import select
 

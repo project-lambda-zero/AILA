@@ -33,17 +33,18 @@ _SUSPICIOUS_INDICATORS: dict[str, float] = {
 
 import re
 
+
 # Each entry: (display_keyword, compiled_pattern, score_boost).
 #
 # Short / ambiguous keywords use word boundaries so that "c2" does not match
 # "x64", "abc2def", "section c2 of..." etc. Generic terms ("suspicious",
 # "encrypted") were removed because they fire on schema field names and
 # descriptive prose rather than actual evidence.
-def _kw(display: str, pattern: str, boost: float) -> tuple[str, "re.Pattern[str]", float]:
+def _kw(display: str, pattern: str, boost: float) -> tuple[str, re.Pattern[str], float]:
     return display, re.compile(pattern, re.IGNORECASE), boost
 
 
-_SCORE_BOOST_KEYWORDS: list[tuple[str, "re.Pattern[str]", float]] = [
+_SCORE_BOOST_KEYWORDS: list[tuple[str, re.Pattern[str], float]] = [
     _kw("c2",            r"\bc2\b",                         20.0),
     _kw("reverse_shell", r"reverse[_ -]?shell",             30.0),
     _kw("persistence",   r"\bpersistence\b",                25.0),

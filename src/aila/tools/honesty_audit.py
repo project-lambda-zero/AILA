@@ -944,17 +944,17 @@ class _HonestyVisitor(ast.NodeVisitor):
             return
 
         # Skip named accessors, factories, and serialization helpers
-        _ACCESSOR_PREFIXES = ("get_", "create_", "build_", "to_", "from_", "is_", "has_")
-        if any(func.name.startswith(p) for p in _ACCESSOR_PREFIXES):
+        _accessor_prefixes = ("get_", "create_", "build_", "to_", "from_", "is_", "has_")
+        if any(func.name.startswith(p) for p in _accessor_prefixes):
             return
 
         # Skip property-style collection accessors and named domain helpers
-        _COLLECTION_ACCESSORS = {
+        _collection_accessors = {
             "modules", "tools", "keys", "values", "items", "entries",
             "utc_now", "minimum_score", "all_tool_keys", "arrivals",
             "departures", "order_group", "criticality_rank",
         }
-        if func.name in _COLLECTION_ACCESSORS:
+        if func.name in _collection_accessors:
             return
 
         if "property" in _decorator_identifiers(func):
@@ -1329,7 +1329,7 @@ class _HonestyVisitor(ast.NodeVisitor):
 
     def _check_except_return_default(self, tree: ast.Module) -> None:
         """Rule 26: except handler that returns an empty default, hiding failures."""
-        _EMPTY_DEFAULTS = (type(None), int, float, str)  # None, 0, 0.0, ""
+        _empty_defaults = (type(None), int, float, str)  # None, 0, 0.0, ""
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
@@ -1339,7 +1339,7 @@ class _HonestyVisitor(ast.NodeVisitor):
             is_empty = False
             if val is None:
                 is_empty = True
-            elif isinstance(val, ast.Constant) and type(val.value) in _EMPTY_DEFAULTS:
+            elif isinstance(val, ast.Constant) and type(val.value) in _empty_defaults:
                 if val.value in (None, 0, 0.0, ""):
                     is_empty = True
             elif isinstance(val, ast.Dict) and not val.keys:
@@ -1494,10 +1494,8 @@ class _HonestyVisitor(ast.NodeVisitor):
 
     def _check_broad_exception_catch(self, tree: ast.Module) -> None:
         """Rule 33: except Exception without a justifying comment."""
-        lines = [None]  # 1-indexed placeholder
-        source = ast.get_source_segment.__doc__  # dummy; we need source lines
         try:
-            source_text = ast.unparse(tree)  # won't have comments, use original
+            ast.unparse(tree)  # validate the AST round-trips before walking
         except (ValueError, TypeError):
             return
         for node in ast.walk(tree):
@@ -1527,7 +1525,7 @@ class _HonestyVisitor(ast.NodeVisitor):
         Using response_model=dict bypasses response validation and schema
         generation, hiding what the endpoint actually returns.
         """
-        _DICT_NAMES: frozenset[str] = frozenset({"dict", "Dict"})
+        _dict_names: frozenset[str] = frozenset({"dict", "Dict"})
 
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1547,7 +1545,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                         continue
                     val = kw.value
                     # response_model=dict or response_model=Dict
-                    if isinstance(val, ast.Name) and val.id in _DICT_NAMES:
+                    if isinstance(val, ast.Name) and val.id in _dict_names:
                         self._emit(
                             dec.lineno,
                             "response_model_dict",
@@ -1565,7 +1563,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                     # response_model=dict | None  (BinOp with left=dict)
                     elif isinstance(val, ast.BinOp):
                         left = val.left
-                        if isinstance(left, ast.Name) and left.id in _DICT_NAMES:
+                        if isinstance(left, ast.Name) and left.id in _dict_names:
                             self._emit(
                                 dec.lineno,
                                 "response_model_dict",

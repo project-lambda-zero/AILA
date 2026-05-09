@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from aila.platform.contracts._common import JsonObject
 from aila.platform.contracts.runtime import PlatformResponse
@@ -33,7 +33,7 @@ from aila.platform.contracts.runtime import PlatformResponse
 __all__ = ["TemplateWorkflow"]
 
 
-class TemplateStage(str, Enum):
+class TemplateStage(StrEnum):
     """Lifecycle stages for the template workflow."""
 
     PREPARE = "prepare"

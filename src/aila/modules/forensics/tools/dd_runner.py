@@ -36,7 +36,7 @@ def _build_dd_command(
     dest = destination or "/dev/stdout"
     bs = block_size
 
-    _DD_COMMANDS: dict[str, str] = {
+    _dd_commands: dict[str, str] = {
         "image_disk": (
             f"dd if={source} of={dest} bs={bs} status=progress conv=noerror,sync"
             if analyzer_os != "windows"
@@ -91,7 +91,7 @@ def _build_dd_command(
         ),
     }
 
-    cmd = _DD_COMMANDS.get(action)
+    cmd = _dd_commands.get(action)
     if cmd is None:
         raise ValueError(f"Unknown dd action '{action}'. Supported: {_ACTIONS}.")
     return cmd

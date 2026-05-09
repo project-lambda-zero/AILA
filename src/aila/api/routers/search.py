@@ -14,8 +14,8 @@ import logging
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from aila.api.limiter import limiter
 from aila.api.auth import AuthContext, require_user_or_api_key
+from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import SearchResult
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.storage.database import async_session_scope

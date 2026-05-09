@@ -10,8 +10,8 @@ from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from zipfile import ZIP_DEFLATED, ZipFile
 from xml.etree import ElementTree as ET
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from aila.platform.contracts._common import utc_now
 

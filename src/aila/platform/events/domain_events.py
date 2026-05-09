@@ -17,7 +17,6 @@ from pydantic import BaseModel
 
 from ..contracts._common import utc_now
 
-
 # --- Base ---
 
 

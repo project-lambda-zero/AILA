@@ -22,7 +22,7 @@ from sqlmodel import select
 
 from ..config import get_settings
 from ..platform.contracts._common import utc_now
-from .database import async_session_scope, init_db
+from .database import async_session_scope
 from .db_models import ProviderConfigRecord
 
 
@@ -123,7 +123,7 @@ class ProviderConfigStore:
             List of dicts with id, config_key, value, and updated_at.
         """
         async with async_session_scope(self.settings) as session:
-            records = list((await session.exec(select(ProviderConfigRecord).order_by(ProviderConfigRecord.config_key))))
+            records = list(await session.exec(select(ProviderConfigRecord).order_by(ProviderConfigRecord.config_key)))
             return [
                 {
                     "id": record.id,

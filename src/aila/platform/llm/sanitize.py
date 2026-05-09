@@ -16,7 +16,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-
 # ---------------------------------------------------------------------------
 # Injection pattern dataclass and registry (D-01, D-05)
 # ---------------------------------------------------------------------------

@@ -14,8 +14,8 @@ import logging
 from fastapi import APIRouter, Depends, Request
 from sqlmodel import select
 
-from aila.api.limiter import limiter
 from aila.api.auth import AuthContext, require_user_or_api_key
+from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import WidgetLayoutRequest, WidgetLayoutResponse
 from aila.api.schemas.envelope import DataEnvelope
 from aila.platform.contracts._common import utc_now

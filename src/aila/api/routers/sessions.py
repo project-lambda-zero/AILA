@@ -21,7 +21,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from aila.api.auth import AuthContext, require_user_or_api_key
-from aila.api.limiter import limiter
 from aila.api.constants import (
     AUDIT_ACTION_SESSION_CREATE,
     AUDIT_ACTION_SESSION_MESSAGE,
@@ -29,6 +28,7 @@ from aila.api.constants import (
     AUDIT_STATUS_COMPLETED,
     MEDIA_TYPE_SSE,
 )
+from aila.api.limiter import limiter
 from aila.api.schemas.sessions import (
     SessionCreateRequest,
     SessionListResponse,

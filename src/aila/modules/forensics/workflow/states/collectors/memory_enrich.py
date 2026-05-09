@@ -22,7 +22,7 @@ import ipaddress
 import logging
 import re
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 __all__ = [
@@ -98,12 +98,12 @@ def _to_str(value: Any) -> str:
 
 
 def _iso_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _is_private_ip(addr: str) -> bool:
     try:
-        return ipaddress.ip_address(addr.split("%")[0]).is_private
+        return ipaddress.ip_address(addr.split("%", maxsplit=1)[0]).is_private
     except (ValueError, TypeError):
         return False
 

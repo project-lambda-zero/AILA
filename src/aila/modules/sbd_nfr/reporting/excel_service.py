@@ -32,7 +32,6 @@ from aila.modules.sbd_nfr.db_models import (
     SbdNfrResolutionResultRecord,
     SbdNfrSectionRecord,
     SbdNfrSessionRecord,
-    SbdNfrSubgroupRecord,
 )
 from aila.platform.uow import UnitOfWork
 
@@ -208,7 +207,6 @@ def _add_section_sheets(
     """Add one sheet per section that has at least one answer."""
     # Build lookup maps
     question_by_id: dict[str, SbdNfrQuestionRecord] = {q.id: q for q in questions}
-    subgroup_ids_to_fetch: set[str] = {q.subgroup_id for q in questions}
 
     # Build section -> subgroup -> question chain
     # We need subgroup records to map question -> section
@@ -230,10 +228,9 @@ def _add_section_sheets(
     # If no section match is found, answers go into an "Other" sheet.
 
     # Build section_key -> section_label map
-    section_by_key: dict[str, SbdNfrSectionRecord] = {s.section_key: s for s in sections}
 
     # Map question ID prefix to section key (from seed_sections.json knowledge)
-    _PREFIX_TO_SECTION: dict[str, str] = {
+    _prefix_to_section: dict[str, str] = {
         "SCOPE": "base_questionnaire",
         "HYGN": "hygiene_essentials",
         "DPRT": "data_protection",
@@ -250,7 +247,7 @@ def _add_section_sheets(
     section_answers: dict[str, list[SbdNfrAnswerRecord]] = {}
     for answer in answers:
         prefix = answer.question_id.split("-")[0].upper() if "-" in answer.question_id else ""
-        section_key = _PREFIX_TO_SECTION.get(prefix, "other")
+        section_key = _prefix_to_section.get(prefix, "other")
         section_answers.setdefault(section_key, []).append(answer)
 
     # Build ordered list of (section_key, section_label)

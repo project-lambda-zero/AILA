@@ -6,7 +6,6 @@ List endpoint returns enriched items with connectivity, tags, scan status, and t
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import math
 
@@ -28,9 +27,9 @@ from aila.api.schemas.findings import FindingResponse, FindingsListResponse
 from aila.api.schemas.systems import (
     ConnectivityStatusResponse,
     ScanHistoryResponse,
+    SystemCreateRequest,
     SystemCSVImportRequest,
     SystemCSVImportResponse,
-    SystemCreateRequest,
     SystemDetailResponse,
     SystemEnrichedResponse,
     SystemListResponse,

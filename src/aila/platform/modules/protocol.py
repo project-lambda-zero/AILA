@@ -155,7 +155,7 @@ class ModuleExecutionContext:
     report_artifact_store: ReportArtifactStore
     progress_callback: Callable[[ProgressUpdate], None] | None = None
     emitter: EventEmitter | None = field(default=None)
-    task_queue: "TaskQueue | None" = field(default=None)
+    task_queue: TaskQueue | None = field(default=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,7 +278,7 @@ class ModuleProtocol(Protocol):
             return rows.copy()
         return rows.copy()
 
-    async def seed_data(self, session: "Any") -> None:
+    async def seed_data(self, session: Any) -> None:
         """Seed initial data for this module. Called once after create_all().
 
         Implementations MUST be idempotent: check SeedVersionRecord before
@@ -300,7 +300,7 @@ class ModuleProtocol(Protocol):
         """
         return []
 
-    async def system_summary(self, system_id: int, session: "Any") -> dict[str, Any]:
+    async def system_summary(self, system_id: int, session: Any) -> dict[str, Any]:
         """Return module-contributed dashboard data for a system (optional).
 
         Called by GET /systems/{id} to enrich system detail with module-specific
@@ -317,7 +317,7 @@ class ModuleProtocol(Protocol):
         return {}
 
     async def system_findings(
-        self, system_id: int, system_name: str, session: "Any",
+        self, system_id: int, system_name: str, session: Any,
         page: int = 1, page_size: int = 50,
     ) -> dict[str, Any]:
         """Return paginated findings for a system owned by this module (optional).
@@ -338,7 +338,7 @@ class ModuleProtocol(Protocol):
         """
         return {"items": [], "total": 0}
 
-    async def report_count(self, run_id: str, session: "Any") -> dict[str, Any]:
+    async def report_count(self, run_id: str, session: Any) -> dict[str, Any]:
         """Return semantic count breakdown for a report owned by this module (optional).
 
         Called by GET /reports/{run_id}/count. The vulnerability module returns
@@ -430,7 +430,7 @@ class ModuleProtocol(Protocol):
         """
         return []
 
-    async def fleet_severity_summary(self, system_ids: list[int], session: "Any") -> dict[int, str]:
+    async def fleet_severity_summary(self, system_ids: list[int], session: Any) -> dict[int, str]:
         """Return top severity per system_id for the given fleet slice (optional, D-20).
 
         Called by GET /systems list endpoint to populate the top_severity field for

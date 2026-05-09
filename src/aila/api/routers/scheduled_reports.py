@@ -15,10 +15,15 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import select
 
-from aila.api.limiter import limiter
 from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN
-from aila.api.schemas.endpoints import ScheduledReportCreate, ScheduledReportResponse, ScheduledReportTriggerResponse, ScheduledReportUpdate
+from aila.api.limiter import limiter
+from aila.api.schemas.endpoints import (
+    ScheduledReportCreate,
+    ScheduledReportResponse,
+    ScheduledReportTriggerResponse,
+    ScheduledReportUpdate,
+)
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.platform.contracts._common import utc_now
 from aila.storage.database import async_session_scope
@@ -233,9 +238,9 @@ async def trigger_scheduled_report(
     # Falls back to task_id="manual" if arq/Redis is not available.
     task_id = "manual"
     try:
-        from aila.platform.tasks.report_tasks import generate_scheduled_report_job
-        from aila.storage.registry import ConfigRegistry
         import arq
+
+        from aila.storage.registry import ConfigRegistry
 
         registry = ConfigRegistry()
         redis_url_raw = await registry.get("platform", "redis_url")
