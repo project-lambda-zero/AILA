@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ._common import ActionId, JsonObject, JsonScalar, JsonValue, utc_now
 from .auth import AuthContext, require_auth, require_role
+from .budget import BudgetConfig, BudgetState
 from .persist import Persistable, PersistContract
 from .platform import (
     PLATFORM_CONFIG_KEY_REDIS_URL,
@@ -67,6 +68,8 @@ __all__ = [
     "AddIntegrationPayload",
     "AsyncTaskQueue",
     "AuthContext",
+    "BudgetConfig",
+    "BudgetState",
     "DeleteIntegrationsPayload",
     "EvidenceProvenance",
     "ExecuteRemoteCommandPayload",
