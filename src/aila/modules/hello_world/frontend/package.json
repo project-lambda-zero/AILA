@@ -1,0 +1,24 @@
+{
+  "name": "@aila/hello-world-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./spec.ts",
+  "types": "./spec.ts",
+  "exports": {
+    ".": "./spec.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf node_modules"
+  },
+  "peerDependencies": {
+    "react": "catalog:react19",
+    "@tanstack/react-query": "catalog:query"
+  },
+  "devDependencies": {
+    "@aila/typescript-config": "workspace:*",
+    "@types/react": "catalog:react19",
+    "typescript": "catalog:"
+  }
+}
