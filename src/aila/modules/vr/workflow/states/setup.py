@@ -23,6 +23,7 @@ from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.project import VRProjectStatus
 from aila.modules.vr.db_models import VRProjectRecord
+from aila.platform.contracts._common import utc_now
 from aila.platform.contracts.budget import BudgetConfig, BudgetState
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
@@ -68,6 +69,7 @@ async def _persist_setup(
         row.mitigations_json = json.dumps(mitigations)
         row.budget_json = budget_json
         row.status = VRProjectStatus.ANALYZING.value
+        row.updated_at = utc_now()
         uow.session.add(row)
         await uow.commit()
 
@@ -111,32 +113,64 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
     return last
 
 
+async def _wait_until_ready(ida_bridge: Any, binary_id: str) -> dict[str, Any]:
+    """Poll an existing binary_id until analysis is ready or budget exhausts."""
+    waited = 0.0
+    last: dict[str, Any] = {}
+    while waited < _POLL_BUDGET_S:
+        last = await asyncio.to_thread(
+            ida_bridge.forward, action="poll_analysis", binary_id=binary_id,
+        )
+        if last.get("status") == "error":
+            raise RuntimeError(f"poll_analysis error: {last.get('error')}")
+        if last.get("analysis_ready") or last.get("state") in ("READY", "INDEXED"):
+            return last
+        await asyncio.sleep(_POLL_INTERVAL_S)
+        waited += _POLL_INTERVAL_S
+    _log.warning(
+        "setup: analysis still not ready after %.0fs for binary_id=%s — proceeding",
+        _POLL_BUDGET_S, binary_id,
+    )
+    return last
+
+
 async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
     """Upload binaries, run checksec, initialize the budget."""
     project_id = str(input.get("project_id") or "")
     target_path = str(input.get("target_path") or "")
     patched_path = input.get("patched_path") or None
+    input_binary_id = str(input.get("binary_id") or "")
+    input_patched_binary_id = str(input.get("patched_binary_id") or "") or None
 
     project = await _load_project(project_id)
     if project is not None:
         target_path = target_path or (project.target_path or "")
         patched_path = patched_path or project.patched_path
 
-    if not target_path:
-        raise ValueError("state_setup: target_path is required (input or project row)")
+    if not target_path and not input_binary_id:
+        raise ValueError(
+            "state_setup: target_path or binary_id is required (input or project row)",
+        )
 
     _log.info(
-        "state_setup START project_id=%s target=%s patched=%s",
-        project_id, target_path, patched_path,
+        "state_setup START project_id=%s target=%s patched=%s pre_binary=%s pre_patched=%s",
+        project_id, target_path, patched_path, input_binary_id or None, input_patched_binary_id,
     )
 
-    vuln_meta = await _upload_and_wait(services.ida_bridge, target_path)
-    binary_id = str(vuln_meta.get("binary_id") or "")
-    if not binary_id:
-        raise RuntimeError("state_setup: vulnerable binary upload yielded no binary_id")
+    if input_binary_id:
+        binary_id = input_binary_id
+        await _wait_until_ready(services.ida_bridge, binary_id)
+    else:
+        vuln_meta = await _upload_and_wait(services.ida_bridge, target_path)
+        binary_id = str(vuln_meta.get("binary_id") or "")
+        if not binary_id:
+            raise RuntimeError("state_setup: vulnerable binary upload yielded no binary_id")
 
     patched_binary_id: str | None = None
-    if patched_path:
+    if input_patched_binary_id:
+        patched_binary_id = input_patched_binary_id
+        await _wait_until_ready(services.ida_bridge, patched_binary_id)
+    elif patched_path:
         patched_meta = await _upload_and_wait(services.ida_bridge, str(patched_path))
         patched_binary_id = str(patched_meta.get("binary_id") or "") or None
 
@@ -175,5 +209,6 @@ async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
             "context_notes": str(input.get("context_notes") or (project.context_notes if project else "")),
             "cve_id": input.get("cve_id") or (project.cve_id if project else None),
             "integration": input.get("integration") or {},
+            "team_id": project.team_id if project else None,
         },
     )

@@ -118,6 +118,7 @@ class NdayResearcher:
         ida_bridge: IDABridgeTool,
         config: VRConfigSchema,
         budget: BudgetState | None = None,
+        context_notes: str = "",
     ) -> None:
         self.run_id = run_id
         self.project_id = project_id
@@ -125,6 +126,7 @@ class NdayResearcher:
         self.binary_id = binary_id
         self.patched_binary_id = patched_binary_id
         self.mitigations = mitigations or {}
+        self.context_notes = context_notes or ""
         self.ida = ida_bridge
         self.config = config
         self.obligations = self._build_obligations()
@@ -424,6 +426,7 @@ class NdayResearcher:
             f"Project: {self.project_id}\n"
             f"Run id:  {self.run_id}\n"
             f"Turn:    {turn}\n"
+            f"Context notes: {self.context_notes or '(none)'}\n"
         )
         evidence = pack.render() or "(no evidence collected yet)"
         history = self._render_history(prior_steps[-_HISTORY_WINDOW:])

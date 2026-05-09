@@ -167,7 +167,31 @@ def create_vr_router() -> APIRouter:
         from .db_models import VRProjectRecord
         from .workflow.task import run_vr_nday
 
+        integration: dict[str, Any] = {}
         async with UnitOfWork() as uow:
+            if body.system_id is not None:
+                from aila.storage.db_models import ManagedSystemRecord
+
+                sys_stmt = select(ManagedSystemRecord).where(
+                    ManagedSystemRecord.id == body.system_id,
+                )
+                if auth.team_id is not None:
+                    sys_stmt = sys_stmt.where(
+                        ManagedSystemRecord.team_id == auth.team_id,
+                    )
+                system = (await uow.session.exec(sys_stmt)).first()
+                if system is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"System {body.system_id} not found.",
+                    )
+                integration = {
+                    "name": system.name, "host": system.host,
+                    "username": system.username, "port": system.port,
+                    "private_key_path": system.private_key_path,
+                    "password_secret_id": system.password_secret_id,
+                }
+
             record = VRProjectRecord(
                 name=body.name,
                 cve_id=body.cve_id,
@@ -207,6 +231,8 @@ def create_vr_router() -> APIRouter:
                 ),
                 "source_available": body.target.source_available,
                 "context_notes": body.context_notes,
+                "system_id": body.system_id,
+                "integration": integration,
             },
             user_id=auth.user_id,
             group_id=auth.role,

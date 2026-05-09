@@ -118,11 +118,13 @@ async def _persist_finding(
     project_id: str, advisory: dict[str, Any], poc: dict[str, Any] | None,
     crash_type: str, research: dict[str, Any], cvss: dict[str, Any],
     cwe: dict[str, Any] | None,
+    team_id: str | None = None,
 ) -> str | None:
     poc = poc or {}
     signature_block = poc.get("crash_signature") or {}
     record = VRFindingRecord(
         project_id=project_id,
+        team_id=team_id,
         crash_type=crash_type,
         crash_signature=signature_block.get("signature_hash"),
         root_cause=str(research.get("root_cause") or ""),
@@ -207,6 +209,7 @@ async def state_advisory(input: dict[str, Any], services: Any) -> StateResult:
 
     finding_id = await _persist_finding(
         project_id, advisory, poc, crash_type, research, cvss_block, cwe_block,
+        team_id=str(input.get("team_id") or "") or None,
     )
     if finding_id:
         advisory["finding_id"] = finding_id
