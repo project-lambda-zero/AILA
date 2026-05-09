@@ -19,6 +19,7 @@ from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.project import VRProjectStatus
 from aila.modules.vr.db_models import VRProjectRecord
+from aila.platform.contracts._common import utc_now
 from aila.platform.exceptions import AILAError
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import RESERVED_SUCCEEDED, StateResult
@@ -52,6 +53,7 @@ async def _set_status(project_id: str, status: str) -> None:
             if row is None:
                 return
             row.status = status
+            row.updated_at = utc_now()
             uow.session.add(row)
             await uow.commit()
     except (OSError, RuntimeError, AILAError) as exc:

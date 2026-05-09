@@ -61,6 +61,10 @@ class VRProjectCreate(BaseModel):
         default="",
         description="Operator-supplied free-form context for the agent.",
     )
+    system_id: int | None = Field(
+        default=None,
+        description="ManagedSystem ID for the research workstation SSH connection.",
+    )
 
 
 class VRProjectStatus(StrEnum):
