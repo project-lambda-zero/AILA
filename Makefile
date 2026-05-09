@@ -1,4 +1,4 @@
-.PHONY: install dev dev-up dev-down dev-reset dev-logs dev-status teardown teardown-force backend frontend frontend-build storybook worker worker-vuln worker-forensics worker-sbd db-init migrate test test-e2e test-frontend lint typecheck honesty build compile check security-scan audit bandit clean
+.PHONY: install dev dev-all dev-up dev-down dev-reset dev-logs dev-status teardown teardown-force backend frontend frontend-build storybook worker worker-vuln worker-forensics worker-sbd db-init migrate test test-e2e test-frontend lint typecheck honesty build compile check security-scan audit bandit clean
 
 # Cross-platform: use python for port-freeing and cleanup instead of
 # fuser/find/bash which are Linux-only.
@@ -60,6 +60,10 @@ dev:
 backend: dev-up db-init
 	python scripts/portfree.py 8000
 	uvicorn aila.api.app:app --host 0.0.0.0 --port 8000 --reload
+
+# Start ALL services in one terminal (Ctrl+C stops everything)
+dev-all: dev-up
+	python scripts/dev_all.py
 
 frontend:
 	python scripts/portfree.py 3000
