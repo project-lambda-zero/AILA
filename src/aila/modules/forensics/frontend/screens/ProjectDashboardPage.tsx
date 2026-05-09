@@ -468,7 +468,7 @@ function InvestigationsTab({
   const isRaw = projectKind === "raw_directory";
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 bg-card text-card-foreground p-4 rounded-[var(--radius-md)] border border-border">
       <AnalystDirectivesPanel projectId={projectId} compact />
       {isRaw ? (
         <FetchRawFilePanel projectId={projectId} compact />
@@ -689,7 +689,7 @@ export function ProjectDashboardPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 bg-card text-card-foreground p-4 rounded-[var(--radius-md)] border border-border">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1 min-w-0">
