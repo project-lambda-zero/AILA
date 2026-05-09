@@ -195,109 +195,110 @@
    ===================================================================== */
 
 [data-theme="vaporwave"] {
-  --color-base: #1a1528;
-  --color-surface: #2e2848;
-  --color-elevated: #3a3360;
-  --color-border: #3d3660;
-  --color-border-hover: #f0a8c7;
+  /* Win95/98 desktop palette — teal desktop, gray dialogs, navy title bars */
+  --color-base: #008080;
+  --color-surface: #C0C0C0;
+  --color-elevated: #d4d0c8;
+  --color-border: #808080;
+  --color-border-hover: #000080;
 
-  --color-accent: #f0a8c7;
-  --color-accent-muted: #3d2840;
+  --color-accent: #000080;
+  --color-accent-muted: #1084d0;
 
   --color-peach: #ffd1a8;
   --color-lavender: #d2a8ff;
-  --color-mint: #a8e6e6;
+  --color-mint: #00CED1;
 
-  /* Severity — muted washed-out nostalgic */
-  --color-critical: #ff6b8a;
-  --color-high: #ffa07a;
-  --color-medium: #e6c84a;
-  --color-low: #8b8ba0;
+  /* Severity — Win95 system signal colors */
+  --color-critical: #ff0000;
+  --color-high: #ff8c00;
+  --color-medium: #ffff00;
+  --color-low: #808080;
 
-  /* TEXT — FIXED CONTRAST (WCAG AA 4.5:1 vs #2e2848 surface) */
-  --color-text: #ffeaf5;
-  --color-text-muted: #d4b8d4;
-  --color-text-peach: #ffd1a8;
+  /* TEXT — black on gray */
+  --color-text: #000000;
+  --color-text-muted: #444444;
+  --color-text-peach: #a06840;
 
-  --color-focus-ring: #a8e6e6;
-  --color-badge-text: #1a0a28;
+  --color-focus-ring: #000080;
+  --color-badge-text: #ffffff;
 
-  /* Chunky rounded borders — Win98 era is 0 or 2-4px */
+  /* Pixel-perfect — Win95 has NO rounded corners */
   --radius-sm: 0px;
-  --radius-md: 2px;
-  --radius-lg: 4px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
 
   /* shadcn/ui */
-  --background: #1a1528;
-  --foreground: #ffeaf5;
-  --card: #2e2848;
-  --card-foreground: #ffeaf5;
-  --popover: #2e2848;
-  --popover-foreground: #ffeaf5;
-  --primary: #f0a8c7;
-  --primary-foreground: #1a0a28;
-  --secondary: #3a3360;
-  --secondary-foreground: #ffeaf5;
-  --muted: #3a3360;
-  --muted-foreground: #d4b8d4;
-  --destructive: #ff6b8a;
-  --border: #3d3660;
-  --input: #3d3660;
-  --ring: #a8e6e6;
-  --radius: 0.125rem;
+  --background: #008080;
+  --foreground: #000000;
+  --card: #C0C0C0;
+  --card-foreground: #000000;
+  --popover: #C0C0C0;
+  --popover-foreground: #000000;
+  --primary: #000080;
+  --primary-foreground: #ffffff;
+  --secondary: #d4d0c8;
+  --secondary-foreground: #000000;
+  --muted: #d4d0c8;
+  --muted-foreground: #444444;
+  --destructive: #ff0000;
+  --border: #808080;
+  --input: #ffffff;
+  --ring: #000080;
+  --radius: 0;
 
   /* Sidebar */
   --sidebar-background: var(--color-surface);
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-accent);
-  --sidebar-primary-foreground: #1a0a28;
+  --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: var(--color-elevated);
   --sidebar-accent-foreground: var(--color-text);
   --sidebar-border: var(--color-border);
   --sidebar-ring: var(--color-focus-ring);
 
-  --glow-strength: 0.15;
-  --glow-color: #f0a8c7;
-  --grid-color: rgba(208, 175, 215, 0.03);
+  --glow-strength: 0;
+  --glow-color: #000080;
+  --grid-color: rgba(0, 0, 0, 0.04);
 
-  /* Hot pink utility for kawaii text */
-  --color-hotpink: #feb1d7;
+  /* Pastel utility kept for legacy kawaii text utilities */
+  --color-hotpink: #f0a8c7;
 }
 
-/* Vaporwave light mode (cream mall lighting) */
+/* Vaporwave light mode — Windows 2000 "bliss" blue desktop with XP-warm dialogs */
 [data-theme="vaporwave"][data-mode="light"] {
-  --color-base: #fbf1e8;
-  --color-surface: #fff4ee;
+  --color-base: #3a6ea5;
+  --color-surface: #ece9d8;
   --color-elevated: #ffffff;
-  --color-border: #e8c8d8;
-  --color-border-hover: #c5196d;
+  --color-border: #808080;
+  --color-border-hover: #000080;
 
-  --color-accent: #c5196d;
-  --color-accent-muted: #f8e0ec;
+  --color-accent: #000080;
+  --color-accent-muted: #1084d0;
 
-  --color-text: #2a1528;
-  --color-text-muted: #7a5a70;
+  --color-text: #000000;
+  --color-text-muted: #444444;
   --color-text-peach: #a06840;
 
-  --background: #fbf1e8;
-  --foreground: #2a1528;
-  --card: #fff4ee;
-  --card-foreground: #2a1528;
-  --popover: #fff4ee;
-  --popover-foreground: #2a1528;
-  --primary: #c5196d;
+  --background: #3a6ea5;
+  --foreground: #000000;
+  --card: #ece9d8;
+  --card-foreground: #000000;
+  --popover: #ece9d8;
+  --popover-foreground: #000000;
+  --primary: #000080;
   --primary-foreground: #ffffff;
-  --secondary: #f0e0ec;
-  --secondary-foreground: #2a1528;
-  --muted: #f0e0ec;
-  --muted-foreground: #7a5a70;
-  --destructive: #d42852;
-  --border: #e8c8d8;
-  --input: #e8c8d8;
-  --ring: #5a9fa0;
+  --secondary: #d4d0c8;
+  --secondary-foreground: #000000;
+  --muted: #d4d0c8;
+  --muted-foreground: #444444;
+  --destructive: #ff0000;
+  --border: #808080;
+  --input: #ffffff;
+  --ring: #000080;
 
-  --color-focus-ring: #5a9fa0;
-  --color-badge-text: #2a1528;
+  --color-focus-ring: #000080;
+  --color-badge-text: #ffffff;
 
   --glow-strength: 0;
 }
@@ -315,22 +316,22 @@
    ===================================================================== */
 
 [data-theme="frutiger-aero"] {
-  /* Surfaces — Bliss sky whites with a hint of cyan */
-  --color-base: #cfeaf7;
-  --color-surface: #ffffff;
-  --color-elevated: #ffffff;
-  --color-border: #a8d2ea;
-  --color-border-hover: #2aa5e6;
+  /* Surfaces — Bliss sky with translucent glass panels */
+  --color-base: #b8dff0;
+  --color-surface: rgba(255, 255, 255, 0.72);
+  --color-elevated: rgba(255, 255, 255, 0.85);
+  --color-border: rgba(255, 255, 255, 0.4);
+  --color-border-hover: #2972b6;
 
-  /* Aqua/cerulean accent palette */
-  --color-accent: #2aa5e6;
-  --color-accent-muted: #dff0fa;
-  --color-accent-deep: #0b69a3;
+  /* Vista blue accent palette */
+  --color-accent: #2972b6;
+  --color-accent-muted: #d4e8f7;
+  --color-accent-deep: #1b5a9e;
 
   /* Nature palette */
   --color-peach: #ffb37a;
   --color-lavender: #9b7fd6;
-  --color-mint: #7fd688;
+  --color-mint: #8ec582;
   --color-grass: #4fae5f;
 
   /* Severity — darkened for light bg */
@@ -344,10 +345,10 @@
   --color-text-muted: #3e627c;
   --color-text-peach: #c47a50;
 
-  --color-focus-ring: #2aa5e6;
+  --color-focus-ring: #2972b6;
   --color-badge-text: #0a2133;
 
-  /* Aero era loved soft 6-14px corners */
+  /* Aero era chicklet corners */
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
@@ -359,22 +360,22 @@
     "Trebuchet MS", system-ui, sans-serif;
 
   /* shadcn/ui */
-  --background: #cfeaf7;
+  --background: #b8dff0;
   --foreground: #0a2133;
   --card: #ffffff;
   --card-foreground: #0a2133;
   --popover: #ffffff;
   --popover-foreground: #0a2133;
-  --primary: #2aa5e6;
+  --primary: #2972b6;
   --primary-foreground: #ffffff;
-  --secondary: #dff0fa;
+  --secondary: #d4e8f7;
   --secondary-foreground: #0a2133;
   --muted: #e8f4fc;
   --muted-foreground: #3e627c;
   --destructive: #c41e3a;
   --border: #a8d2ea;
   --input: #a8d2ea;
-  --ring: #2aa5e6;
+  --ring: #2972b6;
   --radius: 0.625rem;
 
   /* Sidebar — translucent aqua glass */
@@ -421,6 +422,123 @@
 
   --color-focus-ring: #2aa5e6;
   --color-badge-text: #041526;
+}
+
+/* =====================================================================
+   PS1 THEME — 1994 PlayStation gray console, BIOS menu aesthetic
+   ===================================================================== */
+[data-theme="ps1"] {
+  --color-base: #b4b4b4;
+  --color-surface: #c8c8c8;
+  --color-elevated: #d8d8d8;
+  --color-border: #888888;
+  --color-border-hover: #2E6DB4;
+  --color-accent: #2E6DB4;
+  --color-accent-muted: #a0c4e8;
+  --color-peach: #F5A623;
+  --color-lavender: #9b8ec4;
+  --color-mint: #6AB344;
+  --color-critical: #EE1D25;
+  --color-high: #F5A623;
+  --color-medium: #6AB344;
+  --color-low: #2E6DB4;
+  --color-text: #1a1a1a;
+  --color-text-muted: #555555;
+  --color-text-peach: #d48a1a;
+  --color-focus-ring: #2E6DB4;
+  --color-badge-text: #ffffff;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --background: #b4b4b4;
+  --foreground: #1a1a1a;
+  --card: #c8c8c8;
+  --card-foreground: #1a1a1a;
+  --popover: #c8c8c8;
+  --popover-foreground: #1a1a1a;
+  --primary: #2E6DB4;
+  --primary-foreground: #ffffff;
+  --secondary: #d8d8d8;
+  --secondary-foreground: #1a1a1a;
+  --muted: #d8d8d8;
+  --muted-foreground: #555555;
+  --destructive: #EE1D25;
+  --border: #888888;
+  --input: #e0e0e0;
+  --ring: #2E6DB4;
+  --radius: 0rem;
+  --sidebar-background: #a0a0a0;
+  --sidebar-foreground: #1a1a1a;
+  --sidebar-primary: #2E6DB4;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #b8b8b8;
+  --sidebar-accent-foreground: #1a1a1a;
+  --sidebar-border: #888888;
+  --sidebar-ring: #2E6DB4;
+  --glow-strength: 0;
+  --glow-color: #2E6DB4;
+  --grid-color: rgba(0,0,0,0.03);
+}
+
+/* PS1 dark mode — BIOS boot screen black, memory card menu aesthetic */
+[data-theme="ps1"][data-mode="dark"] {
+  --color-base: #1a1a1a;
+  --color-surface: #2a2a2a;
+  --color-elevated: #333333;
+  --color-border: #444444;
+  --color-text: #c8c8c8;
+  --color-text-muted: #888888;
+  --background: #1a1a1a;
+  --foreground: #c8c8c8;
+  --card: #2a2a2a;
+  --card-foreground: #c8c8c8;
+  --popover: #2a2a2a;
+  --popover-foreground: #c8c8c8;
+  --secondary: #333333;
+  --secondary-foreground: #c8c8c8;
+  --muted: #333333;
+  --muted-foreground: #888888;
+  --border: #444444;
+  --input: #333333;
+  --sidebar-background: #222222;
+  --sidebar-foreground: #c8c8c8;
+  --sidebar-accent: #2a2a2a;
+  --sidebar-accent-foreground: #c8c8c8;
+  --sidebar-border: #444444;
+}
+
+/* PS1 body — flat console plastic + subtle BIOS checkerboard */
+[data-theme="ps1"] body {
+  background: var(--color-base);
+  position: relative;
+}
+[data-theme="ps1"] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background: repeating-conic-gradient(
+    rgba(0,0,0,0.03) 0% 25%, transparent 0% 50%
+  ) 0 0 / 20px 20px;
+  pointer-events: none;
+}
+
+/* PS1 dark mode body — BIOS boot screen */
+[data-theme="ps1"][data-mode="dark"] body {
+  background: #1a1a1a;
+}
+[data-theme="ps1"][data-mode="dark"] body::before {
+  background: repeating-conic-gradient(
+    rgba(255,255,255,0.02) 0% 25%, transparent 0% 50%
+  ) 0 0 / 20px 20px;
+}
+
+/* PS1 card — flat console plastic with subtle 1px inset bevel */
+[data-theme="ps1"] .bg-surface,
+[data-theme="ps1"] .bg-card,
+[data-theme="ps1"] .bg-elevated {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), inset 0 -1px 0 rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.1);
+  border: 1px solid var(--color-border);
 }
 
 /* =====================================================================
@@ -526,16 +644,19 @@ body {
   [data-theme="synthwave"] body::after { animation: none; }
 }
 
-/* -------- VAPORWAVE body: dusk sky + star tiled bg + perspective checker -------- */
+/* -------- VAPORWAVE body: Win95/98 flat teal desktop with subtle stipple -------- */
 
 [data-theme="vaporwave"] body {
+  background-color: #008080;
   background-image:
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><g fill='rgba(240,168,199,0.18)'><text x='12' y='22' font-family='serif' font-size='11'>✦</text><text x='68' y='48' font-family='serif' font-size='9'>✧</text><text x='30' y='78' font-family='serif' font-size='7'>✦</text></g></svg>"),
-    linear-gradient(180deg, #1a1528 0%, #2a1540 40%, #3d1e50 70%, #1f0f30 100%);
+    radial-gradient(rgba(0, 0, 0, 0.06) 1px, transparent 1px),
+    radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 4px 4px, 4px 4px;
+  background-position: 0 0, 2px 2px;
   background-attachment: fixed;
 }
 
-/* Gentle vertical scan shift */
+/* Faint horizontal scanline overlay (CRT vibe, kept very subtle) */
 [data-theme="vaporwave"] body::before {
   content: "";
   position: fixed;
@@ -547,37 +668,23 @@ body {
       0deg,
       transparent 0,
       transparent 3px,
-      rgba(240, 168, 199, 0.03) 3px,
-      rgba(240, 168, 199, 0.03) 4px
+      rgba(0, 0, 0, 0.025) 3px,
+      rgba(0, 0, 0, 0.025) 4px
     );
 }
 
-/* Perspective checkerboard floor — THE vaporwave signature */
+/* No perspective floor — Win95 desktop is flat. Disable the inherited ::after. */
 [data-theme="vaporwave"] body::after {
-  content: "";
-  position: fixed;
-  left: -10%;
-  right: -10%;
-  bottom: 0;
-  height: 40vh;
-  pointer-events: none;
-  z-index: -1;
-  background:
-    linear-gradient(45deg,
-      rgba(240, 168, 199, 0.22) 25%, transparent 25%, transparent 75%, rgba(240, 168, 199, 0.22) 75%),
-    linear-gradient(45deg,
-      rgba(126, 200, 200, 0.22) 25%, transparent 25%, transparent 75%, rgba(126, 200, 200, 0.22) 75%);
-  background-size: 60px 60px;
-  background-position: 0 0, 30px 30px;
-  transform: perspective(500px) rotateX(55deg);
-  transform-origin: center top;
-  opacity: 0.5;
+  content: none;
 }
 
 [data-theme="vaporwave"][data-mode="light"] body {
+  background-color: #3a6ea5;
   background-image:
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><g fill='rgba(197,25,109,0.1)'><text x='12' y='22' font-family='serif' font-size='11'>✦</text><text x='68' y='48' font-family='serif' font-size='9'>✧</text></g></svg>"),
-    linear-gradient(180deg, #fff4ee 0%, #fbf1e8 100%);
+    radial-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+    radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 4px 4px, 4px 4px;
+  background-position: 0 0, 2px 2px;
 }
 
 /* -------- FRUTIGER AERO body: Bliss sky + rolling hills + bokeh + bubbles -------- */
@@ -603,23 +710,12 @@ body {
 }
 
 [data-theme="frutiger-aero"] body {
-  background:
-    /* The soft grassy horizon bulge */
-    radial-gradient(ellipse 150% 28vh at 50% 100%,
-      #6ec667 0%, #8cd38a 18%, #b0dfac 40%,
-      rgba(176, 223, 172, 0) 62%),
-    /* Sun glow from upper-right */
-    radial-gradient(ellipse 60vw 40vh at 85% 0%,
-      rgba(255, 244, 190, 0.6) 0%, transparent 60%),
-    /* Main sky */
-    linear-gradient(180deg,
-      #3ba6e0 0%,
-      #5fbbe8 14%,
-      #86cfef 30%,
-      #b2e0f3 52%,
-      #d1ecf7 72%,
-      #e5f4f2 88%,
-      #d7ecd2 100%);
+  background: linear-gradient(180deg,
+    #87CEEB 0%,
+    #b8dff0 30%,
+    #d4eef8 60%,
+    #e8f5e9 85%,
+    #c8e6c9 100%);
   background-attachment: fixed;
 }
 
@@ -750,7 +846,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
     inset 0 0 24px rgba(255, 45, 149, 0.04);
 }
 
-/* -------- VAPORWAVE cards: Win98 chunky 3D bevel (pastel raised) -------- */
+/* -------- VAPORWAVE cards: Win95/98 chunky 3D raised bevel -------- */
 
 [data-theme="vaporwave"] .bg-surface,
 [data-theme="vaporwave"] .bg-card,
@@ -760,25 +856,24 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
   border-radius: 0 !important;
   border: none !important;
   box-shadow:
-    -2px -2px 0 #f8d0e4 inset,
-    2px 2px 0 #1a0a28 inset,
-    -1px -1px 0 #fff0f5 inset,
-    1px 1px 0 #0a0015 inset,
-    0 0 0 1px #3d3660;
-  background-image: linear-gradient(180deg, rgba(240, 168, 199, 0.06) 0%, transparent 30%);
+    inset -1px -1px 0 #000000,
+    inset 1px 1px 0 #ffffff,
+    inset -2px -2px 0 #808080,
+    inset 2px 2px 0 #dfdfdf;
+  background-image: none;
 }
 
-/* Win95 title bar on h3 inside cards (that iconic gradient header) */
+/* Win95 active title bar — navy gradient, white text, on h3 inside cards */
 [data-theme="vaporwave"] .bg-surface h3,
 [data-theme="vaporwave"] .bg-card h3,
 [data-theme="vaporwave"] .bg-elevated h3 {
   margin: -8px -8px 8px -8px;
   padding: 4px 8px;
-  background: linear-gradient(90deg, #d7afd7 0%, #f0a8c7 60%, #7ec8c8 100%);
-  color: #1a0a28;
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+  color: #ffffff;
   font-weight: 700;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
+  text-shadow: none;
 }
 
 [data-theme="vaporwave"][data-mode="light"] .bg-surface,
@@ -787,11 +882,10 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 [data-theme="vaporwave"][data-mode="light"] .bg-muted,
 [data-theme="vaporwave"][data-mode="light"] .bg-popover {
   box-shadow:
-    -2px -2px 0 #ffffff inset,
-    2px 2px 0 #2a1528 inset,
-    -1px -1px 0 #fff8fb inset,
-    1px 1px 0 #0a0015 inset,
-    0 0 0 1px #e8c8d8;
+    inset -1px -1px 0 #000000,
+    inset 1px 1px 0 #ffffff,
+    inset -2px -2px 0 #808080,
+    inset 2px 2px 0 #dfdfdf;
 }
 
 /* -------- FRUTIGER AERO cards: real aqua glass (triple specular, blur, cool drop) --
@@ -808,47 +902,15 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 [data-theme="frutiger-aero"] .bg-elevated,
 [data-theme="frutiger-aero"] .bg-muted,
 [data-theme="frutiger-aero"] .bg-popover {
-  background-image:
-    /* top specular gloss */
-    linear-gradient(180deg,
-      rgba(255, 255, 255, 0.95) 0%,
-      rgba(255, 255, 255, 0.68) 28%,
-      rgba(242, 251, 255, 0.55) 50%,
-      rgba(225, 243, 252, 0.52) 100%),
-    /* faint sky-tint overlay */
-    linear-gradient(180deg,
-      rgba(135, 200, 240, 0.08) 0%,
-      rgba(135, 200, 240, 0) 60%);
-  -webkit-backdrop-filter: blur(18px) saturate(1.25);
-  backdrop-filter: blur(18px) saturate(1.25);
-  box-shadow:
-    /* inner glass meniscus */
-    0 1px 0 rgba(255, 255, 255, 1) inset,
-    0 2px 0 rgba(255, 255, 255, 0.6) inset,
-    0 -1px 0 rgba(120, 170, 200, 0.35) inset,
-    /* outer cool drop */
-    0 2px 4px rgba(20, 70, 110, 0.08),
-    0 10px 26px rgba(42, 165, 230, 0.18),
-    0 22px 44px rgba(42, 165, 230, 0.08);
-  border: 1px solid rgba(170, 205, 230, 0.7);
+  background: rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  backdrop-filter: blur(16px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: var(--radius-md);
-  position: relative;
-}
-
-/* Add the top-arc gloss highlight — signature "wet" look */
-[data-theme="frutiger-aero"] .bg-surface::before,
-[data-theme="frutiger-aero"] .bg-card::before,
-[data-theme="frutiger-aero"] .bg-elevated::before {
-  content: "";
-  position: absolute;
-  inset: 1px 1px auto 1px;
-  height: 42%;
-  border-radius: calc(var(--radius-md) - 1px) calc(var(--radius-md) - 1px) 50% 50%;
-  background: linear-gradient(180deg,
-    rgba(255, 255, 255, 0.55) 0%,
-    rgba(255, 255, 255, 0.12) 60%,
-    rgba(255, 255, 255, 0) 100%);
-  pointer-events: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 2px 8px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(0, 80, 160, 0.08);
 }
 
 [data-theme="frutiger-aero"][data-mode="dark"] .bg-surface,
@@ -868,14 +930,6 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
     0 10px 30px rgba(0, 0, 0, 0.55),
     0 22px 60px rgba(42, 165, 230, 0.15);
   border: 1px solid rgba(42, 165, 230, 0.3);
-}
-[data-theme="frutiger-aero"][data-mode="dark"] .bg-surface::before,
-[data-theme="frutiger-aero"][data-mode="dark"] .bg-card::before,
-[data-theme="frutiger-aero"][data-mode="dark"] .bg-elevated::before {
-  background: linear-gradient(180deg,
-    rgba(140, 210, 255, 0.22) 0%,
-    rgba(140, 210, 255, 0.04) 60%,
-    rgba(140, 210, 255, 0) 100%);
 }
 
 /* =====================================================================
@@ -1071,70 +1125,43 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 [data-theme="frutiger-aero"] button[type="submit"],
 [data-theme="frutiger-aero"] .btn-primary,
 [data-theme="frutiger-aero"] button[data-variant="default"],
-[data-theme="frutiger-aero"] button.bg-primary {
+[data-theme="frutiger-aero"] button.bg-primary,
+[data-theme="frutiger-aero"] button[class*="bg-primary"],
+[data-theme="frutiger-aero"] button[class*="bg-accent"] {
   border-radius: 999px !important;
-  background-image:
-    /* specular highlight, only on top 42% */
-    linear-gradient(180deg,
-      rgba(255, 255, 255, 0.85) 0%,
-      rgba(255, 255, 255, 0.45) 22%,
-      rgba(255, 255, 255, 0) 42%,
-      rgba(0, 0, 0, 0.06) 58%,
-      rgba(0, 0, 0, 0.18) 100%),
-    /* base aqua tint */
-    linear-gradient(180deg,
-      #6fc2ee 0%,
-      #3a9dd8 48%,
-      #2683bd 100%) !important;
+  background: linear-gradient(180deg, #5BA3E6 0%, #2972b6 50%, #1B5A9E 100%) !important;
   color: #ffffff !important;
   font-weight: 600;
   letter-spacing: 0.01em;
-  text-shadow:
-    0 1px 0 rgba(5, 60, 100, 0.55),
-    0 0 2px rgba(5, 60, 100, 0.45);
+  text-shadow: 0 1px 0 rgba(10, 40, 70, 0.45);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.85) inset,
-    0 -1px 0 rgba(2, 56, 90, 0.35) inset,
-    0 2px 4px rgba(16, 80, 130, 0.22),
-    0 6px 14px rgba(42, 165, 230, 0.35),
-    0 10px 28px rgba(42, 165, 230, 0.18);
-  border: 1px solid rgba(18, 95, 145, 0.75) !important;
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.15);
+  border: 1px solid #1B5A9E !important;
   transition: all 140ms ease;
 }
 [data-theme="frutiger-aero"] button[type="submit"]:hover:not(:disabled),
 [data-theme="frutiger-aero"] .btn-primary:hover:not(:disabled),
 [data-theme="frutiger-aero"] button[data-variant="default"]:hover:not(:disabled),
-[data-theme="frutiger-aero"] button.bg-primary:hover:not(:disabled) {
-  background-image:
-    linear-gradient(180deg,
-      rgba(255, 255, 255, 0.95) 0%,
-      rgba(255, 255, 255, 0.55) 22%,
-      rgba(255, 255, 255, 0.05) 42%,
-      rgba(0, 0, 0, 0.05) 58%,
-      rgba(0, 0, 0, 0.15) 100%),
-    linear-gradient(180deg, #8bd0f5 0%, #4aa8e0 48%, #2f8cc4 100%) !important;
+[data-theme="frutiger-aero"] button.bg-primary:hover:not(:disabled),
+[data-theme="frutiger-aero"] button[class*="bg-primary"]:hover:not(:disabled),
+[data-theme="frutiger-aero"] button[class*="bg-accent"]:hover:not(:disabled) {
+  background: linear-gradient(180deg, #6BB3F0 0%, #3582C5 50%, #2065A8 100%) !important;
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 1) inset,
-    0 -1px 0 rgba(2, 56, 90, 0.32) inset,
-    0 3px 6px rgba(16, 80, 130, 0.28),
-    0 10px 22px rgba(42, 165, 230, 0.5),
-    0 16px 42px rgba(42, 165, 230, 0.25);
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 3px 6px rgba(0, 0, 0, 0.18),
+    0 0 0 3px rgba(41, 114, 182, 0.18);
 }
 [data-theme="frutiger-aero"] button[type="submit"]:active:not(:disabled),
 [data-theme="frutiger-aero"] .btn-primary:active:not(:disabled),
 [data-theme="frutiger-aero"] button[data-variant="default"]:active:not(:disabled),
-[data-theme="frutiger-aero"] button.bg-primary:active:not(:disabled) {
-  background-image:
-    linear-gradient(0deg,
-      rgba(255, 255, 255, 0.6) 0%,
-      rgba(255, 255, 255, 0.15) 22%,
-      rgba(255, 255, 255, 0) 42%,
-      rgba(0, 0, 0, 0.12) 58%,
-      rgba(0, 0, 0, 0.22) 100%),
-    linear-gradient(180deg, #2683bd 0%, #1a6fa3 100%) !important;
+[data-theme="frutiger-aero"] button.bg-primary:active:not(:disabled),
+[data-theme="frutiger-aero"] button[class*="bg-primary"]:active:not(:disabled),
+[data-theme="frutiger-aero"] button[class*="bg-accent"]:active:not(:disabled) {
+  background: linear-gradient(180deg, #1B5A9E 0%, #2972b6 100%) !important;
   box-shadow:
-    0 1px 2px rgba(5, 40, 70, 0.35) inset,
-    0 -1px 0 rgba(120, 200, 240, 0.35) inset;
+    inset 0 2px 3px rgba(0, 0, 0, 0.25),
+    0 1px 1px rgba(0, 0, 0, 0.1);
   transform: translateY(0.5px);
 }
 
