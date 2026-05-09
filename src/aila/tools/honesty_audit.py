@@ -162,6 +162,8 @@ _COMMENTED_CODE_RE = _re.compile(
 _COMMENTED_CODE_EXEMPTIONS: tuple[str, ...] = (
     "example", "e.g.", "usage:", "like:", "such as", "pattern:",
     "alternative:", "note:", "see:", "returns:", "yields:",
+    "template", "scaffold", "optional", "placeholder", "disabled",
+    "investigation", "documentation", "explanation", "describes",
 )
 
 # Rule 29 — f-string without interpolation.
@@ -1390,16 +1392,27 @@ class _HonestyVisitor(ast.NodeVisitor):
             )
 
     def _check_f_string_no_interpolation(self, tree: ast.Module) -> None:
-        """Rule 29: f-string with no embedded expressions."""
+        """Rule 29: f-string with no embedded expressions.
+
+        Skips JoinedStr nodes that appear as format_spec inside a
+        FormattedValue — those are formatting directives (e.g. ``<6``
+        in ``f"{'ID':<6}"``) and are not independent f-strings.
+        """
+        format_spec_ids: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FormattedValue) and isinstance(node.format_spec, ast.JoinedStr):
+                format_spec_ids.add(id(node.format_spec))
         for node in ast.walk(tree):
             if not isinstance(node, ast.JoinedStr):
+                continue
+            if id(node) in format_spec_ids:
                 continue
             if not any(isinstance(v, ast.FormattedValue) for v in node.values):
                 self._emit(
                     node.lineno,
                     "f_string_no_interpolation",
                     f"f_string_no_interpolation: f-string has no interpolated expressions "
-                    f"— use a plain string instead",
+                    f"\u2014 use a plain string instead",
                 )
 
     def _check_single_use_variable(self, tree: ast.Module) -> None:
