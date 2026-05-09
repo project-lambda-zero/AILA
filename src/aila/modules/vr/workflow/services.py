@@ -12,12 +12,15 @@ from dataclasses import dataclass
 
 from aila.config import Settings, get_settings
 from aila.modules.vr.config_schema import VRConfigSchema
+from aila.modules.vr.services.target_ingestion import TargetIngestionService
 from aila.modules.vr.tools.advisory_builder import AdvisoryBuilderTool
 from aila.modules.vr.tools.crash_triage import CrashTriageTool
 from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.modules.vr.tools.patch_differ import PatchDifferTool
 from aila.modules.vr.tools.poc_runner import PoCRunnerTool
+from aila.platform.config import build_platform_settings
 from aila.platform.llm.client import AilaLLMClient
+from aila.platform.services import SSHService
 from aila.platform.services.factory import ServiceFactory
 
 __all__ = ["VRWorkflowServices"]
@@ -40,6 +43,10 @@ class VRWorkflowServices:
         advisory_builder: CVSS scorer, CWE mapper, advisory formatter.
         patch_differ: Wrapper over IDA bridge diff capabilities.
         llm_client: Platform LLM client for agent reasoning steps.
+        ssh: Platform SSH service for file transfer + remote command
+            execution against analyzer / PoC workstations.
+        ingestion: VR target ingestion service — uploads, git clones,
+            HTTP downloads onto the analyzer machine via SSH.
     """
 
     run_id: str
@@ -51,6 +58,8 @@ class VRWorkflowServices:
     advisory_builder: AdvisoryBuilderTool
     patch_differ: PatchDifferTool
     llm_client: AilaLLMClient
+    ssh: SSHService
+    ingestion: TargetIngestionService
 
     @classmethod
     async def build(cls, run_id: str) -> VRWorkflowServices:
@@ -63,6 +72,7 @@ class VRWorkflowServices:
         settings = get_settings()
         config = VRConfigSchema()
         ida = IDABridgeTool()
+        ssh = SSHService(build_platform_settings(settings))
         return cls(
             run_id=run_id,
             settings=settings,
@@ -73,4 +83,6 @@ class VRWorkflowServices:
             advisory_builder=AdvisoryBuilderTool(),
             patch_differ=PatchDifferTool(ida_bridge=ida),
             llm_client=ServiceFactory().llm_client,
+            ssh=ssh,
+            ingestion=TargetIngestionService(ssh=ssh),
         )

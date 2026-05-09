@@ -56,6 +56,8 @@ def _summary_from_record(record: Any, finding_count: int = 0) -> VRProjectSummar
         cve_id=record.cve_id,
         status=VRProjectStatus(record.status),
         target_class=TargetClass(record.target_class),
+        input_source=getattr(record, "input_source", None),
+        target_format=getattr(record, "target_format", None),
         finding_count=finding_count,
         created_at=record.created_at.isoformat() if record.created_at else None,
     )
@@ -167,38 +169,61 @@ def create_vr_router() -> APIRouter:
         from .db_models import VRProjectRecord
         from .workflow.task import run_vr_nday
 
-        integration: dict[str, Any] = {}
-        async with UnitOfWork() as uow:
-            if body.system_id is not None:
-                from aila.storage.db_models import ManagedSystemRecord
+        async def _resolve_system(
+            uow_session: Any, sys_id: int, auth_ctx: AuthContext,
+        ) -> dict[str, Any]:
+            from aila.storage.db_models import ManagedSystemRecord
 
-                sys_stmt = select(ManagedSystemRecord).where(
-                    ManagedSystemRecord.id == body.system_id,
+            sys_stmt = select(ManagedSystemRecord).where(
+                ManagedSystemRecord.id == sys_id,
+            )
+            if auth_ctx.team_id is not None:
+                sys_stmt = sys_stmt.where(
+                    ManagedSystemRecord.team_id == auth_ctx.team_id,
                 )
-                if auth.team_id is not None:
-                    sys_stmt = sys_stmt.where(
-                        ManagedSystemRecord.team_id == auth.team_id,
-                    )
-                system = (await uow.session.exec(sys_stmt)).first()
-                if system is None:
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"System {body.system_id} not found.",
-                    )
-                integration = {
-                    "name": system.name, "host": system.host,
-                    "username": system.username, "port": system.port,
-                    "private_key_path": system.private_key_path,
-                    "password_secret_id": system.password_secret_id,
-                }
+            system = (await uow_session.exec(sys_stmt)).first()
+            if system is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"System {sys_id} not found.",
+                )
+            return {
+                "name": system.name, "host": system.host,
+                "username": system.username, "port": system.port,
+                "private_key_path": system.private_key_path,
+                "password_secret_id": system.password_secret_id,
+            }
+
+        analysis_integration: dict[str, Any] = {}
+        poc_integration: dict[str, Any] | None = None
+        async with UnitOfWork() as uow:
+            analysis_integration = await _resolve_system(
+                uow.session, body.analysis_system_id, auth,
+            )
+            if body.poc_system_id is not None:
+                poc_integration = await _resolve_system(
+                    uow.session, body.poc_system_id, auth,
+                )
 
             record = VRProjectRecord(
                 name=body.name,
                 cve_id=body.cve_id,
                 target_class=body.target.target_class.value,
-                target_path=body.target.path,
+                input_source=body.target.input_source.value,
+                target_format=(
+                    body.target.target_format.value
+                    if body.target.target_format else None
+                ),
                 binary_id=body.target.binary_id,
-                patched_path=body.patched_target.path if body.patched_target else None,
+                repo_url=body.target.repo_url,
+                vulnerable_ref=body.target.vulnerable_ref,
+                patched_ref=body.target.patched_ref,
+                build_command=body.target.build_command,
+                build_artifact=body.target.build_artifact,
+                upload_filename=body.target.upload_filename,
+                upload_sha256=body.target.upload_sha256,
+                download_url=body.target.download_url,
+                patched_path=None,
                 patched_binary_id=(
                     body.patched_target.binary_id if body.patched_target else None
                 ),
@@ -206,34 +231,52 @@ def create_vr_router() -> APIRouter:
                 context_notes=body.context_notes,
                 status=VRProjectStatus.CREATED.value,
                 team_id=auth.team_id,
+                analysis_system_id=body.analysis_system_id,
+                poc_system_id=body.poc_system_id,
             )
             uow.session.add(record)
             await uow.session.commit()
             await uow.session.refresh(record)
 
-        # Dispatch the durable n-day workflow through the task queue. The
-        # API request must not block on the multi-hour pipeline; the task
-        # wrapper owns DurableStateMachine execution.
+        t = body.target
+        task_kwargs: dict[str, Any] = {
+            "project_id": record.id,
+            "name": body.name,
+            "cve_id": body.cve_id,
+            "input_source": t.input_source.value,
+            "target_class": t.target_class.value,
+            "target_format": t.target_format.value if t.target_format else None,
+            "binary_id": t.binary_id,
+            "upload_filename": t.upload_filename,
+            "upload_sha256": t.upload_sha256,
+            "repo_url": t.repo_url,
+            "vulnerable_ref": t.vulnerable_ref,
+            "build_command": t.build_command,
+            "build_artifact": t.build_artifact,
+            "download_url": t.download_url,
+            "source_available": t.source_available,
+            "context_notes": body.context_notes,
+            "analysis_integration": analysis_integration,
+            "poc_integration": poc_integration,
+        }
+        if body.patched_target:
+            pt = body.patched_target
+            task_kwargs.update({
+                "patched_input_source": pt.input_source.value,
+                "patched_binary_id": pt.binary_id,
+                "patched_upload_filename": pt.upload_filename,
+                "patched_repo_url": pt.repo_url,
+                "patched_ref": pt.patched_ref or pt.vulnerable_ref,
+                "patched_build_command": pt.build_command,
+                "patched_build_artifact": pt.build_artifact,
+                "patched_download_url": pt.download_url,
+            })
+
         task_queue = get_task_queue("vr", request)
         handle = await task_queue.submit(
             track="vr",
             fn=run_vr_nday,
-            kwargs={
-                "project_id": record.id,
-                "name": body.name,
-                "cve_id": body.cve_id,
-                "target_path": body.target.path,
-                "target_class": body.target.target_class.value,
-                "binary_id": body.target.binary_id,
-                "patched_path": body.patched_target.path if body.patched_target else None,
-                "patched_binary_id": (
-                    body.patched_target.binary_id if body.patched_target else None
-                ),
-                "source_available": body.target.source_available,
-                "context_notes": body.context_notes,
-                "system_id": body.system_id,
-                "integration": integration,
-            },
+            kwargs=task_kwargs,
             user_id=auth.user_id,
             group_id=auth.role,
             team_id=auth.team_id,
