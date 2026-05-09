@@ -162,8 +162,10 @@ def create_vr_router() -> APIRouter:
         body: VRProjectCreate,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRProjectSummary]:
-        del request
+        from aila.api.deps import get_task_queue
+
         from .db_models import VRProjectRecord
+        from .workflow.task import run_vr_nday
 
         async with UnitOfWork() as uow:
             record = VRProjectRecord(
@@ -185,7 +187,36 @@ def create_vr_router() -> APIRouter:
             await uow.session.commit()
             await uow.session.refresh(record)
 
-        return DataEnvelope(data=_summary_from_record(record))
+        # Dispatch the durable n-day workflow through the task queue. The
+        # API request must not block on the multi-hour pipeline; the task
+        # wrapper owns DurableStateMachine execution.
+        task_queue = get_task_queue("vr", request)
+        handle = await task_queue.submit(
+            track="vr",
+            fn=run_vr_nday,
+            kwargs={
+                "project_id": record.id,
+                "name": body.name,
+                "cve_id": body.cve_id,
+                "target_path": body.target.path,
+                "target_class": body.target.target_class.value,
+                "binary_id": body.target.binary_id,
+                "patched_path": body.patched_target.path if body.patched_target else None,
+                "patched_binary_id": (
+                    body.patched_target.binary_id if body.patched_target else None
+                ),
+                "source_available": body.target.source_available,
+                "context_notes": body.context_notes,
+            },
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
+
+        return DataEnvelope(
+            data=_summary_from_record(record),
+            meta={"task_id": handle.task_id, "status": "queued"},
+        )
 
     @router.get(
         "/projects/{project_id}",

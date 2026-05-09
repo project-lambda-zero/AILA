@@ -117,6 +117,7 @@ class NdayResearcher:
         mitigations: dict[str, Any],
         ida_bridge: IDABridgeTool,
         config: VRConfigSchema,
+        budget: BudgetState | None = None,
     ) -> None:
         self.run_id = run_id
         self.project_id = project_id
@@ -127,10 +128,13 @@ class NdayResearcher:
         self.ida = ida_bridge
         self.config = config
         self.obligations = self._build_obligations()
-        self.budget = BudgetState(config=BudgetConfig(
-            max_turns=self.config.nday_max_turns,
-            max_tool_time_seconds=self.config.nday_tool_time_seconds,
-        ))
+        if budget is not None:
+            self.budget = budget
+        else:
+            self.budget = BudgetState(config=BudgetConfig(
+                max_turns=self.config.nday_max_turns,
+                max_tool_time_seconds=self.config.nday_tool_time_seconds,
+            ))
         self._sections: list[EvidenceSection] = []
         if self.mitigations:
             self._sections.append(EvidenceSection(
