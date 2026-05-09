@@ -1,0 +1,9 @@
+"""VR (vulnerability research) module workflow package.
+
+Public exports are intentionally empty: the platform's workflow engine
+imports concrete handlers and ``VR_NDAY_V1`` directly via fully-qualified
+paths; consumers should not reach into this package.
+"""
+from __future__ import annotations
+
+__all__: list[str] = []
