@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink } from "react-router";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { isAllowedRole } from "@platform/auth/roles";

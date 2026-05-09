@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { User, Monitor, Info, ArrowRight, Palette, Sun, Moon } from "@phosphor-icons/react";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";

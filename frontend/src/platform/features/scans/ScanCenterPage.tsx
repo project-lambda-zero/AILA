@@ -1,5 +1,5 @@
 import { useMemo, useRef } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Crosshair, Play } from "@phosphor-icons/react";
 
 import { AilaCard } from "@/components/aila/AilaCard";

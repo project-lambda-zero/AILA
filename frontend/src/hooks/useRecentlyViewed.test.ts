@@ -7,7 +7,7 @@
  * Wraps the hook in MemoryRouter because it depends on useLocation.
  */
 import { renderHook, act } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { describe, it, expect, beforeEach } from "vitest";
 import React from "react";
 

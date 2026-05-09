@@ -11,7 +11,7 @@
  * on AuditLogsPage applies here -- one filter UI for operators to learn.
  */
 import { useCallback, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
 import {
