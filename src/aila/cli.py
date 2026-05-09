@@ -11,6 +11,10 @@ import httpx
 import pydantic
 import typer
 
+from ._dotenv import load_project_env as _load_project_env
+
+_load_project_env()
+
 __all__ = ["app", "main"]
 from sqlmodel import delete as sqlmodel_delete
 from sqlmodel import select as sqlmodel_select
