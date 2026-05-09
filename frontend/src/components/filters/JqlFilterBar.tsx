@@ -21,7 +21,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { X, Funnel, MagnifyingGlass } from "@phosphor-icons/react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { Button } from "@/components/ui/button";

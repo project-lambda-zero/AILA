@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 
 export interface RecentItem {
   path: string;

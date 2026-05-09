@@ -1,22 +1,6 @@
 {
+  "extends": "@aila/typescript-config/react-vite",
   "compilerOptions": {
-    "target": "ES2022",
-    "useDefineForClassFields": true,
-    "lib": ["DOM", "DOM.Iterable", "ES2022"],
-    "allowJs": false,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-    "strict": true,
-    "forceConsistentCasingInFileNames": true,
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "react-jsx",
-    "ignoreDeprecations": "6.0",
-    "types": ["vite/client", "node"],
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
@@ -24,5 +8,10 @@
       "@platform/*": ["src/platform/*"]
     }
   },
-  "include": ["src", "vite.config.ts", "../src/aila/modules/*/frontend/**/*"]
+  "include": [
+    "src",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "../src/aila/modules/*/frontend/**/*"
+  ]
 }

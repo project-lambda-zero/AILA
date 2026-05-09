@@ -1,4 +1,4 @@
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router";
 import { ClipboardText } from "@phosphor-icons/react";
 
 import { AilaCard } from "@/components/aila/AilaCard";

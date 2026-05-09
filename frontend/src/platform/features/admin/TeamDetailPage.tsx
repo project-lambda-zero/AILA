@@ -10,7 +10,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router";
 import { UserPlus, Trash, PencilSimple, ArrowLeft } from "@phosphor-icons/react";
 
 import { AilaCard } from "@/components/aila/AilaCard";

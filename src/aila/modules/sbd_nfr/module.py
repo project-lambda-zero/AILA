@@ -169,9 +169,30 @@ class SbdNfrModule(ModuleProtocol):
         if existing_version is not None and existing_version.seed_version == SEED_VERSION:
             return
 
-        _log.info("sbd_nfr: seeding master data (version %s)", SEED_VERSION)
-
         # --- Load all seed JSONs ---
+        # The five seed JSONs are produced by `aila.modules.sbd_nfr.scripts.extract_nfr`
+        # from the proprietary AILA NFR Security Workbook + document_engine.py constants.
+        # In a fresh dev clone where the workbook isn't available, the data directory
+        # may be empty. Skip seeding gracefully so the rest of the platform still boots;
+        # sbd_nfr functionality remains unavailable until the seed files are produced.
+        seed_files = (
+            "seed_subtasks.json",
+            "seed_sections.json",
+            "seed_questions.json",
+            "seed_options.json",
+            "seed_mappings.json",
+        )
+        missing = [name for name in seed_files if not (_DATA_DIR / name).is_file()]
+        if missing:
+            _log.warning(
+                "sbd_nfr: skipping master-data seed — missing files: %s. "
+                "Run 'python -m aila.modules.sbd_nfr.scripts.extract_nfr' to produce them. "
+                "The sbd_nfr module will not be functional until seed data is in place.",
+                ", ".join(missing),
+            )
+            return
+
+        _log.info("sbd_nfr: seeding master data (version %s)", SEED_VERSION)
         subtasks = _load_seed_json("seed_subtasks.json")
         sections = _load_seed_json("seed_sections.json")
         questions = _load_seed_json("seed_questions.json")

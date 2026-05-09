@@ -75,11 +75,24 @@ Notes:
 - `frontend/` is the app shell and platform frontend infrastructure.
 - `src/aila/modules/<module_id>/frontend/` is the only place a module developer should need to touch for frontend contributions.
 
-## Required Module Frontend Files
+## Workspace Package Requirements
+
+The frontend is a pnpm workspace. Every module's `frontend/` directory is its own workspace package consumed by `@aila/shell` via `workspace:*`.
+
+### Required workspace files
+
+Every module's frontend directory MUST contain:
+
+- `package.json` — name `@aila/<module>-frontend` (kebab-case), private, `main: "./spec.ts"`
+- `tsconfig.json` — extends `@aila/typescript-config/react-module`
+
+Reference template: `src/aila/modules/hello_world/frontend/`. The shell registers each module by package-name import in `frontend/src/platform/extension-registry/loadModuleSpecs.ts`.
+
+### Required source files
 
 Every module that contributes frontend UI must provide:
 
-- `frontend/spec.ts`
+- `frontend/spec.ts` — exports `frontendSpec: ModuleFrontendSpec`
 - `frontend/routes.tsx`
 - `frontend/nav.ts`
 
@@ -95,6 +108,20 @@ Optional:
 - `frontend/widgets.tsx`
 - `frontend/screens/*`
 - `frontend/components/*`
+
+### Dependency declaration
+
+Every bare import in a module's source MUST be declared in that module's `package.json`:
+
+| Import category                                           | Section in package.json   | Version reference                |
+|-----------------------------------------------------------|---------------------------|----------------------------------|
+| Module-specific (e.g., `@dnd-kit/core`, `@xyflow/react`) | `dependencies`            | `catalog:<group>` (preferred)    |
+| Shell-owned framework/design-system                       | `peerDependencies`        | `catalog:<group>`                |
+| Test/storybook tooling                                    | `devDependencies`         | `catalog:<group>`                |
+
+pnpm strict mode enforces this at install time — `pnpm install` fails if any module imports a package it didn't declare. Cross-module imports (`@aila/<other>-frontend`) are forbidden by convention; reviewers must reject them.
+
+See `.claude/rules/frontend-workspace.md` for the full ruleset.
 
 ## ModuleFrontendSpec
 

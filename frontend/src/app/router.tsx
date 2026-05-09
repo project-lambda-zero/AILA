@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ComponentType, type ReactElement } from "react";
-import { createBrowserRouter, Navigate, Outlet, useParams, type RouteObject } from "react-router-dom";
+import { createBrowserRouter, Navigate, Outlet, useParams, type RouteObject } from "react-router";
 
 import { AppErrorBoundary } from "@app/ErrorBoundary";
 import { ProtectedRoute } from "@app/auth/ProtectedRoute";

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { Monitor, Plus, Upload } from "lucide-react";
 
 import { SystemCSVImport } from "./SystemCSVImport";

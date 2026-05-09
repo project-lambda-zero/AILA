@@ -1,0 +1,14 @@
+{
+  "name": "@aila/typescript-config",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    "./base": "./base.json",
+    "./react-vite": "./react-vite.json",
+    "./react-module": "./react-module.json"
+  },
+  "dependencies": {
+    "@types/node": "catalog:types",
+    "vite": "catalog:vite"
+  }
+}
