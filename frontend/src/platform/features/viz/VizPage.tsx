@@ -17,26 +17,25 @@ export function VizPage() {
   const heatmapRef = React.useRef<HTMLDivElement>(null);
 
   return (
-    <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-8rem)] min-h-[600px]">
       {/* VIZ-01: Severity donut */}
-      <div ref={severityDonutRef}>
+      <div ref={severityDonutRef} className="h-full">
         <SeverityDonutChart exportRef={severityDonutRef} />
       </div>
 
       {/* VIZ-02: Findings trend */}
-      <div ref={trendRef}>
+      <div ref={trendRef} className="h-full">
         <FindingsTrendChart exportRef={trendRef} />
       </div>
 
-      {/* VIZ-03: System heatmap — full width */}
-      <div ref={heatmapRef} className="lg:col-span-2">
-        <SystemHeatmap exportRef={heatmapRef} />
-      </div>
-
-      {/* VIZ-04: Geographic map — full width */}
-      <div className="lg:col-span-2">
-        <GeographicMap />
-      </div>
-    </div>
-  );
-}
+          <div ref={heatmapRef} className="lg:col-span-2 h-full">
+            <SystemHeatmap exportRef={heatmapRef} />
+          </div>
+    
+          {/* VIZ-04: Geographic map — full width */}
+          <div className="lg:col-span-2 h-full">
+            <GeographicMap />
+          </div>
+        </div>
+      );
+    }

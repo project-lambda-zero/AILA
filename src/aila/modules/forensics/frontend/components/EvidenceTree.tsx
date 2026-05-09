@@ -210,7 +210,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
           </p>
         </AilaCard>
       ) : (
-        <div className="border border-border rounded-lg overflow-hidden">
+        <div className="border border-border rounded-lg bg-surface text-foreground overflow-hidden">
           <div className="overflow-y-auto max-h-[620px]">
             <table className="w-full text-xs">
               <thead className="bg-surface-secondary sticky top-0 z-10">
