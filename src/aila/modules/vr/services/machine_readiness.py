@@ -6,7 +6,6 @@ Verifies IDA Headless MCP reachability and probes research tooling
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -75,7 +74,7 @@ class VRMachineReadinessService:
         )
 
     async def _check_mcp(self) -> bool:
-        result = await asyncio.to_thread(self._ida_bridge.health)
+        result = await self._ida_bridge.health()
         return result.get("status") != "error"
 
     async def _detect_os(self, ssh: SSHService, integration: dict) -> str:

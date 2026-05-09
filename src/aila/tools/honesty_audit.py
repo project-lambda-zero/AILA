@@ -1,6 +1,6 @@
 """honesty_audit — AST-based structural honesty checker for Python code.
 
-Detects twenty-one categories of structural dishonesty:
+Detects twenty-three categories of structural dishonesty:
 
 1. unused_parameter    — function parameter accepted but never referenced in body.
 2. misleading_name     — function name implies intelligence but body only forwards.
@@ -23,6 +23,8 @@ Detects twenty-one categories of structural dishonesty:
 19. response_model_dict — @router.* decorator specifies response_model=dict/Dict.
 20. bare_dict_return_endpoint — endpoint handler returns a raw dict literal or dict() call.
 21. noqa_inline         — inline # noqa comment in production source (use honesty_whitelist.py instead).
+22. http_client_in_module — module imports httpx/requests/urllib3/aiohttp directly (use platform services).
+23. direct_db_in_module — module imports sqlalchemy.create_engine/asyncpg/psycopg2 directly (use platform UoW).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -120,6 +122,23 @@ _NOQA_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
 # SQLModel.metadata — they cannot use honesty_whitelist.py because the import must
 # appear at the module level and ruff processes it independently.
 _ALEMBIC_PATH_PATTERN = _re.compile(r"[/\\]alembic[/\\]")
+
+# Rule 22 — HTTP client libraries banned from modules/.
+# Modules must use platform HTTP services (SSHService, IDA bridge, etc.),
+# not construct their own httpx/requests/aiohttp clients.
+_HTTP_CLIENT_MODULES: frozenset[str] = frozenset({
+    "httpx", "requests", "urllib3", "aiohttp",
+})
+
+# Rule 23 — Direct DB connection libraries banned from modules/.
+# Modules use UnitOfWork from aila.platform.uow for all DB access.
+# Direct engine/connection construction bypasses team scoping and audit.
+_DIRECT_DB_MODULES: frozenset[str] = frozenset({
+    "asyncpg", "psycopg2", "psycopg", "sqlite3",
+})
+_DIRECT_DB_CALLABLES: frozenset[str] = frozenset({
+    "create_engine", "create_async_engine",
+})
 
 # Names that indicate logging is present (rule 12 — silent exception check).
 _LOGGING_IDENTIFIERS: frozenset[str] = frozenset({
@@ -1147,6 +1166,77 @@ class _HonestyVisitor(ast.NodeVisitor):
                         f"threading belongs to the platform layer, not modules",
                     )
 
+    def _check_http_client_in_module(self, tree: ast.Module) -> None:
+        """Rule 22: http_client_in_module — direct HTTP client imports in modules/.
+
+        Modules must not construct their own HTTP clients. HTTP transport
+        is a platform concern — use SSHService, IDABridgeTool, or platform
+        HTTP helpers. Direct httpx/requests/urllib3/aiohttp imports bypass
+        platform connection management and observability.
+        """
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    top = alias.name.split(".")[0]
+                    if top in _HTTP_CLIENT_MODULES:
+                        self._emit(
+                            node.lineno,
+                            "http_client_in_module",
+                            f"http_client_in_module: 'import {alias.name}' — "
+                            f"HTTP clients belong to the platform layer, not modules",
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                top = mod.split(".")[0]
+                if top in _HTTP_CLIENT_MODULES:
+                    self._emit(
+                        node.lineno,
+                        "http_client_in_module",
+                        f"http_client_in_module: 'from {mod} import ...' — "
+                        f"HTTP clients belong to the platform layer, not modules",
+                    )
+
+    def _check_direct_db_in_module(self, tree: ast.Module) -> None:
+        """Rule 23: direct_db_in_module — direct DB driver imports in modules/.
+
+        Modules access the database exclusively through ``UnitOfWork`` from
+        ``aila.platform.uow``. Direct imports of connection-layer libraries
+        (asyncpg, psycopg2, sqlite3) or engine-construction functions
+        (create_engine, create_async_engine) bypass team scoping, audit
+        trails, and connection-pool management.
+        """
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    top = alias.name.split(".")[0]
+                    if top in _DIRECT_DB_MODULES:
+                        self._emit(
+                            node.lineno,
+                            "direct_db_in_module",
+                            f"direct_db_in_module: 'import {alias.name}' — "
+                            f"use UnitOfWork from aila.platform.uow instead",
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                top = mod.split(".")[0]
+                if top in _DIRECT_DB_MODULES:
+                    self._emit(
+                        node.lineno,
+                        "direct_db_in_module",
+                        f"direct_db_in_module: 'from {mod} import ...' — "
+                        f"use UnitOfWork from aila.platform.uow instead",
+                    )
+                # Also catch create_engine / create_async_engine from sqlalchemy
+                if mod.startswith("sqlalchemy"):
+                    for alias in (node.names or []):
+                        if alias.name in _DIRECT_DB_CALLABLES:
+                            self._emit(
+                                node.lineno,
+                                "direct_db_in_module",
+                                f"direct_db_in_module: 'from {mod} import {alias.name}' — "
+                                f"use UnitOfWork from aila.platform.uow instead",
+                            )
+
     def _check_response_model_dict(self, tree: ast.Module) -> None:
         """Rule 19: response_model_dict — @router.* with response_model=dict/Dict.
 
@@ -1361,6 +1451,8 @@ class HonestyAuditor:
         if _is_module_file(str(path)):
             visitor._check_module_session_scope_import(tree)
             visitor._check_asyncio_in_module(tree)
+            visitor._check_http_client_in_module(tree)
+            visitor._check_direct_db_in_module(tree)
         # Rules 19 and 20 apply to all router files (api/ and module routers alike)
         visitor._check_response_model_dict(tree)
         visitor._check_bare_dict_return_endpoint(tree)

@@ -40,7 +40,7 @@ class PatchDifferTool(Tool):
     def __init__(self, ida_bridge: IDABridgeTool) -> None:
         self._ida = ida_bridge
 
-    def forward(self, action: str | None = None, **kwargs: Any) -> dict:
+    async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the requested diff action.
 
         Args:
@@ -54,11 +54,11 @@ class PatchDifferTool(Tool):
             for ``find_patched_functions``.
         """
         if action == "diff_binaries":
-            return self._ida.forward(action="diff_binary", **kwargs)
+            return await self._ida.forward(action="diff_binary", **kwargs)
         if action == "diff_function":
-            return self._ida.forward(action="diff_function", **kwargs)
+            return await self._ida.forward(action="diff_function", **kwargs)
         if action == "find_patched_functions":
-            return self._find_patched(**kwargs)
+            return await self._find_patched(**kwargs)
         return {
             "status": "error",
             "error": (
@@ -67,7 +67,7 @@ class PatchDifferTool(Tool):
             ),
         }
 
-    def _find_patched(
+    async def _find_patched(
         self,
         binary_id_old: str | None = None,
         binary_id_new: str | None = None,
@@ -86,7 +86,7 @@ class PatchDifferTool(Tool):
                 "status": "error",
                 "error": "binary_id_old and binary_id_new are required.",
             }
-        result = self._ida.forward(
+        result = await self._ida.forward(
             action="diff_binary",
             binary_id_old=binary_id_old,
             binary_id_new=binary_id_new,

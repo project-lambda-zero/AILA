@@ -63,7 +63,7 @@ class CrashTriageTool(Tool):
     output_type = "object"
     skip_forward_signature_validation = True
 
-    def forward(self, action: str | None = None, **kwargs: Any) -> dict:
+    async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         if action == "parse_asan":
             return self.parse_asan(kwargs.get("asan_output", ""))
         if action == "compute_signature":
@@ -87,7 +87,7 @@ class CrashTriageTool(Tool):
 
     def parse_asan(self, asan_output: str) -> dict:
         """Extract structured fields from an ASAN report."""
-        if not isinstance(asan_output, str) or not asan_output.strip():
+        if not asan_output.strip():
             return {"status": "error", "error": "asan_output must be non-empty."}
 
         sanitizer_kind = ""
@@ -135,7 +135,7 @@ class CrashTriageTool(Tool):
         so that ASLR bases and load offsets do not split otherwise-identical
         crashes into separate buckets. Only the top 5 frames participate.
         """
-        if not isinstance(crash_type, str) or not crash_type:
+        if not crash_type:
             return {"status": "error", "error": "crash_type must be non-empty."}
         if not isinstance(frames, list):
             return {"status": "error", "error": "frames must be a list."}
@@ -172,7 +172,7 @@ class CrashTriageTool(Tool):
         This is a tier-0 heuristic, not an exploit proof. The proper
         chain (deep taint, gate proofs, PoC) lives in the agent workflow.
         """
-        if not isinstance(crash_type, str) or not crash_type:
+        if not crash_type:
             return {"status": "error", "error": "crash_type must be non-empty."}
 
         verdict, rationale = "uncertain", "Unclassified primitive."

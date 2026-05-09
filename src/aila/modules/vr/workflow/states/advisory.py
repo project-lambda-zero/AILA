@@ -18,7 +18,6 @@ output even if persistence flapped.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any
@@ -155,8 +154,7 @@ async def state_advisory(input: dict[str, Any], services: Any) -> StateResult:
     poc = input.get("poc") or {}
     crash_type = _resolve_crash_type(research, poc)
 
-    cvss_result = await asyncio.to_thread(
-        services.advisory_builder.forward,
+    cvss_result = await services.advisory_builder.forward(
         action="compute_cvss", crash_type=crash_type,
     )
     cvss_block: dict[str, Any] = {}
@@ -167,8 +165,7 @@ async def state_advisory(input: dict[str, Any], services: Any) -> StateResult:
             "severity": cvss_result.get("severity"),
         }
 
-    cwe_result = await asyncio.to_thread(
-        services.advisory_builder.forward,
+    cwe_result = await services.advisory_builder.forward(
         action="map_cwe", crash_type=crash_type,
     )
     cwe_block = cwe_result if cwe_result.get("status") == "ready" else None
@@ -191,8 +188,7 @@ async def state_advisory(input: dict[str, Any], services: Any) -> StateResult:
         "impact_override": narrative["impact"],
         "remediation": narrative["remediation"],
     }
-    formatted = await asyncio.to_thread(
-        services.advisory_builder.forward,
+    formatted = await services.advisory_builder.forward(
         action="format_advisory", finding=finding_payload,
     )
     advisory = formatted.get("advisory") or {}

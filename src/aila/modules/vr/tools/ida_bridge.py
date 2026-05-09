@@ -67,7 +67,7 @@ class IDABridgeTool(Tool):
             os.environ.get("IDA_HEADLESS_TIMEOUT", "120")
         )
 
-    def forward(self, action: str | None = None, **kwargs: Any) -> dict:
+    async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the MCP HTTP API.
 
         Args:
@@ -80,12 +80,13 @@ class IDABridgeTool(Tool):
             or ``error`` (failure with ``error`` message).
         """
         if not action:
-            return self._list_tools()
+            return await self._list_tools()
         if action == "upload":
-            return self._upload_binary(**kwargs)
+            return await self._upload_binary(**kwargs)
         url = f"{self._base_url}/tools/{action}"
         try:
-            resp = httpx.post(url, json=kwargs, timeout=self._timeout)
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(url, json=kwargs)
         except httpx.ConnectError:
             return {
                 "status": "error",
@@ -108,11 +109,12 @@ class IDABridgeTool(Tool):
                 "error": f"Non-JSON response from {action}: {resp.text[:200]}",
             }
 
-    def _list_tools(self) -> dict:
+    async def _list_tools(self) -> dict:
         """Return available MCP tool names when called with no action."""
         url = f"{self._base_url}/tools"
         try:
-            resp = httpx.get(url, timeout=10.0)
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url)
             tools = resp.json()
             return {
                 "status": "ready",
@@ -125,7 +127,7 @@ class IDABridgeTool(Tool):
                 "error": f"Cannot list tools from {self._base_url}/tools",
             }
 
-    def _upload_binary(self, file_path: str | None = None, **_extra: Any) -> dict:
+    async def _upload_binary(self, file_path: str | None = None, **_extra: Any) -> dict:
         """Upload a local binary to the MCP server for analysis.
 
         The MCP server saves the file, hashes it, copies to workspace,
@@ -147,11 +149,11 @@ class IDABridgeTool(Tool):
         url = f"{self._base_url}/upload"
         try:
             with target.open("rb") as fh:
-                resp = httpx.post(
-                    url,
-                    files={"file": (target.name, fh, "application/octet-stream")},
-                    timeout=self._timeout,
-                )
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.post(
+                        url,
+                        files={"file": (target.name, fh, "application/octet-stream")},
+                    )
             return resp.json()
         except httpx.ConnectError:
             return {"status": "error", "error": f"Cannot reach {self._base_url}"}
@@ -160,11 +162,12 @@ class IDABridgeTool(Tool):
         except (ValueError, OSError) as exc:
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
 
-    def health(self) -> dict:
+    async def health(self) -> dict:
         """Quick reachability check for machine readiness verification."""
         url = f"{self._base_url}/health"
         try:
-            resp = httpx.get(url, timeout=5.0)
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(url)
             return resp.json()
         except (httpx.ConnectError, httpx.TimeoutException, ValueError):
             return {"status": "error", "error": f"Unreachable: {url}"}

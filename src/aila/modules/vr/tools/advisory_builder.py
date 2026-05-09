@@ -87,7 +87,7 @@ class AdvisoryBuilderTool(Tool):
         with (cwe_path or _CWE_PATH).open("r", encoding="utf-8") as fh:
             self._cwe_mappings = json.load(fh)
 
-    def forward(self, action: str | None = None, **kwargs: Any) -> dict:
+    async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         if action == "compute_cvss":
             return self.compute_cvss(crash_type=kwargs.get("crash_type", ""), overrides=kwargs.get("overrides") or {})
         if action == "map_cwe":
