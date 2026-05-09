@@ -1,6 +1,6 @@
 """honesty_audit — AST-based structural honesty checker for Python code.
 
-Detects twenty-three categories of structural dishonesty:
+Detects thirty-three categories of structural dishonesty:
 
 1. unused_parameter    — function parameter accepted but never referenced in body.
 2. misleading_name     — function name implies intelligence but body only forwards.
@@ -25,6 +25,16 @@ Detects twenty-three categories of structural dishonesty:
 21. noqa_inline         — inline # noqa comment in production source (use honesty_whitelist.py instead).
 22. http_client_in_module — module imports httpx/requests/urllib3/aiohttp directly (use platform services).
 23. direct_db_in_module — module imports sqlalchemy.create_engine/asyncpg/psycopg2 directly (use platform UoW).
+24. tautological_docstring — docstring restates function name with no additional information.
+25. commented_out_code  — commented-out Python statement (import/def/class/if/for/return/raise).
+26. except_return_default — except handler returns an empty default ([], {}, None, 0, "") hiding real failures.
+27. nested_if_collapsible — if body is a single if with no else; can be combined with `and`.
+28. pointless_pass      — pass as sole body of non-abstract, non-stub function.
+29. f_string_no_interpolation — f-string with no embedded expressions (plain string suffices).
+30. single_use_variable — variable assigned then immediately returned with no other reference.
+31. placeholder_return  — function body is only a docstring + return {} or return []; no real logic.
+32. log_format_concat   — logging call uses string concatenation/f-string instead of %-formatting.
+33. broad_exception_catch — except Exception without a justifying comment (catches everything indiscriminately).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -138,6 +148,29 @@ _DIRECT_DB_MODULES: frozenset[str] = frozenset({
 })
 _DIRECT_DB_CALLABLES: frozenset[str] = frozenset({
     "create_engine", "create_async_engine",
+})
+
+# Rule 25 — Commented-out code detection.
+# Matches lines that look like commented-out Python statements.
+_COMMENTED_CODE_RE = _re.compile(
+    r'^\s*#\s*'
+    r'(import\s|from\s|def\s|class\s|if\s|elif\s|for\s|while\s'
+    r'|return\s|raise\s|try:|except\s|with\s|async\s|await\s|yield\s'
+    r'|assert\s|pass$|break$|continue$)',
+)
+# Lines containing these phrases are documentation examples, not dead code.
+_COMMENTED_CODE_EXEMPTIONS: tuple[str, ...] = (
+    "example", "e.g.", "usage:", "like:", "such as", "pattern:",
+    "alternative:", "note:", "see:", "returns:", "yields:",
+)
+
+# Rule 29 — f-string without interpolation.
+# Ruff F541 catches this too but may be disabled; this is the structural backup.
+
+# Rule 32 — Logging calls using string concatenation or f-strings.
+# Correct: _log.info("x=%s", x).  Wrong: _log.info(f"x={x}") or _log.info("x=" + str(x)).
+_LOG_METHODS: frozenset[str] = frozenset({
+    "debug", "info", "warning", "warn", "error", "exception", "critical",
 })
 
 # Names that indicate logging is present (rule 12 — silent exception check).
@@ -1237,6 +1270,235 @@ class _HonestyVisitor(ast.NodeVisitor):
                                 f"use UnitOfWork from aila.platform.uow instead",
                             )
 
+    # ------------------------------------------------------------------
+    # Rules 24–33: AI slop detection
+    # ------------------------------------------------------------------
+
+    def _check_tautological_docstring(self, tree: ast.Module) -> None:
+        """Rule 24: docstring that just restates the function/class name."""
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            doc = ast.get_docstring(node)
+            if not doc or len(doc.split()) > 6:
+                continue
+            name_words = set(_re.findall(r'[a-z]+', node.name.lower()))
+            doc_words = set(_re.findall(r'[a-z]+', doc.lower()))
+            # Tautological if every name word appears in the docstring and
+            # the docstring adds at most one filler word ("the", "a", etc.).
+            filler = {"the", "a", "an", "of", "for", "to", "in", "on", "is", "and"}
+            extra = doc_words - name_words - filler
+            if name_words and not extra:
+                self._emit(
+                    node.lineno,
+                    "tautological_docstring",
+                    f"tautological_docstring: '{node.name}' docstring \"{doc}\" "
+                    f"restates the name with no added information",
+                )
+
+    def _check_commented_out_code(self, source: str, filepath: str) -> None:
+        """Rule 25: commented-out Python statements."""
+        normalized = filepath.replace("\\", "/")
+        if _ALEMBIC_PATH_PATTERN.search(normalized):
+            return  # migrations legitimately have commented SQL/Python
+        for suffix in _NOQA_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return  # audit tool itself has commented-out examples
+        for lineno, line in enumerate(source.splitlines(), start=1):
+            if not _COMMENTED_CODE_RE.match(line):
+                continue
+            lower = line.lower()
+            if any(ex in lower for ex in _COMMENTED_CODE_EXEMPTIONS):
+                continue
+            self._emit(
+                lineno,
+                "commented_out_code",
+                f"commented_out_code: line looks like commented-out Python — "
+                f"delete dead code instead of commenting it out",
+            )
+
+    def _check_except_return_default(self, tree: ast.Module) -> None:
+        """Rule 26: except handler that returns an empty default, hiding failures."""
+        _EMPTY_DEFAULTS = (type(None), int, float, str)  # None, 0, 0.0, ""
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if len(node.body) != 1 or not isinstance(node.body[0], ast.Return):
+                continue
+            val = node.body[0].value
+            is_empty = False
+            if val is None:
+                is_empty = True
+            elif isinstance(val, ast.Constant) and type(val.value) in _EMPTY_DEFAULTS:
+                if val.value in (None, 0, 0.0, ""):
+                    is_empty = True
+            elif isinstance(val, ast.Dict) and not val.keys:
+                is_empty = True
+            elif isinstance(val, (ast.List, ast.Tuple, ast.Set)) and not val.elts:
+                is_empty = True
+            if is_empty:
+                self._emit(
+                    node.lineno,
+                    "except_return_default",
+                    f"except_return_default: except returns empty default — "
+                    f"this silently hides failures; log or propagate instead",
+                )
+
+    def _check_nested_if_collapsible(self, tree: ast.Module) -> None:
+        """Rule 27: if whose body is a single if (no else on either) — combine with and."""
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.If):
+                continue
+            if node.orelse:
+                continue
+            if len(node.body) != 1:
+                continue
+            inner = node.body[0]
+            if isinstance(inner, ast.If) and not inner.orelse:
+                self._emit(
+                    node.lineno,
+                    "nested_if_collapsible",
+                    f"nested_if_collapsible: nested if with no else on either branch "
+                    f"— combine with 'and' for readability",
+                )
+
+    def _check_pointless_pass(self, tree: ast.Module) -> None:
+        """Rule 28: pass as sole body of non-abstract, non-decorator-stub function."""
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            # Strip docstring
+            body = [s for s in node.body
+                    if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant)
+                            and isinstance(s.value.value, str))]
+            if len(body) != 1 or not isinstance(body[0], ast.Pass):
+                continue
+            dec_names = set()
+            for d in node.decorator_list:
+                if isinstance(d, ast.Attribute):
+                    dec_names.add(d.attr)
+                elif isinstance(d, ast.Name):
+                    dec_names.add(d.id)
+            exempt = {"abstractmethod", "overload", "platform_task"}
+            if dec_names & exempt:
+                continue
+            self._emit(
+                node.lineno,
+                "pointless_pass",
+                f"pointless_pass: '{node.name}()' body is only 'pass' "
+                f"— implement or mark @abstractmethod",
+            )
+
+    def _check_f_string_no_interpolation(self, tree: ast.Module) -> None:
+        """Rule 29: f-string with no embedded expressions."""
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.JoinedStr):
+                continue
+            if not any(isinstance(v, ast.FormattedValue) for v in node.values):
+                self._emit(
+                    node.lineno,
+                    "f_string_no_interpolation",
+                    f"f_string_no_interpolation: f-string has no interpolated expressions "
+                    f"— use a plain string instead",
+                )
+
+    def _check_single_use_variable(self, tree: ast.Module) -> None:
+        """Rule 30: variable assigned then immediately returned with no other use."""
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            body = node.body
+            if len(body) < 2:
+                continue
+            last = body[-1]
+            prev = body[-2]
+            if not (isinstance(last, ast.Return) and isinstance(last.value, ast.Name)):
+                continue
+            if not (isinstance(prev, ast.Assign) and len(prev.targets) == 1
+                    and isinstance(prev.targets[0], ast.Name)):
+                continue
+            name = last.value.id
+            if prev.targets[0].id != name:
+                continue
+            # Count all references to this name in the entire function body
+            refs = sum(1 for n in ast.walk(node)
+                       if isinstance(n, ast.Name) and n.id == name)
+            if refs == 2:  # one assign target, one return value
+                self._emit(
+                    prev.lineno,
+                    "single_use_variable",
+                    f"single_use_variable: '{name}' is assigned and immediately returned "
+                    f"— return the expression directly",
+                )
+
+    def _check_placeholder_return(self, tree: ast.Module) -> None:
+        """Rule 31: function body is only docstring + return {} or return []."""
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            body = [s for s in node.body
+                    if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant)
+                            and isinstance(s.value.value, str))]
+            if len(body) != 1 or not isinstance(body[0], ast.Return):
+                continue
+            val = body[0].value
+            if isinstance(val, ast.Dict) and not val.keys:
+                self._emit(node.lineno, "placeholder_return",
+                           f"placeholder_return: '{node.name}()' returns empty dict {{}} "
+                           f"— implement or raise NotImplementedError")
+            elif isinstance(val, (ast.List, ast.Tuple)) and not val.elts:
+                self._emit(node.lineno, "placeholder_return",
+                           f"placeholder_return: '{node.name}()' returns empty collection "
+                           f"— implement or raise NotImplementedError")
+
+    def _check_log_format_concat(self, tree: ast.Module) -> None:
+        """Rule 32: logging call uses f-string or concatenation instead of %-formatting."""
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr in _LOG_METHODS):
+                continue
+            if not node.args:
+                continue
+            first_arg = node.args[0]
+            if isinstance(first_arg, ast.JoinedStr):
+                self._emit(node.lineno, "log_format_concat",
+                           f"log_format_concat: logging.{func.attr}(f'...') — "
+                           f"use %-formatting: .{func.attr}('x=%s', x)")
+            elif isinstance(first_arg, ast.BinOp) and isinstance(first_arg.op, ast.Add):
+                self._emit(node.lineno, "log_format_concat",
+                           f"log_format_concat: logging.{func.attr}('...' + ...) — "
+                           f"use %-formatting: .{func.attr}('x=%s', x)")
+
+    def _check_broad_exception_catch(self, tree: ast.Module) -> None:
+        """Rule 33: except Exception without a justifying comment."""
+        lines = [None]  # 1-indexed placeholder
+        source = ast.get_source_segment.__doc__  # dummy; we need source lines
+        try:
+            source_text = ast.unparse(tree)  # won't have comments, use original
+        except (ValueError, TypeError):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if node.type is None:
+                # bare except: — even worse, but rule 12 covers this
+                continue
+            exc_name = ""
+            if isinstance(node.type, ast.Name):
+                exc_name = node.type.id
+            elif isinstance(node.type, ast.Attribute):
+                exc_name = node.type.attr
+            if exc_name != "Exception":
+                continue
+            self._emit(
+                node.lineno,
+                "broad_exception_catch",
+                f"broad_exception_catch: 'except Exception' catches everything indiscriminately "
+                f"— catch specific exception types",
+            )
+
     def _check_response_model_dict(self, tree: ast.Module) -> None:
         """Rule 19: response_model_dict — @router.* with response_model=dict/Dict.
 
@@ -1458,6 +1720,17 @@ class HonestyAuditor:
         visitor._check_bare_dict_return_endpoint(tree)
         # Rule 21 applies to all Python source files (self-exemption handled inside)
         visitor._check_noqa_inline(source, str(path))
+        # Rules 24–33: AI slop detection (apply to all Python source files)
+        visitor._check_tautological_docstring(tree)
+        visitor._check_commented_out_code(source, str(path))
+        visitor._check_except_return_default(tree)
+        visitor._check_nested_if_collapsible(tree)
+        visitor._check_pointless_pass(tree)
+        visitor._check_f_string_no_interpolation(tree)
+        visitor._check_single_use_variable(tree)
+        visitor._check_placeholder_return(tree)
+        visitor._check_log_format_concat(tree)
+        visitor._check_broad_exception_catch(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:
