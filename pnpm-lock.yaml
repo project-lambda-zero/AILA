@@ -201,6 +201,9 @@ importers:
       '@aila/sbd-nfr-frontend':
         specifier: workspace:*
         version: link:../src/aila/modules/sbd_nfr/frontend
+      '@aila/vr-frontend':
+        specifier: workspace:*
+        version: link:../src/aila/modules/vr/frontend
       '@aila/vulnerability-frontend':
         specifier: workspace:*
         version: link:../src/aila/modules/vulnerability/frontend
@@ -469,6 +472,37 @@ importers:
       vitest:
         specifier: catalog:vite
         version: 4.1.4(@types/node@24.7.2)(@vitest/coverage-v8@4.1.4)(jsdom@29.0.2(@noble/hashes@1.8.0))(msw@2.14.5(@types/node@24.7.2)(typescript@6.0.2))(vite@8.0.7(@types/node@24.7.2)(esbuild@0.27.7)(jiti@2.7.0))
+
+  src/aila/modules/vr/frontend:
+    dependencies:
+      '@tanstack/react-query':
+        specifier: catalog:query
+        version: 5.96.2(react@19.2.4)
+      react:
+        specifier: catalog:react19
+        version: 19.2.4
+      react-router:
+        specifier: catalog:router
+        version: 7.14.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+    devDependencies:
+      '@aila/typescript-config':
+        specifier: workspace:*
+        version: link:../../../../../packages/typescript-config
+      '@storybook/react':
+        specifier: catalog:storybook
+        version: 10.3.5(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(storybook@10.3.5(@testing-library/dom@10.4.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(typescript@6.0.2)
+      '@storybook/react-vite':
+        specifier: catalog:storybook
+        version: 10.3.5(esbuild@0.27.7)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(storybook@10.3.5(@testing-library/dom@10.4.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(typescript@6.0.2)(vite@8.0.7(@types/node@24.7.2)(esbuild@0.27.7)(jiti@2.7.0))
+      '@types/react':
+        specifier: catalog:react19
+        version: 19.2.14
+      storybook:
+        specifier: catalog:storybook
+        version: 10.3.5(@testing-library/dom@10.4.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.2
 
   src/aila/modules/vulnerability/frontend:
     dependencies:
