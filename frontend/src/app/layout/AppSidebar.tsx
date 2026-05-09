@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { isAllowedRole } from "@platform/auth/roles";
@@ -27,19 +27,15 @@ interface AppSidebarProps {
 
 function NavItem({ item }: { item: SidebarItem }) {
   const Icon = item.icon;
+  const location = useLocation();
+  const isActive = item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to);
+
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
         tooltip={item.label}
-        render={
-          <NavLink
-            to={item.to}
-            end={item.to === "/"}
-            className={({ isActive }) =>
-              isActive ? "text-accent font-medium" : "text-sidebar-foreground"
-            }
-          />
-        }
+        isActive={isActive}
+        render={<Link to={item.to} />}
       >
         {Icon && <Icon size={20} weight="regular" />}
         <span>{item.label}</span>
@@ -63,6 +59,7 @@ function BrandLogo() {
 
 export function AppSidebar({ moduleSpecs }: AppSidebarProps) {
   const { role } = useAuthStore();
+  const location = useLocation();
   const sections = getSidebarSections(moduleSpecs);
 
   return (
@@ -108,23 +105,20 @@ export function AppSidebar({ moduleSpecs }: AppSidebarProps) {
                               while preventing nested-<li> hydration bugs.
                             */}
                             <SidebarMenu>
-                              {subgroup.items.map((item) => (
-                                <SidebarMenuItem key={item.id}>
-                                  <SidebarMenuButton
-                                    tooltip={item.label}
-                                    render={
-                                      <NavLink
-                                        to={item.to}
-                                        className={({ isActive }) =>
-                                          isActive ? "text-accent font-medium" : "text-sidebar-foreground"
-                                        }
-                                      />
-                                    }
-                                  >
+                              {subgroup.items.map((item) => {
+                                const isActive = item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to);
+                                return (
+                                  <SidebarMenuItem key={item.id}>
+                                    <SidebarMenuButton
+                                      tooltip={item.label}
+                                      isActive={isActive}
+                                      render={<Link to={item.to} />}
+                                    >
                                     <span>{item.label}</span>
                                   </SidebarMenuButton>
                                 </SidebarMenuItem>
-                              ))}
+                                );
+                              })}
                             </SidebarMenu>
                           </div>
                         ))}

@@ -49,7 +49,7 @@ export function ProjectDetailsPage() {
   }
 
   return (
-    <div className="space-y-4 bg-card text-card-foreground p-4 rounded-[var(--radius-md)] border border-border">
+    <div className="space-y-4 bg-surface text-foreground p-4 rounded-[var(--radius-md)] border border-border">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold font-mono text-card-foreground">
