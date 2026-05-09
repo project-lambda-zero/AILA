@@ -205,7 +205,7 @@ async def smart_search(
                 total_searched=total_searched,
             )
         llm_data = _LLMSearchResult.model_validate_json(llm_response.content)
-    except Exception as exc:
+    except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
         _log.error("smart_search: LLM call failed: %s", exc)
         return SmartSearchResponse(
             query=request.query,

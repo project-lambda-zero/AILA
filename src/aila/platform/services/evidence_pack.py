@@ -65,10 +65,9 @@ class BoundedEvidencePack(BaseModel):
         """Add ``section`` honoring all bounds. Returns False if dropped."""
         candidate = self._cap_section_chars(section)
 
-        if len(self.sections) >= self.max_sections:
-            if not self._evict_lowest_below(candidate.priority):
-                self.dropped.append(candidate.title)
-                return False
+        if len(self.sections) >= self.max_sections and not self._evict_lowest_below(candidate.priority):
+            self.dropped.append(candidate.title)
+            return False
 
         if not self._make_char_room(candidate):
             self.dropped.append(candidate.title)

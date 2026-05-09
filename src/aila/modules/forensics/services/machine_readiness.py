@@ -63,14 +63,14 @@ class MachineReadinessService:
                 return "macos"
             if "linux" in kernel:
                 return "linux"
-        except Exception:
+        except (OSError, TimeoutError, ConnectionError, RuntimeError):
             _log.debug("uname probe failed — trying Windows detection", exc_info=True)
 
         try:
             output = await ssh.run_command(integration, "ver", timeout_seconds=10.0)
             if "windows" in output.lower():
                 return "windows"
-        except Exception:
+        except (OSError, TimeoutError, ConnectionError, RuntimeError):
             _log.debug("Windows ver probe failed after uname probe failure", exc_info=True)
 
         raise RuntimeError("Unable to detect analyzer OS via uname -s or ver")

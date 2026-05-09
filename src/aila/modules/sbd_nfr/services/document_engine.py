@@ -370,9 +370,8 @@ def _active_item_ids_for_section(
             if web_required:
                 active.append(item_id)
             continue
-        if re.match(r"^9\.(6|7|8|9|10)(\.|$)", item_id):
-            if mobile_required:
-                active.append(item_id)
+        if re.match(r"^9\.(6|7|8|9|10)(\.|$)", item_id) and mobile_required:
+            active.append(item_id)
     if not active:
         summary_blob = _lower_blob(
             profile.get("service_summary", ""),

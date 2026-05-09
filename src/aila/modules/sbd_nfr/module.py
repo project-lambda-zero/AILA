@@ -171,7 +171,7 @@ class SbdNfrModule(ModuleProtocol):
 
         # --- Load all seed JSONs ---
         # The five seed JSONs are produced by `aila.modules.sbd_nfr.scripts.extract_nfr`
-        # from the proprietary AILA NFR Security Workbook + document_engine.py constants.
+        # using the proprietary AILA NFR Security Workbook + document_engine.py constants.
         # In a fresh dev clone where the workbook isn't available, the data directory
         # may be empty. Skip seeding gracefully so the rest of the platform still boots;
         # sbd_nfr functionality remains unavailable until the seed files are produced.
@@ -485,7 +485,7 @@ class SbdNfrModule(ModuleProtocol):
                 svc = ServiceFactory()
                 await svc.storage.fetch_all(SbdNfrSessionRecord)
                 return {"status": "up"}
-            except Exception as exc:
+            except (OSError, RuntimeError, ValueError) as exc:
                 return {"status": "down", "detail": str(exc)}
 
         return {

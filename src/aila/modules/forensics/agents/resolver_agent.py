@@ -46,8 +46,7 @@ class ResolverAgent:
                 "primary_artifact_id": None,
             }
 
-        candidate = await self._attempt_resolution(question, artifacts, leads)
-        return candidate
+        return await self._attempt_resolution(question, artifacts, leads)
 
     async def _get_relevant_artifacts(self, question: str) -> list[dict[str, Any]]:
         """Retrieve artifacts potentially relevant to the question."""
@@ -168,7 +167,7 @@ class ResolverAgent:
                         "reasoning": parsed.get("reasoning", ""),
                         "primary_artifact_id": parsed.get("primary_artifact_id"),
                     }
-        except Exception:
+        except (RuntimeError, ValueError, OSError, TimeoutError):
             _log.warning("LLM resolution failed", exc_info=True)
 
         return {

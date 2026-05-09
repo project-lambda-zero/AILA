@@ -33,8 +33,7 @@ class ToolSpec:
         Delegates to ``factory_fn`` which may be a class constructor or a
         free function returning the configured tool instance.
         """
-        instance = self.factory_fn(settings)
-        return instance
+        return self.factory_fn(settings)
 
 
 def iter_tool_specs() -> Iterator[ToolSpec]:

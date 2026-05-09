@@ -169,7 +169,7 @@ TASK_ORPHANED_DEPENDENT_SWEPT_TOTAL = Counter(
     labelnames=("outcome",),
 )
 # Phase 178b: checkpoint write volume. Useful for spotting stuck stages and
-# for confirming that in-flight tasks are actually persisting progress.
+# confirms that in-flight tasks are actually persisting progress.
 TASK_CHECKPOINT_WRITES_TOTAL = Counter(
     "aila_task_checkpoint_writes_total",
     "Number of successful checkpoint writes",

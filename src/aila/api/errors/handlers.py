@@ -104,8 +104,7 @@ def _derive_code_for_legacy(exc: AILAError) -> str:
         if i > 0 and ch.isupper() and base[i - 1].islower():
             chars.append("_")
         chars.append(ch.upper())
-    code = "".join(chars) + "_ERROR" if chars else "INTERNAL_ERROR"
-    return code
+    return "".join(chars) + "_ERROR" if chars else "INTERNAL_ERROR"
 
 
 async def typed_error_handler(request: Request, exc: Exception) -> JSONResponse:

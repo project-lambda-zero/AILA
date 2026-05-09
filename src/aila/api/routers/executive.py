@@ -347,9 +347,8 @@ async def executive_health(
     last_scanned_at: str | None = None
     for f in findings:
         val = f.get("last_scanned_at")
-        if val:
-            if last_scanned_at is None or val > last_scanned_at:
-                last_scanned_at = str(val)
+        if val and (last_scanned_at is None or val > last_scanned_at):
+            last_scanned_at = str(val)
 
     systems_with_findings = len({f.get("system_id") for f in findings if f.get("system_id") is not None})
 

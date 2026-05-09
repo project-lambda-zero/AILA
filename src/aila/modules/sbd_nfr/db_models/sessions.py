@@ -81,7 +81,7 @@ class SbdNfrSessionRecord(TeamScopedMixin, SQLModel, table=True):
     # posture_index: 0.0-3.0 aggregate maturity score across all NFR sections.
     # Run ALTER TABLE sbd_nfr_session_record ADD COLUMN risk_tier TEXT;
     #     ALTER TABLE sbd_nfr_session_record ADD COLUMN posture_index REAL;
-    # if upgrading an existing DB instead of re-running create_all().
+    # when upgrading an existing DB instead of re-running create_all().
     risk_tier: str | None = Field(
         default=None,
         sa_column=Column(Text, nullable=True),

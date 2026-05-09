@@ -133,7 +133,7 @@ def _build_analysis_script(
     strings.exe in PATH. The script prints a single JSON document to stdout
     that the collector parses and persists as per-file artifacts.
     """
-    py = textwrap.dedent(rf'''
+    return textwrap.dedent(rf'''
         import sys, os, json, hashlib, subprocess, time, shutil, pathlib, tempfile
         sys.stdout.reconfigure(encoding="utf-8")
         from dissect.target import Target
@@ -434,7 +434,6 @@ def _build_analysis_script(
             out["results"].append(r)
         print(json.dumps(out, default=str))
     ''').strip()
-    return py
 
 
 async def collect_binary_analysis_artifacts(

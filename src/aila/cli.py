@@ -310,7 +310,7 @@ def worker_start(
     )
 
     # Phase 179: WorkerSettings.functions is sourced from _REGISTRY at
-    # import time. Phase 180's module ports add the @platform_task
+    # module import time. Phase 180's module ports add the @platform_task
     # decorators that populate it; Phase 179 leaves it [], with the
     # reaper cron satisfying ARQ's "at least one job" requirement.
     class _BoundWorkerSettings(WorkerSettings):

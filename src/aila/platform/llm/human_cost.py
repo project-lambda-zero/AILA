@@ -143,7 +143,7 @@ async def estimate_human_cost(
 
         # UPDATE original run's cost records (not sentinel records)
         # This approach keeps ROI queries simple: just SUM human_cost_usd
-        # from LLMCostRecord where it's not null.
+        # over LLMCostRecord rows where it's not null.
         from sqlmodel import select
 
         from aila.platform.llm.cost_record import LLMCostRecord

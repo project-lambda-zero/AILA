@@ -39,8 +39,8 @@ class SbdNfrRuntime:
             run_id=request.run_id,
             action_id=self.action_id,
             message=(
-                f"SbD NFR assessments are managed through the /sbd_nfr API. "
-                f"Use POST /sbd_nfr/sessions to start a new assessment."
+                "SbD NFR assessments are managed through the /sbd_nfr API. "
+                "Use POST /sbd_nfr/sessions to start a new assessment."
             ),
             module_payload=payload,
             artifacts={},

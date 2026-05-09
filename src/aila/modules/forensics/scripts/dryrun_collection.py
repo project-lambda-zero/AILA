@@ -139,7 +139,7 @@ def main(disk_path: str) -> int:
         try:
             raw, elapsed, nbytes = _run_dissect_query(disk_path, qfunc)
         except subprocess.TimeoutExpired:
-            print(f"TIMEOUT after 180s")
+            print("TIMEOUT after 180s")
             fails.append({"query": qfunc, "error": "timeout"})
             continue
 

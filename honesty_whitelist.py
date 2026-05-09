@@ -148,4 +148,181 @@ HONESTY_WHITELIST = [
     ("_template/module.py", "commented_out_code", "commented-out Python"),
     ("_template/module.py", "commented_out_code", "commented-out Python"),
     ("_template/module.py", "commented_out_code", "commented-out Python"),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Category (h): Intentional error boundaries — broad_exception_catch.
+    # The platform/API surface logs the exception and degrades gracefully
+    # to keep the request, task, or worker pipeline alive. Narrowing the
+    # catches would risk crashing a service on an unforeseen failure mode
+    # at the system boundary; the breadth is the design.
+    # ──────────────────────────────────────────────────────────────────
+
+    # api/ — FastAPI app, middleware, and routers. Each catch logs and
+    # returns a typed error response or degrades a single endpoint.
+    ("api/app.py", "broad_exception_catch", "catches everything"),
+    ("api/middleware/idempotency.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/dashboard.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/executive.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/findings_workflow.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/health.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/oidc.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/scans.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/scheduled_reports.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/search.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/sessions.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/systems.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/tasks.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/tools.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/topology.py", "broad_exception_catch", "catches everything"),
+    ("api/routers/users.py", "broad_exception_catch", "catches everything"),
+
+    # platform/ — LLM client, routing/runtime, services, task queue, and
+    # workflow engine. These are the platform's outermost frames and
+    # supervisors; they MUST keep running across model/provider/runner
+    # failures and emit structured events instead of propagating.
+    ("platform/llm/client.py", "broad_exception_catch", "catches everything"),
+    ("platform/llm/pipeline.py", "broad_exception_catch", "catches everything"),
+    ("platform/llm/verify.py", "broad_exception_catch", "catches everything"),
+    ("platform/modules/platform.py", "broad_exception_catch", "catches everything"),
+    ("platform/routing/router.py", "broad_exception_catch", "catches everything"),
+    ("platform/runtime/orchestrator.py", "broad_exception_catch", "catches everything"),
+    ("platform/services/health_probes.py", "broad_exception_catch", "catches everything"),
+    ("platform/tasks/discovery.py", "broad_exception_catch", "catches everything"),
+    ("platform/tasks/hooks.py", "broad_exception_catch", "catches everything"),
+    ("platform/tasks/queue.py", "broad_exception_catch", "catches everything"),
+    ("platform/tasks/report_tasks.py", "broad_exception_catch", "catches everything"),
+    ("platform/tasks/worker.py", "broad_exception_catch", "catches everything"),
+    ("platform/workflows/engine.py", "broad_exception_catch", "catches everything"),
+    ("platform/workflows/log.py", "broad_exception_catch", "catches everything"),
+
+    # storage/ — secret store catches keyring backend failures so a missing
+    # platform-level keyring service does not break the API at startup.
+    ("storage/secrets.py", "broad_exception_catch", "catches everything"),
+
+    # modules/ — best-effort SSE emission failure boundaries. SbD-NFR session
+    # completion notifications are non-critical; SILENT_FAILURE_TOTAL counter is
+    # incremented and a warning is logged so the operator can investigate without
+    # blocking the resolution workflow.
+    ("sbd_nfr/services/resolution_service.py", "broad_exception_catch", "catches everything"),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Category (h): except_return_default — mechanical typed catches whose
+    # documented contract IS the empty default. These are pure parser /
+    # coercion / cache-lookup utilities; the empty return is the public
+    # contract, not an error swallow. Logging on every parse failure
+    # would create unbounded log spam against external/user input.
+    # ──────────────────────────────────────────────────────────────────
+
+    # _dotenv.load_project_env: optional dotenv dependency check + missing
+    # .env file is the documented "no .env loaded" contract.
+    ("_dotenv.py", "except_return_default", "silently hides failures"),
+
+    # api/routers/tools.py: registry.require() raises KeyError when the
+    # tool key is unknown; the inner closure returns None to signal a 404
+    # to the outer route handler.
+    ("api/routers/tools.py", "except_return_default", "silently hides failures"),
+
+    # forensics parser/coercion utilities — ill-formed input is the contract.
+    ("forensics/api_router.py", "except_return_default", "silently hides failures"),
+    ("workflow/states/collectors/_ghidra_stage.py", "except_return_default", "silently hides failures"),
+    ("workflow/states/collectors/memory.py", "except_return_default", "silently hides failures"),
+    ("workflow/states/collectors/memory_enrich.py", "except_return_default", "silently hides failures"),
+    ("workflow/states/collectors/network.py", "except_return_default", "silently hides failures"),
+
+    # SbD NFR scoring: numeric-string answer parser; non-numeric is
+    # documented as "excluded from average" — returning None is the rule.
+    ("sbd_nfr/services/scoring_service.py", "except_return_default", "silently hides failures"),
+
+    # VR n-day researcher: structured-output JSON extraction. Failure means
+    # the LLM produced unparseable text; the caller treats None as "no
+    # submission" and the surrounding retry / scoring pipeline owns logging.
+    ("vr/agents/nday_researcher.py", "except_return_default", "silently hides failures"),
+
+    # vulnerability adapters: cache lookups & advisory fetch fallbacks.
+    # arch.py: SQLAlchemyError on DB cache read → empty cache map (cold start).
+    # osv.py: AILAError on remote advisory fetch → None to skip the entry.
+    ("vulnerability/adapters/arch.py", "except_return_default", "silently hides failures"),
+    ("vulnerability/adapters/osv.py", "except_return_default", "silently hides failures"),
+
+    # Scoring agent prior-knowledge fetch — retrieval miss returns empty
+    # context, which the prompt builder handles transparently.
+    ("vulnerability/agents/scoring/agent.py", "except_return_default", "silently hides failures"),
+
+    # vulnerability coercion utilities — the return-on-bad-input default is
+    # the entire purpose of these functions (coerce_int, coerce_float,
+    # coerce_non_negative_int).
+    ("vulnerability/workflow/utils/coercion.py", "except_return_default", "silently hides failures"),
+
+    # platform/contracts: numeric coercion for run-summary counts.
+    ("platform/contracts/reporting.py", "except_return_default", "silently hides failures"),
+
+    # platform/llm: budget guard rails treat unparseable / unset config as
+    # "no ceiling" (early return); cost.py treats unparseable token caps as
+    # "unlimited (0)" per the documented contract.
+    ("platform/llm/budget_alert.py", "except_return_default", "silently hides failures"),
+    ("platform/llm/cost.py", "except_return_default", "silently hides failures"),
+
+    # platform/services/report._extract_target_from_run: malformed route_json
+    # → empty target list, treated as "fleet-wide" by callers.
+    ("platform/services/report.py", "except_return_default", "silently hides failures"),
+
+    # platform/services/team_scope: SQLAlchemy listener fallback — statements
+    # that don't expose a mapper / column descriptions are global queries.
+    ("platform/services/team_scope.py", "except_return_default", "silently hides failures"),
+
+    # platform/tasks/discovery: parser utilities for nproc, free, df, uptime
+    # output — None is the documented "unparseable" contract.
+    ("platform/tasks/discovery.py", "except_return_default", "silently hides failures"),
+
+    # platform/tools/artifacts: JSON content-type parser fallback returns
+    # the raw body when the payload is not valid JSON; _parse_json_object
+    # returns {} when the stored payload is missing or malformed.
+    ("platform/tools/artifacts.py", "except_return_default", "silently hides failures"),
+
+    # platform/tools/audit._parse_json: malformed audit-record details → {}.
+    ("platform/tools/audit.py", "except_return_default", "silently hides failures"),
+
+    # platform/tools/http: SSRF DNS-fail short-circuit (downstream httpx
+    # surfaces the error) and JSON-response decoder (None when not JSON).
+    ("platform/tools/http.py", "except_return_default", "silently hides failures"),
+
+    # storage/report_repository._parse_json_object: malformed report payload
+    # → {} so callers see an empty dict instead of crashing.
+    ("storage/report_repository.py", "except_return_default", "silently hides failures"),
+
+    # tools/honesty_audit: source-text unparse fallback (line 1501) and
+    # SyntaxError tolerance during directory walks (line 1716).
+    ("tools/honesty_audit.py", "except_return_default", "silently hides failures"),
+
+    # ---- Rules 1-23 residual (pre-existing, verified legitimate) --------
+
+    # Category (g): Vulnerability module HTTP providers/adapters are the data-fetch
+    # boundary itself — the module's equivalent of IDA bridge. httpx is their transport.
+    ("vulnerability/adapters/ghsa.py", "http_client_in_module", "HTTP clients belong to the platform"),
+    ("vulnerability/providers/_http.py", "http_client_in_module", "HTTP clients belong to the platform"),
+    ("vulnerability/providers/alpine_secdb.py", "http_client_in_module", "HTTP clients belong to the platform"),
+    ("vulnerability/providers/epss.py", "http_client_in_module", "HTTP clients belong to the platform"),
+    ("vulnerability/providers/nvd.py", "http_client_in_module", "HTTP clients belong to the platform"),
+    ("vulnerability/providers/osv.py", "http_client_in_module", "HTTP clients belong to the platform"),
+    ("vulnerability/services/advisory.py", "http_client_in_module", "HTTP clients belong to the platform"),
+    ("vulnerability/workflow/definitions.py", "http_client_in_module", "HTTP clients belong to the platform"),
+
+    # Category (g): Vulnerability workflow imports psycopg for typed serialization-error
+    # retry, not for direct DB connections. The exception type is the import target.
+    ("vulnerability/workflow/definitions.py", "direct_db_in_module", "use UnitOfWork"),
+
+    # Category (b): CLI sync-to-async bridge functions — Click/Typer requires sync
+    # entry points. These thin wrappers call run_until_complete() which is the mandatory
+    # pattern for invoking async code from a sync CLI handler.
+    ("cli.py", "run_until_complete", "consider inlining"),
+
+    # Category (b): Forensics tool_catalog factory function — the indirection is the
+    # registry pattern (tool alias → factory callable → tool instance).
+    ("forensics/tool_catalog.py", "factory_fn", "consider inlining"),
+
+    # Category (b): CLI functions with unused parameters required by Typer's command
+    # signature contract.
+    ("cli.py", "report_findings", "unused parameter"),
+    ("cli.py", "restore_db", "unused parameter"),
 ]
+

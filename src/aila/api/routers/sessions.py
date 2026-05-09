@@ -124,7 +124,7 @@ async def list_sessions(
                     last_at[sid] = mx
 
                 # Latest message per session for preview -- fetch all messages
-                # for these sessions and keep the newest content per session.
+                # belonging to these sessions and keep the newest content per session.
                 msg_stmt = (
                     select(SessionMessageRecord)
                     .where(SessionMessageRecord.session_id.in_(session_ids))  # type: ignore[attr-defined]

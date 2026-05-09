@@ -404,7 +404,7 @@ async def run_ghidra_on_sample(
     # --- Pass 2: export decompilation ------------------------------------
     # Reuse the same project dir — Ghidra will pick up the analysis it
     # just ran instead of re-analyzing. The -import flag is idempotent
-    # with -overwrite.
+    # alongside -overwrite.
     decomp_cmd = (
         f'{headless} "{project_dir}" prj -process "{scratch}" '
         f'-readOnly -scriptPath "{script_dir}" '

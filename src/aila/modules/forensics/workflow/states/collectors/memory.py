@@ -330,9 +330,8 @@ async def _verify_profile(
     low = stripped.lower()
     for bad in ("unsatisfied", "symbols not found", "no valid operating",
                 "could not locate", "no suitable", "error"):
-        if bad in low:
-            if bad != "error" or "volatility" in low or "traceback" in low:
-                return False
+        if bad in low and (bad != "error" or "volatility" in low or "traceback" in low):
+            return False
     return True
 
 

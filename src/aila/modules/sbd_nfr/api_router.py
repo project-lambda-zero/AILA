@@ -1622,8 +1622,7 @@ async def get_jira_draft(
     """
     await _verify_session_read_access(session_id, auth)
     from .reporting import generate_jira_draft
-    draft = await generate_jira_draft(session_id)
-    return draft
+    return await generate_jira_draft(session_id)
 
 
 @_protected.get(

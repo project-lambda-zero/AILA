@@ -135,8 +135,8 @@ async def list_llm_log(
 
     # Apply user filter (WorkflowRunRecord has no user_id today -- the
     # closest honest signal is the run's team_id, so we match on that when
-    # `user` is passed).  If the user filter can't be resolved honestly we
-    # return zero rows rather than silently ignore the filter.
+    # `user` is passed).  If the user filter cannot be resolved honestly we
+    # produce zero rows rather than silently ignore the filter.
     if user:
         filtered: list[LLMCostRecord] = []
         for rec in all_rows:

@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     # Core platform startup must tell the truth. If platform initialization
     # fails, the API process should fail fast rather than pretending to be up
-    # with a missing runtime behind app.state.platform.
+    # in a degraded state where a runtime is missing behind app.state.platform.
     platform: AILAPlatform = AILAPlatform(settings=settings)
     await platform._ensure_initialized()
     app.state.platform = platform

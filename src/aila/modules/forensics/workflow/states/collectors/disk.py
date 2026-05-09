@@ -187,11 +187,12 @@ def _mark_suspicious(
         if tok in _LOLBAS:
             lolbas_hit = tok
             break
-    if lolbas_hit:
-        if kind in _STRONG_PERSISTENCE_KINDS or arg_hit or any(
-            r.startswith("suspicious_path:") for r in reasons
-        ):
-            reasons.append(f"lolbas:{lolbas_hit}")
+    if lolbas_hit and (
+        kind in _STRONG_PERSISTENCE_KINDS
+        or arg_hit
+        or any(r.startswith("suspicious_path:") for r in reasons)
+    ):
+        reasons.append(f"lolbas:{lolbas_hit}")
 
     # === Structural benign-path short-circuit ===
     # Only skip when no attacker-shape signal fired above. Binaries in
