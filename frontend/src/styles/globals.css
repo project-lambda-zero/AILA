@@ -196,6 +196,10 @@
 
 [data-theme="vaporwave"] {
   /* Win95/98 desktop palette — teal desktop, gray dialogs, navy title bars */
+  /* Win95 system fonts — NOT Syne/Space Grotesk */
+  --font-display: "Tahoma", "MS Sans Serif", "Arial", system-ui, sans-serif;
+  --font-sans: "Tahoma", "MS Sans Serif", "Arial", system-ui, sans-serif;
+  --font-mono: "Fixedsys", "Terminal", "Courier New", monospace;
   --color-base: #008080;
   --color-surface: #C0C0C0;
   --color-elevated: #d4d0c8;
