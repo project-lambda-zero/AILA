@@ -20,7 +20,6 @@ cannot crash the workflow.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any
@@ -267,8 +266,7 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
         or crash_payload["first_run"].get("stdout_tail")
         or ""
     )
-    parsed_asan = await asyncio.to_thread(
-        services.crash_triage.forward,
+    parsed_asan = await services.crash_triage.forward(
         action="parse_asan", asan_output=asan_text,
     )
     if parsed_asan.get("status") != "ready":
@@ -278,8 +276,7 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             "stack_frames": [],
         }
 
-    signature = await asyncio.to_thread(
-        services.crash_triage.forward,
+    signature = await services.crash_triage.forward(
         action="compute_signature",
         crash_type=parsed_asan.get("crash_type") or research.get("crash_type"),
         frames=parsed_asan.get("stack_frames") or [],

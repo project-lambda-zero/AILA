@@ -1,6 +1,6 @@
 # honesty_whitelist.py
 # Suppressions for known false positives in the AILA honesty audit.
-#
+# See also docs/MODULE_AI_CONTEXT.md §18 for absolute rules.
 # Run: python -m aila.tools.honesty_audit src/ --whitelist honesty_whitelist.py
 # Exit code 0 = no findings (clean).
 # Exit code 1 = findings exist (investigate before ignoring).
@@ -113,4 +113,12 @@ HONESTY_WHITELIST = [
     # the script boundary is not a service-layer threading concern.
     ("sbd_nfr/scripts/force_reseed.py", "asyncio_in_module", "threading belongs to the platform layer"),
 
+
+    # Category (g): IDABridgeTool IS the platform HTTP bridge for binary analysis.
+    # httpx is its transport layer — same role as paramiko in SSHService.
+    ("vr/tools/ida_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
+
+    # Category (g): VRModule.health_checks probes the IDA MCP over HTTP.
+    # This is a one-line httpx import inside an async closure, not a general HTTP client.
+    ("vr/module.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
 ]

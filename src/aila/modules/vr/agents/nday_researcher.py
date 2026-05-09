@@ -9,10 +9,10 @@ bridge for analysis actions, and platform ``ObligationSet`` /
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from aila.platform.contracts.budget import BudgetConfig, BudgetState
@@ -58,6 +58,102 @@ _OBLIGATION_DEFS: tuple[tuple[str, str, str, ObligationSeverity], ...] = (
     ("cwe_mapped", "A CWE has been mapped from the bug primitive.", "downstream advisory builder run", _RECOMMENDED),
     ("affected_versions", "Affected versions are recorded.", "downstream advisory builder run or operator input", _RECOMMENDED),
 )
+
+
+def _shape_decompile(p: dict[str, Any]) -> dict[str, Any]:
+    return {"address_or_name": str(p.get("address_or_name") or "")}
+
+
+def _shape_call_chain(p: dict[str, Any]) -> dict[str, Any]:
+    direction = str(p.get("direction") or "callers")
+    return {
+        "target_function": str(p.get("target_function") or ""),
+        "direction": direction if direction in ("callers", "callees") else "callers",
+    }
+
+
+def _shape_trace_dataflow(p: dict[str, Any]) -> dict[str, Any]:
+    try:
+        idx = int(p.get("sink_argument_index", 0))
+    except (TypeError, ValueError):
+        idx = 0
+    return {
+        "address_or_name": str(p.get("address_or_name") or ""),
+        "sink_function": str(p.get("sink_function") or ""),
+        "sink_argument_index": idx,
+    }
+
+
+def _shape_xrefs_to(p: dict[str, Any]) -> dict[str, Any]:
+    return {"address_or_name": str(p.get("address_or_name") or "")}
+
+
+def _shape_search_pattern(p: dict[str, Any]) -> dict[str, Any]:
+    return {"pattern_type": str(p.get("pattern_type") or "")}
+
+
+def _shape_binary_survey(_p: dict[str, Any]) -> dict[str, Any]:
+    return {}
+
+
+# Action → (param shaper). Each shaper returns the kwargs forwarded to the
+# IDA bridge in addition to the implicit ``binary_id`` field. ``diff_versions``
+# is handled separately because it requires both the vulnerable and patched ids.
+_ACTION_SHAPERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "decompile": _shape_decompile,
+    "call_chain": _shape_call_chain,
+    "trace_dataflow": _shape_trace_dataflow,
+    "xrefs_to": _shape_xrefs_to,
+    "search_pattern": _shape_search_pattern,
+    "binary_survey": _shape_binary_survey,
+}
+
+
+def _title_decompile(p: dict[str, Any]) -> str:
+    return f"Decompile: {p.get('address_or_name') or '?'}"
+
+
+def _title_diff_versions(_p: dict[str, Any]) -> str:
+    return "Patch diff (vulnerable vs patched)"
+
+
+def _title_call_chain(p: dict[str, Any]) -> str:
+    return (
+        f"Call chain ({p.get('direction') or 'callers'}) → "
+        f"{p.get('target_function') or '?'}"
+    )
+
+
+def _title_trace_dataflow(p: dict[str, Any]) -> str:
+    return (
+        f"Dataflow → {p.get('sink_function') or '?'}"
+        f"[{p.get('sink_argument_index')}] in "
+        f"{p.get('address_or_name') or '?'}"
+    )
+
+
+def _title_xrefs_to(p: dict[str, Any]) -> str:
+    return f"Xrefs to {p.get('address_or_name') or '?'}"
+
+
+def _title_search_pattern(p: dict[str, Any]) -> str:
+    return f"Pattern: {p.get('pattern_type') or '?'}"
+
+
+def _title_binary_survey(_p: dict[str, Any]) -> str:
+    return "Binary survey"
+
+
+_TITLE_BUILDERS: dict[str, Callable[[dict[str, Any]], str]] = {
+    "decompile": _title_decompile,
+    "diff_versions": _title_diff_versions,
+    "call_chain": _title_call_chain,
+    "trace_dataflow": _title_trace_dataflow,
+    "xrefs_to": _title_xrefs_to,
+    "search_pattern": _title_search_pattern,
+    "binary_survey": _title_binary_survey,
+}
+
 
 _SYSTEM_PROMPT = """You are an autonomous N-day vulnerability researcher.
 
@@ -311,41 +407,21 @@ class NdayResearcher:
     async def _dispatch_action(
         self, action: str, params: dict[str, Any],
     ) -> dict[str, Any]:
-        """Translate one LLM action into one IDA bridge HTTP call.
-        ``forward()`` is sync (httpx); offload to a thread so the event
-        loop stays responsive.
-        """
+        """Translate one LLM action into one IDA bridge HTTP call."""
         if action == "diff_versions":
             if not self.patched_binary_id:
                 return {"status": "error", "error": "no patched_binary_id available"}
-            return await asyncio.to_thread(
-                self.ida.forward, action="diff_binary",
+            return await self.ida.forward(
+                action="diff_binary",
                 binary_id_old=self.binary_id,
                 binary_id_new=self.patched_binary_id,
             )
-        kwargs: dict[str, Any] = {"binary_id": self.binary_id}
-        if action == "decompile":
-            kwargs["address_or_name"] = str(params.get("address_or_name") or "")
-        elif action == "call_chain":
-            kwargs["target_function"] = str(params.get("target_function") or "")
-            direction = str(params.get("direction") or "callers")
-            kwargs["direction"] = direction if direction in ("callers", "callees") else "callers"
-        elif action == "trace_dataflow":
-            kwargs["address_or_name"] = str(params.get("address_or_name") or "")
-            kwargs["sink_function"] = str(params.get("sink_function") or "")
-            try:
-                kwargs["sink_argument_index"] = int(params.get("sink_argument_index", 0))
-            except (TypeError, ValueError):
-                kwargs["sink_argument_index"] = 0
-        elif action == "xrefs_to":
-            kwargs["address_or_name"] = str(params.get("address_or_name") or "")
-        elif action == "search_pattern":
-            kwargs["pattern_type"] = str(params.get("pattern_type") or "")
-        elif action == "binary_survey":
-            pass
-        else:  # pragma: no cover — guarded by _VALID_ACTIONS
+        shaper = _ACTION_SHAPERS.get(action)
+        if shaper is None:  # pragma: no cover — guarded by _VALID_ACTIONS
             return {"status": "error", "error": f"unhandled action: {action}"}
-        return await asyncio.to_thread(self.ida.forward, action=action, **kwargs)
+        return await self.ida.forward(
+            action=action, binary_id=self.binary_id, **shaper(params),
+        )
     def _absorb_outcome(
         self, action: str, params: dict[str, Any], outcome: dict[str, Any],
     ) -> None:
@@ -374,28 +450,8 @@ class NdayResearcher:
             )
     @staticmethod
     def _title_for(action: str, params: dict[str, Any]) -> str:
-        if action == "decompile":
-            return f"Decompile: {params.get('address_or_name') or '?'}"
-        if action == "diff_versions":
-            return "Patch diff (vulnerable vs patched)"
-        if action == "call_chain":
-            return (
-                f"Call chain ({params.get('direction') or 'callers'}) → "
-                f"{params.get('target_function') or '?'}"
-            )
-        if action == "trace_dataflow":
-            return (
-                f"Dataflow → {params.get('sink_function') or '?'}"
-                f"[{params.get('sink_argument_index')}] in "
-                f"{params.get('address_or_name') or '?'}"
-            )
-        if action == "xrefs_to":
-            return f"Xrefs to {params.get('address_or_name') or '?'}"
-        if action == "search_pattern":
-            return f"Pattern: {params.get('pattern_type') or '?'}"
-        if action == "binary_survey":
-            return "Binary survey"
-        return f"Result: {action}"
+        builder = _TITLE_BUILDERS.get(action)
+        return builder(params) if builder else f"Result: {action}"
     @staticmethod
     def _priority_for(action: str) -> int:
         if action == "diff_versions":
