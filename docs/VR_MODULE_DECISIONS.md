@@ -309,9 +309,84 @@ The VR module requires IDA Pro with a valid license. No Ghidra fallback.
 
 ---
 
+## Decisions for v0.3 fuzzing pipeline (added 2026-05-15)
+
+Detailed milestone plan: `VR_V03_FUZZING_PLAN.md`. Decisions below lock in the architectural choices that plan depends on.
+
+### D-23: Fuzzing lives in the VR module, NOT in audit-mcp
+
+Audit-mcp is a stateless tool surface for code-graph queries. Fuzzing campaigns are durable, multi-hour workloads with workers, persistence, observability, and workflow. AILA already has every piece needed (ARQ task queue, Postgres, workflow engine, SSE, frontend modules); rebuilding inside audit-mcp would be months of work duplicating platform infrastructure.
+
+**Architecture:**
+- Fuzzing infrastructure → `src/aila/modules/vr/fuzzing/` (workers, manager, strategies, engines, triage, minimization)
+- LLM-facing surface → audit-mcp adds thin `fuzz_*` MCP tools that call AILA's REST API
+- Web UI → AILA's `@aila/vr-frontend` module (existing)
+
+Both interfaces share the same Postgres state, workers, and storage.
+
+### D-24: Strategy plugin model (composition first, code upload later)
+
+Strategies have two layers:
+
+1. **Built-in strategies** = Python classes in `vr/fuzzing/strategies/`. Versioned, tested, can do anything. Examples: `mutational`, `differential`, `fuzzilli`, `generative`.
+2. **User-defined strategies** = JSON compositions over a registered primitive library. Created via API/UI. Per-team. Stored in `vr_fuzz_strategy_definitions`. Cannot execute arbitrary code.
+
+Plugin upload (drop a `.py` file with a custom `Strategy` subclass) is **deferred** until a real use case justifies the sandboxing work needed to execute untrusted code safely.
+
+Built-in primitive library is the extension point. New primitives ship with the module; user strategies compose them.
+
+### D-25: Engine binding is per-strategy, not global
+
+Each `FuzzStrategy` declares which engines it supports. There is no abstract "engine" that all strategies use. V8 sandbox fuzzing wants `v8_d8_sbx`. Native userspace fuzzing wants `afl++_qemu`. Java fuzzing wants `jazzer`. One-size-fits-all wrapper would force lowest-common-denominator interfaces.
+
+Engines built into v0.3:
+- `v8_d8_sbx` — V8 d8 with `--sandbox-testing`
+- `pdfium_test_sbx` — PDFium test runner with sandbox-testing JS flags
+- `afl++_qemu` — AFL++ QEMU mode for binary-only Linux fuzzing
+- `fuzzilli_v8` — FUZZILLI bound to custom V8 build (optional, gated on infrastructure)
+
+Deferred to v0.4: WinAFL+DynamoRIO, Jazzer, Atheris, syzkaller.
+
+### D-26: Crash classification rules are versioned data, not code
+
+Per-engine classification rules live in `vr/fuzzing/triage/rules/<engine>.yaml`. Adding a new crash class for an engine = editing YAML + bumping rule version. No code change, no redeploy. Rules are loaded at startup; reload via admin API.
+
+For V8 sandbox engines, the gold marker `## V8 sandbox violation detected!` (from V8's `testing.cc:1059`) is the single source of truth for "this is a real escape." Everything else classifies as harmless or sandbox-aware.
+
+### D-27: Two-tier storage (worker FS + object storage)
+
+Workers write crashes to local filesystem (fast, ephemeral). Triage worker uploads triaged findings to object storage (durable, queryable). Postgres holds metadata + dedup signatures + time-series stats. This is the same pattern as forensics module evidence storage.
+
+**Backpressure rule:** if worker `crashes/` directory grows above 500MB before triage catches up, workers pause until triage drains the queue. Prevents disk-fill DoS from runaway crash production.
+
+### D-28: Variant hunt is automatic on confirmed bugs
+
+When a finding gets classified `sandbox_violation` (or any CRITICAL severity), the system automatically queues a `variant_hunt_worker` task that mutates the reproducer 10 ways and tests each. New crashes link back to the parent via `parent_finding_id`, building a variant tree per bug.
+
+Variant tree depth capped at 2 levels to prevent exponential explosion. Each parent gets its own variant budget.
+
+This implements the "find all variants" obligation surfaced repeatedly in `VR_STAFF_RESEARCHER_DISCUSSION.md`. A surface crash is never the final answer — the system always asks "what other shapes of this bug exist?"
+
+### D-29: Resolves Open Question 1 — Fuzzing resource management
+
+Per-campaign quota enforced at worker spawn time:
+- `cpu_quota_pct` (default 50, max % of one machine's CPU)
+- `memory_limit_mb` (default 4096)
+- `disk_quota_gb` (default 10)
+- `concurrent_workers` (default 4)
+- `max_runtime_hours` (default 24, can extend)
+
+When the platform has multiple machines, `services/campaign_scheduler.py` partitions worker assignments per machine. Each machine runs at most `concurrent_workers` total across all campaigns assigned to it. Multi-machine distributed fuzzing (FUZZILLI tree hierarchy) is **deferred to v0.5+** when kernel/hypervisor fuzzing brings broader infrastructure needs.
+
+Defaults pulled from `ConfigRegistry` (per-deployment). Operators can override per-campaign in the create call.
+
+---
+
 ## Open Questions (Remaining)
 
-1. **Fuzzing resource management.** How does the module negotiate resource allocation on the workstation?
+1. ~~**Fuzzing resource management.**~~ → Resolved by D-29.
 2. **Human steering UX richness.** VR needs exploit-specific steering beyond forensics' `ReasoningOperatorSteering`.
 3. **GDB integration depth.** Surface (run PoC, capture crash) for v0.1, deep (breakpoints, heap inspection) for v0.3.
 4. **Multi-model split-roles.** One model vs researcher/implementer/critic split. Experiment in v0.4.
+5. **FUZZILLI bring-up cost.** Custom V8 build with REPRL+coverage takes ~2hrs per V8 version. Worth automating? Or document and accept the cost?
+6. **Differential fuzzing baseline whitelist.** Different V8 tiers produce slightly different output for valid programs (Math precision, GC timing). How big is the false-positive rate without baseline tuning?
