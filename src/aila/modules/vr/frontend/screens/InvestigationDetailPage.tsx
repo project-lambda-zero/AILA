@@ -1,9 +1,15 @@
+import { useState } from "react";
 import { useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import {
+  usePauseInvestigation,
+  useResumeInvestigation,
+  useSendOperatorMessage,
+} from "../mutations";
 import {
   useInvestigation,
   useInvestigationBranches,
@@ -13,6 +19,7 @@ import {
 import type {
   BranchStatus,
   InvestigationStatus,
+  OperatorIntent,
   OutcomeDispatchStatus,
 } from "../types";
 
@@ -103,6 +110,13 @@ export function InvestigationDetailPage() {
   const { data: messagesResult } = useInvestigationMessages(invId);
   const { data: outcomesResult } = useInvestigationOutcomes(invId);
 
+  const pauseMut = usePauseInvestigation(invId);
+  const resumeMut = useResumeInvestigation(invId);
+  const sendMut = useSendOperatorMessage(invId);
+
+  const [messageText, setMessageText] = useState("");
+  const [messageIntent, setMessageIntent] = useState<OperatorIntent | "">("");
+
   if (isLoading || !inv) {
     return <LoadingSkeleton size="lg" width="full" />;
   }
@@ -141,6 +155,87 @@ export function InvestigationDetailPage() {
           </AilaBadge>
         )}
       </div>
+
+      {/* Action bar */}
+      <div className="flex gap-2 flex-wrap">
+        {inv.status === "running" && (
+          <button
+            type="button"
+            onClick={() => pauseMut.mutate()}
+            disabled={pauseMut.isPending}
+            className="px-3 py-1.5 text-sm font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover transition-colors disabled:opacity-50"
+          >
+            {pauseMut.isPending ? "Pausing…" : "Pause"}
+          </button>
+        )}
+        {inv.status === "paused" && (
+          <button
+            type="button"
+            onClick={() => resumeMut.mutate()}
+            disabled={resumeMut.isPending}
+            className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+          >
+            {resumeMut.isPending ? "Resuming…" : "Resume"}
+          </button>
+        )}
+      </div>
+
+      {/* Send operator message */}
+      {(inv.status === "running" || inv.status === "paused" || inv.status === "created") && (
+        <AilaCard>
+          <h2 className="text-sm font-semibold text-foreground mb-2">
+            Send message to engine
+          </h2>
+          <p className="text-xs text-text-muted mb-2">
+            Engine will see this message on its next turn. Steering /
+            correction / dismissal intents bias how it incorporates the
+            input.
+          </p>
+          <textarea
+            value={messageText}
+            onChange={(e) => setMessageText(e.target.value)}
+            placeholder="e.g. 'check JSPI base address handling' or 'that hypothesis is wrong because…'"
+            rows={3}
+            className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+          />
+          <div className="flex gap-2 items-center mt-2">
+            <select
+              value={messageIntent}
+              onChange={(e) => setMessageIntent(e.target.value as OperatorIntent | "")}
+              className="px-2 py-1.5 text-xs font-mono rounded-md bg-surface border border-border-default"
+            >
+              <option value="">auto-classify</option>
+              <option value="steering">steering</option>
+              <option value="question">question</option>
+              <option value="correction">correction</option>
+              <option value="dismissal">dismissal</option>
+              <option value="outcome_selection">outcome_selection</option>
+              <option value="branch_command">branch_command</option>
+            </select>
+            <button
+              type="button"
+              disabled={!messageText.trim() || sendMut.isPending}
+              onClick={() => {
+                sendMut.mutate(
+                  {
+                    text: messageText.trim(),
+                    explicit_intent: messageIntent || undefined,
+                  },
+                  {
+                    onSuccess: () => {
+                      setMessageText("");
+                      setMessageIntent("");
+                    },
+                  },
+                );
+              }}
+              className="px-4 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+            >
+              {sendMut.isPending ? "Sending…" : "Send"}
+            </button>
+          </div>
+        </AilaCard>
+      )}
 
       {/* Cost panel */}
       <AilaCard>

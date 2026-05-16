@@ -6,7 +6,10 @@ import { toast } from "@/components/ui/sonner";
 import type {
   DisclosureUpdate,
   Envelope,
+  OperatorIntent,
   VRFinding,
+  VRInvestigationSummary,
+  VRMessageSummary,
   VRProjectCreate,
   VRProjectSummary,
 } from "./types";
@@ -57,6 +60,74 @@ export function useUpdateDisclosure(projectId: string) {
     },
     onError: (err: Error) => {
       toast.error(`Failed to update disclosure: ${err.message}`);
+    },
+  });
+}
+
+export function usePauseInvestigation(investigationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<VRInvestigationSummary>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/pause`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      toast.success("Investigation paused");
+    },
+    onError: (err: Error) => {
+      toast.error(`Pause failed: ${err.message}`);
+    },
+  });
+}
+
+export function useResumeInvestigation(investigationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<VRInvestigationSummary>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/resume`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      toast.success("Investigation resumed");
+    },
+    onError: (err: Error) => {
+      toast.error(`Resume failed: ${err.message}`);
+    },
+  });
+}
+
+export interface SendOperatorMessageBody {
+  text: string;
+  branch_id?: string;
+  explicit_intent?: OperatorIntent;
+}
+
+export function useSendOperatorMessage(investigationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SendOperatorMessageBody) =>
+      authorizedRequestJson<Envelope<VRMessageSummary>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/messages`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigation-messages", investigationId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
+      toast.success("Message sent — engine will see it next turn");
+    },
+    onError: (err: Error) => {
+      toast.error(`Send failed: ${err.message}`);
     },
   });
 }
