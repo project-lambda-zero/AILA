@@ -70,6 +70,13 @@ HONESTY_WHITELIST = [
     # require duplicating the dict iteration in two call sites.
     ("mcp_adapters/registry.py", "specialized_tools", "inlining"),
 
+    # Category (b): lazy imports inside _task_queue helpers avoid pulling
+    # ``aila.platform.tasks`` and the VR workflow definitions at module
+    # load time. Tested via the OutcomeDispatcher patch_assessment_report
+    # path. Inline `# noqa: PLC0415` is required to silence ruff.
+    ("vr/_task_queue.py", "default_task_queue", "noqa"),
+    ("vr/_task_queue.py", "enqueue_vr_nday", "noqa"),
+
     # Category (h): router cache deserialization — silent fallback on corrupt
     # cache is intentional; the router re-routes on miss.
     ("router.py", "except Exception", "silently swallows"),

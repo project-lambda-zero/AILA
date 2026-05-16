@@ -34,6 +34,12 @@ from uuid import uuid4
 
 from sqlmodel import select as _select
 
+from aila.modules.vr._task_queue import (
+    default_task_queue as _build_default_task_queue,
+)
+from aila.modules.vr._task_queue import (
+    enqueue_vr_nday,
+)
 from aila.modules.vr.contracts import OutcomeDispatchStatus, OutcomeKind
 from aila.modules.vr.contracts.investigation import (
     InvestigationKind,
@@ -75,11 +81,8 @@ class OutcomeDispatchResult:
 _NOT_YET_DISPATCHABLE: dict[OutcomeKind, str] = {
     OutcomeKind.ASSESSMENT_REPORT: "assessment_reports_are_terminal_no_downstream",
     OutcomeKind.STRATEGY_DESCRIPTOR: "no_strategy_registry_consumer_yet",
-    OutcomeKind.PROFILE_SPEC_DRAFT: "no_profile_registry_consumer_yet",
     OutcomeKind.CONFIG_DELTA: "no_config_consumer_yet",
-    OutcomeKind.PATCH_ASSESSMENT_REPORT: "no_nday_workflow_consumer_yet",
     OutcomeKind.CRASH_TRIAGE_REPORT: "no_crash_triage_consumer_yet",
-    OutcomeKind.CAMPAIGN_LAUNCH: "no_fuzz_module_consumer_yet",
     OutcomeKind.SUB_INVESTIGATION: "needs_M3R5_branching_first",
 }
 
@@ -94,8 +97,19 @@ class OutcomeDispatcher:
     coroutine signature.
     """
 
-    def __init__(self, knowledge: KnowledgeService | Any) -> None:
+    def __init__(
+        self,
+        knowledge: KnowledgeService | Any,
+        task_queue_factory: Any | None = None,
+    ) -> None:
         self._knowledge = knowledge
+        # Callable returning a TaskQueue-shaped object with
+        # ``submit(track, fn, kwargs, user_id, group_id, team_id)``.
+        # Default: build a platform TaskQueue lazily from ConfigRegistry.
+        # Tests inject their own callable returning a fake.
+        self._task_queue_factory: Any = (
+            task_queue_factory or _build_default_task_queue
+        )
 
     async def dispatch(self, outcome_id: str) -> OutcomeDispatchResult:
         """Dispatch one outcome and update its dispatch_status."""
@@ -122,6 +136,18 @@ class OutcomeDispatcher:
                 )
             elif outcome_kind == OutcomeKind.VARIANT_HUNT_ORDER:
                 result = await self._dispatch_variant_hunt_order(
+                    outcome_id, investigation_id, payload,
+                )
+            elif outcome_kind == OutcomeKind.CAMPAIGN_LAUNCH:
+                result = await self._dispatch_campaign_launch(
+                    outcome_id, investigation_id, payload, outcome,
+                )
+            elif outcome_kind == OutcomeKind.PROFILE_SPEC_DRAFT:
+                result = await self._dispatch_profile_spec_draft(
+                    outcome_id, investigation_id, payload, outcome,
+                )
+            elif outcome_kind == OutcomeKind.PATCH_ASSESSMENT_REPORT:
+                result = await self._dispatch_patch_assessment_report(
                     outcome_id, investigation_id, payload,
                 )
             elif outcome_kind in _NOT_YET_DISPATCHABLE:
@@ -375,6 +401,196 @@ class OutcomeDispatcher:
             dispatch_status=OutcomeDispatchStatus.DISPATCHED,
             dispatch_target=f"vr_investigation:{child_id}",
             reason=f"target_id={child_target_id} budget=${child_budget:.2f}",
+        )
+
+    async def _dispatch_campaign_launch(
+        self,
+        outcome_id: str,
+        investigation_id: str,
+        payload: dict[str, Any],
+        outcome: VRInvestigationOutcomeRecord,
+    ) -> OutcomeDispatchResult:
+        """CAMPAIGN_LAUNCH → KnowledgeService write under
+        ``vr.campaign_request.workspace.<id>``.
+
+        The downstream fuzz worker (out-of-process; not yet shipped as
+        an AILA module per D-37 "fuzzing is OPTIONAL") subscribes to
+        the same namespace and picks up the request. Until then, the
+        operator can list pending requests via /vr/knowledge queries.
+
+        Required payload fields:
+          - profile: fuzzing profile name (e.g. "V8MapInferenceProfile")
+          - target_descriptor: what to fuzz (binary_path / harness_id)
+        Optional:
+          - duration_hours, parallel_jobs, corpus_seed
+        """
+        target_row, _ = await self._load_target_for_investigation(investigation_id)
+        profile = str(payload.get("profile") or "").strip()
+        target_descriptor = payload.get("target_descriptor") or {}
+        if not profile or not target_descriptor:
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.CAMPAIGN_LAUNCH,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason="missing_profile_or_target_descriptor",
+            )
+
+        workspace_id = target_row.workspace_id
+        namespace = f"vr.campaign_request.workspace.{workspace_id}"
+        content = (
+            f"Campaign request — profile={profile} target_id={target_row.id}\n"
+            f"descriptor={json.dumps(target_descriptor, sort_keys=True)}"
+        )
+        store_result = await self._knowledge.store(
+            namespace=namespace,
+            content=content,
+            metadata={
+                "investigation_id": investigation_id,
+                "target_id": target_row.id,
+                "workspace_id": workspace_id,
+                "profile": profile,
+                "target_descriptor": target_descriptor,
+                "duration_hours": payload.get("duration_hours"),
+                "parallel_jobs": payload.get("parallel_jobs"),
+                "corpus_seed": payload.get("corpus_seed"),
+                "confidence": outcome.confidence,
+                "outcome_id": outcome_id,
+                "status": "pending",
+            },
+            dedup_key=None,
+        )
+        entry_id = store_result.get("entry_id")
+        return OutcomeDispatchResult(
+            outcome_id=outcome_id,
+            outcome_kind=OutcomeKind.CAMPAIGN_LAUNCH,
+            dispatch_status=OutcomeDispatchStatus.DISPATCHED,
+            dispatch_target=f"knowledge_entry:{entry_id}",
+            reason=f"namespace={namespace} profile={profile}",
+        )
+
+    async def _dispatch_profile_spec_draft(
+        self,
+        outcome_id: str,
+        investigation_id: str,
+        payload: dict[str, Any],
+        outcome: VRInvestigationOutcomeRecord,
+    ) -> OutcomeDispatchResult:
+        """PROFILE_SPEC_DRAFT → KnowledgeService write under
+        ``vr.profile_spec.workspace.<id>``.
+
+        Stores the engine's proposed fuzzing-profile / strategy-profile
+        draft. A future profile registry consumer reads the same namespace.
+
+        Required payload fields:
+          - profile_name
+          - profile_kind (fuzzing | reasoning_strategy | other)
+          - spec: structured dict
+        """
+        target_row, _ = await self._load_target_for_investigation(investigation_id)
+        profile_name = str(payload.get("profile_name") or "").strip()
+        profile_kind = str(payload.get("profile_kind") or "fuzzing").strip()
+        spec = payload.get("spec") or {}
+        if not profile_name or not isinstance(spec, dict) or not spec:
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.PROFILE_SPEC_DRAFT,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason="missing_profile_name_or_spec",
+            )
+
+        workspace_id = target_row.workspace_id
+        namespace = f"vr.profile_spec.workspace.{workspace_id}"
+        content = (
+            f"Profile draft — {profile_name} ({profile_kind})\n"
+            f"spec={json.dumps(spec, sort_keys=True)}"
+        )
+        store_result = await self._knowledge.store(
+            namespace=namespace,
+            content=content,
+            metadata={
+                "investigation_id": investigation_id,
+                "target_id": target_row.id,
+                "workspace_id": workspace_id,
+                "profile_name": profile_name,
+                "profile_kind": profile_kind,
+                "spec": spec,
+                "rationale": payload.get("rationale") or "",
+                "confidence": outcome.confidence,
+                "outcome_id": outcome_id,
+                "status": "draft",
+            },
+            dedup_key=f"{workspace_id}|{profile_kind}|{profile_name}",
+        )
+        entry_id = store_result.get("entry_id")
+        return OutcomeDispatchResult(
+            outcome_id=outcome_id,
+            outcome_kind=OutcomeKind.PROFILE_SPEC_DRAFT,
+            dispatch_status=OutcomeDispatchStatus.DISPATCHED,
+            dispatch_target=f"knowledge_entry:{entry_id}",
+            reason=f"namespace={namespace} name={profile_name}",
+        )
+
+    async def _dispatch_patch_assessment_report(
+        self,
+        outcome_id: str,
+        investigation_id: str,
+        payload: dict[str, Any],
+    ) -> OutcomeDispatchResult:
+        """PATCH_ASSESSMENT_REPORT → enqueue ``run_vr_nday`` ARQ task.
+
+        The engine evaluated a patch and produced an assessment (variant
+        windows opened/closed, related CVE candidates). Dispatcher kicks
+        off the N-day workflow that materializes the assessment into a
+        finding + disclosure scaffold.
+
+        Required payload fields:
+          - patch_descriptor: {vulnerable_ref, patched_ref, repo_url} OR
+            {project_id} when reusing an existing v0.1 vr_projects row
+          - assessment: structured dict (engine's findings about the patch)
+        """
+        target_row, parent_inv = await self._load_target_for_investigation(
+            investigation_id,
+        )
+        patch_descriptor = payload.get("patch_descriptor") or {}
+        assessment = payload.get("assessment") or {}
+        if not isinstance(patch_descriptor, dict) or not patch_descriptor:
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.PATCH_ASSESSMENT_REPORT,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason="missing_patch_descriptor",
+            )
+
+
+
+        try:
+            handle = await enqueue_vr_nday(
+                self._task_queue_factory(),
+                source_outcome_id=outcome_id,
+                patch_descriptor=patch_descriptor,
+                assessment=assessment,
+                parent_investigation_id=parent_inv.id,
+                target_id=target_row.id,
+                team_id=target_row.team_id,
+            )
+        except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.PATCH_ASSESSMENT_REPORT,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason=f"enqueue_failed:{type(exc).__name__}:{exc}",
+            )
+
+        return OutcomeDispatchResult(
+            outcome_id=outcome_id,
+            outcome_kind=OutcomeKind.PATCH_ASSESSMENT_REPORT,
+            dispatch_status=OutcomeDispatchStatus.DISPATCHED,
+            dispatch_target=f"task:{handle.task_id}",
+            reason=f"vr_nday enqueued for patch={patch_descriptor.get('vulnerable_ref') or '?'}",
         )
 
     async def _load_target_for_investigation(

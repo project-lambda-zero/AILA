@@ -121,6 +121,28 @@ async def test_db(_session_async_engine) -> AsyncGenerator[None, None]:
     _build_settings.cache_clear()
 
 
+
+@pytest.fixture(autouse=True)
+def _disable_slowapi_limiter() -> Generator[None, None, None]:
+    """Disable slowapi rate limiting for the duration of every test.
+
+    The route sweep test exercises every endpoint with a single admin
+    user identity, blowing the per-endpoint quotas within seconds. With
+    a single in-memory bucket shared by all admin-token tests, the
+    fastest fix is to skip rate limiting entirely in the test
+    process — production behaviour is verified separately by the auth
+    test suite which exercises the limiter directly.
+    """
+    from aila.api.limiter import limiter
+    was_enabled = limiter.enabled
+    limiter.enabled = False
+    limiter.reset()
+    try:
+        yield
+    finally:
+        limiter.enabled = was_enabled
+        limiter.reset()
+
 @pytest_asyncio.fixture(scope="function")
 async def admin_key_record(test_db) -> ApiKeyRecord:
     """Create an admin ApiKeyRecord in the test DB and return it."""

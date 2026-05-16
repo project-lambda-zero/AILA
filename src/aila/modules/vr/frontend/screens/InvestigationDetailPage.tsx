@@ -16,6 +16,7 @@ import {
   useInvestigationMessages,
   useInvestigationOutcomes,
 } from "../queries";
+import { useInvestigationMessagesStream } from "../hooks/useInvestigationMessagesStream";
 import type {
   BranchStatus,
   InvestigationStatus,
@@ -108,6 +109,7 @@ export function InvestigationDetailPage() {
   const { data: inv, isLoading } = useInvestigation(invId);
   const { data: branchesResult } = useInvestigationBranches(invId);
   const { data: messagesResult } = useInvestigationMessages(invId);
+  useInvestigationMessagesStream(invId);
   const { data: outcomesResult } = useInvestigationOutcomes(invId);
 
   const pauseMut = usePauseInvestigation(invId);
