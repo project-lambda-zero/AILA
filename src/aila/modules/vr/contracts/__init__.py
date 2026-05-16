@@ -16,6 +16,16 @@ from .branch import (
     PersonaVoice,
     VRBranchSummary,
 )
+from .disclosure import (
+    ArtifactTier,
+    DisclosureKind,
+    DisclosureSubmissionStatus,
+    DisclosureTrackInfo,
+    RenderedSubmission,
+    VRDisclosureSubmissionCreate,
+    VRDisclosureSubmissionPatch,
+    VRDisclosureSubmissionSummary,
+)
 from .enrichment import (
     EnrichmentError,
     EnrichmentResult,
@@ -97,6 +107,14 @@ __all__ = [
     "CrashSignature",
     "CrashType",
     "DisclosureStatus",
+    "ArtifactTier",
+    "DisclosureKind",
+    "DisclosureSubmissionStatus",
+    "DisclosureTrackInfo",
+    "RenderedSubmission",
+    "VRDisclosureSubmissionCreate",
+    "VRDisclosureSubmissionPatch",
+    "VRDisclosureSubmissionSummary",
     "EnrichmentError",
     "EnrichmentResult",
     "EnrichmentStatus",
