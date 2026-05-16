@@ -1,0 +1,66 @@
+"""Multi-target investigation contracts (v0.4 GA-49).
+
+An investigation has ONE primary target (the existing
+``vr_investigations.target_id`` column) plus N secondary target
+references that live in ``vr_investigation_targets``. Secondary refs
+carry a role + optional comparison_kind so the engine knows how to
+interpret each reference.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from enum import StrEnum
+
+from pydantic import BaseModel, ConfigDict, Field
+
+__all__ = [
+    "InvestigationTargetRole",
+    "VRInvestigationTargetAttach",
+    "VRInvestigationTargetDetach",
+    "VRInvestigationTargetSummary",
+]
+
+
+class InvestigationTargetRole(StrEnum):
+    """Why a secondary target is attached (D-50 extended)."""
+
+    PRIMARY = "primary"
+    COMPARISON = "comparison"
+    PARALLEL_CODEBASE = "parallel_codebase"
+    PARENT_LIBRARY = "parent_library"
+    DERIVED_FORK = "derived_fork"
+
+
+class VRInvestigationTargetAttach(BaseModel):
+    """Operator-attaches a secondary target to an existing investigation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_id: str = Field(min_length=1, max_length=64)
+    role: InvestigationTargetRole = InvestigationTargetRole.COMPARISON
+    rationale: str = Field(
+        default="",
+        max_length=2048,
+        description="Why this target is relevant to the investigation.",
+    )
+
+
+class VRInvestigationTargetDetach(BaseModel):
+    """Detach a previously-attached secondary target."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_id: str = Field(min_length=1, max_length=64)
+
+
+class VRInvestigationTargetSummary(BaseModel):
+    """Read projection of one (investigation, target, role) tuple."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    investigation_id: str
+    target_id: str
+    role: InvestigationTargetRole
+    rationale: str = ""
+    attached_at: datetime | None = None

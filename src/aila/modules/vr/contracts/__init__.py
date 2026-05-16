@@ -58,6 +58,12 @@ from .investigation import (
     VRInvestigationCreate,
     VRInvestigationSummary,
 )
+from .investigation_target import (
+    InvestigationTargetRole,
+    VRInvestigationTargetAttach,
+    VRInvestigationTargetDetach,
+    VRInvestigationTargetSummary,
+)
 from .message import (
     OperatorIntent,
     PayloadKind,
@@ -134,6 +140,10 @@ __all__ = [
     "InvestigationKind",
     "InvestigationPauseReason",
     "InvestigationStatus",
+    "InvestigationTargetRole",
+    "VRInvestigationTargetAttach",
+    "VRInvestigationTargetDetach",
+    "VRInvestigationTargetSummary",
     "MitigationFlags",
     "OperatorIntent",
     "OutcomeConfidence",

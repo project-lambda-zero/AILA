@@ -12,6 +12,10 @@ from aila.modules.vr.services.fuzz_service import (
     classify_crash_severity_default,
     triage_crash,
 )
+from aila.modules.vr.services.multi_target import (
+    MultiTargetService,
+    MultiTargetServiceError,
+)
 from aila.modules.vr.services.pattern_store import (
     PatternRetrievalResult,
     PatternStore,
@@ -22,6 +26,8 @@ from aila.modules.vr.services.target_ingestion import TargetIngestionService
 __all__ = [
     "FuzzCampaignService",
     "FuzzServiceError",
+    "MultiTargetService",
+    "MultiTargetServiceError",
     "PatternRetrievalResult",
     "PatternStore",
     "PatternStoreError",
