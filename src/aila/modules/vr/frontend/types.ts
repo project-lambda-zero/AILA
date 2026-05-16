@@ -265,3 +265,143 @@ export interface RegisteredSystem {
   username: string;
   port: number;
 }
+
+/** Investigation kinds matching M3.R-1 InvestigationKind enum. */
+export type InvestigationKind =
+  | "discovery"
+  | "variant_hunt"
+  | "triage"
+  | "n_day"
+  | "audit";
+
+/** Investigation lifecycle states. */
+export type InvestigationStatus =
+  | "created"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "abandoned";
+
+export type InvestigationPauseReason =
+  | "operator"
+  | "low_confidence"
+  | "cost_budget"
+  | "awaiting_campaign"
+  | "awaiting_mcp";
+
+export type BranchStatus =
+  | "active"
+  | "paused"
+  | "merged"
+  | "promoted"
+  | "abandoned";
+
+export type PersonaVoice =
+  | "halvar" | "maddie" | "yuki" | "renzo" | "noor" | "wei";
+
+export type SenderKind = "engine" | "operator";
+
+export type PayloadKind =
+  | "text"
+  | "tool_call"
+  | "code_pointer"
+  | "graph_view"
+  | "taint_flow"
+  | "xref_view"
+  | "patch_diff"
+  | "decompiled_function"
+  | "hypothesis_update"
+  | "outcome_pending";
+
+export type OperatorIntent =
+  | "steering" | "question" | "correction"
+  | "dismissal" | "outcome_selection"
+  | "branch_command" | "unclassified";
+
+export type OutcomeKind =
+  | "assessment_report" | "strategy_descriptor" | "profile_spec_draft"
+  | "config_delta" | "variant_hunt_order" | "patch_assessment_report"
+  | "audit_memo" | "direct_finding" | "crash_triage_report"
+  | "campaign_launch" | "sub_investigation";
+
+export type OutcomeConfidence =
+  | "exact" | "strong" | "medium" | "caveated" | "unknown";
+
+export type OutcomeDispatchStatus =
+  | "pending" | "dispatched" | "failed" | "skipped";
+
+export interface VRInvestigationSummary {
+  id: string;
+  title: string;
+  target_id: string;
+  workspace_id?: string | null;
+  parent_investigation_id?: string | null;
+  kind: InvestigationKind;
+  status: InvestigationStatus;
+  pause_reason?: InvestigationPauseReason | null;
+  auto_pilot: boolean;
+  strategy_family: string;
+  cost_budget_usd: number;
+  cost_actual_usd: number;
+  llm_tokens_cost_usd: number;
+  mcp_calls_cost_usd: number;
+  fuzz_infra_cost_usd: number;
+  branch_count: number;
+  message_count: number;
+  outcome_count: number;
+  primary_outcome_id?: string | null;
+  linked_campaign_ids: string[];
+  linked_finding_ids: string[];
+  started_at?: string | null;
+  stopped_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface VRBranchSummary {
+  id: string;
+  investigation_id: string;
+  parent_branch_id?: string | null;
+  status: BranchStatus;
+  persona_voice?: PersonaVoice | null;
+  fork_reason: string;
+  fork_at_turn?: number | null;
+  turn_count: number;
+  branch_cost_usd: number;
+  closed_reason: string;
+  merged_into_branch_id?: string | null;
+  promoted: boolean;
+  closed_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface VRMessageSummary {
+  id: string;
+  investigation_id: string;
+  branch_id: string;
+  sender_kind: SenderKind;
+  sender_id?: string | null;
+  payload_kind: PayloadKind;
+  payload: Record<string, unknown>;
+  operator_intent?: OperatorIntent | null;
+  at_turn?: number | null;
+  evidence_refs: string[];
+  created_at?: string | null;
+}
+
+export interface VROutcomeSummary {
+  id: string;
+  investigation_id: string;
+  branch_id: string;
+  outcome_kind: OutcomeKind;
+  payload: Record<string, unknown>;
+  confidence: OutcomeConfidence;
+  evidence_refs: string[];
+  accepted_by_operator: boolean;
+  accepted_at?: string | null;
+  dispatch_status: OutcomeDispatchStatus;
+  dispatch_target?: string | null;
+  created_at?: string | null;
+}

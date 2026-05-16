@@ -5,7 +5,11 @@ import { authorizedRequestJson } from "@platform/api/http";
 import type {
   Envelope,
   RegisteredSystem,
+  VRBranchSummary,
   VRFinding,
+  VRInvestigationSummary,
+  VRMessageSummary,
+  VROutcomeSummary,
   VRProjectSummary,
 } from "./types";
 
@@ -65,5 +69,77 @@ export function useRegisteredSystems() {
       );
       return res?.items ?? [];
     },
+  });
+}
+
+export function useInvestigations(offset = 0, limit = 50) {
+  return useQuery({
+    queryKey: ["vr", "investigations", offset, limit],
+    queryFn: async () =>
+      await authorizedRequestJson<Envelope<VRInvestigationSummary[]>>(
+        `/vr/investigations?offset=${offset}&limit=${limit}`,
+      ),
+    refetchInterval: 5000, // poll while a frontend SSE stream isn't wired
+  });
+}
+
+export function useInvestigation(investigationId: string) {
+  return useQuery({
+    queryKey: ["vr", "investigation", investigationId],
+    queryFn: async () =>
+      (
+        await authorizedRequestJson<Envelope<VRInvestigationSummary>>(
+          `/vr/investigations/${encodeURIComponent(investigationId)}`,
+        )
+      ).data,
+    enabled: !!investigationId,
+    refetchInterval: 3000,
+  });
+}
+
+export function useInvestigationMessages(
+  investigationId: string,
+  branchId?: string,
+  offset = 0,
+  limit = 100,
+) {
+  return useQuery({
+    queryKey: ["vr", "investigation-messages", investigationId, branchId, offset, limit],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        offset: String(offset),
+        limit: String(limit),
+      });
+      if (branchId) params.set("branch_id", branchId);
+      return await authorizedRequestJson<Envelope<VRMessageSummary[]>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/messages?${params.toString()}`,
+      );
+    },
+    enabled: !!investigationId,
+    refetchInterval: 3000,
+  });
+}
+
+export function useInvestigationBranches(investigationId: string) {
+  return useQuery({
+    queryKey: ["vr", "investigation-branches", investigationId],
+    queryFn: async () =>
+      await authorizedRequestJson<Envelope<VRBranchSummary[]>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/branches`,
+      ),
+    enabled: !!investigationId,
+    refetchInterval: 5000,
+  });
+}
+
+export function useInvestigationOutcomes(investigationId: string) {
+  return useQuery({
+    queryKey: ["vr", "investigation-outcomes", investigationId],
+    queryFn: async () =>
+      await authorizedRequestJson<Envelope<VROutcomeSummary[]>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/outcomes`,
+      ),
+    enabled: !!investigationId,
+    refetchInterval: 5000,
   });
 }
