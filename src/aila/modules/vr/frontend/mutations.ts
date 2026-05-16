@@ -8,11 +8,13 @@ import type {
   Envelope,
   InvestigationKind,
   OperatorIntent,
+  TargetKind,
   VRFinding,
   VRInvestigationSummary,
   VRMessageSummary,
   VRProjectCreate,
   VRProjectSummary,
+  VRTargetSummary,
   VRWorkspaceSummary,
   WorkspaceTheme,
 } from "./types";
@@ -191,6 +193,70 @@ export function useCreateWorkspace() {
     },
     onError: (err: Error) => {
       toast.error(`Create workspace failed: ${err.message}`);
+    },
+  });
+}
+
+export interface CreateTargetBody {
+  workspace_id: string;
+  display_name: string;
+  kind: TargetKind;
+  descriptor?: Record<string, unknown>;
+  primary_language?: string;
+  secondary_languages?: string[];
+  tags?: string[];
+}
+
+export function useCreateTarget() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateTargetBody) =>
+      authorizedRequestJson<Envelope<VRTargetSummary>>("/vr/targets", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "targets"] });
+      toast.success(`Target "${result.data.display_name}" created`);
+    },
+    onError: (err: Error) => {
+      toast.error(`Create target failed: ${err.message}`);
+    },
+  });
+}
+
+export function useRankTarget(targetId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<{ task_id: string; target_id: string }>>(
+        `/vr/targets/${encodeURIComponent(targetId)}/rank`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "target", targetId] });
+      toast.success("Function ranking enqueued — refresh in 30-60s");
+    },
+    onError: (err: Error) => {
+      toast.error(`Rank failed: ${err.message}`);
+    },
+  });
+}
+
+export function useEnrichTarget(targetId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<{ task_id: string; target_id: string }>>(
+        `/vr/targets/${encodeURIComponent(targetId)}/enrich`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "target", targetId] });
+      toast.success("Capability profile enrichment enqueued");
+    },
+    onError: (err: Error) => {
+      toast.error(`Enrich failed: ${err.message}`);
     },
   });
 }

@@ -23,4 +23,12 @@ export const nav = [
     order: 69,
     description: "Thematic workspaces grouping related VR targets",
   },
+  {
+    id: "vr.targets",
+    slot: "sidebar.main" as const,
+    label: "Targets",
+    to: "/vr/targets",
+    order: 69.5,
+    description: "Persistent VR targets across workspaces",
+  },
 ];
