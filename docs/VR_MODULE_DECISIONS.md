@@ -860,6 +860,288 @@ Large but high-ROI. Pure chat would force the operator to copy-paste file paths 
 
 v0.3 ships core panels (chat + IDE panel + graph viewer). Polish (mobile layout, advanced annotations, multi-file split view) iterates in v0.4.
 
+### D-45: Target taxonomy — generic VR workflows pluggable per codebase type
+
+Everything in D-30 through D-44 is GENERIC except the V8-specific instances. The hypothesis engine, conversational UX, branching, audit memos, IDE+graph viz, variant hunt — all target-agnostic. V8MapInferenceProfile is one instance of a `CustomFuzzProfile` for one target type. nginx, apache, libxml2, kernel modules each get their own profile instances using the same workflows.
+
+### TargetProfile schema (platform-level)
+
+New abstraction in `platform/contracts/target_profile.py`. A target profile self-describes what engines, strategies, CVE sources, harness templates, triage rules, and source conventions apply to one class of codebase.
+
+```python
+class TargetProfile(BaseModel):
+    """Defines what tools and knowledge apply to one class of audit target."""
+    target_id: str                              # e.g. "userspace_c_daemon", "linux_kernel_module"
+    name: str                                   # human-readable
+    languages: list[str]                        # ["c", "cpp"] / ["js"] / ["rust"] / ["python"]
+    description: str
+
+    # Fuzzing capability
+    engines: list[str]                          # which fuzz engines support this target type
+    default_engine: str
+    default_strategies: list[str]               # IDs in data/strategies/ applicable to this target
+
+    # Reasoning capability
+    cve_sources: list[str]                      # ["nvd", "openwall", "vendor_advisory_<name>"]
+    cve_class_taxonomy: list[str]               # bug classes likely in this target type
+    audit_mcp_config: dict                      # language hints, ignore globs, parser config
+
+    # Harness generation
+    harness_templates: list[str]                # template names in data/harnesses/<target_id>/
+
+    # Triage
+    triage_engine: str                          # which crash-classification ruleset to use
+    triage_rules_file: str                      # path to YAML rules
+
+    # Source-reading conventions
+    source_conventions: dict                    # where main entry, config parsers, protocol handlers, etc. live
+
+    # Build/install recipes
+    build_recipes: dict                         # how to build fuzz-ready binaries from source
+    
+    # IDE config
+    file_tree_filter: list[str]                 # which paths the operator sees by default
+    syntax_highlight: dict                      # extension → language mapping
+```
+
+### Target profiles shipped in v0.3
+
+Three target types initially, covering the bulk of typical audit work:
+
+|`target_id`|Engines|Example codebases|Bug class focus|
+|---|---|---|---|
+|`js_engine_v8`|FUZZILLI|V8|JIT typer confusion, Wasm/JS boundary, sandbox escape|
+|`userspace_c_daemon`|AFL++ (persistent / qemu), libFuzzer, honggfuzz|nginx, apache, postfix, openssh, dovecot|HTTP smuggling, parser OOB, format strings, integer overflow in length fields, race conditions in fork/accept|
+|`shared_library`|libFuzzer, AFL++ persistent|libxml2, libpng, libcurl, libssl, libpcre|API misuse, callback injection, memory safety, parser bugs|
+
+### Target profiles deferred to later versions
+
+|Version|`target_id`|Engines|Notes|
+|---|---|---|---|
+|v0.4|`js_engine_spidermonkey`|FUZZILLI (jsfunfuzz profile)|Mozilla SpiderMonkey — same patterns as v8 but different IR|
+|v0.4|`js_engine_jsc`|fuzzilli (jsc profile)|JavaScriptCore — WebKit|
+|v0.4|`browser_renderer_content_shell`|libFuzzer custom harnesses, Domato|Chromium renderer-process bugs (DOM, Blink, V8 + integration)|
+|v0.4|`network_protocol_text`|boofuzz, AFLNet|HTTP/1.x, SMTP, IMAP, custom text protocols|
+|v0.4|`network_protocol_binary`|boofuzz, custom protocol fuzzers|HTTP/2, gRPC, QUIC, custom binary protocols|
+|v0.5|`linux_kernel_module`|syzkaller, KASAN harnesses|Loadable kernel modules, drivers|
+|v0.5|`linux_kernel_syscall`|syzkaller (default mode)|Full kernel syscall surface|
+|v0.5|`hypervisor`|kvm-fuzz, qemu-fuzz harness templates|KVM, qemu-kvm, hyperv|
+|v0.5|`smart_contract_evm`|Echidna, Foundry fuzzer|Solidity/Vyper contracts|
+|v0.5|`firmware_arm`|AFL++ with QEMU mode + AFL-QEMU-trace|Embedded firmware, IoT|
+
+### Example: nginx target profile (sketched for v0.3)
+
+```json
+{
+  "target_id": "userspace_c_daemon",
+  "name": "Userspace C/C++ Daemon (nginx-class)",
+  "languages": ["c"],
+  "engines": ["afl++_persistent", "afl++_qemu", "libfuzzer", "honggfuzz"],
+  "default_engine": "afl++_persistent",
+  "default_strategies": [
+    "afl_http_parser_persistent",
+    "afl_chunk_parser_oob",
+    "afl_header_injection_seedset",
+    "libfuzzer_config_parser"
+  ],
+  "cve_sources": ["nvd", "openwall_oss-security", "vendor_nginx_advisory"],
+  "cve_class_taxonomy": [
+    "http_smuggling", "parser_oob", "format_string",
+    "integer_overflow_length", "race_condition_accept",
+    "auth_bypass", "path_traversal", "memory_safety_in_third_party_dep"
+  ],
+  "audit_mcp_config": {
+    "languages": ["c"],
+    "ignore_paths": ["test/", "auto/", "objs/", "third_party/"],
+    "interesting_macros": ["ngx_str_t", "ngx_buf_t", "NGX_OK", "NGX_ERROR"]
+  },
+  "harness_templates": [
+    "function_level_libfuzzer",
+    "stream_handler_persistent",
+    "config_directive_parser"
+  ],
+  "triage_engine": "asan_libfuzzer",
+  "triage_rules_file": "data/triage/rules/asan_libfuzzer.yaml",
+  "source_conventions": {
+    "main_entry": ["src/core/nginx.c"],
+    "config_parsers": ["src/core/ngx_conf_file.c", "src/core/ngx_string.c"],
+    "protocol_handlers": ["src/http/", "src/mail/", "src/stream/"],
+    "module_init_pattern": "ngx_module_t.*_module"
+  },
+  "build_recipes": {
+    "afl_persistent": "scripts/build_nginx_afl.sh",
+    "libfuzzer": "scripts/build_nginx_libfuzzer.sh"
+  },
+  "file_tree_filter": ["src/**", "auto/cc/**"],
+  "syntax_highlight": {".c": "c", ".h": "c"}
+}
+```
+
+### Workflows are unchanged
+
+The investigation flow for nginx is IDENTICAL to V8:
+
+- Operator: "audit nginx HTTP request smuggling vulnerabilities"
+- Engine loads `userspace_c_daemon` target profile, learns nginx-specific CVE sources + bug classes
+- Engine runs hypothesis discovery using AFL++ knowledge instead of FUZZILLI
+- Multi-persona dispute (Halvar/Maddie/Yuki/Renzo/Noor/Wei) generates same kind of dispute, except Wei is no longer Maglev-flavored but C-parser-flavored
+- Engine emits a strategy descriptor referencing `afl_http_parser_persistent` instead of `v8MapInference`
+- Operator confirms → campaign launches on dedicated Linux fuzz workstation with AFL++ runner
+- Crashes triaged via ASAN rules instead of V8 sandbox-fuzzing rules
+- Variant hunt works identically: find similar HTTP parser code in other modules, side-by-side compare, verify with micro-AFL++ campaigns
+- IDE panel shows .c/.h files with C syntax highlighting (vs .cc with C++ highlighting for V8)
+- Callgraph viz works for C just like for C++
+
+Same UX. Same agent. Same engine. Different plug-ins.
+
+### Engine selection at investigation start
+
+When operator starts an investigation, engine infers the target profile from context. Approaches:
+
+1. **Repo URL or local path** — if operator says "audit github.com/nginx/nginx" or "/srv/nginx-src", engine probes the codebase: detect language, find common entry points, match against target profile heuristics. Falls back to operator selection if ambiguous.
+
+2. **Explicit operator hint** — "audit my nginx fork" → engine infers `userspace_c_daemon`. "investigate this Python web app" → engine infers `python_web_app` (if registered; otherwise generic source-audit mode).
+
+3. **Cross-target investigations** — operator can scope an investigation to MULTIPLE target profiles (e.g., "compare nginx and apache approach to chunked transfer encoding"). Engine loads both profiles, hypotheses cross-reference both codebases. Deferred to v0.4 — single-target only in v0.3.
+
+### Multi-target workflow (v0.4+)
+
+When v0.4 adds cross-target support:
+- Investigation can carry N target profiles
+- Hypotheses can be cross-target ("both nginx and apache have a parser at X — same bug class?")
+- IDE panel shows multiple source roots
+- Variant hunt branches per target codebase
+- Audit memos can span targets ("this bug class is exhausted in BOTH nginx and apache")
+
+Out of scope for v0.3 to keep complexity bounded.
+
+### What's NOT generic (target-specific)
+
+Despite generic workflows, these per-target investments are real:
+
+|What needs per-target work|Reusability|
+|---|---|
+|Custom strategy generators (Swift for FUZZILLI, C for libFuzzer harnesses)|Highly target-specific; shares only basic patterns|
+|CVE pattern knowledge per target|Curated per target; some cross-pollination (parser bugs share patterns across HTTP servers)|
+|Harness templates|Per language + per codebase architecture; some reusable patterns|
+|Build recipes for fuzz-instrumented binaries|Per codebase, but documented well by upstream often|
+|Triage rules per engine|Per fuzz engine, NOT per target — ASAN rules work for any libFuzzer/AFL++ target|
+|Source conventions (where things live)|Per codebase|
+
+A new target_id requires roughly 1-2 weeks of curation: engine selection, strategy curation, CVE source registration, harness template authoring, triage rule extension. After that, the generic engine handles the investigations.
+
+### Implementation cost
+
+|#|Milestone|LOC est|Notes|
+|---|---|---|---|
+|M3.3w|`TargetProfile` schema + registration|~200|Platform-level (could be generalized for forensics too — "what OS is this triage on?")|
+|M3.3x|Target detection heuristics (probe codebase, infer profile)|~250|VR-specific|
+|M3.3y|Target profile data for `js_engine_v8`, `userspace_c_daemon`, `shared_library`|~600 data|Curation work, not code|
+|M3.3z|Engine-specific harness templates (AFL++ persistent, libFuzzer, honggfuzz)|~400|Curation|
+|M3.3aa|Triage rule files: `asan_libfuzzer.yaml`, `afl_qemu.yaml`, `honggfuzz.yaml`|~200 data|Curation|
+
+Platform-level: ~200 LOC. VR-specific: ~250 LOC + ~1200 data lines. Adding a 4th target profile post-v0.3 is ~1-2 weeks of curation per target (per the table above), no code changes to engine/UX.
+
+### Backward compatibility
+
+v0.3 ships with V8 + nginx-class + library-class profiles. The reasoning engine, branching, conversational UX, IDE, variant hunt, audit memos — all work for any of these three out of the box. New target profiles drop in as data files + curation, not code.
+
+Forensics could potentially adopt `TargetProfile` for "what OS / what evidence type" — defer until forensics asks.
+
+---
+
+### D-46: Language/runtime coverage matrix
+
+D-45 introduced the `TargetProfile` abstraction. This decision lists the languages/runtimes we cover (or plan to cover), the per-language target profile IDs, fuzzing infrastructure available, and the typical bug-class focus. Each language is a separate target_id (or several, for languages that span multiple platforms).
+
+### Coverage matrix
+
+|Language|`target_id`|Fuzz engines|Source tools|Common bug classes|Ship in|
+|---|---|---|---|---|---|
+|**C** (userspace daemons)|`userspace_c_daemon`|AFL++ (persistent / qemu), libFuzzer, honggfuzz|audit-mcp (C parser), gcc-static-analyzer, sparse|HTTP smuggling, parser OOB, format strings, integer overflow in length fields, race on fork/accept, signal handler bugs|**v0.3**|
+|**C** (shared libraries)|`shared_library`|libFuzzer, AFL++ persistent|audit-mcp, clang-tidy, infer|API misuse, callback injection, memory safety, parser bugs (libxml2/libpng/libpcre class)|**v0.3**|
+|**C++** (large apps)|`cpp_app`|libFuzzer, AFL++ qemu, OSS-Fuzz harnesses|audit-mcp (C++ parser), clang-tidy, infer|Type confusion, UAF in object lifecycle, virtual dispatch corruption, lambda capture bugs, template error paths|v0.4|
+|**C++** (JS engines)|`js_engine_v8` / `js_engine_spidermonkey` / `js_engine_jsc`|FUZZILLI (per profile)|audit-mcp + IDA + Hex-Rays|JIT typer confusion, GC/compiler race, Wasm boundary, sandbox escape|`v8` in **v0.3**, others **v0.4**|
+|**Rust** (userspace)|`rust_userspace`|cargo-fuzz (libFuzzer), AFL.rs, honggfuzz-rs|audit-mcp + clippy + cargo-geiger + cargo-audit (deps)|`unsafe` block bugs, FFI boundary, integer overflow (release builds), panic-as-DoS, supply chain via crates.io, logic bugs in safe-code Rust web frameworks (actix/rocket/axum)|**v0.3**|
+|**Go** (userspace)|`go_userspace`|`go test -fuzz` (native, 1.18+), go-fuzz (legacy)|audit-mcp + go vet + staticcheck + gosec|Nil deref, goroutine races (`-race` detector), integer overflow on untyped const, JSON unmarshal panics, HTTP handler bugs, gRPC bugs, slice OOB via unchecked input, supply chain via Go modules|**v0.3**|
+|**Java** (server-side)|`jvm_app`|Jazzer (libFuzzer-coverage on JVM), Spring-Jazzer (Code Intelligence)|audit-mcp + SpotBugs + Semgrep + dependency-check|Java native + Jackson + XStream deserialization, XXE, SSRF, JNDI injection (log4shell class), reflection abuse, Spring/SpringBoot config bugs, unsafe `ObjectInputStream`|**v0.3**|
+|**Kotlin** (JVM)|`jvm_app` (shared with Java)|Jazzer|audit-mcp + detekt + dependency-check|Same as Java (JVM-level), plus Kotlin idioms: data class equality bugs, sealed-class exhaustiveness gaps, coroutine cancellation races|**v0.3**|
+|**Kotlin** (Android)|`android_app`|libFuzzer-Android, Jazzer-Android, manual harness|audit-mcp + Android lint + Mobile Security Framework|Intent injection, content provider bypass, WebView XSS/RCE, deeplink confusion, Realm/Room ORM bypass, JNI bugs|v0.4|
+|**Python** (server-side)|`python_app`|Atheris (libFuzzer-style), pythonfuzz|audit-mcp + bandit + Semgrep + pip-audit|`pickle` / `yaml.load` deserialization, SSRF, lxml XXE, SQL injection via ORM bypass, jinja2 SSTI, `eval`/`exec` misuse, subprocess command injection, async race conditions|**v0.3**|
+|**JavaScript / TypeScript** (Node.js)|`nodejs_app`|Jazzer.js, jsfuzz (limited)|audit-mcp + ESLint security plugins + npm audit + Semgrep|Prototype pollution, command injection in `child_process`, JSON parsing bugs, npm supply chain, async race conditions, deserialization|**v0.3**|
+|**PHP** (web apps)|`php_webapp`|Limited fuzz tooling — primarily static/dynamic web pentest|audit-mcp + Psalm/PHPStan + Semgrep + brakeman-equivalent (`Progpilot`)|SQLi, type juggling, deserialization (`phar://`), file inclusion (LFI/RFI), command injection, template injection, Laravel/Symfony specific|v0.4 (audit-only)|
+|**Ruby** (Rails / Sinatra)|`ruby_webapp`|Very limited fuzz tooling|audit-mcp + brakeman + bundler-audit + Semgrep|Mass assignment, `Marshal` deserialization, ERB template injection, SSRF, Rails-specific (strong-parameters bypass, secret-bleeding)|v0.4 (audit-only)|
+|**Swift** (iOS / server)|`swift_app`|libFuzzer-Swift|audit-mcp + Periphery + swift-format|UAF in ARC + `unowned` references, Objective-C bridging bugs, JSON decoder panics, WebKit/JavaScriptCore embedding|v0.5|
+|**Erlang / Elixir** (BEAM)|`beam_app`|propEr (property-based), no coverage-guided fuzzer of note|audit-mcp + dialyzer + credo|Atom-table exhaustion DoS, `:erlang.binary_to_term` deserialization, Phoenix-specific (path traversal in static), distributed Erlang auth|v0.5 (audit-only)|
+|**Lua** (scripting / Redis-Lua)|`lua_script`|Limited|audit-mcp + luacheck|Sandbox escape (`os.execute` / `io.popen`), arithmetic overflow, integer-to-string truncation in protocol handling|v0.5 (audit-only)|
+|**Solidity** (EVM smart contracts)|`smart_contract_evm`|Echidna, Foundry fuzz, Mythril, Slither|audit-mcp (Solidity parser) + Slither + Mythril|Reentrancy, integer overflow (<0.8), access control gaps, oracle manipulation, flash loan abuse, signature replay|v0.5|
+|**Move** (Sui / Aptos)|`smart_contract_move`|Move Prover (formal), early-stage fuzzers|audit-mcp + Move Analyzer|Resource ownership bugs, capability leaks, vector overflow|v0.5|
+|**Linux kernel C** (modules)|`linux_kernel_module`|syzkaller (KASAN + KMSAN harnesses)|audit-mcp + Smatch + Coccinelle|Race conditions in driver IOCTL, missing capability check (CAP_SYS_ADMIN), copy_to/from_user OOB, ref-count bugs, IPC namespace bugs|v0.5|
+|**Linux kernel C** (syscall surface)|`linux_kernel_syscall`|syzkaller|same|Same plus syscall ABI bugs, eBPF verifier bypass, BPF JIT bugs, ksmbd/io_uring bugs|v0.5|
+|**Windows kernel C** (drivers)|`windows_kernel_driver`|kAFL, what-the-fuzz, IOCTLBruter|IDA + WinDbg + audit-mcp|IRP handling bugs, MmMapIoSpace misuse, double-fetch, pool corruption|v0.6+|
+
+### Fuzz-poor languages: audit-only workflow
+
+Several languages have limited or no production-quality fuzz tooling (PHP, Ruby, Lua, Erlang, embedded Move). For these, the workflow per D-37 picks the no-fuzz outcome path almost always:
+
+- Hypothesis generation runs on source-reading + CVE patterns
+- Engine actions: source_grep, audit-mcp queries, patch_diff
+- Submit outcomes: `emit_audit_memo` (no bug), `emit_direct_finding` (bug confirmed from source review)
+- No `launch_*_campaign` outcome unless operator has a custom harness
+
+The variant hunt flow (the worked example earlier in this doc) still works perfectly for these languages — it's pure source-reading + audit-mcp queries + side-by-side comparison. No fuzz dependency.
+
+### Language-agnostic patterns
+
+Some bug-class hypotheses apply across languages. The engine reuses them:
+
+|Cross-language bug class|Where it surfaces|
+|---|---|
+|HTTP request smuggling|nginx (C), Caddy (Go), Tomcat (Java), Express (Node), Rails (Ruby), Laravel (PHP)|
+|Deserialization|Java/Kotlin (`ObjectInputStream`, Jackson), Python (pickle/yaml), PHP (phar), Ruby (Marshal), Node (serialize-javascript), Go (gob)|
+|XXE|All XML-parsing languages — same fix (disable external entities)|
+|SSRF|All HTTP-client-using languages — same patterns|
+|Prototype pollution|JS/Node specifically, with adjacent class-pollution patterns in Python|
+|Path traversal|All filesystem-using languages|
+|Integer overflow|C, C++, Rust (release), Go (untyped const), Solidity (<0.8) — language-specific severity|
+|TOCTOU race|All POSIX-userspace languages with concurrency primitives|
+
+Cross-language CVE pattern matching is part of the `cve_cluster_query_tool` (D-43 / D-44) — when operator audits Go code for HTTP smuggling, engine pulls smuggling patterns from nginx, Apache, etc. and adapts them to Go idioms.
+
+### Per-language profile maturity rubric
+
+Each target profile gets a maturity score so operators know what to expect:
+
+|Maturity|Means|Example|
+|---|---|---|
+|**Reference**|Profile authored by VR team, multiple production campaigns, known-good harnesses|`js_engine_v8` (after this session's V8MapInferenceProfile work)|
+|**Production**|Profile authored, validated on 2+ real codebases, fuzz infrastructure tested|`userspace_c_daemon` (target nginx in v0.3 validation)|
+|**Beta**|Profile authored, single-codebase validation|`rust_userspace`, `go_userspace`, `jvm_app`, `python_app`, `nodejs_app` (initial v0.3 ships)|
+|**Audit-only**|Profile authored, no fuzz engines (source review + patterns only)|`php_webapp`, `ruby_webapp`, `lua_script` (v0.4)|
+|**Experimental**|Profile authored, no production validation, may not work|`smart_contract_evm`, `linux_kernel_module` (v0.5)|
+|**Planned**|Listed but not authored yet|`windows_kernel_driver` (v0.6+)|
+
+### Implementation cost
+
+The platform-level work for D-46 is zero — D-45's `TargetProfile` schema handles all languages. What costs LOC is the per-language CURATION:
+
+|Per-language|Estimated effort|
+|---|---|
+|Target profile JSON|~50-150 lines data|
+|Engine wrapper(s) — invoke the language's fuzz engine|~200-400 LOC per engine|
+|Triage rules YAML|~50-100 lines data|
+|3-5 default strategies per target|~200-400 LOC per strategy (if custom; less if just wrapping standard engines)|
+|CVE cluster knowledge|~100 lines data, ongoing curation|
+|Documentation runbook|~1-2 days writing|
+
+Total per new language: ~2-4 days for an audit-only profile, ~1-2 weeks for a fuzz-capable profile (because of engine integration + harness curation).
+
+For v0.3, we ship Beta profiles for Rust, Go, Java/Kotlin (JVM shared), Python, Node.js — alongside the Reference V8 and Production nginx-class profiles. That's ~5 weeks of curation work, ~1500 LOC code across the engine wrappers.
+
+### Backward compatibility
+
+Adding a new language is data + glue code, never engine changes. The reasoning engine, branching, UX, IDE, variant hunt all remain target-agnostic. Operator picks language at investigation start; everything else proceeds normally.
+
 ---
 
 ## Open Questions (Remaining)
