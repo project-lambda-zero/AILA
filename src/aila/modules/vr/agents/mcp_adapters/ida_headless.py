@@ -48,9 +48,9 @@ __all__ = [
 ]
 
 
-# Per-adapter caps. Pseudocode and disassembly are the worst offenders
-# for prompt bloat — keep raw in the message store, push only a head
-# slice into observables.
+# Per-adapter caps on observables size. Pseudocode and disassembly
+# are the worst offenders for prompt bloat. Raw responses remain in
+# the message store; observables only hold a bounded head slice.
 _MAX_OBS_PSEUDOCODE = 3000
 _MAX_OBS_DISASM = 2500
 _MAX_OBS_CALLSITES = 25

@@ -66,10 +66,12 @@ from .target import (
     TargetTag,
     TargetTagSource,
     VRTargetCreate,
+    VRTargetPatch,
     VRTargetSummary,
 )
 from .workspace import (
     VRWorkspaceCreate,
+    VRWorkspacePatch,
     VRWorkspaceSummary,
     WorkspaceStatus,
     WorkspaceTheme,
@@ -123,8 +125,10 @@ __all__ = [
     "VRProjectStatus",
     "VRProjectSummary",
     "VRTargetCreate",
+    "VRTargetPatch",
     "VRTargetSummary",
     "VRWorkspaceCreate",
+    "VRWorkspacePatch",
     "VRWorkspaceSummary",
     "WorkspaceStatus",
     "WorkspaceTheme",

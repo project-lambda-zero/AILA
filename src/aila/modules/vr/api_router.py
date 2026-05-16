@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func as sa_func
 from sqlmodel import select
@@ -49,8 +49,10 @@ from .contracts import (
     VRProjectStatus,
     VRProjectSummary,
     VRTargetCreate,
+    VRTargetPatch,
     VRTargetSummary,
     VRWorkspaceCreate,
+    VRWorkspacePatch,
     VRWorkspaceSummary,
     WorkspaceStatus,
     WorkspaceTheme,
@@ -169,8 +171,16 @@ def _finding_from_record(record: Any) -> VRFinding:
     )
 
 
-def _workspace_summary(record: Any) -> VRWorkspaceSummary:
-    """Project a VRWorkspaceRecord row to the public VRWorkspaceSummary."""
+def _workspace_summary(
+    record: Any,
+    target_count: int = 0,
+    active_investigation_count: int = 0,
+) -> VRWorkspaceSummary:
+    """Project a VRWorkspaceRecord row to the public VRWorkspaceSummary.
+
+    Counts default to 0 for endpoints that don't need them (e.g. create).
+    List/get endpoints supply real counts via batched queries below.
+    """
     return VRWorkspaceSummary(
         id=record.id,
         name=record.name,
@@ -178,11 +188,65 @@ def _workspace_summary(record: Any) -> VRWorkspaceSummary:
         description=record.description or "",
         theme=WorkspaceTheme(record.theme),
         status=WorkspaceStatus(record.status),
-        target_count=0,
-        active_investigation_count=0,
+        target_count=target_count,
+        active_investigation_count=active_investigation_count,
         created_at=record.created_at.isoformat() if record.created_at else None,
         updated_at=record.updated_at.isoformat() if record.updated_at else None,
     )
+
+
+async def _workspace_counts(
+    uow: Any,
+    workspace_ids: list[str],
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Two batched queries returning per-workspace counts.
+
+    Returns ``(target_counts, active_investigation_counts)``: each a
+    dict mapping ``workspace_id`` -> count. Workspaces with no rows
+    are absent from the dict (caller defaults to 0).
+
+    Active investigation = status in {CREATED, RUNNING, PAUSED}.
+    COMPLETED/FAILED/ABANDONED are terminal and excluded.
+    """
+    from sqlmodel import select as _select
+
+    from .contracts.investigation import InvestigationStatus
+    from .db_models import VRInvestigationRecord, VRTargetRecord
+
+    if not workspace_ids:
+        return {}, {}
+
+    target_rows = (await uow.session.exec(
+        _select(
+            VRTargetRecord.workspace_id,
+            sa_func.count().label("c"),
+        )
+        .where(VRTargetRecord.workspace_id.in_(workspace_ids))
+        .group_by(VRTargetRecord.workspace_id),
+    )).all()
+    target_counts: dict[str, int] = {row[0]: int(row[1]) for row in target_rows}
+
+    active_statuses = (
+        InvestigationStatus.CREATED.value,
+        InvestigationStatus.RUNNING.value,
+        InvestigationStatus.PAUSED.value,
+    )
+    inv_rows = (await uow.session.exec(
+        _select(
+            VRTargetRecord.workspace_id,
+            sa_func.count().label("c"),
+        )
+        .join(
+            VRInvestigationRecord,
+            VRInvestigationRecord.target_id == VRTargetRecord.id,
+        )
+        .where(VRTargetRecord.workspace_id.in_(workspace_ids))
+        .where(VRInvestigationRecord.status.in_(active_statuses))
+        .group_by(VRTargetRecord.workspace_id),
+    )).all()
+    active_inv_counts: dict[str, int] = {row[0]: int(row[1]) for row in inv_rows}
+
+    return target_counts, active_inv_counts
 
 
 def _target_summary(record: Any) -> VRTargetSummary:
@@ -779,11 +843,157 @@ def create_vr_router() -> APIRouter:
             ).offset(offset).limit(limit)
             rows = (await uow.session.exec(page_stmt)).all()
 
-        items = [_workspace_summary(r) for r in rows]
+            workspace_ids = [r.id for r in rows]
+            target_counts, active_inv_counts = await _workspace_counts(
+                uow, workspace_ids,
+            )
+
+        items = [
+            _workspace_summary(
+                r,
+                target_count=target_counts.get(r.id, 0),
+                active_investigation_count=active_inv_counts.get(r.id, 0),
+            )
+            for r in rows
+        ]
         return DataEnvelope(
             data=items,
             meta=PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump(),
         )
+
+    @router.get(
+        "/workspaces/{workspace_id}",
+        response_model=DataEnvelope[VRWorkspaceSummary],
+        summary="Get one VR workspace by id (with live counts).",
+    )
+    @limiter.limit("120/minute")
+    async def get_workspace(
+        request: Request,
+        workspace_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRWorkspaceSummary]:
+        del request
+        from .db_models import VRWorkspaceRecord
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRWorkspaceRecord).where(VRWorkspaceRecord.id == workspace_id),
+                    VRWorkspaceRecord, auth,
+                )
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Workspace {workspace_id} not found.",
+                )
+            target_counts, active_inv_counts = await _workspace_counts(uow, [workspace_id])
+
+        return DataEnvelope(data=_workspace_summary(
+            row,
+            target_count=target_counts.get(workspace_id, 0),
+            active_investigation_count=active_inv_counts.get(workspace_id, 0),
+        ))
+
+    @router.patch(
+        "/workspaces/{workspace_id}",
+        response_model=DataEnvelope[VRWorkspaceSummary],
+        summary="Partial update of workspace fields (name / description / theme / status).",
+    )
+    @limiter.limit("30/minute")
+    async def patch_workspace(
+        request: Request,
+        workspace_id: str,
+        body: VRWorkspacePatch,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRWorkspaceSummary]:
+        del request
+        from aila.platform.contracts._common import utc_now
+
+        from .db_models import VRWorkspaceRecord
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRWorkspaceRecord).where(VRWorkspaceRecord.id == workspace_id),
+                    VRWorkspaceRecord, auth,
+                )
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Workspace {workspace_id} not found.",
+                )
+            mutated = False
+            if body.name is not None and body.name != row.name:
+                row.name = body.name
+                mutated = True
+            if body.description is not None and body.description != (row.description or ""):
+                row.description = body.description
+                mutated = True
+            if body.theme is not None and body.theme.value != row.theme:
+                row.theme = body.theme.value
+                mutated = True
+            if body.status is not None and body.status.value != row.status:
+                row.status = body.status.value
+                mutated = True
+            if mutated:
+                row.updated_at = utc_now()
+                uow.session.add(row)
+                await uow.session.commit()
+                await uow.session.refresh(row)
+
+            target_counts, active_inv_counts = await _workspace_counts(uow, [workspace_id])
+
+        return DataEnvelope(data=_workspace_summary(
+            row,
+            target_count=target_counts.get(workspace_id, 0),
+            active_investigation_count=active_inv_counts.get(workspace_id, 0),
+        ))
+
+    @router.delete(
+        "/workspaces/{workspace_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        summary="Delete a workspace (refuses if any targets still belong to it).",
+    )
+    @limiter.limit("10/minute")
+    async def delete_workspace(
+        request: Request,
+        workspace_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> Response:
+        del request
+        from .db_models import VRTargetRecord, VRWorkspaceRecord
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRWorkspaceRecord).where(VRWorkspaceRecord.id == workspace_id),
+                    VRWorkspaceRecord, auth,
+                )
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Workspace {workspace_id} not found.",
+                )
+            target_count = (await uow.session.exec(
+                select(sa_func.count())
+                .select_from(VRTargetRecord)
+                .where(VRTargetRecord.workspace_id == workspace_id),
+            )).one()
+            if int(target_count) > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Workspace {workspace_id} has {int(target_count)} target(s). "
+                        "Move or delete them first."
+                    ),
+                )
+            await uow.session.delete(row)
+            await uow.session.commit()
+
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     # ── Targets (D-50/D-51) ────────────────────────────────────────────
 
@@ -917,6 +1127,116 @@ def create_vr_router() -> APIRouter:
             "capability_profile": _json.loads(row.capability_profile_json or "{}"),
             "descriptor": _json.loads(row.descriptor_json or "{}"),
         })
+
+    @router.patch(
+        "/targets/{target_id}",
+        response_model=DataEnvelope[VRTargetSummary],
+        summary="Partial update of mutable target fields.",
+    )
+    @limiter.limit("30/minute")
+    async def patch_target(
+        request: Request,
+        target_id: str,
+        body: VRTargetPatch,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRTargetSummary]:
+        del request
+        import json as _json
+
+        from aila.platform.contracts._common import utc_now
+
+        from .contracts.target import TargetTag, TargetTagSource
+        from .db_models import VRTargetRecord
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                )
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target {target_id} not found.",
+                )
+            mutated = False
+            if body.display_name is not None and body.display_name != row.display_name:
+                row.display_name = body.display_name
+                mutated = True
+            if body.primary_language is not None and body.primary_language != row.primary_language:
+                row.primary_language = body.primary_language
+                mutated = True
+            if body.secondary_languages is not None:
+                new_langs_json = _json.dumps(body.secondary_languages)
+                if new_langs_json != (row.secondary_languages_json or "[]"):
+                    row.secondary_languages_json = new_langs_json
+                    mutated = True
+            if body.status is not None and body.status.value != row.status:
+                row.status = body.status.value
+                mutated = True
+            if body.tags is not None:
+                # Replace operator-supplied tag set. System + pattern tags
+                # are persisted in vr_target_tag_index separately.
+                serialized = [
+                    TargetTag(tag=t, source=TargetTagSource.OPERATOR).model_dump(mode="json")
+                    for t in body.tags
+                ]
+                new_tags_json = _json.dumps(serialized)
+                if new_tags_json != (row.tags_json or "[]"):
+                    row.tags_json = new_tags_json
+                    mutated = True
+            if mutated:
+                row.updated_at = utc_now()
+                uow.session.add(row)
+                await uow.session.commit()
+                await uow.session.refresh(row)
+
+        return DataEnvelope(data=_target_summary(row))
+
+    @router.delete(
+        "/targets/{target_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        summary="Delete a target (refuses if any investigations reference it).",
+    )
+    @limiter.limit("10/minute")
+    async def delete_target(
+        request: Request,
+        target_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> Response:
+        del request
+        from .db_models import VRInvestigationRecord, VRTargetRecord
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                )
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target {target_id} not found.",
+                )
+            inv_count = (await uow.session.exec(
+                select(sa_func.count())
+                .select_from(VRInvestigationRecord)
+                .where(VRInvestigationRecord.target_id == target_id),
+            )).one()
+            if int(inv_count) > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Target {target_id} has {int(inv_count)} investigation(s). "
+                        "Archive or delete them first."
+                    ),
+                )
+            await uow.session.delete(row)
+            await uow.session.commit()
+
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     # ── Enrichment triggers (M3.T-3 + M3.T-4) ──────────────────────────
 

@@ -26,6 +26,7 @@ __all__ = [
     "TargetTag",
     "TargetTagSource",
     "VRTargetCreate",
+    "VRTargetPatch",
     "VRTargetSummary",
 ]
 
@@ -130,3 +131,28 @@ class VRTargetSummary(BaseModel):
     tags: list[TargetTag] = Field(default_factory=list)
     created_at: str | None = None
     updated_at: str | None = None
+
+
+class VRTargetPatch(BaseModel):
+    """Partial-update payload for PATCH /api/vr/targets/{id}.
+
+    Immutable after creation: ``workspace_id`` (move-between-workspaces
+    needs a separate endpoint), ``kind`` (would invalidate
+    capability_profile + ranking + investigations), ``descriptor``
+    (identity field of the target — rebuild instead).
+
+    Mutable here:
+      - display_name: rename for UX
+      - primary_language / secondary_languages: re-tag once detected
+      - status: archive / quarantine / reactivate
+      - tags: replace operator-supplied tag set (system + pattern tags
+        survive via tag_index regen)
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=255)
+    primary_language: str | None = Field(default=None, max_length=32)
+    secondary_languages: list[str] | None = None
+    status: TargetStatus | None = None
+    tags: list[str] | None = None
