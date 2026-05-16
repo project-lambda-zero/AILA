@@ -1805,6 +1805,118 @@ v0.3 ships supporting all four; the YAML config differs but the code paths are t
 
 ---
 
+### D-49: Workspace = thematic project; multi-target hybrid UX
+
+**Decision:** A VR workspace is a **thematic project** (e.g., "Browser engines", "Linux kernel", "Industrial controllers", "Mobile baseband"), not a single target. Inside the workspace, multiple targets coexist with per-target dashboards AND a workspace-level cross-target view.
+
+**Rationale:** Real vulnerability researchers work in thematic areas, not single binaries. A V8 hunter routinely checks WebKit and SpiderMonkey for parallel patterns. A kernel researcher tracks Linux + BSD + Solaris together. Workspace = thematic = how researchers actually organize.
+
+**Three viewing levels:**
+
+| Level | Scope | Use case |
+|---|---|---|
+| **Workspace dashboard** | All targets in the workspace | "What's happening across browser engines this week" — feed of all investigations, findings, campaigns, pending disclosures across V8 + WebKit + SpiderMonkey. Cross-target pattern visibility. |
+| **Per-target dashboard** | One target | "Deep focus on V8" — investigations specific to V8, campaigns targeting V8 binaries, V8-only findings, V8-applicable patterns. |
+| **Cross-target view** | Pattern-driven slice | "Show all targets affected by pattern P" or "Show all targets with bug class B" — for variant hunting across the workspace. |
+
+**Concrete data model implications:**
+
+- `vr_workspaces` table: id, team_id, name, description, theme, created_at
+- `vr_targets` table: id, workspace_id, kind (binary/source_repo/cve/protocol/...), descriptor_json, display_name, primary_language, secondary_languages, status (active/archived/quarantined)
+- `vr_investigations.primary_target_id` references `vr_targets`; `secondary_target_ids` JSON array for investigations that touch multiple targets
+- `vr_fuzz_campaigns.target_id` references `vr_targets`
+- `vr_findings.target_id` references `vr_targets`
+- `vr_patterns.workspace_id` for workspace-scoped patterns (D-43 GA-41 default scope above local)
+
+**UX consequences:**
+
+- Top-level navigation: workspace switcher (dropdown, persistent across sessions)
+- Inside a workspace: target tabs OR target selector (sidebar) with "all targets" option
+- Investigation creation: select primary target from dropdown of workspace's targets; can attach secondaries
+- Audit memos scoped to (target, region_signature) — promoted memos can be re-scoped workspace-wide
+- Cross-target pattern surfacing: "Pattern P was used in 3 investigations against V8; consider applying to WebKit" prompt in WebKit's dashboard
+
+**Default workspaces (suggested seeds):**
+- "Browser engines" — V8, SpiderMonkey, JavaScriptCore, Hermes
+- "Linux kernel" — kernel + upstream subsystems
+- "Container runtimes" — runc, containerd, Docker
+- "Industrial / SCADA" — Modbus stacks, OPC-UA implementations
+- "Mobile baseband" — Qualcomm, MediaTek, Samsung Exynos baseband firmware
+
+Operator can create custom workspaces. Workspace deletion archives but doesn't drop data.
+
+**Why hybrid (workspace + per-target + cross-target) over per-target dashboards alone:**
+
+Per-target dashboards alone fragment context. Researcher pivoting from V8 finding to WebKit hunt loses the cross-target view. Hybrid lets the operator zoom in (per-target) when deep in one binary, OR zoom out (workspace) when looking for cross-target patterns, OR slice (cross-target view) when chasing a specific pattern across all targets in scope. Three lenses on the same data, switched by sidebar/tab — no information lost.
+
+### D-50: Investigation = primary target + secondary references
+
+**Decision:** Every investigation has exactly ONE primary target. It can reference N secondary targets as evidence (e.g., comparison binaries for differential analysis). Branching does NOT change primary target; sub-investigations may have different primary targets.
+
+**Rationale:** Reasoning needs a focal point — engine prompts reference "the target", costs accrue against the primary target's workspace. Secondary references support comparative analysis ("trace this taint through WebKit's equivalent function") without diffusing the investigation's identity.
+
+**Schema:**
+- `vr_investigations.primary_target_id` (NOT NULL)
+- `vr_investigations.secondary_target_refs_json` (default `[]`) — list of `{target_id, role}` where role ∈ {`comparison`, `parallel_codebase`, `parent_library`, `derived_fork`}
+
+**Implications:**
+- Cost attribution: 100% of investigation cost goes to primary target's workspace
+- Findings: primary_target_id required on `vr_findings`
+- Variant hunts (D-43 GA-28): the variant hunt is a sibling investigation with its OWN primary target (usually different from parent's primary target — that's the whole point of a variant hunt)
+- Cross-target retrieval: investigation can pull patterns scoped to secondary targets' workspaces (read-only), but cannot promote patterns to those scopes
+
+### D-51: Per-target capability profile
+
+**Decision:** Each target has a `capability_profile` derived from D-45 TargetProfile + D-46 language matrix. Capability profile encodes which MCP servers, fuzzing engines, decompilers, and reasoning strategies apply. Computed on target creation; cached on `vr_targets.capability_profile_json`.
+
+Capability profile example for "V8 d8 binary":
+
+```json
+{
+  "target_kind": "native_binary",
+  "primary_language": "c++",
+  "secondary_languages": ["javascript"],
+  "applicable_mcp_servers": ["ida_headless", "audit_mcp"],
+  "applicable_fuzzing_engines": ["fuzzilli_v8", "v8_d8_sbx"],
+  "applicable_strategies": ["v8MapInference", "v8_baseline", "v8_jit_differential"],
+  "applicable_pattern_kinds": ["exploitation_technique", "fuzzing_strategy", "search_heuristic", "triage_rule"],
+  "default_reasoning_strategy": "vulnerability_research.discovery_research",
+  "default_disclosure_tracks": ["chrome_vrp", "blog_post"],
+  "estimated_cost_per_investigation_usd": 30.0
+}
+```
+
+**Used by:**
+- Investigation start: limits strategy/engine selection to applicable
+- Fuzzing campaign creation: filters engine dropdown by `applicable_fuzzing_engines`
+- Pattern retrieval (D-43 GA-44): filter by `applicable_pattern_kinds`
+- Disclosure orchestrator (`VR_V03_DISCLOSURE_LIFECYCLE_PLAN.md` GA-32): suggest default tracks
+- Cost estimation: per-investigation budget defaults pulled from capability profile
+
+Recomputed nightly OR on demand (when target's underlying binary version changes, language detection refreshes, etc.).
+
+### D-52: Target tagging + multi-dimensional filtering
+
+**Decision:** Targets carry free-form tags (operator-supplied) + system-derived tags. Both feed cross-target filtering in workspace dashboard.
+
+**Tag sources:**
+- Operator-supplied: `["release_140", "audit_quarter_2026Q2", "high_priority"]`
+- System-derived: `["arch:x86_64", "os:linux", "has_asan_build", "has_fuzzilli_profile", "stripped_binary", "version:140.0.7300"]`
+- Pattern-derived: `["pattern:v8_map_inference_caught_2x", "pattern:descriptor_swap_unsuccessful_5x"]` (auto-applied based on pattern usage stats)
+
+**Schema:**
+- `vr_targets.tags_json` (default `[]`) — combined operator + system tags
+- `vr_target_tag_index` table (denormalized for fast filter queries): id, target_id, workspace_id, tag, tag_source
+
+**Workspace dashboard filtering:**
+- "Show all targets tagged `high_priority` AND `has_fuzzilli_profile`"
+- "Show all targets where pattern P has been retrieved ≥3 times"
+- "Show all targets without an active investigation in last 30 days" (gap detection)
+
+Frontend exposes tag-builder UI (existing pattern from forensics module). Saved filter views persist as `vr_workspace_views` (operator-named saved filters per workspace).
+
+---
+
 ## Open Questions (Remaining)
 
 1. ~~**Fuzzing resource management.**~~ → Resolved by D-29.
