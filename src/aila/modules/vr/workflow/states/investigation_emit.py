@@ -18,8 +18,13 @@ from typing import Any
 from sqlmodel import select as _select
 
 from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
+from aila.modules.vr.agents.pattern_extractor import (
+    PatternExtractionResult,
+    PatternExtractor,
+)
 from aila.modules.vr.contracts.investigation import InvestigationStatus
 from aila.modules.vr.db_models import VRInvestigationRecord
+from aila.modules.vr.services.pattern_store import PatternStore
 from aila.platform.contracts._common import utc_now
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
@@ -96,6 +101,25 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 outcome_id, exc,
             )
 
+    extraction_count: int | None = None
+    extraction_reason: str | None = None
+    if outcome_id and final_status == InvestigationStatus.COMPLETED.value:
+        try:
+            extraction_result = await _run_pattern_extraction(str(outcome_id))
+            extraction_count = extraction_result.extracted_count
+            extraction_reason = extraction_result.skipped_reason or None
+            _log.info(
+                "investigation_emit EXTRACT outcome_id=%s count=%d reason=%s",
+                outcome_id, extraction_count, extraction_reason,
+            )
+        except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+            extraction_count = 0
+            extraction_reason = f"{type(exc).__name__}: {exc}"
+            _log.warning(
+                "investigation_emit EXTRACT ERROR outcome_id=%s err=%s",
+                outcome_id, exc,
+            )
+
     _log.info(
         "investigation_emit DONE investigation_id=%s exit_reason=%s final_status=%s outcome_id=%s",
         investigation_id, exit_reason, final_status, outcome_id,
@@ -113,5 +137,40 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
             "dispatch_status": dispatch_status,
             "dispatch_target": dispatch_target,
             "dispatch_reason": dispatch_reason,
+            "pattern_extraction_count": extraction_count,
+            "pattern_extraction_reason": extraction_reason,
         },
     )
+
+
+async def _run_pattern_extraction(outcome_id: str) -> PatternExtractionResult:
+    """Bridge between investigation_emit and PatternExtractor.
+
+    Resolves team_id from the outcome's investigation row, constructs the
+    extractor with platform LLM client + PatternStore, and runs one pass.
+    Errors propagate to the caller's try/except for status logging.
+    """
+    from aila.modules.vr.db_models import VRInvestigationOutcomeRecord  # noqa: PLC0415
+
+    async with UnitOfWork() as uow:
+        outcome = (await uow.session.exec(
+            _select(VRInvestigationOutcomeRecord).where(
+                VRInvestigationOutcomeRecord.id == outcome_id,
+            ),
+        )).first()
+        if outcome is None:
+            raise RuntimeError(f"outcome {outcome_id} disappeared before extraction")
+        inv = (await uow.session.exec(
+            _select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == outcome.investigation_id,
+            ),
+        )).first()
+        team_id = inv.team_id if inv is not None else None
+
+    services = ServiceFactory()
+    store = PatternStore(knowledge=services.knowledge)
+    extractor = PatternExtractor(
+        llm_client=services.llm_client,
+        pattern_store=store,
+    )
+    return await extractor.extract(outcome_id=outcome_id, team_id=team_id)
