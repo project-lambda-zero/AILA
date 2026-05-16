@@ -694,6 +694,172 @@ Operator-issued direct API calls (e.g., POST /api/vr/campaigns with a fully-spec
 
 Forensics' existing investigation UI is already chat-style; VR adopts the same pattern. No frontend forking required.
 
+### D-44: Interactive code IDE + graph visualizations in investigation UI
+
+Pure-text chat is insufficient for VR work. The investigation UI must surface:
+- **Specific lines in specific files** when the engine points at code ("vuln pattern here, line N of file X")
+- **Callgraphs and taint flow** when the engine reaches a sink or asks "how does data get here?"
+- **Decompiled function context** for binary work (IDA output, xrefs)
+- **Side-by-side patch view** when analyzing a CVE fix
+
+The chat thread carries reasoning, decisions, and outcomes. The visual panels carry the spatial / structural evidence the chat can't fit inline.
+
+### Panels (layout)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ [Investigation: V8 Maglev typer hunt]   cost: $1.42/$5.00  branches: 2 │
+├──────────────────────────────────────────┬──────────────────────────────┤
+│                                          │  File Tree (Monaco-style)    │
+│  Chat thread                             │  ▾ v8/src/                   │
+│  ─────────────                           │    ▾ maglev/                 │
+│  operator: what calls FromJSON?          │      maglev-graph-builder.cc │
+│  engine: [running call_graph(FromJSON)]  │      maglev-ir.cc            │
+│  engine: 3 direct + 14 indirect callers  │      maglev-phi-untagging.cc │
+│          [▼ Show graph]                  │    ▾ compiler/               │
+│                                          │      ...                     │
+│  [GRAPH PANEL INLINE — expandable]       │                              │
+│                                          │  ─────────────────────────   │
+│  operator: show me line 1247             │  Code Viewer (Monaco)        │
+│  engine: [opening maglev-ir.cc:1247]     │  ┌──────────────────────┐    │
+│          [▼ See file panel ➜]            │  │ 1245: void Visit(...)│    │
+│                                          │  │ 1246:   if (tagged) {│    │
+│  engine: This is the Phi untag path the  │  │*1247:     auto val = │    │
+│          CVE-2026-3910 patch added a     │  │ 1248:       UntagSm…│    │
+│          check to. Compare with...       │  │ 1249:   } else if (…│    │
+│                                          │  └──────────────────────┘    │
+│                                          │  [highlighted: line 1247]    │
+│                                          │  [annotation: engine says…]  │
+│                                          │                              │
+│                                          │  ─────────────────────────   │
+│                                          │  Reasoning evidence graph    │
+│                                          │  ▾ Hypotheses (3 active)     │
+│                                          │    H1 supports: 5 evidence   │
+│                                          │    H2 rejected: 1 refutes    │
+│                                          │    H3 active: 0 evidence     │
+│                                          │                              │
+│                                          │  Branch tree (D-41)          │
+│                                          │  ▾ main                      │
+│                                          │    ▸ alt_wasm_focus          │
+│                                          │                              │
+│                                          │  Steering (D-40)             │
+│                                          │  • scope: V8 only            │
+│                                          │  • no flag-gated features    │
+└──────────────────────────────────────────┴──────────────────────────────┘
+```
+
+### Engine emits richer message types
+
+The chat doesn't just carry text. Engine messages have typed payloads:
+
+|Message type|Payload|Renders as|
+|---|---|---|
+|`text`|Markdown string|Normal chat message|
+|`tool_call`|Tool name + args|"Running `audit_mcp.callgraph(symbol=FromJSON)`..." with collapsible result|
+|`code_pointer`|File path + line range + annotation + reason|Inline preview card + "Open in panel" button. Click → IDE panel jumps to that file/line with highlight|
+|`graph_view`|Graph spec (nodes + edges + layout hint)|Embedded React Flow widget, expandable to full-screen|
+|`taint_flow`|Source → ... → sink trace with each hop annotated|Animated linear graph showing data progression|
+|`xref_view`|List of cross-references with sites|Clickable list, each item opens in IDE panel|
+|`patch_diff`|Two file versions side-by-side|GitHub-style split diff with engine commentary|
+|`decompiled_function`|IDA pseudocode + assembly + boundary info|Tabbed viewer (decompiled / disasm / hex)|
+|`hypothesis_update`|Hypothesis ID + state change|Inline badge: "H1 → supported by 2 new evidence" with click-through to evidence node|
+|`outcome_pending`|Pending typed outcome (D-43)|Confirm button + summary of what will be emitted|
+
+Operators can interact with any of these: click a code pointer to open in IDE, click a graph node to expand its neighborhood, click an xref to navigate, etc. Interactions feed back into the engine's context.
+
+### Specific tech choices
+
+|Concern|Choice|Why|
+|---|---|---|
+|Code editor|**Monaco** (VSCode's editor, npm `@monaco-editor/react`)|Production-grade, syntax highlighting for ~30 languages, inline annotations, search/replace, file tree integration|
+|Graph rendering|**React Flow** (`@xyflow/react`)|Already used in similar agentic UIs, supports custom node renderers, edge labels, mini-map, pan/zoom, animated edges (for taint flow)|
+|Side-by-side diff|**Monaco Diff Editor** (built into monaco-editor)|Same component family as the main editor; consistent UX|
+|File tree|**Custom** built on Monaco + project file index|Don't need a full IDE; just enough to navigate the codebase under investigation|
+|Graph data backing|Just the existing `ReasoningEvidenceGraph` from `platform/contracts/reasoning.py`|Already exists. Neo4j would be overkill — investigation graphs are small (<10k nodes) and per-investigation, not cross-investigation queries|
+|Code data sources|`audit-mcp` (already in our toolchain) + IDA Headless MCP + file system + git|All existing infrastructure|
+
+### Data flow for "show me a callgraph"
+
+```
+operator: "what calls maglev-ir.cc:Visit?"
+  ↓
+engine reasons: needs callgraph for that symbol
+  ↓
+engine.tool_run("audit_mcp.callgraph", {symbol: "maglev::Visit", depth: 2})
+  ↓
+audit-mcp returns: {nodes: [...], edges: [...], hot_paths: [...]}
+  ↓
+engine emits message {type: "graph_view", payload: {graph, focus: "maglev::Visit"}}
+  ↓
+chat renders inline graph widget (small) + "Expand" button
+  ↓
+operator clicks "Expand" → graph fills the right panel, IDE panel hides
+  ↓
+operator clicks node "TurboFan::Lowering" in graph
+  ↓
+chat side opens code pointer: turbofan/lowering.cc + relevant function
+  ↓
+operator: "this is the path I was looking for, hypothesize from here"
+  ↓
+engine adds graph node + selected callsite as evidence to current hypothesis
+```
+
+### Data flow for "look at this line — vuln pattern"
+
+```
+engine reasoning concludes: line N of file X exhibits CVE-2025-2135-like alias pattern
+  ↓
+engine emits message {type: "code_pointer", payload: {
+    file: "v8/src/compiler/js-native-context-specialization.cc",
+    line_start: 1245, line_end: 1280,
+    annotation: "InferMapsUnsafe alias check missing here",
+    reason: "Pattern matches CVE-2025-2135 family",
+    severity_hint: "high"
+}}
+  ↓
+chat renders preview card with first 5 lines + annotation
+  ↓
+operator clicks "Open in panel" → IDE panel opens that file, scrolls to 1245-1280,
+   highlights region, shows annotation as inline comment
+  ↓
+operator selects a range, types: "explain what `IsSame` returns here in the
+   monomorphic case"
+  ↓
+selection (file:line_range + selected text) becomes engine context
+  ↓
+engine responds inline + may add more code_pointers
+```
+
+### Persistence
+
+Code pointers and graph views are NOT ephemeral chat ornaments. They get stored as `ReasoningGraphNode` entries with `kind="evidence"`, with the file path / line range / xref list as `attributes`. Subsequent turns can refer back to them via the evidence graph. Investigation export (audit memo, advisory, etc.) embeds the relevant code pointers as anchors.
+
+### Mobile / smaller screens
+
+The 3-panel layout collapses on smaller viewports: chat-only mode, IDE panel as tab, graph as modal overlay. The chat remains the primary surface; visual aids degrade gracefully.
+
+### Backward compatibility
+
+Forensics' existing UI is chat-only with a static evidence graph viewer. D-44's IDE panel + interactive graphs are new surfaces but additive — forensics can opt in. The reasoning engine's message-payload types are agnostic; the chat client decides which to render and how.
+
+### Implementation cost
+
+|#|Milestone|LOC est|Notes|
+|---|---|---|---|
+|M3.3p|Engine message payload types extended (code_pointer, graph_view, taint_flow, xref_view, patch_diff, decompiled_function, hypothesis_update, outcome_pending)|~250|Platform-level — schemas + serialization|
+|M3.3q|`audit-mcp` integration tool — callgraph, xrefs, type-info, taint queries|~400|VR-specific (in `vr/reasoning/tools/`)|
+|M3.3r|IDA Headless MCP integration tool — decompile, xrefs (binary work)|~300|VR-specific|
+|M3.3s|Frontend chat with rich message renderers|~500|Frontend|
+|M3.3t|Monaco-based IDE panel (file tree + viewer + diff editor)|~600|Frontend|
+|M3.3u|React Flow graph viewer (with custom nodes for hypothesis/evidence/code/symbol types)|~400|Frontend|
+|M3.3v|Interaction wiring — clicks in graph/IDE feed back as engine context|~200|Frontend|
+
+Frontend total: ~1700 LOC. Backend total: ~950 LOC. Net D-44 addition: ~2650 LOC.
+
+Large but high-ROI. Pure chat would force the operator to copy-paste file paths from terminal output, lose graph context across messages, and re-derive callgraphs visually in their head. The IDE + graph viewer pay back the investment quickly.
+
+v0.3 ships core panels (chat + IDE panel + graph viewer). Polish (mobile layout, advanced annotations, multi-file split view) iterates in v0.4.
+
 ---
 
 ## Open Questions (Remaining)
