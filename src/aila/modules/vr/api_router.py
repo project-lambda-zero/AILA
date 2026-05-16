@@ -1452,4 +1452,219 @@ def create_vr_router() -> APIRouter:
 
         return DataEnvelope(data=[_outcome_summary(r) for r in rows])
 
+    # ── Branch operations (M3.R-5, D-41) ──────────────────────────────
+
+    async def _load_branch_or_404(
+        investigation_id: str, branch_id: str, auth: AuthContext,
+    ) -> tuple[Any, Any]:
+        from .db_models import VRInvestigationBranchRecord, VRInvestigationRecord
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                )
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            branch = (await uow.session.exec(
+                select(VRInvestigationBranchRecord).where(
+                    VRInvestigationBranchRecord.id == branch_id,
+                    VRInvestigationBranchRecord.investigation_id == investigation_id,
+                )
+            )).first()
+            if branch is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Branch {branch_id} not found in investigation {investigation_id}.",
+                )
+            return inv, branch
+
+    class _BranchOpBody(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        reason: str = Field(default="", max_length=1024)
+
+    class _ForkBody(_BranchOpBody):
+        persona_voice: PersonaVoice | None = Field(default=None)
+        at_turn: int | None = Field(default=None, ge=0)
+
+    class _MergeBody(_BranchOpBody):
+        other_branch_id: str = Field(min_length=1, max_length=64)
+
+    async def _wrap_branch_op_call(
+        coro: Any, op_name: str,
+    ) -> DataEnvelope[dict]:
+        from aila.modules.vr.agents.branch_manager import BranchManagerError
+
+        try:
+            result = await coro
+        except BranchManagerError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"{op_name}: {exc}",
+            ) from exc
+        return DataEnvelope(data={
+            "op": result.op.value,
+            "investigation_id": result.investigation_id,
+            "primary_branch_id": result.primary_branch_id,
+            "new_branch_id": result.new_branch_id,
+            "affected_branch_ids": result.affected_branch_ids or [],
+            "reason": result.reason,
+        })
+
+    @router.post(
+        "/investigations/{investigation_id}/branches/{branch_id}/fork",
+        response_model=DataEnvelope[dict],
+        status_code=status.HTTP_201_CREATED,
+        summary="Fork an ACTIVE branch into a new child branch.",
+    )
+    @limiter.limit("30/minute")
+    async def fork_branch(
+        request: Request,
+        investigation_id: str,
+        branch_id: str,
+        body: _ForkBody,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request
+        from aila.modules.vr.agents.branch_manager import BranchManager
+
+        await _load_branch_or_404(investigation_id, branch_id, auth)
+        mgr = BranchManager(investigation_id=investigation_id)
+        return await _wrap_branch_op_call(
+            mgr.fork(
+                parent_branch_id=branch_id,
+                persona_voice=body.persona_voice.value if body.persona_voice else None,
+                fork_reason=body.reason,
+                at_turn=body.at_turn,
+            ),
+            "fork",
+        )
+
+    @router.post(
+        "/investigations/{investigation_id}/branches/{branch_id}/merge",
+        response_model=DataEnvelope[dict],
+        summary="Merge two ACTIVE branches into a new branch.",
+    )
+    @limiter.limit("30/minute")
+    async def merge_branches(
+        request: Request,
+        investigation_id: str,
+        branch_id: str,
+        body: _MergeBody,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request
+        from aila.modules.vr.agents.branch_manager import BranchManager
+
+        await _load_branch_or_404(investigation_id, branch_id, auth)
+        await _load_branch_or_404(investigation_id, body.other_branch_id, auth)
+        mgr = BranchManager(investigation_id=investigation_id)
+        return await _wrap_branch_op_call(
+            mgr.merge(
+                branch_a_id=branch_id,
+                branch_b_id=body.other_branch_id,
+                merge_reason=body.reason,
+            ),
+            "merge",
+        )
+
+    @router.post(
+        "/investigations/{investigation_id}/branches/{branch_id}/promote",
+        response_model=DataEnvelope[dict],
+        summary="Promote branch to authoritative; sibling ACTIVE branches → ABANDONED.",
+    )
+    @limiter.limit("30/minute")
+    async def promote_branch(
+        request: Request,
+        investigation_id: str,
+        branch_id: str,
+        body: _BranchOpBody,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request
+        from aila.modules.vr.agents.branch_manager import BranchManager
+
+        await _load_branch_or_404(investigation_id, branch_id, auth)
+        mgr = BranchManager(investigation_id=investigation_id)
+        return await _wrap_branch_op_call(
+            mgr.promote(branch_id=branch_id, reason=body.reason),
+            "promote",
+        )
+
+    @router.post(
+        "/investigations/{investigation_id}/branches/{branch_id}/abandon",
+        response_model=DataEnvelope[dict],
+        summary="Close a branch without promotion.",
+    )
+    @limiter.limit("30/minute")
+    async def abandon_branch(
+        request: Request,
+        investigation_id: str,
+        branch_id: str,
+        body: _BranchOpBody,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request
+        from aila.modules.vr.agents.branch_manager import BranchManager
+
+        await _load_branch_or_404(investigation_id, branch_id, auth)
+        mgr = BranchManager(investigation_id=investigation_id)
+        return await _wrap_branch_op_call(
+            mgr.abandon(branch_id=branch_id, reason=body.reason),
+            "abandon",
+        )
+
+    @router.post(
+        "/investigations/{investigation_id}/branches/{branch_id}/pause",
+        response_model=DataEnvelope[dict],
+        summary="Pause a branch (status ACTIVE → PAUSED).",
+    )
+    @limiter.limit("30/minute")
+    async def pause_branch(
+        request: Request,
+        investigation_id: str,
+        branch_id: str,
+        body: _BranchOpBody,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request
+        from aila.modules.vr.agents.branch_manager import BranchManager
+
+        await _load_branch_or_404(investigation_id, branch_id, auth)
+        mgr = BranchManager(investigation_id=investigation_id)
+        return await _wrap_branch_op_call(
+            mgr.pause(branch_id=branch_id, reason=body.reason),
+            "pause",
+        )
+
+    @router.post(
+        "/investigations/{investigation_id}/branches/{branch_id}/resume",
+        response_model=DataEnvelope[dict],
+        summary="Resume a PAUSED branch (status PAUSED → ACTIVE).",
+    )
+    @limiter.limit("30/minute")
+    async def resume_branch(
+        request: Request,
+        investigation_id: str,
+        branch_id: str,
+        body: _BranchOpBody,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request
+        from aila.modules.vr.agents.branch_manager import BranchManager
+
+        await _load_branch_or_404(investigation_id, branch_id, auth)
+        mgr = BranchManager(investigation_id=investigation_id)
+        return await _wrap_branch_op_call(
+            mgr.resume(branch_id=branch_id, reason=body.reason),
+            "resume",
+        )
+
     return router
