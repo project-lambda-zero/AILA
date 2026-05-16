@@ -14,11 +14,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from aila.modules.vr.workflow.definitions import VR_NDAY_V1
+from aila.modules.vr.workflow.definitions import VR_INVESTIGATE_V1, VR_NDAY_V1
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 
-__all__ = ["run_vr_nday"]
+__all__ = ["run_vr_investigate", "run_vr_nday"]
 
 
 @platform_task(
@@ -33,4 +33,23 @@ async def run_vr_nday(
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Seed — platform dispatch handles workflow execution via VR_NDAY_V1."""
+    ...
+
+
+@platform_task(
+    track="vr",
+    module_id="vr",
+    max_tries=1,
+    timeout_s=7800.0,  # 2h+ — covers a full investigation_loop run
+    definition=VR_INVESTIGATE_V1,
+)
+async def run_vr_investigate(
+    ctx: TaskContext,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Seed — platform dispatch handles workflow execution via VR_INVESTIGATE_V1.
+
+    Required kwarg: ``investigation_id``. The setup state resolves the
+    primary branch from the DB; operator does not provide branch_id.
+    """
     ...

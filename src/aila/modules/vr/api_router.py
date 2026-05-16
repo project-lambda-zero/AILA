@@ -1016,10 +1016,12 @@ def create_vr_router() -> APIRouter:
         body: VRInvestigationCreate,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
-        del request
         import json as _json
 
+        from aila.api.deps import get_task_queue
+
         from .db_models import VRInvestigationBranchRecord, VRInvestigationRecord, VRTargetRecord
+        from .workflow.task import run_vr_investigate
 
         async with UnitOfWork() as uow:
             target = (await uow.session.exec(
@@ -1059,6 +1061,16 @@ def create_vr_router() -> APIRouter:
 
             await uow.session.commit()
             await uow.session.refresh(record)
+
+        task_queue = get_task_queue("vr", request)
+        await task_queue.submit(
+            track="vr",
+            fn=run_vr_investigate,
+            kwargs={"investigation_id": record.id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
 
         return DataEnvelope(
             data=_investigation_summary(record, branch_count=1),
