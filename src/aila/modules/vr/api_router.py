@@ -24,10 +24,27 @@ from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.uow import UnitOfWork
 
 from .contracts import (
+    BranchStatus,
     DisclosureStatus,
+    InvestigationKind,
+    InvestigationPauseReason,
+    InvestigationStatus,
+    OperatorIntent,
+    OutcomeConfidence,
+    OutcomeDispatchStatus,
+    OutcomeKind,
+    PayloadKind,
+    PersonaVoice,
+    SenderKind,
     TargetKind,
     TargetStatus,
+    VRBranchSummary,
     VRFinding,
+    VRInvestigationCreate,
+    VRInvestigationSummary,
+    VRMessageCreate,
+    VRMessageSummary,
+    VROutcomeSummary,
     VRProjectCreate,
     VRProjectStatus,
     VRProjectSummary,
@@ -202,6 +219,109 @@ def _target_summary(record: Any) -> VRTargetSummary:
         tags=tags,
         created_at=record.created_at.isoformat() if record.created_at else None,
         updated_at=record.updated_at.isoformat() if record.updated_at else None,
+    )
+
+
+def _investigation_summary(
+    record: Any,
+    branch_count: int = 0,
+    message_count: int = 0,
+    outcome_count: int = 0,
+) -> VRInvestigationSummary:
+    """Project a VRInvestigationRecord row to the public summary."""
+    import json as _json
+
+    return VRInvestigationSummary(
+        id=record.id,
+        title=record.title,
+        target_id=record.target_id,
+        workspace_id=None,  # joined separately by callers that need it
+        parent_investigation_id=record.parent_investigation_id,
+        kind=InvestigationKind(record.kind),
+        status=InvestigationStatus(record.status),
+        pause_reason=(
+            InvestigationPauseReason(record.pause_reason)
+            if record.pause_reason else None
+        ),
+        auto_pilot=record.auto_pilot,
+        strategy_family=record.strategy_family,
+        cost_budget_usd=record.cost_budget_usd,
+        cost_actual_usd=record.cost_actual_usd,
+        llm_tokens_cost_usd=record.llm_tokens_cost_usd,
+        mcp_calls_cost_usd=record.mcp_calls_cost_usd,
+        fuzz_infra_cost_usd=record.fuzz_infra_cost_usd,
+        branch_count=branch_count,
+        message_count=message_count,
+        outcome_count=outcome_count,
+        primary_outcome_id=record.primary_outcome_id,
+        linked_campaign_ids=_json.loads(record.linked_campaign_ids_json or "[]"),
+        linked_finding_ids=_json.loads(record.linked_finding_ids_json or "[]"),
+        started_at=record.started_at,
+        stopped_at=record.stopped_at,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+def _branch_summary(record: Any) -> VRBranchSummary:
+    """Project a VRInvestigationBranchRecord row to summary."""
+    return VRBranchSummary(
+        id=record.id,
+        investigation_id=record.investigation_id,
+        parent_branch_id=record.parent_branch_id,
+        status=BranchStatus(record.status),
+        persona_voice=PersonaVoice(record.persona_voice) if record.persona_voice else None,
+        fork_reason=record.fork_reason or "",
+        fork_at_turn=record.fork_at_turn,
+        turn_count=record.turn_count,
+        branch_cost_usd=record.branch_cost_usd,
+        closed_reason=record.closed_reason or "",
+        merged_into_branch_id=record.merged_into_branch_id,
+        promoted=record.promoted,
+        closed_at=record.closed_at,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+def _message_summary(record: Any) -> VRMessageSummary:
+    """Project a VRInvestigationMessageRecord row to summary."""
+    import json as _json
+
+    return VRMessageSummary(
+        id=record.id,
+        investigation_id=record.investigation_id,
+        branch_id=record.branch_id,
+        sender_kind=SenderKind(record.sender_kind),
+        sender_id=record.sender_id,
+        payload_kind=PayloadKind(record.payload_kind),
+        payload=_json.loads(record.payload_json or "{}"),
+        operator_intent=(
+            OperatorIntent(record.operator_intent) if record.operator_intent else None
+        ),
+        at_turn=record.at_turn,
+        evidence_refs=_json.loads(record.evidence_refs_json or "[]"),
+        created_at=record.created_at,
+    )
+
+
+def _outcome_summary(record: Any) -> VROutcomeSummary:
+    """Project a VRInvestigationOutcomeRecord row to summary."""
+    import json as _json
+
+    return VROutcomeSummary(
+        id=record.id,
+        investigation_id=record.investigation_id,
+        branch_id=record.branch_id,
+        outcome_kind=OutcomeKind(record.outcome_kind),
+        payload=_json.loads(record.payload_json or "{}"),
+        confidence=OutcomeConfidence(record.confidence),
+        evidence_refs=_json.loads(record.evidence_refs_json or "[]"),
+        accepted_by_operator=record.accepted_by_operator,
+        accepted_at=record.accepted_at,
+        dispatch_status=OutcomeDispatchStatus(record.dispatch_status),
+        dispatch_target=record.dispatch_target,
+        created_at=record.created_at,
     )
 
 
@@ -881,5 +1001,443 @@ def create_vr_router() -> APIRouter:
             team_id=auth.team_id,
         )
         return DataEnvelope(data={"task_id": handle.task_id, "target_id": target_id})
+
+    # ── Investigations (M3.R-1 schema, D-43, D-49/D-50) ───────────────
+
+    @router.post(
+        "/investigations",
+        response_model=DataEnvelope[VRInvestigationSummary],
+        status_code=status.HTTP_201_CREATED,
+        summary="Create a new investigation against a target.",
+    )
+    @limiter.limit("30/minute")
+    async def create_investigation(
+        request: Request,
+        body: VRInvestigationCreate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRInvestigationSummary]:
+        del request
+        import json as _json
+
+        from .db_models import VRInvestigationBranchRecord, VRInvestigationRecord, VRTargetRecord
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == body.target_id),
+                    VRTargetRecord, auth,
+                )
+            )).first()
+            if target is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target {body.target_id} not found or not owned by your team.",
+                )
+
+            record = VRInvestigationRecord(
+                target_id=body.target_id,
+                team_id=auth.team_id,
+                parent_investigation_id=body.parent_investigation_id,
+                secondary_target_refs_json=_json.dumps(list(body.secondary_target_ids)),
+                kind=body.kind.value,
+                title=body.title,
+                initial_question=body.initial_question,
+                status=InvestigationStatus.CREATED.value,
+                auto_pilot=body.auto_pilot,
+                strategy_family=body.strategy_family,
+                cost_budget_usd=body.cost_budget_usd,
+            )
+            uow.session.add(record)
+            await uow.session.flush()
+
+            primary_branch = VRInvestigationBranchRecord(
+                investigation_id=record.id,
+                status=BranchStatus.ACTIVE.value,
+                fork_reason="primary",
+            )
+            uow.session.add(primary_branch)
+
+            await uow.session.commit()
+            await uow.session.refresh(record)
+
+        return DataEnvelope(
+            data=_investigation_summary(record, branch_count=1),
+        )
+
+    @router.get(
+        "/investigations",
+        response_model=DataEnvelope[list[VRInvestigationSummary]],
+        summary="List investigations (filterable by target_id + kind + status).",
+    )
+    @limiter.limit("60/minute")
+    async def list_investigations(
+        request: Request,
+        auth: AuthContext = Depends(require_auth),
+        target_id: str | None = Query(default=None),
+        kind: str | None = Query(default=None),
+        investigation_status: str | None = Query(default=None, alias="status"),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> DataEnvelope[list[VRInvestigationSummary]]:
+        del request
+        from .db_models import VRInvestigationRecord
+
+        async with UnitOfWork() as uow:
+            base = _team_filter(select(VRInvestigationRecord), VRInvestigationRecord, auth)
+            count_base = _team_filter(
+                select(sa_func.count()).select_from(VRInvestigationRecord),
+                VRInvestigationRecord, auth,
+            )
+            if target_id is not None:
+                base = base.where(VRInvestigationRecord.target_id == target_id)
+                count_base = count_base.where(VRInvestigationRecord.target_id == target_id)
+            if kind is not None:
+                base = base.where(VRInvestigationRecord.kind == kind)
+                count_base = count_base.where(VRInvestigationRecord.kind == kind)
+            if investigation_status is not None:
+                base = base.where(VRInvestigationRecord.status == investigation_status)
+                count_base = count_base.where(VRInvestigationRecord.status == investigation_status)
+
+            total = (await uow.session.exec(count_base)).one()
+            rows = (await uow.session.exec(
+                base.order_by(VRInvestigationRecord.created_at.desc()).offset(offset).limit(limit)
+            )).all()
+
+        items = [_investigation_summary(r) for r in rows]
+        return DataEnvelope(
+            data=items,
+            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit),
+        )
+
+    async def _load_investigation(
+        investigation_id: str, auth: AuthContext,
+    ) -> Any:
+        from .db_models import VRInvestigationRecord
+
+        async with UnitOfWork() as uow:
+            return (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                )
+            )).first()
+
+    @router.get(
+        "/investigations/{investigation_id}",
+        response_model=DataEnvelope[VRInvestigationSummary],
+        summary="Get investigation detail with aggregated counts.",
+    )
+    @limiter.limit("120/minute")
+    async def get_investigation(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRInvestigationSummary]:
+        del request
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationMessageRecord,
+            VRInvestigationOutcomeRecord,
+            VRInvestigationRecord,
+        )
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                )
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            branch_count = (await uow.session.exec(
+                select(sa_func.count()).select_from(VRInvestigationBranchRecord)
+                .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
+            )).one()
+            message_count = (await uow.session.exec(
+                select(sa_func.count()).select_from(VRInvestigationMessageRecord)
+                .where(VRInvestigationMessageRecord.investigation_id == investigation_id)
+            )).one()
+            outcome_count = (await uow.session.exec(
+                select(sa_func.count()).select_from(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+            )).one()
+
+        return DataEnvelope(data=_investigation_summary(
+            inv,
+            branch_count=int(branch_count),
+            message_count=int(message_count),
+            outcome_count=int(outcome_count),
+        ))
+
+    @router.post(
+        "/investigations/{investigation_id}/pause",
+        response_model=DataEnvelope[VRInvestigationSummary],
+        summary="Operator-initiated pause (D-43 GA-21).",
+    )
+    @limiter.limit("30/minute")
+    async def pause_investigation(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRInvestigationSummary]:
+        del request
+        from aila.platform.contracts._common import utc_now
+
+        from .db_models import VRInvestigationRecord
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                )
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            if inv.status not in {InvestigationStatus.RUNNING.value, InvestigationStatus.CREATED.value}:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Cannot pause investigation in status {inv.status!r}.",
+                )
+            inv.status = InvestigationStatus.PAUSED.value
+            inv.pause_reason = InvestigationPauseReason.OPERATOR.value
+            inv.updated_at = utc_now()
+            uow.session.add(inv)
+            await uow.session.commit()
+            await uow.session.refresh(inv)
+
+        return DataEnvelope(data=_investigation_summary(inv))
+
+    @router.post(
+        "/investigations/{investigation_id}/resume",
+        response_model=DataEnvelope[VRInvestigationSummary],
+        summary="Operator-initiated resume (D-43 GA-21).",
+    )
+    @limiter.limit("30/minute")
+    async def resume_investigation(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRInvestigationSummary]:
+        del request
+        from aila.platform.contracts._common import utc_now
+
+        from .db_models import VRInvestigationRecord
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                )
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            if inv.status != InvestigationStatus.PAUSED.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Cannot resume investigation in status {inv.status!r}.",
+                )
+            inv.status = InvestigationStatus.RUNNING.value
+            inv.pause_reason = None
+            inv.updated_at = utc_now()
+            uow.session.add(inv)
+            await uow.session.commit()
+            await uow.session.refresh(inv)
+
+        return DataEnvelope(data=_investigation_summary(inv))
+
+    @router.post(
+        "/investigations/{investigation_id}/messages",
+        response_model=DataEnvelope[VRMessageSummary],
+        status_code=status.HTTP_201_CREATED,
+        summary="Operator sends a message (D-43 conversational UX).",
+    )
+    @limiter.limit("60/minute")
+    async def post_investigation_message(
+        request: Request,
+        investigation_id: str,
+        body: VRMessageCreate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRMessageSummary]:
+        del request
+        import json as _json
+
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationMessageRecord,
+            VRInvestigationRecord,
+        )
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                )
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+
+            branch_id = body.branch_id
+            if branch_id is None:
+                primary_branch = (await uow.session.exec(
+                    select(VRInvestigationBranchRecord).where(
+                        VRInvestigationBranchRecord.investigation_id == investigation_id,
+                        VRInvestigationBranchRecord.parent_branch_id.is_(None),
+                    ).limit(1)
+                )).first()
+                if primary_branch is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Investigation has no primary branch — DB inconsistency.",
+                    )
+                branch_id = primary_branch.id
+
+            msg = VRInvestigationMessageRecord(
+                investigation_id=investigation_id,
+                branch_id=branch_id,
+                sender_kind=SenderKind.OPERATOR.value,
+                sender_id=auth.user_id,
+                payload_kind=PayloadKind.TEXT.value,
+                payload_json=_json.dumps({"text": body.text}),
+                operator_intent=(
+                    body.explicit_intent.value if body.explicit_intent
+                    else OperatorIntent.UNCLASSIFIED.value
+                ),
+            )
+            uow.session.add(msg)
+            await uow.session.commit()
+            await uow.session.refresh(msg)
+
+        return DataEnvelope(data=_message_summary(msg))
+
+    @router.get(
+        "/investigations/{investigation_id}/messages",
+        response_model=DataEnvelope[list[VRMessageSummary]],
+        summary="List messages for an investigation (paginated, branch-filterable).",
+    )
+    @limiter.limit("120/minute")
+    async def list_investigation_messages(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+        branch_id: str | None = Query(default=None),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> DataEnvelope[list[VRMessageSummary]]:
+        del request
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+        from .db_models import VRInvestigationMessageRecord
+
+        async with UnitOfWork() as uow:
+            stmt = select(VRInvestigationMessageRecord).where(
+                VRInvestigationMessageRecord.investigation_id == investigation_id,
+            )
+            count_stmt = select(sa_func.count()).select_from(
+                VRInvestigationMessageRecord
+            ).where(VRInvestigationMessageRecord.investigation_id == investigation_id)
+            if branch_id is not None:
+                stmt = stmt.where(VRInvestigationMessageRecord.branch_id == branch_id)
+                count_stmt = count_stmt.where(
+                    VRInvestigationMessageRecord.branch_id == branch_id,
+                )
+            total = (await uow.session.exec(count_stmt)).one()
+            rows = (await uow.session.exec(
+                stmt.order_by(VRInvestigationMessageRecord.created_at.asc())
+                .offset(offset).limit(limit)
+            )).all()
+
+        items = [_message_summary(r) for r in rows]
+        return DataEnvelope(
+            data=items,
+            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit),
+        )
+
+    @router.get(
+        "/investigations/{investigation_id}/branches",
+        response_model=DataEnvelope[list[VRBranchSummary]],
+        summary="List branches for an investigation.",
+    )
+    @limiter.limit("120/minute")
+    async def list_investigation_branches(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[VRBranchSummary]]:
+        del request
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+        from .db_models import VRInvestigationBranchRecord
+
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                select(VRInvestigationBranchRecord)
+                .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
+                .order_by(VRInvestigationBranchRecord.created_at.asc())
+            )).all()
+
+        return DataEnvelope(data=[_branch_summary(r) for r in rows])
+
+    @router.get(
+        "/investigations/{investigation_id}/outcomes",
+        response_model=DataEnvelope[list[VROutcomeSummary]],
+        summary="List outcomes for an investigation.",
+    )
+    @limiter.limit("120/minute")
+    async def list_investigation_outcomes(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[VROutcomeSummary]]:
+        del request
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+        from .db_models import VRInvestigationOutcomeRecord
+
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+                .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+            )).all()
+
+        return DataEnvelope(data=[_outcome_summary(r) for r in rows])
 
     return router
