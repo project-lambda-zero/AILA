@@ -78,7 +78,13 @@ export type DisclosureStatus =
   | "patched"
   | "public";
 
-export interface VRTarget {
+/**
+ * Ingestion request shape — describes HOW a binary reaches AILA. The
+ * api_router materializes this into a persistent vr_targets row before
+ * creating the project. Renamed from VRTarget in the M3.T-1 Stage 2
+ * refactor (D-53) to disambiguate from the persistent VRTargetSummary.
+ */
+export interface TargetIngestionSpec {
   input_source: InputSource;
   target_format?: TargetFormat | null;
   target_class: TargetClass;
@@ -94,11 +100,93 @@ export interface VRTarget {
   binary_id?: string | null;
 }
 
+/** Workspace = thematic project per D-49. */
+export type WorkspaceTheme =
+  | "browser_engines"
+  | "linux_kernel"
+  | "container_runtimes"
+  | "industrial_scada"
+  | "mobile_baseband"
+  | "custom";
+
+export type WorkspaceStatus = "active" | "archived";
+
+export interface VRWorkspaceCreate {
+  name: string;
+  slug: string;
+  description?: string;
+  theme?: WorkspaceTheme;
+}
+
+export interface VRWorkspaceSummary {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  theme: WorkspaceTheme;
+  status: WorkspaceStatus;
+  target_count: number;
+  active_investigation_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+/** Persistent target identity per D-49/D-50. */
+export type TargetKind =
+  | "native_binary"
+  | "source_repo"
+  | "cve"
+  | "protocol_capture"
+  | "crash_input"
+  | "patch_diff"
+  | "apk"
+  | "ipa"
+  | "jar"
+  | "dotnet_assembly";
+
+export type TargetStatus = "active" | "archived" | "quarantined";
+
+export type EnrichmentStatus = "unenriched" | "running" | "complete" | "failed";
+
+export type TargetTagSource = "operator" | "system" | "pattern";
+
+export interface TargetTag {
+  tag: string;
+  source: TargetTagSource;
+}
+
+export interface VRTargetCreate {
+  workspace_id: string;
+  display_name: string;
+  kind: TargetKind;
+  descriptor?: Record<string, unknown>;
+  primary_language?: string | null;
+  secondary_languages?: string[];
+  tags?: string[];
+}
+
+export interface VRTargetSummary {
+  id: string;
+  workspace_id: string;
+  display_name: string;
+  kind: TargetKind;
+  descriptor: Record<string, unknown>;
+  primary_language?: string | null;
+  secondary_languages: string[];
+  status: TargetStatus;
+  enrichment_status: EnrichmentStatus;
+  last_enriched_at?: string | null;
+  tags: TargetTag[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface VRProjectCreate {
   name: string;
+  workspace_id: string;
   cve_id?: string | null;
-  target: VRTarget;
-  patched_target?: VRTarget | null;
+  target: TargetIngestionSpec;
+  patched_target?: TargetIngestionSpec | null;
   context_notes: string;
   analysis_system_id: number;
   poc_system_id?: number | null;
@@ -109,9 +197,9 @@ export interface VRProjectSummary {
   name: string;
   cve_id?: string | null;
   status: VRProjectStatus;
-  target_class: TargetClass;
-  input_source?: string | null;
-  target_format?: string | null;
+  workspace_id?: string | null;
+  target_id?: string | null;
+  patched_target_id?: string | null;
   finding_count: number;
   created_at?: string | null;
 }

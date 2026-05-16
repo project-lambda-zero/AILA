@@ -81,8 +81,7 @@ export function ProjectsPage() {
                 <th className="px-4 py-2 font-semibold">Name</th>
                 <th className="px-4 py-2 font-semibold">CVE</th>
                 <th className="px-4 py-2 font-semibold">Status</th>
-                <th className="px-4 py-2 font-semibold">Target Class</th>
-                <th className="px-4 py-2 font-semibold">Input Source</th>
+                <th className="px-4 py-2 font-semibold">Target</th>
                 <th className="px-4 py-2 font-semibold text-right">Findings</th>
                 <th className="px-4 py-2 font-semibold">Created</th>
               </tr>
@@ -105,13 +104,10 @@ export function ProjectsPage() {
                       {project.status}
                     </AilaBadge>
                   </td>
-                  <td className="px-4 py-2">
-                    <AilaBadge severity="info" size="sm">
-                      {project.target_class}
-                    </AilaBadge>
-                  </td>
                   <td className="px-4 py-2 font-mono text-text-muted">
-                    {project.input_source ?? "—"}
+                    {project.target_id ? (
+                      <span className="text-foreground">{project.target_id.slice(0, 8)}…</span>
+                    ) : "—"}
                   </td>
                   <td className="px-4 py-2 font-mono text-right text-foreground">
                     {project.finding_count}

@@ -158,16 +158,20 @@ function OverviewTab({
             </dd>
           </div>
           <div className="flex justify-between gap-4">
-            <dt className="text-text-muted">Input source</dt>
-            <dd className="font-mono text-foreground">{project.input_source ?? "—"}</dd>
+            <dt className="text-text-muted">Target</dt>
+            <dd className="font-mono text-foreground">
+              {project.target_id ? project.target_id.slice(0, 12) + "…" : "—"}
+            </dd>
           </div>
           <div className="flex justify-between gap-4">
-            <dt className="text-text-muted">Target format</dt>
-            <dd className="font-mono text-foreground">{project.target_format ?? "—"}</dd>
+            <dt className="text-text-muted">Patched target</dt>
+            <dd className="font-mono text-foreground">
+              {project.patched_target_id ? project.patched_target_id.slice(0, 12) + "…" : "—"}
+            </dd>
           </div>
           <div className="flex justify-between gap-4">
-            <dt className="text-text-muted">Target class</dt>
-            <dd className="font-mono text-foreground">{project.target_class}</dd>
+            <dt className="text-text-muted">Workspace</dt>
+            <dd className="font-mono text-foreground">{project.workspace_id ?? "—"}</dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-text-muted">Findings</dt>
@@ -289,9 +293,11 @@ export function ProjectDetailPage() {
         <AilaBadge severity={projectStatusColor[project.status] ?? "info"} size="sm">
           {project.status}
         </AilaBadge>
-        <AilaBadge severity="info" size="sm">
-          {project.target_class}
-        </AilaBadge>
+        {project.target_id && (
+          <AilaBadge severity="info" size="sm">
+            target:{project.target_id.slice(0, 8)}
+          </AilaBadge>
+        )}
       </div>
 
       <div className="border-b border-border-default flex gap-1">
