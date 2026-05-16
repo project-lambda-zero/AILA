@@ -26,10 +26,17 @@ from aila.platform.uow import UnitOfWork
 from .contracts import (
     DisclosureStatus,
     TargetKind,
+    TargetStatus,
     VRFinding,
     VRProjectCreate,
     VRProjectStatus,
     VRProjectSummary,
+    VRTargetCreate,
+    VRTargetSummary,
+    VRWorkspaceCreate,
+    VRWorkspaceSummary,
+    WorkspaceStatus,
+    WorkspaceTheme,
 )
 
 
@@ -142,6 +149,59 @@ def _finding_from_record(record: Any) -> VRFinding:
         embargo_until=record.embargo_until.isoformat() if record.embargo_until else None,
         assigned_cve_id=record.assigned_cve_id,
         patch_version=record.patch_version,
+    )
+
+
+def _workspace_summary(record: Any) -> VRWorkspaceSummary:
+    """Project a VRWorkspaceRecord row to the public VRWorkspaceSummary."""
+    return VRWorkspaceSummary(
+        id=record.id,
+        name=record.name,
+        slug=record.slug,
+        description=record.description or "",
+        theme=WorkspaceTheme(record.theme),
+        status=WorkspaceStatus(record.status),
+        target_count=0,
+        active_investigation_count=0,
+        created_at=record.created_at.isoformat() if record.created_at else None,
+        updated_at=record.updated_at.isoformat() if record.updated_at else None,
+    )
+
+
+def _target_summary(record: Any) -> VRTargetSummary:
+    """Project a VRTargetRecord row to the public VRTargetSummary."""
+    import json as _json
+
+    from .contracts.target import TargetTag, TargetTagSource
+
+    raw_tags = _json.loads(record.tags_json or "[]")
+    tags: list[TargetTag] = []
+    for entry in raw_tags:
+        if isinstance(entry, dict) and "tag" in entry:
+            try:
+                tags.append(TargetTag(
+                    tag=str(entry["tag"]),
+                    source=TargetTagSource(entry.get("source", "operator")),
+                ))
+            except ValueError:
+                continue
+        elif isinstance(entry, str):
+            tags.append(TargetTag(tag=entry, source=TargetTagSource.OPERATOR))
+
+    return VRTargetSummary(
+        id=record.id,
+        workspace_id=record.workspace_id,
+        display_name=record.display_name,
+        kind=TargetKind(record.kind),
+        descriptor=_json.loads(record.descriptor_json or "{}"),
+        primary_language=record.primary_language,
+        secondary_languages=_json.loads(record.secondary_languages_json or "[]"),
+        status=TargetStatus(record.status),
+        enrichment_status=record.enrichment_status,  # type: ignore[arg-type]
+        last_enriched_at=record.last_enriched_at.isoformat() if record.last_enriched_at else None,
+        tags=tags,
+        created_at=record.created_at.isoformat() if record.created_at else None,
+        updated_at=record.updated_at.isoformat() if record.updated_at else None,
     )
 
 
@@ -527,5 +587,299 @@ def create_vr_router() -> APIRouter:
             await uow.session.refresh(finding)
 
         return DataEnvelope(data=_finding_from_record(finding))
+
+    # ── Workspaces (D-49) ──────────────────────────────────────────────
+
+    @router.post(
+        "/workspaces",
+        response_model=DataEnvelope[VRWorkspaceSummary],
+        status_code=status.HTTP_201_CREATED,
+        summary="Create a VR workspace (thematic project per D-49).",
+    )
+    @limiter.limit("30/minute")
+    async def create_workspace(
+        request: Request,
+        body: VRWorkspaceCreate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRWorkspaceSummary]:
+        del request
+        from .db_models import VRWorkspaceRecord
+
+        async with UnitOfWork() as uow:
+            existing = (await uow.session.exec(
+                _team_filter(
+                    select(VRWorkspaceRecord).where(VRWorkspaceRecord.slug == body.slug),
+                    VRWorkspaceRecord, auth,
+                )
+            )).first()
+            if existing is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Workspace slug {body.slug!r} already exists for this team.",
+                )
+            record = VRWorkspaceRecord(
+                name=body.name,
+                slug=body.slug,
+                description=body.description,
+                theme=body.theme.value,
+                team_id=auth.team_id,
+            )
+            uow.session.add(record)
+            await uow.session.commit()
+            await uow.session.refresh(record)
+
+        return DataEnvelope(data=_workspace_summary(record))
+
+    @router.get(
+        "/workspaces",
+        response_model=DataEnvelope[list[VRWorkspaceSummary]],
+        summary="List VR workspaces.",
+    )
+    @limiter.limit("60/minute")
+    async def list_workspaces(
+        request: Request,
+        auth: AuthContext = Depends(require_auth),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> DataEnvelope[list[VRWorkspaceSummary]]:
+        del request
+        from .db_models import VRWorkspaceRecord
+
+        async with UnitOfWork() as uow:
+            count_stmt = _team_filter(
+                select(sa_func.count()).select_from(VRWorkspaceRecord),
+                VRWorkspaceRecord, auth,
+            )
+            total = (await uow.session.exec(count_stmt)).one()
+
+            page_stmt = _team_filter(
+                select(VRWorkspaceRecord), VRWorkspaceRecord, auth,
+            ).order_by(
+                VRWorkspaceRecord.created_at.desc()
+            ).offset(offset).limit(limit)
+            rows = (await uow.session.exec(page_stmt)).all()
+
+        items = [_workspace_summary(r) for r in rows]
+        return DataEnvelope(
+            data=items,
+            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit),
+        )
+
+    # ── Targets (D-50/D-51) ────────────────────────────────────────────
+
+    @router.post(
+        "/targets",
+        response_model=DataEnvelope[VRTargetSummary],
+        status_code=status.HTTP_201_CREATED,
+        summary="Create a standalone VR target inside a workspace.",
+    )
+    @limiter.limit("30/minute")
+    async def create_target(
+        request: Request,
+        body: VRTargetCreate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRTargetSummary]:
+        del request
+        import json as _json
+
+        from .db_models import VRTargetRecord, VRWorkspaceRecord
+
+        async with UnitOfWork() as uow:
+            workspace = (await uow.session.exec(
+                _team_filter(
+                    select(VRWorkspaceRecord).where(VRWorkspaceRecord.id == body.workspace_id),
+                    VRWorkspaceRecord, auth,
+                )
+            )).first()
+            if workspace is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Workspace {body.workspace_id} not found or not owned by your team.",
+                )
+            record = VRTargetRecord(
+                workspace_id=body.workspace_id,
+                team_id=auth.team_id,
+                display_name=body.display_name,
+                kind=body.kind.value,
+                descriptor_json=_json.dumps(body.descriptor),
+                primary_language=body.primary_language,
+                secondary_languages_json=_json.dumps(list(body.secondary_languages)),
+                tags_json=_json.dumps(
+                    [{"tag": t, "source": "operator"} for t in body.tags],
+                ),
+                status="active",
+                capability_profile_json="{}",
+                enrichment_status="unenriched",
+            )
+            uow.session.add(record)
+            await uow.session.commit()
+            await uow.session.refresh(record)
+
+        return DataEnvelope(data=_target_summary(record))
+
+    @router.get(
+        "/targets",
+        response_model=DataEnvelope[list[VRTargetSummary]],
+        summary="List VR targets (filterable by workspace_id + kind + status).",
+    )
+    @limiter.limit("60/minute")
+    async def list_targets(
+        request: Request,
+        auth: AuthContext = Depends(require_auth),
+        workspace_id: str | None = Query(default=None),
+        kind: str | None = Query(default=None),
+        target_status: str | None = Query(default=None, alias="status"),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> DataEnvelope[list[VRTargetSummary]]:
+        del request
+        from .db_models import VRTargetRecord
+
+        async with UnitOfWork() as uow:
+            base = _team_filter(select(VRTargetRecord), VRTargetRecord, auth)
+            count_base = _team_filter(
+                select(sa_func.count()).select_from(VRTargetRecord),
+                VRTargetRecord, auth,
+            )
+            if workspace_id is not None:
+                base = base.where(VRTargetRecord.workspace_id == workspace_id)
+                count_base = count_base.where(VRTargetRecord.workspace_id == workspace_id)
+            if kind is not None:
+                base = base.where(VRTargetRecord.kind == kind)
+                count_base = count_base.where(VRTargetRecord.kind == kind)
+            if target_status is not None:
+                base = base.where(VRTargetRecord.status == target_status)
+                count_base = count_base.where(VRTargetRecord.status == target_status)
+
+            total = (await uow.session.exec(count_base)).one()
+            rows = (await uow.session.exec(
+                base.order_by(VRTargetRecord.created_at.desc()).offset(offset).limit(limit)
+            )).all()
+
+        items = [_target_summary(r) for r in rows]
+        return DataEnvelope(
+            data=items,
+            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit),
+        )
+
+    @router.get(
+        "/targets/{target_id}",
+        response_model=DataEnvelope[dict],
+        summary="Get one VR target including raw capability_profile_json.",
+    )
+    @limiter.limit("120/minute")
+    async def get_target(
+        request: Request,
+        target_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request
+        import json as _json
+
+        from .db_models import VRTargetRecord
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                )
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target {target_id} not found.",
+                )
+
+        summary = _target_summary(row)
+        return DataEnvelope(data={
+            **summary.model_dump(mode="json"),
+            "capability_profile": _json.loads(row.capability_profile_json or "{}"),
+            "descriptor": _json.loads(row.descriptor_json or "{}"),
+        })
+
+    # ── Enrichment triggers (M3.T-3 + M3.T-4) ──────────────────────────
+
+    @router.post(
+        "/targets/{target_id}/rank",
+        response_model=DataEnvelope[dict],
+        status_code=status.HTTP_202_ACCEPTED,
+        summary="Enqueue function ranking (M3.T-3) for one target.",
+    )
+    @limiter.limit("10/minute")
+    async def enqueue_ranking(
+        request: Request,
+        target_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        from aila.api.deps import get_task_queue
+
+        from .db_models import VRTargetRecord
+        from .enrichment.workers import run_function_ranking
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                )
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target {target_id} not found.",
+                )
+
+        task_queue = get_task_queue("vr", request)
+        handle = await task_queue.submit(
+            track="vr",
+            fn=run_function_ranking,
+            kwargs={"target_id": target_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
+        return DataEnvelope(data={"task_id": handle.task_id, "target_id": target_id})
+
+    @router.post(
+        "/targets/{target_id}/enrich",
+        response_model=DataEnvelope[dict],
+        status_code=status.HTTP_202_ACCEPTED,
+        summary="Enqueue capability profile build (M3.T-4) for one target.",
+    )
+    @limiter.limit("10/minute")
+    async def enqueue_enrichment(
+        request: Request,
+        target_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        from aila.api.deps import get_task_queue
+
+        from .db_models import VRTargetRecord
+        from .enrichment.workers import run_capability_profile_build
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                )
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target {target_id} not found.",
+                )
+
+        task_queue = get_task_queue("vr", request)
+        handle = await task_queue.submit(
+            track="vr",
+            fn=run_capability_profile_build,
+            kwargs={"target_id": target_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
+        return DataEnvelope(data={"task_id": handle.task_id, "target_id": target_id})
 
     return router
