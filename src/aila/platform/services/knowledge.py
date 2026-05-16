@@ -88,8 +88,10 @@ class KnowledgeService:
         """Current embedding provider."""
         return self._provider
 
-    # DB column dimension — set once from first embedding, then reused
-    _db_dim: int | None = None
+    # DB column dimension (KnowledgeEntryRecord.embedding is Vector(384)).
+    # Set explicitly so embed() truncates from BGE-M3's 1024 down to fit
+    # without requiring a DB introspection round-trip per service init.
+    _db_dim: int | None = 384
 
     def embed(self, text: str) -> list[float]:
         """Generate embedding vector using the configured provider.

@@ -10,6 +10,7 @@ from .finding import VRFindingRecord
 from .investigation import VRInvestigationRecord
 from .message import VRInvestigationMessageRecord
 from .outcome import VRInvestigationOutcomeRecord
+from .pattern import VRPatternRecord
 from .project import VRProjectRecord
 from .target import VRTargetRecord, VRTargetTagIndexRecord
 from .workspace import VRWorkspaceRecord
@@ -20,6 +21,7 @@ __all__ = [
     "VRInvestigationMessageRecord",
     "VRInvestigationOutcomeRecord",
     "VRInvestigationRecord",
+    "VRPatternRecord",
     "VRProjectRecord",
     "VRTargetRecord",
     "VRTargetTagIndexRecord",
