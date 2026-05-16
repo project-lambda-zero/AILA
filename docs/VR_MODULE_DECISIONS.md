@@ -465,15 +465,65 @@ Without `novelty_evidence`, strategy auto-classified as "stock variant" with low
 
 ---
 
+## Decisions from 2026-05-15 hypothesis-engine integration
+
+Detailed protocol in `VR_HYPOTHESIS_ENGINE_INTEGRATION.md`. These build on D-30 through D-35 above.
+
+### D-36: VR uses platform's reasoning engine, not a parallel system
+
+`vulnerability_research` is already a registered `ReasoningStrategyFamily` value in `platform/contracts/reasoning.py:36`. VR's strategy discovery uses the SAME reasoning engine the forensics module uses (`platform/services/reasoning.py`). VR registers its own `ReasoningDomainProfile`, agent (`HonestVulnResearcher`), prompts, and tools. No new platform infrastructure required.
+
+Rationale: the engine already implements the hypothesis lifecycle (propose → dispute → reject/promote → submit) with persistent evidence graph (`ReasoningGraphService`), operator steering (`ReasoningOperatorSteering`), and graph-diff support. Building a parallel system in `vr/` would duplicate ~2000 LOC of working production code.
+
+### D-37: Strategy discovery is hypothesis-driven, not fuzzer-first
+
+Reverses the earlier framing where fuzzing was the workflow entry point. The new entry point is `VR_HYPOTHESIS_INVESTIGATION_V1` — a hypothesis investigation that takes a question + project context + operator steering, runs the reasoning engine loop, and either:
+- Emits a fuzzing campaign (via existing `VR_FUZZ_CAMPAIGN_V1`, now PHASE 2)
+- Emits an audit memo (no-fuzz outcome with rationale)
+- Emits a direct finding entry (variant audit from pure source reading)
+
+Fuzzing is one of three possible OUTCOMES of an investigation, not the default. This matches operator intuition: "let's discuss whether this area is worth fuzzing before we burn compute."
+
+### D-38: Audit memos prevent dead-end re-exploration
+
+When the engine concludes no-fuzz, it MUST emit a `vr_audit_memos` row containing:
+- The question that was investigated
+- The evidence graph snapshot
+- The rejected hypotheses with rationales
+- An expiry date (default 90d)
+- The trigger conditions that would invalidate the memo (e.g., "new CVE in V8 Maglev within next 90d")
+
+New investigations query memos first via embedding-based similarity over `question + rationale`. If a recent memo covers the area, the engine either trusts the prior conclusion or has to specifically argue why the memo's reasoning no longer holds (new CVE landed, new researcher write-up, etc.).
+
+Defers the "CVE feed → memo invalidation" automation to v0.4.
+
+### D-39: Multi-persona prompting drives hypothesis dispute
+
+The engine's `reasoning` action turns use the 6 personas from `VR_FUZZING_STRATEGY_DISCOVERY_DISCUSSION.md` (Halvar/Maddie/Yuki/Renzo/Noor/Wei) as PROMPT VOICES, not as separate agents. Each rescoring turn runs as a multi-persona dialogue surfacing dispute rather than consensus, then resolves to a `Hypothesis` update.
+
+Rationale: this is the documented technique to reduce LLM sycophancy. A single-voice agent tends to converge prematurely on the first plausible hypothesis. Multi-persona dispute generates explicit refutations as `refutes` edges in the evidence graph.
+
+### D-40: Engine interrupts via `ReasoningOperatorSteering`
+
+The interrupt mechanism from Topic 8 of the discovery discussion maps to existing `ReasoningOperatorSteering`. Operator can inject constraints mid-investigation (e.g., "focus on Maglev only", "drop SpiderMonkey from scope", "this hypothesis is wrong because of X"). The engine's loop checks steering before each turn.
+
+Pivots are logged to BOTH the strategy file's `pivot_history` (per D-35) AND the evidence graph as `refutes` edges from the new operator constraint to any hypotheses it contradicts. This gives traceability in two formats: human-readable diff log AND machine-queryable graph.
+
+---
+
 ## Open Questions (Remaining)
 
 1. ~~**Fuzzing resource management.**~~ → Resolved by D-29.
-2. **Human steering UX richness.** VR needs exploit-specific steering beyond forensics' `ReasoningOperatorSteering`.
+2. **Human steering UX richness.** ~~VR needs exploit-specific steering beyond forensics' `ReasoningOperatorSteering`.~~ → Resolved by D-40 (uses existing `ReasoningOperatorSteering` directly).
 3. **GDB integration depth.** Surface (run PoC, capture crash) for v0.1, deep (breakpoints, heap inspection) for v0.3.
-4. **Multi-model split-roles.** One model vs researcher/implementer/critic split. Experiment in v0.4.
+4. **Multi-model split-roles.** One model vs researcher/implementer/critic split. Experiment in v0.4. (D-39 partially addresses via multi-persona prompting in single model.)
 5. **FUZZILLI bring-up cost.** Custom V8 build with REPRL+coverage takes ~25-30min per V8 version (corrected from earlier "~2hrs" estimate based on actual session measurements). Worth automating? Or document and accept the cost?
 6. **Differential fuzzing baseline whitelist.** Different V8 tiers produce slightly different output for valid programs (Math precision, GC timing). How big is the false-positive rate without baseline tuning?
 7. **Bug bounty intake.** When a real sandbox violation lands, file to Google VRP immediately or internal-validate first? Internal validation costs operator time but reduces public-disclosure risk.
 8. **Strategy retirement criteria.** When does a custom strategy get retired? Suggested: 30 days zero new findings OR when stock FUZZILLI catches up to the pattern.
 9. **Multi-target prioritization.** With finite fuzzing workstations, how often do we rotate capacity between V8 / SpiderMonkey / JavaScriptCore / etc.? Suggested: 90-day rotations with 2-week overlap.
 10. **Researcher onboarding.** D-31 assumes Swift-capable engineers. For solo-operator deployments, path is LLM-drafted generator + automated tests for review.
+11. **Hypothesis lifetime across investigations.** When investigation A rejects hypothesis H and investigation B (later) wants to propose H again — does the engine respect A's rejection? Probably yes for 90d (memo expiry) then re-evaluate.
+12. **Investigation cost cap.** Forensics uses turn limits. VR hypothesis investigations can be open-ended (web searches, source greps). Suggest 30 min wall-clock OR $5 LLM spend, whichever first.
+13. **Audit memo discovery in operator UI.** When operator asks a new question, frontend should surface "we already investigated something similar X days ago, here's the memo." UX work.
+14. **CVE feed automation.** D-38 requires memo invalidation when new CVE in the area appears. Need automated feed → memo-invalidation hook. Defer to v0.4.
