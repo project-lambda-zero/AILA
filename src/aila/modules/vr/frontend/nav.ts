@@ -31,4 +31,28 @@ export const nav = [
     order: 69.5,
     description: "Persistent VR targets across workspaces",
   },
+  {
+    id: "vr.patterns",
+    slot: "sidebar.main" as const,
+    label: "Patterns",
+    to: "/vr/patterns",
+    order: 72,
+    description: "Reusable patterns extracted from successful investigations",
+  },
+  {
+    id: "vr.disclosures",
+    slot: "sidebar.main" as const,
+    label: "Disclosures",
+    to: "/vr/disclosures",
+    order: 73,
+    description: "Multi-track disclosure submission lifecycle",
+  },
+  {
+    id: "vr.fuzz-campaigns",
+    slot: "sidebar.main" as const,
+    label: "Fuzz Campaigns",
+    to: "/vr/fuzz/campaigns",
+    order: 74,
+    description: "Fuzzing campaigns + crash triage",
+  },
 ];

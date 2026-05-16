@@ -6,13 +6,18 @@ import type {
   Envelope,
   RegisteredSystem,
   VRBranchSummary,
+  VRDisclosureSubmissionSummary,
   VRFinding,
+  VRFuzzCampaignSummary,
+  VRFuzzCrashSummary,
   VRInvestigationSummary,
   VRMessageSummary,
   VROutcomeSummary,
+  VRPatternSummary,
   VRProjectSummary,
   VRTargetSummary,
   VRWorkspaceSummary,
+  DisclosureTrackInfo,
 } from "./types";
 
 export function useVRProjects(offset = 0, limit = 20) {
@@ -197,5 +202,200 @@ export function useTarget(targetId: string) {
       ).data,
     enabled: !!targetId,
     refetchInterval: 5000,
+  });
+}
+
+// ─── Patterns ───────────────────────────────────────────────────────────────
+
+export function usePatterns(opts?: {
+  workspaceId?: string;
+  kind?: string;
+  status?: string;
+  scope?: string;
+  offset?: number;
+  limit?: number;
+}) {
+  const {
+    workspaceId, kind, status, scope, offset = 0, limit = 50,
+  } = opts ?? {};
+  return useQuery({
+    queryKey: [
+      "vr", "patterns", workspaceId, kind, status, scope, offset, limit,
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        offset: String(offset),
+        limit: String(limit),
+      });
+      if (workspaceId) params.set("workspace_id", workspaceId);
+      if (kind) params.set("kind", kind);
+      if (status) params.set("status", status);
+      if (scope) params.set("scope", scope);
+      return await authorizedRequestJson<Envelope<VRPatternSummary[]>>(
+        `/vr/patterns?${params.toString()}`,
+      );
+    },
+  });
+}
+
+export function usePattern(patternId: string) {
+  return useQuery({
+    queryKey: ["vr", "pattern", patternId],
+    queryFn: async () =>
+      (
+        await authorizedRequestJson<Envelope<VRPatternSummary>>(
+          `/vr/patterns/${encodeURIComponent(patternId)}`,
+        )
+      ).data,
+    enabled: !!patternId,
+  });
+}
+
+// ─── Disclosures ────────────────────────────────────────────────────────────
+
+export function useDisclosureTracks() {
+  return useQuery({
+    queryKey: ["vr", "disclosure-tracks"],
+    queryFn: async () =>
+      (
+        await authorizedRequestJson<Envelope<DisclosureTrackInfo[]>>(
+          "/vr/disclosure-tracks",
+        )
+      ).data,
+  });
+}
+
+export function useDisclosures(opts?: {
+  findingId?: string;
+  workspaceId?: string;
+  trackId?: string;
+  status?: string;
+  offset?: number;
+  limit?: number;
+}) {
+  const {
+    findingId, workspaceId, trackId, status, offset = 0, limit = 50,
+  } = opts ?? {};
+  return useQuery({
+    queryKey: [
+      "vr", "disclosures",
+      findingId, workspaceId, trackId, status, offset, limit,
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        offset: String(offset),
+        limit: String(limit),
+      });
+      if (findingId) params.set("finding_id", findingId);
+      if (workspaceId) params.set("workspace_id", workspaceId);
+      if (trackId) params.set("track_id", trackId);
+      if (status) params.set("status", status);
+      return await authorizedRequestJson<
+        Envelope<VRDisclosureSubmissionSummary[]>
+      >(`/vr/disclosures?${params.toString()}`);
+    },
+  });
+}
+
+export function useDisclosure(submissionId: string) {
+  return useQuery({
+    queryKey: ["vr", "disclosure", submissionId],
+    queryFn: async () =>
+      (
+        await authorizedRequestJson<Envelope<VRDisclosureSubmissionSummary>>(
+          `/vr/disclosures/${encodeURIComponent(submissionId)}`,
+        )
+      ).data,
+    enabled: !!submissionId,
+  });
+}
+
+// ─── Fuzz campaigns + crashes ───────────────────────────────────────────────
+
+export function useFuzzCampaigns(opts?: {
+  targetId?: string;
+  workspaceId?: string;
+  status?: string;
+  offset?: number;
+  limit?: number;
+}) {
+  const {
+    targetId, workspaceId, status, offset = 0, limit = 50,
+  } = opts ?? {};
+  return useQuery({
+    queryKey: [
+      "vr", "fuzz-campaigns",
+      targetId, workspaceId, status, offset, limit,
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        offset: String(offset),
+        limit: String(limit),
+      });
+      if (targetId) params.set("target_id", targetId);
+      if (workspaceId) params.set("workspace_id", workspaceId);
+      if (status) params.set("status", status);
+      return await authorizedRequestJson<Envelope<VRFuzzCampaignSummary[]>>(
+        `/vr/fuzz/campaigns?${params.toString()}`,
+      );
+    },
+    refetchInterval: 5000,  // progress updates
+  });
+}
+
+export function useFuzzCampaign(campaignId: string) {
+  return useQuery({
+    queryKey: ["vr", "fuzz-campaign", campaignId],
+    queryFn: async () =>
+      (
+        await authorizedRequestJson<Envelope<VRFuzzCampaignSummary>>(
+          `/vr/fuzz/campaigns/${encodeURIComponent(campaignId)}`,
+        )
+      ).data,
+    enabled: !!campaignId,
+    refetchInterval: 3000,
+  });
+}
+
+export function useFuzzCrashes(opts?: {
+  campaignId?: string;
+  verdict?: string;
+  severity?: string;
+  offset?: number;
+  limit?: number;
+}) {
+  const {
+    campaignId, verdict, severity, offset = 0, limit = 100,
+  } = opts ?? {};
+  return useQuery({
+    queryKey: [
+      "vr", "fuzz-crashes", campaignId, verdict, severity, offset, limit,
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        offset: String(offset),
+        limit: String(limit),
+      });
+      if (campaignId) params.set("campaign_id", campaignId);
+      if (verdict) params.set("verdict", verdict);
+      if (severity) params.set("severity", severity);
+      return await authorizedRequestJson<Envelope<VRFuzzCrashSummary[]>>(
+        `/vr/fuzz/crashes?${params.toString()}`,
+      );
+    },
+    refetchInterval: 5000,
+  });
+}
+
+export function useFuzzCrash(crashId: string) {
+  return useQuery({
+    queryKey: ["vr", "fuzz-crash", crashId],
+    queryFn: async () =>
+      (
+        await authorizedRequestJson<Envelope<VRFuzzCrashSummary>>(
+          `/vr/fuzz/crashes/${encodeURIComponent(crashId)}`,
+        )
+      ).data,
+    enabled: !!crashId,
   });
 }

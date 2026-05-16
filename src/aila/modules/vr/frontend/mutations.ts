@@ -4,14 +4,25 @@ import { authorizedRequestJson } from "@platform/api/http";
 import { toast } from "@/components/ui/sonner";
 
 import type {
+  ArtifactTier,
+  DisclosureSubmissionStatus,
   DisclosureUpdate,
   Envelope,
   InvestigationKind,
   OperatorIntent,
+  PatternConfidence,
+  PatternKind,
+  PatternScope,
+  PatternStatus,
+  RenderedSubmission,
   TargetKind,
+  VRDisclosureSubmissionSummary,
   VRFinding,
+  VRFuzzCampaignSummary,
+  VRFuzzCrashSummary,
   VRInvestigationSummary,
   VRMessageSummary,
+  VRPatternSummary,
   VRProjectCreate,
   VRProjectSummary,
   VRTargetSummary,
@@ -257,6 +268,206 @@ export function useEnrichTarget(targetId: string) {
     },
     onError: (err: Error) => {
       toast.error(`Enrich failed: ${err.message}`);
+    },
+  });
+}
+
+// ─── Patterns ───────────────────────────────────────────────────────────────
+
+export interface PatternPatchBody {
+  summary?: string;
+  body?: string;
+  applicability?: Record<string, unknown>;
+  confidence?: PatternConfidence;
+  status?: PatternStatus;
+  scope?: PatternScope;
+  superseded_by?: string;
+}
+
+export interface PatternCreateBody {
+  workspace_id: string;
+  investigation_id?: string;
+  kind: PatternKind;
+  summary: string;
+  body: string;
+  applicability?: Record<string, unknown>;
+  confidence?: PatternConfidence;
+  evidence_refs?: string[];
+  scope?: PatternScope;
+}
+
+export function useCreatePattern() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PatternCreateBody) =>
+      authorizedRequestJson<Envelope<VRPatternSummary>>("/vr/patterns", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "patterns"] });
+      toast.success(`Pattern "${result.data.summary}" created`);
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to create pattern: ${err.message}`);
+    },
+  });
+}
+
+export function usePatchPattern(patternId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PatternPatchBody) =>
+      authorizedRequestJson<Envelope<VRPatternSummary>>(
+        `/vr/patterns/${encodeURIComponent(patternId)}`,
+        { method: "PATCH", body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "patterns"] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "pattern", patternId] });
+      toast.success("Pattern updated");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to update pattern: ${err.message}`);
+    },
+  });
+}
+
+// ─── Disclosures ────────────────────────────────────────────────────────────
+
+export interface DisclosureCreateBody {
+  finding_id: string;
+  track_id: string;
+  workspace_id: string;
+  poc_tier?: ArtifactTier;
+  severity_rating?: string;
+  embargo_days_override?: number;
+  notes?: string;
+}
+
+export interface DisclosurePatchBody {
+  status?: DisclosureSubmissionStatus;
+  poc_tier?: ArtifactTier;
+  severity_rating?: string;
+  embargo_days_override?: number;
+  vendor_reference?: string;
+  bounty_awarded_usd?: number;
+  notes?: string;
+}
+
+export function useCreateDisclosure() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DisclosureCreateBody) =>
+      authorizedRequestJson<Envelope<VRDisclosureSubmissionSummary>>(
+        "/vr/disclosures",
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "disclosures"] });
+      toast.success("Disclosure submission created");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to create disclosure: ${err.message}`);
+    },
+  });
+}
+
+export function usePatchDisclosure(submissionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DisclosurePatchBody) =>
+      authorizedRequestJson<Envelope<VRDisclosureSubmissionSummary>>(
+        `/vr/disclosures/${encodeURIComponent(submissionId)}`,
+        { method: "PATCH", body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "disclosures"] });
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "disclosure", submissionId],
+      });
+      toast.success("Disclosure updated");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to update disclosure: ${err.message}`);
+    },
+  });
+}
+
+export function useRenderDisclosure(submissionId: string) {
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<RenderedSubmission>>(
+        `/vr/disclosures/${encodeURIComponent(submissionId)}/render`,
+        { method: "POST" },
+      ),
+    onError: (err: Error) => {
+      toast.error(`Re-render failed: ${err.message}`);
+    },
+  });
+}
+
+// ─── Fuzz campaigns ─────────────────────────────────────────────────────────
+
+export interface FuzzCampaignCreateBody {
+  target_id: string;
+  workspace_id: string;
+  name: string;
+  engine_id: string;
+  strategy_id: string;
+  engine_config?: Record<string, unknown>;
+  strategy_config?: Record<string, unknown>;
+  duration_hours?: number;
+  workstation_host?: string;
+  notes?: string;
+}
+
+export interface FuzzCampaignPatchBody {
+  status?: string;
+  notes?: string;
+  duration_hours?: number;
+  execs_per_sec?: number;
+  total_execs?: number;
+  corpus_size?: number;
+  coverage_pct?: number;
+  crashes_found?: number;
+}
+
+export function useCreateFuzzCampaign() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: FuzzCampaignCreateBody) =>
+      authorizedRequestJson<Envelope<VRFuzzCampaignSummary>>(
+        "/vr/fuzz/campaigns",
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "fuzz-campaigns"] });
+      toast.success(`Fuzz campaign "${result.data.name}" created`);
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to create fuzz campaign: ${err.message}`);
+    },
+  });
+}
+
+export function usePatchFuzzCampaign(campaignId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: FuzzCampaignPatchBody) =>
+      authorizedRequestJson<Envelope<VRFuzzCampaignSummary>>(
+        `/vr/fuzz/campaigns/${encodeURIComponent(campaignId)}`,
+        { method: "PATCH", body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "fuzz-campaigns"] });
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "fuzz-campaign", campaignId],
+      });
+      toast.success("Fuzz campaign updated");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to update fuzz campaign: ${err.message}`);
     },
   });
 }

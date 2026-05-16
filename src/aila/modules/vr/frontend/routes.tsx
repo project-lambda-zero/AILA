@@ -5,6 +5,13 @@ import { ProjectsPage } from "./screens/ProjectsPage";
 import { TargetDetailPage } from "./screens/TargetDetailPage";
 import { TargetsPage } from "./screens/TargetsPage";
 import { WorkspacesPage } from "./screens/WorkspacesPage";
+import { DisclosureDetailPage } from "./screens/DisclosureDetailPage";
+import { DisclosuresPage } from "./screens/DisclosuresPage";
+import { FuzzCampaignDetailPage } from "./screens/FuzzCampaignDetailPage";
+import { FuzzCampaignsPage } from "./screens/FuzzCampaignsPage";
+import { FuzzCrashDetailPage } from "./screens/FuzzCrashDetailPage";
+import { PatternDetailPage } from "./screens/PatternDetailPage";
+import { PatternsPage } from "./screens/PatternsPage";
 
 export const routes = [
   {
@@ -69,5 +76,68 @@ export const routes = [
     nav: false,
     slot: "page.full" as const,
     breadcrumb: "Target",
+  },
+  {
+    id: "vr.patterns",
+    path: "/vr/patterns",
+    page: PatternsPage,
+    title: "Patterns",
+    nav: true,
+    slot: "page.full" as const,
+    breadcrumb: "Patterns",
+  },
+  {
+    id: "vr.pattern-detail",
+    path: "/vr/patterns/:patternId",
+    page: PatternDetailPage,
+    title: "Pattern Detail",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "Pattern",
+  },
+  {
+    id: "vr.disclosures",
+    path: "/vr/disclosures",
+    page: DisclosuresPage,
+    title: "Disclosures",
+    nav: true,
+    slot: "page.full" as const,
+    breadcrumb: "Disclosures",
+  },
+  {
+    id: "vr.disclosure-detail",
+    path: "/vr/disclosures/:submissionId",
+    page: DisclosureDetailPage,
+    title: "Disclosure Detail",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "Disclosure",
+  },
+  {
+    id: "vr.fuzz-campaigns",
+    path: "/vr/fuzz/campaigns",
+    page: FuzzCampaignsPage,
+    title: "Fuzz Campaigns",
+    nav: true,
+    slot: "page.full" as const,
+    breadcrumb: "Fuzz Campaigns",
+  },
+  {
+    id: "vr.fuzz-campaign-detail",
+    path: "/vr/fuzz/campaigns/:campaignId",
+    page: FuzzCampaignDetailPage,
+    title: "Fuzz Campaign",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "Fuzz Campaign",
+  },
+  {
+    id: "vr.fuzz-crash-detail",
+    path: "/vr/fuzz/crashes/:crashId",
+    page: FuzzCrashDetailPage,
+    title: "Fuzz Crash",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "Fuzz Crash",
   },
 ];
