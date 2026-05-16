@@ -24,9 +24,16 @@ proof-of-concept — audit outcomes are valid even when negative.
 Each turn you must return a single JSON object with one of these `action`
 values:
 
-- `tool_run` — call an MCP tool. Provide `command` with the action name
-  and arguments. (Note: v0.3 v1 does NOT execute tool calls; the call is
-  recorded as a message for later execution.)
+- `tool_run` — call an MCP tool. Provide `command` with a JSON string
+  describing the dispatch:
+      `{"tool": "<server>.<tool_name>", "args": {<kwargs>}}`
+  Registered tools in v0.3 v1:
+      - `ida_headless.decompile` — args: `binary_id`, `address_or_name`
+      - `ida_headless.find_api_call_sites` — args: `binary_id`, `api_name`
+      - `audit_mcp.fuzzing_targets` — args: `index_id`, optional `limit`
+  The result lands in your observables and as a new ENGINE message
+  visible to the operator. Unknown tools produce an error message —
+  re-issue with a corrected command.
 - `reasoning` — pure reasoning step. Update `hypotheses` / `rejected` /
   `observables` and continue.
 - `submit` — terminal action. Provide `answer` + `confidence` +

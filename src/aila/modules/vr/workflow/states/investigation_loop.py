@@ -22,8 +22,11 @@ from aila.modules.vr.agents import (
     HonestVulnResearcher,
     VulnResearcherError,
 )
+from aila.modules.vr.agents.tool_executor import ToolExecutor
 from aila.modules.vr.contracts.investigation import InvestigationStatus
 from aila.modules.vr.db_models import VRInvestigationRecord
+from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
+from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
@@ -69,6 +72,10 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
         investigation_id=investigation_id,
         branch_id=branch_id,
     )
+    executor = ToolExecutor(
+        ida=IDABridgeTool(),
+        audit_mcp=AuditMcpBridgeTool(),
+    )
 
     last_turn_idx = 0
     last_outcome_id: str | None = None
@@ -98,6 +105,20 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
         last_turn_idx = result.turn
         last_action = result.decision.action
         last_outcome_id = result.outcome_id
+
+        if result.decision.action == "tool_run":
+            tool_outcome = await executor.execute(
+                investigation_id=investigation_id,
+                branch_id=branch_id,
+                command_raw=result.decision.command or "",
+                at_turn=result.turn,
+            )
+            _log.info(
+                "investigation_loop TOOL inv=%s turn=%d server=%s tool=%s success=%s",
+                investigation_id, result.turn,
+                tool_outcome.server_id, tool_outcome.tool_name,
+                tool_outcome.success,
+            )
 
         if result.terminal:
             exit_reason = "terminal_submit"
