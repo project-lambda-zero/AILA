@@ -594,102 +594,105 @@ v0.3 ships AFL++ / libFuzzer support. WinAFL and syzkaller are placeholders with
 
 ---
 
-### D-43: Typed question intents for granular operator control
+### D-43: Conversational investigations, typed outcomes
 
-The reasoning engine doesn't just answer "what should we do?" — it answers operator-specified question TYPES, each with appropriate kill criteria, evidence sources, default budget, and outcome shape. The operator picks the intent; the engine picks the means.
+The reasoning engine is conversational end-to-end. The operator never selects an "intent" from a dropdown or fills a structured form — they just talk, like the 2026-05-15 discovery session ("lets fucking go", "i dont like no minimization", "is this profile enough has novelty tho", "we wont use wsl2 you know it right").
 
-No action is implicitly automatic. The operator can ask "design the profile but don't launch" and the engine will stop at the design phase. The operator can ask "hunt variants for finding F" and the engine will orchestrate micro-campaigns without running discovery fuzzing first.
+The engine maintains conversation state. Each new operator message:
+- Extends the current investigation if it's a refinement ("focus on Maglev only")
+- Pivots the current investigation if it changes direction ("forget that, what about Wasm/JS?")
+- Demands evidence if it challenges ("how do you KNOW that's underexplored")
+- Corrects if the engine got something wrong ("WSL2 is dev only, not production")
+- Starts a new investigation only when the topic is genuinely orthogonal
 
-**Question intents** (each becomes a `ReasoningContract.answer_type` value):
+The engine decides which based on conversation context, NOT operator pre-classification.
 
-|Intent|Operator phrasing|Engine output (`submit` action)|Default budget|
-|---|---|---|---|
-|`bug_class_assessment`|"What bug classes are hot in target X for Q3?"|`AssessmentReport` (memo) ranking classes by EV|$2, 20min|
-|`strategy_selection`|"Which strategy for V8 Maglev JIT bugs over 72h?"|`StrategyDescriptor` referencing existing strategy OR a NEW profile spec|$5, 30min|
-|`profile_design`|"Design a FUZZILLI profile for Wasm/JS boundary bugs — don't launch"|`ProfileSpec` saved to `data/strategies/draft/<name>.json` for review|$3, 30min|
-|`config_recommendation`|"What jobs/hours/timeout for mapinf_v8?"|`ConfigDelta` with rationale, NOT applied automatically|$0.50, 5min|
-|`variant_hunt_order`|"Hunt variants for finding F-12345"|Orchestrates N micro-campaigns from F's reproducer; results merged into variant tree (D-28)|$3, 1h per finding|
-|`patch_completeness_assessment`|"Did patch P fully close bug B?"|`PatchAssessmentReport` — fully-closed / variant-found / inconclusive|$2, 30min|
-|`direct_construction`|"Write a PoC for CVE-X" (v0.1 N-day)|`PoC + Advisory` in `vr_findings` (existing v0.1 outcome)|$5, 30min|
-|`triage_assessment`|"Is crash C exploitable? What class?"|`CrashTriageReport` with class, severity, suggested next action|$0.50, 10min|
-|`exhaustion_check`|"Is bug class X exhausted in target Y, or worth more investment?"|`AuditMemo` with rationale + 90d expiry|$2, 20min|
-|`sub_investigation`|(engine-internal) "I need to answer X before continuing parent investigation"|Returns answer to parent loop, doesn't surface outcome to operator|inherited from parent|
+### What the engine emits (the typed outcome layer)
 
-**Outcome types** (the submit action's emission, typed):
+Internally the engine still produces typed outcomes — those are the SHAPES of work it can produce. But each outcome is INFERRED from where the conversation lands, not pre-declared. When the engine emits an outcome, the chat shows the operator what's being shipped with a confirm button.
 
-|Outcome type|Side effect|Frontend action button|
+|Outcome shape|When the engine emits it|Operator confirmation|
 |---|---|---|
-|`launch_discovery_campaign`|Starts FUZZILLI campaign with the chosen strategy|"View Campaign"|
-|`launch_nday_targeted_campaign`|Starts AFL++/libFuzzer campaign|"View Campaign"|
-|`launch_variant_micro_campaigns`|Queues N small variant hunts|"View Variant Tree"|
-|`emit_strategy_descriptor`|Saves strategy JSON, doesn't launch|"Review & Launch"|
-|`emit_profile_spec_draft`|Saves draft profile JSON in `data/strategies/draft/`|"Review & Promote"|
-|`emit_config_delta`|Stores config recommendation, doesn't apply|"Review & Apply"|
-|`emit_audit_memo`|Writes `vr_audit_memos` row (no-fuzz conclusion)|"View Memo"|
-|`emit_direct_finding`|Promotes to `vr_findings` (claimed confidence per D-Noor)|"View Finding"|
-|`emit_assessment_report`|Writes report doc (no DB side effect beyond the report itself)|"View Report"|
-|`request_operator_input`|Engine stuck, surfaces question|"Resolve Block"|
+|`AssessmentReport`|Conversation explored a target/class survey and reached a ranked view|"Save report?"|
+|`StrategyDescriptor`|Conversation converged on a specific strategy to use|"Launch campaign?" / "Save for later?"|
+|`ProfileSpecDraft`|Conversation designed a new FUZZILLI profile but operator hasn't asked to launch|"Promote to production strategies?"|
+|`ConfigDelta`|Conversation argued over campaign params|"Apply to next launch?"|
+|`VariantHuntOrder`|Conversation focused on exploring variants of an existing finding|"Queue variant micro-campaigns?"|
+|`PatchAssessmentReport`|Conversation evaluated whether a patch fully closes a bug|"Save assessment?"|
+|`AuditMemo`|Conversation concluded no fuzz warranted (often when operator says "this is exhausted, let's move on")|"Save memo (90d expiry)?"|
+|`DirectFinding`|Conversation produced a confirmed bug entry from source reading alone|"Promote to vr_findings?"|
+|`CrashTriageReport`|Conversation focused on classifying a specific crash|"Save triage / promote to finding?"|
+|`CampaignLaunch`|Conversation reached explicit launch authorization (operator said "go" / "do it" / "lets ship it")|Confirmation modal with campaign summary|
+|`SubInvestigation`|Engine needs to answer a sub-question to continue|(automatic, doesn't surface)|
 
-### How the engine composes intents
+The operator never types `"intent": "profile_design"`. They might say "design a profile for V8 Wasm GC bugs but don't launch yet" — the engine parses that as conversation context, runs a reasoning loop appropriate for profile-design work, eventually emits a `ProfileSpecDraft` with a confirm button.
 
-A high-level intent can recursively spawn lower-level intents as sub-investigations (D-43 sub_investigation type). Example call chain:
+### Conversation-level pivots
 
-```
-operator: bug_class_assessment("V8 Q3 2026")
-  ↓ engine identifies "JIT Maglev typer" as top class
-  ↓ recursively spawns:
-  strategy_selection("V8 Maglev typer bugs over 72h")
-    ↓ engine compares mapinf_v8 vs proposed new profile
-    ↓ recursively spawns:
-    profile_design("Maglev Phi-untagging-focused profile, no launch")
-      ↓ emit_profile_spec_draft → review queue
-    ↑ returns ProfileSpec to parent
-    ↑ parent now has 2 options to compare: existing mapinf_v8 vs draft
-  ↑ emit_strategy_descriptor → operator decides which to launch
-↑ operator picks one → triggers launch_discovery_campaign
-```
+Three pivot patterns appeared in the 2026-05-15 session, all natively supported:
 
-Each level is its own reasoning loop with its own budget. Sub-investigations inherit operator steering from parent. The operator can intervene at ANY level via the branching API (D-41) — fork into "compare two profile designs side by side" for example.
+|Pattern|Session example|Engine response|
+|---|---|---|
+|Direction change|"forget that, let's do X" / "no intent selection — should be conversational"|Marks current branch as abandoned (D-41), spawns new branch from a snapshot before the pivot point. Old branch's evidence stays queryable.|
+|Constraint addition|"we wont use wsl2", "i dont like no minimization"|Updates `ReasoningOperatorSteering` (D-40), re-evaluates current hypotheses against new constraint. Any hypothesis that depended on the rejected option gets a `refutes` edge from the new constraint.|
+|Evidence demand|"how do you KNOW", "no speculation"|Engine pauses any in-flight `submit` action, runs additional `tool_run` actions to gather evidence, then resumes. Updates evidence graph with the new sources.|
 
-### Standalone intents (no campaign trigger)
+### Frontend UX (revised — chat-style, no forms)
 
-Critical: SEVEN of the ten intents above can complete WITHOUT triggering any fuzz campaign. The operator chooses whether to invest fuzz budget. This matches the user expectation: "we should be able to just create FUZZILLI profiles" / "let's do variant hunting" / "should we even fuzz this?"
+The investigation UI is a chat interface. Components:
 
-Concrete examples of valid no-fuzz workflows:
+- Message thread: operator messages + engine messages, like Claude Code or forensics' investigator UI
+- Engine messages include action markers: "I'm running `cve_lookup(CVE-2026-3910)`..." / "Hypothesis H4 (concurrent race) abandoned: insufficient evidence per Topic 4 protocol" / "Ready to emit `ProfileSpecDraft` — confirm?"
+- Side panel: live evidence graph (reuse forensics' visualization)
+- Side panel: branch tree (D-41) — operator can switch branches like switching git branches
+- Side panel: current `ReasoningOperatorSteering` constraints (operator can edit inline)
+- Top bar: cost meter (current spend / cap), time elapsed
+- No "intent picker" anywhere. No form fields per intent. The first message starts the investigation; subsequent messages refine it.
 
-- **Pure profile design.** Operator iterates with engine to design `v8WasmGCBoundaryProfile`. Engine emits draft spec. Operator reviews, requests changes ("add more reftype generators, drop the SAB ones"). Engine re-emits. Eventually operator approves spec → it lands in `data/strategies/`. No campaign ever launched. Profile sits ready for when operator wants to use it.
+### Engine prompt strategy for conversation parsing
 
-- **Quarterly assessment.** Operator runs `bug_class_assessment` for each major target. Engine produces assessment reports ranking bug classes. Operator reads reports, decides next quarter's research focus. Maybe launches campaigns, maybe doesn't.
+Each operator message gets parsed by the engine into:
+- Intent inference (which of the internal intent classes applies — used for routing, never surfaced to operator)
+- Constraint extraction (any new operator steering implied by the message)
+- Pivot detection (is this a direction change, refinement, or new investigation?)
+- Confirmation detection (did the operator approve a pending outcome?)
 
-- **Pure variant hunt from existing finding.** A v0.1 N-day investigation produces a working PoC. Operator triggers `variant_hunt_order` for that finding. Engine orchestrates micro-campaigns. Reports back: 2 variants found, 8 variants ruled out. Updates patch-completeness assessment.
+This parsing happens as the engine's first `reasoning` action turn after receiving the message. Result drives subsequent actions.
 
-- **Patch verification.** Vendor releases patch P. Operator asks `patch_completeness_assessment`. Engine reads patch, generates hypotheses about what it does / doesn't fix, decides whether to spawn a variant-hunt micro-campaign or conclude from source reading alone. Often the answer is reachable without fuzz.
+The engine's system prompt explicitly says: "Do NOT ask the operator to pre-categorize their request. Infer intent from natural conversation."
 
-- **Config tuning conversation.** Operator: "What jobs/timeout for mapinf_v8 next run?" Engine: "Based on prior runs, 8 jobs / 5500ms gives best throughput-per-finding. But your hardware has 12 cores so try 10/6000 if you accept slightly lower per-job efficiency." Engine emits `ConfigDelta`. Operator applies or discards.
+### When the engine HAS to ask the operator
 
-### Frontend UX implication
+The conversational model still leaves room for `request_operator_input` outcomes — but only when:
+- The engine genuinely cannot infer intent (rare; ambiguous messages)
+- The engine has reached a `submit` outcome that needs operator authorization (campaign launch, memo save, etc.)
+- The engine has exhausted its budget without convergence
+- An operator-defined constraint is contradictory (e.g., "use FUZZILLI" + "fuzz Windows kernel" — these don't compose)
 
-The investigation creation form has a **question intent selector** as the first field, not a free-form question box. Intent selection changes the form's other fields (e.g., `variant_hunt_order` requires selecting a parent finding; `profile_design` requires selecting a target component + bug class).
+Even in these cases, the engine doesn't ask "which intent?" — it asks the specific blocking question ("Should I launch the campaign now, or save the strategy for review?" / "Do you want me to drop the Windows constraint or pick a different target?").
 
-Default intent for the "I just have a question" case is `bug_class_assessment` — engine spends a small budget producing an assessment, then suggests follow-up intents the operator can launch.
+### Implementation cost (revised from prior D-43)
 
-### Implementation cost
-
-Net new beyond D-36 through D-42 milestones:
+Net new beyond D-36 through D-42:
 
 |#|Milestone|LOC est|Notes|
 |---|---|---|---|
-|M3.3j|Question intent registry + typed contracts per intent|~300|Platform-level extension to `ReasoningContract`|
-|M3.3k|Sub-investigation support (recursive engine invocations)|~250|Platform-level|
-|M3.3l|Per-intent prompt templates + kill criteria + budgets|~400 data|Module-specific (VR data files)|
-|M3.3m|Outcome type dispatchers (route to campaign launch / memo emit / etc.)|~250|VR-specific|
-|M3.3n|Frontend question-intent picker + per-intent form fields|~400|Frontend, can defer to v0.4|
+|M3.3j|Conversation-state model (extends `ReasoningCaseState` with message history + last-pivot snapshot)|~200|Platform-level|
+|M3.3k|Intent inference parser (first reasoning turn after each operator message)|~150|Platform-level, used by all conversational agents|
+|M3.3l|Pivot detection + branch auto-fork on direction change (uses D-41)|~150|Platform-level|
+|M3.3m|Per-outcome system prompts + kill criteria (no per-intent prompts; the agent figures it out)|~300 data|VR-specific|
+|M3.3n|Outcome confirmation flow (in-chat confirm buttons for typed emissions)|~250|Frontend chat|
+|M3.3o|Sub-investigation support|~250|Platform-level|
 
-Total platform-level: ~550 LOC. VR-specific: ~650 LOC. Frontend optional for v0.3.
+Total platform-level: ~750 LOC. VR-specific: ~300 LOC. Frontend ~250 LOC (chat is required for v0.3 launch UX; no separate form-picker frontend needed).
+
+Smaller than prior D-43 (no form-picker frontend, no per-intent forms, no intent registry data files). Aligns with forensics' existing `HonestInvestigator` philosophy: "no hardcoded playbooks, the LLM is the strategist end-to-end."
 
 ### Backward compatibility
 
-A "just give me an answer" question with no intent defaults to `bug_class_assessment`. Existing forensics investigations work unchanged (forensics has its own intent set; VR adds these on top).
+Operator-issued direct API calls (e.g., POST /api/vr/campaigns with a fully-specified `StrategyDescriptor`) still work — the conversation layer is the default UX, not the only entry point. Power users / automation can bypass.
+
+Forensics' existing investigation UI is already chat-style; VR adopts the same pattern. No frontend forking required.
 
 ---
 
