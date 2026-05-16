@@ -65,6 +65,11 @@ HONESTY_WHITELIST = [
     # providing a named query accessor on the class.
     ("report_store.py", "list_run_records", "inlining"),
 
+    # Category (b): specialized_tools() is the named public helper used by
+    # vuln_researcher prompt rendering + adapter tests. Inlining would
+    # require duplicating the dict iteration in two call sites.
+    ("mcp_adapters/registry.py", "specialized_tools", "inlining"),
+
     # Category (h): router cache deserialization — silent fallback on corrupt
     # cache is intentional; the router re-routes on miss.
     ("router.py", "except Exception", "silently swallows"),

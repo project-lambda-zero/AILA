@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "VRWorkspaceCreate",
+    "VRWorkspacePatch",
     "VRWorkspaceSummary",
     "WorkspaceStatus",
     "WorkspaceTheme",
@@ -73,3 +74,18 @@ class VRWorkspaceSummary(BaseModel):
     active_investigation_count: int = 0
     created_at: str | None = None
     updated_at: str | None = None
+
+
+class VRWorkspacePatch(BaseModel):
+    """Partial-update payload for PATCH /api/vr/workspaces/{id}.
+
+    Slug is immutable (URL-safe identifier is contract). Theme can be
+    re-themed for UI grouping. Status flips between active / archived.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=4096)
+    theme: WorkspaceTheme | None = None
+    status: WorkspaceStatus | None = None
