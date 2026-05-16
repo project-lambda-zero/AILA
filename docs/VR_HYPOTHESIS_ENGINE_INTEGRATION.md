@@ -238,6 +238,223 @@ The user explicitly asked about this. The engine's `submit` action can decide **
 
 Audit memos prevent re-investigating the same dead ends. When a new question comes in, the engine queries memos first; if a recent memo says "this area has been investigated, here's why we passed," the engine either trusts that result or has to specifically argue why the memo's reasoning no longer holds (e.g., new CVE landed).
 
+## Branching — exploring multiple investigation paths in parallel
+
+The single-thread reasoning loop (intake → propose → dispute → submit) handles most VR investigations. But certain decisions benefit from EXPLORING MULTIPLE PATHS in parallel before committing:
+
+- Two competing strategies that could each consume the full 72h budget
+- Two evidence-gathering approaches that pull from different sources (CVE-feed-first vs source-grep-first)
+- A high-stakes call where the operator can't decide between A and B and wants to see both play out
+- Variant hunt: one confirmed crash spawns N variant-mutation branches, each exploring a different transformation
+- Multi-persona dispute literally as branches: each persona advocates their position in its own branch, then merge based on accumulated evidence
+
+Branching extends the reasoning engine with **fork-merge** semantics. Forensics could benefit from the same extension but VR is the consumer driving it.
+
+### Schema additions (platform-level)
+
+New `ReasoningBranch` model in `platform/contracts/reasoning.py`:
+
+```python
+class ReasoningBranch(BaseModel):
+    """One branch of a reasoning investigation.
+
+    Branches fork off a parent branch at a specific reasoning state.
+    Each branch carries its own hypothesis set, evidence subgraph,
+    operator steering, and turn history. Branches can be:
+    - active: currently being explored
+    - abandoned: explored and discarded (with rationale)
+    - merged: evidence promoted into parent
+    - promoted: replaced the parent as canonical
+    """
+    id: str
+    investigation_id: str
+    parent_branch_id: str | None = None
+    name: str = ""                              # short label: "mapinf_focus", "stock_baseline"
+    rationale: str = ""                         # why this branch was forked
+    forked_at: datetime
+    forked_from_snapshot_id: str                # ReasoningEvidenceGraph snapshot at fork moment
+    status: Literal["active", "abandoned", "merged", "promoted"] = "active"
+    abandoned_reason: str = ""
+    merged_into_branch_id: str | None = None
+    cost_so_far_usd: float = 0.0
+    cost_cap_usd: float = 5.0                   # per-branch budget
+    turns_so_far: int = 0
+    turns_cap: int = 20
+```
+
+`ReasoningCaseState` gets a `branch_id` field. `ReasoningGraphService` snapshots become branch-aware: each branch has its own evidence graph rooted at the fork snapshot.
+
+New `BranchOperation` (Literal): `"fork"`, `"abandon"`, `"merge"`, `"promote"`, `"compare"`.
+
+### Engine actions for branching
+
+Two new `ReasoningAction` values:
+- **`branch_fork`** — engine decides to fork into N branches at the current state. Returns the branch IDs.
+- **`branch_resolve`** — engine looks at active branches and decides: which to keep, which to abandon, which to merge, which to promote.
+
+Operator can also trigger branching via API (see below) — the engine doesn't have to initiate it.
+
+### Default fork policy
+
+The engine SHOULD fork when:
+- Initial hypotheses split into >1 mutually-exclusive bug-class groups (e.g., "JIT typer" + "Wasm reftype" both look viable). Fork into one branch per group.
+- Two evidence-gathering paths would consume similar budget but pull from different sources. Fork to gather both.
+- Operator steering says "explore both A and B" explicitly.
+- Variant hunt context: each crash spawns up to 10 variant branches per `VR_V03_FUZZING_PLAN.md` D-28.
+
+The engine SHOULD NOT fork when:
+- A single hypothesis is overwhelmingly dominant (>80% evidence weight from initial propose turn)
+- Cost cap is near exhausted (forking just multiplies budget consumption)
+- Operator steering explicitly says "commit to one path"
+
+### Merge semantics
+
+When two branches converge or one branch is abandoned, evidence merge follows these rules:
+
+|Merge type|Rule|
+|---|---|
+|**Promote**|Replace parent's state entirely with the promoted branch's. Other sibling branches auto-abandoned with reason "sibling promoted".|
+|**Merge into parent**|Branch's `evidence` and `observable` nodes are added to parent's graph. `Hypothesis` nodes added if not already present in parent. `RejectedHypothesis` rationales appended (don't overwrite parent's). Cost accumulates.|
+|**Abandon**|Branch's evidence subgraph is preserved in storage but NOT merged into parent. The abandon-rationale becomes a `refutes` edge from "branch abandonment" node to any hypotheses the branch was exploring.|
+|**Compare** (read-only)|Returns a `ReasoningGraphDiff` between two branches' graphs. No state change. Used by operator UI for side-by-side review.|
+
+### Branch cost budgets
+
+Each branch carries its own `cost_cap_usd` and `turns_cap`. When a branch hits its cap, the engine forces a `branch_resolve` turn — either promote (sufficient evidence), abandon (insufficient), or merge (partial result).
+
+Default budgets:
+- Strategy-discovery investigation: parent cap $5, max 4 active branches → per-branch cap $1.25
+- Variant hunt: parent cap $2, max 10 branches → per-branch cap $0.20
+- Operator can override via `ReasoningOperatorSteering`
+
+### Operator API
+
+```
+# List all branches in an investigation
+GET /api/vr/investigations/{id}/branches
+
+# Fork the current state into a new branch
+POST /api/vr/investigations/{id}/branches
+{
+  "from_branch_id": "<current>",
+  "name": "explore_wasm_jit",
+  "rationale": "operator suggests testing if Wasm/JS boundary hypotheses survive",
+  "cost_cap_usd": 1.5,
+  "initial_steering": {
+    "scope": ["v8 wasm"],
+    "constraints": ["assume Wasm GC type system is known-buggy"]
+  }
+}
+# Returns: { branch_id, status: "active", forked_at_snapshot_id }
+
+# Compare two branches
+GET /api/vr/investigations/{id}/branches/compare?from={a}&to={b}
+# Returns: ReasoningGraphDiff
+
+# Promote a branch (operator decision)
+POST /api/vr/investigations/{id}/branches/{branch_id}/promote
+# Returns: list of auto-abandoned sibling branch_ids
+
+# Abandon a branch
+POST /api/vr/investigations/{id}/branches/{branch_id}/abandon
+{ "reason": "operator decided wasm is out of scope this quarter" }
+
+# Merge branch evidence into parent without promotion
+POST /api/vr/investigations/{id}/branches/{branch_id}/merge
+```
+
+### Multi-persona dispute as branches
+
+The cleanest application of branching is mapping the 6 personas from `VR_FUZZING_STRATEGY_DISCOVERY_DISCUSSION.md` to branches at high-stakes decision points. Each persona advocates their position as a separate branch:
+
+- **Halvar branch:** explores PoC-first, "show me the primitive" approach
+- **Maddie branch:** explores patch-diff-first approach
+- **Yuki branch:** explores crash-triage-friendly approach
+- **Renzo branch:** explores source-level approach (no fuzzing if source-read finds it faster)
+- **Noor branch:** explores defense-feasibility approach (would mitigation X catch this?)
+- **Wei branch:** explores IR-level / compiler-internals approach
+
+Each branch runs its own dispute loop with a single-persona prompt. After all branches reach `submit` (or hit budget), the engine runs a `branch_resolve` turn that compares them:
+- Which branches produced novel evidence?
+- Which branches converged on the same submit decision?
+- Which branches got stuck or produced contradictions?
+
+Promote the highest-quality branch, merge corroborating branches' evidence, abandon contradicted ones. The operator gets a side-by-side view of all 6 personas' reasoning paths in the frontend.
+
+### Branch UI in frontend (conceptual)
+
+Borrow Git's mental model:
+- Tree visualization of branch graph
+- Each branch has commit-like history (one node per reasoning turn)
+- Hovering a turn shows: action, evidence added, hypotheses changed
+- Side-by-side diff view for two selected branches
+- Promote/abandon/merge buttons with confirmation
+- Cost meter per branch (red when approaching cap)
+
+This is a substantial UI feature. Implementation deferred to v0.4 unless operator demand surfaces sooner; v0.3 ships with API-only branching (operator can fork/promote via curl).
+
+### State diagram with branching
+
+```
+    intake
+       |
+       v
+   propose_hypotheses
+       |
+       v
+  +----+----+
+  | hypotheses |
+  | are mutually|
+  | exclusive? |
+  +----+----+
+       |
+  +----+----+
+  |         |
+  no        yes
+  |         |
+  v         v
+dispute    fork_decision
+  |         |
+  |    +----+----+----+
+  |    |    |    |    |
+  |  br_A  br_B  br_C ...   (each gets its own intake state seeded
+  |    |    |    |              with the question + that hypothesis)
+  |    |    |    |
+  |  dispute dispute dispute  (parallel reasoning loops)
+  |    |    |    |
+  |  submit submit submit    (each branch reaches its own conclusion)
+  |    |    |    |
+  |    +----+----+----+
+  |         |
+  |    branch_resolve         (engine picks: promote one, merge several,
+  |         |                  abandon rest)
+  |         v
+  +-->  submit_decision        (canonical final outcome)
+          |
+          v
+        emit (campaign or memo or finding)
+```
+
+### Backward compatibility
+
+Investigations that DON'T need branching just run on a single implicit "main" branch. The `ReasoningCaseState.branch_id` defaults to a generated value at intake. Existing forensics workflows are unaffected.
+
+### Cost of implementation
+
+Net new beyond the M3.3a-d milestones already planned:
+
+|#|Milestone|LOC est|Notes|
+|---|---|---|---|
+|M3.3e|`ReasoningBranch` schema + `branch_id` on case state + DB table|~250|Platform-level, benefits forensics too|
+|M3.3f|Branch operations service (fork/abandon/merge/promote/compare)|~350|Platform-level|
+|M3.3g|VR workflow states for `fork_decision` + `branch_resolve`|~200|VR-specific|
+|M3.3h|Operator API endpoints + auth|~200|Platform-level|
+|M3.3i|(deferred to v0.4) Frontend branch tree visualization|~600|Deferred|
+
+Total platform-level: ~800 LOC. Total VR-specific: ~200 LOC. Frontend defer.
+
+---
+
 ## What lands in `src/aila/modules/vr/` (per MODULE_STANDARD)
 
 Per the v0.3 plan (`VR_V03_FUZZING_PLAN.md`), the VR module already has structure for fuzzing. This integration adds the reasoning layer.
@@ -246,42 +463,91 @@ Per the v0.3 plan (`VR_V03_FUZZING_PLAN.md`), the VR module already has structur
 
 ```
 src/aila/modules/vr/
-├── agents/
-│   └── vuln_researcher.py                NEW — HonestVulnResearcher class
-│                                              (parallel to HonestInvestigator;
-│                                               same engine, VR prompts/tools)
-├── contracts/
-│   ├── audit_memo.py                     NEW — VRAuditMemo Pydantic model
-│   └── strategy_descriptor.py            NEW — StrategyDescriptor (engine's submit output)
-├── db_models/
-│   └── audit_memo.py                     NEW — vr_audit_memos table
-├── data/
-│   ├── domain_profile.json               NEW — VR's ReasoningDomainProfile
-│   ├── prompts/
-│   │   ├── vuln_researcher_system.md     NEW — system prompt (parallel to forensics' _SYSTEM_PROMPT_BASE)
-│   │   ├── hypothesis_seeds.md           NEW — bootstrap hypotheses for common question types
-│   │   └── kill_criteria_templates.md    NEW — reusable kill_criterion patterns
-│   └── question_templates/
-│       ├── strategy_selection.json       NEW — template for "which strategy" questions
-│       ├── variant_landscape.json        NEW — template for "what variants exist" questions
-│       └── target_prioritization.json    NEW — template for "highest-EV component" questions
-├── tools/
-│   ├── cve_lookup_tool.py                NEW — wraps NVD + vendor advisories
-│   ├── cve_cluster_query_tool.py         NEW — statistical clustering of CVEs by class
-│   ├── source_grep_tool.py               NEW — wraps audit-mcp ast queries
-│   ├── fuzzilli_source_read_tool.py      NEW — version-aware FUZZILLI source access
-│   ├── patch_diff_tool.py                NEW — compare two versions, extract changed funcs
-│   ├── audit_memo_query_tool.py          NEW — checks existing memos before investigating
-│   └── strategy_descriptor_tool.py       NEW — emits a StrategyDescriptor (submit action target)
-├── workflow/
-│   ├── states/
-│   │   ├── hypothesis_intake.py          NEW — parse question + project + steering
-│   │   ├── hypothesis_propose.py         NEW — initial hypothesis generation
-│   │   ├── hypothesis_dispute.py         NEW — the engine loop
-│   │   ├── submit_decision.py            NEW — campaign-or-memo branch
-│   │   └── audit_memo_emit.py            NEW — finalize a no-fuzz outcome
-│   └── definitions.py                    UPDATE — add VR_HYPOTHESIS_INVESTIGATION_V1
-```
+│
+├── reasoning/                                NEW — shared reasoning layer (used by all outcomes)
+│   ├── agents/
+│   │   └── vuln_researcher.py                NEW — HonestVulnResearcher class
+│   │                                              (parallel to HonestInvestigator;
+│   │                                               same engine, VR prompts/tools)
+│   ├── contracts/
+│   │   └── strategy_descriptor.py            NEW — StrategyDescriptor (engine's submit output)
+│   ├── data/
+│   │   ├── domain_profile.json               NEW — VR's ReasoningDomainProfile
+│   │   ├── prompts/
+│   │   │   ├── vuln_researcher_system.md     NEW — system prompt (parallel to forensics' _SYSTEM_PROMPT_BASE)
+│   │   │   ├── hypothesis_seeds.md           NEW — bootstrap hypotheses for common question types
+│   │   │   └── kill_criteria_templates.md    NEW — reusable kill_criterion patterns
+│   │   └── question_templates/
+│   │       ├── strategy_selection.json       NEW — template for "which strategy" questions
+│   │       ├── variant_landscape.json        NEW — template for "what variants exist" questions
+│   │       └── target_prioritization.json    NEW — template for "highest-EV component" questions
+│   ├── tools/                                NEW — engine-callable tools (cross-outcome)
+│   │   ├── cve_lookup_tool.py                NEW — wraps NVD + vendor advisories
+│   │   ├── cve_cluster_query_tool.py         NEW — statistical clustering of CVEs by class
+│   │   ├── source_grep_tool.py               NEW — wraps audit-mcp ast queries
+│   │   ├── patch_diff_tool.py                NEW — compare two versions, extract changed funcs
+│   │   ├── audit_memo_query_tool.py          NEW — checks existing memos before investigating
+│   │   └── strategy_descriptor_tool.py       NEW — emits StrategyDescriptor (submit -> campaign)
+│   └── workflow/
+│       ├── states/
+│       │   ├── hypothesis_intake.py          NEW — parse question + project + steering
+│       │   ├── hypothesis_propose.py         NEW — initial hypothesis generation
+│       │   ├── hypothesis_dispute.py         NEW — the engine loop (calls tools, updates graph)
+│       │   ├── fork_decision.py              NEW — branch when hypotheses split (D-41)
+│       │   ├── branch_resolve.py             NEW — merge/promote/abandon branches (D-41)
+│       │   └── submit_decision.py            NEW — emit campaign | memo | finding
+│       └── definitions.py                    NEW — VR_HYPOTHESIS_INVESTIGATION_V1
+│
+├── audit/                                    NEW — code-audit outcome (no fuzz)
+│   ├── contracts/
+│   │   └── audit_memo.py                     NEW — VRAuditMemo Pydantic model
+│   ├── db_models/
+│   │   └── audit_memo.py                     NEW — vr_audit_memos table
+│   ├── services/
+│   │   ├── audit_memo_service.py             NEW — emit/query/expire memos
+│   │   └── source_reading_service.py         NEW — guided code audit via audit-mcp
+│   ├── tools/                                NEW — audit-specific reasoning tools
+│   │   ├── fuzzilli_source_read_tool.py      NEW — version-aware FUZZILLI source access
+│   │   ├── compiler_ir_inspect_tool.py       NEW — analyze JIT IR for invariant violations
+│   │   └── ida_decompile_tool.py             NEW — wraps IDA Headless MCP for binary work
+│   ├── workers/
+│   │   └── audit_memo_emit_worker.py         NEW — ARQ task to finalize a no-fuzz outcome
+│   ├── workflow/
+│   │   └── states/
+│   │       └── audit_memo_emit.py            NEW — workflow state for no-fuzz finalization
+│   └── reporting/
+│       └── audit_memo_report.py              NEW — human-readable memo formatting
+│
+├── fuzzing/                                  Existing v0.3 scope, now split by mode
+│   ├── discovery/                            DISCOVERY fuzzing — hunt novel bugs
+│   │   ├── engines/                          FUZZILLI subprocess wrappers (V8, SpiderMonkey, ...)
+│   │   ├── strategies/                       data/strategies/ JSON: mapinf_v8, stock_v8, hole, sbx
+│   │   └── (everything from VR_V03_FUZZING_PLAN.md M3.1-M3.13)
+│   │       — invoked when reasoning's submit_decision picks discovery-campaign
+│   │
+│   └── nday/                                 NEW — N-day-targeted fuzzing (reproduce CVE + variant hunt)
+│       ├── engines/
+│       │   ├── afl_libfuzzer.py              NEW — AFL++ / libFuzzer wrapper for in-process harness
+│       │   ├── winafl_dynamorio.py           NEW — WinAFL+DynamoRIO for Windows binary fuzzing
+│       │   └── syzkaller.py                  NEW — syzkaller for kernel CVE reproduction (v0.5 preview)
+│       ├── strategies/                       data/strategies/ JSON: nday_seeded_patch_diff,
+│       │                                                            nday_advisory_corpus,
+│       │                                                            nday_variant_hunt
+│       ├── harness_gen/
+│       │   ├── from_patch_diff.py            NEW — generate fuzz harness from patched function
+│       │   ├── from_advisory.py              NEW — extract harness skeleton from advisory text
+│       │   └── from_crash_report.py          NEW — seed corpus from public crash report
+│       ├── services/
+│       │   ├── corpus_seeder.py              NEW — build seed corpus from advisory PoC + patch context
+│       │   └── patch_completeness.py         NEW — measure whether fuzz finds variants the patch missed
+│       └── workflow/
+│           └── states/
+│               └── nday_fuzz_campaign.py     NEW — VR_NDAY_FUZZ_V1 workflow state
+│
+└── (existing v0.1 N-day code at module root)
+     — its workflow becomes a third submit_decision outcome ("direct finding"),
+       promoting reasoning state into a vr_findings row for v0.1's
+       advisory generator to process.
 
 ### Files that DO NOT need changes
 

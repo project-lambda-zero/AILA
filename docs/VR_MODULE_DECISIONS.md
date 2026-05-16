@@ -509,6 +509,188 @@ The interrupt mechanism from Topic 8 of the discovery discussion maps to existin
 
 Pivots are logged to BOTH the strategy file's `pivot_history` (per D-35) AND the evidence graph as `refutes` edges from the new operator constraint to any hypotheses it contradicts. This gives traceability in two formats: human-readable diff log AND machine-queryable graph.
 
+### D-41: Reasoning engine supports branching (fork/merge/promote/abandon)
+
+Branching extends the reasoning engine with fork-merge semantics. At any reasoning state, an investigation can fork into N parallel branches; each branch carries its own hypothesis set, evidence subgraph, operator steering, and turn history. Branches can be:
+- **active** — currently being explored
+- **abandoned** — discarded with rationale; subgraph preserved
+- **merged** — evidence promoted into parent without replacing it
+- **promoted** — replaced the parent as canonical (siblings auto-abandoned)
+
+Drives 5 use cases in VR:
+- Two competing strategies that each could consume the full 72h budget
+- Two evidence-gathering paths from different sources
+- Operator can't decide between A/B and wants both played out
+- Variant hunt — each crash spawns up to 10 mutation-hypothesis branches (per D-28)
+- **Multi-persona dispute literally as branches** — each of the 6 personas (Halvar/Maddie/Yuki/Renzo/Noor/Wei from D-39) runs its own dispute loop in a branch, then evidence is merged based on cross-branch corroboration
+
+Schema additions in `platform/contracts/reasoning.py`:
+- New `ReasoningBranch` model with id/parent/name/rationale/forked_at/status/cost tracking
+- `ReasoningCaseState` gains `branch_id`
+- `ReasoningGraphService` snapshots become branch-aware
+
+Two new `ReasoningAction` values: `branch_fork` and `branch_resolve`. Operator can also trigger branching via API.
+
+Default fork policy:
+- Fork when initial hypotheses split into >1 mutually-exclusive groups
+- Fork when operator steering says "explore both A and B"
+- DON'T fork when single hypothesis is overwhelmingly dominant (>80% evidence weight)
+- DON'T fork when cost cap is near exhausted
+
+Per-branch budgets default $1.25 (strategy discovery) or $0.20 (variant hunt). Operator can override.
+
+v0.3 ships API-only branching. Frontend tree-visualization UI deferred to v0.4 unless operator demand surfaces sooner.
+
+Platform-level: ~800 LOC. Forensics also benefits (no module-specific changes needed there). VR-specific: ~200 LOC for the `fork_decision` and `branch_resolve` workflow states.
+
+Backward-compatible: investigations that don't fork run on an implicit "main" branch. Existing forensics workflows are unaffected.
+
+---
+
+### D-42: N-day-targeted fuzzing is a parallel mode to discovery fuzzing
+
+Two orthogonal fuzzing modes ship in v0.3:
+
+|Mode|Use case|Engine|Strategy seeds|
+|---|---|---|---|
+|**Discovery fuzzing** (D-30/D-31)|Hunt novel/0-day bugs in target component|FUZZILLI (grammar-driven)|Custom CodeGenerators (mapinf_v8 etc.)|
+|**N-day-targeted fuzzing** (this decision)|Reproduce a known CVE OR find unpatched variants|AFL++ / libFuzzer / WinAFL / syzkaller|Patch diff + advisory PoC + crash report|
+
+Both modes route through the same reasoning engine (D-36). The engine's `submit_decision` now picks from FOUR outcomes instead of three:
+1. Direct PoC construction (v0.1 N-day path — hand-written by LLM, no fuzzing)
+2. **N-day-targeted fuzz campaign** (new — when advisory is too vague to construct directly, or for variant hunt)
+3. Discovery fuzz campaign (existing — novel-bug hunt)
+4. Audit memo (no-fuzz outcome)
+
+Module structure splits `vr/fuzzing/` into two peer subpackages:
+- `vr/fuzzing/discovery/` — FUZZILLI-driven novel bug hunt (existing v0.3 scope)
+- `vr/fuzzing/nday/` — CVE-targeted reproduction + variant hunt (new)
+
+N-day fuzz uses different engines because grammar fuzzers are wrong for CVE reproduction:
+- AFL++ / libFuzzer for in-process userspace harnessing
+- WinAFL+DynamoRIO for Windows binary fuzzing
+- syzkaller for kernel CVE reproduction (full implementation deferred to v0.5)
+
+N-day-specific services:
+- `harness_gen/from_patch_diff.py` — auto-generate a fuzz harness from the patched function signature
+- `harness_gen/from_advisory.py` — extract harness skeleton from advisory text via LLM
+- `harness_gen/from_crash_report.py` — seed corpus from public crash report
+- `services/corpus_seeder.py` — build seed corpus from advisory PoC + patch context
+- `services/patch_completeness.py` — measure whether fuzz finds variants the patch didn't fix (per the `patch_completeness_assessed` obligation from `VR_STAFF_RESEARCHER_DISCUSSION.md`)
+
+Triggers for picking N-day-targeted over direct construction:
+- Advisory text too vague to construct PoC by hand
+- Direct construction PoC works BUT operator requested variant analysis
+- Patch-completeness assessment requested
+- Previous direct construction attempts failed (LLM stuck)
+
+Triggers for picking direct construction over fuzz:
+- Advisory is precise (e.g., "OOB read at offset N in function X with input crafted as Y")
+- Public PoC exists; just need to wrap and verify
+- Single-trigger bug with no variant space to explore
+- Budget too tight for fuzz campaign (<2h)
+
+v0.3 ships AFL++ / libFuzzer support. WinAFL and syzkaller are placeholders with documented integration paths; full implementations deferred to v0.4 (Windows) and v0.5 (kernel).
+
+---
+
+### D-43: Typed question intents for granular operator control
+
+The reasoning engine doesn't just answer "what should we do?" — it answers operator-specified question TYPES, each with appropriate kill criteria, evidence sources, default budget, and outcome shape. The operator picks the intent; the engine picks the means.
+
+No action is implicitly automatic. The operator can ask "design the profile but don't launch" and the engine will stop at the design phase. The operator can ask "hunt variants for finding F" and the engine will orchestrate micro-campaigns without running discovery fuzzing first.
+
+**Question intents** (each becomes a `ReasoningContract.answer_type` value):
+
+|Intent|Operator phrasing|Engine output (`submit` action)|Default budget|
+|---|---|---|---|
+|`bug_class_assessment`|"What bug classes are hot in target X for Q3?"|`AssessmentReport` (memo) ranking classes by EV|$2, 20min|
+|`strategy_selection`|"Which strategy for V8 Maglev JIT bugs over 72h?"|`StrategyDescriptor` referencing existing strategy OR a NEW profile spec|$5, 30min|
+|`profile_design`|"Design a FUZZILLI profile for Wasm/JS boundary bugs — don't launch"|`ProfileSpec` saved to `data/strategies/draft/<name>.json` for review|$3, 30min|
+|`config_recommendation`|"What jobs/hours/timeout for mapinf_v8?"|`ConfigDelta` with rationale, NOT applied automatically|$0.50, 5min|
+|`variant_hunt_order`|"Hunt variants for finding F-12345"|Orchestrates N micro-campaigns from F's reproducer; results merged into variant tree (D-28)|$3, 1h per finding|
+|`patch_completeness_assessment`|"Did patch P fully close bug B?"|`PatchAssessmentReport` — fully-closed / variant-found / inconclusive|$2, 30min|
+|`direct_construction`|"Write a PoC for CVE-X" (v0.1 N-day)|`PoC + Advisory` in `vr_findings` (existing v0.1 outcome)|$5, 30min|
+|`triage_assessment`|"Is crash C exploitable? What class?"|`CrashTriageReport` with class, severity, suggested next action|$0.50, 10min|
+|`exhaustion_check`|"Is bug class X exhausted in target Y, or worth more investment?"|`AuditMemo` with rationale + 90d expiry|$2, 20min|
+|`sub_investigation`|(engine-internal) "I need to answer X before continuing parent investigation"|Returns answer to parent loop, doesn't surface outcome to operator|inherited from parent|
+
+**Outcome types** (the submit action's emission, typed):
+
+|Outcome type|Side effect|Frontend action button|
+|---|---|---|
+|`launch_discovery_campaign`|Starts FUZZILLI campaign with the chosen strategy|"View Campaign"|
+|`launch_nday_targeted_campaign`|Starts AFL++/libFuzzer campaign|"View Campaign"|
+|`launch_variant_micro_campaigns`|Queues N small variant hunts|"View Variant Tree"|
+|`emit_strategy_descriptor`|Saves strategy JSON, doesn't launch|"Review & Launch"|
+|`emit_profile_spec_draft`|Saves draft profile JSON in `data/strategies/draft/`|"Review & Promote"|
+|`emit_config_delta`|Stores config recommendation, doesn't apply|"Review & Apply"|
+|`emit_audit_memo`|Writes `vr_audit_memos` row (no-fuzz conclusion)|"View Memo"|
+|`emit_direct_finding`|Promotes to `vr_findings` (claimed confidence per D-Noor)|"View Finding"|
+|`emit_assessment_report`|Writes report doc (no DB side effect beyond the report itself)|"View Report"|
+|`request_operator_input`|Engine stuck, surfaces question|"Resolve Block"|
+
+### How the engine composes intents
+
+A high-level intent can recursively spawn lower-level intents as sub-investigations (D-43 sub_investigation type). Example call chain:
+
+```
+operator: bug_class_assessment("V8 Q3 2026")
+  ↓ engine identifies "JIT Maglev typer" as top class
+  ↓ recursively spawns:
+  strategy_selection("V8 Maglev typer bugs over 72h")
+    ↓ engine compares mapinf_v8 vs proposed new profile
+    ↓ recursively spawns:
+    profile_design("Maglev Phi-untagging-focused profile, no launch")
+      ↓ emit_profile_spec_draft → review queue
+    ↑ returns ProfileSpec to parent
+    ↑ parent now has 2 options to compare: existing mapinf_v8 vs draft
+  ↑ emit_strategy_descriptor → operator decides which to launch
+↑ operator picks one → triggers launch_discovery_campaign
+```
+
+Each level is its own reasoning loop with its own budget. Sub-investigations inherit operator steering from parent. The operator can intervene at ANY level via the branching API (D-41) — fork into "compare two profile designs side by side" for example.
+
+### Standalone intents (no campaign trigger)
+
+Critical: SEVEN of the ten intents above can complete WITHOUT triggering any fuzz campaign. The operator chooses whether to invest fuzz budget. This matches the user expectation: "we should be able to just create FUZZILLI profiles" / "let's do variant hunting" / "should we even fuzz this?"
+
+Concrete examples of valid no-fuzz workflows:
+
+- **Pure profile design.** Operator iterates with engine to design `v8WasmGCBoundaryProfile`. Engine emits draft spec. Operator reviews, requests changes ("add more reftype generators, drop the SAB ones"). Engine re-emits. Eventually operator approves spec → it lands in `data/strategies/`. No campaign ever launched. Profile sits ready for when operator wants to use it.
+
+- **Quarterly assessment.** Operator runs `bug_class_assessment` for each major target. Engine produces assessment reports ranking bug classes. Operator reads reports, decides next quarter's research focus. Maybe launches campaigns, maybe doesn't.
+
+- **Pure variant hunt from existing finding.** A v0.1 N-day investigation produces a working PoC. Operator triggers `variant_hunt_order` for that finding. Engine orchestrates micro-campaigns. Reports back: 2 variants found, 8 variants ruled out. Updates patch-completeness assessment.
+
+- **Patch verification.** Vendor releases patch P. Operator asks `patch_completeness_assessment`. Engine reads patch, generates hypotheses about what it does / doesn't fix, decides whether to spawn a variant-hunt micro-campaign or conclude from source reading alone. Often the answer is reachable without fuzz.
+
+- **Config tuning conversation.** Operator: "What jobs/timeout for mapinf_v8 next run?" Engine: "Based on prior runs, 8 jobs / 5500ms gives best throughput-per-finding. But your hardware has 12 cores so try 10/6000 if you accept slightly lower per-job efficiency." Engine emits `ConfigDelta`. Operator applies or discards.
+
+### Frontend UX implication
+
+The investigation creation form has a **question intent selector** as the first field, not a free-form question box. Intent selection changes the form's other fields (e.g., `variant_hunt_order` requires selecting a parent finding; `profile_design` requires selecting a target component + bug class).
+
+Default intent for the "I just have a question" case is `bug_class_assessment` — engine spends a small budget producing an assessment, then suggests follow-up intents the operator can launch.
+
+### Implementation cost
+
+Net new beyond D-36 through D-42 milestones:
+
+|#|Milestone|LOC est|Notes|
+|---|---|---|---|
+|M3.3j|Question intent registry + typed contracts per intent|~300|Platform-level extension to `ReasoningContract`|
+|M3.3k|Sub-investigation support (recursive engine invocations)|~250|Platform-level|
+|M3.3l|Per-intent prompt templates + kill criteria + budgets|~400 data|Module-specific (VR data files)|
+|M3.3m|Outcome type dispatchers (route to campaign launch / memo emit / etc.)|~250|VR-specific|
+|M3.3n|Frontend question-intent picker + per-intent form fields|~400|Frontend, can defer to v0.4|
+
+Total platform-level: ~550 LOC. VR-specific: ~650 LOC. Frontend optional for v0.3.
+
+### Backward compatibility
+
+A "just give me an answer" question with no intent defaults to `bug_class_assessment`. Existing forensics investigations work unchanged (forensics has its own intent set; VR adds these on top).
+
 ---
 
 ## Open Questions (Remaining)
