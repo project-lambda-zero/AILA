@@ -1,0 +1,93 @@
+"""Target table definitions for the vulnerability research module.
+
+Per D-49/D-50: VRTargetRecord is a first-class persistent target identity
+that lives inside a workspace. Investigations, fuzzing campaigns,
+findings, and disclosures all reference target_id.
+
+Per D-51: capability_profile_json is populated by M3.T-2 through M3.T-4
+enrichment pipeline.
+
+Per D-52: VRTargetTagIndexRecord denormalizes tags for fast multi-tag
+filter queries from the workspace dashboard.
+
+Written by: POST /api/vr/targets, M3.T enrichment workers.
+Consumed by: workspace + per-target dashboards, investigation creation,
+fuzzing campaign creation, pattern retrieval applicability filter,
+disclosure orchestrator default-track suggester.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from uuid import uuid4
+
+from sqlalchemy import Column, DateTime, ForeignKey, Text, UniqueConstraint
+from sqlmodel import Field, SQLModel
+
+from aila.platform.contracts._common import utc_now
+from aila.storage.mixins import TeamScopedMixin
+
+__all__ = ["VRTargetRecord", "VRTargetTagIndexRecord"]
+
+
+class VRTargetRecord(TeamScopedMixin, SQLModel, table=True):
+    """A persistent target identity owned by a workspace (D-49/D-50/D-51)."""
+
+    __tablename__ = "vr_targets"
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    workspace_id: str = Field(
+        sa_column=Column(
+            "workspace_id",
+            ForeignKey("vr_workspaces.id"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    display_name: str = Field(max_length=255)
+    kind: str = Field(max_length=64, index=True)
+    descriptor_json: str = Field(default="{}", sa_column=Column(Text))
+    primary_language: str | None = Field(default=None, max_length=32)
+    secondary_languages_json: str = Field(default="[]", sa_column=Column(Text))
+    status: str = Field(default="active", index=True, max_length=32)
+    capability_profile_json: str = Field(default="{}", sa_column=Column(Text))
+    tags_json: str = Field(default="[]", sa_column=Column(Text))
+    enrichment_status: str = Field(default="unenriched", index=True, max_length=32)
+    last_enriched_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+
+
+class VRTargetTagIndexRecord(SQLModel, table=True):
+    """Denormalized tag-to-target index for fast filter queries (D-52).
+
+    Per-tag rows let the workspace dashboard query "all targets in this
+    workspace tagged X AND Y" without unpacking ``tags_json`` from every
+    row. The canonical tag list still lives on ``vr_targets.tags_json``;
+    this table is a read-side index maintained by the tag writer service.
+    """
+
+    __tablename__ = "vr_target_tag_index"
+    __table_args__ = (
+        UniqueConstraint("target_id", "tag", "tag_source", name="uq_target_tag_source"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    target_id: str = Field(
+        sa_column=Column(
+            "target_id",
+            ForeignKey("vr_targets.id"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    workspace_id: str = Field(
+        sa_column=Column(
+            "workspace_id",
+            ForeignKey("vr_workspaces.id"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    tag: str = Field(index=True, max_length=128)
+    tag_source: str = Field(max_length=32)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))

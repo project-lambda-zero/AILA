@@ -7,8 +7,13 @@ from __future__ import annotations
 
 from .finding import VRFindingRecord
 from .project import VRProjectRecord
+from .target import VRTargetRecord, VRTargetTagIndexRecord
+from .workspace import VRWorkspaceRecord
 
 __all__ = [
     "VRFindingRecord",
     "VRProjectRecord",
+    "VRTargetRecord",
+    "VRTargetTagIndexRecord",
+    "VRWorkspaceRecord",
 ]
