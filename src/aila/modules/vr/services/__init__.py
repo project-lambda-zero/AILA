@@ -6,6 +6,12 @@ local construction sites) per the platform DI rules.
 """
 from __future__ import annotations
 
+from aila.modules.vr.services.fuzz_service import (
+    FuzzCampaignService,
+    FuzzServiceError,
+    classify_crash_severity_default,
+    triage_crash,
+)
 from aila.modules.vr.services.pattern_store import (
     PatternRetrievalResult,
     PatternStore,
@@ -14,8 +20,12 @@ from aila.modules.vr.services.pattern_store import (
 from aila.modules.vr.services.target_ingestion import TargetIngestionService
 
 __all__ = [
+    "FuzzCampaignService",
+    "FuzzServiceError",
     "PatternRetrievalResult",
     "PatternStore",
     "PatternStoreError",
     "TargetIngestionService",
+    "classify_crash_severity_default",
+    "triage_crash",
 ]
