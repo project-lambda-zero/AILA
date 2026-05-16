@@ -1,0 +1,71 @@
+# Pattern extraction from a completed investigation
+
+You are extracting reusable patterns from a successful vulnerability research
+investigation. The patterns you extract enter the team's catalog and will be
+surfaced to future investigations as evidence — wrong patterns waste real
+researcher time, so be conservative.
+
+## Investigation outcome
+
+```
+{outcome_summary}
+```
+
+## Reasoning transcript
+
+The investigation's turn-by-turn reasoning, hypotheses, tool calls, and
+observables. Read it before extracting.
+
+```
+{transcript}
+```
+
+## What to extract
+
+Return a JSON list. Each entry is one pattern:
+
+```json
+{
+  "kind": "exploitation_technique" | "fuzzing_strategy" | "search_heuristic" | "tool_recipe" | "triage_rule",
+  "summary": "one operator-recognizable sentence",
+  "body": "full description including example code, queries, or tool invocations",
+  "applicability": {
+    "target_kinds": ["native_binary"|"source_repo"|"cve"|"protocol_capture"|"crash_input"|"patch_diff"|"apk"|"ipa"|"jar"|"dotnet_assembly"],
+    "languages": ["c", "c++", "rust", "go", "javascript", "java", "kotlin", "python"],
+    "bug_classes": ["type_confusion", "uaf", "heap_oob", "command_injection", "ssrf", ...]
+  },
+  "confidence": "exact" | "strong" | "medium" | "caveated" | "unknown",
+  "evidence_refs": ["<message_id>", "<outcome_id>"]
+}
+```
+
+## The five pattern kinds
+
+|Kind|Example summary|
+|---|---|
+|`exploitation_technique`|"V8 type confusion triggers reliably when passing aliased descriptors after distinct-shape warmup runs"|
+|`fuzzing_strategy`|"V8MapInferenceProfile.swift biases mutators toward map-instability operations; reusable for JIT engines with map inference"|
+|`search_heuristic`|"Grep `InferMaps` callsites where the surrounding function lacks an explicit alias check; high-yield for the CVE-2025-2135 family"|
+|`tool_recipe`|"IDA Headless `find_similar_functions` + `decompile` + `value_ranges` is the 3-step combo for catching missing bounds checks in JIT helpers"|
+|`triage_rule`|"SBXCHECK + Wasm frames in the crash stack ⇒ in-sandbox amplifier (V8 sandbox violation expected — NOT VRP-eligible)"|
+
+## Rules
+
+- **Only extract patterns you can defend with evidence from the transcript.**
+  Each pattern's `evidence_refs` MUST point at concrete message or outcome
+  ids. Patterns without evidence get rejected at review.
+- **Quality over quantity.** Returning an empty list when nothing reusable
+  was learned is correct behaviour. DO NOT invent patterns to fill quota.
+- **Stay narrow.** `applicability` should restrict to the kinds / languages /
+  bug classes you actually saw. Don't write `target_kinds: [...all...]`
+  unless the pattern truly generalizes.
+- **Confidence map:** use `exact` only if the engine produced a working
+  exploit. `strong` if it produced a verified finding. `medium` for audit
+  memos. `caveated` if the technique only applies under specific narrow
+  conditions you documented. `unknown` should not be emitted — drop the
+  pattern instead.
+- **Body must be reusable.** Include enough detail (code snippets, exact
+  tool commands, exact grep patterns) that a fresh investigator can apply
+  the technique without re-reading the original investigation.
+
+Return ONLY the JSON list. No prose preamble or trailing commentary.
