@@ -29,6 +29,9 @@ from aila.platform.uow import UnitOfWork
 
 from .contracts import (
     BranchStatus,
+    CampaignStatus,
+    CrashSeverity,
+    CrashTriageVerdict,
     DisclosureStatus,
     DisclosureSubmissionStatus,
     DisclosureTrackInfo,
@@ -53,6 +56,11 @@ from .contracts import (
     VRDisclosureSubmissionPatch,
     VRDisclosureSubmissionSummary,
     VRFinding,
+    VRFuzzCampaignCreate,
+    VRFuzzCampaignPatch,
+    VRFuzzCampaignSummary,
+    VRFuzzCrashCreate,
+    VRFuzzCrashSummary,
     VRInvestigationCreate,
     VRInvestigationSummary,
     VRMessageCreate,
@@ -2465,5 +2473,196 @@ def create_vr_router() -> APIRouter:
                 status_code=status.HTTP_400_BAD_REQUEST, detail=msg,
             ) from exc
         return DataEnvelope(data=rendered)
+
+    # ── Fuzzing campaigns + crashes (Fuzzing plan) ─────────────────────
+
+    @router.post(
+        "/fuzz/campaigns",
+        response_model=DataEnvelope[VRFuzzCampaignSummary],
+        status_code=status.HTTP_201_CREATED,
+        summary="Create a fuzzing campaign for a target.",
+    )
+    @limiter.limit("30/minute")
+    async def create_fuzz_campaign(
+        request: Request,
+        body: VRFuzzCampaignCreate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFuzzCampaignSummary]:
+        del request
+        from aila.modules.vr.services import FuzzCampaignService, FuzzServiceError
+
+        svc = FuzzCampaignService()
+        try:
+            summary = await svc.create_campaign(body, team_id=auth.team_id)
+        except FuzzServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc),
+            ) from exc
+        return DataEnvelope(data=summary)
+
+    @router.get(
+        "/fuzz/campaigns",
+        response_model=DataEnvelope[list[VRFuzzCampaignSummary]],
+        summary="List fuzzing campaigns (filterable).",
+    )
+    @limiter.limit("60/minute")
+    async def list_fuzz_campaigns(
+        request: Request,
+        target_id: str | None = Query(default=None),
+        workspace_id: str | None = Query(default=None),
+        campaign_status: CampaignStatus | None = Query(
+            default=None, alias="status",
+        ),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[VRFuzzCampaignSummary]]:
+        del request, auth
+        from aila.modules.vr.services import FuzzCampaignService
+
+        svc = FuzzCampaignService()
+        items, total = await svc.list_campaigns(
+            target_id=target_id,
+            workspace_id=workspace_id,
+            status=campaign_status,
+            offset=offset,
+            limit=limit,
+        )
+        return DataEnvelope(
+            data=items,
+            meta=PaginatedMeta(
+                total=int(total), offset=offset, limit=limit,
+            ).model_dump(),
+        )
+
+    @router.get(
+        "/fuzz/campaigns/{campaign_id}",
+        response_model=DataEnvelope[VRFuzzCampaignSummary],
+        summary="Get one fuzzing campaign by id.",
+    )
+    @limiter.limit("120/minute")
+    async def get_fuzz_campaign(
+        request: Request,
+        campaign_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFuzzCampaignSummary]:
+        del request, auth
+        from aila.modules.vr.services import FuzzCampaignService
+
+        svc = FuzzCampaignService()
+        summary = await svc.get_campaign(campaign_id)
+        if summary is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Fuzz campaign {campaign_id} not found.",
+            )
+        return DataEnvelope(data=summary)
+
+    @router.patch(
+        "/fuzz/campaigns/{campaign_id}",
+        response_model=DataEnvelope[VRFuzzCampaignSummary],
+        summary="Update campaign status + progress metrics.",
+    )
+    @limiter.limit("60/minute")  # progress updates can be frequent
+    async def patch_fuzz_campaign(
+        request: Request,
+        campaign_id: str,
+        body: VRFuzzCampaignPatch,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFuzzCampaignSummary]:
+        del request, auth
+        from aila.modules.vr.services import FuzzCampaignService, FuzzServiceError
+
+        svc = FuzzCampaignService()
+        try:
+            summary = await svc.patch_campaign(campaign_id, body)
+        except FuzzServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc),
+            ) from exc
+        return DataEnvelope(data=summary)
+
+    @router.post(
+        "/fuzz/crashes",
+        response_model=DataEnvelope[VRFuzzCrashSummary],
+        status_code=status.HTTP_201_CREATED,
+        summary=(
+            "Register a crash. Auto-dedup by stack hash + auto-triage by "
+            "crash_type pattern matching."
+        ),
+    )
+    @limiter.limit("120/minute")  # workers may post crashes frequently
+    async def register_fuzz_crash(
+        request: Request,
+        body: VRFuzzCrashCreate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFuzzCrashSummary]:
+        del request
+        from aila.modules.vr.services import FuzzCampaignService, FuzzServiceError
+
+        svc = FuzzCampaignService()
+        try:
+            summary = await svc.register_crash(body, team_id=auth.team_id)
+        except FuzzServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc),
+            ) from exc
+        return DataEnvelope(data=summary)
+
+    @router.get(
+        "/fuzz/crashes",
+        response_model=DataEnvelope[list[VRFuzzCrashSummary]],
+        summary="List fuzz crashes (filterable by campaign/verdict/severity).",
+    )
+    @limiter.limit("60/minute")
+    async def list_fuzz_crashes(
+        request: Request,
+        campaign_id: str | None = Query(default=None),
+        verdict: CrashTriageVerdict | None = Query(default=None),
+        severity: CrashSeverity | None = Query(default=None),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[VRFuzzCrashSummary]]:
+        del request, auth
+        from aila.modules.vr.services import FuzzCampaignService
+
+        svc = FuzzCampaignService()
+        items, total = await svc.list_crashes(
+            campaign_id=campaign_id,
+            verdict=verdict,
+            severity=severity,
+            offset=offset,
+            limit=limit,
+        )
+        return DataEnvelope(
+            data=items,
+            meta=PaginatedMeta(
+                total=int(total), offset=offset, limit=limit,
+            ).model_dump(),
+        )
+
+    @router.get(
+        "/fuzz/crashes/{crash_id}",
+        response_model=DataEnvelope[VRFuzzCrashSummary],
+        summary="Get one fuzz crash by id.",
+    )
+    @limiter.limit("120/minute")
+    async def get_fuzz_crash(
+        request: Request,
+        crash_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFuzzCrashSummary]:
+        del request, auth
+        from aila.modules.vr.services import FuzzCampaignService
+
+        svc = FuzzCampaignService()
+        summary = await svc.get_crash(crash_id)
+        if summary is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Fuzz crash {crash_id} not found.",
+            )
+        return DataEnvelope(data=summary)
 
     return router
