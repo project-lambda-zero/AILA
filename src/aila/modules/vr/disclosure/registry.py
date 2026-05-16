@@ -9,6 +9,7 @@ from aila.modules.vr.contracts.disclosure import DisclosureTrackInfo
 
 from .base import DisclosureTrack
 from .builtin_tracks import BUILTIN_TRACKS
+from .builtin_tracks_extra import ALL_EXTRA_TRACKS
 
 __all__ = [
     "DisclosureTrack",
@@ -19,7 +20,7 @@ __all__ = [
 
 
 _REGISTRY: dict[str, type[DisclosureTrack]] = {
-    track.track_id: track for track in BUILTIN_TRACKS
+    track.track_id: track for track in (*BUILTIN_TRACKS, *ALL_EXTRA_TRACKS)
 }
 
 

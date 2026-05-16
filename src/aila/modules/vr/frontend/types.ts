@@ -405,3 +405,199 @@ export interface VROutcomeSummary {
   dispatch_target?: string | null;
   created_at?: string | null;
 }
+
+// ─── Pattern catalog (Knowledge Transfer plan) ─────────────────────────────
+
+export type PatternKind =
+  | "exploitation_technique"
+  | "fuzzing_strategy"
+  | "search_heuristic"
+  | "tool_recipe"
+  | "triage_rule";
+
+export type PatternStatus = "draft" | "active" | "archived";
+export type PatternScope = "local" | "workspace" | "team" | "global";
+export type PatternConfidence =
+  | "exact"
+  | "strong"
+  | "medium"
+  | "caveated"
+  | "unknown";
+
+export interface VRPatternSummary {
+  id: string;
+  workspace_id: string;
+  investigation_id?: string | null;
+  kind: PatternKind;
+  summary: string;
+  body: string;
+  applicability: Record<string, unknown>;
+  confidence: PatternConfidence;
+  evidence_refs: string[];
+  status: PatternStatus;
+  scope: PatternScope;
+  superseded_by?: string | null;
+  knowledge_entry_id?: number | null;
+  times_retrieved: number;
+  last_used_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+// ─── Disclosure lifecycle (Disclosure Lifecycle plan) ──────────────────────
+
+export type DisclosureKind =
+  | "bounty"
+  | "broker"
+  | "coordination"
+  | "vendor_direct"
+  | "cna"
+  | "public"
+  | "academic";
+
+export type DisclosureSubmissionStatus =
+  | "drafted"
+  | "submitted"
+  | "acknowledged"
+  | "triaging"
+  | "accepted"
+  | "rejected"
+  | "patched"
+  | "published"
+  | "closed"
+  | "withdrawn";
+
+export type ArtifactTier = "working_poc" | "sanitized_poc" | "no_poc";
+
+export interface DisclosureTrackInfo {
+  track_id: string;
+  kind: DisclosureKind;
+  display_name: string;
+  program_url?: string | null;
+  required_artifacts: string[];
+  accepted_poc_tiers: ArtifactTier[];
+  embargo_default_days?: number | null;
+  severity_schema: string;
+  notes: string;
+}
+
+export interface VRDisclosureSubmissionSummary {
+  id: string;
+  finding_id: string;
+  track_id: string;
+  workspace_id: string;
+  kind: DisclosureKind;
+  status: DisclosureSubmissionStatus;
+  poc_tier: ArtifactTier;
+  severity_rating?: string | null;
+  embargo_until?: string | null;
+  embargo_days_used?: number | null;
+  vendor_reference?: string | null;
+  bounty_awarded_usd?: number | null;
+  rendered_submission_path?: string | null;
+  notes: string;
+  validation_errors: string[];
+  track_info?: DisclosureTrackInfo | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface RenderedSubmission {
+  submission_id: string;
+  track_id: string;
+  finding_id: string;
+  rendered_at: string;
+  body: string;
+  body_format: string;
+  metadata: Record<string, unknown>;
+  validation_errors: string[];
+}
+
+// ─── Fuzzing (Fuzzing plan) ────────────────────────────────────────────────
+
+export type FuzzEngineId =
+  | "afl++"
+  | "afl++_qemu"
+  | "libfuzzer"
+  | "honggfuzz"
+  | "fuzzilli_v8"
+  | "v8_d8_sbx"
+  | "jazzer"
+  | "cargo-fuzz"
+  | "go-fuzz"
+  | "atheris";
+
+export type FuzzStrategyId =
+  | "mutational"
+  | "coverage_guided"
+  | "differential"
+  | "generative"
+  | "grammar";
+
+export type CampaignStatus =
+  | "created"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "aborted";
+
+export type CrashTriageVerdict =
+  | "untriaged"
+  | "security_relevant"
+  | "likely_harmless"
+  | "duplicate"
+  | "needs_manual_review";
+
+export type CrashSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "low"
+  | "informational"
+  | "unknown";
+
+export interface VRFuzzCampaignSummary {
+  id: string;
+  target_id: string;
+  workspace_id: string;
+  name: string;
+  engine_id: FuzzEngineId;
+  strategy_id: FuzzStrategyId;
+  engine_config: Record<string, unknown>;
+  strategy_config: Record<string, unknown>;
+  status: CampaignStatus;
+  duration_hours?: number | null;
+  workstation_host?: string | null;
+  execs_per_sec?: number | null;
+  total_execs: number;
+  corpus_size: number;
+  coverage_pct?: number | null;
+  crashes_found: number;
+  started_at?: string | null;
+  stopped_at?: string | null;
+  last_progress_at?: string | null;
+  notes: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface VRFuzzCrashSummary {
+  id: string;
+  campaign_id: string;
+  stack_hash: string;
+  crash_type?: string | null;
+  crash_signature?: string | null;
+  severity: CrashSeverity;
+  triage_verdict: CrashTriageVerdict;
+  triage_reason?: string | null;
+  duplicate_of_crash_id?: string | null;
+  promoted_to_finding_id?: string | null;
+  reproducer_path?: string | null;
+  reproducer_size_bytes?: number | null;
+  stack_trace?: string | null;
+  extra: Record<string, unknown>;
+  discovered_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
