@@ -1,4 +1,21 @@
-"""Project-level contract models for the vulnerability research module."""
+"""Project-level contract models for the vulnerability research module.
+
+Per D-53 refactor:
+  - VRTarget renamed to TargetIngestionSpec — it describes HOW a binary
+    gets ingested onto the analysis workstation, not the persistent
+    target identity. The persistent target identity lives in
+    ``contracts/target.py`` (VRTargetSummary, VRTargetCreate).
+  - VRProjectCreate now takes a workspace_id + TargetIngestionSpec; the
+    api_router materializes the ingestion spec into a vr_targets row
+    before creating the project row.
+  - VRProjectSummary no longer exposes target_class / input_source /
+    target_format — those live on VRTargetSummary, exposed via a
+    separate /api/vr/targets endpoint.
+
+The TargetClass / TargetFormat / InputSource StrEnums are preserved for
+the ingestion spec shape and continue to be used by the workstation-side
+ingestion service.
+"""
 from __future__ import annotations
 
 from enum import StrEnum
@@ -9,10 +26,10 @@ __all__ = [
     "InputSource",
     "TargetClass",
     "TargetFormat",
+    "TargetIngestionSpec",
     "VRProjectCreate",
     "VRProjectStatus",
     "VRProjectSummary",
-    "VRTarget",
 ]
 
 
@@ -61,8 +78,17 @@ class InputSource(StrEnum):
     HTTP_URL = "http_url"
 
 
-class VRTarget(BaseModel):
-    """Description of a single analysis target across all supported input modes."""
+class TargetIngestionSpec(BaseModel):
+    """How to ingest one analysis target onto the workstation.
+
+    This is a transient request-time shape — the api_router materializes
+    it into a vr_targets row (VRTargetRecord) and then forwards the
+    physical-ingestion fields to the workflow setup state via task kwargs.
+
+    Renamed from VRTarget in the M3.T-1 Stage 2 refactor: the old name
+    conflated 'how to ingest' (this spec) with 'persistent target
+    identity' (now VRTargetRecord / VRTargetSummary in target.py).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -74,7 +100,6 @@ class VRTarget(BaseModel):
     target_class: TargetClass = Field(default=TargetClass.NATIVE)
     source_available: bool = Field(default=False)
 
-    # Upload input — set after multipart file lands on AILA server
     upload_filename: str | None = Field(
         default=None,
         description="Server-side filename after upload. Set by the API, not the caller.",
@@ -84,35 +109,32 @@ class VRTarget(BaseModel):
         description="SHA256 of uploaded content. Set by the API.",
     )
 
-    # Git repo input
     repo_url: str | None = Field(
         default=None,
-        description="Git repository URL (https or ssh). Required when input_source=git_repo.",
+        description="Git repository URL. Required when input_source=git_repo.",
     )
     vulnerable_ref: str | None = Field(
         default=None,
-        description="Git ref (commit, tag, branch) for the vulnerable version.",
+        description="Git ref for the vulnerable version.",
     )
     patched_ref: str | None = Field(
         default=None,
-        description="Git ref for the patched version. Enables differential analysis.",
+        description="Git ref for the patched version (used only for patched ingestion specs).",
     )
     build_command: str | None = Field(
         default=None,
-        description="Shell command to build the target from source (e.g., 'make -j4').",
+        description="Shell command to build the target from source.",
     )
     build_artifact: str | None = Field(
         default=None,
-        description="Relative path to the built binary within the repo (e.g., 'src/.libs/libfoo.so').",
+        description="Relative path to the built binary within the repo.",
     )
 
-    # HTTP URL input
     download_url: str | None = Field(
         default=None,
-        description="HTTPS URL to download the target from. Required when input_source=http_url.",
+        description="HTTPS URL to download the target from.",
     )
 
-    # Pre-existing MCP handle (skip upload entirely)
     binary_id: str | None = Field(
         default=None,
         description="Existing MCP binary_id. When set, skips upload/transfer.",
@@ -120,17 +142,27 @@ class VRTarget(BaseModel):
 
 
 class VRProjectCreate(BaseModel):
-    """Input payload for creating a new VR project."""
+    """Input payload for creating a new VR project.
+
+    Per D-49/D-50 the project lives inside a workspace and binds to one
+    primary target + optionally one patched target for differential
+    analysis. The api_router creates the target rows first, then the
+    project row referencing them.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=255)
+    workspace_id: str = Field(
+        min_length=1, max_length=64,
+        description="Workspace ID per D-49. Must exist before project creation.",
+    )
     cve_id: str | None = Field(
         default=None,
         description="Existing CVE identifier (CVE-YYYY-NNNNN) when reproducing a known issue.",
     )
-    target: VRTarget
-    patched_target: VRTarget | None = Field(
+    target: TargetIngestionSpec
+    patched_target: TargetIngestionSpec | None = Field(
         default=None,
         description="Optional patched build used for differential analysis and PoC validation.",
     )
@@ -158,7 +190,11 @@ class VRProjectStatus(StrEnum):
 
 
 class VRProjectSummary(BaseModel):
-    """Read-only summary of a VR project."""
+    """Read-only summary of a VR project.
+
+    Target metadata (target_class, input_source, format, etc) is no longer
+    exposed here — call /api/vr/targets/{target_id} for the full target.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -166,8 +202,8 @@ class VRProjectSummary(BaseModel):
     name: str
     cve_id: str | None = None
     status: VRProjectStatus
-    target_class: TargetClass
-    input_source: str | None = None
-    target_format: str | None = None
+    workspace_id: str | None = None
+    target_id: str | None = None
+    patched_target_id: str | None = None
     finding_count: int = 0
     created_at: str | None = None

@@ -36,7 +36,7 @@ from typing import Any
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.project import VRProjectStatus
-from aila.modules.vr.db_models import VRProjectRecord
+from aila.modules.vr.db_models import VRProjectRecord, VRTargetRecord
 from aila.platform.contracts._common import utc_now
 from aila.platform.contracts.budget import BudgetConfig, BudgetState
 from aila.platform.uow import UnitOfWork
@@ -69,6 +69,8 @@ async def _load_project(project_id: str) -> VRProjectRecord | None:
 
 async def _persist_setup(
     project_id: str,
+    target_id: str | None,
+    patched_target_id: str | None,
     binary_id: str,
     patched_binary_id: str | None,
     target_path: str,
@@ -76,26 +78,60 @@ async def _persist_setup(
     mitigations: dict[str, Any],
     budget_json: str,
 ) -> None:
+    """Persist ingestion results.
+
+    Target metadata (binary_id, workstation_path, mitigations) goes onto the
+    vr_targets row referenced by the project (D-53 schema). Project row
+    only gets project-scoped updates (status, budget_json).
+    """
     async with UnitOfWork() as uow:
-        row = (
+        if target_id:
+            target_row = (
+                await uow.session.exec(
+                    _select(VRTargetRecord).where(VRTargetRecord.id == target_id)
+                )
+            ).first()
+            if target_row is not None:
+                descriptor = json.loads(target_row.descriptor_json or "{}")
+                if binary_id:
+                    descriptor["binary_id"] = binary_id
+                if target_path:
+                    descriptor["workstation_path"] = target_path
+                target_row.descriptor_json = json.dumps(descriptor)
+                capability = json.loads(target_row.capability_profile_json or "{}")
+                if mitigations:
+                    capability.setdefault("mitigations", {}).update(mitigations)
+                    target_row.capability_profile_json = json.dumps(capability)
+                target_row.updated_at = utc_now()
+                uow.session.add(target_row)
+
+        if patched_target_id and (patched_binary_id or patched_path):
+            patched_row = (
+                await uow.session.exec(
+                    _select(VRTargetRecord).where(VRTargetRecord.id == patched_target_id)
+                )
+            ).first()
+            if patched_row is not None:
+                pdescriptor = json.loads(patched_row.descriptor_json or "{}")
+                if patched_binary_id:
+                    pdescriptor["binary_id"] = patched_binary_id
+                if patched_path:
+                    pdescriptor["workstation_path"] = patched_path
+                patched_row.descriptor_json = json.dumps(pdescriptor)
+                patched_row.updated_at = utc_now()
+                uow.session.add(patched_row)
+
+        proj_row = (
             await uow.session.exec(
                 _select(VRProjectRecord).where(VRProjectRecord.id == project_id)
             )
         ).first()
-        if row is None:
-            return
-        row.binary_id = binary_id
-        if patched_binary_id:
-            row.patched_binary_id = patched_binary_id
-        if target_path:
-            row.target_path = target_path
-        if patched_path:
-            row.patched_path = patched_path
-        row.mitigations_json = json.dumps(mitigations)
-        row.budget_json = budget_json
-        row.status = VRProjectStatus.ANALYZING.value
-        row.updated_at = utc_now()
-        uow.session.add(row)
+        if proj_row is not None:
+            proj_row.budget_json = budget_json
+            proj_row.status = VRProjectStatus.ANALYZING.value
+            proj_row.updated_at = utc_now()
+            uow.session.add(proj_row)
+
         await uow.commit()
 
 
@@ -223,6 +259,8 @@ async def _ingest_target(
 async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
     """Ingest target(s), upload to IDA MCP, run checksec, initialize budget."""
     project_id = str(input.get("project_id") or "")
+    target_id = (input.get("target_id") or None)
+    patched_target_id = (input.get("patched_target_id") or None)
 
     analysis_integration = input.get("analysis_integration") or input.get("integration") or {}
     poc_integration = input.get("poc_integration") or analysis_integration
@@ -289,7 +327,7 @@ async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
             download_url=patched_download_url,
         )
     else:
-        patched_path = project.patched_path if project else None
+        patched_path = None
 
     _log.info(
         "state_setup START project_id=%s input_source=%s target=%s patched=%s "
@@ -348,6 +386,8 @@ async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
 
     await _persist_setup(
         project_id,
+        target_id if target_id else None,
+        patched_target_id if patched_target_id else None,
         binary_id,
         patched_binary_id,
         target_path,

@@ -20,11 +20,11 @@ from aila.modules.vr.contracts import (
     PoCResult,
     TargetClass,
     TargetFormat,
+    TargetIngestionSpec,
     VRAdvisory,
     VRProjectCreate,
     VRProjectStatus,
     VRProjectSummary,
-    VRTarget,
 )
 
 __all__ = [
@@ -67,45 +67,50 @@ class TestEnumCardinality:
 class TestVRTarget:
     def test_input_source_required(self) -> None:
         with pytest.raises(ValidationError):
-            VRTarget()  # type: ignore[call-arg]
+            TargetIngestionSpec()  # type: ignore[call-arg]
 
     def test_extra_fields_forbidden(self) -> None:
         with pytest.raises(ValidationError):
-            VRTarget(input_source=InputSource.UPLOAD, bogus_field="x")  # type: ignore[call-arg]
+            TargetIngestionSpec(input_source=InputSource.UPLOAD, bogus_field="x")  # type: ignore[call-arg]
 
     def test_binary_id_optional(self) -> None:
-        t = VRTarget(input_source=InputSource.UPLOAD)
+        t = TargetIngestionSpec(input_source=InputSource.UPLOAD)
         assert t.binary_id is None
         assert t.target_class == TargetClass.NATIVE
         assert t.source_available is False
 
     def test_binary_id_set(self) -> None:
-        t = VRTarget(input_source=InputSource.UPLOAD, binary_id="abc-123")
+        t = TargetIngestionSpec(input_source=InputSource.UPLOAD, binary_id="abc-123")
         assert t.binary_id == "abc-123"
 
 
 class TestVRProjectCreate:
-    def _target(self) -> VRTarget:
-        return VRTarget(input_source=InputSource.UPLOAD)
+    def _target(self) -> TargetIngestionSpec:
+        return TargetIngestionSpec(input_source=InputSource.UPLOAD)
 
     def test_name_min_length(self) -> None:
         with pytest.raises(ValidationError):
-            VRProjectCreate(name="", target=self._target(), analysis_system_id=1)
+            VRProjectCreate(name="", workspace_id="ws-1", target=self._target(), analysis_system_id=1)
 
     def test_analysis_system_id_required(self) -> None:
         with pytest.raises(ValidationError):
-            VRProjectCreate(name="x", target=self._target())  # type: ignore[call-arg]
+            VRProjectCreate(name="x", workspace_id="ws-1", target=self._target())  # type: ignore[call-arg]
+
+    def test_workspace_id_required(self) -> None:
+        with pytest.raises(ValidationError):
+            VRProjectCreate(name="x", target=self._target(), analysis_system_id=1)  # type: ignore[call-arg]
 
     def test_patched_target_optional(self) -> None:
-        p = VRProjectCreate(name="x", target=self._target(), analysis_system_id=1)
+        p = VRProjectCreate(name="x", workspace_id="ws-1", target=self._target(), analysis_system_id=1)
         assert p.patched_target is None
         assert p.poc_system_id is None
         assert p.context_notes == ""
+        assert p.workspace_id == "ws-1"
 
     def test_extra_fields_forbidden(self) -> None:
         with pytest.raises(ValidationError):
             VRProjectCreate(  # type: ignore[call-arg]
-                name="x", target=self._target(), analysis_system_id=1, junk=1,
+                name="x", workspace_id="ws-1", target=self._target(), analysis_system_id=1, junk=1,
             )
 
 
@@ -116,9 +121,9 @@ class TestVRProjectSummary:
             name="libfoo CVE",
             cve_id="CVE-2025-1",
             status=VRProjectStatus.ANALYZING,
-            target_class=TargetClass.NATIVE,
-            input_source="upload",
-            target_format="elf",
+            workspace_id="ws-1",
+            target_id="tgt-1",
+            patched_target_id=None,
             finding_count=3,
             created_at="2026-01-01T00:00:00Z",
         )

@@ -22,10 +22,10 @@ from .project import (
     InputSource,
     TargetClass,
     TargetFormat,
+    TargetIngestionSpec,
     VRProjectCreate,
     VRProjectStatus,
     VRProjectSummary,
-    VRTarget,
 )
 from .target import (
     EnrichmentStatus,
@@ -58,6 +58,7 @@ __all__ = [
     "TargetCapabilityProfile",
     "TargetClass",
     "TargetFormat",
+    "TargetIngestionSpec",
     "TargetKind",
     "TargetStatus",
     "TargetTag",
@@ -67,7 +68,6 @@ __all__ = [
     "VRProjectCreate",
     "VRProjectStatus",
     "VRProjectSummary",
-    "VRTarget",
     "VRTargetCreate",
     "VRTargetSummary",
     "VRWorkspaceCreate",
