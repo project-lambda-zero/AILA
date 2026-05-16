@@ -1411,57 +1411,246 @@ Example audit-mcp fleet:
   - `audit_mcp.web_pool` — 1 CPU instance for JS/Python/Ruby projects (cheaper, no GPU needed)
   - `audit_mcp.dev` — 1 instance on operator's laptop
 
-### Config schema (replaces D-47's flat config)
+### Config storage: Postgres + frontend admin panel (NOT YAML)
 
-```yaml
-# In ConfigRegistry / config.yaml
-platform:
-  mcp:
-    types:
-      ida:
-        providers:
-          - id: ida.x64_pool
-            routing_strategy: binary_affinity_first  # prefer instance with .i64 warm
-            failover_attempts: 2
-            instances:
-              - id: ida-x64-1
-                transport: http
-                endpoint: https://ida-1.internal.example.com:8443
-                auth_ref: platform.mcp.ida.ida-x64-1.token  # secret ref
-                capabilities: [x64, hexrays, win, linux]
-                project_affinity: [v8, chromium]
-                binary_affinity_max: 3  # can keep 3 binaries warm
-                weight: 100
-                health_check_url: https://ida-1.internal.example.com:8443/health
-                health_check_interval_s: 30
-                timeout_s: 60
-                cost_per_call_usd: 0.05
-              - id: ida-x64-2
-                endpoint: https://ida-2.internal.example.com:8443
-                # ... similar
-              - id: ida-x64-3
-                endpoint: https://ida-3.internal.example.com:8443
-                # ...
-          - id: ida.arm_pool
-            routing_strategy: round_robin
-            instances:
-              - id: ida-arm-1
-                endpoint: https://ida-arm-1.internal.example.com:8443
-                capabilities: [arm, aarch64, hexrays, ios, android]
-      audit_mcp:
-        providers:
-          - id: audit_mcp.c_pool
-            routing_strategy: least_connections
-            instances:
-              - id: audit-c-1
-                endpoint: https://audit-1.internal.example.com:9000
-                capabilities: [c, cpp, gpu_enabled, large_index]
-                project_affinity: [v8, chromium, nginx, apache]
-                cost_per_call_usd: 0.08  # GPU compute charged
-              - id: audit-c-2
-                endpoint: https://audit-2.internal.example.com:9000
-                # ...
+Fleet config is **stored in Postgres** and managed through a **frontend admin panel**. YAML files are not the source of truth — they're an optional bootstrap-import format for initial setup or disaster recovery.
+
+Why frontend, not YAML:
+- Operators add/remove IDA seats and audit-mcp workers often (license rotation, scaling, maintenance) — should not require SSH to server + YAML edit + restart
+- Frontend changes are live (no restart); YAML changes need at least a config reload
+- Built-in audit trail: every fleet change recorded with who/when/why; YAML changes only audited if commit hooks happen to catch them
+- Lower risk: form validation prevents typos that YAML schema can't always catch
+- Real-time UX: ops sees instance go red → click "drain" → instance enters maintenance mode in <1s
+- Multi-operator: two ops people editing fleet config simultaneously is safe with API/DB; two people editing YAML race
+
+### Data model (Postgres)
+
+Three tables in the platform schema:
+
+```sql
+platform_mcp_providers (
+    id              TEXT PRIMARY KEY,           -- e.g. "ida.x64_pool"
+    mcp_type        TEXT NOT NULL,              -- "ida" | "audit_mcp" | future types
+    name            TEXT NOT NULL,              -- human-readable
+    routing_strategy TEXT NOT NULL,             -- enum
+    failover_attempts INTEGER NOT NULL DEFAULT 2,
+    description     TEXT,
+    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL
+);
+
+platform_mcp_instances (
+    id              TEXT PRIMARY KEY,           -- e.g. "ida-x64-1"
+    provider_id     TEXT NOT NULL REFERENCES platform_mcp_providers(id),
+    transport       TEXT NOT NULL,              -- "stdio" | "http" | "grpc"
+    endpoint        TEXT NOT NULL,              -- "https://ida-1.internal:8443" or "/usr/local/bin/audit-mcp"
+    auth_secret_ref TEXT,                       -- reference to secret in platform.secrets table
+    capabilities    TEXT[] NOT NULL DEFAULT '{}',-- ["x64", "hexrays", "win"]
+    project_affinity TEXT[] NOT NULL DEFAULT '{}',  -- ["v8", "chromium"]
+    weight          INTEGER NOT NULL DEFAULT 100,
+    health_check_url TEXT,
+    health_check_interval_s INTEGER DEFAULT 30,
+    per_call_timeout_s INTEGER DEFAULT 60,
+    cost_per_call_usd NUMERIC(10,4),
+    status          TEXT NOT NULL DEFAULT 'enabled', -- enabled|drained|disabled|maintenance
+    binary_affinity_max INTEGER DEFAULT 1,       -- IDA-specific
+    created_at      TIMESTAMPTZ NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL,
+    last_health_check_at TIMESTAMPTZ,
+    last_health_status TEXT,                    -- "healthy" | "degraded" | "down"
+    UNIQUE (provider_id, id)
+);
+
+platform_mcp_audit_log (
+    id              BIGSERIAL PRIMARY KEY,
+    timestamp       TIMESTAMPTZ NOT NULL,
+    actor_id        TEXT NOT NULL,              -- operator who made the change
+    action          TEXT NOT NULL,              -- "create_instance"|"drain"|"update_weight"|etc.
+    target_type     TEXT NOT NULL,              -- "provider"|"instance"
+    target_id       TEXT NOT NULL,
+    before_state_json TEXT,
+    after_state_json TEXT,
+    reason          TEXT
+);
 ```
+
+Auth secrets stored separately in `platform_secrets` table (encrypted-at-rest), referenced by `auth_secret_ref`. Never stored inline.
+
+### Frontend admin panel
+
+New route: `/admin/mcp-fleet`. Sections:
+
+**Providers list view:**
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ MCP Fleet Management                            [+ Add Provider]     │
+├──────────────────────────────────────────────────────────────────────┤
+│ ┌─ ida ──────────────────────────────────────────────────────────┐   │
+│ │ Type: ida  |  3 providers  |  5 instances  |  4 healthy        │   │
+│ │                                                                 │   │
+│ │ ▾ ida.x64_pool  (3 instances, 2 healthy, 1 down)               │   │
+│ │   strategy: binary_affinity_first  |  cost: $4.32/24h          │   │
+│ │   ┌──────────────────────────────────────────────────────────┐ │   │
+│ │   │ ● ida-x64-1   https://ida-1.internal:8443                │ │   │
+│ │   │   healthy • 2 active • 47 calls/h • $0.05/call           │ │   │
+│ │   │   capabilities: [x64, hexrays, win]                      │ │   │
+│ │   │   project_affinity: [v8, chromium]                       │ │   │
+│ │   │   binaries loaded: v8.exe, chrome.dll                    │ │   │
+│ │   │   [Edit] [Drain] [Disable] [View calls]                  │ │   │
+│ │   ├──────────────────────────────────────────────────────────┤ │   │
+│ │   │ ● ida-x64-2   https://ida-2.internal:8443                │ │   │
+│ │   │   degraded (license session at 95%, 5min remaining)      │ │   │
+│ │   │   [Edit] [Restart] [View health]                         │ │   │
+│ │   ├──────────────────────────────────────────────────────────┤ │   │
+│ │   │ ✗ ida-x64-3   https://ida-3.internal:8443                │ │   │
+│ │   │   down since 2026-05-15 22:14 — connection refused       │ │   │
+│ │   │   [Edit] [Retry] [Remove] [View error log]               │ │   │
+│ │   └──────────────────────────────────────────────────────────┘ │   │
+│ │   [+ Add instance to this provider]                            │   │
+│ │                                                                 │   │
+│ │ ▸ ida.arm_pool  (1 instance, healthy)                          │   │
+│ │ ▸ ida.kernel_pool  (1 instance, healthy)                       │   │
+│ └────────────────────────────────────────────────────────────────┘   │
+│                                                                       │
+│ ┌─ audit_mcp ────────────────────────────────────────────────────┐   │
+│ │ Type: audit_mcp  |  2 providers  |  3 instances  |  3 healthy  │   │
+│ │ ▸ audit_mcp.c_pool  (2 instances)                              │   │
+│ │ ▸ audit_mcp.web_pool  (1 instance)                             │   │
+│ └─────────────────────────────────────────────────────────────-──┘   │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+**Add instance modal:**
+```
+┌─ Add Instance to ida.x64_pool ─────────────────────────────────┐
+│                                                                 │
+│ ID: [ida-x64-4                                              ]   │
+│ Transport: ( ) stdio   (●) http   ( ) grpc                     │
+│ Endpoint: [https://ida-4.internal.example.com:8443           ]  │
+│ Auth secret: [Select existing ▾]  or  [+ New secret]            │
+│ Capabilities (tags): [x64 ×] [hexrays ×] [win ×] [+ add]        │
+│ Project affinity:    [v8 ×] [chromium ×] [+ add project]        │
+│ Weight:              [100        ]                              │
+│ Health check URL:    [/health                              ]    │
+│ Health interval:     [30] seconds                               │
+│ Per-call timeout:    [60] seconds                               │
+│ Cost per call:       [$0.05]                                    │
+│ Binary affinity max: [3]  (IDA-specific)                        │
+│                                                                 │
+│             [Test connection]   [Cancel]   [Save]               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+"Test connection" runs an MCP `list_tools` against the endpoint before saving — operator sees immediately if the instance is reachable + authenticated. If test fails, save is blocked with the error reason inline.
+
+**Per-instance detail view:**
+- Live health graph (last 24h status / response time / error rate)
+- Recent calls log (last 100, with investigation_id link)
+- Current loaded binaries (IDA) / current GPU memory usage (audit-mcp)
+- License session remaining (IDA-specific)
+- Edit form (changes go through audit log)
+- Drain/Enable/Restart buttons with confirmation modals
+- Force-load-binary form (manual operator hint)
+
+**Provider edit form:**
+- Routing strategy selector (with explanation of each)
+- Failover policy (attempts, backoff)
+- Enable/disable toggle
+- Description field for ops notes
+
+**Audit log view:**
+- Searchable + filterable log of all fleet changes
+- Each entry: timestamp, operator, action, target, before/after state, reason
+- Export to CSV for compliance
+
+### REST API (frontend consumes)
+
+```
+# Providers
+GET    /api/admin/mcp/providers                  list all providers
+POST   /api/admin/mcp/providers                  create new provider
+GET    /api/admin/mcp/providers/{id}             provider detail + instances
+PATCH  /api/admin/mcp/providers/{id}             update provider (routing, etc.)
+DELETE /api/admin/mcp/providers/{id}             remove provider (must have no instances)
+
+# Instances
+POST   /api/admin/mcp/providers/{pid}/instances  create instance
+PATCH  /api/admin/mcp/instances/{id}             update instance (capabilities, weight, etc.)
+DELETE /api/admin/mcp/instances/{id}             remove instance
+POST   /api/admin/mcp/instances/{id}/test        run list_tools against endpoint
+POST   /api/admin/mcp/instances/{id}/drain       enter drain mode
+POST   /api/admin/mcp/instances/{id}/enable      re-enable from drain
+POST   /api/admin/mcp/instances/{id}/restart     send restart signal (best effort)
+POST   /api/admin/mcp/instances/{id}/load_binary preload .i64 (IDA-specific)
+
+# Audit log
+GET    /api/admin/mcp/audit_log                  paginated, filterable
+
+# Real-time status (SSE)
+GET    /api/admin/mcp/stream/health              live health updates per instance
+GET    /api/admin/mcp/stream/calls               live tool-call dispatch events
+```
+
+All admin endpoints require operator role with `mcp_admin` permission.
+
+### Config bootstrap (YAML optional, not source of truth)
+
+For initial deployment OR disaster recovery, a YAML bootstrap import is available:
+
+```bash
+# Import from YAML at first boot (idempotent)
+python -m aila.platform.mcp.bootstrap --import config/mcp_fleet_bootstrap.yaml
+
+# Export current fleet to YAML (for backup or DR)
+python -m aila.platform.mcp.bootstrap --export /backup/mcp_fleet_$(date).yaml
+```
+
+Import is idempotent: it creates/updates rows in the Postgres tables. After bootstrap, all further fleet changes go through the frontend / API.
+
+Recommended for production: keep the YAML in version control as DR snapshot, but treat Postgres as the live source. Periodic export to git for backup.
+
+### Hot reload
+
+When the frontend changes fleet config:
+1. API mutates Postgres row
+2. Audit log entry created
+3. Postgres event triggers MCP client to refresh in-memory fleet state
+4. Within ~1 second, new instance is in rotation OR old instance is drained
+5. No process restart, no orchestrator downtime
+
+For high-availability deployments with multiple orchestrator replicas, all replicas subscribe to the Postgres event channel and update in sync.
+
+### Permissions
+
+|Operator role|Can do|
+|---|---|
+|`operator`|View fleet status, see which instances served their investigations, see costs|
+|`mcp_admin`|All operator capabilities + add/edit/remove instances and providers, drain instances, force binary affinity|
+|`platform_admin`|All mcp_admin capabilities + manage secrets, enable/disable transports, configure global policy|
+
+Default deployment: solo operator gets all 3 roles. Multi-operator deployments split them.
+
+### Frontend implementation cost (revises D-48 estimate)
+
+|#|Milestone|LOC est|Notes|
+|---|---|---|---|
+|M3.3ab.7 (revised)|Frontend admin panel — providers list, instance CRUD, health graphs, audit log|~700|Frontend (was ~400 in prior estimate)|
+|M3.3ab.9 (new)|Hot-reload mechanism (Postgres event → MCP client refresh)|~150|Platform-level|
+|M3.3ab.10 (new)|Bootstrap YAML import/export utility|~150|Platform-level (DR support)|
+|M3.3ab.11 (new)|Live SSE streams (health, calls) for frontend|~200|Platform-level (reuse existing SSE infra)|
+
+Frontend admin panel adds ~700 LOC over the lighter "metrics export" earlier estimate, but the API surface is the same — no extra backend beyond the hot-reload bridge.
+
+Total platform: ~1900 LOC for v0.3 (was 1650; +250 for hot reload + bootstrap utilities).
+Total frontend: ~700 LOC (was 400; +300 for the full CRUD admin panel).
+Total v0.3 MCP work: ~3600 LOC across D-47 + D-48.
+
+### Backward compatibility
+
+Deployments without the admin frontend (headless / CLI-only) can use the bootstrap YAML import + the REST API directly. The Postgres data model is the source of truth either way. Frontend is the convenience layer, not the requirement.
+
+Forensics gets all this for free — same fleet management UI manages MCP servers used by both modules.
 
 ### Routing strategies
 
