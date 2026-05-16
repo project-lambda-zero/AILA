@@ -1,0 +1,82 @@
+"""Pattern catalog table (Knowledge Transfer plan GA-41).
+
+A pattern is a reusable technique extracted from a successful
+investigation (or entered manually by the operator). The structured
+fields below are queryable; the body + embedding live in a mirrored
+``KnowledgeEntryRecord`` under namespace ``vr.pattern.<scope>.<id>``.
+
+PatternStore writes both rows in one transaction so they stay
+consistent. Search uses the KnowledgeService (pgvector + FTS) and joins
+back to ``vr_patterns`` via the stored ``knowledge_entry_id``.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from uuid import uuid4
+
+from sqlalchemy import Column, DateTime, ForeignKey, Text
+from sqlmodel import Field, SQLModel
+
+from aila.platform.contracts._common import utc_now
+from aila.storage.mixins import TeamScopedMixin
+
+__all__ = ["VRPatternRecord"]
+
+
+class VRPatternRecord(TeamScopedMixin, SQLModel, table=True):
+    """Catalog entry for one reusable pattern."""
+
+    __tablename__ = "vr_patterns"
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+
+    workspace_id: str = Field(
+        sa_column=Column(
+            "workspace_id",
+            ForeignKey("vr_workspaces.id"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    investigation_id: str | None = Field(
+        default=None,
+        sa_column=Column(
+            "investigation_id",
+            ForeignKey("vr_investigations.id"),
+            nullable=True,
+            index=True,
+        ),
+    )
+
+    kind: str = Field(max_length=32, index=True)         # PatternKind
+    summary: str = Field(max_length=512)
+    body: str = Field(default="", sa_column=Column(Text))
+
+    applicability_json: str = Field(
+        default="{}",
+        sa_column=Column(Text),
+    )
+    confidence: str = Field(default="medium", max_length=16, index=True)
+    evidence_refs_json: str = Field(default="[]", sa_column=Column(Text))
+
+    status: str = Field(default="draft", max_length=16, index=True)
+    scope: str = Field(default="local", max_length=16, index=True)
+    superseded_by: str | None = Field(default=None, max_length=64, index=True)
+
+    # Mirror entry id in KnowledgeService — populated on insert by PatternStore.
+    knowledge_entry_id: int | None = Field(default=None, index=True)
+
+    # Usage counters (v1 increments times_retrieved on retrieve; full
+    # success-rate tracking lands in v1.1 via vr_pattern_usages).
+    times_retrieved: int = Field(default=0)
+    last_used_at: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+    )
+
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True),
+    )
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True),
+    )

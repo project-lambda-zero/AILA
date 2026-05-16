@@ -49,6 +49,7 @@ async def _session_async_engine() -> AsyncGenerator[object, None]:
     import aila.storage.db_models  # noqa: F401
     import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.modules.sbd_nfr.db_models  # noqa: F401
+    import aila.modules.vr.db_models  # noqa: F401
 
     import aila.storage.database as _db_module
 

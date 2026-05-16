@@ -37,6 +37,9 @@ from .contracts import (
     OutcomeConfidence,
     OutcomeDispatchStatus,
     OutcomeKind,
+    PatternKind,
+    PatternScope,
+    PatternStatus,
     PayloadKind,
     PersonaVoice,
     SenderKind,
@@ -49,6 +52,9 @@ from .contracts import (
     VRMessageCreate,
     VRMessageSummary,
     VROutcomeSummary,
+    VRPatternCreate,
+    VRPatternPatch,
+    VRPatternSummary,
     VRProjectCreate,
     VRProjectStatus,
     VRProjectSummary,
@@ -2119,5 +2125,166 @@ def create_vr_router() -> APIRouter:
             mgr.resume(branch_id=branch_id, reason=body.reason),
             "resume",
         )
+
+    # ── Pattern catalog (Knowledge Transfer plan GA-41 / GA-44) ────────
+
+    @router.post(
+        "/patterns",
+        response_model=DataEnvelope[VRPatternSummary],
+        status_code=status.HTTP_201_CREATED,
+        summary="Create a pattern (operator-manual entry path).",
+    )
+    @limiter.limit("30/minute")
+    async def create_pattern(
+        request: Request,
+        body: VRPatternCreate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRPatternSummary]:
+        del request
+        from aila.modules.vr.services import PatternStore
+        from aila.platform.services.knowledge import KnowledgeService
+
+        store = PatternStore(knowledge=KnowledgeService())
+        try:
+            summary = await store.create(body, team_id=auth.team_id)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to create pattern: {exc}",
+            ) from exc
+        return DataEnvelope(data=summary)
+
+    @router.get(
+        "/patterns",
+        response_model=DataEnvelope[list[VRPatternSummary]],
+        summary="List patterns (filterable by workspace/kind/status/scope).",
+    )
+    @limiter.limit("60/minute")
+    async def list_patterns(
+        request: Request,
+        workspace_id: str | None = Query(default=None),
+        kind: PatternKind | None = Query(default=None),
+        pattern_status: PatternStatus | None = Query(
+            default=None,
+            alias="status",
+            description="Pattern lifecycle status (draft/active/archived).",
+        ),
+        scope: PatternScope | None = Query(default=None),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[VRPatternSummary]]:
+        del request, auth
+        from aila.modules.vr.services import PatternStore
+        from aila.platform.services.knowledge import KnowledgeService
+
+        store = PatternStore(knowledge=KnowledgeService())
+        items, total = await store.list(
+            workspace_id=workspace_id,
+            kind=kind,
+            status=pattern_status,
+            scope=scope,
+            offset=offset,
+            limit=limit,
+        )
+        return DataEnvelope(
+            data=items,
+            meta=PaginatedMeta(
+                total=int(total), offset=offset, limit=limit,
+            ).model_dump(),
+        )
+
+    @router.get(
+        "/patterns/applicable",
+        response_model=DataEnvelope[list[dict]],
+        summary="Retrieve patterns applicable to a target + question (semantic + structured).",
+    )
+    @limiter.limit("60/minute")
+    async def applicable_patterns(
+        request: Request,
+        workspace_id: str = Query(min_length=1),
+        query: str = Query(min_length=1),
+        target_kind: str | None = Query(default=None),
+        primary_language: str | None = Query(default=None),
+        k: int = Query(default=5, ge=1, le=20),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[dict]]:
+        del request
+        from aila.modules.vr.services import PatternStore
+        from aila.platform.services.knowledge import KnowledgeService
+
+        store = PatternStore(knowledge=KnowledgeService())
+        results = await store.applicable(
+            workspace_id=workspace_id,
+            team_id=auth.team_id,
+            query=query,
+            target_kind=target_kind,
+            primary_language=primary_language,
+            k=k,
+        )
+        return DataEnvelope(
+            data=[
+                {
+                    "pattern": r.pattern.model_dump(mode="json"),
+                    "score": r.score,
+                    "matched_by": r.matched_by,
+                }
+                for r in results
+            ],
+        )
+
+    @router.get(
+        "/patterns/{pattern_id}",
+        response_model=DataEnvelope[VRPatternSummary],
+        summary="Get one pattern by id.",
+    )
+    @limiter.limit("120/minute")
+    async def get_pattern(
+        request: Request,
+        pattern_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRPatternSummary]:
+        del request, auth
+        from aila.modules.vr.services import PatternStore
+        from aila.platform.services.knowledge import KnowledgeService
+
+        store = PatternStore(knowledge=KnowledgeService())
+        summary = await store.get(pattern_id)
+        if summary is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Pattern {pattern_id} not found.",
+            )
+        return DataEnvelope(data=summary)
+
+    @router.patch(
+        "/patterns/{pattern_id}",
+        response_model=DataEnvelope[VRPatternSummary],
+        summary="Operator review + scope promotion. Scope demotion forbidden.",
+    )
+    @limiter.limit("30/minute")
+    async def patch_pattern(
+        request: Request,
+        pattern_id: str,
+        body: VRPatternPatch,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRPatternSummary]:
+        del request
+        from aila.modules.vr.services import PatternStore, PatternStoreError
+        from aila.platform.services.knowledge import KnowledgeService
+
+        store = PatternStore(knowledge=KnowledgeService())
+        try:
+            summary = await store.patch(pattern_id, body, team_id=auth.team_id)
+        except PatternStoreError as exc:
+            msg = str(exc)
+            if "not found" in msg:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=msg,
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=msg,
+            ) from exc
+        return DataEnvelope(data=summary)
 
     return router

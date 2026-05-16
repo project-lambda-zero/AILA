@@ -50,6 +50,15 @@ from .outcome import (
     VROutcomeCreate,
     VROutcomeSummary,
 )
+from .pattern import (
+    PatternConfidence,
+    PatternKind,
+    PatternScope,
+    PatternStatus,
+    VRPatternCreate,
+    VRPatternPatch,
+    VRPatternSummary,
+)
 from .project import (
     InputSource,
     TargetClass,
@@ -100,6 +109,10 @@ __all__ = [
     "OutcomeConfidence",
     "OutcomeDispatchStatus",
     "OutcomeKind",
+    "PatternConfidence",
+    "PatternKind",
+    "PatternScope",
+    "PatternStatus",
     "PayloadKind",
     "PersonaVoice",
     "PoCResult",
@@ -124,6 +137,9 @@ __all__ = [
     "VRProjectCreate",
     "VRProjectStatus",
     "VRProjectSummary",
+    "VRPatternCreate",
+    "VRPatternPatch",
+    "VRPatternSummary",
     "VRTargetCreate",
     "VRTargetPatch",
     "VRTargetSummary",
