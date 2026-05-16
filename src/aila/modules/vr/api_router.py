@@ -63,6 +63,8 @@ from .contracts import (
     VRFuzzCrashSummary,
     VRInvestigationCreate,
     VRInvestigationSummary,
+    VRInvestigationTargetAttach,
+    VRInvestigationTargetSummary,
     VRMessageCreate,
     VRMessageSummary,
     VROutcomeSummary,
@@ -2664,5 +2666,104 @@ def create_vr_router() -> APIRouter:
                 detail=f"Fuzz crash {crash_id} not found.",
             )
         return DataEnvelope(data=summary)
+
+    # ── Multi-target investigation attachments (v0.4 GA-49) ────────────
+
+    @router.post(
+        "/investigations/{investigation_id}/targets",
+        response_model=DataEnvelope[VRInvestigationTargetSummary],
+        status_code=status.HTTP_201_CREATED,
+        summary="Attach a secondary target to an investigation.",
+    )
+    @limiter.limit("30/minute")
+    async def attach_investigation_target(
+        request: Request,
+        investigation_id: str,
+        body: VRInvestigationTargetAttach,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRInvestigationTargetSummary]:
+        del request
+        from aila.modules.vr.services import (
+            MultiTargetService,
+            MultiTargetServiceError,
+        )
+
+        svc = MultiTargetService()
+        try:
+            summary = await svc.attach(
+                investigation_id=investigation_id,
+                target_id=body.target_id,
+                role=body.role,
+                rationale=body.rationale,
+                team_id=auth.team_id,
+            )
+        except MultiTargetServiceError as exc:
+            msg = str(exc)
+            if "not found" in msg:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=msg,
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=msg,
+            ) from exc
+        return DataEnvelope(data=summary)
+
+    @router.get(
+        "/investigations/{investigation_id}/targets",
+        response_model=DataEnvelope[list[VRInvestigationTargetSummary]],
+        summary="List secondary targets attached to an investigation.",
+    )
+    @limiter.limit("120/minute")
+    async def list_investigation_targets(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[VRInvestigationTargetSummary]]:
+        del request, auth
+        from aila.modules.vr.services import MultiTargetService
+
+        svc = MultiTargetService()
+        items = await svc.list_for_investigation(investigation_id)
+        return DataEnvelope(data=items)
+
+    @router.delete(
+        "/investigations/{investigation_id}/targets/{target_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        summary="Detach a secondary target (primary cannot be detached).",
+    )
+    @limiter.limit("30/minute")
+    async def detach_investigation_target(
+        request: Request,
+        investigation_id: str,
+        target_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> Response:
+        del request, auth
+        from aila.modules.vr.services import (
+            MultiTargetService,
+            MultiTargetServiceError,
+        )
+
+        svc = MultiTargetService()
+        try:
+            removed = await svc.detach(investigation_id, target_id)
+        except MultiTargetServiceError as exc:
+            msg = str(exc)
+            if "not found" in msg:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=msg,
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=msg,
+            ) from exc
+        if not removed:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"target {target_id} is not attached to "
+                    f"investigation {investigation_id}"
+                ),
+            )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return router

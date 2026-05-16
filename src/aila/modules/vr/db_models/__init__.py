@@ -10,6 +10,7 @@ from .disclosure import VRDisclosureSubmissionRecord
 from .finding import VRFindingRecord
 from .fuzz import VRFuzzCampaignRecord, VRFuzzCrashRecord
 from .investigation import VRInvestigationRecord
+from .investigation_target import VRInvestigationTargetRecord
 from .message import VRInvestigationMessageRecord
 from .outcome import VRInvestigationOutcomeRecord
 from .pattern import VRPatternRecord
@@ -26,6 +27,7 @@ __all__ = [
     "VRInvestigationMessageRecord",
     "VRInvestigationOutcomeRecord",
     "VRInvestigationRecord",
+    "VRInvestigationTargetRecord",
     "VRPatternRecord",
     "VRProjectRecord",
     "VRTargetRecord",

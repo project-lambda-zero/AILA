@@ -1,0 +1,174 @@
+"""Multi-target investigation service (v0.4 phase 1).
+
+Operator attaches/detaches secondary targets to an existing
+investigation. The primary target stays unchanged on the investigation
+row; secondary targets live exclusively in ``vr_investigation_targets``.
+
+Future v0.4 phases will add multi-strategy orchestration that consumes
+these attachments — the engine can reason across all attached targets
+in one turn.
+"""
+from __future__ import annotations
+
+import logging
+
+from sqlmodel import select as _select
+
+from aila.modules.vr.contracts.investigation_target import (
+    InvestigationTargetRole,
+    VRInvestigationTargetSummary,
+)
+from aila.modules.vr.db_models import (
+    VRInvestigationRecord,
+    VRInvestigationTargetRecord,
+    VRTargetRecord,
+)
+from aila.platform.uow import UnitOfWork
+
+__all__ = [
+    "MultiTargetService",
+    "MultiTargetServiceError",
+]
+
+_log = logging.getLogger(__name__)
+
+
+class MultiTargetServiceError(Exception):
+    """User-facing errors (missing FK, duplicate attachment, primary detach)."""
+
+
+def _record_to_summary(
+    record: VRInvestigationTargetRecord,
+) -> VRInvestigationTargetSummary:
+    return VRInvestigationTargetSummary(
+        id=record.id,
+        investigation_id=record.investigation_id,
+        target_id=record.target_id,
+        role=InvestigationTargetRole(record.role),
+        rationale=record.rationale or "",
+        attached_at=record.attached_at,
+    )
+
+
+class MultiTargetService:
+    """Attach + list + detach secondary targets on an investigation."""
+
+    async def attach(
+        self,
+        investigation_id: str,
+        target_id: str,
+        role: InvestigationTargetRole,
+        rationale: str,
+        team_id: str | None,
+    ) -> VRInvestigationTargetSummary:
+        if role == InvestigationTargetRole.PRIMARY:
+            raise MultiTargetServiceError(
+                "PRIMARY role is reserved for the investigation's "
+                "vr_investigations.target_id column. Use a different role "
+                "(comparison / parallel_codebase / parent_library / derived_fork) "
+                "for secondary attachments.",
+            )
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
+                ),
+            )).first()
+            if inv is None:
+                raise MultiTargetServiceError(
+                    f"investigation {investigation_id} not found",
+                )
+
+            target = (await uow.session.exec(
+                _select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+            )).first()
+            if target is None:
+                raise MultiTargetServiceError(
+                    f"target {target_id} not found",
+                )
+
+            # Disallow attaching the primary target a second time as a
+            # secondary — it's already the primary.
+            if inv.target_id == target_id:
+                raise MultiTargetServiceError(
+                    f"target {target_id} is already this investigation's primary "
+                    "target; secondary attachments must be different targets",
+                )
+
+            existing = (await uow.session.exec(
+                _select(VRInvestigationTargetRecord).where(
+                    VRInvestigationTargetRecord.investigation_id == investigation_id,
+                    VRInvestigationTargetRecord.target_id == target_id,
+                ),
+            )).first()
+            if existing is not None:
+                # Idempotent — update role + rationale if changed
+                mutated = False
+                if existing.role != role.value:
+                    existing.role = role.value
+                    mutated = True
+                if rationale and existing.rationale != rationale:
+                    existing.rationale = rationale
+                    mutated = True
+                if mutated:
+                    uow.session.add(existing)
+                    await uow.session.commit()
+                    await uow.session.refresh(existing)
+                return _record_to_summary(existing)
+
+            record = VRInvestigationTargetRecord(
+                team_id=team_id,
+                investigation_id=investigation_id,
+                target_id=target_id,
+                role=role.value,
+                rationale=rationale or "",
+            )
+            uow.session.add(record)
+            await uow.session.commit()
+            await uow.session.refresh(record)
+            return _record_to_summary(record)
+
+    async def list_for_investigation(
+        self, investigation_id: str,
+    ) -> list[VRInvestigationTargetSummary]:
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(VRInvestigationTargetRecord)
+                .where(VRInvestigationTargetRecord.investigation_id == investigation_id)
+                .order_by(VRInvestigationTargetRecord.attached_at.asc()),
+            )).all()
+            return [_record_to_summary(r) for r in rows]
+
+    async def detach(
+        self, investigation_id: str, target_id: str,
+    ) -> bool:
+        """Detach a secondary target. Returns True if a row was removed."""
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
+                ),
+            )).first()
+            if inv is None:
+                raise MultiTargetServiceError(
+                    f"investigation {investigation_id} not found",
+                )
+            if inv.target_id == target_id:
+                raise MultiTargetServiceError(
+                    f"cannot detach the investigation's primary target "
+                    f"({target_id}). Detaching the primary would orphan the "
+                    "investigation; archive the investigation instead.",
+                )
+
+            existing = (await uow.session.exec(
+                _select(VRInvestigationTargetRecord).where(
+                    VRInvestigationTargetRecord.investigation_id == investigation_id,
+                    VRInvestigationTargetRecord.target_id == target_id,
+                ),
+            )).first()
+            if existing is None:
+                return False
+            await uow.session.delete(existing)
+            await uow.session.commit()
+            return True
