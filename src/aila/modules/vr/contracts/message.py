@@ -1,0 +1,120 @@
+"""Investigation message contracts (M3.R-1).
+
+Per D-43, investigations are conversational — operator and engine
+exchange typed messages. Each message has a payload_kind matching one
+of the 10 D-44 typed payloads (text, tool_call, code_pointer,
+graph_view, taint_flow, xref_view, patch_diff, decompiled_function,
+hypothesis_update, outcome_pending).
+
+This module defines the shape of the message record. The 10 payload
+shapes themselves are NOT defined here as separate Pydantic models —
+they live as ``payload: dict[str, Any]`` for v0.3 v1 and get typed
+shapes when consumers actually need validation. Per the M3.T lesson:
+don't pre-define schemas that aren't yet exercised.
+
+Operator-typed messages get an intent classification (D-43 GA-30) by a
+cheap LLM call so the engine knows how to react. Operator can override
+the classification through the UI.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+__all__ = [
+    "OperatorIntent",
+    "PayloadKind",
+    "SenderKind",
+    "VRMessageCreate",
+    "VRMessageSummary",
+]
+
+
+class SenderKind(StrEnum):
+    """Who sent this message."""
+
+    ENGINE = "engine"
+    OPERATOR = "operator"
+
+
+class PayloadKind(StrEnum):
+    """The 10 D-44 typed payload kinds. Payload shape is per-kind dict.
+
+    For v0.3 v1 the payload contents are not strictly typed by Pydantic
+    — frontend renderers branch on payload_kind and consume the dict
+    fields they need. Add typed Pydantic shapes per kind when a real
+    consumer asks for one.
+    """
+
+    TEXT = "text"
+    TOOL_CALL = "tool_call"
+    CODE_POINTER = "code_pointer"
+    GRAPH_VIEW = "graph_view"
+    TAINT_FLOW = "taint_flow"
+    XREF_VIEW = "xref_view"
+    PATCH_DIFF = "patch_diff"
+    DECOMPILED_FUNCTION = "decompiled_function"
+    HYPOTHESIS_UPDATE = "hypothesis_update"
+    OUTCOME_PENDING = "outcome_pending"
+
+
+class OperatorIntent(StrEnum):
+    """How the engine should interpret an operator message (D-43 GA-30).
+
+    Auto-classified by a cheap Haiku call at insertion time. Operator
+    can override via the UI ('interpret as ___').
+    """
+
+    STEERING = "steering"
+    QUESTION = "question"
+    CORRECTION = "correction"
+    DISMISSAL = "dismissal"
+    OUTCOME_SELECTION = "outcome_selection"
+    BRANCH_COMMAND = "branch_command"
+    UNCLASSIFIED = "unclassified"
+
+
+class VRMessageCreate(BaseModel):
+    """Input payload for an operator-sent message.
+
+    Engine messages are NOT created via this API — they emit from the
+    reasoning loop directly. This shape is operator-only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    branch_id: str | None = Field(
+        default=None,
+        description="Branch context for the message. When None, applies to the investigation's primary branch.",
+    )
+    text: str = Field(min_length=1, description="Free-form operator input. Engine classifies intent.")
+    explicit_intent: OperatorIntent | None = Field(
+        default=None,
+        description="When set, skip auto-classification and use this intent directly.",
+    )
+
+
+class VRMessageSummary(BaseModel):
+    """Read-only projection of one message.
+
+    The ``payload`` dict shape depends on ``payload_kind`` and is
+    rendered by the frontend per-kind. Evidence refs are AgentStepRecord
+    IDs supporting the message's claims.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    investigation_id: str
+    branch_id: str
+    sender_kind: SenderKind
+    sender_id: str | None = None
+    payload_kind: PayloadKind
+    payload: dict[str, Any] = Field(default_factory=dict)
+    operator_intent: OperatorIntent | None = None
+    at_turn: int | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
