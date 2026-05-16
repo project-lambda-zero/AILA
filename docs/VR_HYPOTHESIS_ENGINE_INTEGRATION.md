@@ -238,6 +238,210 @@ The user explicitly asked about this. The engine's `submit` action can decide **
 
 Audit memos prevent re-investigating the same dead ends. When a new question comes in, the engine queries memos first; if a recent memo says "this area has been investigated, here's why we passed," the engine either trusts that result or has to specifically argue why the memo's reasoning no longer holds (e.g., new CVE landed).
 
+## Worked example: variant hunt with live IDE interaction
+
+The most complex live-UI flow is variant hunting from a confirmed parent finding. The file explorer becomes a real-time status dashboard; the code viewer becomes a verification surface; the graph panel becomes a live variant tree. This worked example shows D-41 + D-43 + D-44 composing.
+
+### The conversation
+
+```
+operator: hunt variants for F-12345
+
+engine:   [Parsing context: variant_hunt_order intent inferred]
+          F-12345 is the InferMapsUnsafe alias gap at
+          v8/src/maglev/maglev-ir.cc:1247 (root cause class
+          CVE-2025-2135).
+
+          Proposing 4 variant hypotheses:
+          ▸ H1: same pattern at sibling functions in same file
+          ▸ H2: same pattern in caller/callee chain
+          ▸ H3: structurally similar code elsewhere in V8 tree
+          ▸ H4: Wasm-side equivalent (CanonicalSig / WCPT)
+
+          Budget: $3.00, ~70 candidate sites estimated.
+          Forking into 4 parallel branches (D-41) — one per hypothesis.
+
+          [▶ Start variant hunt]   [Adjust budget]   [Drop H4 (Wasm out of scope)]
+
+operator: drop H4, lets see
+
+engine:   Steering updated: H4 abandoned (Wasm out of scope per operator).
+          Starting 3 branches in parallel.
+```
+
+### The file explorer decorates in real time
+
+As branches run, each file gets a status icon. Icons update via SSE events from the campaign workers.
+
+```
+File Tree (right panel)              Status legend
+───────────────────────              ─────────────
+▾ v8/src/                            ⚪  pending (queued for analysis)
+  ▾ maglev/                          🔵  currently being analyzed
+    ★ maglev-ir.cc                   ✓  cleared (no variant)
+      └─ line 1247 [F-12345]         ⚠  candidate (pattern match, unconfirmed)
+    🔵 maglev-graph-builder.cc       ★  confirmed variant (promoted to finding)
+    🔵 maglev-phi-untagging.cc       ✗  rejected (operator dismissed)
+  ▾ compiler/
+    ⚪ js-create-lowering.cc
+    ⚪ js-native-context-specialization.cc
+    ⚪ js-typed-lowering.cc
+    ...44 more pending H3 candidates
+```
+
+Hovering a file shows:
+- Status reason (e.g., "matched pattern at line 1812, 87% structural similarity")
+- Which branch/hypothesis flagged it
+- Time analyzed / time remaining
+- Click → opens file in code viewer with the suspected line highlighted
+
+### The variant tree graph updates live
+
+The graph panel (React Flow per D-44) renders the variant tree. Initial state:
+
+```
+        F-12345 (★ confirmed root)
+          ├── H1 sibling (3 pending)
+          ├── H2 callgraph (8 pending)
+          └── H3 structural (47 pending)
+          [H4 abandoned by operator]
+```
+
+As branches make progress, nodes appear under each hypothesis, color-coded by status. Click a candidate node → IDE auto-jumps to file/line.
+
+### Candidate surfaces with auto-open
+
+```
+engine: [✓ checked maglev-graph-builder.cc:Visit — no variant]
+engine: [✓ checked maglev-graph-builder.cc:VisitWithMaps — no variant]
+engine: [⚠ candidate found]
+        js-native-context-specialization.cc:1812
+        Pattern match: 87% to F-12345's structure
+        - IsSame(receiver, object_) check present
+        - alias-handling code MISSING (parent's gap)
+        - effect chain has Array.prototype.X.call (matches parent's effect)
+
+        [▼ Opening in code viewer with side-by-side comparison]
+```
+
+The IDE auto-splits to side-by-side view:
+
+```
+┌─ js-native-context-specialization.cc:1812 ─┐ ┌─ F-12345 root: maglev-ir.cc:1247 ─┐
+│ 1809  // ReduceElementAccess monomorphic   │ │ 1244  // InferMapsUnsafe traverse │
+│ 1810  if (access_infos.size() == 1) {      │ │ 1245  while (true) {              │
+│ 1811    access_info = access_infos.front() │ │ 1246    switch (effect->opcode) { │
+│⚠1812    if (IsSame(receiver, object_)) {   │ │⭐1247      case kTransitionElems  │
+│ 1813      // missing alias check here      │ │ 1248        if (IsSame(recv, obj))│
+│ 1814    }                                  │ │ 1249          return reliable;    │
+│ 1815  }                                    │ │ 1250        break;                │
+└─────────────────────────────────────────────┘ └────────────────────────────────────┘
+
+Engine annotation: "Both sites call IsSame() but neither handles the false-but-aliasing case.
+                    Parent's bug was fixed by setting kUnreliableMaps; this site has the same
+                    structure and may have the same vulnerability."
+
+[★ Promote to confirmed]   [⚠ Mark suspicious, verify with fuzz]   [✗ Reject - not a variant]
+```
+
+### Operator confirms — engine launches verification
+
+```
+operator: verify with fuzz
+
+engine:   Queuing fuzzilli micro-campaign on js-native-context-specialization.cc:1812
+          - Budget: $0.20 (per D-41 per-variant budget)
+          - Duration: 30 min  
+          - Strategy: mapinf_v8 with seed corpus derived from F-12345
+          - Engine: v8_d8_std on fuzz workstation
+          ...
+
+          [Live progress streams into the file tree decoration:
+           ⚠ js-native-context-specialization.cc  →  📊 fuzzing 0:12s]
+
+[30 min later]
+
+engine:   [✓ Verification complete]
+          Crash found: SBXCHECK at line 1819 (effect chain side effect)
+          Stack signature matches F-12345 family.
+          ★ Promoted to new finding: F-12348 (variant of F-12345)
+
+          [▼ Side-by-side: F-12348 details ←→ F-12345 parent]
+```
+
+### File tree state at completion
+
+```
+▾ v8/src/
+  ▾ maglev/
+    ★ maglev-ir.cc              ← parent F-12345
+    ✓ maglev-graph-builder.cc   ← 12 functions checked, none match
+    ✓ maglev-phi-untagging.cc
+  ▾ compiler/
+    ★ js-native-context-specialization.cc  ← variant F-12348 ⬆
+    ✓ js-create-lowering.cc
+    ✓ js-typed-lowering.cc
+    ⚠ js-call-reducer.cc        ← suspect, awaiting operator triage
+    ✓ 43 more cleared
+```
+
+### Engine final summary
+
+```
+engine:   Variant hunt complete:
+          - 58 candidate sites analyzed (avg $0.04/site)
+          - 2 confirmed variants: F-12348, F-12349
+          - 1 awaiting operator triage: js-call-reducer.cc
+          - 55 cleared (no variant)
+          - Spend: $2.42 of $3.00 budget
+
+          Next actions:
+          ▸ Triage 1 outstanding candidate? [Review]
+          ▸ Generate patch-completeness assessment? (Topic 4)
+          ▸ Update F-12345 with sibling-variant evidence?
+          ▸ Done [Close investigation]
+```
+
+### What gets persisted
+
+- Each candidate file decoration → `ReasoningGraphNode` (kind=evidence) with file path, line, pattern_match_score, branch_id
+- Operator triage decisions → audit trail (who confirmed/rejected when)
+- Each confirmed variant → row in `vr_findings` linked to parent via `parent_finding_id`
+- Each branch's exploration history → preserved per D-41 (queryable even after merge/abandon)
+- Live SSE event stream → re-playable via the investigation timeline view
+
+### What the IDE provides that pure chat couldn't
+
+|Without IDE+graph|With D-44 + this flow|
+|---|---|
+|Operator copy-pastes file paths from chat into separate editor|Click file in tree → opens in viewer|
+|Operator manually compares parent vs candidate code (window-switching)|Auto side-by-side comparison panel|
+|Operator tracks 50+ candidate files in their head|File tree decorations show full state at a glance|
+|"How is this candidate related to the parent?" — operator has to remember chain|Click graph node → see chain visualized|
+|Approve/reject requires typing exact file paths|Inline buttons on each candidate|
+|Progress updates are buried in scroll-back chat|File tree status icons + graph nodes update live|
+
+Variant hunt is the killer use case for D-44's interactive panels.
+
+### Backend message-payload types this requires
+
+Variant hunt depends on these from D-44's message-type catalog:
+- `code_pointer` (each candidate site)
+- `graph_view` (variant tree)
+- `taint_flow` (showing how parent's bug pattern reaches each candidate)
+- `patch_diff` (when comparing fixed-elsewhere code to unfixed candidate)
+- `hypothesis_update` (variant tree node state changes)
+- `outcome_pending` (each candidate awaits operator triage)
+
+Plus three NEW payload types specific to variant hunt:
+- `file_tree_decoration` — file path + status + reason. Frontend updates the tree decoration without losing scroll/expansion state.
+- `candidate_for_triage` — file + line + pattern_match_score + comparison_context + accept/reject buttons embedded in chat
+- `variant_hunt_progress` — branch_id + budget_used + candidates_processed + remaining_estimate (updates progress meter)
+
+Cost addition over D-44 baseline: ~150 LOC backend (three new payload types), ~250 LOC frontend (file tree decoration subscriber + candidate triage card + progress meter).
+
+---
+
 ## Branching — exploring multiple investigation paths in parallel
 
 The single-thread reasoning loop (intake → propose → dispute → submit) handles most VR investigations. But certain decisions benefit from EXPLORING MULTIPLE PATHS in parallel before committing:
