@@ -15,4 +15,12 @@ export const nav = [
     order: 71,
     description: "Hypothesis-driven investigations across targets",
   },
+  {
+    id: "vr.workspaces",
+    slot: "sidebar.main" as const,
+    label: "Workspaces",
+    to: "/vr/workspaces",
+    order: 69,
+    description: "Thematic workspaces grouping related VR targets",
+  },
 ];

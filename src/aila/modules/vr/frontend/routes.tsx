@@ -2,6 +2,7 @@ import { InvestigationDetailPage } from "./screens/InvestigationDetailPage";
 import { InvestigationsListPage } from "./screens/InvestigationsListPage";
 import { ProjectDetailPage } from "./screens/ProjectDetailPage";
 import { ProjectsPage } from "./screens/ProjectsPage";
+import { WorkspacesPage } from "./screens/WorkspacesPage";
 
 export const routes = [
   {
@@ -39,5 +40,14 @@ export const routes = [
     nav: false,
     slot: "page.full" as const,
     breadcrumb: "Investigation",
+  },
+  {
+    id: "vr.workspaces",
+    path: "/vr/workspaces",
+    page: WorkspacesPage,
+    title: "Workspaces",
+    nav: true,
+    slot: "page.full" as const,
+    breadcrumb: "Workspaces",
   },
 ];
