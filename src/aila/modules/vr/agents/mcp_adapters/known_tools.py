@@ -1,0 +1,196 @@
+"""Canonical inventory of every MCP tool the engine may invoke.
+
+Derived directly from:
+  - ida_headless_mcp server (81 tools as of 2026-05-14)
+  - audit_mcp server (54 tools as of 2026-05-14)
+
+Reasons to enumerate explicitly rather than auto-discover at runtime:
+  1. Unknown tool names should fail loud — typos in engine output, not
+     silent network errors at dispatch time.
+  2. The system prompt enumerates available tools per turn (so the
+     engine doesn't guess names). That enumeration MUST be deterministic
+     and not depend on whether the bridge happens to be reachable.
+  3. Adapter-coverage tests can iterate the set and confirm every tool
+     resolves (specialized OR generic).
+
+If a new MCP tool ships upstream, add its name here. The next
+investigation turn will then surface it in the prompt and accept it as
+a tool_run command.
+"""
+from __future__ import annotations
+
+__all__ = ["IDA_HEADLESS_TOOLS", "AUDIT_MCP_TOOLS", "KNOWN_TOOLS"]
+
+
+IDA_HEADLESS_TOOLS: frozenset[str] = frozenset({
+    # Lifecycle / metadata
+    "open_binary",
+    "close_binary",
+    "list_binaries",
+    "binary_metadata",
+    "binary_survey",
+    "poll_analysis",
+    "poll_mutation",
+    "worker_status",
+    "get_generation",
+    # Inventory
+    "list_functions",
+    "exports",
+    "imports",
+    "segments",
+    "stack_frame",
+    # Decompilation / disassembly
+    "decompile",
+    "batch_decompile",
+    "disassemble_function",
+    "get_microcode",
+    "pseudocode_slice_view",
+    "query_ctree",
+    "hexrays_warnings",
+    # miasm
+    "miasm_disassemble",
+    "miasm_lift_ir",
+    "miasm_emulate",
+    "miasm_simplify_expression",
+    # Cross-references / call graphs
+    "xrefs_to",
+    "xrefs_from",
+    "call_graph",
+    "call_chain",
+    "build_call_tree",
+    "find_api_call_sites",
+    "find_paths",
+    "find_similar_functions",
+    # Taint / dataflow / proofs
+    "trace_dataflow",
+    "trace_hash_xrefs",
+    "interprocedural_taint",
+    "def_use",
+    "value_ranges",
+    "path_feasibility",
+    "constrained_reachability",
+    "prove_equivalence",
+    "prove_predicate_opaque",
+    "prove_overflow",
+    "prove_bounds_sufficient",
+    "assess_exploitability",
+    # Obfuscation / CFF
+    "detect_obfuscation",
+    "detect_control_flow_obfuscation",
+    "batch_cff_scan",
+    "deflat_function",
+    "recover_cfg",
+    "patch_cff",
+    # Anti-analysis / strings / crypto
+    "detect_anti_analysis",
+    "detect_stack_strings",
+    "detect_dynamic_resolution",
+    "detect_crypto_primitives",
+    "classify_strings",
+    "decrypt_function_strings",
+    "decrypt_binary_strings",
+    "resolve_api_hashes",
+    # Library / classification
+    "detect_library_functions",
+    "classify_behavior",
+    "verify_capabilities",
+    "capa_scan",
+    "checksec",
+    "entropy_analysis",
+    "recover_class_hierarchy",
+    "detect_protocol_state_machine",
+    # Search / diff
+    "search_pattern",
+    "diff_function",
+    "diff_binary",
+    "diff_survey",
+    "cross_binary_similarity",
+    # Emulation
+    "emulate_concrete",
+    # Mutations
+    "rename_function",
+    "rename_variable",
+    "set_comment",
+    "set_function_type",
+    "set_variable_type",
+    "patch_bytes",
+    "patch_assemble",
+    # YARA
+    "generate_yara_rule",
+})
+
+
+AUDIT_MCP_TOOLS: frozenset[str] = frozenset({
+    # Indexing / cache
+    "index_codebase",
+    "poll_index",
+    "list_indexes",
+    "detect_languages",
+    "supported_languages",
+    "cache_stats",
+    "clear_cache",
+    "memory_usage",
+    "plan_partitions",
+    "poll_task",
+    "list_tasks",
+    # Summary / preanalysis
+    "summary",
+    "preanalysis",
+    # Call graph
+    "callers_of",
+    "callees_of",
+    "ancestors_of",
+    "children_of",
+    "reachable_from",
+    "paths_between",
+    "entrypoint_paths_to",
+    "includers_of",
+    # Surface / hotspots / fuzz
+    "attack_surface",
+    "complexity_hotspots",
+    "fuzzing_targets",
+    "fuzz_generators",
+    "attack_surface_diff",
+    # Search
+    "search_functions",
+    "search_constants",
+    "search_types",
+    "search_assertions",
+    "search_bitfields",
+    "search_macros",
+    "search_source",
+    "search_narrowing_casts",
+    "read_function",
+    "extract_class",
+    "cross_reference_bitfields",
+    # Taint / reachability
+    "taint_paths_to",
+    "dead_code",
+    "unreachable_from_entrypoints",
+    "functions_that_raise",
+    # Diff
+    "diff_codebases",
+    # Annotations
+    "annotate_function",
+    "annotations_of",
+    "nodes_with_annotation",
+    "clear_annotations",
+    # Findings / scanners
+    "findings",
+    "augment_sarif",
+    "list_scanners",
+    "run_scanner",
+    "scan_and_correlate",
+    # Graph export
+    "export_graph",
+    # Browser smoke
+    "test_in_browser",
+    "browser_info",
+})
+
+
+# Indexed by server_id used by the bridge dispatch.
+KNOWN_TOOLS: dict[str, frozenset[str]] = {
+    "ida_headless": IDA_HEADLESS_TOOLS,
+    "audit_mcp": AUDIT_MCP_TOOLS,
+}

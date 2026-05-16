@@ -381,7 +381,7 @@ def create_vr_router() -> APIRouter:
                 counts_by_project = {pid: int(n) for pid, n in count_rows}
 
         items = [_summary_from_record(r, counts_by_project.get(r.id, 0)) for r in rows]
-        meta = PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump()
+        meta = PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump().model_dump()
         return DataEnvelope(data=items, meta=meta)
 
     @router.post(
@@ -605,7 +605,7 @@ def create_vr_router() -> APIRouter:
             )).all()
 
         items = [_finding_from_record(r) for r in rows]
-        meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump()
+        meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump().model_dump()
         return DataEnvelope(data=items, meta=meta)
 
     @router.get(
@@ -782,7 +782,7 @@ def create_vr_router() -> APIRouter:
         items = [_workspace_summary(r) for r in rows]
         return DataEnvelope(
             data=items,
-            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit),
+            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump(),
         )
 
     # ── Targets (D-50/D-51) ────────────────────────────────────────────
@@ -879,7 +879,7 @@ def create_vr_router() -> APIRouter:
         items = [_target_summary(r) for r in rows]
         return DataEnvelope(
             data=items,
-            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit),
+            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump(),
         )
 
     @router.get(
@@ -1118,7 +1118,7 @@ def create_vr_router() -> APIRouter:
         items = [_investigation_summary(r) for r in rows]
         return DataEnvelope(
             data=items,
-            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit),
+            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump(),
         )
 
     async def _load_investigation(
@@ -1391,7 +1391,7 @@ def create_vr_router() -> APIRouter:
         items = [_message_summary(r) for r in rows]
         return DataEnvelope(
             data=items,
-            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit),
+            meta=PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump(),
         )
 
     @router.get(

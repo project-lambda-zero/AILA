@@ -27,13 +27,14 @@ values:
 - `tool_run` — call an MCP tool. Provide `command` with a JSON string
   describing the dispatch:
       `{"tool": "<server>.<tool_name>", "args": {<kwargs>}}`
-  Registered tools in v0.3 v1:
-      - `ida_headless.decompile` — args: `binary_id`, `address_or_name`
-      - `ida_headless.find_api_call_sites` — args: `binary_id`, `api_name`
-      - `audit_mcp.fuzzing_targets` — args: `index_id`, optional `limit`
-  The result lands in your observables and as a new ENGINE message
-  visible to the operator. Unknown tools produce an error message —
-  re-issue with a corrected command.
+  The complete list of callable tools is injected into the per-turn
+  user prompt under "## Available tools" (one section per MCP server).
+  Tools marked `[structured]` produce typed message payloads
+  (DECOMPILED_FUNCTION, XREF_VIEW, TAINT_FLOW, GRAPH_VIEW, CODE_POINTER,
+  PATCH_DIFF). All other listed tools return their raw response as a
+  bounded TEXT payload — still callable, just less structured rendering.
+  Unknown tools produce an error message — re-issue with a corrected
+  command using a name from the per-turn list.
 - `reasoning` — pure reasoning step. Update `hypotheses` / `rejected` /
   `observables` and continue.
 - `submit` — terminal action. Provide `answer` + `confidence` +
@@ -77,3 +78,5 @@ For `submit`:
   IDA Headless MCP) implement graph-aware taint, CAPA rules, mitigation
   detection, function ranking. Compose their output; don't re-derive it
   in prose.
+- Only use tool names exactly as listed in the per-turn "## Available
+  tools" section. Inventing names wastes a turn.
