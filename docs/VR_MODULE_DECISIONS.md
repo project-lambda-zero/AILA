@@ -382,11 +382,98 @@ Defaults pulled from `ConfigRegistry` (per-deployment). Operators can override p
 
 ---
 
+## Decisions from 2026-05-15 fuzzing bring-up session
+
+Detailed protocol in `VR_FUZZING_STRATEGY_DISCOVERY_DISCUSSION.md`. These are the actionable decisions that emerged.
+
+### D-30: V8MapInferenceProfile is the v0.3 reference custom strategy
+
+Four CodeGenerators targeting documented 2025-2026 CVE patterns:
+- `AliasedArgsAfterWarmupGenerator` — CVE-2025-2135 (Zellic V8CTF). Triggers `InferMapsUnsafe()` missing alias check by calling JIT'd functions with same variable in multiple parameter slots after warmup with distinct objects.
+- `PhiTypeMixerGenerator` — CVE-2026-3910 (zero-day, in-the-wild). Builds Phi nodes joining Smi + Object paths to trigger Maglev's incorrect untagging speculation.
+- `InferMapsExhaustionGenerator` — CVE-2020-6418 / CVE-2025-2135 family. Forces `InferMapsUnsafe` to walk effect chain past `Array.prototype.X.call(arr)` side effects with aliased receivers.
+- `ElementsKindTransitionAliasGenerator` — Cross-product of #1 with explicit `PACKED_SMI` → `PACKED_DOUBLE` → `PACKED_ELEMENTS` transitions via `push()`.
+
+The novelty gap was verified empirically: FUZZILLI's `randomArguments(forCallingFunctionWithParameters:)` source code reads `parameterTypes.map({ randomVariable(forUseAs: $0) })` — each parameter is picked independently, argument aliasing is essentially never produced by stock generators.
+
+### D-31: FUZZILLI is the primary v0.3 fuzz engine; AILA never replicates its generators
+
+The fuzz engine = FUZZILLI subprocess with REPRL. AILA stores strategies as REFERENCES to FUZZILLI profiles + commit pinning. Custom strategies = Swift PRs against a forked FUZZILLI (`project-lambda-zero/fuzzilli`, branch `aila-strategies`). Strategy plugin model from earlier `VR_V03_FUZZING_PLAN.md` GA-9 ("JSON composition of primitives") is REVERSED — Swift CodeGenerators ARE the primitive layer, JSON can't express them.
+
+Strategy JSON schema in AILA:
+```json
+{
+  "id": "mapinf_v8",
+  "engine": "v8_d8_std",
+  "fuzzilli_profile": "v8MapInference",
+  "fuzzilli_commit": "515d05c",
+  "cve_targets": ["CVE-2025-2135", "CVE-2026-3910"],
+  "novelty_evidence": {
+    "pattern": "Argument aliasing after warmup with distinct objects",
+    "missing_in": "randomArguments(forCallingFunctionWithParameters:)",
+    "cve_caught": "CVE-2025-2135"
+  },
+  "default_config": {"jobs": 8, "timeout_ms": 5500, "corpus": "markov", "consecutive_mutations": 3},
+  "pivot_history": []
+}
+```
+
+Each new strategy = FUZZILLI rebuild (~4 min) + JSON update. Not Python edit.
+
+### D-32: Campaign storage layout (refined from D-27)
+
+Three distinct directories per campaign on the fuzzing workstation:
+- `~/fuzz-storage/<campaign>/` — FUZZILLI's storage (corpus, crashes, settings, stats). `--overwrite` wipes this.
+- `~/fuzz-logs/<campaign>/` — Operator-facing logs. DELIBERATELY OUTSIDE storage so `--overwrite` doesn't wipe them. Empirical bug: putting logs inside storage caused FUZZILLI to delete logs on restart.
+- Object storage `s3://aila-vr/fuzz/<campaign>/` — durable findings after triage. Synced by triage worker.
+
+Postgres holds metadata + dedup signatures + time-series stats (per D-27).
+
+### D-33: Production = dedicated Linux fuzzing workstations via SSH, NOT WSL2
+
+WSL2 is fine for development/operator-side dev work but production v0.3 deployments use dedicated Linux machines, same execution model as v0.1's `tools/poc_runner.py`. Per-machine state on local SSD, AILA orchestrator connects over SSH.
+
+Rationale:
+- Reproducibility: no Windows-host interference, no thermal throttling on laptops
+- Isolation: campaign crashes don't kill operator workstation
+- Scale: fleet of fungible boxes, campaigns migrate on hardware failure
+- Security: untrusted-input processing (attacker-controlled bytes in crashes) needs proper user/cgroup isolation
+
+Provisioning per workstation:
+- ≥12 cores, ≥32GB RAM, ≥500GB SSD, Ubuntu 24.04 LTS
+- Install depot_tools, Swift 6.2+, FUZZILLI fork (pinned commit), target binaries
+- AILA service user (`aila-fuzz`), no shell, cgroup-limited
+- Per-orchestrator SSH key with `command=` restriction
+- Quarterly key rotation
+
+### D-34: Default minimization stays ON
+
+Initially tested `--minimizationLimit=1.0` (skip minimization) for 5x raw throughput. Reverted because:
+- Crash files become 80-instruction programs instead of 20-instruction minimized reproducers
+- Triage cost massively higher (operator reads bigger PoCs)
+- 30 execs/sec × 72h = 7.8M execs is plenty for our directed CVE-pattern hunt
+
+Quality > raw throughput. Post-hoc minimization helper (`minimize_crash.sh`) exists as fallback. May reconsider when running coverage-discovery campaigns where quantity matters more than triage-readiness.
+
+### D-35: Strategy files include `novelty_evidence` and `pivot_history` blocks
+
+Every strategy JSON in `data/strategies/` must include:
+- `novelty_evidence`: pattern definition, source-code citation of why existing tools miss it, CVE caught
+- `pivot_history`: log of when this strategy was abandoned/resumed and why
+
+Without `novelty_evidence`, strategy auto-classified as "stock variant" with low priority. Without `pivot_history`, AILA can't tell whether a strategy is fresh or has been tried-and-discarded before — important when revisiting old strategies as CVE landscape shifts.
+
+---
+
 ## Open Questions (Remaining)
 
 1. ~~**Fuzzing resource management.**~~ → Resolved by D-29.
 2. **Human steering UX richness.** VR needs exploit-specific steering beyond forensics' `ReasoningOperatorSteering`.
 3. **GDB integration depth.** Surface (run PoC, capture crash) for v0.1, deep (breakpoints, heap inspection) for v0.3.
 4. **Multi-model split-roles.** One model vs researcher/implementer/critic split. Experiment in v0.4.
-5. **FUZZILLI bring-up cost.** Custom V8 build with REPRL+coverage takes ~2hrs per V8 version. Worth automating? Or document and accept the cost?
+5. **FUZZILLI bring-up cost.** Custom V8 build with REPRL+coverage takes ~25-30min per V8 version (corrected from earlier "~2hrs" estimate based on actual session measurements). Worth automating? Or document and accept the cost?
 6. **Differential fuzzing baseline whitelist.** Different V8 tiers produce slightly different output for valid programs (Math precision, GC timing). How big is the false-positive rate without baseline tuning?
+7. **Bug bounty intake.** When a real sandbox violation lands, file to Google VRP immediately or internal-validate first? Internal validation costs operator time but reduces public-disclosure risk.
+8. **Strategy retirement criteria.** When does a custom strategy get retired? Suggested: 30 days zero new findings OR when stock FUZZILLI catches up to the pattern.
+9. **Multi-target prioritization.** With finite fuzzing workstations, how often do we rotate capacity between V8 / SpiderMonkey / JavaScriptCore / etc.? Suggested: 90-day rotations with 2-week overlap.
+10. **Researcher onboarding.** D-31 assumes Swift-capable engineers. For solo-operator deployments, path is LLM-drafted generator + automated tests for review.
