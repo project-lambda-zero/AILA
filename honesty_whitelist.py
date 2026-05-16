@@ -117,6 +117,7 @@ HONESTY_WHITELIST = [
     # Category (g): IDABridgeTool IS the platform HTTP bridge for binary analysis.
     # httpx is its transport layer — same role as paramiko in SSHService.
     ("vr/tools/ida_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
+    ("vr/tools/audit_mcp_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
 
     # Category (g): VRModule.health_checks probes the IDA MCP over HTTP.
     # This is a one-line httpx import inside an async closure, not a general HTTP client.
