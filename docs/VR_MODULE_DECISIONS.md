@@ -1361,6 +1361,261 @@ Step 3 can happen in parallel with other v0.3 platform work; step 4 happens duri
 
 ---
 
+### D-48: MCP fleet — standalone network deployment, multi-instance providers
+
+Revises D-47's "single MCP server per type" model. In real deployments MCPs run as standalone network services. AILA operates against a **fleet** of MCP instances per logical type, with routing/affinity/failover semantics like any other service mesh.
+
+### Why multi-instance is mandatory
+
+|Constraint|Implication|
+|---|---|
+|IDA Pro licenses are per-seat, ~$2-5K each|Can't run "more IDA" by scaling vertically. Adding capacity = adding licensed seats. Need a pool of N IDA workers.|
+|IDA databases (.i64) are per-binary, single-binary-open-at-a-time per instance|Switching binaries costs database load time. Pin a binary to an instance ("instance has v8 .i64 warm") and route accordingly.|
+|Different IDA versions for different target architectures|x64 binaries on one IDA build, ARM/MIPS on another, kernel-specific plugins on a third. Operator picks pool by capability tag.|
+|audit-mcp GPU instances are expensive (cloud GPU $1-3/hr) and want utilization|Share across teams/projects; pool-and-queue model.|
+|Multi-team / multi-project isolation|Project A's investigations shouldn't see Project B's IDA databases. Per-project instance assignment.|
+|MCP server failure is a fact of life|License timeouts, process crashes, network blips. Need failover.|
+|Geographic latency|Operator in EU, IDA license in US datacenter — pick closest available instance.|
+
+Bundling MCP into the AILA process (D-47 original framing) handles none of these. Fleet model handles all.
+
+### Concept hierarchy
+
+```
+MCP Type (logical capability)
+  └─ MCP Provider (named pool with policy)
+      └─ MCP Instance (one physical endpoint)
+          ├─ transport (stdio | http | grpc)
+          ├─ host:port
+          ├─ auth (token, mTLS cert, etc.)
+          ├─ capabilities (tags: arch, language, plugins)
+          ├─ project_affinity (which projects can use it)
+          ├─ binary_affinity (which binaries are pre-loaded)
+          ├─ health (alive, last_check_at, error_count)
+          ├─ load (active_calls, queue_depth)
+          └─ cost_per_call_usd (for budget tracking)
+```
+
+Example IDA fleet:
+- **Type:** `ida`
+- **Providers:**
+  - `ida.x64_pool` — 3 instances, all running IDA Pro 9.2 with Hex-Rays x64, share .i64 databases for v8 / chromium / firefox
+  - `ida.arm_pool` — 1 instance, IDA Pro with ARM decompiler, for Android/iOS analysis
+  - `ida.kernel_pool` — 1 instance, IDA with kernel debug plugin
+  - `ida.dev_workstation` — 1 instance on operator's laptop (development; lowest priority)
+
+Example audit-mcp fleet:
+- **Type:** `audit_mcp`
+- **Providers:**
+  - `audit_mcp.c_pool` — 2 GPU-equipped instances pre-loaded with C/C++ project indices
+  - `audit_mcp.web_pool` — 1 CPU instance for JS/Python/Ruby projects (cheaper, no GPU needed)
+  - `audit_mcp.dev` — 1 instance on operator's laptop
+
+### Config schema (replaces D-47's flat config)
+
+```yaml
+# In ConfigRegistry / config.yaml
+platform:
+  mcp:
+    types:
+      ida:
+        providers:
+          - id: ida.x64_pool
+            routing_strategy: binary_affinity_first  # prefer instance with .i64 warm
+            failover_attempts: 2
+            instances:
+              - id: ida-x64-1
+                transport: http
+                endpoint: https://ida-1.internal.example.com:8443
+                auth_ref: platform.mcp.ida.ida-x64-1.token  # secret ref
+                capabilities: [x64, hexrays, win, linux]
+                project_affinity: [v8, chromium]
+                binary_affinity_max: 3  # can keep 3 binaries warm
+                weight: 100
+                health_check_url: https://ida-1.internal.example.com:8443/health
+                health_check_interval_s: 30
+                timeout_s: 60
+                cost_per_call_usd: 0.05
+              - id: ida-x64-2
+                endpoint: https://ida-2.internal.example.com:8443
+                # ... similar
+              - id: ida-x64-3
+                endpoint: https://ida-3.internal.example.com:8443
+                # ...
+          - id: ida.arm_pool
+            routing_strategy: round_robin
+            instances:
+              - id: ida-arm-1
+                endpoint: https://ida-arm-1.internal.example.com:8443
+                capabilities: [arm, aarch64, hexrays, ios, android]
+      audit_mcp:
+        providers:
+          - id: audit_mcp.c_pool
+            routing_strategy: least_connections
+            instances:
+              - id: audit-c-1
+                endpoint: https://audit-1.internal.example.com:9000
+                capabilities: [c, cpp, gpu_enabled, large_index]
+                project_affinity: [v8, chromium, nginx, apache]
+                cost_per_call_usd: 0.08  # GPU compute charged
+              - id: audit-c-2
+                endpoint: https://audit-2.internal.example.com:9000
+                # ...
+```
+
+### Routing strategies
+
+|Strategy|Best for|Behavior|
+|---|---|---|
+|`binary_affinity_first`|IDA fleets|Pick instance with target binary's .i64 already loaded. If none, pick least-loaded instance and assign binary to it.|
+|`project_affinity_first`|IDA fleets across team boundaries|Pick instance assigned to current investigation's project. Falls back to any instance with capability match.|
+|`least_connections`|Stateless MCPs (audit-mcp's GPU pool)|Pick instance with fewest active calls.|
+|`round_robin`|Uniform fleets where instances are fungible|Cycle through instances in order.|
+|`capability_filtered`|Heterogeneous fleets (mixed IDA versions)|Filter to instances with required capability tags, then apply secondary strategy.|
+|`sticky_per_investigation`|Long investigations with multi-step tool chains on same data|First call picks instance; subsequent calls go to same instance for cache locality.|
+
+Operator can override routing per investigation: "use the EU instance for latency" / "use the dev instance for testing".
+
+### Health checking
+
+MCP client polls each instance's `health_check_url` every `health_check_interval_s` (default 30s). Health response includes:
+- `status`: "healthy" | "degraded" | "down"
+- `active_calls`: current concurrent calls (load signal)
+- `loaded_binaries` (IDA-specific): list of .i64 IDs currently warm
+- `version` and `tool_schema_hash`: for cache invalidation on upgrades
+
+If instance is degraded (e.g., approaching its license session limit), routing weight decreases. If down, instance temporarily removed from rotation; reattempt every `failover_attempts * 30s`.
+
+### Failover behavior
+
+```
+engine: tool_run("ida.decompile", {binary: "v8.exe", address: "0x..."})
+  ↓
+MCP client looks up ida type, picks ida.x64_pool provider
+  ↓
+Routing strategy = binary_affinity_first
+  → ida-x64-1 has v8.exe warm. Pick ida-x64-1.
+  ↓
+Call sent. Response after 1.2s. Success.
+```
+
+If ida-x64-1 is down or times out:
+
+```
+  ↓
+ida-x64-1 timeout / 5xx response
+  ↓
+Failover attempt 1: check ida-x64-2 — has v8.exe? No.
+  → Pick ida-x64-2 anyway (least loaded among remaining); cost: ~30s to load v8.exe .i64
+  ↓
+Call sent to ida-x64-2. Success.
+  ↓
+Mark ida-x64-1 as degraded for next health check window.
+Wrapper logs: "Failover from ida-x64-1 to ida-x64-2; added 30s to call latency".
+```
+
+If all instances in provider fail:
+- Wrapper raises `ProviderUnavailableError`
+- Reasoning engine treats it like any tool-unavailable error: surface to operator OR route to alternative tool
+- Operator gets notification: "ida.x64_pool unavailable; investigations using IDA tools will block. Use the alt pool or wait for recovery."
+
+### Project-instance affinity persistence
+
+Per-investigation, the chosen instance is sticky:
+- `ReasoningCaseState` includes `mcp_instance_pins: dict[mcp_type, instance_id]`
+- Once an investigation lands on an instance (e.g., ida-x64-1 has v8 loaded), all subsequent calls in that investigation prefer that instance
+- Only switch on failure OR explicit operator override
+- Reduces "load .i64 fresh each call" overhead massively
+
+Persists across operator sessions: if investigation pauses and resumes 4h later, pin still holds if instance is still healthy and binary still warm.
+
+### Fleet management API (operator side)
+
+```
+# List fleet
+GET /api/admin/mcp/providers
+  Returns providers with instance counts, health, load
+
+# Register a new instance
+POST /api/admin/mcp/providers/{provider_id}/instances
+  {endpoint, capabilities, project_affinity, weight, auth_ref}
+  Auto-discovers tools via MCP list_tools, registers in registry
+
+# Manually drain an instance for maintenance
+POST /api/admin/mcp/instances/{instance_id}/drain
+  No new calls; existing calls finish. After idle, instance can be safely restarted.
+
+# Re-enable instance
+POST /api/admin/mcp/instances/{instance_id}/enable
+
+# Force binary affinity (operator hint)
+POST /api/admin/mcp/instances/{instance_id}/load_binary
+  {binary_id: "v8.exe"}
+  Instance pre-loads .i64, becomes the preferred candidate for v8 calls
+
+# Move investigation to specific instance (override)
+POST /api/vr/investigations/{id}/mcp_pin
+  {mcp_type: "ida", instance_id: "ida-x64-2"}
+```
+
+### Observability
+
+Per-fleet metrics in the operator UI:
+- Provider-level: total calls/hr, p95 latency, error rate, cost spend
+- Instance-level: active calls, queue depth, binaries loaded, license session remaining (IDA-specific)
+- Per-investigation: which instances served calls, cumulative cost per provider
+
+Frontend admin panel shows fleet state visually — green/yellow/red per instance, with click-through to recent calls + errors.
+
+### Security model (refined)
+
+- Each MCP instance has its own auth credentials (separate token per instance)
+- TLS required for HTTP transport in production
+- mTLS for high-security deployments (AILA orchestrator presents client cert; instance verifies against known-good fingerprint list)
+- Per-instance ACLs: instance can declare "only investigations from project X can use me" — enforced by MCP client at routing time
+- Audit log records which instance served which call, for incident reconstruction
+
+### Discovery — auto-registration via service registry
+
+Optional: instead of YAML config, instances self-register via a service registry (Consul / etcd / Kubernetes service discovery). AILA's MCP client subscribes to service-registry events. New instance comes online → MCP client discovers, validates, adds to pool. Instance dies → registry notifies → MCP client removes from pool.
+
+Defer to v0.4 unless operator demands. v0.3 ships YAML-driven static config (simpler, sufficient for most deployments).
+
+### Implementation cost (revises D-47's M3.3ab estimate)
+
+|#|Milestone|LOC est|Notes|
+|---|---|---|---|
+|M3.3ab (revised)|`MCPClient` with single instance per type|→ split into smaller pieces below|
+|M3.3ab.1|MCP connection primitives (stdio + HTTP + grpc transports)|~300|Platform-level|
+|M3.3ab.2|Provider/instance registry + config schema|~300|Platform-level|
+|M3.3ab.3|Routing strategies (binary_affinity_first, least_connections, round_robin, sticky, capability_filtered)|~400|Platform-level|
+|M3.3ab.4|Health checking + failover state machine|~300|Platform-level|
+|M3.3ab.5|Affinity persistence (mcp_instance_pins in CaseState)|~150|Platform-level (uses existing reasoning state)|
+|M3.3ab.6|Fleet management API endpoints|~200|Platform-level|
+|M3.3ab.7|Fleet observability — metrics export + frontend admin panel|~400|Frontend + backend|
+|M3.3ab.8|Service registry adapter (v0.4 only)|~250|Deferred|
+
+Total platform: ~1650 LOC for v0.3 (~250 LOC v0.4 for service registry). Increase over D-47's original 1150 LOC platform estimate is +500 LOC for fleet semantics.
+
+### Backward compatibility
+
+A "fleet" of 1 instance behaves identically to D-47's single-instance assumption. Existing config from D-47 (single endpoint per MCP type) auto-converts to a provider with 1 instance, default routing strategy round_robin. Nothing breaks; deployments can scale up later without code changes.
+
+Forensics + other modules using MCP get fleet semantics for free.
+
+### Deployment patterns
+
+|Deployment|Fleet shape|
+|---|---|
+|**Solo operator dev**|Single-instance providers, all on localhost. Stdio transport.|
+|**Small team**|1-3 IDA licenses pooled, 1-2 audit-mcp instances on a shared workstation/server. HTTP transport.|
+|**Enterprise**|10+ IDA licenses across availability zones, multiple audit-mcp pools per language. mTLS + service registry. Per-team / per-project instance assignment.|
+|**Multi-tenant SaaS**|Operator-isolated instance pools, per-tenant cost accounting, ACLs at provider level. Hard isolation.|
+
+v0.3 ships supporting all four; the YAML config differs but the code paths are the same.
+
+---
+
 ## Open Questions (Remaining)
 
 1. ~~**Fuzzing resource management.**~~ → Resolved by D-29.
