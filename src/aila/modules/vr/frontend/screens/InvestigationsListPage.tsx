@@ -1,11 +1,13 @@
+import { useState } from "react";
 import { useNavigate } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import { useCreateInvestigation } from "../mutations";
 import { useInvestigations } from "../queries";
-import type { InvestigationStatus } from "../types";
+import type { InvestigationKind, InvestigationStatus } from "../types";
 
 const statusColor: Record<
   InvestigationStatus,
@@ -35,6 +37,14 @@ function fmtUsd(n: number): string {
 export function InvestigationsListPage() {
   const navigate = useNavigate();
   const { data: result, isLoading, isError } = useInvestigations();
+  const createMut = useCreateInvestigation();
+
+  const [showForm, setShowForm] = useState(false);
+  const [formTitle, setFormTitle] = useState("");
+  const [formQuestion, setFormQuestion] = useState("");
+  const [formTargetId, setFormTargetId] = useState("");
+  const [formKind, setFormKind] = useState<InvestigationKind>("discovery");
+  const [formBudget, setFormBudget] = useState("50");
 
   const investigations = result?.data ?? [];
 
@@ -50,7 +60,109 @@ export function InvestigationsListPage() {
             HonestVulnResearcher loop with tool dispatch + outcome routing.
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setShowForm((v) => !v)}
+          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors"
+        >
+          {showForm ? "Cancel" : "New Investigation"}
+        </button>
       </div>
+
+      {showForm && (
+        <AilaCard>
+          <h2 className="text-sm font-semibold text-foreground mb-2">
+            Start a new investigation
+          </h2>
+          <p className="text-xs text-text-muted mb-3">
+            Target must already exist (POST /api/vr/targets first if needed).
+            Workflow VR_INVESTIGATE_V1 fires immediately on create.
+          </p>
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={formTitle}
+              onChange={(e) => setFormTitle(e.target.value)}
+              placeholder="Title (e.g. 'Audit V8 InferMaps for missing alias check')"
+              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+            />
+            <textarea
+              value={formQuestion}
+              onChange={(e) => setFormQuestion(e.target.value)}
+              placeholder="Initial question — what are you asking the engine to investigate?"
+              rows={2}
+              className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+            />
+            <input
+              type="text"
+              value={formTargetId}
+              onChange={(e) => setFormTargetId(e.target.value)}
+              placeholder="Target ID (UUID from POST /api/vr/targets)"
+              className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+            />
+            <div className="flex gap-2 items-center">
+              <select
+                value={formKind}
+                onChange={(e) => setFormKind(e.target.value as InvestigationKind)}
+                className="px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
+              >
+                <option value="discovery">discovery</option>
+                <option value="variant_hunt">variant_hunt</option>
+                <option value="triage">triage</option>
+                <option value="n_day">n_day</option>
+                <option value="audit">audit</option>
+              </select>
+              <div className="flex items-center gap-1">
+                <span className="text-sm text-text-muted">budget $</span>
+                <input
+                  type="number"
+                  step="1"
+                  min="0"
+                  value={formBudget}
+                  onChange={(e) => setFormBudget(e.target.value)}
+                  className="w-20 px-2 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
+                />
+              </div>
+              <button
+                type="button"
+                disabled={
+                  !formTitle.trim() ||
+                  !formQuestion.trim() ||
+                  !formTargetId.trim() ||
+                  createMut.isPending
+                }
+                onClick={() => {
+                  const budget = parseFloat(formBudget);
+                  createMut.mutate(
+                    {
+                      title: formTitle.trim(),
+                      initial_question: formQuestion.trim(),
+                      target_id: formTargetId.trim(),
+                      kind: formKind,
+                      cost_budget_usd: Number.isFinite(budget) ? budget : 50,
+                    },
+                    {
+                      onSuccess: (result) => {
+                        setShowForm(false);
+                        setFormTitle("");
+                        setFormQuestion("");
+                        setFormTargetId("");
+                        setFormKind("discovery");
+                        setFormBudget("50");
+                        navigate(`/vr/investigations/${result.data.id}`);
+                      },
+                    },
+                  );
+                }}
+                className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+              >
+                {createMut.isPending ? "Creating…" : "Start investigation"}
+              </button>
+            </div>
+          </div>
+        </AilaCard>
+      )}
+
 
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 

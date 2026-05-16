@@ -6,6 +6,7 @@ import { toast } from "@/components/ui/sonner";
 import type {
   DisclosureUpdate,
   Envelope,
+  InvestigationKind,
   OperatorIntent,
   VRFinding,
   VRInvestigationSummary,
@@ -128,6 +129,41 @@ export function useSendOperatorMessage(investigationId: string) {
     },
     onError: (err: Error) => {
       toast.error(`Send failed: ${err.message}`);
+    },
+  });
+}
+
+export interface CreateInvestigationBody {
+  title: string;
+  initial_question: string;
+  target_id: string;
+  kind?: InvestigationKind;
+  secondary_target_ids?: string[];
+  parent_investigation_id?: string;
+  strategy_family?: string;
+  auto_pilot?: boolean;
+  cost_budget_usd?: number;
+}
+
+export function useCreateInvestigation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateInvestigationBody) =>
+      authorizedRequestJson<Envelope<VRInvestigationSummary>>(
+        "/vr/investigations",
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      ),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      toast.success(
+        `Investigation "${result.data.title}" started — workflow firing`,
+      );
+    },
+    onError: (err: Error) => {
+      toast.error(`Create failed: ${err.message}`);
     },
   });
 }
