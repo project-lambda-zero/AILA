@@ -76,6 +76,17 @@ HONESTY_WHITELIST = [
     # path. Inline `# noqa: PLC0415` is required to silence ruff.
     ("vr/_task_queue.py", "default_task_queue", "noqa"),
     ("vr/_task_queue.py", "enqueue_vr_nday", "noqa"),
+    ("vr/workflow/states/investigation_emit.py", "_run_pattern_extraction", "noqa"),
+
+    # Category (b): builtin disclosure tracks must share a uniform render()
+    # signature even when a specific track doesn't consume embargo_days
+    # (blog_post defers timing to the operator outside the embargo system).
+    ("vr/disclosure/builtin_tracks.py", "render", "embargo_days"),
+
+    # Category (b): available_tracks() returns a defensive copy of the
+    # private _REGISTRY dict. Inlining at call sites would leak mutable
+    # internal state across the API boundary.
+    ("vr/disclosure/registry.py", "available_tracks", "inlining"),
 
     # Category (h): router cache deserialization — silent fallback on corrupt
     # cache is intentional; the router re-routes on miss.

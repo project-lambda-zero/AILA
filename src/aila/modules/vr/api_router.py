@@ -30,6 +30,8 @@ from aila.platform.uow import UnitOfWork
 from .contracts import (
     BranchStatus,
     DisclosureStatus,
+    DisclosureSubmissionStatus,
+    DisclosureTrackInfo,
     InvestigationKind,
     InvestigationPauseReason,
     InvestigationStatus,
@@ -42,10 +44,14 @@ from .contracts import (
     PatternStatus,
     PayloadKind,
     PersonaVoice,
+    RenderedSubmission,
     SenderKind,
     TargetKind,
     TargetStatus,
     VRBranchSummary,
+    VRDisclosureSubmissionCreate,
+    VRDisclosureSubmissionPatch,
+    VRDisclosureSubmissionSummary,
     VRFinding,
     VRInvestigationCreate,
     VRInvestigationSummary,
@@ -2286,5 +2292,178 @@ def create_vr_router() -> APIRouter:
                 status_code=status.HTTP_409_CONFLICT, detail=msg,
             ) from exc
         return DataEnvelope(data=summary)
+
+    # ── Disclosure submissions (Disclosure Lifecycle plan) ─────────────
+
+    @router.get(
+        "/disclosure-tracks",
+        response_model=DataEnvelope[list[DisclosureTrackInfo]],
+        summary="List all available disclosure tracks (built-in + registered).",
+    )
+    @limiter.limit("120/minute")
+    async def list_disclosure_tracks(
+        request: Request,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[DisclosureTrackInfo]]:
+        del request, auth
+        from aila.modules.vr.disclosure import track_info_list
+
+        return DataEnvelope(data=track_info_list())
+
+    @router.post(
+        "/disclosures",
+        response_model=DataEnvelope[VRDisclosureSubmissionSummary],
+        status_code=status.HTTP_201_CREATED,
+        summary="Create a disclosure submission for a finding via one track.",
+    )
+    @limiter.limit("30/minute")
+    async def create_disclosure(
+        request: Request,
+        body: VRDisclosureSubmissionCreate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRDisclosureSubmissionSummary]:
+        del request
+        from aila.modules.vr.disclosure import (
+            DisclosureService,
+            DisclosureServiceError,
+        )
+
+        svc = DisclosureService()
+        try:
+            summary = await svc.create(body, team_id=auth.team_id)
+        except DisclosureServiceError as exc:
+            msg = str(exc)
+            if "not found" in msg or "unknown track" in msg:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=msg,
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=msg,
+            ) from exc
+        return DataEnvelope(data=summary)
+
+    @router.get(
+        "/disclosures",
+        response_model=DataEnvelope[list[VRDisclosureSubmissionSummary]],
+        summary="List disclosure submissions (filterable).",
+    )
+    @limiter.limit("60/minute")
+    async def list_disclosures(
+        request: Request,
+        finding_id: str | None = Query(default=None),
+        workspace_id: str | None = Query(default=None),
+        track_id: str | None = Query(default=None),
+        submission_status: DisclosureSubmissionStatus | None = Query(
+            default=None,
+            alias="status",
+        ),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[VRDisclosureSubmissionSummary]]:
+        del request, auth
+        from aila.modules.vr.disclosure import DisclosureService
+
+        svc = DisclosureService()
+        items, total = await svc.list(
+            finding_id=finding_id,
+            workspace_id=workspace_id,
+            track_id=track_id,
+            status=submission_status,
+            offset=offset,
+            limit=limit,
+        )
+        return DataEnvelope(
+            data=items,
+            meta=PaginatedMeta(
+                total=int(total), offset=offset, limit=limit,
+            ).model_dump(),
+        )
+
+    @router.get(
+        "/disclosures/{submission_id}",
+        response_model=DataEnvelope[VRDisclosureSubmissionSummary],
+        summary="Get one disclosure submission by id.",
+    )
+    @limiter.limit("120/minute")
+    async def get_disclosure(
+        request: Request,
+        submission_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRDisclosureSubmissionSummary]:
+        del request, auth
+        from aila.modules.vr.disclosure import DisclosureService
+
+        svc = DisclosureService()
+        summary = await svc.get(submission_id)
+        if summary is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Disclosure submission {submission_id} not found.",
+            )
+        return DataEnvelope(data=summary)
+
+    @router.patch(
+        "/disclosures/{submission_id}",
+        response_model=DataEnvelope[VRDisclosureSubmissionSummary],
+        summary="State transition + field updates for a disclosure submission.",
+    )
+    @limiter.limit("30/minute")
+    async def patch_disclosure(
+        request: Request,
+        submission_id: str,
+        body: VRDisclosureSubmissionPatch,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRDisclosureSubmissionSummary]:
+        del request, auth
+        from aila.modules.vr.disclosure import (
+            DisclosureService,
+            DisclosureServiceError,
+        )
+
+        svc = DisclosureService()
+        try:
+            summary = await svc.patch(submission_id, body)
+        except DisclosureServiceError as exc:
+            msg = str(exc)
+            if "not found" in msg:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=msg,
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=msg,
+            ) from exc
+        return DataEnvelope(data=summary)
+
+    @router.post(
+        "/disclosures/{submission_id}/render",
+        response_model=DataEnvelope[RenderedSubmission],
+        summary="Re-render the submission body (idempotent).",
+    )
+    @limiter.limit("60/minute")
+    async def render_disclosure(
+        request: Request,
+        submission_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[RenderedSubmission]:
+        del request, auth
+        from aila.modules.vr.disclosure import (
+            DisclosureService,
+            DisclosureServiceError,
+        )
+
+        svc = DisclosureService()
+        try:
+            rendered = await svc.render(submission_id)
+        except DisclosureServiceError as exc:
+            msg = str(exc)
+            if "not found" in msg or "disappeared" in msg:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=msg,
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=msg,
+            ) from exc
+        return DataEnvelope(data=rendered)
 
     return router
