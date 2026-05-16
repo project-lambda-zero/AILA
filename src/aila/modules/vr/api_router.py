@@ -10,16 +10,20 @@ D-26; total counts go in ``meta`` via ``PaginatedMeta``.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func as sa_func
 from sqlmodel import select
 
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
+from aila.platform.contracts._common import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.uow import UnitOfWork
 
@@ -57,6 +61,12 @@ from .contracts import (
     WorkspaceStatus,
     WorkspaceTheme,
 )
+
+# SSE polling cadence for the messages stream — 1s feels live without
+# hammering the DB. Heartbeat every 15s keeps proxies from idling out.
+_SSE_POLL_INTERVAL_S = 1.0
+_SSE_HEARTBEAT_S = 15.0
+_SSE_BATCH_LIMIT = 100
 
 
 def _infer_target_kind(spec: Any) -> TargetKind:
@@ -445,7 +455,7 @@ def create_vr_router() -> APIRouter:
                 counts_by_project = {pid: int(n) for pid, n in count_rows}
 
         items = [_summary_from_record(r, counts_by_project.get(r.id, 0)) for r in rows]
-        meta = PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump().model_dump()
+        meta = PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump()
         return DataEnvelope(data=items, meta=meta)
 
     @router.post(
@@ -669,7 +679,7 @@ def create_vr_router() -> APIRouter:
             )).all()
 
         items = [_finding_from_record(r) for r in rows]
-        meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump().model_dump()
+        meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump()
         return DataEnvelope(data=items, meta=meta)
 
     @router.get(
@@ -1613,6 +1623,7 @@ def create_vr_router() -> APIRouter:
         del request
         import json as _json
 
+        from .agents.intent_classifier import classify_intent
         from .db_models import (
             VRInvestigationBranchRecord,
             VRInvestigationMessageRecord,
@@ -1658,7 +1669,7 @@ def create_vr_router() -> APIRouter:
                 payload_json=_json.dumps({"text": body.text}),
                 operator_intent=(
                     body.explicit_intent.value if body.explicit_intent
-                    else OperatorIntent.UNCLASSIFIED.value
+                    else classify_intent(body.text).value
                 ),
             )
             uow.session.add(msg)
@@ -1714,6 +1725,128 @@ def create_vr_router() -> APIRouter:
             meta=PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump(),
         )
 
+    @router.get(
+        "/investigations/{investigation_id}/messages/stream",
+        summary="SSE stream of new investigation messages (live tail).",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "description": "SSE event stream of new messages as they land.",
+                "content": {"text/event-stream": {"schema": {"type": "string"}}},
+            },
+        },
+    )
+    @limiter.limit("30/minute")
+    async def stream_investigation_messages(
+        request: Request,
+        investigation_id: str,
+        branch_id: str | None = Query(default=None),
+        since_iso: str | None = Query(
+            default=None,
+            description="ISO-8601 timestamp; only messages newer than this are streamed.",
+        ),
+        auth: AuthContext = Depends(require_auth),
+    ) -> StreamingResponse:
+        """SSE stream of new investigation messages.
+
+        Polls the message table every ``_SSE_POLL_INTERVAL_S`` seconds for
+        rows with ``created_at > cursor`` and emits each as a single
+        ``data: <json>`` SSE event. Heartbeat every ``_SSE_HEARTBEAT_S``
+        seconds. Terminates when the investigation reaches a terminal
+        status or when the connection drops.
+        """
+        del request
+        from datetime import datetime as _dt
+
+        from .db_models import VRInvestigationMessageRecord, VRInvestigationRecord
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                )
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+
+        if since_iso:
+            try:
+                cursor = _dt.fromisoformat(since_iso.replace("Z", "+00:00"))
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid since_iso: {since_iso!r}",
+                ) from None
+        else:
+            cursor = utc_now()
+
+        async def _generator() -> AsyncGenerator[str, None]:
+            import json as _json
+
+            last_heartbeat = utc_now()
+            local_cursor = cursor
+            terminal = {
+                InvestigationStatus.COMPLETED.value,
+                InvestigationStatus.FAILED.value,
+                InvestigationStatus.ABANDONED.value,
+            }
+
+            yield 'event: open\ndata: {"connected":true}\n\n'
+
+            while True:
+                async with UnitOfWork() as poll_uow:
+                    stmt = select(VRInvestigationMessageRecord).where(
+                        VRInvestigationMessageRecord.investigation_id == investigation_id,
+                        VRInvestigationMessageRecord.created_at > local_cursor,
+                    )
+                    if branch_id:
+                        stmt = stmt.where(
+                            VRInvestigationMessageRecord.branch_id == branch_id,
+                        )
+                    stmt = stmt.order_by(
+                        VRInvestigationMessageRecord.created_at.asc()
+                    ).limit(_SSE_BATCH_LIMIT)
+                    rows = (await poll_uow.session.exec(stmt)).all()
+
+                    status_row = (await poll_uow.session.exec(
+                        select(VRInvestigationRecord.status).where(
+                            VRInvestigationRecord.id == investigation_id,
+                        ),
+                    )).first()
+
+                for row in rows:
+                    summary = _message_summary(row)
+                    yield f"data: {_json.dumps(summary.model_dump(mode='json'))}\n\n"
+                    if row.created_at and row.created_at > local_cursor:
+                        local_cursor = row.created_at
+
+                now = utc_now()
+                if (now - last_heartbeat).total_seconds() >= _SSE_HEARTBEAT_S:
+                    yield f'event: heartbeat\ndata: {{"ts":"{now.isoformat()}"}}\n\n'
+                    last_heartbeat = now
+
+                if status_row in terminal and not rows:
+                    yield (
+                        f'event: done\ndata: {{"status":"{status_row}"}}\n\n'
+                    )
+                    return
+
+                await asyncio.sleep(_SSE_POLL_INTERVAL_S)
+
+        return StreamingResponse(
+            _generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
     @router.get(
         "/investigations/{investigation_id}/branches",
         response_model=DataEnvelope[list[VRBranchSummary]],

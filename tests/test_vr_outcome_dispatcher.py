@@ -67,25 +67,28 @@ class TestTargetSignature:
 class TestRoutingTableCoverage:
     """Verify _NOT_YET_DISPATCHABLE covers every kind not handled directly."""
 
-    def test_three_kinds_have_real_handlers(self) -> None:
-        # These three are explicitly dispatched (AuditMemo, DirectFinding,
-        # VariantHuntOrder) — should NOT appear in _NOT_YET_DISPATCHABLE.
-        assert OutcomeKind.AUDIT_MEMO not in _NOT_YET_DISPATCHABLE
-        assert OutcomeKind.DIRECT_FINDING not in _NOT_YET_DISPATCHABLE
-        assert OutcomeKind.VARIANT_HUNT_ORDER not in _NOT_YET_DISPATCHABLE
+    def test_six_kinds_have_real_handlers(self) -> None:
+        # These six are explicitly dispatched — should NOT appear in
+        # _NOT_YET_DISPATCHABLE.
+        for handled in (
+            OutcomeKind.AUDIT_MEMO,
+            OutcomeKind.DIRECT_FINDING,
+            OutcomeKind.VARIANT_HUNT_ORDER,
+            OutcomeKind.CAMPAIGN_LAUNCH,
+            OutcomeKind.PROFILE_SPEC_DRAFT,
+            OutcomeKind.PATCH_ASSESSMENT_REPORT,
+        ):
+            assert handled not in _NOT_YET_DISPATCHABLE
 
-    def test_remaining_8_kinds_listed_explicitly(self) -> None:
-        # The other 8 of 11 D-43 outcome kinds must each be in the
-        # NOT_YET_DISPATCHABLE map so the dispatcher emits SKIPPED with a
-        # real reason rather than silently no-op.
+    def test_remaining_5_kinds_listed_explicitly(self) -> None:
+        # The other 5 of 11 D-43 outcome kinds must each be in the
+        # NOT_YET_DISPATCHABLE map so the dispatcher emits SKIPPED with
+        # a real reason rather than silently no-op.
         expected_not_yet = {
             OutcomeKind.ASSESSMENT_REPORT,
             OutcomeKind.STRATEGY_DESCRIPTOR,
-            OutcomeKind.PROFILE_SPEC_DRAFT,
             OutcomeKind.CONFIG_DELTA,
-            OutcomeKind.PATCH_ASSESSMENT_REPORT,
             OutcomeKind.CRASH_TRIAGE_REPORT,
-            OutcomeKind.CAMPAIGN_LAUNCH,
             OutcomeKind.SUB_INVESTIGATION,
         }
         assert set(_NOT_YET_DISPATCHABLE.keys()) == expected_not_yet
@@ -96,6 +99,9 @@ class TestRoutingTableCoverage:
             OutcomeKind.AUDIT_MEMO,
             OutcomeKind.DIRECT_FINDING,
             OutcomeKind.VARIANT_HUNT_ORDER,
+            OutcomeKind.CAMPAIGN_LAUNCH,
+            OutcomeKind.PROFILE_SPEC_DRAFT,
+            OutcomeKind.PATCH_ASSESSMENT_REPORT,
         }
         skipped = set(_NOT_YET_DISPATCHABLE.keys())
         all_listed = handled | skipped
@@ -146,3 +152,202 @@ class TestKnowledgeStub:
         assert result["entry_id"] == 42
         assert fake.calls[0]["namespace"] == "vr.audit_memo.workspace.ws-1"
         assert fake.calls[0]["dedup_key"] == "sig"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Pure-handler tests using fakes (no DB) — exercise the validation +
+# routing semantics of the 3 new dispatch kinds. The DB-bound load
+# step is monkey-patched out.
+# ────────────────────────────────────────────────────────────────────────────
+
+from dataclasses import dataclass  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
+
+from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher  # noqa: E402
+from aila.modules.vr.contracts import OutcomeDispatchStatus  # noqa: E402
+
+
+@dataclass
+class _FakeTarget:
+    id: str = "tgt-x"
+    workspace_id: str = "ws-x"
+    team_id: str | None = "team-x"
+
+
+@dataclass
+class _FakeInvestigation:
+    id: str = "inv-x"
+    title: str = "Patch X audit"
+    team_id: str | None = "team-x"
+    cost_budget_usd: float = 100.0
+    auto_pilot: bool = False
+    project_id: str | None = None
+
+
+class _FakeTaskHandle:
+    def __init__(self, task_id: str = "task-001") -> None:
+        self.task_id = task_id
+
+
+class _FakeTaskQueue:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def submit(self, **kwargs) -> _FakeTaskHandle:
+        self.calls.append(kwargs)
+        return _FakeTaskHandle()
+
+
+def _patch_load(dispatcher: OutcomeDispatcher) -> AsyncMock:
+    """Replace _load_target_for_investigation with a fake returning known rows."""
+    target = _FakeTarget()
+    inv = _FakeInvestigation()
+    mock = AsyncMock(return_value=(target, inv))
+    dispatcher._load_target_for_investigation = mock  # type: ignore[method-assign]
+    return mock
+
+
+class TestDispatchCampaignLaunch:
+    @pytest.mark.asyncio
+    async def test_writes_to_knowledge_when_payload_valid(self) -> None:
+        fake_knowledge = _FakeKnowledge()
+        d = OutcomeDispatcher(knowledge=fake_knowledge)
+        _patch_load(d)
+        outcome = MagicMock(confidence="strong")
+        result = await d._dispatch_campaign_launch(
+            "oc-1", "inv-x",
+            {"profile": "V8MapInferenceProfile",
+             "target_descriptor": {"binary_path": "/tmp/d8"},
+             "duration_hours": 24},
+            outcome,
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        assert result.dispatch_target == "knowledge_entry:42"
+        assert len(fake_knowledge.calls) == 1
+        call = fake_knowledge.calls[0]
+        assert call["namespace"] == "vr.campaign_request.workspace.ws-x"
+        assert call["metadata"]["profile"] == "V8MapInferenceProfile"
+        assert call["metadata"]["status"] == "pending"
+        assert call["metadata"]["duration_hours"] == 24
+
+    @pytest.mark.asyncio
+    async def test_rejects_missing_profile(self) -> None:
+        d = OutcomeDispatcher(knowledge=_FakeKnowledge())
+        _patch_load(d)
+        result = await d._dispatch_campaign_launch(
+            "oc-1", "inv-x",
+            {"target_descriptor": {"binary_path": "/tmp/d8"}},
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "missing_profile" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_rejects_missing_descriptor(self) -> None:
+        d = OutcomeDispatcher(knowledge=_FakeKnowledge())
+        _patch_load(d)
+        result = await d._dispatch_campaign_launch(
+            "oc-1", "inv-x",
+            {"profile": "X"},
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+
+
+class TestDispatchProfileSpecDraft:
+    @pytest.mark.asyncio
+    async def test_writes_to_knowledge(self) -> None:
+        fake_knowledge = _FakeKnowledge()
+        d = OutcomeDispatcher(knowledge=fake_knowledge)
+        _patch_load(d)
+        result = await d._dispatch_profile_spec_draft(
+            "oc-2", "inv-x",
+            {"profile_name": "NgxHttpFuzzProfile",
+             "profile_kind": "fuzzing",
+             "spec": {"strategy": "request-grammar", "seed_corpus": "rfc7230"}},
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        call = fake_knowledge.calls[0]
+        assert call["namespace"] == "vr.profile_spec.workspace.ws-x"
+        assert call["metadata"]["profile_name"] == "NgxHttpFuzzProfile"
+        assert call["metadata"]["status"] == "draft"
+        # Dedup is per-(workspace, kind, name) so a re-emission of the same
+        # draft hits the existing entry rather than spamming the namespace.
+        assert call["dedup_key"] == "ws-x|fuzzing|NgxHttpFuzzProfile"
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_spec(self) -> None:
+        d = OutcomeDispatcher(knowledge=_FakeKnowledge())
+        _patch_load(d)
+        result = await d._dispatch_profile_spec_draft(
+            "oc-2", "inv-x",
+            {"profile_name": "X", "profile_kind": "fuzzing", "spec": {}},
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "missing_profile_name_or_spec" in result.reason
+
+
+class TestDispatchPatchAssessmentReport:
+    @pytest.mark.asyncio
+    async def test_enqueues_vr_nday(self) -> None:
+        fake_queue = _FakeTaskQueue()
+        d = OutcomeDispatcher(
+            knowledge=_FakeKnowledge(),
+            task_queue_factory=lambda: fake_queue,
+        )
+        _patch_load(d)
+        with patch(
+            "aila.modules.vr.agents.outcome_dispatcher.enqueue_vr_nday",
+            new=AsyncMock(return_value=_FakeTaskHandle("task-nday-001")),
+        ) as enqueue_mock:
+            result = await d._dispatch_patch_assessment_report(
+                "oc-3", "inv-x",
+                {
+                    "patch_descriptor": {
+                        "vulnerable_ref": "abc123",
+                        "patched_ref": "def456",
+                        "repo_url": "https://github.com/x/y",
+                    },
+                    "assessment": {"verdict": "incomplete_fix"},
+                },
+            )
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        assert result.dispatch_target == "task:task-nday-001"
+        enqueue_mock.assert_awaited_once()
+        kwargs = enqueue_mock.await_args.kwargs
+        assert kwargs["source_outcome_id"] == "oc-3"
+        assert kwargs["patch_descriptor"]["vulnerable_ref"] == "abc123"
+        assert kwargs["target_id"] == "tgt-x"
+        assert kwargs["parent_investigation_id"] == "inv-x"
+
+    @pytest.mark.asyncio
+    async def test_rejects_missing_patch_descriptor(self) -> None:
+        d = OutcomeDispatcher(knowledge=_FakeKnowledge())
+        _patch_load(d)
+        result = await d._dispatch_patch_assessment_report(
+            "oc-3", "inv-x",
+            {"assessment": {"verdict": "ok"}},
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "missing_patch_descriptor" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_enqueue_failure_surfaces_as_failed(self) -> None:
+        d = OutcomeDispatcher(
+            knowledge=_FakeKnowledge(),
+            task_queue_factory=lambda: _FakeTaskQueue(),
+        )
+        _patch_load(d)
+        with patch(
+            "aila.modules.vr.agents.outcome_dispatcher.enqueue_vr_nday",
+            new=AsyncMock(side_effect=RuntimeError("redis down")),
+        ):
+            result = await d._dispatch_patch_assessment_report(
+                "oc-3", "inv-x",
+                {"patch_descriptor": {"vulnerable_ref": "x"}},
+            )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "enqueue_failed" in result.reason
+        assert "redis down" in result.reason
