@@ -25,12 +25,61 @@ from aila.platform.uow import UnitOfWork
 
 from .contracts import (
     DisclosureStatus,
-    TargetClass,
+    TargetKind,
     VRFinding,
     VRProjectCreate,
     VRProjectStatus,
     VRProjectSummary,
 )
+
+
+def _infer_target_kind(spec: Any) -> TargetKind:
+    """Infer a TargetKind from an ingestion spec's input_source + target_format.
+
+    Source-tree ingestion paths map to SOURCE_REPO. Binary uploads/downloads
+    map to a kind derived from target_format when set, otherwise NATIVE_BINARY.
+    Archive-class formats (APK/IPA/JAR/.NET) get their own TargetKind so
+    enrichment routes them through the appropriate toolchain.
+    """
+    if spec.input_source.value == "git_repo":
+        return TargetKind.SOURCE_REPO
+    fmt = spec.target_format.value if spec.target_format else None
+    if fmt == "apk":
+        return TargetKind.APK
+    if fmt == "ipa":
+        return TargetKind.IPA
+    if fmt == "jar":
+        return TargetKind.JAR
+    if fmt == "dotnet":
+        return TargetKind.DOTNET_ASSEMBLY
+    return TargetKind.NATIVE_BINARY
+
+
+def _descriptor_from_spec(spec: Any) -> str:
+    """Serialize a TargetIngestionSpec into a vr_targets.descriptor_json string.
+
+    The descriptor captures kind-specific identification so the workflow
+    setup state can recover everything needed to materialize the binary on
+    the workstation. It is also the canonical record of what was ingested.
+    """
+    import json as _json
+
+    descriptor: dict[str, Any] = {
+        "input_source": spec.input_source.value,
+        "target_format": spec.target_format.value if spec.target_format else None,
+        "target_class": spec.target_class.value,
+        "source_available": spec.source_available,
+    }
+    for field in (
+        "upload_filename", "upload_sha256", "repo_url", "vulnerable_ref",
+        "patched_ref", "build_command", "build_artifact", "download_url",
+        "binary_id",
+    ):
+        value = getattr(spec, field, None)
+        if value is not None:
+            descriptor[field] = value
+    return _json.dumps(descriptor)
+
 
 __all__ = ["DisclosureUpdate", "create_vr_router"]
 
@@ -49,15 +98,18 @@ class DisclosureUpdate(BaseModel):
 
 
 def _summary_from_record(record: Any, finding_count: int = 0) -> VRProjectSummary:
-    """Project a ``VRProjectRecord`` row to the public ``VRProjectSummary``."""
+    """Project a ``VRProjectRecord`` row to the public ``VRProjectSummary``.
+
+    Target metadata (target_class, input_source, format) lives on the
+    linked vr_targets row — callers can fetch it via /api/vr/targets/{id}.
+    """
     return VRProjectSummary(
         id=record.id,
         name=record.name,
         cve_id=record.cve_id,
         status=VRProjectStatus(record.status),
-        target_class=TargetClass(record.target_class),
-        input_source=getattr(record, "input_source", None),
-        target_format=getattr(record, "target_format", None),
+        target_id=record.target_id,
+        patched_target_id=record.patched_target_id,
         finding_count=finding_count,
         created_at=record.created_at.isoformat() if record.created_at else None,
     )
@@ -166,7 +218,7 @@ def create_vr_router() -> APIRouter:
     ) -> DataEnvelope[VRProjectSummary]:
         from aila.api.deps import get_task_queue
 
-        from .db_models import VRProjectRecord
+        from .db_models import VRProjectRecord, VRTargetRecord
         from .workflow.task import run_vr_nday
 
         async def _resolve_system(
@@ -205,29 +257,45 @@ def create_vr_router() -> APIRouter:
                     uow.session, body.poc_system_id, auth,
                 )
 
+            primary_target = VRTargetRecord(
+                workspace_id=body.workspace_id,
+                team_id=auth.team_id,
+                display_name=body.name,
+                kind=_infer_target_kind(body.target).value,
+                descriptor_json=_descriptor_from_spec(body.target),
+                primary_language=None,
+                secondary_languages_json="[]",
+                status="active",
+                capability_profile_json="{}",
+                tags_json="[]",
+                enrichment_status="unenriched",
+            )
+            uow.session.add(primary_target)
+            await uow.session.flush()
+
+            patched_target: VRTargetRecord | None = None
+            if body.patched_target:
+                patched_target = VRTargetRecord(
+                    workspace_id=body.workspace_id,
+                    team_id=auth.team_id,
+                    display_name=f"{body.name} (patched)",
+                    kind=_infer_target_kind(body.patched_target).value,
+                    descriptor_json=_descriptor_from_spec(body.patched_target),
+                    primary_language=None,
+                    secondary_languages_json="[]",
+                    status="active",
+                    capability_profile_json="{}",
+                    tags_json='["patched"]',
+                    enrichment_status="unenriched",
+                )
+                uow.session.add(patched_target)
+                await uow.session.flush()
+
             record = VRProjectRecord(
                 name=body.name,
                 cve_id=body.cve_id,
-                target_class=body.target.target_class.value,
-                input_source=body.target.input_source.value,
-                target_format=(
-                    body.target.target_format.value
-                    if body.target.target_format else None
-                ),
-                binary_id=body.target.binary_id,
-                repo_url=body.target.repo_url,
-                vulnerable_ref=body.target.vulnerable_ref,
-                patched_ref=body.target.patched_ref,
-                build_command=body.target.build_command,
-                build_artifact=body.target.build_artifact,
-                upload_filename=body.target.upload_filename,
-                upload_sha256=body.target.upload_sha256,
-                download_url=body.target.download_url,
-                patched_path=None,
-                patched_binary_id=(
-                    body.patched_target.binary_id if body.patched_target else None
-                ),
-                source_available=body.target.source_available,
+                target_id=primary_target.id,
+                patched_target_id=patched_target.id if patched_target else None,
                 context_notes=body.context_notes,
                 status=VRProjectStatus.CREATED.value,
                 team_id=auth.team_id,
@@ -241,6 +309,8 @@ def create_vr_router() -> APIRouter:
         t = body.target
         task_kwargs: dict[str, Any] = {
             "project_id": record.id,
+            "target_id": record.target_id,
+            "patched_target_id": record.patched_target_id,
             "name": body.name,
             "cve_id": body.cve_id,
             "input_source": t.input_source.value,

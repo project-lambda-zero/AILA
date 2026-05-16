@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, Float, Text
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Text
 from sqlmodel import Field, SQLModel
 
 from aila.platform.contracts._common import utc_now
@@ -31,6 +31,15 @@ class VRFindingRecord(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     project_id: str = Field(index=True, max_length=64)
+    target_id: str | None = Field(
+        default=None,
+        sa_column=Column(
+            "target_id",
+            ForeignKey("vr_targets.id"),
+            nullable=True,
+            index=True,
+        ),
+    )
     team_id: str | None = Field(default=None, index=True)
     crash_type: str | None = Field(default=None, index=True, max_length=64)
     crash_signature: str | None = Field(default=None, max_length=128)
