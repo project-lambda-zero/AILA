@@ -132,8 +132,7 @@ The malware analysis module is a separate future module (`src/aila/modules/malwa
 | Version | Scope | Success Criterion |
 |---|---|---|
 | **v0.1** | N-day PoC writer + mitigation check + advisory output + disclosure tracking | Given a CVE + binary: produces working crash PoC, checks mitigations, generates vendor-ready advisory, tracks disclosure state |
-| **v0.2** | Binary recon + target ranking + target class detection | Given a binary: identifies target class (userspace/kernel/hypervisor), maps attack surface, ranks functions by exploitability, reports mitigations |
-| **v0.3** | Fuzzing pipeline (local, single binary) | Given a binary + target function: generates harness, runs AFL++ campaign, triages crashes, assesses exploitability |
+| **v0.3** | **Hypothesis-driven discovery + fuzzing + disclosure + knowledge** (incorporates former v0.2 recon scope per D-53) | Given any target: workspaces and targets with capability profiles, hypothesis-engine investigations with branching, fuzzing campaigns with custom strategies, multi-track disclosure (12 tracks including blog/audition), pattern catalog with RAG-backed retrieval. See: VR_V03_REASONING_PLAN, VR_V03_FUZZING_PLAN, VR_V03_DISCLOSURE_LIFECYCLE_PLAN, VR_V03_KNOWLEDGE_TRANSFER_PLAN |
 | **v0.4** | Full research workflow | Hypothesis-driven, multi-strategy, human-in-the-loop. Combines recon + fuzzing + exploitation + advisory. Project/target hierarchy. |
 | **v0.5** | Kernel/hypervisor exploitation workflows | QEMU/KVM test environments, kernel-specific exploitation primitives, VM escape strategies |
 | **later** | Network fuzzing, packed binary support, variant analysis, cross-project knowledge |
@@ -1914,6 +1913,32 @@ Recomputed nightly OR on demand (when target's underlying binary version changes
 - "Show all targets without an active investigation in last 30 days" (gap detection)
 
 Frontend exposes tag-builder UI (existing pattern from forensics module). Saved filter views persist as `vr_workspace_views` (operator-named saved filters per workspace).
+
+---
+
+### D-53: v0.2 collapsed into v0.3 as target-enrichment milestone (M3.T)
+
+**Decision:** v0.2 is removed from the roadmap. Its scope — binary recon, target ranking, target class detection, mitigation analysis — is absorbed into v0.3 as a new milestone series `M3.T-1` through `M3.T-4` (Target enrichment), added to `VR_V03_REASONING_PLAN.md` because enrichment populates the `capability_profile` that the reasoning engine consumes.
+
+**Rationale:** v0.3 architecture (D-30 through D-52) makes most of v0.2's original scope redundant. The reasoning engine + MCP fleet (D-47/48) already drives recon through audit-mcp + IDA Headless MCP tool calls during investigations. Target class detection is now part of D-51 capability_profile. Attack surface mapping happens naturally through `binary_survey` + `call_graph` MCP calls inside the reasoning loop. Function-level exploitability ranking, while still useful as a batch operation, fits cleanly into the same data layer as capability_profile.
+
+Three pieces of original v0.2 scope were genuine work that needed a home:
+
+1. **Per-binary metadata enrichment** — one-shot pass on target ingestion that fills `vr_targets.capability_profile_json` (target class, primary/secondary languages, mitigations, applicable strategies)
+2. **Function-level exploitability ranking** — standalone batch service that ranks functions by risk-score (parser sites, network-reachable entry points, syscall surface) and surfaces "what should I focus on" reports separate from full investigations
+3. **Mitigation analysis pipeline** — extends v0.1's per-PoC checksec into per-binary upfront analysis (PE/ELF mitigations, control-flow integrity, sanitizer build detection)
+
+All three land in v0.3 as M3.T milestones (~3500 LOC). v0.3 total grows from ~47000 LOC to ~50500 LOC across ~340 files.
+
+**Phantom dependency cleanup:** Three docs previously referenced "v0.2 recon" as a precondition. Those references are corrected to reference M3.T:
+- `VR_V03_FUZZING_PLAN.md:20` — roadmap table updated
+- `VR_V03_FUZZING_PLAN.md:25` — "builds on v0.2's recon" → "builds on M3.T target enrichment"
+- `VR_V03_FUZZING_PLAN.md:474` — "If `target_path` is from v0.2 recon" → "If target has capability_profile populated (M3.T)"
+- `VR_V03_REASONING_PLAN.md:22` — roadmap table updated
+
+**v0.4 unchanged:** v0.4 still ships "full research workflow" — the hypothesis-driven, multi-strategy human-in-the-loop integration. v0.4 builds on v0.3 in the same way it would have built on v0.2 + v0.3 separately.
+
+**Why merge rather than ship v0.2 first:** v0.3's D-51 capability_profile schema is the canonical home for enrichment output. Shipping v0.2 separately would either (a) define a competing schema that v0.3 then refactors, OR (b) be a single-milestone release whose only artifact is a schema fragment. Merging avoids both.
 
 ---
 

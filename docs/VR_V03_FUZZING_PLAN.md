@@ -16,13 +16,15 @@ Output: campaign_id (long-running) + stream of `VRFinding` records as crashes ar
 ## Position in the VR roadmap
 
 From `VR_MODULE_DECISIONS.md`:
-- v0.1: N-day PoC writer (CVE → PoC + advisory) — **shipping**
-- v0.2: Binary recon + target ranking — **next**
-- **v0.3: Fuzzing pipeline (local, single binary)** — **this plan**
-- v0.4: Full research workflow (recon + fuzzing + exploit + advisory)
+- v0.1: superseded by v0.3 refactor (no users, no backport per D-53)
+- **v0.3: Hypothesis-driven discovery + fuzzing + disclosure + knowledge + target enrichment** — this plan covers fuzzing only; see siblings:
+  - `VR_V03_REASONING_PLAN.md` (hypothesis engine + N-day flow + M3.T target enrichment)
+  - `VR_V03_DISCLOSURE_LIFECYCLE_PLAN.md` (multi-track disclosure)
+  - `VR_V03_KNOWLEDGE_TRANSFER_PLAN.md` (pattern catalog + RAG)
+- v0.4: Full autonomous research workflow (multi-strategy + human-in-the-loop integration)
 - v0.5: Kernel/hypervisor exploitation
 
-v0.3 builds on v0.2's recon (which functions are worth fuzzing) and feeds v0.1 (advisory generation from crashes).
+v0.3 fuzzing builds on M3.T target enrichment (capability_profile populated on `vr_targets`) — tells the engine selector which fuzzing engines apply, what mitigations exist, and what languages live in the target. v0.3 fuzzing feeds the reasoning engine (which routes findings via `DirectFinding` outcome → advisory generation).
 
 ---
 
@@ -471,7 +473,7 @@ fuzz_setup -> fuzz_campaign -> fuzz_summary -> response_emit -> __succeeded__
 3. Validate strategy config against schema
 4. Allocate workdir
 5. Pre-flight resource check (CPU/mem/disk available)
-6. If `target_path` is from v0.2 recon: pull `binary_id` and any function-level metadata
+6. If target has populated `capability_profile_json` (from M3.T target enrichment): pull `binary_id`, applicable engines list, and any function-level ranking metadata
 
 **Output:** `campaign_record` initialized
 

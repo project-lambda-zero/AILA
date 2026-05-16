@@ -18,16 +18,18 @@ Output: `investigation_id` (durable, resumable) + stream of typed engine message
 
 | Version | Status | Deliverable |
 |---|---|---|
-| v0.1 | shipping | N-day PoC writer (`VR_V01_PLAN.md`) |
-| v0.2 | next | Binary recon + target ranking |
-| **v0.3 reasoning** | **this plan** | **Hypothesis-engine-driven discovery + variant hunting** |
+| v0.1 | superseded by v0.3 refactor (no users, no backport per D-53) | Original N-day PoC writer scope absorbed into v0.3 |
+| **v0.3 reasoning** | **this plan** | **Hypothesis-engine-driven discovery + variant hunting + N-day PoC writer + branching** |
 | v0.3 fuzzing | parallel plan | Fuzzing pipeline (`VR_V03_FUZZING_PLAN.md`) |
-| v0.4 | later | Full research workflow (recon + fuzzing + exploit + advisory) |
+| v0.3 disclosure | parallel plan | Multi-track disclosure (`VR_V03_DISCLOSURE_LIFECYCLE_PLAN.md`) |
+| v0.3 knowledge | parallel plan | Pattern catalog + RAG (`VR_V03_KNOWLEDGE_TRANSFER_PLAN.md`) |
+| v0.3 target enrichment | M3.T milestone in this plan (absorbed v0.2 per D-53) | Workspaces, targets, capability profiles, mitigation analysis, function ranking |
+| v0.4 | later | Full research workflow (autonomous multi-strategy + human-in-the-loop integration) |
 | v0.5 | later | Kernel / hypervisor exploitation |
 
 **Relationship to v0.3 fuzzing**: The fuzzing plan covers campaign infrastructure (engines, strategies, triage, minimization). This plan covers the **decision system that decides whether to launch a campaign** in the first place — and what to do with findings when they appear. Per D-37: fuzzing is OPTIONAL. The reasoning engine emits one of four outcomes per investigation: direct PoC / n-day-targeted fuzz / discovery fuzz / audit memo.
 
-**Relationship to v0.1 N-day**: When the reasoning engine concludes a finding is reportable, it can dispatch to the v0.1 workflow (`VR_NDAY_V1`) for advisory generation. The N-day workflow becomes a downstream consumer, not a peer.
+**Relationship to v0.1 N-day**: v0.1 is being refactored into v0.3 rather than preserved. Per D-53, there are no v0.1 production users; the N-day PoC writing workflow (`VR_NDAY_V1`) is reshaped as one of v0.3's investigation outcomes (`DirectFinding` → N-day workflow dispatch). The previously-shipped v0.1 schema (`vr_projects`, `vr_findings`) is being refactored to reference the new `vr_targets` and `vr_workspaces` tables introduced by M3.T-1.
 
 ---
 
@@ -801,6 +803,73 @@ Mirrors v0.3 fuzzing plan's M3.x naming convention. Reasoning side uses M3.R-* t
 | 10.12 | `frontend/spec.ts` route additions | 30 | 10.3, 10.4 |
 
 **Exit:** Operator browses investigations, opens one, sees live IDE + graph, chats with engine, accepts/rejects pending outcomes. Cost budget visible. Audit memo browser separate page.
+
+### Milestone M3.T-1: Target enrichment foundation (absorbed v0.2 per D-53)
+**Goal:** Workspace + target data layer with capability_profile schema. No enrichment logic yet — just schema.
+
+| # | File | LOC | Depends on |
+|---|---|---|---|
+| T1.1 | `contracts/workspace.py` (VRWorkspaceSummary, VRWorkspaceCreate) | 100 | — |
+| T1.2 | `contracts/target.py` (VRTargetSummary, VRTargetCreate, TargetKind, TargetStatus) | 180 | — |
+| T1.3 | `contracts/enrichment.py` (TargetCapabilityProfile, EnrichmentResult, MitigationFlags) | 200 | — |
+| T1.4 | `db_models/workspace.py` (VRWorkspaceRecord) | 80 | T1.1 |
+| T1.5 | `db_models/target.py` (VRTargetRecord, VRTargetTagIndexRecord) | 180 | T1.2 |
+| T1.6 | `alembic/versions/NNN_vr_v03_schema.py` — coherent v0.3 schema, drops legacy v0.1 migrations | 250 | T1.4, T1.5 |
+| T1.7 | Update `db_models/project.py` to reference `target_id` FK; drop redundant target columns | 80 | T1.6 |
+| T1.8 | Update `db_models/finding.py` to reference `target_id` FK | 30 | T1.6 |
+| T1.9 | Update `contracts/project.py` to split target ingestion from target persistence | 100 | T1.1, T1.2 |
+| T1.10 | Update workflow states + agent + tools to read target metadata from `vr_targets` (not `vr_projects`) | 200 | T1.7 |
+| T1.11 | `contracts/__init__.py` + `db_models/__init__.py` barrel exports | 30 | T1.x |
+
+**Exit:** Migrations apply cleanly to fresh DB. Existing v0.1 code paths (workflow states, agent) read target metadata via `project.target` relation. `ruff check`, `honesty_audit`, `compileall` clean.
+
+### Milestone M3.T-2: Mitigation analyzer
+**Goal:** Per-binary mitigation analysis pipeline (extends v0.1's per-PoC checksec to upfront per-target).
+
+| # | File | LOC | Depends on |
+|---|---|---|---|
+| T2.1 | `enrichment/contracts/mitigation.py` (MitigationReport, MitigationKind) | 100 | M3.T-1 |
+| T2.2 | `enrichment/services/mitigation_analyzer.py` | 350 | T2.1, audit-mcp `checksec` |
+| T2.3 | `enrichment/services/pe_mitigation_parser.py` | 200 | T2.2 |
+| T2.4 | `enrichment/services/elf_mitigation_parser.py` | 200 | T2.2 |
+| T2.5 | `enrichment/services/sanitizer_detector.py` (ASAN/MSAN/UBSAN build detection) | 150 | T2.2 |
+| T2.6 | `enrichment/workers/mitigation_worker.py` (ARQ task) | 100 | T2.2 |
+| T2.7 | Tests for parsers + worker | 250 | T2.x |
+
+**Exit:** Upload a PE/ELF binary → mitigation worker fires → `vr_targets.capability_profile_json.mitigations` populated with full report (NX, ASLR, canary, CET, CFI, RELRO, PIE, sanitizers). Result visible in per-target dashboard.
+
+### Milestone M3.T-3: Function-level exploitability ranker
+**Goal:** Standalone batch service that ranks functions by risk-score for operator-facing "what should I focus on" reports.
+
+| # | File | LOC | Depends on |
+|---|---|---|---|
+| T3.1 | `enrichment/contracts/ranking.py` (FunctionRiskScore, RankingReport) | 100 | M3.T-1 |
+| T3.2 | `enrichment/services/function_ranker.py` (composite scoring) | 350 | T3.1, audit-mcp + IDA MCP |
+| T3.3 | `enrichment/services/heuristics/parser_sink_detector.py` | 150 | T3.2 |
+| T3.4 | `enrichment/services/heuristics/network_entry_detector.py` | 150 | T3.2 |
+| T3.5 | `enrichment/services/heuristics/syscall_surface_detector.py` | 120 | T3.2 |
+| T3.6 | `enrichment/services/heuristics/string_pattern_detector.py` | 100 | T3.2 |
+| T3.7 | `enrichment/workers/ranking_worker.py` (ARQ task) | 100 | T3.2 |
+| T3.8 | API endpoints for ranking | 100 | T3.7 |
+| T3.9 | Tests for heuristics + ranker | 300 | T3.x |
+
+**Exit:** Trigger ranking on a target → top-N functions ranked with score breakdown (parser=X, network=Y, syscall=Z, strings=W → composite=N). Report stored as artifact; visible in per-target dashboard.
+
+### Milestone M3.T-4: Capability profile builder
+**Goal:** One-shot enrichment pass on target ingestion that fills capability_profile_json from D-51 schema.
+
+| # | File | LOC | Depends on |
+|---|---|---|---|
+| T4.1 | `enrichment/services/capability_profile_builder.py` | 400 | T2.x, T3.x |
+| T4.2 | `enrichment/services/target_class_detector.py` (userspace/kernel/hypervisor inference) | 200 | T4.1 |
+| T4.3 | `enrichment/services/language_detector.py` (primary + secondary languages) | 200 | T4.1, audit-mcp |
+| T4.4 | `enrichment/services/applicable_strategy_filter.py` (matches D-45 TargetProfile) | 150 | T4.1 |
+| T4.5 | `enrichment/workers/enrichment_orchestrator.py` (ARQ, chains T2+T3+T4) | 150 | T4.1 |
+| T4.6 | Tests | 250 | T4.x |
+
+**Exit:** Operator creates a target → enrichment orchestrator runs all three (mitigation + ranking + capability profile) in sequence → target dashboard shows complete capability profile. Investigation start filters strategies/engines by `applicable_*` lists from capability_profile.
+
+---
 
 ### Milestone M3.R-11: Tests + benchmark
 **Goal:** Verify v0.3 reasoning against known scenarios.
