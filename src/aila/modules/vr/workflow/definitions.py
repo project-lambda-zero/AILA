@@ -27,6 +27,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from aila.modules.vr.workflow.states.advisory import state_advisory
+from aila.modules.vr.workflow.states.investigation_emit import state_investigation_emit
+from aila.modules.vr.workflow.states.investigation_loop import state_investigation_loop
+from aila.modules.vr.workflow.states.investigation_setup import state_investigation_setup
 from aila.modules.vr.workflow.states.poc_development import state_poc_development
 from aila.modules.vr.workflow.states.research import state_research
 from aila.modules.vr.workflow.states.response_emit import state_response_emit
@@ -41,7 +44,7 @@ from aila.platform.workflows.types import (
 if TYPE_CHECKING:
     from aila.platform.workflows.types import WorkflowServices
 
-__all__ = ["VR_NDAY_V1"]
+__all__ = ["VR_INVESTIGATE_V1", "VR_NDAY_V1"]
 
 
 def _h(handler: object) -> HandlerFn:
@@ -99,6 +102,34 @@ VR_NDAY_V1: WorkflowDefinition = WorkflowDefinition(
         ),
         "response_emit": StateSpec(
             handler=_h(state_response_emit),
+            timeout_s=60.0,
+            max_retries=0,
+            on_success=RESERVED_SUCCEEDED,
+        ),
+    },
+    services_factory=_build_services,
+)
+
+VR_INVESTIGATE_V1: WorkflowDefinition = WorkflowDefinition(
+    definition_id="vr.investigate.v1",
+    start_state="investigation_setup",
+    states={
+        "investigation_setup": StateSpec(
+            handler=_h(state_investigation_setup),
+            timeout_s=60.0,
+            max_retries=1,
+            on_success="investigation_loop",
+        ),
+        "investigation_loop": StateSpec(
+            handler=_h(state_investigation_loop),
+            # Long timeout — each turn is one LLM round trip; up to 25
+            # turns by default with a generous per-turn budget.
+            timeout_s=7200.0,
+            max_retries=0,
+            on_success="investigation_emit",
+        ),
+        "investigation_emit": StateSpec(
+            handler=_h(state_investigation_emit),
             timeout_s=60.0,
             max_retries=0,
             on_success=RESERVED_SUCCEEDED,
