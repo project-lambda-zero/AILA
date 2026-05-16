@@ -823,51 +823,110 @@ Mirrors v0.3 fuzzing plan's M3.x naming convention. Reasoning side uses M3.R-* t
 
 **Exit:** Migrations apply cleanly to fresh DB. Existing v0.1 code paths (workflow states, agent) read target metadata via `project.target` relation. `ruff check`, `honesty_audit`, `compileall` clean.
 
-### Milestone M3.T-2: Mitigation analyzer
-**Goal:** Per-binary mitigation analysis pipeline (extends v0.1's per-PoC checksec to upfront per-target).
+### Milestone M3.T-2: ~~Mitigation analyzer~~ (DROPPED per honest review)
+
+**Status:** Dropped. The work is already done inline in
+`workflow/states/setup.py` `_persist_setup` (M3.T-1 Stage 2): one
+`ida.checksec(binary_id)` call, dict stored into
+`vr_targets.capability_profile_json.mitigations`. No analyzer class,
+no detector files, no provenance enum. If operators need a refresh-on-
+demand endpoint, that's ~30 LOC added to `api_router.py` when needed.
+
+**Lesson:** Don't build a subpackage around a one-line MCP call. The
+MCP server IS the analyzer.
+
+### Milestone M3.T-3: Function-level exploitability ranker (right-sized again)
+
+**Goal:** Per-target ranked list of "what's worth focusing on" produced by
+dispatching to audit-mcp (source path) or IDA Headless MCP (binary path)
+and unifying the outputs into one schema. No Python heuristics, no
+detector files — the MCPs already implement the heuristics graph-aware.
+
+**audit-mcp already provides (51 tools — see audit-mcp/README.md):**
+- `fuzzing_targets(index_id)` — **the ranked "what's worth fuzzing" list, built-in**
+- `attack_surface(index_id)` — entrypoints with trust levels, blast radius, framework detection
+- `preanalysis(index_id)` — blast radius top-50, privilege boundaries, taint propagation
+- `complexity_hotspots(index_id)` — complexity ranking
+- `taint_paths_to(index_id, sink_name)` — entrypoint→sink paths, graph-aware
+- `entrypoint_paths_to(index_id, target)` — paths from network entry points
+- `dead_code(index_id)` — exclusions (GPU: 49ms vs 72s on Chromium)
+- `scan_and_correlate(index_id, scanner="semgrep")` — SAST findings ranked by graph exploitability
+- `cross_reference_bitfields`, `children_of`, `includers_of` — variant hunt support
+
+**IDA Headless MCP already provides (binary path):**
+- `find_api_call_sites(api_name)` — parser-sink hits
+- `interprocedural_taint(sink_function, sink_argument_index)` — taint
+- `call_graph(addr, direction)` — bounded transitive callers/callees
+- `classify_behavior()` — imports mapped to ATT&CK
+- `classify_strings()`, `detect_stack_strings()` — string-pattern signals
+- `verify_capabilities()`, `capa_scan()` — 678 CAPA rules with function attribution
+- `assess_exploitability(addr, sink_function, sink_argument_index)` — per-function deep verdict
+- `prove_overflow()`, `prove_bounds_sufficient()` — SMT-backed confirmation
+
+**The only Python work is a dispatcher:** route by target kind to the
+appropriate MCP, await the structured response, normalize into a unified
+`function_ranking` schema, persist into `vr_targets.capability_profile_json`.
+No composition logic — the MCPs already compose graph-aware. Don't reinvent.
 
 | # | File | LOC | Depends on |
 |---|---|---|---|
-| T2.1 | `enrichment/contracts/mitigation.py` (MitigationReport, MitigationKind) | 100 | M3.T-1 |
-| T2.2 | `enrichment/services/mitigation_analyzer.py` | 350 | T2.1, audit-mcp `checksec` |
-| T2.3 | `enrichment/services/pe_mitigation_parser.py` | 200 | T2.2 |
-| T2.4 | `enrichment/services/elf_mitigation_parser.py` | 200 | T2.2 |
-| T2.5 | `enrichment/services/sanitizer_detector.py` (ASAN/MSAN/UBSAN build detection) | 150 | T2.2 |
-| T2.6 | `enrichment/workers/mitigation_worker.py` (ARQ task) | 100 | T2.2 |
-| T2.7 | Tests for parsers + worker | 250 | T2.x |
+| T3.1 | `enrichment/contracts/ranking.py` (FunctionRanking, RankedFunction, RankingSource enum) | 80 | M3.T-1 |
+| T3.2 | `enrichment/services/function_ranker.py` (dispatcher: source → audit-mcp `fuzzing_targets` + `complexity_hotspots` + `scan_and_correlate`; binary → IDA `find_api_call_sites` aggregator + `assess_exploitability` for top-K) | 200 | T3.1, audit-mcp, IDA MCP |
+| T3.3 | `enrichment/workers/ranking_worker.py` (ARQ task) | 30 | T3.2 |
+| T3.4 | API endpoints + persistence | 50 | T3.3 |
+| T3.5 | Tests for dispatcher + normalization (mock MCP responses) | 150 | T3.x |
 
-**Exit:** Upload a PE/ELF binary → mitigation worker fires → `vr_targets.capability_profile_json.mitigations` populated with full report (NX, ASLR, canary, CET, CFI, RELRO, PIE, sanitizers). Result visible in per-target dashboard.
+**Exit:** Trigger ranking on a source-repo target → audit-mcp `fuzzing_targets` runs → normalized
+ranked list written to `capability_profile_json.function_ranking`.
+Same on binary target → IDA `find_api_call_sites` + `assess_exploitability` chain → same schema.
+Operator sees uniform ranked list regardless of target kind.
 
-### Milestone M3.T-3: Function-level exploitability ranker
-**Goal:** Standalone batch service that ranks functions by risk-score for operator-facing "what should I focus on" reports.
+### Milestone M3.T-4: Capability profile builder (right-sized again)
+
+**Goal:** Single ARQ orchestrator that chains MCP enrichment into the
+D-51 capability_profile. Optional Haiku call for ambiguous classifications.
+
+**Already in MCPs:**
+- `audit_mcp.detect_languages(index_id)` — language detection
+- `audit_mcp.attack_surface(index_id)` — frameworks + entrypoint classification
+- `audit_mcp.preanalysis(index_id)` — blast radius + privilege boundaries
+- `ida.binary_survey(binary_id)` — binary orientation
+- `ida.checksec(binary_id)` — mitigations (already wired in setup.py)
+- `ida.classify_behavior(binary_id)` — ATT&CK behavioral categories
+- `ida.verify_capabilities(binary_id)` — API-driven capability classification
+- `ida.capa_scan(binary_id)` — 678 CAPA rules
+
+**Python work:**
+- Dispatch by target kind
+- Collect MCP outputs
+- Merge into TargetCapabilityProfile schema
+- Rule engine over collected signals to set `applicable_*` lists
+- Optional Haiku finalize when target_class is ambiguous (e.g. shared
+  library could be userspace or kernel-loaded)
 
 | # | File | LOC | Depends on |
 |---|---|---|---|
-| T3.1 | `enrichment/contracts/ranking.py` (FunctionRiskScore, RankingReport) | 100 | M3.T-1 |
-| T3.2 | `enrichment/services/function_ranker.py` (composite scoring) | 350 | T3.1, audit-mcp + IDA MCP |
-| T3.3 | `enrichment/services/heuristics/parser_sink_detector.py` | 150 | T3.2 |
-| T3.4 | `enrichment/services/heuristics/network_entry_detector.py` | 150 | T3.2 |
-| T3.5 | `enrichment/services/heuristics/syscall_surface_detector.py` | 120 | T3.2 |
-| T3.6 | `enrichment/services/heuristics/string_pattern_detector.py` | 100 | T3.2 |
-| T3.7 | `enrichment/workers/ranking_worker.py` (ARQ task) | 100 | T3.2 |
-| T3.8 | API endpoints for ranking | 100 | T3.7 |
-| T3.9 | Tests for heuristics + ranker | 300 | T3.x |
+| T4.1 | `enrichment/services/capability_profile_builder.py` (dispatcher: source → audit-mcp `detect_languages` + `attack_surface` + `preanalysis`; binary → IDA `binary_survey` + `checksec` + `classify_behavior` + `verify_capabilities` + `capa_scan`; rule engine merges into TargetCapabilityProfile; optional Haiku finalize for ambiguous target_class) | 200 | T3.x |
+| T4.2 | `enrichment/workers/profile_worker.py` (ARQ task wrapping T4.1) | 30 | T4.1 |
+| T4.3 | API endpoint `POST /api/vr/targets/<id>/enrich` | 50 | T4.2 |
+| T4.4 | Tests (mock MCP responses + LLM stub) | 150 | T4.x |
 
-**Exit:** Trigger ranking on a target → top-N functions ranked with score breakdown (parser=X, network=Y, syscall=Z, strings=W → composite=N). Report stored as artifact; visible in per-target dashboard.
+**Exit:** Operator creates a target → `POST /api/vr/targets/<id>/enrich` →
+orchestrator harvests MCP signals → composes capability_profile (mitigations
+from checksec, function_ranking from T3, behavior categories from CAPA,
+target_class from rule + optional Haiku finalize, applicable_* lists from
+rule engine over the composed signals). Report visible in per-target
+dashboard; investigation start filters strategies by `applicable_*` lists.
 
-### Milestone M3.T-4: Capability profile builder
-**Goal:** One-shot enrichment pass on target ingestion that fills capability_profile_json from D-51 schema.
+### M3.T LOC summary (revised after audit-mcp tool review)
 
-| # | File | LOC | Depends on |
-|---|---|---|---|
-| T4.1 | `enrichment/services/capability_profile_builder.py` | 400 | T2.x, T3.x |
-| T4.2 | `enrichment/services/target_class_detector.py` (userspace/kernel/hypervisor inference) | 200 | T4.1 |
-| T4.3 | `enrichment/services/language_detector.py` (primary + secondary languages) | 200 | T4.1, audit-mcp |
-| T4.4 | `enrichment/services/applicable_strategy_filter.py` (matches D-45 TargetProfile) | 150 | T4.1 |
-| T4.5 | `enrichment/workers/enrichment_orchestrator.py` (ARQ, chains T2+T3+T4) | 150 | T4.1 |
-| T4.6 | Tests | 250 | T4.x |
-
-**Exit:** Operator creates a target → enrichment orchestrator runs all three (mitigation + ranking + capability profile) in sequence → target dashboard shows complete capability profile. Investigation start filters strategies/engines by `applicable_*` lists from capability_profile.
+| Milestone | Original | After IDA-MCP review | After audit-mcp review | Notes |
+|---|---|---|---|---|
+| M3.T-1 (data + refactor) | ~1500 | ~1500 | ~1132 actual | Done, 4 commits |
+| M3.T-2 (mitigations) | ~1450 | 0 | 0 | Inline in setup.py |
+| M3.T-3 (ranker) | ~1670 | ~710 | ~510 | audit-mcp `fuzzing_targets` + `scan_and_correlate` already produce the ranking; dispatcher only |
+| M3.T-4 (capability profile) | ~1350 | ~550 | ~430 | audit-mcp `detect_languages` + `attack_surface` cover source path; dispatcher + Haiku finalize |
+| **M3.T total** | ~5970 | ~2400 | **~2072** | 65% reduction from original. MCPs do the work; AILA dispatches and unifies. |
 
 ---
 
