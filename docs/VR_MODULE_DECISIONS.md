@@ -1144,6 +1144,223 @@ Adding a new language is data + glue code, never engine changes. The reasoning e
 
 ---
 
+### D-47: MCP integration — audit-mcp + IDA Headless MCP as platform tools
+
+Both external MCP servers (audit-mcp source analysis, IDA Headless binary analysis) become first-class tools the reasoning engine can call via the platform tool registry. No re-implementation of their analysis logic in AILA. They're invoked, their results are transformed into AILA-native primitives (evidence nodes, code pointers, graphs), and they participate in the reasoning loop just like native Python tools.
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ AILA Platform                                                    │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │ Reasoning Engine                                         │    │
+│  │ (platform/services/reasoning.py — existing)              │    │
+│  └─────────────────────────┬────────────────────────────────┘    │
+│                            │ tool_run actions (D-36)             │
+│                            ▼                                      │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │ Platform Tool Registry (platform/tools/__init__.py)      │    │
+│  │  - Native tools: ScriptExecutor, SSHService, etc.        │    │
+│  │  - MCP-wrapped tools (NEW)                               │    │
+│  └─────────────────────────┬────────────────────────────────┘    │
+│                            │                                      │
+│  ┌─────────────────────────▼────────────────────────────────┐    │
+│  │ MCP Client (platform/services/mcp_client.py) NEW         │    │
+│  │ - Manages connections to configured MCP servers          │    │
+│  │ - Dynamic tool discovery + Python wrapper generation     │    │
+│  │ - Cost/timeout/retry policy per tool                     │    │
+│  │ - Translates MCP error responses to AILAError            │    │
+│  └─────┬─────────────────────────────────┬──────────────────┘    │
+│        │                                 │                        │
+└────────┼─────────────────────────────────┼────────────────────────┘
+         │                                 │
+      stdio/HTTP                       stdio/HTTP
+         │                                 │
+         ▼                                 ▼
+┌───────────────────────┐         ┌─────────────────────────────┐
+│ audit-mcp             │         │ IDA Headless MCP            │
+│ (source analysis)     │         │ (binary analysis)           │
+│ 54+ tools             │         │ 100+ tools                  │
+│ - callgraph, xrefs    │         │ - decompile, disassemble    │
+│ - type resolver       │         │ - prove_overflow            │
+│ - ast pattern search  │         │ - trace_dataflow            │
+│ - GPU graph engine    │         │ - constrained_reachability  │
+│ Local or remote       │         │ Requires IDA Pro license    │
+└───────────────────────┘         └─────────────────────────────┘
+```
+
+### Deployment topology
+
+|MCP|Where it runs|Why|
+|---|---|---|
+|**audit-mcp**|On the orchestrator OR on the fuzz workstation, configurable|Pure Python + GPU; no licensing constraint. Operator can keep it close to the source tree being audited (latency)|
+|**IDA Headless MCP**|On the analyst's workstation (where IDA Pro is licensed)|D-22 mandate. License is per-seat; orchestrator must SSH (or MCP-over-HTTP) to the IDA-licensed machine|
+|**AILA orchestrator**|Backend server (in deployment) or operator workstation (dev)|Always the one calling. Maintains MCP connections.|
+|**Fuzz workstations**|Dedicated Linux boxes (per D-33)|Don't need MCP themselves; orchestrator does the analysis work|
+
+Each deployment configures MCP server addresses in `ConfigRegistry`:
+- `platform.mcp.audit.transport` = `stdio` | `http`
+- `platform.mcp.audit.path` = `/usr/local/bin/audit-mcp` (stdio) or `https://audit-mcp.internal:8443` (http)
+- `platform.mcp.audit.auth_token` = bearer token if http transport
+- `platform.mcp.ida.transport`, `platform.mcp.ida.path`, `platform.mcp.ida.auth_token`
+- `platform.mcp.<name>.allowed_tools` = comma-separated tool names (whitelist; empty = all)
+- `platform.mcp.<name>.per_call_timeout_s` = per-tool-call timeout
+- `platform.mcp.<name>.cost_per_call_usd` = budget tracking
+
+### Lifecycle
+
+1. **Startup**: AILA bootstrap reads MCP config from `ConfigRegistry`. For each configured server, MCP client opens a connection (stdio subprocess OR HTTP session).
+2. **Tool discovery**: For each connection, MCP client calls `list_tools` MCP method. Each tool gets a generated Python wrapper class registered with the platform tool registry. Tool keys are namespaced: `audit_mcp.callgraph`, `ida.decompile`, `ida.prove_overflow`, etc.
+3. **Per-investigation use**: Reasoning engine emits `ReasoningTurnDecision(action="tool_run", tool_name="audit_mcp.callgraph", arguments={...})`. Tool registry dispatches to the MCP wrapper.
+4. **Wrapper executes**: Wrapper sends MCP RPC, awaits result with timeout. On error: maps MCP error to `AILAError`. On success: transforms result (next section).
+5. **Reconnect on failure**: If MCP connection drops, client auto-reconnects on next call. After N failures, marks tools temporarily unavailable; engine sees "tool unavailable" and routes to alternative or surfaces to operator.
+6. **Shutdown**: Graceful disconnect; if stdio subprocess, send termination signal.
+
+### Result transformation — MCP output to AILA primitives
+
+This is where the VR module adds value over generic MCP. Each MCP tool's output gets transformed into AILA's typed primitives so the result is automatically usable by the engine, chat, IDE, and graph viz.
+
+|MCP tool|Raw output|Transformed to|
+|---|---|---|
+|`audit_mcp.callgraph`|JSON graph (nodes + edges)|`graph_view` payload (D-44 message type) + `ReasoningGraphNode` entries (kind=evidence)|
+|`audit_mcp.ast_pattern_search`|List of file:line matches with confidence scores|N × `code_pointer` payloads (D-44) + `file_tree_decoration` updates (D-44) for variant hunt + evidence nodes per finding|
+|`audit_mcp.type_resolver`|Resolved type info for a symbol|Annotated evidence node + inline annotation in IDE panel|
+|`audit_mcp.xrefs_to` / `xrefs_from`|List of cross-reference sites|`xref_view` payload (D-44) — clickable list|
+|`audit_mcp.taint_analysis`|Source → sink trace|`taint_flow` payload (D-44) — animated linear graph|
+|`ida.decompile`|Pseudocode + assembly|`decompiled_function` payload (D-44) — tabbed viewer|
+|`ida.call_graph`|Binary callgraph|Same as `audit_mcp.callgraph` transformation|
+|`ida.trace_dataflow` / `ida.constrained_reachability`|Taint chain with constraints|`taint_flow` payload + constraint annotations|
+|`ida.prove_overflow` / `ida.prove_bounds_sufficient`|SMT proof verdict (SAT/UNSAT/inconclusive)|Annotated finding card + evidence node with the proof|
+|`ida.diff_function` / `audit_mcp.diff`|Unified diff between two versions|`patch_diff` payload (D-44) — side-by-side Monaco|
+|`ida.search_pattern`|Vulnerability pattern hits|N × `code_pointer` + severity-tagged candidates for variant hunt|
+|`ida.deflat_function`|CFF-recovered control flow|`graph_view` payload + special obfuscation badge|
+
+Each transformation is implemented in `vr/reasoning/mcp_adapters/` (one file per MCP server). Pure Python, easy to extend when new MCP tools surface.
+
+### Cross-MCP composition
+
+Many VR questions combine source + binary analysis:
+
+Example: "show me the source for this binary function I just decompiled"
+```
+engine.tool_run("ida.decompile", {address: "0x140001234"})
+  ↓ returns pseudocode + source file/line hint
+  ↓
+engine.tool_run("audit_mcp.locate_source", {function_name: "...", hint: "..."})
+  ↓ returns actual source file + line
+  ↓
+engine emits side-by-side payload:
+  - Left: ida.decompile result (decompiled_function payload)
+  - Right: source viewer at the located line (code_pointer payload)
+  - Annotated by engine: "Source-binary correspondence confirmed at offset N"
+```
+
+Another: "find all places this binary calls a symbol, then check the source-level type"
+```
+engine.tool_run("ida.xrefs_to", {address: "GetProcAddress"})
+  ↓ N call sites returned
+  ↓
+for each site:
+  engine.tool_run("audit_mcp.type_resolver", {symbol: locate_source(site)})
+  ↓ type info per site
+  ↓
+engine summarizes: "12 GetProcAddress callers; 3 take attacker-controlled strings"
+```
+
+This composition is what makes the integrated platform more powerful than either MCP alone.
+
+### Cost tracking
+
+Each MCP call has a configured cost (LLM token cost for including result in prompts + compute cost on the MCP server). MCP client tracks per-investigation spend:
+
+- `audit_mcp.callgraph` for a 10k-edge graph might cost ~$0.05 (compute) + ~$0.10 (prompt tokens to include in next reasoning turn)
+- `ida.decompile` for one function ~$0.02
+- `ida.prove_overflow` (SMT solving) ~$0.20 (compute) + ~$0.05 (prompt)
+- `audit_mcp.ast_pattern_search` over a 10MB codebase ~$0.30 (GPU compute) + variable prompt cost
+
+Budgets enforce per D-43:
+- Investigation budget ($5 default) caps total spend
+- Per-MCP-tool quota prevents one expensive tool from monopolizing budget
+- Engine prefers cheap tools when their evidence suffices
+
+### Long-running operations
+
+Some IDA tools (full binary analysis, deflat_function, batch_decompile) take minutes. MCP client supports two modes:
+
+1. **Synchronous**: Wait with timeout (default 60s). For fast tools.
+2. **Async with polling**: For tools known to be long-running (`batch_decompile`, `find_paths`, `path_feasibility`), MCP client gets back a ticket ID, returns control to engine immediately. Engine proceeds with other reasoning; periodically polls via `mcp.poll_ticket(id)`. When done, result becomes available.
+
+The IDA Headless MCP already supports both modes (per its existing `poll_analysis`, `poll_mutation` pattern). audit-mcp's GPU-heavy tools added the same.
+
+### Security model
+
+- Each MCP server is its own attack surface. Operator must trust the MCPs to the same level as the AILA orchestrator
+- MCP connections use authenticated transports (token in HTTP header, or stdio with restricted subprocess user)
+- Tool whitelisting: operator can explicitly disable mutating tools (`ida.rename_function`, `ida.patch_bytes`, `ida.set_comment`) if the IDA database should be read-only for AILA's purpose
+- Cost cap: prevents runaway investigations from racking up compute bills on shared MCP servers
+- Audit log: every MCP tool call logged with investigation_id, tool_name, args (redacted), duration, cost — operator can later query "what MCP tools did investigation X invoke?"
+
+### Failure modes
+
+|Failure|Behavior|
+|---|---|
+|MCP server unreachable|Wrappers report `tool_unavailable`; reasoning engine routes to alternatives or surfaces "the IDA service is down" to operator|
+|MCP tool error (e.g., binary not analyzed yet)|Wrapper maps to typed `AILAError` subclass (`ToolNotReadyError`, `ToolBadArgsError`, `ToolTimeoutError`); engine can retry with different args or escalate|
+|MCP version mismatch (server returns unknown response shape)|Wrapper logs schema mismatch, returns generic `ToolSchemaError`; operator notified to update MCP server|
+|License expiration (IDA)|Specific error class `LicenseError`; engine surfaces to operator immediately, doesn't retry|
+|Cost cap exceeded|Wrappers refuse calls, engine emits `request_operator_input` for budget extension|
+
+### Live operator visibility
+
+The investigation UI shows MCP activity in the chat thread as `tool_call` messages (per D-44 message types):
+
+```
+engine:   [▼ tool_call] audit_mcp.callgraph(symbol="maglev::Visit", depth=2)
+          ↳ duration: 1.2s | cost: $0.05 | 47 nodes, 89 edges
+          ↳ [▼ Show graph inline]
+          
+engine:   Based on the callgraph, the relevant callers are in 
+          maglev-graph-builder.cc and turbofan/lowering.cc.
+          Want me to check those for the same pattern?
+```
+
+Operator can click into any tool call to see full args + raw result + cost contribution. Helpful for debugging when an investigation produces unexpected conclusions.
+
+### Implementation cost
+
+|#|Milestone|LOC est|Notes|
+|---|---|---|---|
+|M3.3ab|`MCPClient` service (connection management, auto-reconnect, async polling)|~400|Platform-level|
+|M3.3ac|`MCPTool` dynamic wrapper class (schema-driven from MCP `list_tools`)|~250|Platform-level|
+|M3.3ad|Result transformer framework + base adapter|~150|Platform-level|
+|M3.3ae|`audit_mcp_adapter.py` — VR-specific transformations for audit-mcp tools|~400|VR-specific (in `vr/reasoning/mcp_adapters/`)|
+|M3.3af|`ida_mcp_adapter.py` — VR-specific transformations for IDA tools|~500|VR-specific|
+|M3.3ag|Config schema + bootstrap wiring|~150|Platform-level|
+|M3.3ah|Audit log + cost tracking integration|~200|Platform-level|
+
+Total platform-level: ~1150 LOC. VR-specific: ~900 LOC. No frontend work — chat client already handles `tool_call` payloads (per D-44).
+
+### Backward compatibility
+
+The MCP client is a NEW platform service; nothing else changes. Forensics can adopt the same MCPs (forensics often needs binary analysis too). The MCP servers themselves are unchanged — AILA consumes them through their existing MCP protocol surface.
+
+If a deployment has no MCP servers configured, all `audit_mcp.*` / `ida.*` tools simply don't appear in the tool registry. Reasoning engine adapts (won't propose using them).
+
+### Bootstrap order
+
+Per D-22: IDA Headless MCP is the FIRST deliverable, built before the VR module itself. With D-47:
+
+1. IDA Headless MCP exists and is testable standalone (✓ done — we used it in this session)
+2. audit-mcp exists and is testable standalone (✓ done — we built it earlier)
+3. AILA platform MCP client built (M3.3ab through M3.3ah) — does NOT depend on VR
+4. VR module's mcp_adapters built — depends on platform MCP client + VR reasoning module
+5. VR investigations can now use both MCPs as first-class tools
+
+Step 3 can happen in parallel with other v0.3 platform work; step 4 happens during VR module v0.3 implementation.
+
+---
+
 ## Open Questions (Remaining)
 
 1. ~~**Fuzzing resource management.**~~ → Resolved by D-29.
