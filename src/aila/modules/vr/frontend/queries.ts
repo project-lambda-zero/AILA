@@ -11,6 +11,7 @@ import type {
   VRMessageSummary,
   VROutcomeSummary,
   VRProjectSummary,
+  VRTargetSummary,
   VRWorkspaceSummary,
 } from "./types";
 
@@ -152,5 +153,49 @@ export function useWorkspaces(offset = 0, limit = 50) {
       await authorizedRequestJson<Envelope<VRWorkspaceSummary[]>>(
         `/vr/workspaces?offset=${offset}&limit=${limit}`,
       ),
+  });
+}
+
+export interface VRTargetDetail extends VRTargetSummary {
+  capability_profile: Record<string, unknown>;
+  descriptor: Record<string, unknown>;
+}
+
+export function useTargets(opts?: {
+  workspaceId?: string;
+  kind?: string;
+  status?: string;
+  offset?: number;
+  limit?: number;
+}) {
+  const { workspaceId, kind, status, offset = 0, limit = 50 } = opts ?? {};
+  return useQuery({
+    queryKey: ["vr", "targets", workspaceId, kind, status, offset, limit],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        offset: String(offset),
+        limit: String(limit),
+      });
+      if (workspaceId) params.set("workspace_id", workspaceId);
+      if (kind) params.set("kind", kind);
+      if (status) params.set("status", status);
+      return await authorizedRequestJson<Envelope<VRTargetSummary[]>>(
+        `/vr/targets?${params.toString()}`,
+      );
+    },
+  });
+}
+
+export function useTarget(targetId: string) {
+  return useQuery({
+    queryKey: ["vr", "target", targetId],
+    queryFn: async () =>
+      (
+        await authorizedRequestJson<Envelope<VRTargetDetail>>(
+          `/vr/targets/${encodeURIComponent(targetId)}`,
+        )
+      ).data,
+    enabled: !!targetId,
+    refetchInterval: 5000,
   });
 }

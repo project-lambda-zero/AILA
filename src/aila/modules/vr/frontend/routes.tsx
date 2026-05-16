@@ -2,6 +2,8 @@ import { InvestigationDetailPage } from "./screens/InvestigationDetailPage";
 import { InvestigationsListPage } from "./screens/InvestigationsListPage";
 import { ProjectDetailPage } from "./screens/ProjectDetailPage";
 import { ProjectsPage } from "./screens/ProjectsPage";
+import { TargetDetailPage } from "./screens/TargetDetailPage";
+import { TargetsPage } from "./screens/TargetsPage";
 import { WorkspacesPage } from "./screens/WorkspacesPage";
 
 export const routes = [
@@ -49,5 +51,23 @@ export const routes = [
     nav: true,
     slot: "page.full" as const,
     breadcrumb: "Workspaces",
+  },
+  {
+    id: "vr.targets",
+    path: "/vr/targets",
+    page: TargetsPage,
+    title: "Targets",
+    nav: true,
+    slot: "page.full" as const,
+    breadcrumb: "Targets",
+  },
+  {
+    id: "vr.target-detail",
+    path: "/vr/targets/:targetId",
+    page: TargetDetailPage,
+    title: "Target Detail",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "Target",
   },
 ];
