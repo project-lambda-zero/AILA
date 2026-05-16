@@ -11,6 +11,7 @@ import type {
   VRMessageSummary,
   VROutcomeSummary,
   VRProjectSummary,
+  VRWorkspaceSummary,
 } from "./types";
 
 export function useVRProjects(offset = 0, limit = 20) {
@@ -141,5 +142,15 @@ export function useInvestigationOutcomes(investigationId: string) {
       ),
     enabled: !!investigationId,
     refetchInterval: 5000,
+  });
+}
+
+export function useWorkspaces(offset = 0, limit = 50) {
+  return useQuery({
+    queryKey: ["vr", "workspaces", offset, limit],
+    queryFn: async () =>
+      await authorizedRequestJson<Envelope<VRWorkspaceSummary[]>>(
+        `/vr/workspaces?offset=${offset}&limit=${limit}`,
+      ),
   });
 }

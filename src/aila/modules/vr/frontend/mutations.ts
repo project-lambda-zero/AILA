@@ -13,6 +13,8 @@ import type {
   VRMessageSummary,
   VRProjectCreate,
   VRProjectSummary,
+  VRWorkspaceSummary,
+  WorkspaceTheme,
 } from "./types";
 
 export function useCreateVRProject() {
@@ -164,6 +166,31 @@ export function useCreateInvestigation() {
     },
     onError: (err: Error) => {
       toast.error(`Create failed: ${err.message}`);
+    },
+  });
+}
+
+export interface CreateWorkspaceBody {
+  name: string;
+  slug: string;
+  description?: string;
+  theme?: WorkspaceTheme;
+}
+
+export function useCreateWorkspace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateWorkspaceBody) =>
+      authorizedRequestJson<Envelope<VRWorkspaceSummary>>("/vr/workspaces", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "workspaces"] });
+      toast.success(`Workspace "${result.data.name}" created`);
+    },
+    onError: (err: Error) => {
+      toast.error(`Create workspace failed: ${err.message}`);
     },
   });
 }
