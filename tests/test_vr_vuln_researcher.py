@@ -18,6 +18,7 @@ from aila.modules.vr.agents.vuln_researcher import (
     _encode_case_state,
     _load_prompt,
     _outcome_payload,
+    _render_operator_messages_section,
     _terminal_outcome_kind,
     _to_outcome_confidence,
 )
@@ -186,3 +187,35 @@ class TestPromptLoading:
     def test_completely_unknown_family_also_falls_back(self) -> None:
         text = _load_prompt("weird.unknown_family")
         assert "audit-only investigation" in text
+
+
+class TestRenderOperatorMessagesSection:
+    def test_empty_returns_empty_string(self) -> None:
+        assert _render_operator_messages_section([]) == ""
+
+    def test_single_message_includes_text_and_intent(self) -> None:
+        out = _render_operator_messages_section([
+            {"id": "m1", "text": "check JSPI base", "intent": "steering"},
+        ])
+        assert "check JSPI base" in out
+        assert "[intent: steering]" in out
+        assert "Operator messages" in out
+
+    def test_unclassified_intent_default(self) -> None:
+        out = _render_operator_messages_section([
+            {"id": "m1", "text": "look at recv", "intent": ""},
+        ])
+        assert "[intent: unclassified]" in out
+
+    def test_multiple_messages_preserve_order(self) -> None:
+        out = _render_operator_messages_section([
+            {"id": "m1", "text": "first thought", "intent": "steering"},
+            {"id": "m2", "text": "second thought", "intent": "correction"},
+        ])
+        assert out.index("first thought") < out.index("second thought")
+        assert "[intent: steering]" in out
+        assert "[intent: correction]" in out
+
+    def test_missing_text_doesnt_crash(self) -> None:
+        out = _render_operator_messages_section([{"id": "m1", "intent": "steering"}])
+        assert "[intent: steering]" in out

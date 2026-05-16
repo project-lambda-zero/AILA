@@ -119,9 +119,17 @@ class HonestVulnResearcher:
         case_state = _decode_case_state(branch.case_state_json)
         turn_number = branch.turn_count + 1
 
+        pending_operator_messages = await self._consume_pending_operator_messages(
+            turn_number,
+        )
+
         system_prompt = _load_prompt(inv.strategy_family)
         user_prompt = self._build_user_prompt(
-            inv=inv, branch=branch, case_state=case_state, turn=turn_number,
+            inv=inv,
+            branch=branch,
+            case_state=case_state,
+            turn=turn_number,
+            pending_operator_messages=pending_operator_messages,
         )
 
         try:
@@ -236,18 +244,24 @@ class HonestVulnResearcher:
         branch: VRInvestigationBranchRecord,
         case_state: ReasoningCaseState,
         turn: int,
+        pending_operator_messages: list[dict[str, Any]] | None = None,
     ) -> str:
         """Render the per-turn user prompt.
 
-        Compact + structured. Pre-includes the investigation question,
-        target reference, current case state model, and a small turn
-        counter. Operator messages + MCP-derived evidence are NOT
-        included yet (M3.R-3 and M3.R-6 wire those).
+        Compact + structured. Includes the investigation question,
+        target reference, current case state model, turn counter, and
+        any pending operator messages (M3.R-6) consumed at this turn.
+        MCP tool results land in case_state.observables and surface via
+        render_case_model.
         """
         case_model = self._engine.render_case_model(case_state)
         secondary_refs = json.loads(inv.secondary_target_refs_json or "[]")
         secondary_str = (
             ", ".join(str(r) for r in secondary_refs) if secondary_refs else "(none)"
+        )
+
+        operator_section = _render_operator_messages_section(
+            pending_operator_messages or [],
         )
 
         return (
@@ -263,10 +277,73 @@ class HonestVulnResearcher:
             f"# Current case state\n\n"
             f"{case_model}\n"
             f"\n"
+            f"{operator_section}"
             f"# Instruction\n\n"
             f"Produce the next reasoning turn as a JSON object per the "
             f"system prompt schema."
         )
+
+    async def _consume_pending_operator_messages(
+        self,
+        turn_number: int,
+    ) -> list[dict[str, Any]]:
+        """Read + consume operator messages with at_turn IS NULL.
+
+        Stamps at_turn=turn_number so subsequent turns don't re-read
+        them. Returns the consumed messages' text + intent for prompt
+        rendering. Engine messages are ignored — they're already in
+        case_state via prior absorb() calls.
+        """
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(VRInvestigationMessageRecord)
+                .where(
+                    VRInvestigationMessageRecord.branch_id == self.branch_id,
+                    VRInvestigationMessageRecord.sender_kind == SenderKind.OPERATOR.value,
+                    VRInvestigationMessageRecord.at_turn.is_(None),
+                )
+                .order_by(VRInvestigationMessageRecord.created_at.asc())
+            )).all()
+
+            if not rows:
+                return []
+
+            consumed: list[dict[str, Any]] = []
+            for row in rows:
+                try:
+                    payload = json.loads(row.payload_json or "{}")
+                except json.JSONDecodeError:
+                    payload = {}
+                text = str(payload.get("text", "")).strip()
+                consumed.append({
+                    "id": row.id,
+                    "text": text,
+                    "intent": row.operator_intent or "unclassified",
+                    "sender_id": row.sender_id,
+                })
+                row.at_turn = turn_number
+                uow.session.add(row)
+            await uow.commit()
+            return consumed
+
+
+def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:
+    """Render pending operator messages as a markdown block for the prompt.
+
+    Returns "" when no messages — caller concatenates unconditionally.
+    Each message is shown with its intent classification (defaults to
+    'unclassified' when the message_classifier hasn't tagged it yet).
+    """
+    if not messages:
+        return ""
+    lines: list[str] = ["# Operator messages (new — consider before acting)\n"]
+    for entry in messages:
+        intent = entry.get("intent") or "unclassified"
+        text = entry.get("text") or ""
+        lines.append(f"- [intent: {intent}] {text}")
+    lines.append("")  # trailing blank for spacing before next section
+    return "\n".join(lines) + "\n"
+
 
 
 def _decode_case_state(raw_json: str | None) -> ReasoningCaseState:
