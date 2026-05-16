@@ -18,6 +18,7 @@ from aila.modules.vr.agents.vuln_researcher import (
     _encode_case_state,
     _load_prompt,
     _outcome_payload,
+    _render_available_tools_section,
     _render_operator_messages_section,
     _terminal_outcome_kind,
     _to_outcome_confidence,
@@ -219,3 +220,34 @@ class TestRenderOperatorMessagesSection:
     def test_missing_text_doesnt_crash(self) -> None:
         out = _render_operator_messages_section([{"id": "m1", "intent": "steering"}])
         assert "[intent: steering]" in out
+
+
+class TestRenderAvailableToolsSection:
+    def test_includes_both_servers(self) -> None:
+        out = _render_available_tools_section()
+        assert "## ida_headless" in out
+        assert "## audit_mcp" in out
+        assert "# Available tools" in out
+
+    def test_marks_specialized_tools(self) -> None:
+        out = _render_available_tools_section()
+        # Specialized adapter: decompile
+        assert "`ida_headless.decompile` [structured]" in out
+        # Specialized adapter: taint_paths_to
+        assert "`audit_mcp.taint_paths_to` [structured]" in out
+
+    def test_lists_generic_tools_without_marker(self) -> None:
+        out = _render_available_tools_section()
+        # No specialized adapter: list_binaries (generic only)
+        assert "`ida_headless.list_binaries`\n" in out
+        # Not marked as [structured]
+        line_with_list_binaries = next(
+            line for line in out.splitlines()
+            if "ida_headless.list_binaries" in line
+        )
+        assert "[structured]" not in line_with_list_binaries
+
+    def test_includes_tool_count_per_server(self) -> None:
+        out = _render_available_tools_section()
+        assert "(81 tools)" in out or "(80 tools)" in out  # ida_headless count
+        assert "(54 tools)" in out or "(53 tools)" in out  # audit_mcp count

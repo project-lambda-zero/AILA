@@ -35,6 +35,10 @@ from typing import Any
 
 from sqlmodel import select as _select
 
+from aila.modules.vr.agents.mcp_adapters import (
+    KNOWN_TOOLS,
+    specialized_tools,
+)
 from aila.modules.vr.contracts import (
     OutcomeConfidence,
     OutcomeKind,
@@ -278,6 +282,7 @@ class HonestVulnResearcher:
             f"{case_model}\n"
             f"\n"
             f"{operator_section}"
+            f"{_render_available_tools_section()}"
             f"# Instruction\n\n"
             f"Produce the next reasoning turn as a JSON object per the "
             f"system prompt schema."
@@ -343,6 +348,29 @@ def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:
         lines.append(f"- [intent: {intent}] {text}")
     lines.append("")  # trailing blank for spacing before next section
     return "\n".join(lines) + "\n"
+
+
+def _render_available_tools_section() -> str:
+    """Render the catalog of MCP tools the engine may invoke this turn.
+
+    Organized per MCP server. Tools with custom adapters (structured
+    payloads) are marked ``[structured]`` so the engine knows which
+    calls return high-fidelity rendering; everything else returns a
+    bounded TEXT payload via the generic fallback. The catalog is
+    derived from ``KNOWN_TOOLS`` + ``specialized_tools()`` so adding a
+    new tool only requires updating the registry.
+    """
+    specialized = set(specialized_tools())
+    parts: list[str] = ["# Available tools\n"]
+    for server in sorted(KNOWN_TOOLS):
+        tool_names = sorted(KNOWN_TOOLS[server])
+        parts.append(f"\n## {server} ({len(tool_names)} tools)\n\n")
+        for name in tool_names:
+            full = f"{server}.{name}"
+            marker = " [structured]" if full in specialized else ""
+            parts.append(f"- `{full}`{marker}\n")
+        parts.append("\n")
+    return "".join(parts)
 
 
 
