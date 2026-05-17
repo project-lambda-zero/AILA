@@ -32,7 +32,7 @@ __all__ = [
 
 
 class TargetKind(StrEnum):
-    """What kind of artifact the target represents (D-45)."""
+    """What kind of artifact the target represents (D-45, v0.5 GA-54)."""
 
     NATIVE_BINARY = "native_binary"
     SOURCE_REPO = "source_repo"
@@ -44,6 +44,10 @@ class TargetKind(StrEnum):
     IPA = "ipa"
     JAR = "jar"
     DOTNET_ASSEMBLY = "dotnet_assembly"
+    # v0.5 GA-54 — kernel + hypervisor target kinds
+    KERNEL_IMAGE = "kernel_image"
+    KERNEL_MODULE = "kernel_module"
+    HYPERVISOR_IMAGE = "hypervisor_image"
 
 
 class TargetStatus(StrEnum):
