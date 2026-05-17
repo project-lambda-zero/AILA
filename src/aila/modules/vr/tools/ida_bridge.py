@@ -59,13 +59,26 @@ class IDABridgeTool(Tool):
         base_url: str | None = None,
         timeout: float | None = None,
     ) -> None:
-        self._base_url = (
-            base_url
-            or os.environ.get("IDA_HEADLESS_URL", "http://127.0.0.1:18821")
-        ).rstrip("/")
+        self._fixed_base_url = base_url.rstrip("/") if base_url else None
         self._timeout = timeout or float(
-            os.environ.get("IDA_HEADLESS_TIMEOUT", "120")
+            os.environ.get("IDA_HEADLESS_TIMEOUT", "120"),
         )
+
+    async def _resolve_base_url(self) -> str:
+        if self._fixed_base_url is not None:
+            return self._fixed_base_url
+        env_value = os.environ.get("IDA_HEADLESS_URL")
+        if env_value:
+            return env_value.rstrip("/")
+        try:
+            from aila.storage.registry import ConfigRegistry  # noqa: PLC0415  (lazy: avoid hot-path on cold init)
+
+            cfg_value = await ConfigRegistry().get("vr", "ida_headless_url")
+            if isinstance(cfg_value, str) and cfg_value.strip():
+                return cfg_value.rstrip("/")
+        except (ValueError, RuntimeError, ImportError):
+            pass
+        return "http://127.0.0.1:18821"
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the MCP HTTP API.
@@ -83,7 +96,8 @@ class IDABridgeTool(Tool):
             return await self._list_tools()
         if action == "upload":
             return await self._upload_binary(**kwargs)
-        url = f"{self._base_url}/tools/{action}"
+        base = await self._resolve_base_url()
+        url = f"{base}/tools/{action}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(url, json=kwargs)
@@ -91,7 +105,7 @@ class IDABridgeTool(Tool):
             return {
                 "status": "error",
                 "error": (
-                    f"Cannot reach IDA Headless MCP at {self._base_url}. "
+                    f"Cannot reach IDA Headless MCP at {base}. "
                     "Ensure the HTTP server is running "
                     "(ida-headless-http or python -m ida_headless_mcp.http_api)."
                 ),
@@ -111,7 +125,8 @@ class IDABridgeTool(Tool):
 
     async def _list_tools(self) -> dict:
         """Return available MCP tool names when called with no action."""
-        url = f"{self._base_url}/tools"
+        base = await self._resolve_base_url()
+        url = f"{base}/tools"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(url)
@@ -124,7 +139,7 @@ class IDABridgeTool(Tool):
         except (httpx.ConnectError, httpx.TimeoutException, ValueError):
             return {
                 "status": "error",
-                "error": f"Cannot list tools from {self._base_url}/tools",
+                "error": f"Cannot list tools from {url}",
             }
 
     async def _upload_binary(self, file_path: str | None = None, **_extra: Any) -> dict:
@@ -146,7 +161,8 @@ class IDABridgeTool(Tool):
         target = Path(file_path)
         if not target.is_file():
             return {"status": "error", "error": f"File not found: {file_path}"}
-        url = f"{self._base_url}/upload"
+        base = await self._resolve_base_url()
+        url = f"{base}/upload"
         try:
             with target.open("rb") as fh:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -156,7 +172,7 @@ class IDABridgeTool(Tool):
                     )
             return resp.json()
         except httpx.ConnectError:
-            return {"status": "error", "error": f"Cannot reach {self._base_url}"}
+            return {"status": "error", "error": f"Cannot reach {base}"}
         except httpx.TimeoutException:
             return {"status": "error", "error": f"Upload timeout ({self._timeout}s)"}
         except (ValueError, OSError) as exc:
@@ -164,7 +180,8 @@ class IDABridgeTool(Tool):
 
     async def health(self) -> dict:
         """Quick reachability check for machine readiness verification."""
-        url = f"{self._base_url}/health"
+        base = await self._resolve_base_url()
+        url = f"{base}/health"
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(url)

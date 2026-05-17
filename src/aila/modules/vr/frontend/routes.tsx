@@ -13,6 +13,7 @@ import { FuzzCampaignsPage } from "./screens/FuzzCampaignsPage";
 import { FuzzCrashDetailPage } from "./screens/FuzzCrashDetailPage";
 import { PatternDetailPage } from "./screens/PatternDetailPage";
 import { PatternsPage } from "./screens/PatternsPage";
+import { McpServersPage } from "./screens/McpServersPage";
 
 export const routes = [
   {
@@ -149,5 +150,14 @@ export const routes = [
     nav: false,
     slot: "page.full" as const,
     breadcrumb: "Branch Tree",
+  },
+  {
+    id: "vr.mcp-servers",
+    path: "/vr/mcp/servers",
+    page: McpServersPage,
+    title: "MCP Servers",
+    nav: true,
+    slot: "page.full" as const,
+    breadcrumb: "MCP Servers",
   },
 ];

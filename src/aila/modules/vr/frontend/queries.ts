@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { authorizedRequestJson } from "@platform/api/http";
 
 import type {
+  DisclosureTrackInfo,
   Envelope,
+  McpServerSummary,
   RegisteredSystem,
   VRBranchSummary,
   VRDisclosureSubmissionSummary,
@@ -17,7 +19,6 @@ import type {
   VRProjectSummary,
   VRTargetSummary,
   VRWorkspaceSummary,
-  DisclosureTrackInfo,
 } from "./types";
 
 export function useVRProjects(offset = 0, limit = 20) {
@@ -397,5 +398,21 @@ export function useFuzzCrash(crashId: string) {
         )
       ).data,
     enabled: !!crashId,
+  });
+}
+
+// ─── MCP servers ────────────────────────────────────────────────────────
+// Lists registered MCP servers (audit-mcp, ida-headless) with live health
+// probes. Refetches every 5s while page is open so the operator sees
+// breakage immediately. Use mutations.useUpdateMcpServer to retarget.
+
+export function useMcpServers() {
+  return useQuery({
+    queryKey: ["vr", "mcp-servers"],
+    queryFn: async () =>
+      await authorizedRequestJson<Envelope<McpServerSummary[]>>(
+        "/vr/mcp/servers",
+      ),
+    refetchInterval: 5000,
   });
 }

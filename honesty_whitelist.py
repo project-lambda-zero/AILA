@@ -79,6 +79,8 @@ HONESTY_WHITELIST = [
     ("vr/workflow/states/investigation_emit.py", "_run_pattern_extraction", "noqa"),
     ("vr/workflow/task.py", "run_target_analysis", "noqa"),
     ("vr/services/target_analysis.py", "_run_git", "noqa"),
+    ("vr/tools/audit_mcp_bridge.py", "_resolve_base_url", "noqa"),
+    ("vr/tools/ida_bridge.py", "_resolve_base_url", "noqa"),
 
     # Category (b): builtin disclosure tracks must share a uniform render()
     # signature even when a specific track doesn't consume embargo_days
@@ -143,6 +145,7 @@ HONESTY_WHITELIST = [
     # httpx is its transport layer — same role as paramiko in SSHService.
     ("vr/tools/ida_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
     ("vr/tools/audit_mcp_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
+    ("vr/services/mcp_registry.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
 
     # Category (g): VRModule.health_checks probes the IDA MCP over HTTP.
     # This is a one-line httpx import inside an async closure, not a general HTTP client.

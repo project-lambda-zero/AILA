@@ -607,3 +607,25 @@ export interface VRFuzzCrashSummary {
   created_at?: string | null;
   updated_at?: string | null;
 }
+
+// ─── MCP server registry projection (operator-visible) ─────────────────
+
+export type McpServerStatus = "reachable" | "unreachable";
+export type McpServerUrlSource = "env" | "config" | "default";
+
+export interface McpServerSummary {
+  id: string;                          // 'audit_mcp' | 'ida_headless'
+  name: string;                        // human display name
+  description: string;                 // what this MCP owns
+  base_url: string;                    // currently resolved URL
+  base_url_source: McpServerUrlSource; // where the URL came from
+  default_url: string;                 // built-in default
+  env_var: string;                     // env var name (op reference only)
+  config_key: string;                  // vr.<key> for PATCH
+  status: McpServerStatus;             // reachability verdict
+  latency_ms: number | null;           // probe round-trip
+  tool_count: number;                  // distinct /tools/* endpoints
+  tools: string[];                     // sorted tool names
+  last_probed_at: string;              // ISO 8601
+  error: string | null;                // when status='unreachable'
+}

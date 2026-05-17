@@ -75,6 +75,22 @@ class VRConfigSchema(BaseModel):
         ge=10.0,
         description="Timeout for individual SSH commands on remote analysis hosts.",
     )
+    audit_mcp_url: str = Field(
+        default="http://127.0.0.1:18822",
+        description=(
+            "Base URL for the audit-mcp source-code MCP server. The platform "
+            "delegates ALL clone/index/graph work to this server (D-33). Point "
+            "at a dedicated Linux workstation for production."
+        ),
+    )
+    ida_headless_url: str = Field(
+        default="http://127.0.0.1:18821",
+        description=(
+            "Base URL for the IDA headless MCP server. The platform delegates "
+            "ALL binary upload/analysis to this server (D-33). Point at the "
+            "workstation that owns the IDA license + GPU."
+        ),
+    )
 
 
 VR_DEFAULTS = VRConfigSchema()
