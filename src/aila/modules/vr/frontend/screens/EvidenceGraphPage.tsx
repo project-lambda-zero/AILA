@@ -11,6 +11,7 @@ import {
   type GraphNodeInput,
 } from "../components/EvidenceGraph";
 import {
+  useEvidenceGraph,
   useInvestigation,
   useInvestigationBranches,
   useInvestigationOutcomes,
@@ -121,18 +122,8 @@ export function EvidenceGraphPage() {
         </p>
       </div>
 
-      <AilaCard className="border-dashed">
-        <AilaBadge severity="info" size="sm">
-          synthesised view
-        </AilaBadge>
-        <p className="text-[10px] text-text-muted mt-1">
-          Spec §1.9 wants a real project-level evidence graph with hypothesis
-          + evidence + obligation + crash + exploit + advisory nodes from
-          the reasoning engine. Backend graph endpoint is pending — this
-          view derives a graph from branches (as hypotheses) + outcomes
-          (as evidence / crash / advisory by outcome_kind).
-        </p>
-      </AilaCard>
+      <ServerSnapshotStatus investigationId={investigationId} />
+
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-3">
         <EvidenceGraph
@@ -273,4 +264,43 @@ function openUrlForNode(node: GraphNodeInput): string | null {
     return `/vr/fuzz/campaigns`;
   }
   return null;
+}
+
+/** Status card showing whether the backend evidence-graph endpoint
+ *  (08_FRONTEND_UX.md §1.9) returned a snapshot. The client-side
+ *  synthesis stays as the rendering source for v0.5 — the server
+ *  snapshot is exposed here so operators can confirm parity, and the
+ *  endpoint is in place for the day we want to swap data sources. */
+function ServerSnapshotStatus({
+  investigationId,
+}: {
+  investigationId: string;
+}) {
+  const { data, isLoading, error } = useEvidenceGraph(investigationId);
+  return (
+    <AilaCard className="border-dashed">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <AilaBadge severity={error ? "high" : "info"} size="sm">
+            {error
+              ? "server snapshot unavailable"
+              : isLoading
+                ? "loading server snapshot…"
+                : "server snapshot ready"}
+          </AilaBadge>
+          {data && (
+            <span className="text-[10px] text-text-muted ml-2 font-mono">
+              layout={data.data.layout} · {data.data.nodes.length} nodes ·{" "}
+              {data.data.edges.length} edges
+            </span>
+          )}
+        </div>
+        <p className="text-[10px] text-text-muted">
+          Layout is computed server-side from branches + outcomes; the
+          render below uses the same data via client synthesis for
+          interactive performance (08_FRONTEND_UX.md §1.9).
+        </p>
+      </div>
+    </AilaCard>
+  );
 }

@@ -170,6 +170,16 @@ class VRDisclosureSubmissionSummary(BaseModel):
     track_info: DisclosureTrackInfo | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    sections: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Named sections of the advisory — keys: summary, "
+            "technical_details, reproduction, patches, references. "
+            "Empty until the operator runs regenerate or edits in the "
+            "structured editor (08_FRONTEND_UX.md §1.8)."
+        ),
+    )
+    regenerated_from_finding_at: datetime | None = None
 
 
 class RenderedSubmission(BaseModel):

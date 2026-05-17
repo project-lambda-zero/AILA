@@ -39,6 +39,12 @@ from .enrichment import (
     MitigationFlags,
     TargetCapabilityProfile,
 )
+from .events import VREventEnvelope, VREventType
+from .evidence_graph import (
+    EvidenceGraphEdge,
+    EvidenceGraphNode,
+    EvidenceGraphSnapshot,
+)
 from .finding import (
     CrashSignature,
     CrashType,
@@ -49,15 +55,19 @@ from .finding import (
 from .fuzz import (
     CampaignStatus,
     CrashSeverity,
+    CrashTriageEvent,
     CrashTriageVerdict,
     FuzzEngineId,
     FuzzStrategyId,
+    FuzzTelemetryCreate,
+    FuzzTelemetryPoint,
     VRFuzzCampaignCreate,
     VRFuzzCampaignPatch,
     VRFuzzCampaignSummary,
     VRFuzzCrashCreate,
     VRFuzzCrashSummary,
 )
+from .hypothesis import HypothesisProjection, HypothesisState
 from .investigation import (
     InvestigationKind,
     InvestigationPauseReason,
@@ -210,4 +220,14 @@ __all__ = [
     "VRWorkspaceSummary",
     "WorkspaceStatus",
     "WorkspaceTheme",
+    "CrashTriageEvent",
+    "FuzzTelemetryCreate",
+    "FuzzTelemetryPoint",
+    "HypothesisProjection",
+    "HypothesisState",
+    "VREventEnvelope",
+    "VREventType",
+    "EvidenceGraphEdge",
+    "EvidenceGraphNode",
+    "EvidenceGraphSnapshot",
 ]

@@ -18,6 +18,7 @@ from .outcome import VRInvestigationOutcomeRecord
 from .pattern import VRPatternRecord
 from .project import VRProjectRecord
 from .target import VRTargetRecord, VRTargetTagIndexRecord
+from .telemetry import VRFuzzTelemetryRecord
 from .workspace import VRWorkspaceRecord
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "VRFindingRecord",
     "VRFuzzCampaignRecord",
     "VRFuzzCrashRecord",
+    "VRFuzzTelemetryRecord",
     "VRInvestigationBranchRecord",
     "VRInvestigationMessageRecord",
     "VRInvestigationOutcomeRecord",

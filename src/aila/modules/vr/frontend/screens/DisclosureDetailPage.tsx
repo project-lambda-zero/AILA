@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { useNavigate, useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
@@ -9,10 +11,15 @@ import { CVSSCalculator } from "../components/CVSSCalculator";
 import {
   useDeleteDisclosure,
   usePatchDisclosure,
+  usePatchDisclosureSections,
+  useRegenerateDisclosureSections,
   useRenderDisclosure,
 } from "../mutations";
 import { useDisclosure } from "../queries";
-import type { DisclosureSubmissionStatus } from "../types";
+import type {
+  DisclosureSubmissionStatus,
+  VRDisclosureSubmissionSummary,
+} from "../types";
 
 const NEXT_STATES: Record<
   DisclosureSubmissionStatus,
@@ -355,6 +362,10 @@ export function DisclosureDetailPage() {
           </dl>
         </AilaCard>
       )}
+      {/* Structured advisory editor (§1.8) — sections backed by
+          POST /disclosures/{id}/sections + regenerate-from-finding. */}
+      <DisclosureSectionsEditor submission={sub} />
+
       {/* Disclosure timeline thread (§1.8). Spec calls for a vertical
           thread of state transitions with timestamps. v0.5 surfaces
           what the contract exposes: drafted → submitted (= created_at)
@@ -424,5 +435,107 @@ function TimelineRow({
         {note && <p className="text-text-muted text-[10px] mt-0.5">{note}</p>}
       </div>
     </li>
+  );
+}
+
+const SECTION_ORDER = [
+  { key: "summary", label: "Summary" },
+  { key: "technical_details", label: "Technical details" },
+  { key: "reproduction", label: "Reproduction" },
+  { key: "patches", label: "Patches" },
+  { key: "references", label: "References" },
+] as const;
+
+function DisclosureSectionsEditor({
+  submission,
+}: {
+  submission: VRDisclosureSubmissionSummary;
+}) {
+  const initial = submission.sections ?? {};
+  const [draft, setDraft] = useState<Record<string, string>>({
+    summary: initial.summary ?? "",
+    technical_details: initial.technical_details ?? "",
+    reproduction: initial.reproduction ?? "",
+    patches: initial.patches ?? "",
+    references: initial.references ?? "",
+  });
+  const patchMut = usePatchDisclosureSections(submission.id);
+  const regenMut = useRegenerateDisclosureSections(submission.id);
+  const regeneratedAt = submission.regenerated_from_finding_at;
+
+  return (
+    <AilaCard>
+      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">
+            Structured advisory editor
+          </h2>
+          <p className="text-[10px] text-text-muted mt-0.5">
+            Save replaces the body; Regenerate refills every section
+            from the finding ({regeneratedAt
+              ? `last regenerated ${new Date(regeneratedAt).toLocaleString()}`
+              : "never regenerated"}).
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={regenMut.isPending}
+            onClick={() => {
+              if (window.confirm(
+                "Regenerating REPLACES every section with text derived "
+                + "from the finding (advisory + PoC). Operator edits "
+                + "above will be lost. Continue?",
+              )) {
+                regenMut.mutate(undefined, {
+                  onSuccess: (res) => {
+                    const fresh = res.data.sections ?? {};
+                    setDraft({
+                      summary: fresh.summary ?? "",
+                      technical_details: fresh.technical_details ?? "",
+                      reproduction: fresh.reproduction ?? "",
+                      patches: fresh.patches ?? "",
+                      references: fresh.references ?? "",
+                    });
+                  },
+                });
+              }
+            }}
+            className="px-3 py-1.5 text-xs font-medium rounded bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-40"
+          >
+            {regenMut.isPending ? "Regenerating…" : "Regenerate from finding"}
+          </button>
+          <button
+            type="button"
+            disabled={patchMut.isPending}
+            onClick={() => patchMut.mutate(draft)}
+            className="px-3 py-1.5 text-xs font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
+          >
+            {patchMut.isPending ? "Saving…" : "Save sections"}
+          </button>
+        </div>
+      </div>
+      <div className="space-y-3">
+        {SECTION_ORDER.map(({ key, label }) => (
+          <div key={key}>
+            <label
+              htmlFor={`section-${key}`}
+              className="block text-xs font-mono text-text-muted mb-1"
+            >
+              {label}
+            </label>
+            <textarea
+              id={`section-${key}`}
+              value={draft[key] ?? ""}
+              onChange={(e) =>
+                setDraft({ ...draft, [key]: e.target.value })
+              }
+              rows={key === "summary" || key === "references" ? 3 : 6}
+              className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+            />
+          </div>
+        ))}
+      </div>
+    </AilaCard>
   );
 }

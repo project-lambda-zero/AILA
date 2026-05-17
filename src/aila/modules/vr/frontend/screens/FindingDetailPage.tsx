@@ -8,6 +8,7 @@ import { CVSSBadge, CWEBadge } from "../components/CVSSBadge";
 import { CVSSBreakdown } from "../components/CVSSBadge";
 import { AdjudicationBanner } from "../components/AdjudicationBanner";
 import { ObligationChecklist } from "../components/ObligationChecklist";
+import { SyntaxHighlighter } from "../components/SyntaxHighlighter";
 import { useVRFinding } from "../queries";
 import type { DisclosureStatus } from "../types";
 
@@ -245,9 +246,10 @@ export function FindingDetailPage() {
           }
         />
         {f.poc?.code ? (
-          <pre className="text-xs font-mono p-3 rounded bg-surface border border-border-default overflow-x-auto whitespace-pre">
-            {f.poc.code}
-          </pre>
+          <SyntaxHighlighter
+            code={f.poc.code}
+            language={f.poc.language ?? "python"}
+          />
         ) : (
           <p className="text-xs text-text-muted">No PoC yet.</p>
         )}

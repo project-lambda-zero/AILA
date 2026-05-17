@@ -206,4 +206,7 @@ class VRProjectSummary(BaseModel):
     target_id: str | None = None
     patched_target_id: str | None = None
     finding_count: int = 0
+    operator_id: str | None = None
+    latest_disclosure_status: str | None = None
+    disclosure_submission_count: int = 0
     created_at: str | None = None

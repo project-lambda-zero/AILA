@@ -341,6 +341,18 @@ class CapabilityProfileBuilder:
             signals["capa_matches"] = capa_resp.get("matches") or []
             signals["raw_capa_scan"] = capa_resp
 
+        # §1.4 — Imports + Exports tabs read these signals directly.
+        imports_resp = await self._ida.forward(
+            action="imports", binary_id=binary_id,
+        )
+        if imports_resp.get("status") == "ready":
+            signals["imports"] = imports_resp.get("imports") or []
+        exports_resp = await self._ida.forward(
+            action="exports", binary_id=binary_id,
+        )
+        if exports_resp.get("status") == "ready":
+            signals["exports"] = exports_resp.get("exports") or []
+
         return signals
 
     def _compose_profile(
@@ -388,6 +400,35 @@ class CapabilityProfileBuilder:
             if "fuzzilli_v8" in applicable_fuzzing_engines:
                 applicable_strategies.extend(["differential", "fuzzilli", "v8MapInference"])
 
+        # §1.4 — Attack surface tab projects:
+        # source targets → audit-mcp `frameworks` + entrypoint summary,
+        # binary targets → IDA `behavior_categories` + checksec hints.
+        attack_surface_items: list[dict[str, Any]] = []
+        for fw in (signals.get("frameworks") or []):
+            attack_surface_items.append({
+                "kind": "framework",
+                "name": str(fw),
+                "location": "",
+                "severity_hint": "info",
+            })
+        for cat in (signals.get("behavior_categories") or []):
+            attack_surface_items.append({
+                "kind": "behavior",
+                "name": str(cat),
+                "location": "",
+                "severity_hint": "medium",
+            })
+        # Entry points (binary targets) collapse to a single row when
+        # large — the operator drills into the IDA MCP for the full list.
+        entry_points = signals.get("entry_points") or []
+        if entry_points:
+            attack_surface_items.append({
+                "kind": "entry_points",
+                "name": f"{len(entry_points)} entry point(s)",
+                "location": "binary header",
+                "severity_hint": "info",
+            })
+
         return TargetCapabilityProfile(
             target_kind=kind,
             primary_language=primary_language,
@@ -400,6 +441,9 @@ class CapabilityProfileBuilder:
             default_disclosure_tracks=default_disclosure_tracks,
             estimated_cost_per_investigation_usd=estimated_cost,
             mitigations=mitigations,
+            attack_surface=attack_surface_items,
+            imports=list(signals.get("imports") or []),
+            exports=list(signals.get("exports") or []),
         )
 
     async def _load_and_mark_running(self, target_id: str) -> VRTargetRecord:

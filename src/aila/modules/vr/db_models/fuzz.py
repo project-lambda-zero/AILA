@@ -112,6 +112,10 @@ class VRFuzzCrashRecord(TeamScopedMixin, SQLModel, table=True):
     reproducer_size_bytes: int | None = Field(default=None)
     stack_trace: str | None = Field(default=None, sa_column=Column(Text))
     extra_json: str = Field(default="{}", sa_column=Column(Text))
+    reproducer_head_hex: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    reproducer_head_truncated_size: int | None = Field(default=None)
+    llm_summary: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    triage_chain_json: str = Field(default="[]", sa_column=Column(Text))
 
     discovered_at: datetime = Field(
         default_factory=utc_now, sa_type=DateTime(timezone=True), index=True,

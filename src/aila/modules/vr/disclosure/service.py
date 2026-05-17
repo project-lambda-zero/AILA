@@ -91,6 +91,14 @@ def _record_to_summary(
     record: VRDisclosureSubmissionRecord,
     track_info: Any = None,
 ) -> VRDisclosureSubmissionSummary:
+    sections: dict[str, str] = {}
+    if record.sections_json:
+        try:
+            decoded = json.loads(record.sections_json)
+            if isinstance(decoded, dict):
+                sections = {str(k): str(v) for k, v in decoded.items()}
+        except (ValueError, TypeError):
+            sections = {}
     return VRDisclosureSubmissionSummary(
         id=record.id,
         finding_id=record.finding_id,
@@ -110,6 +118,8 @@ def _record_to_summary(
         track_info=track_info,
         created_at=record.created_at,
         updated_at=record.updated_at,
+        sections=sections,
+        regenerated_from_finding_at=record.regenerated_from_finding_at,
     )
 
 

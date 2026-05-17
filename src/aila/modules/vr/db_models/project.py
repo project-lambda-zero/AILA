@@ -68,6 +68,7 @@ class VRProjectRecord(TeamScopedMixin, SQLModel, table=True):
 
     context_notes: str = Field(default="", sa_column=Column(Text))
     status: str = Field(default="created", index=True, max_length=32)
+    created_by: str | None = Field(default=None, index=True, max_length=64)
     budget_json: str = Field(default="{}", sa_column=Column(Text))
     obligations_json: str = Field(default="{}", sa_column=Column(Text))
 

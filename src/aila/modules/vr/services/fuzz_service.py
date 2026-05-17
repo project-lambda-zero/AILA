@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 from sqlalchemy import func as sa_func
 from sqlmodel import select as _select
@@ -198,6 +199,11 @@ def _campaign_record_to_summary(
 
 
 def _crash_record_to_summary(record: VRFuzzCrashRecord) -> VRFuzzCrashSummary:
+    triage_chain: list[dict[str, Any]] = []
+    try:
+        triage_chain = json.loads(record.triage_chain_json or "[]") or []
+    except (ValueError, TypeError):
+        triage_chain = []
     return VRFuzzCrashSummary(
         id=record.id,
         campaign_id=record.campaign_id,
@@ -216,6 +222,10 @@ def _crash_record_to_summary(record: VRFuzzCrashRecord) -> VRFuzzCrashSummary:
         discovered_at=record.discovered_at,
         created_at=record.created_at,
         updated_at=record.updated_at,
+        reproducer_head_hex=record.reproducer_head_hex,
+        reproducer_head_truncated_size=record.reproducer_head_truncated_size,
+        llm_summary=record.llm_summary,
+        triage_chain=triage_chain,
     )
 
 

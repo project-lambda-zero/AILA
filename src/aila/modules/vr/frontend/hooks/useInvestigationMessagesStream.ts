@@ -105,11 +105,33 @@ export function useInvestigationMessagesStream(
         const raw = line.slice(5).trimStart();
         if (!raw) return;
         try {
-          const parsed = JSON.parse(raw) as VRMessageSummary | { connected: boolean } | { ts: string } | { status: string };
+          // Backend wraps every event in a typed VREventEnvelope
+          // (see contracts/events.py). The payload of a
+          // message.created or operator.steering event is the
+          // VRMessageSummary; heartbeat / open / done envelopes
+          // carry no message and we drop them.
+          const parsed = JSON.parse(raw) as
+            | { type: string; payload?: unknown }
+            | { id: string; payload_kind: string };
+          if ("type" in parsed) {
+            const t = parsed.type;
+            if (t === "message.created" || t === "operator.steering") {
+              const payload = (parsed as { payload?: unknown }).payload;
+              if (
+                payload
+                && typeof payload === "object"
+                && "id" in payload
+                && "payload_kind" in payload
+              ) {
+                mergeMessage(payload as VRMessageSummary);
+              }
+            }
+            return;
+          }
+          // Legacy un-enveloped event (backward compat).
           if ("id" in parsed && "payload_kind" in parsed) {
             mergeMessage(parsed as VRMessageSummary);
           }
-          // open / heartbeat / done events have no message body
         } catch {
           // malformed event — skip
         }

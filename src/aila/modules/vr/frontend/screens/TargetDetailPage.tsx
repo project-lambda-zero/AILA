@@ -11,13 +11,19 @@ import {
   type MitigationFlags,
 } from "../components/MitigationsRibbon";
 import { DeleteButton } from "../components/DeleteButton";
+import { UploadDropzone } from "../components/UploadDropzone";
 import {
   useAnalyzeTarget,
   useDeleteTarget,
   useRankTarget,
   useUploadTargetArtifact,
 } from "../mutations";
-import { useTarget, useWorkspaces } from "../queries";
+import {
+  useInvestigationsForTarget,
+  useTarget,
+  useWorkspaces,
+} from "../queries";
+import { HypothesisDetailRail } from "../components/HypothesisDetailRail";
 import type {
   AnalysisState,
   TargetKind,
@@ -139,34 +145,83 @@ function AttackSurfaceTab({
 }: {
   capability: Record<string, unknown>;
 }) {
-  const entrypoints = (capability.entrypoints as unknown[]) ?? [];
-  if (entrypoints.length === 0) {
+  // capability_profile.attack_surface is a list of
+  // {kind, name, location, severity_hint} populated by the
+  // CapabilityProfileBuilder (08_FRONTEND_UX.md §1.4).
+  const items = (capability.attack_surface as Array<{
+    kind: string;
+    name: string;
+    location?: string;
+    severity_hint?: string;
+  }> | undefined) ?? [];
+  if (items.length === 0) {
     return (
       <AilaCard>
         <EmptyState
-          title="No entrypoints enumerated yet"
-          description="audit-mcp + IDA-MCP entrypoint pass produces network listeners, IPC sockets, ioctls, env vars, parsed file formats. Backend wiring of capability_profile.entrypoints is pending (see docs/vr/02_IDA_HEADLESS_MCP.md §3)."
+          title="No attack-surface entries enumerated yet"
+          description="audit-mcp `attack_surface` + IDA `classify_behavior` populate this on analyze. Re-run analysis if you expected entries."
         />
       </AilaCard>
     );
   }
   return (
     <AilaCard>
-      <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap overflow-x-auto">
-        {JSON.stringify(entrypoints, null, 2)}
-      </pre>
+      <ul className="space-y-1 text-xs font-mono">
+        {items.map((it, i) => (
+          <li
+            key={`${it.kind}-${it.name}-${i}`}
+            className="border border-border-default rounded px-2 py-1 flex items-center justify-between gap-2"
+          >
+            <div>
+              <span className="text-text-muted">{it.kind}</span>{" "}
+              <span className="text-foreground">{it.name}</span>
+              {it.location && (
+                <span className="text-text-muted ml-2">@ {it.location}</span>
+              )}
+            </div>
+            {it.severity_hint && (
+              <AilaBadge
+                severity={
+                  it.severity_hint === "high"
+                    ? "high"
+                    : it.severity_hint === "medium"
+                      ? "medium"
+                      : "info"
+                }
+                size="sm"
+              >
+                {it.severity_hint}
+              </AilaBadge>
+            )}
+          </li>
+        ))}
+      </ul>
     </AilaCard>
   );
 }
 
-function HypothesesTab() {
+function HypothesesTab({ targetId }: { targetId: string }) {
+  // Per-investigation hypothesis API; we surface the union across
+  // investigations rooted on this target. The endpoint lives at
+  // /vr/investigations/:id/hypotheses (08_FRONTEND_UX.md §2.3).
+  const { data: invsRes } = useInvestigationsForTarget(targetId);
+  const investigations = invsRes?.data ?? [];
+  if (investigations.length === 0) {
+    return (
+      <AilaCard>
+        <EmptyState
+          title="No hypotheses yet"
+          description="Open an investigation on this target — the reasoning engine populates hypotheses per branch as evidence lands."
+        />
+      </AilaCard>
+    );
+  }
   return (
-    <AilaCard>
-      <EmptyState
-        title="No hypotheses yet"
-        description="Hypotheses are produced during investigations. Open one from /vr/investigations — they show up here once they exist. Hypothesis-detail API (claim text, supports/refutes count, state badge) is backend pending."
-      />
-    </AilaCard>
+    <div className="space-y-3">
+      {investigations.map((inv) => (
+        <HypothesisDetailRail key={inv.id} investigationId={inv.id} />
+      ))}
+    </div>
   );
 }
 
@@ -407,7 +462,7 @@ export function TargetDetailPage() {
           file through to the IDA MCP; nothing is stored on the platform. */}
       {isUploadableKind(target.kind) && (
         <AilaCard>
-          <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="space-y-3">
             <div>
               <h2 className="text-sm font-semibold text-foreground">
                 Binary artifact
@@ -427,30 +482,27 @@ export function TargetDetailPage() {
                 ) : null}
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) uploadMut.mutate(f);
-                  e.target.value = "";
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadMut.isPending}
-                className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
-              >
-                {uploadMut.isPending
-                  ? "Uploading…"
+            <UploadDropzone
+              onFile={(f) => uploadMut.mutate(f)}
+              disabled={uploadMut.isPending}
+              hint={
+                uploadMut.isPending
+                  ? "uploading…"
                   : currentUploadedFilename(target)
-                    ? "Replace file"
-                    : "Choose file"}
-              </button>
-            </div>
+                    ? "drop a different file to replace"
+                    : "drag a binary here or click pick from disk"
+              }
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) uploadMut.mutate(f);
+                e.target.value = "";
+              }}
+            />
           </div>
         </AilaCard>
       )}
@@ -546,7 +598,7 @@ export function TargetDetailPage() {
           {activeTab === "attack_surface" && (
             <AttackSurfaceTab capability={capability} />
           )}
-          {activeTab === "hypotheses" && <HypothesesTab />}
+          {activeTab === "hypotheses" && <HypothesesTab targetId={target.id} />}
           {activeTab === "imports" && <ImportsExportsTab capability={capability} />}
           {activeTab === "notes" && <NotesTab targetId={target.id} />}
         </>

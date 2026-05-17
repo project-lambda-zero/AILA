@@ -88,6 +88,25 @@ function CrashesFoundWidget() {
           />
         )}
       </div>
+      {trend.length > 0 && (
+        <table className="sr-only">
+          <caption>Crashes per day, last 7 days</caption>
+          <thead>
+            <tr>
+              <th>Day</th>
+              <th>Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            {trend.map((row) => (
+              <tr key={row.day}>
+                <td>{row.day}</td>
+                <td>{row.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </AilaCard>
   );
 }
