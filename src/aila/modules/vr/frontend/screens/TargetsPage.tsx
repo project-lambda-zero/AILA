@@ -7,23 +7,24 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { useCreateTarget } from "../mutations";
 import { useTargets, useWorkspaces } from "../queries";
-import type { EnrichmentStatus, TargetKind, TargetStatus } from "../types";
+import type { AnalysisState, TargetKind, TargetStatus } from "../types";
 
-// Per-kind descriptor templates. Auto-fills the descriptor textarea
-// when the operator picks a target kind. Operators edit before submit.
+// Per-kind descriptor templates. Operator only provides what they
+// actually know — repo URL, file path, version, arch. Backend
+// (TargetAnalysisService) handles all MCP-internal ids transparently.
 const DESCRIPTOR_TEMPLATES: Record<TargetKind, string> = {
   native_binary: '{"binary_path": "/path/on/workstation"}',
-  source_repo: '{"repo_url": "https://github.com/x/y", "audit_mcp_index_id": ""}',
+  source_repo: '{"repo_url": "https://github.com/owner/repo", "ref": "main"}',
   cve: '{"cve_id": "CVE-YYYY-NNNN"}',
-  protocol_capture: '{"pcap_path": "/path/to/capture.pcap"}',
+  protocol_capture: '{"pcap_path": "/path/to/capture.pcap", "protocol": "http"}',
   crash_input: '{"crash_input_path": "/path/to/input.bin"}',
-  patch_diff: '{"diff_path": "/path/to/patch.diff"}',
+  patch_diff: '{"vulnerable_ref": "abc123", "patched_ref": "def456", "repo_url": "https://github.com/owner/repo"}',
   apk: '{"apk_path": "/path/to/app.apk"}',
   ipa: '{"ipa_path": "/path/to/app.ipa"}',
   jar: '{"jar_path": "/path/to/app.jar"}',
   dotnet_assembly: '{"dll_path": "/path/to/assembly.dll"}',
   kernel_image: '{"image_path": "/path/vmlinuz", "kernel_version": "6.10", "arch": "x86_64"}',
-  kernel_module: '{"ko_path": "/path/buggy.ko", "kernel_image_id": "", "module_name": "buggy"}',
+  kernel_module: '{"ko_path": "/path/buggy.ko", "module_name": "buggy"}',
   hypervisor_image: '{"binary_path": "/usr/bin/qemu-system-x86_64", "hypervisor_kind": "qemu", "version": "9.1.0"}',
 };
 
@@ -52,15 +53,25 @@ const statusColor: Record<
   quarantined: "high",
 };
 
-const enrichmentColor: Record<
-  EnrichmentStatus,
+const analysisColor: Record<
+  AnalysisState,
   "info" | "low" | "medium" | "high" | "critical"
 > = {
-  unenriched: "info",
-  running: "medium",
-  complete: "low",
+  pending: "info",
+  ingesting: "medium",
+  ready: "low",
   failed: "critical",
 };
+
+function analysisLabel(state: AnalysisState): string {
+  return state === "pending"
+    ? "Queued"
+    : state === "ingesting"
+      ? "Analyzing…"
+      : state === "ready"
+        ? "Ready"
+        : "Failed";
+}
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
@@ -123,11 +134,12 @@ export function TargetsPage() {
           </h2>
           <p className="text-xs text-text-muted mb-3">
             descriptor is kind-specific JSON.
-            <br /><strong>native_binary</strong>: <code>{`{"binary_path": "..."}`}</code> or <code>{`{"binary_id": "..."}`}</code> if already in IDA MCP.
-            <br /><strong>source_repo</strong>: <code>{`{"repo_url": "...", "audit_mcp_index_id": "..."}`}</code>
+            <br /><strong>native_binary</strong>: <code>{`{"binary_path": "/path/on/workstation"}`}</code>
+            <br /><strong>source_repo</strong>: <code>{`{"repo_url": "https://github.com/owner/repo", "ref": "main"}`}</code>
             <br /><strong>kernel_image</strong>: <code>{`{"image_path": "/path/vmlinuz", "kernel_version": "6.10", "arch": "x86_64"}`}</code>
-            <br /><strong>kernel_module</strong>: <code>{`{"ko_path": "/path/buggy.ko", "kernel_image_id": "...", "module_name": "buggy"}`}</code>
+            <br /><strong>kernel_module</strong>: <code>{`{"ko_path": "/path/buggy.ko", "module_name": "buggy"}`}</code>
             <br /><strong>hypervisor_image</strong>: <code>{`{"binary_path": "/path/qemu-system-x86_64", "hypervisor_kind": "qemu", "version": "9.1.0"}`}</code>
+            <br /><em>Analysis runs automatically after create. No manual MCP wiring.</em>
           </p>
           <div className="space-y-2">
             <select
@@ -269,8 +281,8 @@ export function TargetsPage() {
                 <th className="px-4 py-2 font-semibold">Kind</th>
                 <th className="px-4 py-2 font-semibold">Language</th>
                 <th className="px-4 py-2 font-semibold">Status</th>
-                <th className="px-4 py-2 font-semibold">Enrichment</th>
-                <th className="px-4 py-2 font-semibold">Last enriched</th>
+                <th className="px-4 py-2 font-semibold">Analysis</th>
+                <th className="px-4 py-2 font-semibold">Analyzed at</th>
                 <th className="px-4 py-2 font-semibold">Created</th>
               </tr>
             </thead>
@@ -300,14 +312,14 @@ export function TargetsPage() {
                   </td>
                   <td className="px-4 py-2">
                     <AilaBadge
-                      severity={enrichmentColor[t.enrichment_status] ?? "info"}
+                      severity={analysisColor[t.analysis_state] ?? "info"}
                       size="sm"
                     >
-                      {t.enrichment_status}
+                      {analysisLabel(t.analysis_state)}
                     </AilaBadge>
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                    {formatDate(t.last_enriched_at)}
+                    {formatDate(t.analysis_completed_at)}
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-muted">
                     {formatDate(t.created_at)}

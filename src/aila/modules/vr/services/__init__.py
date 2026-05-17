@@ -25,6 +25,10 @@ from aila.modules.vr.services.pattern_store import (
     PatternStore,
     PatternStoreError,
 )
+from aila.modules.vr.services.target_analysis import (
+    TargetAnalysisError,
+    TargetAnalysisService,
+)
 from aila.modules.vr.services.target_ingestion import TargetIngestionService
 
 __all__ = [
@@ -32,6 +36,8 @@ __all__ = [
     "FuzzServiceError",
     "CVEService",
     "CVEServiceError",
+    "TargetAnalysisError",
+    "TargetAnalysisService",
     "MultiTargetService",
     "MultiTargetServiceError",
     "PatternRetrievalResult",

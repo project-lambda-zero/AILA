@@ -51,8 +51,16 @@ class VRTargetRecord(TeamScopedMixin, SQLModel, table=True):
     status: str = Field(default="active", index=True, max_length=32)
     capability_profile_json: str = Field(default="{}", sa_column=Column(Text))
     tags_json: str = Field(default="[]", sa_column=Column(Text))
-    enrichment_status: str = Field(default="unenriched", index=True, max_length=32)
-    last_enriched_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    analysis_state: str = Field(default="pending", index=True, max_length=24)
+    analysis_state_message: str | None = Field(default=None, sa_column=Column(Text))
+    analysis_started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    analysis_completed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    # Backend-only: audit_mcp index_id, ida binary_id, etc. Underscore
+    # prefix marks 'internal — never exposed in contracts or UI'.
+    mcp_handles_json: str = Field(
+        default="{}",
+        sa_column=Column("_mcp_handles_json", Text, nullable=False, server_default="{}"),
+    )
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
     updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 

@@ -222,29 +222,37 @@ class CapabilityProfileBuilder:
     async def build(self, target_id: str) -> TargetCapabilityProfile:
         """Build capability_profile for one target. Persists into vr_targets.
 
-        Sets ``enrichment_status='running'`` at entry; transitions to
-        ``complete`` on success or ``failed`` on dispatch failure.
-        Raises ``ProfileBuilderError`` on fatal infrastructure failures.
+        Reads MCP handles (binary_id, audit_mcp_index_id) from the
+        target's private ``_mcp_handles_json`` column populated by
+        TargetAnalysisService. Refuses to run when handles are missing
+        — operator gets a clear 'target not analyzed yet' message.
         """
         target_row = await self._load_and_mark_running(target_id)
+        handles = json.loads(target_row.mcp_handles_json or "{}")
         descriptor = json.loads(target_row.descriptor_json or "{}")
         kind_str = target_row.kind
 
         try:
             if kind_str == TargetKind.SOURCE_REPO.value:
-                signals = await self._gather_source_signals(descriptor)
+                signals = await self._gather_source_signals(handles)
             elif kind_str in {
                 TargetKind.NATIVE_BINARY.value,
                 TargetKind.APK.value,
                 TargetKind.IPA.value,
                 TargetKind.JAR.value,
                 TargetKind.DOTNET_ASSEMBLY.value,
+                TargetKind.KERNEL_IMAGE.value,
+                TargetKind.KERNEL_MODULE.value,
+                TargetKind.HYPERVISOR_IMAGE.value,
             }:
-                signals = await self._gather_binary_signals(descriptor)
+                signals = await self._gather_binary_signals(handles)
             else:
-                # Unsupported kinds get a minimal profile from descriptor + rules,
-                # no MCP gather. Operator can still drive investigations.
-                signals = {"primary_language": descriptor.get("primary_language") or ""}
+                # Unsupported kinds (cve / protocol_capture / crash_input /
+                # patch_diff) — no MCP gather. Operator can still drive
+                # investigations from descriptor alone.
+                signals = {
+                    "primary_language": descriptor.get("primary_language") or "",
+                }
         except ProfileBuilderError:
             raise
         except (OSError, TimeoutError, RuntimeError) as exc:
@@ -265,12 +273,12 @@ class CapabilityProfileBuilder:
         )
         return profile
 
-    async def _gather_source_signals(self, descriptor: dict[str, Any]) -> dict[str, Any]:
-        index_id = descriptor.get("audit_mcp_index_id")
+    async def _gather_source_signals(self, handles: dict[str, Any]) -> dict[str, Any]:
+        index_id = handles.get("audit_mcp_index_id")
         if not index_id:
             raise ProfileBuilderError(
-                "source target descriptor missing audit_mcp_index_id — run "
-                "audit-mcp index_codebase before profile build",
+                "target not analyzed yet — call POST /vr/targets/{id}/analyze "
+                "or wait for the auto-ingestion to complete",
             )
 
         signals: dict[str, Any] = {}
@@ -293,12 +301,12 @@ class CapabilityProfileBuilder:
 
         return signals
 
-    async def _gather_binary_signals(self, descriptor: dict[str, Any]) -> dict[str, Any]:
-        binary_id = descriptor.get("binary_id")
+    async def _gather_binary_signals(self, handles: dict[str, Any]) -> dict[str, Any]:
+        binary_id = handles.get("binary_id")
         if not binary_id:
             raise ProfileBuilderError(
-                "binary target descriptor missing binary_id — upload + analyze "
-                "in IDA MCP before profile build",
+                "target not analyzed yet — call POST /vr/targets/{id}/analyze "
+                "or wait for the auto-ingestion to complete",
             )
 
         signals: dict[str, Any] = {}
@@ -403,7 +411,7 @@ class CapabilityProfileBuilder:
             ).first()
             if row is None:
                 raise ProfileBuilderError(f"target {target_id} not found")
-            row.enrichment_status = "running"
+            row.analysis_state = "ingesting"
             row.updated_at = utc_now()
             uow.session.add(row)
             await uow.commit()
@@ -423,7 +431,7 @@ class CapabilityProfileBuilder:
             errors = capability.setdefault("enrichment_errors", [])
             errors.append({"step": "profile_builder", "message": message})
             row.capability_profile_json = json.dumps(capability)
-            row.enrichment_status = "failed"
+            row.analysis_state = "failed"
             row.updated_at = utc_now()
             uow.session.add(row)
             await uow.commit()
@@ -458,8 +466,8 @@ class CapabilityProfileBuilder:
             row.capability_profile_json = json.dumps(merged)
             row.primary_language = profile.primary_language or row.primary_language
             row.secondary_languages_json = json.dumps(profile.secondary_languages)
-            row.enrichment_status = "complete"
-            row.last_enriched_at = utc_now()
+            row.analysis_state = "ready"
+            row.analysis_completed_at = utc_now()
             row.updated_at = utc_now()
             uow.session.add(row)
             await uow.commit()

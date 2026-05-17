@@ -15,7 +15,7 @@ already implement graph-aware ranking:
 
 The dispatcher persists the result into
 ``vr_targets.capability_profile_json.function_ranking`` and updates
-``enrichment_status``.
+``analysis_state``.
 """
 from __future__ import annotations
 
@@ -97,34 +97,38 @@ class FunctionRankingDispatcher:
     async def rank(self, target_id: str) -> FunctionRanking:
         """Dispatch ranking for one target. Returns the produced report.
 
-        Sets ``enrichment_status='running'`` at entry; transitions to
-        ``complete`` on success or ``failed`` if the MCP call returned
-        an error. Raises ``FunctionRankerError`` on fatal failure
-        (target not found, descriptor missing required fields, MCP
-        unreachable).
+        Reads MCP handles from the target's private
+        ``_mcp_handles_json`` column (populated by TargetAnalysisService).
+        Sets ``analysis_state='ingesting'`` at entry; transitions to
+        ``ready`` on success or ``failed`` if the MCP call errored.
+        Raises ``FunctionRankerError`` on fatal failure (target not
+        found, handles missing, MCP unreachable).
         """
         target_row = await self._load_and_mark_running(target_id)
-        descriptor = json.loads(target_row.descriptor_json or "{}")
+        handles = json.loads(target_row.mcp_handles_json or "{}")
 
         try:
             if target_row.kind == TargetKind.SOURCE_REPO.value:
-                ranking = await self._rank_source(target_id, descriptor)
+                ranking = await self._rank_source(target_id, handles)
             elif target_row.kind in {
                 TargetKind.NATIVE_BINARY.value,
                 TargetKind.APK.value,
                 TargetKind.IPA.value,
                 TargetKind.JAR.value,
                 TargetKind.DOTNET_ASSEMBLY.value,
+                TargetKind.KERNEL_IMAGE.value,
+                TargetKind.KERNEL_MODULE.value,
+                TargetKind.HYPERVISOR_IMAGE.value,
             }:
-                ranking = await self._rank_binary(target_id, descriptor)
+                ranking = await self._rank_binary(target_id, handles)
             else:
                 await self._mark_failed(
-                    target_id, f"unsupported target kind for ranking: {target_row.kind}",
+                    target_id,
+                    f"unsupported target kind for ranking: {target_row.kind}",
                 )
                 raise FunctionRankerError(
                     f"target_id={target_id} kind={target_row.kind!r} "
-                    "is not rankable (only SOURCE_REPO + NATIVE_BINARY + "
-                    "APK + IPA + JAR + DOTNET_ASSEMBLY supported)",
+                    "is not rankable (only SOURCE_REPO + binary kinds supported)",
                 )
         except FunctionRankerError:
             raise
@@ -141,12 +145,12 @@ class FunctionRankingDispatcher:
         )
         return ranking
 
-    async def _rank_source(self, target_id: str, descriptor: dict[str, Any]) -> FunctionRanking:
-        index_id = descriptor.get("audit_mcp_index_id")
+    async def _rank_source(self, target_id: str, handles: dict[str, Any]) -> FunctionRanking:
+        index_id = handles.get("audit_mcp_index_id")
         if not index_id:
             raise FunctionRankerError(
-                f"source target {target_id} has no audit_mcp_index_id in descriptor — "
-                "run audit-mcp index_codebase before ranking",
+                f"target {target_id} not analyzed yet — POST "
+                "/vr/targets/{id}/analyze or wait for auto-ingestion",
             )
 
         resp = await self._audit_mcp.forward(
@@ -168,12 +172,12 @@ class FunctionRankingDispatcher:
             notes=resp.get("notes") or "",
         )
 
-    async def _rank_binary(self, target_id: str, descriptor: dict[str, Any]) -> FunctionRanking:
-        binary_id = descriptor.get("binary_id")
+    async def _rank_binary(self, target_id: str, handles: dict[str, Any]) -> FunctionRanking:
+        binary_id = handles.get("binary_id")
         if not binary_id:
             raise FunctionRankerError(
-                f"binary target {target_id} has no binary_id in descriptor — "
-                "upload + analyze in IDA MCP before ranking",
+                f"target {target_id} not analyzed yet — POST "
+                "/vr/targets/{id}/analyze or wait for auto-ingestion",
             )
 
         bucket: dict[str, dict[str, Any]] = {}
@@ -256,7 +260,7 @@ class FunctionRankingDispatcher:
             ).first()
             if row is None:
                 raise FunctionRankerError(f"target {target_id} not found")
-            row.enrichment_status = "running"
+            row.analysis_state = "ingesting"
             row.updated_at = utc_now()
             uow.session.add(row)
             await uow.commit()
@@ -276,7 +280,7 @@ class FunctionRankingDispatcher:
             errors = capability.setdefault("enrichment_errors", [])
             errors.append({"step": "function_ranker", "message": message})
             row.capability_profile_json = json.dumps(capability)
-            row.enrichment_status = "failed"
+            row.analysis_state = "failed"
             row.updated_at = utc_now()
             uow.session.add(row)
             await uow.commit()
@@ -295,8 +299,8 @@ class FunctionRankingDispatcher:
             capability = json.loads(row.capability_profile_json or "{}")
             capability["function_ranking"] = ranking.model_dump(mode="json")
             row.capability_profile_json = json.dumps(capability)
-            row.enrichment_status = "complete"
-            row.last_enriched_at = utc_now()
+            row.analysis_state = "ready"
+            row.analysis_completed_at = utc_now()
             row.updated_at = utc_now()
             uow.session.add(row)
             await uow.commit()

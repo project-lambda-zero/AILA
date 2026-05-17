@@ -49,7 +49,6 @@ async def fixture_investigation(test_db) -> tuple[str, str]:
             descriptor_json='{"binary_path": "/dev/null"}',
             primary_language="c",
             status="active",
-            enrichment_status="unenriched",
         )
         uow.session.add(target)
         await uow.session.flush()
