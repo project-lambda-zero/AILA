@@ -64,14 +64,17 @@ class CVEResolution:
     cve_id: str
     status: str
     description: str = ""
-    cwe_ids: list[str] | None = None
     cvss_score: float | None = None
     base_severity: str | None = None
-    affected_products: list[str] | None = None
     epss_score: float | None = None
     epss_percentile: float | None = None
     kev_listed: bool = False
     kev_date_added: str | None = None
+    attack_vector: str | None = None
+    privileges_required: str | None = None
+    user_interaction: str | None = None
+    nvd_url: str | None = None
+    published_at: str | None = None
     notes: list[str] | None = None
     error: str | None = None
 
@@ -82,14 +85,10 @@ class CVEResolution:
         }
         if self.description:
             out["description"] = self.description
-        if self.cwe_ids:
-            out["cwe_ids"] = list(self.cwe_ids)
         if self.cvss_score is not None:
             out["cvss_score"] = self.cvss_score
         if self.base_severity:
             out["base_severity"] = self.base_severity
-        if self.affected_products:
-            out["affected_products"] = list(self.affected_products)
         if self.epss_score is not None:
             out["epss_score"] = self.epss_score
         if self.epss_percentile is not None:
@@ -98,6 +97,16 @@ class CVEResolution:
             out["kev_listed"] = True
             if self.kev_date_added:
                 out["kev_date_added"] = self.kev_date_added
+        if self.attack_vector:
+            out["attack_vector"] = self.attack_vector
+        if self.privileges_required:
+            out["privileges_required"] = self.privileges_required
+        if self.user_interaction:
+            out["user_interaction"] = self.user_interaction
+        if self.nvd_url:
+            out["nvd_url"] = self.nvd_url
+        if self.published_at:
+            out["published_at"] = self.published_at
         if self.notes:
             out["notes"] = list(self.notes)
         if self.error:
@@ -215,14 +224,17 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
             cve_id=cve_id,
             status="found",
             description=knowledge.description or "",
-            cwe_ids=list(knowledge.cwe_ids or []),
             cvss_score=knowledge.cvss_score,
             base_severity=knowledge.base_severity,
-            affected_products=list(knowledge.affected_products or []),
-            epss_score=getattr(knowledge, "epss_score", None),
-            epss_percentile=getattr(knowledge, "epss_percentile", None),
-            kev_listed=bool(getattr(knowledge, "kev_listed", False)),
-            kev_date_added=getattr(knowledge, "kev_date_added", None),
-            notes=list(getattr(knowledge, "notes", None) or []),
+            epss_score=knowledge.epss_score,
+            epss_percentile=knowledge.epss_percentile,
+            kev_listed=bool(knowledge.kev_listed),
+            kev_date_added=knowledge.kev_date_added,
+            attack_vector=knowledge.attack_vector,
+            privileges_required=knowledge.privileges_required,
+            user_interaction=knowledge.user_interaction,
+            nvd_url=knowledge.nvd_url,
+            published_at=knowledge.published_at,
+            notes=list(knowledge.notes or []),
         ))
     return out
