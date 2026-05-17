@@ -454,6 +454,22 @@ def platform_task(
                         )
                     else:
                         # D-05: workflow-engine task. Pass kwargs as initial_input.
+                        # The engine inserts workflow_state_cursor with an FK
+                        # to workflowrunrecord.id, so the run record MUST
+                        # exist before execute() touches the cursor — same
+                        # invariant the two-phase path enforces. Without
+                        # this the cursor INSERT raises IntegrityError, the
+                        # transaction rolls back, and the engine reports the
+                        # row 'vanished'. Synthesize a query_text from
+                        # kwargs['query'] when present, else a deterministic
+                        # workflow:<definition_id> tag so the row is auditable.
+                        query_text = str(
+                            kwargs.get("query")
+                            or f"workflow:{definition.definition_id}",
+                        )
+                        await _ensure_run_record(
+                            task_context.task_id, query_text,
+                        )
                         result = await DurableStateMachine.execute(
                             task_context.task_id,
                             definition,

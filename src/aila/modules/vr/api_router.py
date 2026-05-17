@@ -2357,6 +2357,60 @@ def create_vr_router() -> APIRouter:
         return DataEnvelope(data=_investigation_summary(inv))
 
     @router.post(
+        "/investigations/{investigation_id}/re-enqueue",
+        response_model=DataEnvelope[VRInvestigationSummary],
+        summary=(
+            "Re-enqueue the run_vr_investigate ARQ task for this "
+            "investigation. Useful when a prior run dead-lettered and "
+            "the row needs to start fresh without creating a new "
+            "investigation. Resets status to CREATED before submission."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def reenqueue_investigation(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRInvestigationSummary]:
+        from aila.api.deps import get_task_queue
+        from aila.platform.contracts._common import utc_now
+
+        from .db_models import VRInvestigationRecord
+        from .workflow.task import run_vr_investigate
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                )
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            inv.status = InvestigationStatus.CREATED.value
+            inv.pause_reason = None
+            inv.updated_at = utc_now()
+            uow.session.add(inv)
+            await uow.session.commit()
+            await uow.session.refresh(inv)
+
+        task_queue = get_task_queue("vr", request)
+        await task_queue.submit(
+            track="vr",
+            fn=run_vr_investigate,
+            kwargs={"investigation_id": investigation_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
+        return DataEnvelope(data=_investigation_summary(inv))
+
+    @router.post(
         "/investigations/{investigation_id}/messages",
         response_model=DataEnvelope[VRMessageSummary],
         status_code=status.HTTP_201_CREATED,
