@@ -173,6 +173,7 @@ export function EvidenceGraph({
   height = 600,
   onNodeClick,
   showLabels = true,
+  serverPositions,
 }: {
   nodes: GraphNodeInput[];
   edges: GraphEdgeInput[];
@@ -181,6 +182,11 @@ export function EvidenceGraph({
    *  on cmd/ctrl-click (open in new tab per §3.6) vs primary-click. */
   onNodeClick?: (node: GraphNodeInput, event: React.MouseEvent) => void;
   showLabels?: boolean;
+  /** Server-computed x/y per node-id. When present, overrides the
+   *  client-side layout algorithms (08_FRONTEND_UX.md §1.9). The
+   *  layout picker is hidden when serverPositions is in effect since
+   *  the server is the authority. */
+  serverPositions?: Map<string, { x: number; y: number }>;
 }) {
   const [filter, setFilter] = useState<GraphFilter>("all");
   const [searchText, setSearchText] = useState("");
@@ -244,10 +250,36 @@ export function EvidenceGraph({
   }, [rawNodes, rawEdges, filter, searchText]);
 
   const positions = useMemo(() => {
+    // Server-side authoritative layout takes precedence when
+    // supplied. Falls back to local algorithms when the snapshot
+    // is missing or empty (08_FRONTEND_UX.md §1.9).
+    if (serverPositions && serverPositions.size > 0) {
+      // Server coords are id-keyed against the original rawNodes
+      // — clip to the filtered subset to honour search/filter
+      // without re-running the layout client-side.
+      const filtered = new Map<string, { x: number; y: number }>();
+      for (const n of filteredNodes) {
+        const p = serverPositions.get(n.id);
+        if (p) filtered.set(n.id, p);
+      }
+      // If the server snapshot doesn't cover every node (e.g. the
+      // client synthesised extra nodes the backend doesn't model),
+      // fall back to layout() for the orphans.
+      if (filtered.size < filteredNodes.length) {
+        const fallback = layout(filteredNodes);
+        for (const n of filteredNodes) {
+          if (!filtered.has(n.id)) {
+            const p = fallback.get(n.id);
+            if (p) filtered.set(n.id, p);
+          }
+        }
+      }
+      return filtered;
+    }
     if (layoutAlgo === "grid") return layoutGrid(filteredNodes);
     if (layoutAlgo === "radial") return layoutRadial(filteredNodes);
     return layout(filteredNodes);
-  }, [filteredNodes, layoutAlgo]);
+  }, [filteredNodes, layoutAlgo, serverPositions]);
 
   const flowNodes: Node[] = useMemo(
     () =>

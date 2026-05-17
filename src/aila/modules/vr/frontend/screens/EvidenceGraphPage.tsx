@@ -44,6 +44,22 @@ export function EvidenceGraphPage() {
     () => outcomesResult?.data ?? [],
     [outcomesResult],
   );
+  const { data: snapshotResult } = useEvidenceGraph(investigationId);
+  // Map server node id (`branch:xxx` / `outcome:xxx` / `inv:xxx`) onto
+  // the client node id space (`branch-xxx` / `outcome-xxx`). Keep
+  // both keys so either id format resolves.
+  const serverPositions = useMemo(() => {
+    const m = new Map<string, { x: number; y: number }>();
+    const snap = snapshotResult?.data;
+    if (!snap) return m;
+    for (const n of snap.nodes) {
+      m.set(n.id, { x: n.x, y: n.y });
+      // colon → dash translation for the client synthesis id space
+      m.set(n.id.replace(":", "-"), { x: n.x, y: n.y });
+    }
+    return m;
+  }, [snapshotResult]);
+
 
   const { nodes, edges } = useMemo(() => {
     const ns: GraphNodeInput[] = [];
@@ -129,6 +145,7 @@ export function EvidenceGraphPage() {
         <EvidenceGraph
           nodes={nodes}
           edges={edges}
+          serverPositions={serverPositions}
           height={620}
           onNodeClick={(node, event) => {
             // Cmd/Ctrl-click → open the node's dedicated page in a new
@@ -266,27 +283,28 @@ function openUrlForNode(node: GraphNodeInput): string | null {
   return null;
 }
 
-/** Status card showing whether the backend evidence-graph endpoint
- *  (08_FRONTEND_UX.md §1.9) returned a snapshot. The client-side
- *  synthesis stays as the rendering source for v0.5 — the server
- *  snapshot is exposed here so operators can confirm parity, and the
- *  endpoint is in place for the day we want to swap data sources. */
+/** Status card surfacing the backend evidence-graph endpoint
+ *  (08_FRONTEND_UX.md §1.9). When the snapshot is present the
+ *  EvidenceGraph below uses the server-computed x/y positions
+ *  directly — the client-side concentric/grid/radial layouts only
+ *  apply when the snapshot is unavailable. */
 function ServerSnapshotStatus({
   investigationId,
 }: {
   investigationId: string;
 }) {
   const { data, isLoading, error } = useEvidenceGraph(investigationId);
+  const ready = !!data && !error;
   return (
     <AilaCard className="border-dashed">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <AilaBadge severity={error ? "high" : "info"} size="sm">
+          <AilaBadge severity={error ? "high" : ready ? "low" : "info"} size="sm">
             {error
-              ? "server snapshot unavailable"
+              ? "server snapshot unavailable — using client layout"
               : isLoading
                 ? "loading server snapshot…"
-                : "server snapshot ready"}
+                : "server layout in use"}
           </AilaBadge>
           {data && (
             <span className="text-[10px] text-text-muted ml-2 font-mono">
@@ -296,9 +314,9 @@ function ServerSnapshotStatus({
           )}
         </div>
         <p className="text-[10px] text-text-muted">
-          Layout is computed server-side from branches + outcomes; the
-          render below uses the same data via client synthesis for
-          interactive performance (08_FRONTEND_UX.md §1.9).
+          Coordinates come from the backend so they stay stable across
+          operators + sessions. The picker below only matters when the
+          backend snapshot isn't available.
         </p>
       </div>
     </AilaCard>

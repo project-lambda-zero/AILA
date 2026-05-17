@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import func as sa_func
 from sqlmodel import select as _select
@@ -39,6 +41,7 @@ from aila.modules.vr.contracts.fuzz import (
 from aila.modules.vr.db_models import (
     VRFuzzCampaignRecord,
     VRFuzzCrashRecord,
+    VRFuzzTelemetryRecord,
     VRTargetRecord,
     VRWorkspaceRecord,
 )
@@ -229,6 +232,87 @@ def _crash_record_to_summary(record: VRFuzzCrashRecord) -> VRFuzzCrashSummary:
     )
 
 
+# §1.6 — keep the head bytes preview tight. 4 KB at 16 bytes/row =
+# 256 rows in the HexView, which fills the panel without burning RAM.
+_REPRODUCER_HEAD_LIMIT = 4096
+
+
+def _read_reproducer_head(
+    path: str | None,
+) -> tuple[str | None, int | None]:
+    """Read up to ``_REPRODUCER_HEAD_LIMIT`` bytes from ``path``.
+
+    Returns ``(hex_string, bytes_read)``. When the path is missing,
+    unreadable, or empty, returns ``(None, None)``. Workers running
+    on remote workstations write to local AILA storage via the same
+    file-transfer flow that already places ``reproducer_path``; if
+    the file isn't reachable we surface that as missing — the operator
+    will see "no minimised input bytes available" on the UI.
+    """
+    if not path:
+        return None, None
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(_REPRODUCER_HEAD_LIMIT)
+    except (OSError, PermissionError):
+        return None, None
+    if not data:
+        return None, None
+    truncated = os.path.getsize(path) if os.path.exists(path) else len(data)
+    return data.hex(), int(truncated)
+
+
+def _compose_crash_summary(
+    crash_type: str | None,
+    stack_trace: str | None,
+) -> str:
+    """Produce a one-line crash summary for the §1.6 LLM summary slot.
+
+    Today this composes a deterministic string from the crash_type +
+    the topmost stack frame. When a real LLM dispatcher is wired into
+    the fuzz worker it should replace this with a model-generated
+    sentence; the column type + projection don't change.
+    """
+    top = ""
+    if stack_trace:
+        for raw in stack_trace.splitlines():
+            line = raw.strip()
+            if line:
+                top = line
+                break
+    if crash_type and top:
+        return f"{crash_type} at {top}"
+    if crash_type:
+        return crash_type
+    if top:
+        return top
+    return ""
+
+
+def _record_telemetry_snapshot(
+    uow: UnitOfWork,
+    campaign: VRFuzzCampaignRecord,
+    moment: Any,
+) -> None:
+    """Append one telemetry row from the campaign's scalar columns.
+
+    Called from ``patch_campaign`` (whenever a scalar metric moves)
+    and ``register_crash`` (each unique crash). The sparkline + stuck
+    detection on the campaign detail page read these rows
+    (08_FRONTEND_UX.md §1.5).
+    """
+    uow.session.add(VRFuzzTelemetryRecord(
+        id=str(uuid4()),
+        campaign_id=campaign.id,
+        measured_at=moment,
+        execs_per_sec=campaign.execs_per_sec,
+        total_execs=campaign.total_execs,
+        corpus_size=campaign.corpus_size,
+        coverage_pct=campaign.coverage_pct,
+        crashes_found=campaign.crashes_found,
+    ))
+
+
 class FuzzCampaignService:
     """CRUD + crash ingestion for VR fuzzing campaigns."""
 
@@ -344,6 +428,7 @@ class FuzzCampaignService:
                 )
 
             mutated = False
+            telemetry_changed = False
             now = utc_now()
             if body.status is not None and body.status.value != record.status:
                 old = record.status
@@ -374,23 +459,34 @@ class FuzzCampaignService:
                 record.execs_per_sec = body.execs_per_sec
                 record.last_progress_at = now
                 mutated = True
+                telemetry_changed = True
             if body.total_execs is not None:
                 record.total_execs = body.total_execs
                 record.last_progress_at = now
                 mutated = True
+                telemetry_changed = True
             if body.corpus_size is not None:
                 record.corpus_size = body.corpus_size
                 mutated = True
+                telemetry_changed = True
             if body.coverage_pct is not None:
                 record.coverage_pct = body.coverage_pct
                 mutated = True
+                telemetry_changed = True
             if body.crashes_found is not None:
                 record.crashes_found = body.crashes_found
                 mutated = True
+                telemetry_changed = True
 
             if mutated:
                 record.updated_at = now
                 uow.session.add(record)
+                # Take a telemetry snapshot whenever any scalar metric
+                # moved. Each PATCH that brings new numbers from the
+                # workstation becomes one time-series point — operator
+                # gets a sparkline without a separate POST loop.
+                if telemetry_changed:
+                    _record_telemetry_snapshot(uow, record, now)
                 await uow.session.commit()
                 await uow.session.refresh(record)
             return _campaign_record_to_summary(record)
@@ -432,6 +528,19 @@ class FuzzCampaignService:
                 # the triage verdict surfaced (the operator already saw it).
                 return _crash_record_to_summary(existing)
 
+            head_hex, head_size = _read_reproducer_head(body.reproducer_path)
+            llm_summary = _compose_crash_summary(
+                body.crash_type, body.stack_trace,
+            )
+            initial_chain: list[dict[str, Any]] = [
+                {
+                    "at": utc_now().isoformat(),
+                    "actor": "fuzz_worker",
+                    "verdict": verdict.value,
+                    "reason": reason,
+                    "notes": "auto-triage on crash registration",
+                },
+            ]
             record = VRFuzzCrashRecord(
                 team_id=team_id,
                 campaign_id=body.campaign_id,
@@ -445,6 +554,10 @@ class FuzzCampaignService:
                 reproducer_size_bytes=body.reproducer_size_bytes,
                 stack_trace=body.stack_trace,
                 extra_json=json.dumps(body.extra),
+                reproducer_head_hex=head_hex,
+                reproducer_head_truncated_size=head_size,
+                llm_summary=llm_summary,
+                triage_chain_json=json.dumps(initial_chain),
             )
             uow.session.add(record)
 
@@ -452,6 +565,10 @@ class FuzzCampaignService:
             campaign.crashes_found = (campaign.crashes_found or 0) + 1
             campaign.last_progress_at = utc_now()
             uow.session.add(campaign)
+
+            # Snapshot telemetry on every new crash so the sparkline
+            # picks up the moment without a separate PATCH.
+            _record_telemetry_snapshot(uow, campaign, utc_now())
 
             await uow.session.commit()
             await uow.session.refresh(record)
