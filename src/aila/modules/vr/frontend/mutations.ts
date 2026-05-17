@@ -679,3 +679,75 @@ export const useDeleteFuzzCampaign = makeDeleter(
   ["fuzz-campaigns", "fuzz-crashes"],
   "Fuzz campaign",
 );
+
+// ── Fuzz proposals (operator-in-the-loop) ──────────────────────────
+
+export interface AcceptFuzzProposalBody {
+  name?: string | null;
+  engine_id?: string | null;
+  strategy_id?: string | null;
+  engine_config?: Record<string, unknown> | null;
+  strategy_config?: Record<string, unknown> | null;
+  duration_hours?: number | null;
+  analysis_system_id?: number | null;
+  auto_launch?: boolean;
+  skip_prepare?: boolean;
+  decision_reason?: string | null;
+}
+
+export interface AcceptFuzzProposalResponse {
+  proposal_id: string;
+  campaign_id: string;
+  workdir: string;
+  harness_path: string | null;
+  seeds_written: number;
+  dictionary_written: boolean;
+  auto_launched: boolean;
+  build_log: string;
+}
+
+export function useAcceptFuzzProposal(proposalId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AcceptFuzzProposalBody) =>
+      authorizedRequestJson<Envelope<AcceptFuzzProposalResponse>>(
+        `/vr/fuzz/proposals/${encodeURIComponent(proposalId)}/accept`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "fuzz-proposals"] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "fuzz-campaigns"] });
+      const r = res?.data;
+      if (r?.auto_launched) {
+        toast.success(
+          `Proposal accepted · campaign ${r.campaign_id.slice(0, 8)} launched`,
+        );
+      } else {
+        toast.success(
+          `Proposal accepted · campaign ${r?.campaign_id.slice(0, 8) ?? "?"} created`,
+        );
+      }
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to accept proposal: ${err.message}`);
+    },
+  });
+}
+
+export function useRejectFuzzProposal(proposalId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { decision_reason: string }) =>
+      authorizedRequestJson<Envelope<unknown>>(
+        `/vr/fuzz/proposals/${encodeURIComponent(proposalId)}/reject`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "fuzz-proposals"] });
+      toast.success("Proposal rejected");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to reject proposal: ${err.message}`);
+    },
+  });
+}

@@ -10,6 +10,7 @@ from .cve import VRCVEFeedStateRecord, VRCVERecord
 from .disclosure import VRDisclosureSubmissionRecord
 from .finding import VRFindingRecord
 from .fuzz import VRFuzzCampaignRecord, VRFuzzCrashRecord
+from .fuzz_proposal import VRFuzzCampaignProposalRecord
 from .investigation import VRInvestigationRecord
 from .investigation_target import VRInvestigationTargetRecord
 from .mcp_call_log import VRMcpCallLogRecord
@@ -28,6 +29,7 @@ __all__ = [
     "VRFindingRecord",
     "VRFuzzCampaignRecord",
     "VRFuzzCrashRecord",
+    "VRFuzzCampaignProposalRecord",
     "VRFuzzTelemetryRecord",
     "VRInvestigationBranchRecord",
     "VRInvestigationMessageRecord",

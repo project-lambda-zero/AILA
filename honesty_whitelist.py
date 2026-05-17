@@ -84,6 +84,8 @@ HONESTY_WHITELIST = [
     ("vr/tools/ida_bridge.py", "_resolve_base_url", "noqa"),
     ("vr/tools/audit_mcp_bridge.py", "forward", "noqa"),
     ("vr/tools/ida_bridge.py", "forward", "noqa"),
+    ("vr/agents/outcome_dispatcher.py", "_int_or_none", "inlining"),
+    ("vr/api_router.py", "_fuzz_proposal_summary", "inlining"),
 
     # Category (b): builtin disclosure tracks must share a uniform render()
     # signature even when a specific track doesn't consume embargo_days

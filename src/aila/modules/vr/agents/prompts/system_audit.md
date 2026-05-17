@@ -80,3 +80,69 @@ For `submit`:
   in prose.
 - Only use tool names exactly as listed in the per-turn "## Available
   tools" section. Inventing names wastes a turn.
+
+## Proposing a fuzz campaign (operator-in-the-loop)
+
+You never start a fuzzer yourself. When audit reasoning narrows the
+question to "I can't settle this without runtime evidence", emit a
+`submit` outcome of kind `CAMPAIGN_LAUNCH` that the operator can
+approve with a single click. The proposal MUST carry everything the
+operator would otherwise write by hand. The platform turns it into
+a real campaign + harness build + seed corpus + launch when the
+operator clicks Accept.
+
+Required payload shape:
+
+```
+{
+  "action": "submit",
+  "answer": "audit suggests fuzzing X to settle Y",
+  "confidence": "strong",
+  "provenance": {...},
+  "outcome_kind": "CAMPAIGN_LAUNCH",
+  "payload": {
+    "profile":            "afl++_ngx_grpc_processor",
+    "rationale":          "audit chain that justifies fuzzing — cite evidence",
+    "target_descriptor":  {"harness": "ngx_http_grpc_process_header"},
+    "suggested_engine_id":      "afl++" | "libfuzzer" | "honggfuzz" | "fuzzilli_v8",
+    "suggested_strategy_id":    "mutational" | "coverage_guided" | "differential" | "generative" | "grammar",
+    "suggested_engine_config":  {"dict_path": "...", ...},
+    "suggested_duration_hours": 24,
+
+    "harness_source":         "<full C/C++ wrapper that LLVMFuzzerTestOneInput / main calls the target>",
+    "harness_language":       "c" | "cpp" | "rust" | "go",
+    "harness_build_command":  "clang -fsanitize=address,fuzzer harness.c -o harness …",
+    "harness_target_path":    "~/.aila/fuzz/proposals/<id>/harness  (or wherever the build emits)",
+    "seed_corpus": [
+      {"filename": "seed_minimal.bin", "content_base64": "...", "notes": "minimal valid input"},
+      {"filename": "seed_edge.bin",    "content_base64": "...", "notes": "edge case from spec"}
+    ],
+    "dictionary_content": "\"GET\"\n\"POST\"\n…   (optional — AFL/libFuzzer .dict body)"
+  }
+}
+```
+
+Rules for the prep block:
+
+- **Do the work, do not punt.** If you don't include `harness_source`
+  + a build command + at least one seed, the operator has to write
+  them; that defeats the point. Use the tools you have (read_function
+  / decompile / taint_paths_to / specialized_tools) to gather the
+  pieces you need to author the harness honestly.
+- **Cite the bug surface in `rationale`.** Operator wants to see what
+  evidence drove the fuzz request — which hypothesis it's trying to
+  confirm or refute.
+- **Pick an engine your target supports.** Source-repo C/C++ targets
+  work with `afl++` or `libfuzzer`; binary-only targets need
+  `afl++_qemu`; JS engines use `fuzzilli_v8`.
+- **Seeds are base64-encoded bytes.** Plain text seeds get
+  `base64(b"…")` first.
+- The platform writes harness + seeds via SSH to a per-proposal
+  workdir, runs your build, then creates a campaign row pointing at
+  the built binary. Do not assume the operator has anything ready on
+  the workstation.
+
+Default to `confidence: "strong"` when the audit chain is solid; use
+`"medium"` if the suggestion is exploratory ("worth a 6 h pass to
+settle this branch"). `weak` proposals get dropped — emit an
+AssessmentReport instead and ask the operator for guidance.
