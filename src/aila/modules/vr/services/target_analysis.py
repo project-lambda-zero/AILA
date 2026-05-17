@@ -26,6 +26,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from sqlmodel import select as _select
@@ -51,6 +57,87 @@ _NO_INGEST_KINDS: frozenset[TargetKind] = frozenset({
     TargetKind.CRASH_INPUT,
     TargetKind.PATCH_DIFF,
 })
+
+# Where source_repo targets get cloned before audit_mcp.index_codebase.
+# Overridable via AILA_VR_CLONE_ROOT for dedicated workstations (D-33).
+_DEFAULT_CLONE_ROOT = Path(tempfile.gettempdir()) / "aila-vr-clones"
+_CLONE_TIMEOUT_SECONDS = 600.0  # 10 min hard cap on `git clone`
+
+_SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9._-]+")
+
+
+def _clone_root() -> Path:
+    root = Path(os.environ.get("AILA_VR_CLONE_ROOT") or _DEFAULT_CLONE_ROOT)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _slug_for(repo_url: str, ref: str | None) -> str:
+    """Stable directory name from repo URL + ref. e.g. 'github_com_nginx_nginx@main'."""
+    base = repo_url
+    for prefix in ("https://", "http://", "git@", "ssh://"):
+        if base.startswith(prefix):
+            base = base[len(prefix):]
+            break
+    base = base.replace(":", "/").rstrip("/")
+    if base.endswith(".git"):
+        base = base[:-4]
+    slug = _SAFE_NAME_RE.sub("_", base.replace("/", "_"))
+    suffix = _SAFE_NAME_RE.sub("_", ref) if ref else "HEAD"
+    return f"{slug}@{suffix}"
+
+
+async def _git_clone(repo_url: str, ref: str | None, dest: Path) -> None:
+    """Clone (or refresh) ``repo_url`` at ``ref`` into ``dest``.
+
+    Idempotent: if ``dest/.git`` exists, runs `git fetch + checkout` instead
+    of re-cloning. Raises TargetAnalysisError on any git failure.
+    """
+    if not shutil.which("git"):
+        raise TargetAnalysisError(
+            "git is not on PATH — install git or set AILA_VR_CLONE_ROOT "
+            "to a pre-cloned directory.",
+        )
+
+    if (dest / ".git").exists():
+        cmd = ["git", "-C", str(dest), "fetch", "--depth", "1", "origin", ref or "HEAD"]
+        await _run_git(cmd)
+        if ref:
+            await _run_git(["git", "-C", str(dest), "checkout", "FETCH_HEAD"])
+        return
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = ["git", "clone", "--depth", "1"]
+    if ref:
+        cmd += ["--branch", ref]
+    cmd += [repo_url, str(dest)]
+    await _run_git(cmd)
+
+
+async def _run_git(cmd: list[str]) -> None:
+    """Run ``cmd`` via subprocess.run inside asyncio.to_thread.
+
+    Done this way (instead of asyncio.create_subprocess_exec) because the
+    Windows SelectorEventLoop used inside ARQ workers does NOT support
+    subprocess creation. ``asyncio.to_thread`` sidesteps the constraint
+    while keeping the call awaitable.
+    """
+    def _do() -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(  # noqa: S603 — cmd built from controlled args  # noqa: PLW1510
+            cmd,
+            capture_output=True,
+            timeout=_CLONE_TIMEOUT_SECONDS,
+        )
+
+    try:
+        result = await asyncio.to_thread(_do)
+    except subprocess.TimeoutExpired as exc:
+        raise TargetAnalysisError(f"git timed out after {_CLONE_TIMEOUT_SECONDS}s: {' '.join(cmd)}") from exc
+    if result.returncode != 0:
+        err_text = (result.stderr or b"").decode(errors="replace").strip()[:300]
+        raise TargetAnalysisError(
+            f"git failed (exit {result.returncode}): {err_text}",
+        )
 
 
 class TargetAnalysisError(Exception):
@@ -123,10 +210,23 @@ class TargetAnalysisService:
             raise TargetAnalysisError(
                 "source_repo target requires repo_url in descriptor",
             )
-        ref = descriptor.get("ref") or descriptor.get("branch") or "main"
+        ref_explicit = descriptor.get("ref") or descriptor.get("branch")
+        ref = ref_explicit or "main"
+
+        # Accept either an http(s)/git URL or a pre-existing local path.
+        # URLs are cloned into AILA_VR_CLONE_ROOT first since audit_mcp
+        # treats `path` as a local filesystem location.
+        looks_like_url = "://" in repo_url or repo_url.startswith("git@")
+        if looks_like_url:
+            dest = _clone_root() / _slug_for(repo_url, ref_explicit)
+            _log.info("vr.clone repo_url=%s ref=%s dest=%s", repo_url, ref, dest)
+            await _git_clone(repo_url, ref_explicit, dest)
+            local_path = str(dest)
+        else:
+            local_path = repo_url
 
         kickoff = await self._audit_mcp.forward(
-            action="index_codebase", repo_url=repo_url, ref=ref,
+            action="index_codebase", path=local_path,
         )
         if kickoff.get("status") == "error":
             raise TargetAnalysisError(
@@ -146,7 +246,7 @@ class TargetAnalysisService:
         language = None
         try:
             langs = await self._audit_mcp.forward(
-                action="detect_languages", index_id=index_id,
+                action="detect_languages", path=local_path,
             )
             if isinstance(langs, dict):
                 primary = (
@@ -161,7 +261,13 @@ class TargetAnalysisService:
                 index_id, exc,
             )
 
-        return {"audit_mcp_index_id": index_id, "repo_url": repo_url, "ref": ref}, language
+        handles: dict[str, Any] = {
+            "audit_mcp_index_id": index_id,
+            "repo_url": repo_url,
+            "ref": ref,
+            "local_path": local_path,
+        }
+        return handles, language
 
     async def _ingest_binary(
         self, kind: TargetKind, descriptor: dict[str, Any],
