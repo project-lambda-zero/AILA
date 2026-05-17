@@ -5,6 +5,8 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import { DeleteButton } from "../components/DeleteButton";
+import { useDeletePattern } from "../mutations";
 import { usePatterns, useWorkspaces } from "../queries";
 import type { PatternKind, PatternScope, PatternStatus } from "../types";
 
@@ -41,6 +43,7 @@ export function PatternsPage() {
   const navigate = useNavigate();
   const { data: workspacesResult } = useWorkspaces();
   const workspaces = workspacesResult?.data ?? [];
+  const deleteMut = useDeletePattern();
 
   const [workspaceFilter, setWorkspaceFilter] = useState("");
   const [kindFilter, setKindFilter] = useState<PatternKind | "">("");
@@ -159,6 +162,7 @@ export function PatternsPage() {
                 <th className="px-4 py-2 font-semibold">Confidence</th>
                 <th className="px-4 py-2 font-semibold text-right">Used</th>
                 <th className="px-4 py-2 font-semibold">Created</th>
+                <th className="px-2 py-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -194,6 +198,14 @@ export function PatternsPage() {
                     {p.created_at
                       ? new Date(p.created_at).toLocaleDateString()
                       : "—"}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    <DeleteButton
+                      id={p.id}
+                      label={`pattern "${p.summary.slice(0, 40)}"`}
+                      mutation={deleteMut}
+                      compact
+                    />
                   </td>
                 </tr>
               ))}

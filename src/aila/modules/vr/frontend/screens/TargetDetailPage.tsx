@@ -1,12 +1,14 @@
 import { useRef } from "react";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import { DeleteButton } from "../components/DeleteButton";
 import {
   useAnalyzeTarget,
+  useDeleteTarget,
   useRankTarget,
   useUploadTargetArtifact,
 } from "../mutations";
@@ -140,6 +142,8 @@ export function TargetDetailPage() {
   const rankMut = useRankTarget(tid);
   const uploadMut = useUploadTargetArtifact(tid);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const deleteMut = useDeleteTarget();
+  const navigate = useNavigate();
 
   if (isLoading || !target) {
     return <LoadingSkeleton size="lg" width="full" />;
@@ -161,20 +165,28 @@ export function TargetDetailPage() {
   return (
     <div className="space-y-4">
       {/* Header — humans, not IDs */}
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          {target.display_name}
-        </h1>
-        <p className="text-sm text-text-muted mt-1">
-          {workspaceName ? (
-            <span>
-              {workspaceName} <span className="text-text-muted">·</span>{" "}
-              {target.kind.replace(/_/g, " ")}
-            </span>
-          ) : (
-            <span>{target.kind.replace(/_/g, " ")}</span>
-          )}
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-xl font-bold font-mono text-foreground">
+            {target.display_name}
+          </h1>
+          <p className="text-sm text-text-muted mt-1">
+            {workspaceName ? (
+              <span>
+                {workspaceName} <span className="text-text-muted">·</span>{" "}
+                {target.kind.replace(/_/g, " ")}
+              </span>
+            ) : (
+              <span>{target.kind.replace(/_/g, " ")}</span>
+            )}
+          </p>
+        </div>
+        <DeleteButton
+          id={target.id}
+          label={`target "${target.display_name}"`}
+          mutation={deleteMut}
+          onDeleted={() => navigate("/vr/targets")}
+        />
       </div>
 
       {/* Status banner */}

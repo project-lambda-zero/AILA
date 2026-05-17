@@ -5,8 +5,14 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
-import { useCreateInvestigation } from "../mutations";
-import { useInvestigations, useTargetMap } from "../queries";
+import { DeleteButton } from "../components/DeleteButton";
+import { useCreateInvestigation, useDeleteInvestigation } from "../mutations";
+import {
+  useInvestigations,
+  useTargetMap,
+  useTargets,
+  useWorkspaces,
+} from "../queries";
 import type { InvestigationKind, InvestigationStatus } from "../types";
 
 const statusColor: Record<
@@ -38,7 +44,10 @@ export function InvestigationsListPage() {
   const navigate = useNavigate();
   const { data: result, isLoading, isError } = useInvestigations();
   const targetMap = useTargetMap();
+  const { data: targetsResult } = useTargets();
+  const { data: workspacesResult } = useWorkspaces();
   const createMut = useCreateInvestigation();
+  const deleteMut = useDeleteInvestigation();
 
   const [showForm, setShowForm] = useState(false);
   const [formTitle, setFormTitle] = useState("");
@@ -76,7 +85,7 @@ export function InvestigationsListPage() {
             Start a new investigation
           </h2>
           <p className="text-xs text-text-muted mb-3">
-            Target must already exist (POST /api/vr/targets first if needed).
+            Pick a target you already onboarded under Workspaces → Targets.
             Workflow VR_INVESTIGATE_V1 fires immediately on create.
           </p>
           <div className="space-y-2">
@@ -94,13 +103,58 @@ export function InvestigationsListPage() {
               rows={2}
               className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
             />
-            <input
-              type="text"
-              value={formTargetId}
-              onChange={(e) => setFormTargetId(e.target.value)}
-              placeholder="Target ID (UUID from POST /api/vr/targets)"
-              className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-            />
+            {(() => {
+              const targets = targetsResult?.data ?? [];
+              const workspaces = workspacesResult?.data ?? [];
+              const byWs = new Map<string, typeof targets>();
+              for (const t of targets) {
+                const arr = byWs.get(t.workspace_id) ?? [];
+                arr.push(t);
+                byWs.set(t.workspace_id, arr);
+              }
+              const wsName = (id: string) =>
+                workspaces.find((w) => w.id === id)?.name ?? "(unknown workspace)";
+              const orderedWsIds = Array.from(byWs.keys()).sort(
+                (a, b) => wsName(a).localeCompare(wsName(b)),
+              );
+              if (targetsResult === undefined) {
+                return (
+                  <div className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-default text-text-muted">
+                    Loading targets…
+                  </div>
+                );
+              }
+              if (targets.length === 0) {
+                return (
+                  <div className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-danger text-text-danger">
+                    No targets exist yet. Create one under Workspaces → Targets
+                    before starting an investigation.
+                  </div>
+                );
+              }
+              return (
+                <select
+                  value={formTargetId}
+                  onChange={(e) => setFormTargetId(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+                >
+                  <option value="">— Pick a target —</option>
+                  {orderedWsIds.map((wsId) => (
+                    <optgroup key={wsId} label={wsName(wsId)}>
+                      {(byWs.get(wsId) ?? [])
+                        .slice()
+                        .sort((a, b) => a.display_name.localeCompare(b.display_name))
+                        .map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.display_name} · {t.kind} ·{" "}
+                            {t.primary_language ?? "—"} · {t.analysis_state}
+                          </option>
+                        ))}
+                    </optgroup>
+                  ))}
+                </select>
+              );
+            })()}
             <div className="flex gap-2 items-center">
               <select
                 value={formKind}
@@ -178,8 +232,8 @@ export function InvestigationsListPage() {
           <div className="text-center py-8">
             <p className="text-text-muted">No investigations yet.</p>
             <p className="text-text-muted text-xs mt-2">
-              POST /api/vr/investigations with target_id + initial_question
-              to start one. Workflow auto-fires.
+              Click <strong>New Investigation</strong> above to start one.
+              Workflow auto-fires on create.
             </p>
           </div>
         </AilaCard>
@@ -199,6 +253,7 @@ export function InvestigationsListPage() {
                 <th className="px-4 py-2 font-semibold text-right">Outcomes</th>
                 <th className="px-4 py-2 font-semibold text-right">Cost</th>
                 <th className="px-4 py-2 font-semibold">Created</th>
+                <th className="px-2 py-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -241,6 +296,14 @@ export function InvestigationsListPage() {
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-muted">
                     {formatDate(inv.created_at)}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    <DeleteButton
+                      id={inv.id}
+                      label={`investigation "${inv.title}"`}
+                      mutation={deleteMut}
+                      compact
+                    />
                   </td>
                 </tr>
               ))}

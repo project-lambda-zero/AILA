@@ -5,7 +5,8 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
-import { useCreateTarget } from "../mutations";
+import { DeleteButton } from "../components/DeleteButton";
+import { useCreateTarget, useDeleteTarget } from "../mutations";
 import { useTargets, useWorkspaces } from "../queries";
 import type { AnalysisState, TargetKind, TargetStatus } from "../types";
 
@@ -93,6 +94,7 @@ export function TargetsPage() {
   });
 
   const createMut = useCreateTarget();
+  const deleteMut = useDeleteTarget();
   const [showForm, setShowForm] = useState(false);
   const [formWorkspaceId, setFormWorkspaceId] = useState("");
   const [formDisplayName, setFormDisplayName] = useState("");
@@ -284,6 +286,7 @@ export function TargetsPage() {
                 <th className="px-4 py-2 font-semibold">Analysis</th>
                 <th className="px-4 py-2 font-semibold">Analyzed at</th>
                 <th className="px-4 py-2 font-semibold">Created</th>
+                <th className="px-2 py-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -323,6 +326,14 @@ export function TargetsPage() {
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-muted">
                     {formatDate(t.created_at)}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    <DeleteButton
+                      id={t.id}
+                      label={`target "${t.display_name}"`}
+                      mutation={deleteMut}
+                      compact
+                    />
                   </td>
                 </tr>
               ))}

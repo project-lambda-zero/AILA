@@ -5,6 +5,8 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import { DeleteButton } from "../components/DeleteButton";
+import { useDeleteFuzzCampaign } from "../mutations";
 import { useFuzzCampaigns, useWorkspaces } from "../queries";
 import type { CampaignStatus } from "../types";
 
@@ -28,6 +30,7 @@ export function FuzzCampaignsPage() {
   const navigate = useNavigate();
   const { data: workspacesResult } = useWorkspaces();
   const workspaces = workspacesResult?.data ?? [];
+  const deleteMut = useDeleteFuzzCampaign();
 
   const [workspaceFilter, setWorkspaceFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<CampaignStatus | "">("");
@@ -117,6 +120,7 @@ export function FuzzCampaignsPage() {
                 <th className="px-4 py-2 font-semibold text-right">Cov %</th>
                 <th className="px-4 py-2 font-semibold text-right">Crashes</th>
                 <th className="px-4 py-2 font-semibold">Last progress</th>
+                <th className="px-2 py-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -156,6 +160,14 @@ export function FuzzCampaignsPage() {
                     {c.last_progress_at
                       ? new Date(c.last_progress_at).toLocaleString()
                       : "—"}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    <DeleteButton
+                      id={c.id}
+                      label={`fuzz campaign "${c.name}"`}
+                      mutation={deleteMut}
+                      compact
+                    />
                   </td>
                 </tr>
               ))}
