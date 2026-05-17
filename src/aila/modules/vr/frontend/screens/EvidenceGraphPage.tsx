@@ -139,7 +139,16 @@ export function EvidenceGraphPage() {
           nodes={nodes}
           edges={edges}
           height={620}
-          onNodeClick={setSelected}
+          onNodeClick={(node, event) => {
+            // Cmd/Ctrl-click → open the node's dedicated page in a new
+            // tab per §3.6 / §1.9. Each node kind has its own target URL.
+            if (event.metaKey || event.ctrlKey) {
+              const url = openUrlForNode(node);
+              if (url) window.open(url, "_blank", "noopener");
+              return;
+            }
+            setSelected(node);
+          }}
         />
 
         {/* Right rail: selected node detail */}
@@ -170,6 +179,28 @@ export function EvidenceGraphPage() {
                   <pre className="text-[10px] font-mono text-text-muted whitespace-pre-wrap max-h-60 overflow-y-auto">
                     {JSON.stringify(selected.meta, null, 2)}
                   </pre>
+                )}
+                {(() => {
+                  const url = openUrlForNode(selected);
+                  if (!url) return null;
+                  return (
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-accent hover:underline mt-1 inline-block"
+                    >
+                      open {selected.kind} page in new tab →
+                    </a>
+                  );
+                })()}
+                {selected.kind === "obligation" && (
+                  <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40">
+                    <AilaBadge severity="info" size="sm">operator-only</AilaBadge>
+                    <p className="text-[10px] text-text-muted mt-1">
+                      "Manually close" — backend pending.
+                    </p>
+                  </div>
                 )}
               </div>
             ) : (
@@ -214,4 +245,32 @@ export function EvidenceGraphPage() {
       </div>
     </div>
   );
+}
+
+/** Per-node-kind navigation target for Cmd-click (08_FRONTEND_UX.md §3.6).
+ *  Synthesised graph: nodes carry meta with the source row (branch /
+ *  outcome) so we navigate accordingly. */
+function openUrlForNode(node: GraphNodeInput): string | null {
+  const meta = node.meta as Record<string, unknown> | undefined;
+  if (node.kind === "hypothesis") {
+    const branch = meta?.branch as { investigation_id?: string } | undefined;
+    if (branch?.investigation_id) {
+      return `/vr/investigations/${branch.investigation_id}/tree`;
+    }
+  }
+  if (node.kind === "crash") {
+    const o = meta?.outcome as { id?: string } | undefined;
+    // Outcomes don't carry crash_id directly — fall back to a generic
+    // fuzz crashes list; once a crash → outcome mapping ships, this
+    // resolves to /vr/fuzz/crashes/:id.
+    if (o?.id) return `/vr/fuzz/campaigns`;
+  }
+  if (node.kind === "advisory") {
+    const o = meta?.outcome as { id?: string } | undefined;
+    if (o?.id) return `/vr/disclosures`;
+  }
+  if (node.kind === "exploit") {
+    return `/vr/fuzz/campaigns`;
+  }
+  return null;
 }

@@ -25,6 +25,7 @@ export function CVSSCalculator({
 }) {
   const initial = parseVector(initialVector);
   const [values, setValues] = useState<Record<string, string>>(initial);
+  const [version, setVersion] = useState<"v3.1" | "v4.0">("v3.1");
 
   const { vector, score } = useMemo(() => computeCVSS(values), [values]);
 
@@ -35,9 +36,34 @@ export function CVSSCalculator({
   function pick(metricId: string, valueId: string) {
     setValues((prev) => ({ ...prev, [metricId]: valueId }));
   }
+  if (version === "v4.0") {
+    return (
+      <div className="space-y-3">
+        <VersionTabs version={version} setVersion={setVersion} />
+        <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
+          <p className="text-xs text-text-muted">
+            <strong>CVSS v4.0 calculator — backend pending.</strong>
+          </p>
+          <p className="text-[10px] text-text-muted mt-2">
+            v4.0 introduces 11 base metrics + threat + environmental +
+            supplemental groups + a fundamentally different score
+            formula. The spec calls for both v3.1 + v4.0 because some
+            consumers (vendor PSIRTs) still demand the older vector
+            string. Wiring v4 requires shipping the FIRST v4.0
+            specification-document §7 computation; tracked as a
+            v0.6 follow-up.
+          </p>
+          <p className="text-[10px] text-text-muted mt-2 font-mono">
+            Use v3.1 above to produce a vector now.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">
+      <VersionTabs version={version} setVersion={setVersion} />
       {CVSS_METRICS.map((m) => (
         <div key={m.id}>
           <div className="text-xs font-mono text-text-muted mb-1">
@@ -143,4 +169,32 @@ function computeCVSS(values: Record<string, string>): {
 function roundUp(n: number): number {
   // CVSS rounds up to one decimal place
   return Math.ceil(n * 10) / 10;
+}
+
+function VersionTabs({
+  version,
+  setVersion,
+}: {
+  version: "v3.1" | "v4.0";
+  setVersion: (v: "v3.1" | "v4.0") => void;
+}) {
+  return (
+    <div className="flex gap-1 text-xs font-mono border-b border-border-default pb-1">
+      {(["v3.1", "v4.0"] as const).map((v) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => setVersion(v)}
+          className={
+            "px-2 py-1 rounded " +
+            (version === v
+              ? "bg-accent text-white"
+              : "text-text-muted hover:text-foreground hover:bg-surface-hover")
+          }
+        >
+          CVSS {v}
+        </button>
+      ))}
+    </div>
+  );
 }

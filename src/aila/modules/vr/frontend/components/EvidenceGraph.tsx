@@ -125,6 +125,46 @@ function layout(nodes: GraphNodeInput[]): Map<string, { x: number; y: number }> 
   return positions;
 }
 
+
+type LayoutAlgo = "concentric" | "radial" | "grid";
+
+function layoutGrid(nodes: GraphNodeInput[]): Map<string, { x: number; y: number }> {
+  // Group by kind, render each kind in a row with even spacing.
+  const tiers: Record<GraphNodeKind, GraphNodeInput[]> = {
+    hypothesis: [],
+    evidence: [],
+    crash: [],
+    exploit: [],
+    advisory: [],
+    obligation: [],
+  };
+  for (const n of nodes) tiers[n.kind].push(n);
+  const positions = new Map<string, { x: number; y: number }>();
+  const colW = 260;
+  const rowH = 120;
+  let rowIdx = 0;
+  for (const kind of Object.keys(tiers) as GraphNodeKind[]) {
+    tiers[kind].forEach((n, i) => {
+      positions.set(n.id, { x: i * colW, y: rowIdx * rowH });
+    });
+    if (tiers[kind].length > 0) rowIdx++;
+  }
+  return positions;
+}
+
+function layoutRadial(nodes: GraphNodeInput[]): Map<string, { x: number; y: number }> {
+  // Single concentric ring, all nodes equally spaced.
+  const positions = new Map<string, { x: number; y: number }>();
+  const r = Math.max(200, nodes.length * 15);
+  nodes.forEach((n, i) => {
+    const angle = (2 * Math.PI * i) / Math.max(nodes.length, 1);
+    positions.set(n.id, {
+      x: r * Math.cos(angle),
+      y: r * Math.sin(angle),
+    });
+  });
+  return positions;
+}
 type GraphFilter = "all" | "confirmed" | "rejected" | "unresolved" | "tainted";
 
 export function EvidenceGraph({
@@ -137,12 +177,15 @@ export function EvidenceGraph({
   nodes: GraphNodeInput[];
   edges: GraphEdgeInput[];
   height?: number;
-  onNodeClick?: (node: GraphNodeInput) => void;
+  /** Called with the raw node and the click event so callers can branch
+   *  on cmd/ctrl-click (open in new tab per §3.6) vs primary-click. */
+  onNodeClick?: (node: GraphNodeInput, event: React.MouseEvent) => void;
   showLabels?: boolean;
 }) {
   const [filter, setFilter] = useState<GraphFilter>("all");
   const [searchText, setSearchText] = useState("");
   const [edgeLabels, setEdgeLabels] = useState(showLabels);
+  const [layoutAlgo, setLayoutAlgo] = useState<LayoutAlgo>("concentric");
 
   // Apply filter
   const { filteredNodes, filteredEdges } = useMemo(() => {
@@ -200,7 +243,11 @@ export function EvidenceGraph({
     return { filteredNodes: nodes, filteredEdges: edges };
   }, [rawNodes, rawEdges, filter, searchText]);
 
-  const positions = useMemo(() => layout(filteredNodes), [filteredNodes]);
+  const positions = useMemo(() => {
+    if (layoutAlgo === "grid") return layoutGrid(filteredNodes);
+    if (layoutAlgo === "radial") return layoutRadial(filteredNodes);
+    return layout(filteredNodes);
+  }, [filteredNodes, layoutAlgo]);
 
   const flowNodes: Node[] = useMemo(
     () =>
@@ -210,9 +257,15 @@ export function EvidenceGraph({
         return {
           id: n.id,
           position: p,
+          ariaLabel: `${n.kind} ${n.label}${n.state ? ` (${n.state})` : ""}`,
           data: {
             label: (
-              <div className="text-left" style={{ color: "white" }}>
+              <div
+                className="text-left"
+                style={{ color: "white" }}
+                aria-label={`${n.kind} ${n.label}${n.state ? ` (${n.state})` : ""}`}
+                role="article"
+              >
                 <div className="text-[10px] uppercase opacity-70">{n.kind}</div>
                 <div className="text-xs font-mono truncate max-w-[180px]">
                   {n.label}
@@ -307,6 +360,17 @@ export function EvidenceGraph({
         >
           {edgeLabels ? "Labels: on" : "Labels: off"}
         </button>
+        <select
+          value={layoutAlgo}
+          onChange={(e) => setLayoutAlgo(e.target.value as LayoutAlgo)}
+          className="px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border-default"
+          aria-label="Layout algorithm"
+          title="Layout algorithm — concentric tiers, single radial ring, or kind-grouped grid"
+        >
+          <option value="concentric">layout: concentric</option>
+          <option value="radial">layout: radial</option>
+          <option value="grid">layout: grid</option>
+        </select>
       </div>
 
       <div
@@ -322,9 +386,9 @@ export function EvidenceGraph({
             nodes={flowNodes}
             edges={flowEdges}
             fitView
-            onNodeClick={(_, node) => {
+            onNodeClick={(event, node) => {
               const raw = rawNodes.find((n) => n.id === node.id);
-              if (raw && onNodeClick) onNodeClick(raw);
+              if (raw && onNodeClick) onNodeClick(raw, event as unknown as React.MouseEvent);
             }}
             proOptions={{ hideAttribution: true }}
           >

@@ -10,6 +10,7 @@ import { WorkflowStepper } from "../components/WorkflowStepper";
 import { useDeleteProject } from "../mutations";
 import {
   useFuzzCampaigns,
+  useInvestigationMessages,
   useInvestigations,
   useTargetName,
   useVRFindings,
@@ -326,6 +327,65 @@ function OverviewTab({
         </AilaCard>
       </div>
 
+      {/* Workstation heartbeat (§1.3). The platform exposes
+          /systems but the per-project link (project.analysis_system_id)
+          isn't on VRProjectSummary yet. v0.5 surfaces "unknown" with a
+          backend-pending hint; LiveDot indicates connection state once
+          wired. */}
+      <AilaCard>
+        <div className="flex items-center gap-2 flex-wrap">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+            Workstation
+          </h3>
+          <AilaBadge severity="info" size="sm">unknown</AilaBadge>
+          <span className="text-[10px] text-text-muted ml-auto">
+            analysis_system_id missing on VRProjectSummary — backend
+            pending
+          </span>
+        </div>
+        <p className="text-[10px] text-text-muted mt-2">
+          Per §1.3 this should show "aila-research-04 — connected" with
+          a heartbeat dot driven by the SSH service health. Wiring
+          requires the project summary to project the system_id +
+          a /systems/:id/health endpoint.
+        </p>
+      </AilaCard>
+
+      {/* Recent reasoning rollup (§1.3) — last 10 turns across the
+          project's investigations. Pulls from the existing investigation
+          messages query. */}
+      {projInvs.length > 0 && (
+        <RecentReasoningRollup investigationId={projInvs[0]!.id} />
+      )}
+
+      {/* Project event timeline strip (§1.3) — major events derived
+          from existing data. Real event log is backend pending. */}
+      <AilaCard>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+          Project events
+        </h3>
+        <ol className="space-y-2 text-xs">
+          <EventRow
+            time={project.created_at}
+            label="project created"
+          />
+          {projInvs.map((inv) => (
+            <EventRow
+              key={inv.id}
+              time={inv.started_at ?? inv.created_at}
+              label={`investigation '${inv.title}' ${inv.status}`}
+            />
+          ))}
+          {fuzzCampaigns.map((c) => (
+            <EventRow
+              key={c.id}
+              time={c.started_at ?? c.created_at}
+              label={`fuzz campaign '${c.name}' ${c.status}`}
+            />
+          ))}
+        </ol>
+      </AilaCard>
+
       {/* Project metadata strip */}
       <AilaCard>
         <dl className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
@@ -610,5 +670,84 @@ export function ProjectDetailPage() {
       {activeTab === "agent" && <AgentLogTab project={project} />}
       {activeTab === "advisory" && <AdvisoryTab project={project} />}
     </div>
+  );
+}
+
+function RecentReasoningRollup({
+  investigationId,
+}: {
+  investigationId: string;
+}) {
+  const { data, isLoading } = useInvestigationMessages(investigationId);
+  const messages = data?.data ?? [];
+  const recent = messages.slice(-10).reverse();
+  return (
+    <AilaCard>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+          Recent reasoning ({recent.length})
+        </h3>
+        <Link
+          to={`/vr/investigations/${investigationId}`}
+          className="text-[10px] text-accent hover:underline"
+        >
+          full timeline →
+        </Link>
+      </div>
+      {isLoading ? (
+        <p className="text-xs text-text-muted">Loading…</p>
+      ) : recent.length === 0 ? (
+        <p className="text-xs text-text-muted">
+          No turns yet — engine hasn't reasoned about this target.
+        </p>
+      ) : (
+        <ol className="space-y-1 text-xs">
+          {recent.map((m) => (
+            <li
+              key={m.id}
+              className="border border-border-default rounded px-2 py-1 flex items-center gap-2 flex-wrap"
+            >
+              <AilaBadge
+                severity={m.sender_kind === "operator" ? "info" : "medium"}
+                size="sm"
+              >
+                {m.sender_kind}
+              </AilaBadge>
+              <span className="font-mono text-text-muted">
+                {m.payload_kind}
+              </span>
+              {m.at_turn != null && (
+                <span className="text-text-muted">t{m.at_turn}</span>
+              )}
+              <span className="text-text-muted ml-auto">
+                {m.created_at
+                  ? new Date(m.created_at).toLocaleTimeString()
+                  : ""}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </AilaCard>
+  );
+}
+
+function EventRow({
+  time,
+  label,
+}: {
+  time?: string | null;
+  label: string;
+}) {
+  return (
+    <li className="flex items-start gap-2 border border-border-default rounded px-2 py-1.5">
+      <span className="w-2 h-2 rounded-full bg-accent mt-1.5 flex-shrink-0" />
+      <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
+        <span className="font-mono text-foreground truncate">{label}</span>
+        <span className="text-text-muted text-[10px] whitespace-nowrap">
+          {time ? new Date(time).toLocaleString() : "—"}
+        </span>
+      </div>
+    </li>
   );
 }

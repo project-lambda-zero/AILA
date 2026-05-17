@@ -64,6 +64,14 @@ export const nav = [
     description: "Configure + monitor delegated MCP workstations",
   },
   {
+    id: "vr.audit-log",
+    slot: "sidebar.main" as const,
+    label: "Audit Log",
+    to: "/vr/audit",
+    order: 76.5,
+    description: "Who-did-what-when audit trail for VR engagements",
+  },
+  {
     id: "vr.mcp-calls",
     slot: "sidebar.main" as const,
     label: "MCP Call Log",
