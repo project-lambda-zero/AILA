@@ -15,6 +15,11 @@ import { PatternDetailPage } from "./screens/PatternDetailPage";
 import { PatternsPage } from "./screens/PatternsPage";
 import { McpServersPage } from "./screens/McpServersPage";
 import { McpCallLogPage } from "./screens/McpCallLogPage";
+import { FindingDetailPage } from "./screens/FindingDetailPage";
+import { EvidenceGraphPage } from "./screens/EvidenceGraphPage";
+import { NdayPage } from "./screens/NdayPage";
+import { ExploitEditorPage } from "./screens/ExploitEditorPage";
+import { NewProjectWizard } from "./screens/NewProjectWizard";
 
 export const routes = [
   {
@@ -25,6 +30,15 @@ export const routes = [
     nav: true,
     slot: "page.full" as const,
     breadcrumb: "Vuln Research",
+  },
+  {
+    id: "vr.project-new",
+    path: "/vr/projects/new",
+    page: NewProjectWizard,
+    title: "New VR Project",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "New",
   },
   {
     id: "vr.project-detail",
@@ -144,6 +158,15 @@ export const routes = [
     breadcrumb: "Fuzz Crash",
   },
   {
+    id: "vr.evidence-graph",
+    path: "/vr/investigations/:investigationId/graph",
+    page: EvidenceGraphPage,
+    title: "Evidence Graph",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "Evidence Graph",
+  },
+  {
     id: "vr.branch-tree",
     path: "/vr/investigations/:investigationId/tree",
     page: BranchTreePage,
@@ -160,6 +183,33 @@ export const routes = [
     nav: true,
     slot: "page.full" as const,
     breadcrumb: "MCP Servers",
+  },
+  {
+    id: "vr.nday",
+    path: "/vr/projects/:projectId/ndays/:cveId",
+    page: NdayPage,
+    title: "N-day Reproduction",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "N-day",
+  },
+  {
+    id: "vr.finding-detail",
+    path: "/vr/projects/:projectId/findings/:findingId",
+    page: FindingDetailPage,
+    title: "Finding Detail",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "Finding",
+  },
+  {
+    id: "vr.exploit-editor",
+    path: "/vr/projects/:projectId/findings/:findingId/exploit",
+    page: ExploitEditorPage,
+    title: "Exploit Editor",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "Exploit",
   },
   {
     id: "vr.mcp-calls",

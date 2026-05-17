@@ -1,6 +1,7 @@
 import { useNavigate, useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
+import { AilaChart } from "@/components/aila/AilaChart";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
@@ -40,6 +41,31 @@ const NEXT_STATES: Record<CampaignStatus, CampaignStatus[]> = {
   failed: [],
   aborted: [],
 };
+
+/** Bucket crashes by hour-of-discovery for the crash-rate bar chart.
+ *  Returns the last 12 buckets (rolling 12h window) so the chart fits. */
+function bucketCrashesByHour(
+  crashes: ReadonlyArray<{ discovered_at?: string | null; created_at?: string | null }>,
+): Array<{ bucket: string; count: number }> {
+  const counts = new Map<string, number>();
+  const now = Date.now();
+  // Init buckets for the last 12 hours so empty hours render as zero
+  for (let i = 11; i >= 0; i--) {
+    const t = new Date(now - i * 3600_000);
+    const k = `${t.getHours().toString().padStart(2, "0")}h`;
+    counts.set(k, 0);
+  }
+  for (const c of crashes) {
+    const ts = c.discovered_at ?? c.created_at;
+    if (!ts) continue;
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) continue;
+    if (now - d.getTime() > 12 * 3600_000) continue;
+    const k = `${d.getHours().toString().padStart(2, "0")}h`;
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return Array.from(counts.entries()).map(([bucket, count]) => ({ bucket, count }));
+}
 
 export function FuzzCampaignDetailPage() {
   const { campaignId } = useParams<{ campaignId: string }>();
@@ -176,6 +202,66 @@ export function FuzzCampaignDetailPage() {
             </dd>
           </div>
         </dl>
+      </AilaCard>
+
+      {/* Live charts (§1.5 — coverage / crashes / corpus / stability).
+          v0.5: derived from scalar metrics + crash discovery timestamps.
+          Real time-series telemetry stream is backend pending. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <AilaCard>
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+            Crashes over time
+          </h3>
+          {crashes.length === 0 ? (
+            <p className="text-xs text-text-muted">
+              No crashes yet — chart populates once the engine finds one.
+            </p>
+          ) : (
+            <AilaChart
+              type="bar"
+              data={bucketCrashesByHour(crashes)}
+              dataKey="count"
+              xKey="bucket"
+              size="sm"
+              ariaLabel="Crashes per hour bucket"
+            />
+          )}
+        </AilaCard>
+
+        <AilaCard>
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+            Coverage / corpus / stability
+          </h3>
+          <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
+            <AilaBadge severity="info" size="sm">
+              backend pending
+            </AilaBadge>
+            <p className="text-[10px] text-text-muted mt-2">
+              Live edge-coverage + corpus-size + stability% time-series
+              charts ship once the workstation telemetry stream lands.
+              Scalars above show the latest snapshot.
+            </p>
+          </div>
+        </AilaCard>
+      </div>
+
+      {/* Resource band (§1.5 — per-instance CPU/mem/IO from workstation polls) */}
+      <AilaCard>
+        <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+          Workstation resources
+        </h3>
+        <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
+          <AilaBadge severity="info" size="sm">
+            backend pending
+          </AilaBadge>
+          <p className="text-[10px] text-text-muted mt-2">
+            Spec calls for per-instance CPU / memory / disk-write-rate polled
+            from the workstation every 10 s.{" "}
+            {campaign.workstation_host
+              ? `Host: ${campaign.workstation_host}.`
+              : "No workstation host registered."}
+          </p>
+        </div>
       </AilaCard>
 
       {/* Crashes */}
