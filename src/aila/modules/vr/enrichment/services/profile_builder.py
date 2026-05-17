@@ -70,6 +70,7 @@ _APPLICABLE_MCP_BY_KIND: dict[str, list[str]] = {
 # (target_kind, primary_language) → applicable fuzzing engines. Source
 # missing OR language missing falls back to NATIVE_BINARY defaults.
 _APPLICABLE_FUZZING_ENGINES: dict[tuple[str, str], list[str]] = {
+    # v0.3 — single-target engines per (kind, language)
     (TargetKind.NATIVE_BINARY.value, "c"):          ["afl++_qemu", "libfuzzer"],
     (TargetKind.NATIVE_BINARY.value, "c++"):        ["afl++_qemu", "libfuzzer"],
     (TargetKind.NATIVE_BINARY.value, "javascript"): ["fuzzilli_v8"],
@@ -88,6 +89,21 @@ _APPLICABLE_FUZZING_ENGINES: dict[tuple[str, str], list[str]] = {
     (TargetKind.APK.value, "java"):                 ["jazzer"],
     (TargetKind.JAR.value, "java"):                 ["jazzer"],
     (TargetKind.JAR.value, "kotlin"):               ["jazzer"],
+
+    # v0.4 GA-53 — expanded profile coverage
+    # PHP / Ruby are audit-only — no usable fuzzer ecosystem
+    (TargetKind.SOURCE_REPO.value, "php"):          [],
+    (TargetKind.SOURCE_REPO.value, "ruby"):         [],
+    # Swift / Objective-C — IPA + native paths
+    (TargetKind.SOURCE_REPO.value, "swift"):        ["libfuzzer-swift"],
+    (TargetKind.IPA.value, "swift"):                ["libfuzzer-swift"],
+    (TargetKind.IPA.value, "objc"):                 ["libfuzzer"],
+    # Android extension — libFuzzer-Android for native libs in APK
+    (TargetKind.APK.value, "c++"):                  ["libfuzzer-android"],
+    (TargetKind.APK.value, "c"):                    ["libfuzzer-android"],
+    # .NET — sharpfuzz coverage-guided fuzzer
+    (TargetKind.DOTNET_ASSEMBLY.value, "c#"):       ["sharpfuzz"],
+    (TargetKind.DOTNET_ASSEMBLY.value, "f#"):       ["sharpfuzz"],
 }
 
 # (target_kind, primary_language) → reasoning strategy family default
@@ -98,6 +114,15 @@ _DEFAULT_REASONING_STRATEGY: dict[tuple[str, str], str] = {
     (TargetKind.CVE.value, "*"):                    "vulnerability_research.variant_hunt",
     (TargetKind.PATCH_DIFF.value, "*"):             "vulnerability_research.patch_diff_analysis",
     (TargetKind.CRASH_INPUT.value, "*"):            "vulnerability_research.crash_triage",
+    # v0.4 GA-53 — audit-only and mobile source-audit defaults
+    (TargetKind.SOURCE_REPO.value, "php"):          "vulnerability_research.source_audit",
+    (TargetKind.SOURCE_REPO.value, "ruby"):         "vulnerability_research.source_audit",
+    (TargetKind.SOURCE_REPO.value, "python"):       "vulnerability_research.source_audit",
+    (TargetKind.SOURCE_REPO.value, "java"):         "vulnerability_research.source_audit",
+    (TargetKind.SOURCE_REPO.value, "kotlin"):       "vulnerability_research.source_audit",
+    (TargetKind.APK.value, "*"):                    "vulnerability_research.discovery_research",
+    (TargetKind.IPA.value, "*"):                    "vulnerability_research.discovery_research",
+    (TargetKind.DOTNET_ASSEMBLY.value, "*"):        "vulnerability_research.discovery_research",
 }
 
 # target_kind → default disclosure tracks suggested at finding promotion.
