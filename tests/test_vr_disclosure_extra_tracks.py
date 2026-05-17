@@ -53,10 +53,10 @@ class TestExtraTracksRegistered:
         for track_id, _ in _NEW_TRACKS:
             assert track_id in registry, f"{track_id} not registered"
 
-    def test_total_track_count_is_eleven(self) -> None:
+    def test_total_track_count_is_fourteen(self) -> None:
         # 4 original (chrome_vrp / blog_post / vendor_direct / cna_github_gsa)
-        # + 7 extras
-        assert len(available_tracks()) == 11
+        # + 7 v0.3 extras + 3 v0.5 kernel = 14
+        assert len(available_tracks()) == 14
 
     @pytest.mark.parametrize("track_id,expected_kind", _NEW_TRACKS)
     def test_kind_matches(self, track_id: str, expected_kind: DisclosureKind) -> None:

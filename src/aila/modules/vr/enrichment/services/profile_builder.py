@@ -154,12 +154,18 @@ _DEFAULT_DISCLOSURE_TRACKS: dict[str, list[str]] = {
     TargetKind.CRASH_INPUT.value:     ["vendor_direct", "blog_post"],
     TargetKind.PATCH_DIFF.value:      ["blog_post"],
     # v0.5 GA-57 — kernel + hypervisor disclosure
-    # linux-distros / oss-security / kernel.org tracks ship in v0.5 phase 3.
-    # Until then, fall back to vendor_direct + blog_post; cert_cc covers
-    # multi-vendor coordination for hypervisor escapes.
-    TargetKind.KERNEL_IMAGE.value:    ["vendor_direct", "blog_post"],
-    TargetKind.KERNEL_MODULE.value:   ["vendor_direct", "blog_post"],
-    TargetKind.HYPERVISOR_IMAGE.value: ["cert_cc", "vendor_direct", "blog_post"],
+    # Linux kernel finding → kernel_org_security primary, linux_distros for
+    # distro coordination, oss_security for public after embargo, plus the
+    # researcher's blog post.
+    TargetKind.KERNEL_IMAGE.value:    [
+        "kernel_org_security", "linux_distros", "oss_security", "blog_post",
+    ],
+    TargetKind.KERNEL_MODULE.value:   [
+        "kernel_org_security", "linux_distros", "oss_security", "blog_post",
+    ],
+    TargetKind.HYPERVISOR_IMAGE.value: [
+        "cert_cc", "vendor_direct", "oss_security", "blog_post",
+    ],
 }
 
 # All pattern kinds defined in VR_V03_KNOWLEDGE_TRANSFER_PLAN.md GA-41 apply

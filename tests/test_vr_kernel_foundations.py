@@ -78,11 +78,12 @@ class TestProfileRules:
         ) == "vulnerability_research.hypervisor_audit"
 
     def test_kernel_default_disclosure(self) -> None:
-        # Phase 1 falls back to vendor_direct + blog_post until phase 3
-        # adds linux_distros / oss_security / kernel_org_security.
+        # v0.5 phase 3 — kernel disclosures now point at real tracks.
         for kind in (TargetKind.KERNEL_IMAGE, TargetKind.KERNEL_MODULE):
             tracks = _DEFAULT_DISCLOSURE_TRACKS[kind.value]
-            assert "vendor_direct" in tracks
+            assert "kernel_org_security" in tracks
+            assert "linux_distros" in tracks
+            assert "oss_security" in tracks
             assert "blog_post" in tracks
 
     def test_hypervisor_default_disclosure_includes_cert_cc(self) -> None:
