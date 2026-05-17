@@ -55,4 +55,12 @@ export const nav = [
     order: 74,
     description: "Fuzzing campaigns + crash triage",
   },
+  {
+    id: "vr.mcp-servers",
+    slot: "sidebar.main" as const,
+    label: "MCP Servers",
+    to: "/vr/mcp/servers",
+    order: 75,
+    description: "Configure + monitor delegated MCP workstations",
+  },
 ];

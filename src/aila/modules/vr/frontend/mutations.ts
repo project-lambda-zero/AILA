@@ -471,3 +471,29 @@ export function usePatchFuzzCampaign(campaignId: string) {
     },
   });
 }
+
+// ─── MCP server retarget ───────────────────────────────────────────────
+
+export function useUpdateMcpServer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      serverId,
+      baseUrl,
+    }: {
+      serverId: string;
+      baseUrl: string;
+    }) =>
+      await authorizedRequestJson<Envelope<unknown>>(
+        `/vr/mcp/servers/${encodeURIComponent(serverId)}`,
+        { method: "PATCH", body: { base_url: baseUrl } },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "mcp-servers"] });
+      toast.success("MCP server updated");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to update MCP server: ${err.message}`);
+    },
+  });
+}

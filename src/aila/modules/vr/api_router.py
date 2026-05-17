@@ -2974,4 +2974,54 @@ def create_vr_router() -> APIRouter:
             )
         return DataEnvelope(data=summary)
 
+    # ─── MCP server health + config (operator surface) ────────────────────
+    #
+    # AILA is orchestration only — every analysis call is forwarded to one
+    # of these external MCP servers. The operator needs visibility into
+    # which ones are reachable and an ability to retarget them at a
+    # different workstation without editing env vars (D-33).
+
+    @router.get(
+        "/mcp/servers",
+        summary="List configured MCP servers with live health probes.",
+    )
+    @limiter.limit("60/minute")
+    async def list_mcp_servers(
+        request: Request,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[dict[str, Any]]]:
+        del request, auth
+        from aila.modules.vr.services import McpRegistryService
+
+        servers = await McpRegistryService().probe_all()
+        return DataEnvelope(data=servers)
+
+    @router.patch(
+        "/mcp/servers/{server_id}",
+        summary="Update an MCP server's base_url. Re-probes immediately.",
+    )
+    @limiter.limit("30/minute")
+    async def update_mcp_server(
+        request: Request,
+        server_id: str,
+        body: dict[str, Any],
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict[str, Any]]:
+        del request, auth
+        from aila.modules.vr.services import McpRegistryService
+
+        base_url = (body or {}).get("base_url")
+        if not isinstance(base_url, str) or not base_url.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="base_url (string) required.",
+            )
+        result = await McpRegistryService().update_base_url(server_id, base_url.strip())
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"MCP server {server_id!r} not registered.",
+            )
+        return DataEnvelope(data=result)
+
     return router

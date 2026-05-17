@@ -16,6 +16,10 @@ from aila.modules.vr.services.fuzz_service import (
     classify_crash_severity_default,
     triage_crash,
 )
+from aila.modules.vr.services.mcp_registry import (
+    MCP_SERVERS,
+    McpRegistryService,
+)
 from aila.modules.vr.services.multi_target import (
     MultiTargetService,
     MultiTargetServiceError,
@@ -34,6 +38,8 @@ from aila.modules.vr.services.target_ingestion import TargetIngestionService
 __all__ = [
     "FuzzCampaignService",
     "FuzzServiceError",
+    "MCP_SERVERS",
+    "McpRegistryService",
     "CVEService",
     "CVEServiceError",
     "TargetAnalysisError",
