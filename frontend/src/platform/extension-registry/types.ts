@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 
-import type { AppRole } from "@platform/auth/roles";
+import type { AppRole, Capability } from "@platform/auth/roles";
 import type { WidgetCategory } from "@platform/features/dashboard/types";
 
 export interface NavContribution {
@@ -11,6 +11,7 @@ export interface NavContribution {
   order: number;
   description?: string;
   minRole?: AppRole;
+  requiresCapability?: Capability;
 }
 
 export interface RouteContribution {
@@ -21,6 +22,7 @@ export interface RouteContribution {
   slot: "page.full";
   page: ComponentType;
   minRole?: AppRole;
+  requiresCapability?: Capability;
   /**
    * Label used in the header breadcrumb for this exact match. When
    * omitted, the header falls back to pathname-derived crumbs — which

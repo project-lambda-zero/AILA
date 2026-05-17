@@ -92,6 +92,69 @@ export function useInvestigations(offset = 0, limit = 50) {
   });
 }
 
+/**
+ * Convenience hook — returns all investigations across the workspace
+ * filtered to those rooted on a given target_id. The backend list
+ * endpoint doesn't yet accept a target_id filter, so we filter
+ * client-side; the data set is small enough (per-workspace) that
+ * this is fine for v0.5 (08_FRONTEND_UX.md §1.4 hypothesis tab).
+ */
+export function useInvestigationsForTarget(targetId: string) {
+  return useQuery({
+    queryKey: ["vr", "investigations-for-target", targetId],
+    queryFn: async () => {
+      const res = await authorizedRequestJson<
+        Envelope<VRInvestigationSummary[]>
+      >(`/vr/investigations?offset=0&limit=200`);
+      return {
+        ...res,
+        data: res.data.filter((i) => i.target_id === targetId),
+      };
+    },
+    enabled: !!targetId,
+    refetchInterval: 8000,
+  });
+}
+
+export interface EvidenceGraphNodeWire {
+  id: string;
+  kind: string;
+  label: string;
+  state: string;
+  x: number;
+  y: number;
+  attributes: Record<string, unknown>;
+}
+
+export interface EvidenceGraphEdgeWire {
+  source: string;
+  target: string;
+  kind: string;
+  attributes: Record<string, unknown>;
+}
+
+export interface EvidenceGraphSnapshot {
+  investigation_id: string;
+  layout: "concentric" | "radial" | "grid";
+  nodes: EvidenceGraphNodeWire[];
+  edges: EvidenceGraphEdgeWire[];
+}
+
+export function useEvidenceGraph(
+  investigationId: string,
+  layout: "concentric" | "radial" | "grid" = "concentric",
+) {
+  return useQuery({
+    queryKey: ["vr", "evidence-graph", investigationId, layout],
+    queryFn: async () =>
+      await authorizedRequestJson<Envelope<EvidenceGraphSnapshot>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/evidence-graph?layout=${layout}`,
+      ),
+    enabled: !!investigationId,
+    refetchInterval: 10000,
+  });
+}
+
 export function useInvestigation(investigationId: string) {
   return useQuery({
     queryKey: ["vr", "investigation", investigationId],
@@ -150,6 +213,29 @@ export function useInvestigationOutcomes(investigationId: string) {
       ),
     enabled: !!investigationId,
     refetchInterval: 5000,
+  });
+}
+
+export interface HypothesisProjection {
+  id: string;
+  claim: string;
+  why_plausible: string;
+  kill_criterion: string;
+  state: "live" | "rejected" | "mixed";
+  rejection_reason: string | null;
+  live_in_branches: string[];
+  rejected_in_branches: string[];
+}
+
+export function useInvestigationHypotheses(investigationId: string) {
+  return useQuery({
+    queryKey: ["vr", "investigation-hypotheses", investigationId],
+    queryFn: async () =>
+      await authorizedRequestJson<Envelope<HypothesisProjection[]>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/hypotheses`,
+      ),
+    enabled: !!investigationId,
+    refetchInterval: 8000,
   });
 }
 
@@ -356,6 +442,29 @@ export function useFuzzCampaign(campaignId: string) {
       ).data,
     enabled: !!campaignId,
     refetchInterval: 3000,
+  });
+}
+
+export interface FuzzTelemetryPoint {
+  id: string;
+  campaign_id: string;
+  measured_at: string;
+  execs_per_sec: number | null;
+  total_execs: number | null;
+  corpus_size: number | null;
+  coverage_pct: number | null;
+  crashes_found: number | null;
+}
+
+export function useCampaignTelemetry(campaignId: string) {
+  return useQuery({
+    queryKey: ["vr", "campaign-telemetry", campaignId],
+    queryFn: async () =>
+      await authorizedRequestJson<Envelope<FuzzTelemetryPoint[]>>(
+        `/vr/fuzz/campaigns/${encodeURIComponent(campaignId)}/telemetry?offset=0&limit=500`,
+      ),
+    enabled: !!campaignId,
+    refetchInterval: 10000,
   });
 }
 

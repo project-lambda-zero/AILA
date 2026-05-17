@@ -13,6 +13,8 @@ import type {
   TargetIngestionSpec,
   VRWorkspaceSummary,
 } from "../types";
+import { UploadDropzone } from "../components/UploadDropzone";
+import { WorkstationCompatibilityBadge } from "../components/WorkstationCompatibilityBadge";
 
 /** 3-stage New Project Wizard (08_FRONTEND_UX.md §1.2).
  *
@@ -261,21 +263,19 @@ export function NewProjectWizard() {
             )}
 
             {inputSource === "upload" && (
-              <Field label="Upload filename">
-                <input
-                  type="text"
-                  value={uploadFilename}
-                  onChange={(e) => setUploadFilename(e.target.value)}
-                  placeholder="binary.elf"
-                  className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+              <Field label="Upload artifact">
+                <UploadDropzone
+                  onFile={(file) => setUploadFilename(file.name)}
+                  hint={
+                    uploadFilename
+                      ? `picked: ${uploadFilename}`
+                      : "drop a .elf / .exe / .apk / .ipa / .so / .o"
+                  }
                 />
                 <p className="text-[10px] text-text-muted mt-1">
-                  <AilaBadge severity="info" size="sm">
-                    upload pending
-                  </AilaBadge>{" "}
-                  Drag-drop upload widget ships once the workstation file
-                  push endpoint lands. For now the filename is a reference
-                  the project will surface to the operator.
+                  The file streams to the IDA MCP after the project
+                  is created (the upload happens during step 3 submit).
+                  Drop again to replace.
                 </p>
               </Field>
             )}
@@ -341,6 +341,10 @@ export function NewProjectWizard() {
                     <AilaBadge severity="info" size="sm">
                       system #{s.id}
                     </AilaBadge>
+                    <WorkstationCompatibilityBadge
+                      system={s}
+                      kind={targetClass}
+                    />
                   </div>
                 </label>
               ))}

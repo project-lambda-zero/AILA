@@ -2,17 +2,24 @@ import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";
-import { isAllowedRole, type AppRole } from "@platform/auth/roles";
+import {
+  hasCapability,
+  isAllowedRole,
+  type AppRole,
+  type Capability,
+} from "@platform/auth/roles";
 import { AppStateScreen } from "@platform/ui/AppStateScreen";
 
 interface ProtectedRouteProps {
   children: ReactNode;
   requiredRole?: AppRole;
+  requiresCapability?: Capability;
 }
 
 export function ProtectedRoute({
   children,
   requiredRole,
+  requiresCapability,
 }: ProtectedRouteProps) {
   const { status, role } = useAuthStore();
   const location = useLocation();
@@ -32,6 +39,10 @@ export function ProtectedRoute({
   }
 
   if (requiredRole && !isAllowedRole(role, requiredRole)) {
+    return <Navigate to="/403" replace />;
+  }
+
+  if (requiresCapability && !hasCapability(role, requiresCapability)) {
     return <Navigate to="/403" replace />;
   }
 

@@ -32,12 +32,20 @@ from .contracts import (
     BranchStatus,
     CampaignStatus,
     CrashSeverity,
+    CrashTriageEvent,
     CrashTriageVerdict,
     CVEFeedSource,
     CVERecordSummary,
     DisclosureStatus,
     DisclosureSubmissionStatus,
     DisclosureTrackInfo,
+    EvidenceGraphEdge,
+    EvidenceGraphNode,
+    EvidenceGraphSnapshot,
+    FuzzTelemetryCreate,
+    FuzzTelemetryPoint,
+    HypothesisProjection,
+    HypothesisState,
     InvestigationKind,
     InvestigationPauseReason,
     InvestigationStatus,
@@ -60,6 +68,8 @@ from .contracts import (
     VRDisclosureSubmissionCreate,
     VRDisclosureSubmissionPatch,
     VRDisclosureSubmissionSummary,
+    VREventEnvelope,
+    VREventType,
     VRFinding,
     VRFuzzCampaignCreate,
     VRFuzzCampaignPatch,
@@ -160,7 +170,13 @@ class DisclosureUpdate(BaseModel):
     patch_version: str | None = Field(default=None, max_length=64)
 
 
-def _summary_from_record(record: Any, finding_count: int = 0) -> VRProjectSummary:
+def _summary_from_record(
+    record: Any,
+    finding_count: int = 0,
+    *,
+    latest_disclosure_status: str | None = None,
+    disclosure_submission_count: int = 0,
+) -> VRProjectSummary:
     """Project a ``VRProjectRecord`` row to the public ``VRProjectSummary``.
 
     Target metadata (target_class, input_source, format) lives on the
@@ -174,6 +190,9 @@ def _summary_from_record(record: Any, finding_count: int = 0) -> VRProjectSummar
         target_id=record.target_id,
         patched_target_id=record.patched_target_id,
         finding_count=finding_count,
+        operator_id=getattr(record, "created_by", None),
+        latest_disclosure_status=latest_disclosure_status,
+        disclosure_submission_count=disclosure_submission_count,
         created_at=record.created_at.isoformat() if record.created_at else None,
     )
 
@@ -470,7 +489,11 @@ def create_vr_router() -> APIRouter:
         limit: int = Query(default=20, ge=1, le=100),
     ) -> DataEnvelope[list[VRProjectSummary]]:
         del request
-        from .db_models import VRFindingRecord, VRProjectRecord
+        from .db_models import (
+            VRDisclosureSubmissionRecord,
+            VRFindingRecord,
+            VRProjectRecord,
+        )
 
         async with UnitOfWork() as uow:
             count_stmt = _team_filter(
@@ -487,6 +510,7 @@ def create_vr_router() -> APIRouter:
             rows = (await uow.session.exec(page_stmt)).all()
 
             counts_by_project: dict[str, int] = {}
+            disclosure_by_project: dict[str, tuple[str | None, int]] = {}
             if rows:
                 project_ids = [r.id for r in rows]
                 count_rows = (await uow.session.exec(
@@ -496,7 +520,53 @@ def create_vr_router() -> APIRouter:
                 )).all()
                 counts_by_project = {pid: int(n) for pid, n in count_rows}
 
-        items = [_summary_from_record(r, counts_by_project.get(r.id, 0)) for r in rows]
+                # Aggregate disclosure submissions by joining findings →
+                # disclosure_submissions. The "latest" status is the
+                # max(updated_at) row's status per project; the count is
+                # the number of submissions across all findings of the
+                # project.
+                disclosure_rows = (await uow.session.exec(
+                    select(
+                        VRFindingRecord.project_id,
+                        VRDisclosureSubmissionRecord.status,
+                        VRDisclosureSubmissionRecord.updated_at,
+                    )
+                    .join(
+                        VRDisclosureSubmissionRecord,
+                        VRDisclosureSubmissionRecord.finding_id
+                        == VRFindingRecord.id,
+                    )
+                    .where(VRFindingRecord.project_id.in_(project_ids))
+                )).all()
+                # Pick the latest per project + count submissions.
+                latest: dict[str, tuple[str, Any]] = {}
+                count_subs: dict[str, int] = {}
+                for pid, sub_status, sub_updated in disclosure_rows:
+                    count_subs[pid] = count_subs.get(pid, 0) + 1
+                    prev = latest.get(pid)
+                    if prev is None or (
+                        sub_updated is not None
+                        and (prev[1] is None or sub_updated > prev[1])
+                    ):
+                        latest[pid] = (sub_status, sub_updated)
+                disclosure_by_project = {
+                    pid: (latest[pid][0], count_subs[pid])
+                    for pid in latest
+                }
+
+        items = [
+            _summary_from_record(
+                r,
+                counts_by_project.get(r.id, 0),
+                latest_disclosure_status=(
+                    disclosure_by_project.get(r.id, (None, 0))[0]
+                ),
+                disclosure_submission_count=(
+                    disclosure_by_project.get(r.id, (None, 0))[1]
+                ),
+            )
+            for r in rows
+        ]
         meta = PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump()
         return DataEnvelope(data=items, meta=meta)
 
@@ -593,6 +663,7 @@ def create_vr_router() -> APIRouter:
                 context_notes=body.context_notes,
                 status=VRProjectStatus.CREATED.value,
                 team_id=auth.team_id,
+                created_by=auth.user_id,
                 analysis_system_id=body.analysis_system_id,
                 poc_system_id=body.poc_system_id,
             )
@@ -663,7 +734,11 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRProjectSummary]:
         del request
-        from .db_models import VRFindingRecord, VRProjectRecord
+        from .db_models import (
+            VRDisclosureSubmissionRecord,
+            VRFindingRecord,
+            VRProjectRecord,
+        )
 
         async with UnitOfWork() as uow:
             project = (await uow.session.exec(
@@ -679,7 +754,286 @@ def create_vr_router() -> APIRouter:
                 )
             )).one())
 
-        return DataEnvelope(data=_summary_from_record(project, finding_count))
+            # Aggregate disclosure submissions across all of the
+            # project's findings; the most recently updated submission
+            # provides the headline status (mirrors list_projects).
+            sub_rows = (await uow.session.exec(
+                select(
+                    VRDisclosureSubmissionRecord.status,
+                    VRDisclosureSubmissionRecord.updated_at,
+                )
+                .join(
+                    VRFindingRecord,
+                    VRFindingRecord.id == VRDisclosureSubmissionRecord.finding_id,
+                )
+                .where(VRFindingRecord.project_id == project_id)
+            )).all()
+            latest_status: str | None = None
+            latest_ts: Any = None
+            for sub_status, sub_updated in sub_rows:
+                if latest_status is None or (
+                    sub_updated is not None
+                    and (latest_ts is None or sub_updated > latest_ts)
+                ):
+                    latest_status = sub_status
+                    latest_ts = sub_updated
+
+        return DataEnvelope(
+            data=_summary_from_record(
+                project,
+                finding_count,
+                latest_disclosure_status=latest_status,
+                disclosure_submission_count=len(sub_rows),
+            )
+        )
+
+    @router.get(
+        "/projects/{project_id}/events",
+        summary=(
+            "Typed SSE event stream for one project. Multiplexes "
+            "message.created / branch.state_changed / outcome.created "
+            "across all of the project's investigations and "
+            "campaign.crash_found / campaign.progress across its "
+            "fuzz campaigns (08_FRONTEND_UX.md §2.1)."
+        ),
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "description": "SSE stream of typed VREventEnvelope events.",
+                "content": {"text/event-stream": {"schema": {"type": "string"}}},
+            },
+        },
+    )
+    @limiter.limit("30/minute")
+    async def stream_project_events(
+        request: Request,
+        project_id: str,
+        since_iso: str | None = Query(
+            default=None,
+            description="ISO-8601 timestamp; only events newer than this are streamed.",
+        ),
+        auth: AuthContext = Depends(require_auth),
+    ) -> StreamingResponse:
+        del request
+        from datetime import datetime as _dt
+
+        from .db_models import (
+            VRFuzzCampaignRecord,
+            VRFuzzCrashRecord,
+            VRInvestigationBranchRecord,
+            VRInvestigationMessageRecord,
+            VRInvestigationOutcomeRecord,
+            VRInvestigationRecord,
+            VRProjectRecord,
+        )
+
+        async with UnitOfWork() as uow:
+            project = (await uow.session.exec(
+                _team_filter(
+                    select(VRProjectRecord).where(
+                        VRProjectRecord.id == project_id,
+                    ),
+                    VRProjectRecord, auth,
+                )
+            )).first()
+            if project is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"VR project {project_id!r} not found.",
+                )
+
+        if since_iso:
+            try:
+                cursor = _dt.fromisoformat(since_iso.replace("Z", "+00:00"))
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid since_iso: {since_iso!r}",
+                ) from None
+        else:
+            cursor = utc_now()
+
+        async def _generator() -> AsyncGenerator[str, None]:
+            import json as _json
+
+            last_heartbeat = utc_now()
+            local_cursor = cursor
+
+            open_env = VREventEnvelope(
+                type=VREventType.HEARTBEAT,
+                ts=utc_now().isoformat(),
+                project_id=project_id,
+                payload={"connected": True},
+            )
+            yield (
+                "event: open\n"
+                f"data: {_json.dumps(open_env.model_dump(mode='json'))}\n\n"
+            )
+
+            while True:
+                async with UnitOfWork() as poll_uow:
+                    # All investigations rooted at this project.
+                    inv_ids = [
+                        row.id
+                        for row in (await poll_uow.session.exec(
+                            select(VRInvestigationRecord).where(
+                                VRInvestigationRecord.project_id == project_id,
+                            )
+                        )).all()
+                    ]
+                    # All campaigns whose target is the project's target.
+                    camp_rows = (await poll_uow.session.exec(
+                        select(VRFuzzCampaignRecord).where(
+                            VRFuzzCampaignRecord.target_id == project.target_id,
+                        )
+                    )).all() if project.target_id else []
+                    camp_ids = [c.id for c in camp_rows]
+
+                    new_messages = (
+                        (await poll_uow.session.exec(
+                            select(VRInvestigationMessageRecord)
+                            .where(
+                                VRInvestigationMessageRecord.investigation_id.in_(inv_ids),
+                                VRInvestigationMessageRecord.created_at > local_cursor,
+                            )
+                            .order_by(VRInvestigationMessageRecord.created_at.asc())
+                            .limit(_SSE_BATCH_LIMIT)
+                        )).all()
+                        if inv_ids else []
+                    )
+                    new_branches = (
+                        (await poll_uow.session.exec(
+                            select(VRInvestigationBranchRecord)
+                            .where(
+                                VRInvestigationBranchRecord.investigation_id.in_(inv_ids),
+                                VRInvestigationBranchRecord.updated_at > local_cursor,
+                            )
+                            .order_by(VRInvestigationBranchRecord.updated_at.asc())
+                            .limit(_SSE_BATCH_LIMIT)
+                        )).all()
+                        if inv_ids else []
+                    )
+                    new_outcomes = (
+                        (await poll_uow.session.exec(
+                            select(VRInvestigationOutcomeRecord)
+                            .where(
+                                VRInvestigationOutcomeRecord.investigation_id.in_(inv_ids),
+                                VRInvestigationOutcomeRecord.created_at > local_cursor,
+                            )
+                            .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+                            .limit(_SSE_BATCH_LIMIT)
+                        )).all()
+                        if inv_ids else []
+                    )
+                    new_crashes = (
+                        (await poll_uow.session.exec(
+                            select(VRFuzzCrashRecord)
+                            .where(
+                                VRFuzzCrashRecord.campaign_id.in_(camp_ids),
+                                VRFuzzCrashRecord.discovered_at > local_cursor,
+                            )
+                            .order_by(VRFuzzCrashRecord.discovered_at.asc())
+                            .limit(_SSE_BATCH_LIMIT)
+                        )).all()
+                        if camp_ids else []
+                    )
+
+                # Emit each in chronological order across all sources.
+                events: list[tuple[Any, str, dict[str, Any]]] = []
+                for m in new_messages:
+                    is_op = m.sender == SenderKind.OPERATOR.value
+                    events.append((
+                        m.created_at,
+                        (
+                            VREventType.OPERATOR_STEERING.value
+                            if is_op else VREventType.MESSAGE_CREATED.value
+                        ),
+                        {
+                            "investigation_id": m.investigation_id,
+                            "branch_id": m.branch_id,
+                            "payload": _message_summary(m).model_dump(mode="json"),
+                        },
+                    ))
+                for b in new_branches:
+                    events.append((
+                        b.updated_at,
+                        VREventType.HYPOTHESIS_STATE_CHANGED.value,
+                        {
+                            "investigation_id": b.investigation_id,
+                            "branch_id": b.id,
+                            "payload": _branch_summary(b).model_dump(mode="json"),
+                        },
+                    ))
+                for o in new_outcomes:
+                    events.append((
+                        o.created_at,
+                        VREventType.OUTCOME_CREATED.value,
+                        {
+                            "investigation_id": o.investigation_id,
+                            "payload": {
+                                "id": o.id,
+                                "kind": o.kind,
+                                "branch_id": o.branch_id,
+                            },
+                        },
+                    ))
+                for c in new_crashes:
+                    events.append((
+                        c.discovered_at,
+                        VREventType.CAMPAIGN_CRASH_FOUND.value,
+                        {
+                            "payload": {
+                                "id": c.id,
+                                "campaign_id": c.campaign_id,
+                                "crash_type": c.crash_type,
+                                "severity": c.severity,
+                                "stack_hash": c.stack_hash,
+                            },
+                        },
+                    ))
+                events.sort(key=lambda e: e[0] or utc_now())
+                advanced = local_cursor
+                for ts_, type_, body in events:
+                    envelope = VREventEnvelope(
+                        type=VREventType(type_),
+                        ts=ts_.isoformat() if ts_ else utc_now().isoformat(),
+                        project_id=project_id,
+                        investigation_id=body.get("investigation_id"),
+                        branch_id=body.get("branch_id"),
+                        campaign_id=body.get("payload", {}).get("campaign_id"),
+                        payload=body.get("payload", {}),
+                    )
+                    yield (
+                        f"event: {type_}\n"
+                        f"data: {_json.dumps(envelope.model_dump(mode='json'))}\n\n"
+                    )
+                    if ts_ and ts_ > advanced:
+                        advanced = ts_
+                local_cursor = advanced
+
+                now = utc_now()
+                if (now - last_heartbeat).total_seconds() >= _SSE_HEARTBEAT_S:
+                    heartbeat_env = VREventEnvelope(
+                        type=VREventType.HEARTBEAT,
+                        ts=now.isoformat(),
+                        project_id=project_id,
+                    )
+                    yield (
+                        "event: heartbeat\n"
+                        f"data: {_json.dumps(heartbeat_env.model_dump(mode='json'))}\n\n"
+                    )
+                    last_heartbeat = now
+
+                await asyncio.sleep(_SSE_POLL_INTERVAL_S)
+
+        return StreamingResponse(
+            _generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @router.delete(
         "/projects/{project_id}",
@@ -2140,18 +2494,56 @@ def create_vr_router() -> APIRouter:
 
                 for row in rows:
                     summary = _message_summary(row)
-                    yield f"data: {_json.dumps(summary.model_dump(mode='json'))}\n\n"
+                    # Discriminate operator-steering messages from
+                    # agent turns so the consumer can branch on the
+                    # typed event name without parsing the payload
+                    # (08_FRONTEND_UX.md §2.1).
+                    is_operator = row.sender == SenderKind.OPERATOR.value
+                    event_type = (
+                        VREventType.OPERATOR_STEERING
+                        if is_operator
+                        else VREventType.MESSAGE_CREATED
+                    )
+                    envelope = VREventEnvelope(
+                        type=event_type,
+                        ts=(
+                            row.created_at.isoformat()
+                            if row.created_at else utc_now().isoformat()
+                        ),
+                        investigation_id=investigation_id,
+                        branch_id=row.branch_id,
+                        payload=summary.model_dump(mode="json"),
+                    )
+                    yield (
+                        f"event: {event_type.value}\n"
+                        f"data: {_json.dumps(envelope.model_dump(mode='json'))}\n\n"
+                    )
                     if row.created_at and row.created_at > local_cursor:
                         local_cursor = row.created_at
 
                 now = utc_now()
                 if (now - last_heartbeat).total_seconds() >= _SSE_HEARTBEAT_S:
-                    yield f'event: heartbeat\ndata: {{"ts":"{now.isoformat()}"}}\n\n'
+                    heartbeat_env = VREventEnvelope(
+                        type=VREventType.HEARTBEAT,
+                        ts=now.isoformat(),
+                        investigation_id=investigation_id,
+                    )
+                    yield (
+                        "event: heartbeat\n"
+                        f"data: {_json.dumps(heartbeat_env.model_dump(mode='json'))}\n\n"
+                    )
                     last_heartbeat = now
 
                 if status_row in terminal and not rows:
+                    done_env = VREventEnvelope(
+                        type=VREventType.DONE,
+                        ts=now.isoformat(),
+                        investigation_id=investigation_id,
+                        payload={"status": status_row},
+                    )
                     yield (
-                        f'event: done\ndata: {{"status":"{status_row}"}}\n\n'
+                        "event: done\n"
+                        f"data: {_json.dumps(done_env.model_dump(mode='json'))}\n\n"
                     )
                     return
 
@@ -2222,6 +2614,235 @@ def create_vr_router() -> APIRouter:
             )).all()
 
         return DataEnvelope(data=[_outcome_summary(r) for r in rows])
+
+    @router.get(
+        "/investigations/{investigation_id}/hypotheses",
+        response_model=DataEnvelope[list[HypothesisProjection]],
+        summary=(
+            "Aggregate live + rejected hypotheses across the "
+            "investigation's branches (08_FRONTEND_UX.md §2.3)."
+        ),
+    )
+    @limiter.limit("60/minute")
+    async def list_investigation_hypotheses(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[HypothesisProjection]]:
+        del request
+        import json as _json
+
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+        from .db_models import VRInvestigationBranchRecord
+
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                select(VRInvestigationBranchRecord).where(
+                    VRInvestigationBranchRecord.investigation_id
+                    == investigation_id,
+                )
+            )).all()
+
+        # hyp id → projection (built up as we walk branches)
+        live_branches: dict[str, list[str]] = {}
+        rejected_branches: dict[str, list[str]] = {}
+        claims: dict[str, dict[str, str]] = {}
+        rejection_reasons: dict[str, str] = {}
+
+        for b in rows:
+            try:
+                state = _json.loads(b.case_state_json or "{}")
+            except (ValueError, TypeError):
+                continue
+            for h in state.get("hypotheses", []) or []:
+                hid = h.get("id")
+                if not hid:
+                    continue
+                live_branches.setdefault(hid, []).append(b.id)
+                claims.setdefault(hid, {
+                    "claim": h.get("claim", ""),
+                    "why_plausible": h.get("why_plausible", ""),
+                    "kill_criterion": h.get("kill_criterion", ""),
+                })
+            for h in state.get("rejected", []) or []:
+                hid = h.get("id")
+                if not hid:
+                    continue
+                rejected_branches.setdefault(hid, []).append(b.id)
+                claims.setdefault(hid, {
+                    "claim": h.get("claim", ""),
+                    "why_plausible": "",
+                    "kill_criterion": "",
+                })
+                if h.get("reason"):
+                    rejection_reasons.setdefault(hid, h["reason"])
+
+        all_ids = set(live_branches) | set(rejected_branches)
+        items: list[HypothesisProjection] = []
+        for hid in sorted(all_ids):
+            live = live_branches.get(hid, [])
+            rejected = rejected_branches.get(hid, [])
+            if live and rejected:
+                hstate = HypothesisState.MIXED
+            elif rejected:
+                hstate = HypothesisState.REJECTED
+            else:
+                hstate = HypothesisState.LIVE
+            c = claims.get(hid, {})
+            items.append(HypothesisProjection(
+                id=hid,
+                claim=c.get("claim", ""),
+                why_plausible=c.get("why_plausible", ""),
+                kill_criterion=c.get("kill_criterion", ""),
+                state=hstate,
+                rejection_reason=rejection_reasons.get(hid),
+                live_in_branches=live,
+                rejected_in_branches=rejected,
+            ))
+
+        return DataEnvelope(data=items)
+
+    @router.get(
+        "/investigations/{investigation_id}/evidence-graph",
+        response_model=DataEnvelope[EvidenceGraphSnapshot],
+        summary=(
+            "Server-side computed evidence graph for one investigation "
+            "with deterministic layout (08_FRONTEND_UX.md §1.9)."
+        ),
+    )
+    @limiter.limit("60/minute")
+    async def get_evidence_graph(
+        request: Request,
+        investigation_id: str,
+        layout: str = Query(default="concentric", pattern="^(concentric|grid|radial)$"),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[EvidenceGraphSnapshot]:
+        del request
+        import math
+
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationOutcomeRecord,
+        )
+
+        async with UnitOfWork() as uow:
+            branches = (await uow.session.exec(
+                select(VRInvestigationBranchRecord).where(
+                    VRInvestigationBranchRecord.investigation_id
+                    == investigation_id,
+                )
+            )).all()
+            outcomes = (await uow.session.exec(
+                select(VRInvestigationOutcomeRecord).where(
+                    VRInvestigationOutcomeRecord.investigation_id
+                    == investigation_id,
+                )
+            )).all()
+
+        nodes: list[EvidenceGraphNode] = []
+        edges: list[EvidenceGraphEdge] = []
+
+        # Root investigation node at origin.
+        nodes.append(EvidenceGraphNode(
+            id=f"inv:{investigation_id}",
+            kind="investigation",
+            label=f"Investigation {investigation_id[:8]}",
+            state=inv.status,
+            x=0.0,
+            y=0.0,
+        ))
+
+        # Place branches on inner ring (concentric) / row 1 (grid) /
+        # primary spokes (radial).
+        radius_branch = 220.0
+        n_branches = max(len(branches), 1)
+        for i, b in enumerate(branches):
+            if layout == "grid":
+                x = (i % 4) * 200 - 300
+                y = 200.0
+            elif layout == "radial":
+                angle = (2 * math.pi * i / n_branches) - math.pi / 2
+                x = radius_branch * math.cos(angle)
+                y = radius_branch * math.sin(angle)
+            else:
+                angle = (2 * math.pi * i / n_branches) - math.pi / 2
+                x = radius_branch * math.cos(angle)
+                y = radius_branch * math.sin(angle)
+            nodes.append(EvidenceGraphNode(
+                id=f"branch:{b.id}",
+                kind="branch",
+                label=f"branch · {b.status}",
+                state=b.status,
+                x=x,
+                y=y,
+                attributes={
+                    "persona_voice": b.persona_voice or "",
+                    "strategy_family": b.strategy_family or "",
+                    "promoted": b.promoted,
+                },
+            ))
+            edges.append(EvidenceGraphEdge(
+                source=f"inv:{investigation_id}",
+                target=f"branch:{b.id}",
+                kind="spawned",
+            ))
+
+        # Outcomes on outer ring.
+        radius_outcome = 380.0
+        n_outcomes = max(len(outcomes), 1)
+        for i, o in enumerate(outcomes):
+            if layout == "grid":
+                x = (i % 4) * 200 - 300
+                y = 400.0
+            elif layout == "radial":
+                angle = (2 * math.pi * i / n_outcomes) - math.pi / 2
+                x = radius_outcome * math.cos(angle)
+                y = radius_outcome * math.sin(angle)
+            else:
+                angle = (2 * math.pi * i / n_outcomes) + math.pi / 6
+                x = radius_outcome * math.cos(angle)
+                y = radius_outcome * math.sin(angle)
+            nodes.append(EvidenceGraphNode(
+                id=f"outcome:{o.id}",
+                kind="outcome",
+                label=str(o.kind),
+                state=str(o.dispatch_status),
+                x=x,
+                y=y,
+                attributes={
+                    "confidence": o.confidence,
+                    "branch_id": o.branch_id,
+                },
+            ))
+            # Edge: branch → outcome (when known), else investigation → outcome.
+            source_id = (
+                f"branch:{o.branch_id}" if o.branch_id else f"inv:{investigation_id}"
+            )
+            edges.append(EvidenceGraphEdge(
+                source=source_id,
+                target=f"outcome:{o.id}",
+                kind="produced",
+            ))
+
+        return DataEnvelope(data=EvidenceGraphSnapshot(
+            investigation_id=investigation_id,
+            layout=layout,
+            nodes=nodes,
+            edges=edges,
+        ))
+
+
 
     # ── Branch operations (M3.R-5, D-41) ──────────────────────────────
 
@@ -2836,6 +3457,141 @@ def create_vr_router() -> APIRouter:
             ) from exc
         return DataEnvelope(data=rendered)
 
+    class _DisclosureSectionsPatch(BaseModel):
+        """Operator-edited section bodies (08_FRONTEND_UX.md §1.8)."""
+
+        model_config = ConfigDict(extra="forbid")
+
+        sections: dict[str, str]
+
+    @router.patch(
+        "/disclosures/{submission_id}/sections",
+        response_model=DataEnvelope[VRDisclosureSubmissionSummary],
+        summary=(
+            "Replace the structured advisory sections "
+            "(summary / technical_details / reproduction / patches / "
+            "references). The body is rendered from these sections on "
+            "the next POST /disclosures/:id/render."
+        ),
+    )
+    @limiter.limit("30/minute")
+    async def patch_disclosure_sections(
+        request: Request,
+        submission_id: str,
+        body: _DisclosureSectionsPatch,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRDisclosureSubmissionSummary]:
+        del request, auth
+        import json as _json
+
+        from .db_models import VRDisclosureSubmissionRecord
+        from .disclosure import DisclosureService
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                select(VRDisclosureSubmissionRecord).where(
+                    VRDisclosureSubmissionRecord.id == submission_id,
+                ),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Disclosure submission {submission_id} not found.",
+                )
+            row.sections_json = _json.dumps(body.sections)
+            row.updated_at = utc_now()
+            await uow.session.commit()
+            await uow.session.refresh(row)
+
+        svc = DisclosureService()
+        summary = await svc.get(submission_id)
+        if summary is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Disclosure submission {submission_id} not found.",
+            )
+        return DataEnvelope(data=summary)
+
+    @router.post(
+        "/disclosures/{submission_id}/regenerate",
+        response_model=DataEnvelope[VRDisclosureSubmissionSummary],
+        summary=(
+            "Regenerate the structured sections from the underlying "
+            "finding (advisory + PoC). Replaces any operator edits — "
+            "frontend prompts before invoking (08_FRONTEND_UX.md §1.8)."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def regenerate_disclosure_sections(
+        request: Request,
+        submission_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRDisclosureSubmissionSummary]:
+        del request, auth
+        import json as _json
+
+        from .db_models import (
+            VRDisclosureSubmissionRecord,
+            VRFindingRecord,
+        )
+        from .disclosure import DisclosureService
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                select(VRDisclosureSubmissionRecord).where(
+                    VRDisclosureSubmissionRecord.id == submission_id,
+                ),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Disclosure submission {submission_id} not found.",
+                )
+            finding = (await uow.session.exec(
+                select(VRFindingRecord).where(
+                    VRFindingRecord.id == row.finding_id,
+                ),
+            )).first()
+            if finding is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Finding {row.finding_id} backing this submission "
+                        f"is missing — cannot regenerate."
+                    ),
+                )
+            now = utc_now()
+            sections = {
+                "summary": finding.root_cause or "",
+                "technical_details": (finding.crash_type or "")
+                + ("\n\n" + (finding.asan_report or "") if finding.asan_report else ""),
+                "reproduction": finding.poc_code or "",
+                "patches": (
+                    f"Patch version: {finding.patch_version}"
+                    if finding.patch_version else ""
+                ),
+                "references": (
+                    finding.assigned_cve_id
+                    or finding.vendor_contact
+                    or ""
+                ),
+            }
+            row.sections_json = _json.dumps(sections)
+            row.regenerated_from_finding_at = now
+            row.updated_at = now
+            await uow.session.commit()
+            await uow.session.refresh(row)
+
+        svc = DisclosureService()
+        summary = await svc.get(submission_id)
+        if summary is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Disclosure submission {submission_id} not found.",
+            )
+        return DataEnvelope(data=summary)
+
+
     # ── Fuzzing campaigns + crashes (Fuzzing plan) ─────────────────────
 
     @router.post(
@@ -3064,6 +3820,185 @@ def create_vr_router() -> APIRouter:
                 detail=f"Fuzz crash {crash_id} not found.",
             )
         return DataEnvelope(data=summary)
+
+    @router.post(
+        "/fuzz/crashes/{crash_id}/triage",
+        response_model=DataEnvelope[VRFuzzCrashSummary],
+        summary=(
+            "Append a triage event to a crash's chain "
+            "(08_FRONTEND_UX.md §1.6)."
+        ),
+    )
+    @limiter.limit("30/minute")
+    async def append_crash_triage(
+        request: Request,
+        crash_id: str,
+        body: CrashTriageEvent,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFuzzCrashSummary]:
+        del request
+        import json as _json
+
+        from .db_models import VRFuzzCrashRecord
+
+        async with UnitOfWork() as uow:
+            crash = (await uow.session.exec(
+                select(VRFuzzCrashRecord).where(VRFuzzCrashRecord.id == crash_id),
+            )).first()
+            if crash is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Fuzz crash {crash_id} not found.",
+                )
+            chain: list[Any] = []
+            try:
+                chain = _json.loads(crash.triage_chain_json or "[]")
+                if not isinstance(chain, list):
+                    chain = []
+            except (ValueError, TypeError):
+                chain = []
+            chain.append(body.model_dump(mode="json"))
+            crash.triage_chain_json = _json.dumps(chain)
+            # The latest event drives the current verdict + reason.
+            crash.triage_verdict = body.verdict.value
+            if body.reason:
+                crash.triage_reason = body.reason
+            crash.updated_at = utc_now()
+            await uow.session.commit()
+            await uow.session.refresh(crash)
+
+        del auth
+        from aila.modules.vr.services.fuzz_service import _crash_record_to_summary
+        return DataEnvelope(data=_crash_record_to_summary(crash))
+
+    @router.get(
+        "/fuzz/campaigns/{campaign_id}/telemetry",
+        response_model=DataEnvelope[list[FuzzTelemetryPoint]],
+        summary=(
+            "Time-series telemetry for one fuzz campaign "
+            "(08_FRONTEND_UX.md §1.5)."
+        ),
+    )
+    @limiter.limit("120/minute")
+    async def list_campaign_telemetry(
+        request: Request,
+        campaign_id: str,
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=500, ge=1, le=5000),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[FuzzTelemetryPoint]]:
+        del request, auth
+        from .db_models import VRFuzzTelemetryRecord
+
+        async with UnitOfWork() as uow:
+            count_stmt = (
+                select(sa_func.count())
+                .select_from(VRFuzzTelemetryRecord)
+                .where(VRFuzzTelemetryRecord.campaign_id == campaign_id)
+            )
+            total = (await uow.session.exec(count_stmt)).one()
+            rows = (await uow.session.exec(
+                select(VRFuzzTelemetryRecord)
+                .where(VRFuzzTelemetryRecord.campaign_id == campaign_id)
+                .order_by(VRFuzzTelemetryRecord.measured_at.asc())
+                .offset(offset)
+                .limit(limit),
+            )).all()
+
+        items = [
+            FuzzTelemetryPoint(
+                id=r.id,
+                campaign_id=r.campaign_id,
+                measured_at=r.measured_at,
+                execs_per_sec=r.execs_per_sec,
+                total_execs=r.total_execs,
+                corpus_size=r.corpus_size,
+                coverage_pct=r.coverage_pct,
+                crashes_found=r.crashes_found,
+            )
+            for r in rows
+        ]
+        return DataEnvelope(
+            data=items,
+            meta=PaginatedMeta(
+                total=int(total), offset=offset, limit=limit,
+            ).model_dump(),
+        )
+
+    @router.post(
+        "/fuzz/campaigns/{campaign_id}/telemetry",
+        response_model=DataEnvelope[FuzzTelemetryPoint],
+        status_code=status.HTTP_201_CREATED,
+        summary=(
+            "Record a telemetry sample for one fuzz campaign. Also "
+            "updates the campaign's last_progress_at + roll-up columns "
+            "(08_FRONTEND_UX.md §1.5)."
+        ),
+    )
+    @limiter.limit("60/minute")
+    async def record_campaign_telemetry(
+        request: Request,
+        campaign_id: str,
+        body: FuzzTelemetryCreate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[FuzzTelemetryPoint]:
+        del request, auth
+        from uuid import uuid4 as _uuid4
+
+        from .db_models import VRFuzzCampaignRecord, VRFuzzTelemetryRecord
+
+        async with UnitOfWork() as uow:
+            campaign = (await uow.session.exec(
+                select(VRFuzzCampaignRecord).where(
+                    VRFuzzCampaignRecord.id == campaign_id,
+                ),
+            )).first()
+            if campaign is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Fuzz campaign {campaign_id} not found.",
+                )
+            now = utc_now()
+            row = VRFuzzTelemetryRecord(
+                id=str(_uuid4()),
+                campaign_id=campaign_id,
+                measured_at=now,
+                execs_per_sec=body.execs_per_sec,
+                total_execs=body.total_execs,
+                corpus_size=body.corpus_size,
+                coverage_pct=body.coverage_pct,
+                crashes_found=body.crashes_found,
+            )
+            uow.session.add(row)
+            # Roll the latest sample onto the campaign row so the
+            # campaigns list page renders fresh numbers without
+            # joining the telemetry table.
+            campaign.last_progress_at = now
+            if body.execs_per_sec is not None:
+                campaign.execs_per_sec = body.execs_per_sec
+            if body.total_execs is not None:
+                campaign.total_execs = body.total_execs
+            if body.corpus_size is not None:
+                campaign.corpus_size = body.corpus_size
+            if body.coverage_pct is not None:
+                campaign.coverage_pct = body.coverage_pct
+            if body.crashes_found is not None:
+                campaign.crashes_found = body.crashes_found
+            campaign.updated_at = now
+            await uow.session.commit()
+            await uow.session.refresh(row)
+
+        return DataEnvelope(data=FuzzTelemetryPoint(
+            id=row.id,
+            campaign_id=row.campaign_id,
+            measured_at=row.measured_at,
+            execs_per_sec=row.execs_per_sec,
+            total_execs=row.total_execs,
+            corpus_size=row.corpus_size,
+            coverage_pct=row.coverage_pct,
+            crashes_found=row.crashes_found,
+        ))
+
 
     # ── Multi-target investigation attachments (v0.4 GA-49) ────────────
 

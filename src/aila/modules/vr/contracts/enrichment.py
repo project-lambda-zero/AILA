@@ -13,6 +13,8 @@ The TargetCapabilityProfile schema matches the D-51 sketch and drives:
 """
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from .target import TargetKind
@@ -96,6 +98,39 @@ class TargetCapabilityProfile(BaseModel):
     )
 
     mitigations: MitigationFlags = Field(default_factory=MitigationFlags)
+
+    # Per-tab structured fields for TargetDetailPage (08_FRONTEND_UX.md §1.4).
+    # Populated by TargetAnalysisService once analysis completes. Empty
+    # lists mean "analyzer ran but found nothing" — distinct from "not
+    # analyzed yet" (which surfaces as `analysis_state != ready`).
+    attack_surface: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Exposed entrypoints — network APIs, IPC, file parsers, "
+            "userspace syscalls. Each entry: {kind, name, location, severity_hint}."
+        ),
+    )
+    functions_of_interest: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Ranked candidate vulnerable functions. Each entry: "
+            "{name, address, complexity, score, reason}."
+        ),
+    )
+    imports: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Imported symbols (binary targets) — each entry "
+            "{name, module, address}."
+        ),
+    )
+    exports: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Exported symbols (binary targets) — each entry "
+            "{name, address, type}."
+        ),
+    )
 
 
 class EnrichmentError(BaseModel):

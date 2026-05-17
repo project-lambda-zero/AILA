@@ -8,7 +8,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
 import { useDeleteFuzzCampaign, usePatchFuzzCampaign } from "../mutations";
-import { useFuzzCampaign, useFuzzCrashes } from "../queries";
+import { useCampaignTelemetry, useFuzzCampaign, useFuzzCrashes } from "../queries";
 import type { CampaignStatus, CrashTriageVerdict } from "../types";
 
 const STATUS_COLOR: Record<
@@ -134,6 +134,7 @@ export function FuzzCampaignDetailPage() {
             host:{campaign.workstation_host}
           </AilaBadge>
         )}
+        <StuckBadge lastProgressAt={campaign.last_progress_at} status={campaign.status} />
         {campaign.duration_hours && (
           <AilaBadge severity="info" size="sm">
             duration:{campaign.duration_hours}h
@@ -327,16 +328,7 @@ export function FuzzCampaignDetailPage() {
           <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
             Coverage / corpus / stability
           </h3>
-          <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
-            <AilaBadge severity="info" size="sm">
-              backend pending
-            </AilaBadge>
-            <p className="text-[10px] text-text-muted mt-2">
-              Live edge-coverage + corpus-size + stability% time-series
-              charts ship once the workstation telemetry stream lands.
-              Scalars above show the latest snapshot.
-            </p>
-          </div>
+          <CoverageChart campaignId={cid} />
         </AilaCard>
       </div>
 
@@ -437,5 +429,92 @@ export function FuzzCampaignDetailPage() {
         )}
       </AilaCard>
     </div>
+  );
+}
+
+/** Time-series coverage / exec rate / corpus size chart fed from
+ *  /vr/fuzz/campaigns/:id/telemetry (08_FRONTEND_UX.md §1.5). Renders
+ *  a small line chart per metric, plus a sr-only table mirror. */
+function CoverageChart({ campaignId }: { campaignId: string }) {
+  const { data } = useCampaignTelemetry(campaignId);
+  const points = data?.data ?? [];
+  if (points.length === 0) {
+    return (
+      <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
+        <p className="text-xs text-text-muted">
+          No telemetry samples recorded yet. Workers POST to{" "}
+          <code className="font-mono">
+            /vr/fuzz/campaigns/{campaignId}/telemetry
+          </code>{" "}
+          and this chart populates as samples land.
+        </p>
+      </div>
+    );
+  }
+  // Project into a single chart bound by the cheapest dimension:
+  // coverage_pct % over time.
+  const series = points.map((p) => ({
+    t: p.measured_at.slice(11, 16),
+    coverage: p.coverage_pct ?? 0,
+    corpus: p.corpus_size ?? 0,
+    eps: p.execs_per_sec ?? 0,
+  }));
+  return (
+    <div className="space-y-2">
+      <AilaChart
+        type="bar"
+        data={series}
+        dataKey="coverage"
+        xKey="t"
+        size="sm"
+        ariaLabel="Coverage percent over time"
+      />
+      <p className="text-[10px] text-text-muted font-mono">
+        {series.length} samples · latest: {points.at(-1)?.coverage_pct ?? 0}% cov
+        · {points.at(-1)?.corpus_size ?? 0} corpus
+        · {points.at(-1)?.execs_per_sec?.toFixed(0) ?? 0} exec/s
+      </p>
+      <table className="sr-only">
+        <caption>Fuzz telemetry samples</caption>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Coverage %</th>
+            <th>Corpus size</th>
+            <th>Execs/sec</th>
+          </tr>
+        </thead>
+        <tbody>
+          {series.map((row) => (
+            <tr key={row.t}>
+              <td>{row.t}</td>
+              <td>{row.coverage}</td>
+              <td>{row.corpus}</td>
+              <td>{row.eps}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** "Stuck" detection — render an amber badge when the campaign has been
+ *  running but hasn't reported progress in > 4h (08_FRONTEND_UX.md §1.5). */
+function StuckBadge({
+  lastProgressAt,
+  status,
+}: {
+  lastProgressAt?: string | null;
+  status: CampaignStatus;
+}) {
+  if (status !== "running" || !lastProgressAt) return null;
+  const ms = Date.now() - new Date(lastProgressAt).getTime();
+  if (Number.isNaN(ms) || ms < 4 * 3600_000) return null;
+  const hours = Math.floor(ms / 3600_000);
+  return (
+    <AilaBadge severity="medium" size="sm">
+      stuck · no progress in {hours}h
+    </AilaBadge>
   );
 }

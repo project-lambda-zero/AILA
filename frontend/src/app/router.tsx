@@ -11,7 +11,7 @@ import { LoginPage } from "@app/screens/LoginPage";
 import { NotFoundPage } from "@app/screens/NotFoundPage";
 import { OidcCallbackPage } from "@app/screens/OidcCallbackPage";
 import { ServerErrorPage } from "@app/screens/ServerErrorPage";
-import type { AppRole } from "@platform/auth/roles";
+import type { AppRole, Capability } from "@platform/auth/roles";
 import { ApiKeysPage } from "@platform/features/admin/ApiKeysPage";
 import { AuditLogsPage } from "@platform/features/admin/AuditLogsPage";
 import { LLMLogPage } from "@platform/features/admin/LLMLogPage";
@@ -100,9 +100,17 @@ function withFeatureBoundary(element: ReactElement): ReactElement {
   return <AppErrorBoundary>{element}</AppErrorBoundary>;
 }
 
-function protectPage(title: string, Page: ComponentType, requiredRole?: AppRole) {
+function protectPage(
+  title: string,
+  Page: ComponentType,
+  requiredRole?: AppRole,
+  requiresCapability?: Capability,
+) {
   return withFeatureBoundary(
-    <ProtectedRoute requiredRole={requiredRole}>
+    <ProtectedRoute
+      requiredRole={requiredRole}
+      requiresCapability={requiresCapability}
+    >
       <RoutedPage page={Page} title={title} />
     </ProtectedRoute>,
   );
@@ -118,7 +126,12 @@ function buildModuleRouteObjects(specs: ModuleFrontendSpec[]): RouteObject[] {
       id: route.id,
       path: normalizeModulePath(route.path),
       // Each contributed module route also gets its own feature-level boundary.
-      element: protectPage(route.title, route.page, route.minRole),
+      element: protectPage(
+        route.title,
+        route.page,
+        route.minRole,
+        route.requiresCapability,
+      ),
       handle: route.breadcrumb ? { breadcrumb: route.breadcrumb } : undefined,
     })),
   );

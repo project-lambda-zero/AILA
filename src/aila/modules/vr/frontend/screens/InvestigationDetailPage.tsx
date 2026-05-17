@@ -10,6 +10,7 @@ import { LiveDot, type LiveStatus } from "../components/LiveDot";
 import { SteeringDrawer } from "../components/SteeringDrawer";
 import { TurnCard } from "../components/TurnCard";
 import { WorkflowStepper } from "../components/WorkflowStepper";
+import { HypothesisDetailRail } from "../components/HypothesisDetailRail";
 import { useInvestigationMessagesStream } from "../hooks/useInvestigationMessagesStream";
 import { useVRKeyboardShortcuts } from "../hooks/useVRKeyboardShortcuts";
 import {
@@ -496,6 +497,9 @@ export function InvestigationDetailPage() {
 
         {/* Side rail */}
         <aside className="space-y-3">
+          {/* Hypothesis projection (08_FRONTEND_UX.md §2.3) */}
+          <HypothesisDetailRail investigationId={invId} />
+
           {/* Branches summary */}
           <AilaCard>
             <h3 className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">

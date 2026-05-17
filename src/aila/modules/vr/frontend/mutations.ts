@@ -407,6 +407,47 @@ export function useRenderDisclosure(submissionId: string) {
   });
 }
 
+export function usePatchDisclosureSections(submissionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sections: Record<string, string>) =>
+      authorizedRequestJson<Envelope<VRDisclosureSubmissionSummary>>(
+        `/vr/disclosures/${encodeURIComponent(submissionId)}/sections`,
+        { method: "PATCH", body: JSON.stringify({ sections }) },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "disclosures"] });
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "disclosure", submissionId],
+      });
+      toast.success("Sections saved");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to save sections: ${err.message}`);
+    },
+  });
+}
+
+export function useRegenerateDisclosureSections(submissionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<VRDisclosureSubmissionSummary>>(
+        `/vr/disclosures/${encodeURIComponent(submissionId)}/regenerate`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "disclosure", submissionId],
+      });
+      toast.success("Sections regenerated from finding");
+    },
+    onError: (err: Error) => {
+      toast.error(`Regenerate failed: ${err.message}`);
+    },
+  });
+}
+
 // ─── Fuzz campaigns ─────────────────────────────────────────────────────────
 
 export interface FuzzCampaignCreateBody {

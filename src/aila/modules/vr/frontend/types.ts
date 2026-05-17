@@ -507,6 +507,8 @@ export interface VRDisclosureSubmissionSummary {
   track_info?: DisclosureTrackInfo | null;
   created_at?: string | null;
   updated_at?: string | null;
+  sections?: Record<string, string>;
+  regenerated_from_finding_at?: string | null;
 }
 
 export interface RenderedSubmission {

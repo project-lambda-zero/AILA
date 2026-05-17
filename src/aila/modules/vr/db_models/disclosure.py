@@ -73,6 +73,11 @@ class VRDisclosureSubmissionRecord(TeamScopedMixin, SQLModel, table=True):
 
     notes: str = Field(default="", sa_column=Column(Text))
     validation_errors_json: str = Field(default="[]", sa_column=Column(Text))
+    sections_json: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    regenerated_from_finding_at: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+    )
 
     created_at: datetime = Field(
         default_factory=utc_now,

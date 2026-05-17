@@ -29,6 +29,11 @@ __all__ = [
     "VRFuzzCrashCreate",
     "VRFuzzCrashSummary",
 ]
+__all__ += [
+    "CrashTriageEvent",
+    "FuzzTelemetryCreate",
+    "FuzzTelemetryPoint",
+]
 
 
 class FuzzEngineId(StrEnum):
@@ -228,3 +233,54 @@ class VRFuzzCrashSummary(BaseModel):
     discovered_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    # §1.6 — minimised input bytes preview, LLM-summarised crash,
+    # and chronological triage chain ([{ts, actor, verdict, reason}, …]).
+    reproducer_head_hex: str | None = None
+    reproducer_head_truncated_size: int | None = None
+    llm_summary: str | None = None
+    triage_chain: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class FuzzTelemetryPoint(BaseModel):
+    """One row of the fuzz campaign telemetry time-series (§1.5)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    campaign_id: str
+    measured_at: datetime
+    execs_per_sec: float | None = None
+    total_execs: int | None = None
+    corpus_size: int | None = None
+    coverage_pct: float | None = None
+    crashes_found: int | None = None
+
+
+class FuzzTelemetryCreate(BaseModel):
+    """Operator/worker-posted telemetry sample (§1.5)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    execs_per_sec: float | None = Field(default=None, ge=0)
+    total_execs: int | None = Field(default=None, ge=0)
+    corpus_size: int | None = Field(default=None, ge=0)
+    coverage_pct: float | None = Field(default=None, ge=0, le=100)
+    crashes_found: int | None = Field(default=None, ge=0)
+
+
+class CrashTriageEvent(BaseModel):
+    """One link in the triage chain for one crash (§1.6).
+
+    Stored as a JSON-encoded list on ``triage_chain_json`` and decoded
+    onto ``VRFuzzCrashSummary.triage_chain``. Each entry captures who
+    set the verdict, when, why, and any free-form notes.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    at: datetime
+    actor: str
+    verdict: CrashTriageVerdict
+    reason: str = ""
+    notes: str = ""
