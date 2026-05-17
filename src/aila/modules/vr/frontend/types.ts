@@ -375,6 +375,7 @@ export interface VRBranchSummary {
   closed_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  strategy_family?: string | null;
 }
 
 export interface VRMessageSummary {

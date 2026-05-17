@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
@@ -130,13 +130,21 @@ export function InvestigationDetailPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          {inv.title}
-        </h1>
-        <p className="text-sm text-text-muted mt-1 font-mono">
-          {inv.kind} · target:{inv.target_id.slice(0, 12)}…
-        </p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-bold font-mono text-foreground">
+            {inv.title}
+          </h1>
+          <p className="text-sm text-text-muted mt-1 font-mono">
+            {inv.kind} · target:{inv.target_id.slice(0, 12)}…
+          </p>
+        </div>
+        <Link
+          to={`/vr/investigations/${invId}/tree`}
+          className="text-xs px-3 py-1.5 rounded-md bg-surface border border-border-default hover:bg-surface-hover text-foreground"
+        >
+          View branch tree →
+        </Link>
       </div>
 
       <div className="flex gap-2 items-center">
