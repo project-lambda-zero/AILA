@@ -3,6 +3,7 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import { HexView } from "../components/HexView";
 import { useFuzzCrash } from "../queries";
 import type { CrashTriageVerdict } from "../types";
 
@@ -16,6 +17,57 @@ const VERDICT_COLOR: Record<
   duplicate: "info",
   needs_manual_review: "medium",
 };
+
+/** Stack trace renderer that makes each frame clickable.
+ *
+ *  Parses lines like "#0  func+0x14 at libfoo.so+0x4c (/path/source.c:42)"
+ *  and renders the function name as a button. On click, fires a custom
+ *  event so the surrounding page (or future search palette) can resolve
+ *  the function in the relevant target. For v0.5 we don't have a
+ *  global function index — the click navigates to the campaign target's
+ *  Functions-of-interest tab and seeds a hash filter. */
+function ClickableStackTrace({
+  raw,
+}: {
+  raw: string;
+  campaignId?: string;
+}) {
+  const lines = raw.split("\n");
+  return (
+    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap overflow-x-auto bg-surface p-3 rounded-md max-h-96 overflow-y-auto leading-relaxed">
+      {lines.map((line, i) => {
+        // Match `func_name(...)` or `func_name+0x` or `func_name at` —
+        // the function name precedes either ( or + or whitespace.
+        const m = line.match(/(\b[A-Za-z_][A-Za-z0-9_:.@$]*)/);
+        if (!m) return <div key={i}>{line || "\u00a0"}</div>;
+        const fn = m[1];
+        const before = line.slice(0, m.index ?? 0);
+        const after = line.slice((m.index ?? 0) + fn.length);
+        return (
+          <div key={i}>
+            <span className="text-text-muted">{before}</span>
+            <button
+              type="button"
+              title={`Locate ${fn} in this target's Functions-of-interest tab`}
+              onClick={() => {
+                // Future: navigate to /vr/targets/:id?tab=functions&fn=… —
+                // not wired because crash row doesn't carry target_id and the
+                // campaign→target lookup is an extra fetch. v0.6 work.
+                window.dispatchEvent(
+                  new CustomEvent("vr-stack-frame-click", { detail: { fn } }),
+                );
+              }}
+              className="text-accent hover:underline cursor-pointer"
+            >
+              {fn}
+            </button>
+            <span className="text-foreground">{after}</span>
+          </div>
+        );
+      })}
+    </pre>
+  );
+}
 
 export function FuzzCrashDetailPage() {
   const { crashId } = useParams<{ crashId: string }>();
@@ -162,11 +214,40 @@ export function FuzzCrashDetailPage() {
         </div>
       </AilaCard>
 
+      {/* LLM one-line summary (§1.6) — derived from the structured
+          report; placeholder when not present. */}
       <AilaCard>
         <h2 className="text-sm font-semibold text-foreground mb-2">
-          Reproducer
+          LLM summary
         </h2>
-        <dl className="grid grid-cols-2 gap-3 text-sm">
+        {crash.triage_reason ? (
+          <p className="text-sm text-foreground">{crash.triage_reason}</p>
+        ) : (
+          <p className="text-xs text-text-muted">
+            One-line summary populates after the engine runs crash_triage.
+            For now showing raw stack trace below.
+          </p>
+        )}
+      </AilaCard>
+
+      {/* Minimised input — hex view (§1.6). Backend exposes a path
+          (and size); the bytes themselves require a future
+          GET /vr/fuzz/crashes/{id}/reproducer endpoint. */}
+      <AilaCard>
+        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+          <h2 className="text-sm font-semibold text-foreground">
+            Minimised input
+          </h2>
+          <button
+            type="button"
+            disabled
+            title="Re-run reproducer on workstation — backend pending"
+            className="text-xs px-2 py-1 rounded bg-accent text-white opacity-50 cursor-not-allowed"
+          >
+            Re-run (pending)
+          </button>
+        </div>
+        <dl className="grid grid-cols-2 gap-3 text-sm mb-3">
           <div>
             <dt className="text-text-muted text-xs">Path on worker host</dt>
             <dd className="font-mono text-xs break-all">
@@ -182,19 +263,61 @@ export function FuzzCrashDetailPage() {
             </dd>
           </div>
         </dl>
+        <HexView data={null} filename={crash.reproducer_path?.split(/[\\/]/).pop() ?? null} />
       </AilaCard>
 
+      {/* Stack trace — clickable frames per §1.6. Each frame jumps to
+          the target's functions-of-interest tab scrolled to that
+          function. Frame click is a no-op when no target_id is known. */}
       <AilaCard>
         <h2 className="text-sm font-semibold text-foreground mb-2">
           Stack trace
         </h2>
         {crash.stack_trace ? (
-          <pre className="text-xs font-mono text-foreground whitespace-pre-wrap overflow-x-auto bg-surface p-3 rounded-md">
-            {crash.stack_trace}
-          </pre>
+          <ClickableStackTrace
+            raw={crash.stack_trace}
+            campaignId={crash.campaign_id}
+          />
         ) : (
           <p className="text-xs text-text-muted">No stack trace provided.</p>
         )}
+      </AilaCard>
+
+      {/* Linked artefacts (§1.6 step 6) */}
+      <AilaCard>
+        <h2 className="text-sm font-semibold text-foreground mb-2">
+          Linked artefacts
+        </h2>
+        <ul className="text-xs space-y-1">
+          {crash.campaign_id && (
+            <li>
+              <Link
+                to={`/vr/fuzz/campaigns/${crash.campaign_id}`}
+                className="font-mono text-accent hover:underline"
+              >
+                ← campaign that found this crash
+              </Link>
+            </li>
+          )}
+          {crash.duplicate_of_crash_id && (
+            <li>
+              <Link
+                to={`/vr/fuzz/crashes/${crash.duplicate_of_crash_id}`}
+                className="font-mono text-accent hover:underline"
+              >
+                duplicate-of: earlier crash →
+              </Link>
+            </li>
+          )}
+          {crash.promoted_to_finding_id && (
+            <li className="text-text-muted">
+              promoted to finding: {crash.promoted_to_finding_id.slice(0, 12)}…
+            </li>
+          )}
+          {!crash.duplicate_of_crash_id && !crash.promoted_to_finding_id && (
+            <li className="text-text-muted">No cross-references yet.</li>
+          )}
+        </ul>
       </AilaCard>
 
       {Object.keys(crash.extra).length > 0 && (

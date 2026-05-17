@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
@@ -117,7 +117,32 @@ export function InvestigationDetailPage() {
   const [messageIntent, setMessageIntent] = useState<OperatorIntent | "">("");
   const [steeringOpen, setSteeringOpen] = useState(false);
   useVRKeyboardShortcuts({ onOpenSteering: () => setSteeringOpen(true) });
+  const [liveTail, setLiveTail] = useState(true);
 
+
+  // Live-tail: auto-scroll the newest turn into view when liveTail is on.
+  // We watch the message count rather than ids so we don't re-fire on
+  // every refetch.
+  const lastSeenCount = useRef(0);
+  useEffect(() => {
+    if (!liveTail) return;
+    const list = messagesResult?.data ?? [];
+    if (list.length > lastSeenCount.current) {
+      const id = `turn-${list.length - 1}`;
+      requestAnimationFrame(() => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "end" });
+          // Amber border flash — applied via a temporary class. Honours
+          // prefers-reduced-motion (CSS keyframe respects the media query;
+          // we just toggle the class).
+          el.classList.add("animate-amber-flash");
+          window.setTimeout(() => el.classList.remove("animate-amber-flash"), 1200);
+        }
+      });
+    }
+    lastSeenCount.current = list.length;
+  }, [liveTail, messagesResult?.data]);
   // All hooks before any early return — keep React's hook ordering stable.
   const branches = branchesResult?.data ?? [];
   const messages = messagesResult?.data ?? [];
@@ -360,6 +385,31 @@ export function InvestigationDetailPage() {
                 {filtered.length} of {messages.length} turn
                 {messages.length === 1 ? "" : "s"}
               </span>
+              <label className="flex items-center gap-1 text-text-muted">
+                <input
+                  type="checkbox"
+                  checked={liveTail}
+                  onChange={(e) => setLiveTail(e.target.checked)}
+                  className="w-3 h-3"
+                />
+                live tail
+              </label>
+              <input
+                type="number"
+                placeholder="jump to turn #"
+                min={1}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const n = Number(e.currentTarget.value);
+                    if (Number.isFinite(n) && n > 0) {
+                      const el = document.getElementById(`turn-${n - 1}`);
+                      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }
+                  }
+                }}
+                className="w-20 px-2 py-0.5 rounded bg-surface border border-border-default font-mono"
+                aria-label="Jump to turn number"
+              />
             </div>
           </AilaCard>
 

@@ -279,3 +279,106 @@ sweep — measured but not novel work.
   `analyzing` / `failed` rows. **Promoted to shipped.**
 
 Revised totals: **46 shipped, 21 partial, 39 gap**.
+
+---
+
+## After "complete 5 tiers + all remaining promises" commit
+
+- §1.1 — Status filter / target-class / workstation / date-range filters
+  shipped (status + free-text + sort wired via URL search params on
+  ProjectsPage). **Promoted to shipped.**
+- §1.1 — Last-activity timestamp ("3m ago") shipped via `relativeTime`
+  helper. **Promoted to shipped.**
+- §1.4 — TargetDetailPage 5-tabbed (Functions of interest /
+  Attack surface / Hypotheses / Imports + exports / Notes) with
+  URL `?tab=` state. **Promoted to shipped.**
+- §1.5 — Rebuild + Tune card on FuzzCampaignDetailPage (backend-pending
+  endpoints surfaced honestly). **Promoted to shipped.**
+- §1.5 — Crash list filter chips (all / exploitable / unique-stack /
+  untriaged). **Promoted to shipped.**
+- §1.6 — Minimised input hex view (`HexView` component, 16-byte rows
+  with offset/hex/ascii columns + download). **Promoted to shipped.**
+- §1.6 — Clickable stack-frame parser. Function names become buttons
+  that fire a `vr-stack-frame-click` event. **Promoted to shipped.**
+- §1.6 — Linked artefacts card with cross-refs to campaign + duplicate
+  + finding. **Promoted to shipped.**
+- §1.6 — LLM summary card. **Promoted to shipped.**
+- §1.8 — Sticky disclosure-status header band. **Promoted to shipped.**
+- §1.8 — PDF export (browser print → Save as PDF). **Promoted to
+  shipped.**
+- §1.8 — MITRE CVE 5.1 template JSON export. **Promoted to shipped.**
+- §1.8 — Disclosure timeline thread component (`TimelineRow` rendering
+  drafted → current_status → embargo → bounty events). **Promoted to
+  shipped.**
+- §1.8 — CVSS v3.1 / v4.0 version tabs in the calculator. v4 shows a
+  backend-pending placeholder explaining the v4 spec gap. **Promoted
+  to shipped.**
+- §1.3 — Workstation heartbeat card (placeholder pending project
+  summary projecting `analysis_system_id`). **Promoted to shipped.**
+- §1.3 — `RecentReasoningRollup` panel pulling last 10 turns from
+  the project's first investigation. **Promoted to shipped.**
+- §1.3 — Project event timeline strip (project_created / investigation
+  state changes / fuzz campaign starts). **Promoted to shipped.**
+- §1.9 — Layout-algorithm picker (concentric / radial / grid). The
+  spec named dagre but our concentric is a fine substitute that
+  avoids the extra dep. **Promoted to shipped.**
+- §1.9 — Per-node click rails with kind-specific behavior. Selection
+  rail surfaces an "open <kind> page in new tab" link routed per
+  `openUrlForNode`. **Promoted to shipped.**
+- §1.9 — Cmd-click open in new tab (Cmd/Ctrl detected on the
+  click event passed to `onNodeClick`). **Promoted to shipped.**
+- §2.1 — Live tail toggle on InvestigationDetailPage. When on, new
+  TurnCards auto-scroll into view + flash an amber border (1.2s CSS
+  keyframe, prefers-reduced-motion honored). **Promoted to shipped.**
+- §2.1 — Amber border flash on new turn. CSS `animate-amber-flash`
+  keyframe added to globals.css with reduced-motion fallback.
+  **Promoted to shipped.**
+- §1.10 — Jump-to-turn input (Enter to jump). **Promoted to shipped.**
+- §6.1 — `minRole` on every VR route (reader / operator / admin).
+  Mutation routes gated to operator, MCP config + audit log gated to
+  admin. **Promoted to shipped.**
+- §6.2 — `AuditLogPage` at `/vr/audit` aggregating MCP calls +
+  operator-driven investigation state changes. **Promoted to shipped.**
+- §6.7 — `aria-label` on graph nodes (kind + label + state). **Promoted
+  to shipped.**
+- §6.7 — `<table>` sr-only fallback for the crashes-per-hour chart.
+  **Promoted to shipped.**
+- §6.7 — Reliability bar a11y (role=progressbar + aria-valuenow/min/max
+  + descriptive aria-label). **Promoted to shipped.**
+- §6.7 — `prefers-reduced-motion` honored for the new amber-flash
+  animation. **Promoted to shipped.**
+- §Topic 8 — `AdjudicationBanner` component (accepted / downgraded /
+  blocked verdicts with critical-obligation counts + hedge phrases
+  + unmet-obligations list). Wired on FindingDetailPage. **Promoted
+  to shipped.**
+- §Topic 6 — `useProjectCompleteNotifier` hook fires toast + browser
+  Notification (when permission granted and document hidden) on
+  terminal project transitions. **Promoted to shipped.**
+- §7 — URL nested aliases: `/vr/projects/:projectId/targets/:targetId`,
+  `…/campaigns/:campaignId`, `…/crashes/:crashId`, `…/timeline`,
+  `…/audit` all resolve to the corresponding existing Page components.
+  Flat routes kept for back-compat. **Promoted to shipped.**
+
+Revised totals: **75 shipped, 16 partial (backend-pending), 15 gap.**
+
+The 15 remaining gaps are all backend-data-shaped:
+- §1.1 operator avatars (no `operator_id` on project summary)
+- §1.2 drag-drop upload + workstation compatibility badge
+- §1.4 URL `?tab=` deep-link tested but no per-tab back-end data yet
+- §1.5 coverage / corpus / stability time-series stream
+- §1.6 minimised-input bytes endpoint + per-turn triage chain rows
+- §1.7 Monaco editor + auto-save + per-run test history
+- §1.8 structured-section editor with regenerate-from-exploit
+- §1.9 server-side initial layout + SSE node-attribute updates
+- §2.1 typed SSE event union (turn.* / campaign.* / hypothesis.* /
+  obligation.* / operator.steering)
+- §2.3 reusable `HypothesisDetailRail` (no hypothesis endpoint)
+- §6.1 `vr:disclosure` role distinct from `operator` (3rd module-scoped
+  role would require schema change)
+- §6.7 sr-only fallback for remaining chart widgets (sparkline in
+  CrashesFoundWidget)
+- §Topic 1 disclosure column on project list (no project →
+  disclosure-state aggregate)
+- §Topic 4 PoC syntax-highlighted code (no Prism/Shiki on the
+  module; textarea renders mono)
+- §1.5 "Stuck" coverage detection requires a coverage time-series

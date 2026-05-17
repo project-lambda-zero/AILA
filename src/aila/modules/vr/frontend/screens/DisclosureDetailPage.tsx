@@ -46,7 +46,7 @@ export function DisclosureDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
+      <div className="sticky top-0 z-10 bg-base/95 backdrop-blur-sm border-b border-border-default -mx-4 px-4 py-2 flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-xl font-bold font-mono text-foreground">
             {sub.track_info?.display_name ?? sub.track_id}
@@ -222,6 +222,64 @@ export function DisclosureDetailPage() {
                 >
                   Download MD
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // MITRE CVE 5.x JSON template — minimal shell.
+                    // Full per-field mapping requires a backend renderer
+                    // (track_id + finding_id → CVE JSON 5.x).
+                    const tpl = {
+                      dataType: "CVE_RECORD",
+                      dataVersion: "5.1",
+                      cveMetadata: {
+                        cveId:
+                          sub.vendor_reference ??
+                          "CVE-PLACEHOLDER",
+                        assignerOrgId: "(your org id)",
+                        state: "PUBLISHED",
+                      },
+                      containers: {
+                        cna: {
+                          title: sub.track_info?.display_name ?? sub.track_id,
+                          descriptions: [
+                            {
+                              lang: "en",
+                              value: renderMut.data!.data.body,
+                            },
+                          ],
+                        },
+                      },
+                    };
+                    const blob = new Blob(
+                      [JSON.stringify(tpl, null, 2)],
+                      { type: "application/json" },
+                    );
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `mitre_cve_${sub.track_id}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="text-xs px-2 py-1 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                  title="Download as MITRE CVE 5.1 JSON skeleton"
+                >
+                  MITRE template
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Browser print dialog → 'Save as PDF'. Operator
+                    // gets a real PDF without us shipping a PDF
+                    // generator. The print stylesheet on PageFrame
+                    // already strips chrome.
+                    window.print();
+                  }}
+                  className="text-xs px-2 py-1 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                  title="Use browser 'Save as PDF' from the print dialog"
+                >
+                  PDF (print)
+                </button>
               </>
             )}
             <button
@@ -297,6 +355,74 @@ export function DisclosureDetailPage() {
           </dl>
         </AilaCard>
       )}
+      {/* Disclosure timeline thread (§1.8). Spec calls for a vertical
+          thread of state transitions with timestamps. v0.5 surfaces
+          what the contract exposes: drafted → submitted (= created_at)
+          → current_status (= updated_at) plus embargo + bounty events.
+          A real per-event log requires VRDisclosureTransitionRecord. */}
+      <AilaCard>
+        <h2 className="text-sm font-semibold text-foreground mb-2">
+          Disclosure timeline
+        </h2>
+        <ol className="space-y-2 text-xs">
+          <TimelineRow
+            time={sub.created_at}
+            label="drafted"
+            note="submission record created"
+          />
+          {sub.status !== "drafted" && (
+            <TimelineRow
+              time={sub.updated_at}
+              label={sub.status}
+              note={`status now: ${sub.status}`}
+            />
+          )}
+          {sub.embargo_until && (
+            <TimelineRow
+              time={sub.embargo_until}
+              label="embargo until"
+              note="public disclosure permitted on / after this date"
+            />
+          )}
+          {sub.bounty_awarded_usd != null && sub.bounty_awarded_usd > 0 && (
+            <TimelineRow
+              time={sub.updated_at}
+              label="bounty"
+              note={`$${sub.bounty_awarded_usd.toLocaleString()} awarded`}
+            />
+          )}
+        </ol>
+        <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40 text-[10px] text-text-muted">
+          Per-transition rows (who advanced status / when / why) require a
+          VRDisclosureTransitionRecord on the backend. Currently only
+          first + most-recent transitions render.
+        </div>
+      </AilaCard>
     </div>
+  );
+}
+
+function TimelineRow({
+  time,
+  label,
+  note,
+}: {
+  time?: string | null;
+  label: string;
+  note?: string;
+}) {
+  return (
+    <li className="flex items-start gap-2 border border-border-default rounded px-2 py-1.5">
+      <span className="w-2 h-2 rounded-full bg-accent mt-1.5 flex-shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-mono text-foreground">{label}</span>
+          <span className="text-text-muted">
+            {time ? new Date(time).toLocaleString() : "—"}
+          </span>
+        </div>
+        {note && <p className="text-text-muted text-[10px] mt-0.5">{note}</p>}
+      </div>
+    </li>
   );
 }

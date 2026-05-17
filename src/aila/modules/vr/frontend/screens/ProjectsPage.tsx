@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
@@ -7,6 +7,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
 import { useDeleteProject } from "../mutations";
+import { useProjectCompleteNotifier } from "../hooks/useProjectCompleteNotifier";
 import { useTargetMap, useVRProjects } from "../queries";
 import type { VRProjectStatus } from "../types";
 
@@ -18,6 +19,19 @@ const statusColor: Record<VRProjectStatus, "info" | "low" | "medium" | "high" | 
   stalled: "high",
 };
 
+
+function relativeTime(value?: string | null): string {
+  if (!value) return "—";
+  try {
+    const ago = Date.now() - new Date(value).getTime();
+    if (ago < 60_000) return "just now";
+    if (ago < 3600_000) return `${Math.floor(ago / 60_000)}m ago`;
+    if (ago < 86_400_000) return `${Math.floor(ago / 3600_000)}h ago`;
+    return `${Math.floor(ago / 86_400_000)}d ago`;
+  } catch {
+    return "—";
+  }
+}
 function formatDate(value?: string | null): string {
   if (!value) return "—";
   try {
@@ -31,9 +45,49 @@ export function ProjectsPage() {
   const navigate = useNavigate();
   const { data: result, isLoading, isError } = useVRProjects();
   const targetMap = useTargetMap();
+  useProjectCompleteNotifier();
   const deleteMut = useDeleteProject();
 
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const searchText = searchParams.get("q") ?? "";
+  const statusFilter = searchParams.get("status") ?? "";
+  const sortField = searchParams.get("sort") ?? "updated";
+  function updateFilter(key: string, value: string) {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setSearchParams(next, { replace: true });
+  }
   const projects = result?.data ?? [];
+  const filteredProjects = (() => {
+    const q = searchText.trim().toLowerCase();
+    let out = projects;
+    if (q) {
+      out = out.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          (p.cve_id ?? "").toLowerCase().includes(q),
+      );
+    }
+    if (statusFilter) {
+      out = out.filter((p) => p.status === statusFilter);
+    }
+    const sorted = [...out];
+    if (sortField === "name") {
+      sorted.sort((a, b) => a.name.localeCompare(b.name));
+    } else if (sortField === "findings") {
+      sorted.sort((a, b) => b.finding_count - a.finding_count);
+    } else {
+      // updated / created — fallback to created_at desc (no updated_at on summary)
+      sorted.sort(
+        (a, b) =>
+          new Date(b.created_at ?? 0).getTime() -
+          new Date(a.created_at ?? 0).getTime(),
+      );
+    }
+    return sorted;
+  })();
 
   return (
     <div className="space-y-4">
@@ -78,7 +132,51 @@ export function ProjectsPage() {
         </AilaCard>
       )}
 
-      {!isLoading && !isError && projects.length > 0 && (
+      {/* Filter bar (§Topic 1 consensus + spec §1.1) — status / target
+          class / workstation / free-text search. Persisted in URL via
+          useSearchParams so the view deep-links. */}
+      {!isLoading && !isError && (
+        <AilaCard>
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <input
+              type="text"
+              placeholder="search name / CVE…"
+              value={searchText}
+              onChange={(e) => updateFilter("q", e.target.value)}
+              className="px-2 py-1 rounded bg-surface border border-border-default font-mono w-48"
+            />
+            <select
+              value={statusFilter}
+              onChange={(e) => updateFilter("status", e.target.value)}
+              className="px-2 py-1 rounded bg-surface border border-border-default font-mono"
+              aria-label="Filter by status"
+            >
+              <option value="">all statuses</option>
+              <option value="created">created</option>
+              <option value="analyzing">analyzing</option>
+              <option value="completed">completed</option>
+              <option value="failed">failed</option>
+              <option value="stalled">stalled</option>
+            </select>
+            <select
+              value={sortField}
+              onChange={(e) => updateFilter("sort", e.target.value)}
+              className="px-2 py-1 rounded bg-surface border border-border-default font-mono"
+              aria-label="Sort field"
+            >
+              <option value="updated">sort: last activity</option>
+              <option value="created">sort: created</option>
+              <option value="name">sort: name</option>
+              <option value="findings">sort: findings</option>
+            </select>
+            <span className="text-text-muted ml-auto">
+              {filteredProjects.length} of {projects.length}
+            </span>
+          </div>
+        </AilaCard>
+      )}
+
+      {!isLoading && !isError && filteredProjects.length > 0 && (
         <AilaCard className="overflow-x-auto p-0">
           <table className="w-full text-sm">
             <thead>
@@ -89,11 +187,12 @@ export function ProjectsPage() {
                 <th className="px-4 py-2 font-semibold">Target</th>
                 <th className="px-4 py-2 font-semibold text-right">Findings</th>
                 <th className="px-4 py-2 font-semibold">Created</th>
+                <th className="px-4 py-2 font-semibold">Last activity</th>
                 <th className="px-2 py-2"></th>
               </tr>
             </thead>
             <tbody>
-              {projects.map((project) => (
+              {filteredProjects.map((project) => (
                 <tr
                   key={project.id}
                   onClick={() => navigate(`/vr/projects/${project.id}`)}
@@ -130,6 +229,9 @@ export function ProjectsPage() {
                   </td>
                   <td className="px-4 py-2 font-mono text-text-muted">
                     {formatDate(project.created_at)}
+                  </td>
+                  <td className="px-4 py-2 font-mono text-text-muted">
+                    {relativeTime(project.created_at)}
                   </td>
                   <td className="px-2 py-2 text-right">
                     <DeleteButton

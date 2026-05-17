@@ -1,8 +1,9 @@
-import { useRef } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useRef, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import {
@@ -115,6 +116,157 @@ interface FunctionRanking {
 
 // MitigationFlags interface lives in MitigationsRibbon (shared component).
 
+
+// ─── Tabs for §1.4 ────────────────────────────────────────────────────────
+
+type TargetTab =
+  | "functions"
+  | "attack_surface"
+  | "hypotheses"
+  | "imports"
+  | "notes";
+
+const TARGET_TABS: ReadonlyArray<{ id: TargetTab; label: string }> = [
+  { id: "functions", label: "Functions of interest" },
+  { id: "attack_surface", label: "Attack surface" },
+  { id: "hypotheses", label: "Hypotheses" },
+  { id: "imports", label: "Imports / exports" },
+  { id: "notes", label: "Notes" },
+];
+
+function AttackSurfaceTab({
+  capability,
+}: {
+  capability: Record<string, unknown>;
+}) {
+  const entrypoints = (capability.entrypoints as unknown[]) ?? [];
+  if (entrypoints.length === 0) {
+    return (
+      <AilaCard>
+        <EmptyState
+          title="No entrypoints enumerated yet"
+          description="audit-mcp + IDA-MCP entrypoint pass produces network listeners, IPC sockets, ioctls, env vars, parsed file formats. Backend wiring of capability_profile.entrypoints is pending (see docs/vr/02_IDA_HEADLESS_MCP.md §3)."
+        />
+      </AilaCard>
+    );
+  }
+  return (
+    <AilaCard>
+      <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap overflow-x-auto">
+        {JSON.stringify(entrypoints, null, 2)}
+      </pre>
+    </AilaCard>
+  );
+}
+
+function HypothesesTab() {
+  return (
+    <AilaCard>
+      <EmptyState
+        title="No hypotheses yet"
+        description="Hypotheses are produced during investigations. Open one from /vr/investigations — they show up here once they exist. Hypothesis-detail API (claim text, supports/refutes count, state badge) is backend pending."
+      />
+    </AilaCard>
+  );
+}
+
+function ImportsExportsTab({
+  capability,
+}: {
+  capability: Record<string, unknown>;
+}) {
+  const imports = (capability.imports as Array<{ name: string; module?: string; dangerous?: boolean }> | undefined) ?? [];
+  const exports_ = (capability.exports as Array<{ name: string; reachable?: boolean }> | undefined) ?? [];
+  if (imports.length === 0 && exports_.length === 0) {
+    return (
+      <AilaCard>
+        <EmptyState
+          title="No imports / exports recorded yet"
+          description="capability_profile.imports + exports backend wiring pending. Spec §1.4: dangerous imports (strcpy, sprintf, system, gets) get a yellow border; reachable exports get a 'reachable' badge."
+        />
+      </AilaCard>
+    );
+  }
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <AilaCard>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+          Imports ({imports.length})
+        </h3>
+        <ul className="text-xs font-mono space-y-1 max-h-96 overflow-y-auto">
+          {imports.map((im) => (
+            <li
+              key={im.name}
+              className={
+                "px-2 py-1 rounded border " +
+                (im.dangerous
+                  ? "border-amber-500 text-amber-300"
+                  : "border-border-default text-foreground")
+              }
+            >
+              {im.name}
+              {im.module && <span className="text-text-muted ml-2">{im.module}</span>}
+            </li>
+          ))}
+        </ul>
+      </AilaCard>
+      <AilaCard>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+          Exports ({exports_.length})
+        </h3>
+        <ul className="text-xs font-mono space-y-1 max-h-96 overflow-y-auto">
+          {exports_.map((ex) => (
+            <li
+              key={ex.name}
+              className="px-2 py-1 rounded border border-border-default text-foreground flex items-center justify-between gap-2"
+            >
+              <span>{ex.name}</span>
+              {ex.reachable && (
+                <AilaBadge severity="medium" size="sm">reachable</AilaBadge>
+              )}
+            </li>
+          ))}
+        </ul>
+      </AilaCard>
+    </div>
+  );
+}
+
+function NotesTab({ targetId }: { targetId: string }) {
+  const STORAGE_KEY = `vr.target.notes.${targetId}`;
+  const initial =
+    typeof window === "undefined" ? "" : window.localStorage.getItem(STORAGE_KEY) ?? "";
+  const [text, setText] = useState(initial);
+  const [savedAt, setSavedAt] = useState<string | null>(initial ? "loaded from local" : null);
+  function save() {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, text);
+      setSavedAt(new Date().toLocaleTimeString());
+    } catch {
+      setSavedAt("save failed");
+    }
+  }
+  return (
+    <AilaCard>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+        Operator notes
+      </h3>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={save}
+        rows={10}
+        placeholder="Free-text notes about this target. Stays in your browser until the backend per-target notes API ships."
+        className="w-full px-3 py-2 text-sm font-mono rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+      />
+      <p className="text-[10px] text-text-muted mt-1">
+        Saved locally in your browser ({savedAt ?? "not saved yet"}). Spec §1.4
+        wants project-scoped sync — backend pending.
+      </p>
+    </AilaCard>
+  );
+}
+
 export function TargetDetailPage() {
   const { targetId } = useParams<{ targetId: string }>();
   const tid = targetId ?? "";
@@ -130,6 +282,13 @@ export function TargetDetailPage() {
   const uploadMut = useUploadTargetArtifact(tid);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const deleteMut = useDeleteTarget();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = (searchParams.get("tab") as TargetTab) || "functions";
+  function setActiveTab(t: TargetTab) {
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", t);
+    setSearchParams(next, { replace: true });
+  }
   const navigate = useNavigate();
 
   if (isLoading || !target) {
@@ -359,8 +518,43 @@ export function TargetDetailPage() {
         </AilaCard>
       )}
 
-      {/* Function ranking */}
+      {/* Tabs per 08_FRONTEND_UX.md §1.4. URL state via ?tab= so the
+          operator can deep-link a teammate to "look at this tab." */}
       {target.analysis_state === "ready" && (
+        <>
+          <div className="border-b border-border-default flex gap-1 overflow-x-auto">
+            {TARGET_TABS.map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={
+                    "px-3 py-2 text-xs font-mono whitespace-nowrap border-b-2 transition-colors " +
+                    (isActive
+                      ? "border-accent text-foreground"
+                      : "border-transparent text-text-muted hover:text-foreground")
+                  }
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {activeTab === "attack_surface" && (
+            <AttackSurfaceTab capability={capability} />
+          )}
+          {activeTab === "hypotheses" && <HypothesesTab />}
+          {activeTab === "imports" && <ImportsExportsTab capability={capability} />}
+          {activeTab === "notes" && <NotesTab targetId={target.id} />}
+        </>
+      )}
+
+
+      {/* Functions of interest tab content */}
+      {target.analysis_state === "ready" && activeTab === "functions" && (
         <AilaCard>
           <h2 className="text-sm font-semibold text-foreground mb-2">
             Function ranking ({ranking.top_k?.length ?? 0} of{" "}

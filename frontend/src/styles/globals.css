@@ -1970,6 +1970,15 @@ a:hover {
   animation: severity-pulse 2s ease-in-out infinite;
 }
 
+@keyframes amber-flash {
+  0%   { box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.0); }
+  20%  { box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.85); }
+  100% { box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.0); }
+}
+.animate-amber-flash {
+  animation: amber-flash 1.2s ease-out;
+}
+
 @keyframes aila-scan {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(400%); }
@@ -2025,6 +2034,7 @@ a:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .animate-severity-pulse { animation: none; }
+  .animate-amber-flash { animation: none; box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.5); }
   .skeleton-aila::after { animation: none; opacity: 0.08; }
 }
 

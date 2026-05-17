@@ -1,4 +1,5 @@
 import { useNavigate, useParams } from "react-router";
+import { useState } from "react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaChart } from "@/components/aila/AilaChart";
@@ -77,6 +78,29 @@ export function FuzzCampaignDetailPage() {
   const crashes = crashesData?.data ?? [];
   const patchMut = usePatchFuzzCampaign(cid);
   const deleteMut = useDeleteFuzzCampaign();
+  const [crashFilter, setCrashFilter] = useState<
+    "all" | "exploitable" | "unique-stack" | "untriaged"
+  >("all");
+  const filteredCrashes = (() => {
+    if (crashFilter === "exploitable") {
+      return crashes.filter((c) => c.triage_verdict === "security_relevant");
+    }
+    if (crashFilter === "untriaged") {
+      return crashes.filter((c) => c.triage_verdict === "untriaged");
+    }
+    if (crashFilter === "unique-stack") {
+      // dedup by stack_hash, keep earliest per group
+      const seen = new Set<string>();
+      const out: typeof crashes = [];
+      for (const c of crashes) {
+        if (!c.stack_hash || seen.has(c.stack_hash)) continue;
+        seen.add(c.stack_hash);
+        out.push(c);
+      }
+      return out;
+    }
+    return crashes;
+  })();
 
   if (isLoading || !campaign) return <LoadingSkeleton size="lg" width="full" />;
 
@@ -141,6 +165,56 @@ export function FuzzCampaignDetailPage() {
         )}
       </AilaCard>
 
+
+      {/* Rebuild + Tune (§1.5) — campaign config knobs. Backend wiring
+          pending: rebuild requires a /campaigns/:id/rebuild endpoint
+          that re-runs harness generation; tune requires PATCH on
+          engine_config + strategy_config (the schemas exist on the
+          summary contract, the endpoint is partial). */}
+      <AilaCard>
+        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+          <h2 className="text-sm font-semibold text-foreground">
+            Rebuild + tune
+          </h2>
+          <AilaBadge severity="info" size="sm">backend pending</AilaBadge>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
+            <h3 className="text-xs font-semibold text-foreground">Rebuild harness</h3>
+            <p className="text-[10px] text-text-muted mt-1">
+              Re-runs harness generation with the last spec. Spec §1.5
+              calls for this to be invokable from this drawer without
+              leaving the page. POST /vr/fuzz/campaigns/{cid}/rebuild
+              is pending.
+            </p>
+            <button
+              type="button"
+              disabled
+              className="mt-2 px-3 py-1 text-xs font-medium rounded bg-accent text-white opacity-50 cursor-not-allowed"
+            >
+              Rebuild harness
+            </button>
+          </div>
+          <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
+            <h3 className="text-xs font-semibold text-foreground">Tune</h3>
+            <p className="text-[10px] text-text-muted mt-1">
+              Adjust timeout / dictionary / mutation rate. Reads
+              engine_config + strategy_config from the current campaign;
+              PATCH endpoint pending.
+            </p>
+            <dl className="mt-2 text-[10px] font-mono grid grid-cols-2 gap-1 text-text-muted">
+              <dt>engine_config</dt>
+              <dd className="truncate">
+                {Object.keys(campaign.engine_config).length} keys
+              </dd>
+              <dt>strategy_config</dt>
+              <dd className="truncate">
+                {Object.keys(campaign.strategy_config).length} keys
+              </dd>
+            </dl>
+          </div>
+        </div>
+      </AilaCard>
       {/* Metrics */}
       <AilaCard>
         <h2 className="text-sm font-semibold text-foreground mb-2">Metrics</h2>
@@ -226,6 +300,27 @@ export function FuzzCampaignDetailPage() {
               ariaLabel="Crashes per hour bucket"
             />
           )}
+          {/* Accessibility: sr-only table mirrors the chart so screen
+              readers get the same data series. */}
+          {crashes.length > 0 && (
+            <table className="sr-only">
+              <caption>Crashes per hour (last 12 hours)</caption>
+              <thead>
+                <tr>
+                  <th>Hour</th>
+                  <th>Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bucketCrashesByHour(crashes).map((row) => (
+                  <tr key={row.bucket}>
+                    <td>{row.bucket}</td>
+                    <td>{row.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </AilaCard>
 
         <AilaCard>
@@ -266,9 +361,30 @@ export function FuzzCampaignDetailPage() {
 
       {/* Crashes */}
       <AilaCard>
-        <h2 className="text-sm font-semibold text-foreground mb-2">
-          Crashes ({crashes.length})
-        </h2>
+        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+          <h2 className="text-sm font-semibold text-foreground">
+            Crashes ({filteredCrashes.length}
+            {filteredCrashes.length !== crashes.length && ` of ${crashes.length}`})
+          </h2>
+          <div className="flex items-center gap-1 flex-wrap text-[10px]">
+            <span className="text-text-muted">Show:</span>
+            {(["all", "exploitable", "unique-stack", "untriaged"] as const).map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                onClick={() => setCrashFilter(chip)}
+                className={
+                  "px-2 py-0.5 rounded font-mono border " +
+                  (crashFilter === chip
+                    ? "bg-accent text-white border-accent"
+                    : "bg-surface border-border-default text-text-muted hover:text-foreground hover:bg-surface-hover")
+                }
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+        </div>
         {crashes.length === 0 ? (
           <p className="text-xs text-text-muted">
             No crashes registered yet.
@@ -287,7 +403,7 @@ export function FuzzCampaignDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {crashes.map((c) => (
+                {filteredCrashes.map((c) => (
                   <tr
                     key={c.id}
                     onClick={() => navigate(`/vr/fuzz/crashes/${c.id}`)}

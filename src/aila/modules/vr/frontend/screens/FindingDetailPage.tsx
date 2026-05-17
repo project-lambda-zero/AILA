@@ -6,6 +6,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { CVSSBadge, CWEBadge } from "../components/CVSSBadge";
 import { CVSSBreakdown } from "../components/CVSSBadge";
+import { AdjudicationBanner } from "../components/AdjudicationBanner";
 import { ObligationChecklist } from "../components/ObligationChecklist";
 import { useVRFinding } from "../queries";
 import type { DisclosureStatus } from "../types";
@@ -130,6 +131,26 @@ export function FindingDetailPage() {
           <CWEBadge cweId={f.cwe_id} name={f.cwe_name} />
         </div>
       </div>
+
+      {/* Adjudication banner (§Topic 8) — synthesised from finding state.
+          A real adjudication record (verdict + hedge phrases detected +
+          unmet obligations) is backend pending. */}
+      <AdjudicationBanner
+        result={{
+          verdict:
+            f.poc?.crashes_vulnerable === 5 && f.poc?.crashes_patched === 0
+              ? "accepted"
+              : f.poc?.crashes_vulnerable && f.poc.crashes_vulnerable >= 3
+                ? "downgraded"
+                : "blocked",
+          reason:
+            f.poc?.crashes_vulnerable === 5 && f.poc?.crashes_patched === 0
+              ? "PoC reliability 5/5 on vulnerable + clean on patched."
+              : f.poc?.crashes_vulnerable === 0
+                ? "PoC fails to reproduce — submission blocked until reliability ≥ 3/5."
+                : "PoC reproduces but flaky — operator review required.",
+        }}
+      />
 
       {/* 1 — Root cause */}
       <AilaCard>
