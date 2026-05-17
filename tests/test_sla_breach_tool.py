@@ -1,11 +1,10 @@
 """Tests for sla_breach() and SlaBreachTool (OPS-09 / plan 35-01, Task 2)."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.dialects.sqlite import insert as sa_insert
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,7 +35,7 @@ def _insert_finding(
     from aila.modules.vulnerability.db_models import LatestFindingRecord
     from aila.storage.database import session_scope
 
-    now = created_at or datetime.now(timezone.utc)
+    now = created_at or datetime.now(UTC)
     stmt = (
         sa_insert(LatestFindingRecord)
         .values(
@@ -75,7 +74,7 @@ def _insert_remediation(
     from aila.modules.vulnerability.db_models import RemediationRecord
     from aila.storage.database import session_scope
 
-    now = updated_at or datetime.now(timezone.utc)
+    now = updated_at or datetime.now(UTC)
     stmt = (
         sa_insert(RemediationRecord)
         .values(
@@ -118,7 +117,7 @@ def test_within_sla_not_flagged(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Immediate SLA = 1 day; 0.5 days = 50% utilization — below 80% threshold
     _insert_finding(
         settings,
@@ -143,7 +142,7 @@ def test_breach_at_80_percent(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Immediate SLA = 1 day; 0.81 days = 81% utilization — warning level
     _insert_finding(
         settings,
@@ -172,7 +171,7 @@ def test_breach_at_100_percent(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # High SLA = 7 days; 7.1 days = ~101.4% — breach level
     _insert_finding(
         settings,
@@ -199,7 +198,7 @@ def test_breach_at_150_percent(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Moderate SLA = 30 days; 46 days = ~153.3% — critical level
     _insert_finding(
         settings,
@@ -226,7 +225,7 @@ def test_multiple_findings_multiple_levels(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # warning: Immediate, 0.81 days -> 81%
     _insert_finding(
@@ -266,7 +265,7 @@ def test_remediated_findings_excluded(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # This would be critical if counted (46 days, Moderate SLA=30)
     _insert_finding(
         settings, host="host-done", package_name="pkg-done", cve_id="CVE-DONE001",

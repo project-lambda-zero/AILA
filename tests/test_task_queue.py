@@ -12,17 +12,14 @@ pattern (RESEARCH Pitfall 6: metadata collision if shared engine).
 from __future__ import annotations
 
 import json
-import os
 import sys
 import types
-from collections.abc import Generator
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine
-from sqlmodel import SQLModel, Session
-
+from sqlmodel import Session, SQLModel
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -56,9 +53,9 @@ class MockRegistry:
 def _make_test_engine(db_url: str):
     """Create a test engine and register all SQLModel tables."""
     # Import platform task models to register taskrecord with SQLModel.metadata
+    import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.platform.tasks.models  # noqa: F401
     import aila.storage.db_models  # noqa: F401
-    import aila.modules.vulnerability.db_models  # noqa: F401
 
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)

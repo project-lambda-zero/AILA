@@ -9,7 +9,6 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-
 # ─── Pagination edge cases ────────────────────────────────────────────────────
 # FastAPI Query(ge=1) and Query(le=250) constraints produce automatic 422.
 

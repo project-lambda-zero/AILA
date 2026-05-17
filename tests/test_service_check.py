@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy.dialects.sqlite import insert as sa_insert
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -23,8 +22,8 @@ def _setup_db(settings):
 
 
 def _insert_system(settings, *, name: str, host: str, username: str = "admin") -> None:
-    from aila.storage.db_models import ManagedSystemRecord
     from aila.storage.database import session_scope
+    from aila.storage.db_models import ManagedSystemRecord
 
     stmt = (
         sa_insert(ManagedSystemRecord)

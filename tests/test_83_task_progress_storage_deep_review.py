@@ -31,8 +31,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
-from sqlmodel import SQLModel, Session
-
+from sqlmodel import Session, SQLModel
 
 # ---------------------------------------------------------------------------
 # DB isolation helpers (same pattern as Phase 81/82)
@@ -41,9 +40,9 @@ from sqlmodel import SQLModel, Session
 
 def _make_test_engine(db_url: str):
     """Create a fresh SQLite engine with all SQLModel tables registered."""
+    import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.platform.tasks.models  # noqa: F401
     import aila.storage.db_models  # noqa: F401
-    import aila.modules.vulnerability.db_models  # noqa: F401
 
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)

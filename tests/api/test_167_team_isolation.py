@@ -34,7 +34,6 @@ from aila.platform.contracts._common import utc_now
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ApiKeyRecord, ManagedSystemRecord, UserRecord
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

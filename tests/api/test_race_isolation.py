@@ -96,10 +96,10 @@ async def test_race_task_group_isolation(
     reader_token,
 ):
     """Reader gets 404 (not 403) on admin's task; admin sees all tasks (D-04, D-22)."""
-    from aila.platform.tasks.models import TaskRecord
-
     # Seed a task with group_id="admin" (simulating admin-submitted task)
     import asyncio
+
+    from aila.platform.tasks.models import TaskRecord
 
     def _seed_task() -> str:
         with session_scope() as db:

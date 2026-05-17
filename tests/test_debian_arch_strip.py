@@ -8,14 +8,11 @@ RED phase: These tests verify that:
 """
 from __future__ import annotations
 
-import pytest
-
 from aila.modules.vulnerability.adapters.inventory import (
     parse_space_separated_line,
     parse_tab_separated_line,
     strip_debian_arch_suffix,
 )
-
 
 # ---------------------------------------------------------------------------
 # strip_debian_arch_suffix — all 8 behavior cases from plan

@@ -11,7 +11,6 @@ from __future__ import annotations
 import re
 
 import pytest
-import pytest_asyncio
 from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 

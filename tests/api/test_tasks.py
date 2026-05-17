@@ -15,9 +15,7 @@ import pytest
 from httpx import AsyncClient
 
 from aila.platform.tasks.models import TaskRecord, TaskStatus
-from aila.platform.contracts._common import utc_now
 from aila.storage.database import session_scope
-
 
 # ---------------------------------------------------------------------------
 # Helpers

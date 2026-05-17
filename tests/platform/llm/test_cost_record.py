@@ -6,8 +6,7 @@ integration without requiring a live database connection.
 
 from __future__ import annotations
 
-import inspect
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 class TestLLMCostRecordSchema:
@@ -24,8 +23,8 @@ class TestLLMCostRecordSchema:
 
     def test_team_id_from_mixin(self) -> None:
         """team_id column comes from TeamScopedMixin."""
-        from aila.storage.mixins import TeamScopedMixin
         from aila.platform.llm.cost_record import LLMCostRecord
+        from aila.storage.mixins import TeamScopedMixin
         assert issubclass(LLMCostRecord, TeamScopedMixin)
         # team_id must be accessible on the model
         record = LLMCostRecord(model_id="gpt-4o")

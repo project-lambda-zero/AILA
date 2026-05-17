@@ -16,14 +16,13 @@ Covers:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from aila.modules.vulnerability.db_models import LatestFindingRecord
 from aila.storage.report_repository import ReportRepository
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -67,7 +66,7 @@ def _finding(
         score=75.0,
         rationale="test",
         nvd_url="https://nvd.nist.gov",
-        last_scanned_at=datetime.now(timezone.utc),
+        last_scanned_at=datetime.now(UTC),
     )
 
 

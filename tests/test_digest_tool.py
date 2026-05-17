@@ -1,11 +1,10 @@
 """Tests for weekly_digest() and WeeklyDigestTool (EXEC-01 / plan 37-01, Task 1)."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.dialects.sqlite import insert as sa_insert
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,7 +36,7 @@ def _insert_finding(
     from aila.modules.vulnerability.db_models import LatestFindingRecord
     from aila.storage.database import session_scope
 
-    now = created_at or datetime.now(timezone.utc)
+    now = created_at or datetime.now(UTC)
     scanned = last_scanned_at or now
     stmt = (
         sa_insert(LatestFindingRecord)
@@ -107,7 +106,7 @@ def test_two_findings_risk_posture_band(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _insert_finding(
         settings,
         host="host-a",
@@ -140,7 +139,7 @@ def test_recent_finding_counted_in_cve_arrivals(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     recent = now - timedelta(days=3)
     _insert_finding(
         settings,

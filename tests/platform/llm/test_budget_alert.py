@@ -13,12 +13,11 @@ Verifies check_monthly_budget:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Async registry stubs
@@ -189,7 +188,7 @@ class TestBudgetAlertThreshold:
         async def mock_scope():
             yield mock_session
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expected_ym = now.strftime("%Y-%m")
 
         with patch("aila.platform.llm.budget_alert.async_session_scope", mock_scope):

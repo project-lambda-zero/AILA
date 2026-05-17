@@ -13,12 +13,11 @@ from __future__ import annotations
 import re
 from unittest.mock import patch
 
-import pytest
 from fastapi import APIRouter
 from fastapi.routing import APIRoute
 
 from aila.api.app import create_app
-from aila.platform.modules.protocol import ModuleProtocol, ModuleRouteSpec
+from aila.platform.modules.protocol import ModuleRouteSpec
 
 # FastAPI route table stores path converters (e.g., {key:path}) but OpenAPI
 # strips them to plain {key}. Normalize for comparison.
@@ -93,7 +92,7 @@ def test_openapi_no_bare_empty_schemas():
     schema = _get_openapi_schema()
     empties = _find_bare_empty(schema)
     assert empties == [], (
-        f"Found bare {{}} in OpenAPI schema at:\n"
+        "Found bare {} in OpenAPI schema at:\n"
         + "\n".join(f"  {p}" for p in empties)
     )
 
@@ -113,7 +112,7 @@ def test_openapi_no_untyped_object_schemas():
         if "ValidationError" not in p
     ]
     assert filtered == [], (
-        f"Found empty object schemas:\n"
+        "Found empty object schemas:\n"
         + "\n".join(f"  {p}: {o}" for p, o in filtered)
     )
 
@@ -146,7 +145,7 @@ def test_every_route_in_openapi():
             missing.append(f"{methods} {normalized_path}")
 
     assert missing == [], (
-        f"Routes registered but not in OpenAPI:\n"
+        "Routes registered but not in OpenAPI:\n"
         + "\n".join(f"  {r}" for r in missing)
     )
 
@@ -175,7 +174,7 @@ def test_every_openapi_route_has_response_schema():
                 missing.append(f"{method.upper()} {path}: responses have no content or description")
 
     assert missing == [], (
-        f"Routes with undefined responses:\n"
+        "Routes with undefined responses:\n"
         + "\n".join(f"  {r}" for r in missing)
     )
 
@@ -251,7 +250,6 @@ def test_module_addition_adds_routes_to_openapi():
     appear in the OpenAPI schema without any changes to app.py.
     """
     from aila.platform.modules.builtin import builtin_module_factories
-    from aila.platform.modules.platform import PlatformModule
 
     # Create a minimal fake module
     class FakeModule:

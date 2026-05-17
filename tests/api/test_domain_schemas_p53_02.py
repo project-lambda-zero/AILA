@@ -5,7 +5,7 @@ Uses TDD: tests written before implementation.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -40,7 +40,7 @@ class TestFindingSchemas:
             kev=True,
             score=0.95,
             status="open",
-            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
         assert f.cve_id == "CVE-2023-12345"
         assert f.kev is True
@@ -124,8 +124,8 @@ class TestReportSchemas:
             total_findings=42,
             kev_count=3,
             severity_breakdown={"CRITICAL": 3, "HIGH": 10},
-            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            completed_at=datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            completed_at=datetime(2026, 1, 1, 0, 5, tzinfo=UTC),
         )
         assert r.total_findings == 42
         assert r.severity_breakdown["CRITICAL"] == 3
@@ -174,8 +174,8 @@ class TestSystemSchemas:
             port=2222,
             distro="ubuntu-22.04",
             description="Primary web server",
-            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 2, tzinfo=UTC),
         )
         assert s.port == 2222
         assert s.distro == "ubuntu-22.04"
@@ -239,7 +239,7 @@ class TestAuditSchemas:
             target="web01",
             user_id="operator",
             details={"cmd": "dpkg -l", "exit_code": 1},
-            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
         assert e.status == "failed"
         assert e.details["exit_code"] == 1
@@ -273,7 +273,7 @@ class TestConfigSchemas:
             key="score_threshold",
             value="0.7",
             value_type="float",
-            updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
         assert c.value_type == "float"
 
@@ -399,4 +399,4 @@ class TestSchemasInitExports:
 
     def test_all_domain_modules_importable(self):
         """All six domain schema modules can be imported."""
-        from aila.api.schemas import findings, reports, systems, audit, config, tools  # noqa: F401
+        from aila.api.schemas import audit, config, findings, reports, systems, tools  # noqa: F401

@@ -11,7 +11,7 @@ Tests validate:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -37,8 +37,7 @@ from aila.api.schemas.tools import (
     ToolSummaryResponse,
 )
 
-
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------

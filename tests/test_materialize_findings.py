@@ -10,7 +10,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.dialects.sqlite import insert as sa_insert
@@ -18,7 +18,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from aila.modules.vulnerability.db_models import LatestFindingRecord
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -52,7 +51,7 @@ def _upsert_finding(session: Session, *, host: str, package_name: str, cve_id: s
                     details_json: str = "{}",
                     last_scanned_at: datetime | None = None) -> None:
     """Execute the same upsert logic as state_persist() for test purposes."""
-    now = last_scanned_at or datetime.now(timezone.utc)
+    now = last_scanned_at or datetime.now(UTC)
     stmt = (
         sa_insert(LatestFindingRecord)
         .values(
@@ -101,9 +100,9 @@ def test_upsert_latest_finding(session: Session) -> None:
     key = dict(host="10.0.0.1", package_name="libssl", cve_id="CVE-2024-0001")
 
     _upsert_finding(session, **key, criticality="MEDIUM", score=5.0,
-                    last_scanned_at=datetime(2024, 1, 1, tzinfo=timezone.utc))
+                    last_scanned_at=datetime(2024, 1, 1, tzinfo=UTC))
     _upsert_finding(session, **key, criticality="HIGH", score=9.0,
-                    last_scanned_at=datetime(2024, 6, 1, tzinfo=timezone.utc))
+                    last_scanned_at=datetime(2024, 6, 1, tzinfo=UTC))
 
     rows = session.exec(select(LatestFindingRecord)).all()
     assert len(rows) == 1, f"Expected 1 row, got {len(rows)}"
@@ -144,7 +143,7 @@ def test_unique_constraint_enforced(engine) -> None:
         nvd_url="https://nvd.nist.gov/vuln/detail/CVE-2024-1234",
         compliance_tags_json="[]",
         details_json="{}",
-        last_scanned_at=datetime.now(timezone.utc),
+        last_scanned_at=datetime.now(UTC),
     )
 
     with Session(engine) as s:

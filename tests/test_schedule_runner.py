@@ -1,13 +1,11 @@
 """Tests for schedule due-checking and run_pending / schedule_status logic (SCHED-01, SCHED-02)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 
 def _utc(*args) -> datetime:
-    return datetime(*args, tzinfo=timezone.utc)
+    return datetime(*args, tzinfo=UTC)
 
 
 def _make_settings(tmp_path):

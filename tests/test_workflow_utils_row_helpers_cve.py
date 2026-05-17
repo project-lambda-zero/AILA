@@ -1,8 +1,6 @@
 """Tests for workflow/utils/row_helpers.py and workflow/utils/cve.py."""
 from __future__ import annotations
 
-import pytest
-
 
 class TestRowHelpers:
     def test_row_value_exact_key(self):

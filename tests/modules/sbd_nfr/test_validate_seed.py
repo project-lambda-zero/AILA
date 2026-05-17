@@ -16,7 +16,6 @@ from aila.modules.sbd_nfr.scripts.validate_seed import (
     validate,
 )
 
-
 # --- Fixtures ---
 
 def _q(qid: str, subgroup: str = "sg1", dep: str | None = None, expected: str | None = None, order: int = 1) -> dict:
@@ -250,7 +249,7 @@ class TestRegression:
         if not _DATA_DIR.exists():
             pytest.skip(f"Seed data directory not found: {_DATA_DIR}")
         errors = validate(_DATA_DIR)
-        assert errors == [], f"Current seed data has errors:\n" + "\n".join(errors)
+        assert errors == [], "Current seed data has errors:\n" + "\n".join(errors)
 
     def test_question_count_is_80(self) -> None:
         if not _DATA_DIR.exists():

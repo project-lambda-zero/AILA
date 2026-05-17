@@ -8,7 +8,7 @@ Tests validate:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -16,7 +16,6 @@ from pydantic import ValidationError
 from aila.api.schemas.audit import AuditEventResponse, AuditListResponse
 from aila.api.schemas.config import ConfigEntryResponse, ConfigUpdateRequest
 from aila.api.schemas.health import HealthCheckResponse, HealthCheckResult, StatusResponse
-
 
 # ---------------------------------------------------------------------------
 # AuditEventResponse (FILE-19)
@@ -42,7 +41,7 @@ class TestAuditEventResponse:
 
     def test_all_fields_round_trip(self) -> None:
         """All fields serialize and deserialize correctly."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         event = AuditEventResponse(
             id=42,
             run_id="run-abc",

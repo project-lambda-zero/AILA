@@ -10,15 +10,14 @@ Verifies:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch, call
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from aila.modules.vulnerability.db_models import CacheRecord
 from aila.modules.vulnerability.tools.intel_cache import CVECacheIntelTool, _forward_cve_cache_batch
-
 
 # ---------------------------------------------------------------------------
 # In-memory DB fixture
@@ -39,13 +38,13 @@ def populated_session(in_memory_engine):
             namespace="cve_intel",
             cache_key="CVE-2021-1",
             payload_json=json.dumps({"severity": "HIGH", "score": 8.1}),
-            last_synced_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            last_synced_at=datetime(2024, 1, 1, tzinfo=UTC),
         ))
         session.add(CacheRecord(
             namespace="cve_intel",
             cache_key="CVE-2021-2",
             payload_json=json.dumps({"severity": "MEDIUM", "score": 5.5}),
-            last_synced_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            last_synced_at=datetime(2024, 1, 2, tzinfo=UTC),
         ))
         session.commit()
     return in_memory_engine

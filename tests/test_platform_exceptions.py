@@ -7,10 +7,6 @@ import pytest
 def test_imports():
     from aila.platform.exceptions import (
         AILAError,
-        AuthenticationError,
-        NotFoundError,
-        RateLimitError,
-        ValidationError,
     )
     assert AILAError is not None
 

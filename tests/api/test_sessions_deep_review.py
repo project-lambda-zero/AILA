@@ -27,7 +27,6 @@ from aila.platform.contracts._common import utc_now
 from aila.storage.database import session_scope
 from aila.storage.db_models import SessionRecord
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

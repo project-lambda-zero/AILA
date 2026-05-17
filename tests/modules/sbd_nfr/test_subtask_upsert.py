@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -147,7 +146,7 @@ class TestSubtaskUpsertUnit:
 
         assert existing.label == "Updated Network Security"
         assert existing.category == "Network"
-        assert existing.description == f"Description for network_security"
+        assert existing.description == "Description for network_security"
         assert existing.is_active is True
         assert existing.icon_hint == "shield-check"
         assert existing.display_order == 3
@@ -164,9 +163,10 @@ async def test_seed_data_updates_existing_subtask(async_db_session) -> None:
 
     Test 1: existing subtask is updated (TOOL-02).
     """
+    from sqlmodel import select
+
     from aila.modules.sbd_nfr.db_models import SbdNfrSubtaskComponentRecord
     from aila.platform.contracts._common import utc_now
-    from sqlmodel import select
 
     session = async_db_session
 
@@ -240,9 +240,10 @@ async def test_seed_data_inserts_new_subtask(async_db_session) -> None:
 
     Test 2: existing insert behavior is preserved.
     """
+    from sqlmodel import select
+
     from aila.modules.sbd_nfr.db_models import SbdNfrSubtaskComponentRecord
     from aila.platform.contracts._common import utc_now
-    from sqlmodel import select
 
     session = async_db_session
 
@@ -301,9 +302,10 @@ async def test_seed_data_never_deletes_existing_subtasks(async_db_session) -> No
 
     Test 3: no subtask rows are lost.
     """
+    from sqlmodel import func, select
+
     from aila.modules.sbd_nfr.db_models import SbdNfrSubtaskComponentRecord
     from aila.platform.contracts._common import utc_now
-    from sqlmodel import func, select
 
     session = async_db_session
 

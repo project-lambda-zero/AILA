@@ -6,10 +6,8 @@ agent_name, latency_ms (int >= 0), cache_hit (bool), retry_count (int).
 from __future__ import annotations
 
 import logging
-import time
 from unittest.mock import MagicMock, patch
 
-import pytest
 from pydantic import BaseModel
 
 from aila.platform.routing.agent import StructuredAgent

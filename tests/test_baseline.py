@@ -37,9 +37,10 @@ def _insert_finding(settings, *, host, package_name, cve_id, system_id=1,
 
 
 def _delete_all_findings(settings):
+    from sqlmodel import delete
+
     from aila.modules.vulnerability.db_models import LatestFindingRecord
     from aila.storage.database import session_scope
-    from sqlmodel import delete
     with session_scope(settings) as session:
         session.exec(delete(LatestFindingRecord))  # type: ignore[arg-type]
         session.commit()
@@ -47,8 +48,8 @@ def _delete_all_findings(settings):
 
 def test_create_stores_snapshot_in_cache(tmp_path):
     """baseline_create inserts CacheRecord(namespace='auto_baseline', cache_key='q1-2026')."""
-    from aila.modules.vulnerability.tools.baseline import baseline_create
     from aila.modules.vulnerability.db_models import CacheRecord
+    from aila.modules.vulnerability.tools.baseline import baseline_create
     from aila.storage.database import session_scope
 
     settings = _make_settings(tmp_path)
@@ -104,7 +105,7 @@ def test_create_overwrites_existing(tmp_path):
 
 def test_compare_reports_new_findings(tmp_path):
     """Snapshot had 2 findings, now DB has 3 -> new_count=1, resolved_count=0."""
-    from aila.modules.vulnerability.tools.baseline import baseline_create, baseline_compare
+    from aila.modules.vulnerability.tools.baseline import baseline_compare, baseline_create
 
     settings = _make_settings(tmp_path)
     _setup_db(settings)
@@ -123,7 +124,7 @@ def test_compare_reports_new_findings(tmp_path):
 
 def test_compare_reports_resolved_findings(tmp_path):
     """Snapshot had 3 findings (by key), now 2 remain -> resolved_count=1, new_count=0."""
-    from aila.modules.vulnerability.tools.baseline import baseline_create, baseline_compare
+    from aila.modules.vulnerability.tools.baseline import baseline_compare, baseline_create
 
     settings = _make_settings(tmp_path)
     _setup_db(settings)

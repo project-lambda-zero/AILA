@@ -12,9 +12,8 @@ Fixtures from tests/api/conftest.py: async_client_with_registries, admin_token.
 """
 from __future__ import annotations
 
-import time
-from datetime import UTC, datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -26,7 +25,7 @@ from aila.storage.database import async_session_scope
 # Re-export conftest fixture so pytest can find it
 # conftest.py is at tests/api/conftest.py -- fixtures are available here.
 
-_UTC = timezone.utc
+_UTC = UTC
 
 
 def _utc_now() -> datetime:
@@ -62,8 +61,8 @@ async def cost_client(test_db):
     import time as _time
 
     from aila.api.app import create_app
-    from aila.storage.registry import ConfigRegistry
     from aila.platform.runtime.tools import ToolRegistry
+    from aila.storage.registry import ConfigRegistry
 
     config_registry = ConfigRegistry()
     tool_registry = ToolRegistry()
@@ -369,6 +368,7 @@ async def test_estimate_worst_case_uses_config_registry(cost_client, admin_token
 async def test_estimate_human_returns_503_without_platform(test_db, admin_token):
     """POST /cost/estimate-human returns 503 when platform is None."""
     import time as _time
+
     from aila.api.app import create_app
 
     test_app = create_app()

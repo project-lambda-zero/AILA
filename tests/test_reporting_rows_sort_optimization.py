@@ -1,8 +1,6 @@
 """Tests for rows.py sort optimization: _CRITICALITY_RANKS constant and precomputed sort keys."""
 from __future__ import annotations
 
-import pytest
-
 
 class TestCriticalityRanksConstant:
     """_CRITICALITY_RANKS must be a module-level dict constant."""
@@ -22,8 +20,7 @@ class TestCriticalityRanksConstant:
 
     def test_criticality_rank_uses_constant(self):
         """criticality_rank must use _CRITICALITY_RANKS — no inline dict construction."""
-        from aila.modules.vulnerability.reporting import rows as rows_module
-        from aila.modules.vulnerability.reporting.rows import criticality_rank, _CRITICALITY_RANKS
+        from aila.modules.vulnerability.reporting.rows import _CRITICALITY_RANKS, criticality_rank
 
         # Verify function returns correct values using the constant
         assert criticality_rank("Immediate") == _CRITICALITY_RANKS["Immediate"]

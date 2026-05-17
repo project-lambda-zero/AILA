@@ -10,7 +10,7 @@ reports and systems.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -25,7 +25,6 @@ from aila.api.schemas.systems import (
     SystemResponse,
     SystemUpdateRequest,
 )
-
 
 # ---------------------------------------------------------------------------
 # ReportSummaryResponse -- field completeness (FILE-17)
@@ -78,8 +77,8 @@ class TestReportSummaryResponseFields:
 
     def test_full_construction(self) -> None:
         """All fields populated from a real vulnerability scan response."""
-        created = datetime(2026, 3, 15, 10, 0, 0, tzinfo=timezone.utc)
-        completed = datetime(2026, 3, 15, 10, 5, 30, tzinfo=timezone.utc)
+        created = datetime(2026, 3, 15, 10, 0, 0, tzinfo=UTC)
+        completed = datetime(2026, 3, 15, 10, 5, 30, tzinfo=UTC)
         r = ReportSummaryResponse(
             run_id="run-abc-123",
             query_text="scan web servers for CVEs",
@@ -115,7 +114,7 @@ class TestReportSummaryResponseFields:
             query_text="list all vulnerabilities",
             module_id="vulnerability",
             status="running",
-            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
             completed_at=None,
         )
         assert r.target_count == 0
@@ -142,7 +141,7 @@ class TestReportSummaryExtraForbid:
 
     def test_datetime_iso_serialization(self) -> None:
         """Datetime fields serialize to ISO 8601."""
-        dt = datetime(2026, 7, 4, 16, 45, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 7, 4, 16, 45, 0, tzinfo=UTC)
         r = ReportSummaryResponse(
             run_id="r", query_text="q", module_id="m", status="completed",
             created_at=dt, completed_at=dt,
@@ -429,8 +428,8 @@ class TestSystemResponseFieldMapping:
 
     def test_full_construction(self) -> None:
         """All fields can be populated."""
-        created = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-        updated = datetime(2026, 3, 20, 8, 30, 0, tzinfo=timezone.utc)
+        created = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+        updated = datetime(2026, 3, 20, 8, 30, 0, tzinfo=UTC)
         r = SystemResponse(
             id=42,
             name="db-primary",
@@ -458,7 +457,7 @@ class TestSystemResponseFieldMapping:
 
     def test_datetime_serialization(self) -> None:
         """Datetime fields serialize to ISO 8601."""
-        dt = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
         r = SystemResponse(
             id=1, name="s", host="h", username="u",
             created_at=dt, updated_at=dt,

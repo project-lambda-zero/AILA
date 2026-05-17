@@ -11,7 +11,6 @@ from aila.modules.vulnerability.agents.scoring.models import (
     ScoreBreakdown,
     ScoringCandidate,
 )
-from aila.modules.vulnerability.contracts import SignalAssessment
 from aila.modules.vulnerability.agents.scoring.policy import (
     apply_overrides,
     bump_category,
@@ -23,6 +22,7 @@ from aila.modules.vulnerability.agents.scoring.policy import (
     raise_minimum,
     severity_profile,
 )
+from aila.modules.vulnerability.contracts import SignalAssessment
 
 # ---------------------------------------------------------------------------
 # Inline default policy — mirrors scoring_policy.default.json exactly.

@@ -13,8 +13,7 @@ Pure model tests and prompt-builder tests require no DB.
 from __future__ import annotations
 
 import asyncio
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -22,12 +21,9 @@ from uuid import uuid4
 import pytest
 
 from aila.modules.sbd_nfr.contracts.resolution import (
-    AssistRequest,
-    AssistResponse,
     ComponentClassification,
     ResolutionResponse,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,7 +31,7 @@ from aila.modules.sbd_nfr.contracts.resolution import (
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _make_session(
@@ -199,6 +195,7 @@ class TestResolutionServiceImports:
     def test_run_resolution_is_async(self):
         """run_resolution must be an async coroutine function."""
         import inspect
+
         from aila.modules.sbd_nfr.services.resolution_service import run_resolution
         assert inspect.iscoroutinefunction(run_resolution), (
             "run_resolution must be async def so ARQ workers can call it directly"
@@ -206,6 +203,7 @@ class TestResolutionServiceImports:
 
     def test_get_resolution_results_is_async(self):
         import inspect
+
         from aila.modules.sbd_nfr.services.resolution_service import get_resolution_results
         assert inspect.iscoroutinefunction(get_resolution_results)
 
@@ -517,9 +515,10 @@ async def test_classify_all_subtasks(async_db_session):
     Seeds real DB data. Calls run_resolution. Queries DB to verify 25 result
     rows were inserted.
     """
-    from aila.modules.sbd_nfr.services import resolution_service
-    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord
     from sqlmodel import select as sm_select
+
+    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord
+    from aila.modules.sbd_nfr.services import resolution_service
 
     session_id = f"sess-{uuid4().hex[:8]}"
     await _seed_resolution_data(async_db_session, session_id)
@@ -546,9 +545,11 @@ async def test_classify_all_subtasks(async_db_session):
 async def test_cited_question_ids(async_db_session):
     """RESOLVE-02: resolved result records have non-empty cited_question_ids_json."""
     import json as _json
-    from aila.modules.sbd_nfr.services import resolution_service
-    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord
+
     from sqlmodel import select as sm_select
+
+    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord
+    from aila.modules.sbd_nfr.services import resolution_service
 
     session_id = f"sess-{uuid4().hex[:8]}"
     await _seed_resolution_data(async_db_session, session_id)
@@ -579,9 +580,10 @@ async def test_uncertain_threshold(async_db_session):
     First subtask key has confidence=0.5 (below 0.7 threshold). Verifies the
     stored record for that key has classification='uncertain'.
     """
-    from aila.modules.sbd_nfr.services import resolution_service
-    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord
     from sqlmodel import select as sm_select
+
+    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord
+    from aila.modules.sbd_nfr.services import resolution_service
 
     session_id = f"sess-{uuid4().hex[:8]}"
     await _seed_resolution_data(async_db_session, session_id)
@@ -619,7 +621,6 @@ async def test_uncertain_threshold(async_db_session):
     async with _patch_llm_context(mock_llm_client):
         await resolution_service.run_resolution(session_id)
 
-    from sqlmodel import select as sm_select
     row = (await async_db_session.exec(
         sm_select(SbdNfrResolutionResultRecord).where(
             SbdNfrResolutionResultRecord.session_id == session_id,
@@ -669,9 +670,10 @@ async def test_retry_on_first_failure(async_db_session):
     Verifies that a single transient LLM failure does not cause permanent
     resolution failure when MAX_RETRIES=1.
     """
-    from aila.modules.sbd_nfr.services import resolution_service
-    from aila.modules.sbd_nfr.db_models import SbdNfrSessionRecord
     from sqlmodel import select as sm_select
+
+    from aila.modules.sbd_nfr.db_models import SbdNfrSessionRecord
+    from aila.modules.sbd_nfr.services import resolution_service
 
     session_id = f"sess-{uuid4().hex[:8]}"
     await _seed_resolution_data(async_db_session, session_id)
@@ -706,9 +708,10 @@ async def test_retry_on_first_failure(async_db_session):
 @pytest.mark.asyncio
 async def test_resolution_failed_on_double_failure(async_db_session):
     """D-03: Both LLM calls fail → session becomes resolution_failed."""
-    from aila.modules.sbd_nfr.services import resolution_service
-    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord, SbdNfrSessionRecord
     from sqlmodel import select as sm_select
+
+    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord, SbdNfrSessionRecord
+    from aila.modules.sbd_nfr.services import resolution_service
 
     session_id = f"sess-{uuid4().hex[:8]}"
     await _seed_resolution_data(async_db_session, session_id)
@@ -723,7 +726,6 @@ async def test_resolution_failed_on_double_failure(async_db_session):
         await resolution_service.run_resolution(session_id)
 
     # No result rows added
-    from sqlmodel import select as sm_select
     rows = (await async_db_session.exec(
         sm_select(SbdNfrResolutionResultRecord).where(
             SbdNfrResolutionResultRecord.session_id == session_id
@@ -743,9 +745,10 @@ async def test_resolution_failed_on_double_failure(async_db_session):
 @pytest.mark.asyncio
 async def test_timeout_causes_failure(async_db_session):
     """D-04: LLM call that hangs causes TimeoutError → resolution_failed."""
-    from aila.modules.sbd_nfr.services import resolution_service
-    from aila.modules.sbd_nfr.db_models import SbdNfrSessionRecord
     from sqlmodel import select as sm_select
+
+    from aila.modules.sbd_nfr.db_models import SbdNfrSessionRecord
+    from aila.modules.sbd_nfr.services import resolution_service
 
     session_id = f"sess-{uuid4().hex[:8]}"
     await _seed_resolution_data(async_db_session, session_id)
@@ -763,7 +766,6 @@ async def test_timeout_causes_failure(async_db_session):
         async with _patch_llm_context(mock_llm_client):
             await resolution_service.run_resolution(session_id)
 
-    from sqlmodel import select as sm_select
     session_row = (await async_db_session.exec(
         sm_select(SbdNfrSessionRecord).where(SbdNfrSessionRecord.id == session_id),
         execution_options={"populate_existing": True},
@@ -775,10 +777,11 @@ async def test_timeout_causes_failure(async_db_session):
 @pytest.mark.asyncio
 async def test_replace_in_place(async_db_session):
     """D-12: Second resolution run replaces existing results (25 rows, not 50)."""
-    from aila.modules.sbd_nfr.services import resolution_service
-    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord, SbdNfrSessionRecord
     from sqlalchemy import update
     from sqlmodel import select as sm_select
+
+    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord, SbdNfrSessionRecord
+    from aila.modules.sbd_nfr.services import resolution_service
 
     session_id = f"sess-{uuid4().hex[:8]}"
     await _seed_resolution_data(async_db_session, session_id)
@@ -818,9 +821,11 @@ async def test_golden_fixture_db_persistence(async_db_session):
     """D-22: Golden fixture JSON matches exactly what is stored in DB."""
     import json as _json
     from pathlib import Path
-    from aila.modules.sbd_nfr.services import resolution_service
-    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord
+
     from sqlmodel import select as sm_select
+
+    from aila.modules.sbd_nfr.db_models import SbdNfrResolutionResultRecord
+    from aila.modules.sbd_nfr.services import resolution_service
 
     # Load the golden fixture
     fixture_path = (
@@ -884,6 +889,7 @@ class TestAssistServiceImports:
 
     def test_handle_assist_is_async(self):
         import inspect
+
         from aila.modules.sbd_nfr.services.assist_service import handle_assist
         assert inspect.iscoroutinefunction(handle_assist)
 

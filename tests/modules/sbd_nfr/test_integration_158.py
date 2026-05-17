@@ -15,9 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
 from aila.modules.sbd_nfr.db_models import (
     SbdNfrAnswerRecord,
-    SbdNfrQuestionOptionRecord,
     SbdNfrQuestionRecord,
-    SbdNfrQuestionSubtaskMapRecord,
     SbdNfrResolutionResultRecord,
     SbdNfrSchemaVersionRecord,
     SbdNfrSectionRecord,
@@ -31,7 +29,6 @@ from aila.modules.sbd_nfr.services.resolution_service import (
     run_resolution,
 )
 from aila.modules.sbd_nfr.services.schema_service import get_schema_tree
-from aila.storage.db_models import SeedVersionRecord
 
 # ---------------------------------------------------------------------------
 # Mark all tests in this module as asyncio
@@ -159,8 +156,9 @@ async def test_synthetic_resolution_e2e():
     Uses the real configured database — test data is inserted and cleaned up
     in a finally block.
     """
-    from aila.storage.database import async_session_scope  # noqa: PLC0415
     from sqlmodel import select  # noqa: PLC0415
+
+    from aila.storage.database import async_session_scope  # noqa: PLC0415
 
     session_id = str(uuid.uuid4())
 

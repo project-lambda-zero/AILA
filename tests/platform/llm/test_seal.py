@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import hmac as hmac_mod
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
 
@@ -23,12 +22,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, select
 
+from aila.platform.events.event import PlatformEvent
 from aila.platform.llm.client import LLMResponse
 from aila.platform.llm.config import LLMRouting
 from aila.platform.llm.seal import compute_seal, make_seal_step
-from aila.platform.events.event import PlatformEvent
 from aila.storage.db_models import AuditSealRecord
-
 
 # ---------------------------------------------------------------------------
 # Fakes (same patterns as test_gate.py / test_validate.py)
@@ -149,7 +147,6 @@ def _patch_session_scope(in_memory_engine):
 
     with patch("aila.storage.database.session_scope", fake_session_scope):
         # Also ensure the table exists on this engine (import forces registration)
-        from aila.storage.db_models import AuditSealRecord as _  # noqa: F811
         SQLModel.metadata.create_all(in_memory_engine)
         yield
 
@@ -468,7 +465,7 @@ class TestRetentionPruning:
     ) -> None:
         """Records older than retention_days are pruned."""
         # Insert an old record (100 days ago)
-        old_time = datetime.now(timezone.utc) - timedelta(days=100)
+        old_time = datetime.now(UTC) - timedelta(days=100)
         with Session(in_memory_engine) as session:
             old_record = AuditSealRecord(
                 run_id="old-run",
@@ -513,7 +510,7 @@ class TestRetentionPruning:
         in_memory_engine,
     ) -> None:
         """A record 50 days old is pruned when retention is 30 days."""
-        old_time = datetime.now(timezone.utc) - timedelta(days=50)
+        old_time = datetime.now(UTC) - timedelta(days=50)
         with Session(in_memory_engine) as session:
             old_record = AuditSealRecord(
                 run_id="semi-old-run",

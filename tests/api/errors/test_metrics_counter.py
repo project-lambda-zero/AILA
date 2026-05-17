@@ -6,11 +6,10 @@ counter value before and after an error-envelope emission, confirming the
 """
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
-
-import pytest
 
 from aila.api.errors import register_error_handlers
 from aila.api.metrics import (

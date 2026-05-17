@@ -18,8 +18,8 @@ def _setup_db(settings):
 
 
 def _insert_system(settings, *, name, host, username="admin"):
-    from aila.storage.db_models import ManagedSystemRecord
     from aila.storage.database import session_scope
+    from aila.storage.db_models import ManagedSystemRecord
     stmt = (
         sa_insert(ManagedSystemRecord)
         .values(name=name, host=host, username=username)

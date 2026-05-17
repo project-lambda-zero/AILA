@@ -24,7 +24,7 @@ import pytest
 from fastapi import APIRouter
 
 from aila.modules.hello_world.module import create_module
-from aila.platform.modules.protocol import ModuleProtocol, ModuleRouteSpec
+from aila.platform.modules.protocol import ModuleProtocol
 from aila.platform.modules.standard import build_module_factory, validate_module_layout
 
 __all__ = ["TestHelloWorldModuleSmoke"]

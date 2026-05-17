@@ -6,10 +6,8 @@ RED phase — these tests MUST fail before the implementation is in place.
 GREEN phase — all tests pass after _ENGINE_LOCK is added and used.
 """
 
-import threading
 import inspect
-
-import pytest
+import threading
 
 
 def _patch_settings_to_memory(monkeypatch):
@@ -67,7 +65,7 @@ def test_concurrent_get_engine_single_instance(monkeypatch):
     _patch_settings_to_memory(monkeypatch)
     _clear_engines()
 
-    from aila.storage.database import get_engine, _ENGINES
+    from aila.storage.database import _ENGINES, get_engine
 
     results: list[int] = []
     barrier = threading.Barrier(8)
@@ -96,7 +94,7 @@ def test_dispose_engine_thread_safe(monkeypatch):
     _patch_settings_to_memory(monkeypatch)
     _clear_engines()
 
-    from aila.storage.database import get_engine, dispose_engine, _ENGINES
+    from aila.storage.database import dispose_engine, get_engine
 
     errors: list[Exception] = []
 

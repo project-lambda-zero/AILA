@@ -1,8 +1,6 @@
 """Tests for workflow/utils/reporting.py and workflow/utils/ranking.py."""
 from __future__ import annotations
 
-import pytest
-
 
 class TestRanking:
     def test_criticality_rank_immediate(self):

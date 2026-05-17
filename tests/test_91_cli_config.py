@@ -15,11 +15,11 @@ import dataclasses
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
 from typer.testing import CliRunner
 
 from aila.cli import app
-from aila.config import Settings, __all__ as config_all, get_settings
+from aila.config import Settings
+from aila.config import __all__ as config_all
 
 runner = CliRunner()
 

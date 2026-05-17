@@ -12,14 +12,10 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from aila.modules.sbd_nfr.services.triage_service import (
-    TriageContext,
     adjust_finding_severity,
     build_triage_context,
 )
-
 
 # ---------------------------------------------------------------------------
 # build_triage_context tests

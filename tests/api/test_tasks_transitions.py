@@ -14,9 +14,9 @@ import pytest
 import pytest_asyncio
 
 from aila.platform.contracts._common import utc_now
+from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import WorkflowRunRecord, WorkflowStateTransition
-from aila.platform.tasks.models import TaskRecord, TaskStatus
 
 
 @pytest_asyncio.fixture

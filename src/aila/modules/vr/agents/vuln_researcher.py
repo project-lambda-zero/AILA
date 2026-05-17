@@ -52,6 +52,8 @@ from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
 )
+from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
+from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.contracts._common import utc_now
 from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
@@ -131,6 +133,9 @@ class HonestVulnResearcher:
         )
 
         system_prompt = _load_prompt(inv.strategy_family)
+        tool_specs = await _fetch_tool_specs(
+            target_kind=(target_snapshot or {}).get("kind"),
+        )
         user_prompt = self._build_user_prompt(
             inv=inv,
             branch=branch,
@@ -139,6 +144,7 @@ class HonestVulnResearcher:
             pending_operator_messages=pending_operator_messages,
             cve_intel=self._cve_intel,
             target_snapshot=target_snapshot,
+            tool_specs=tool_specs,
         )
 
         # v0.4 GA-52: branch persona maps to a per-role task_type
@@ -327,6 +333,7 @@ class HonestVulnResearcher:
         pending_operator_messages: list[dict[str, Any]] | None = None,
         cve_intel: list[dict[str, Any]] | None = None,
         target_snapshot: dict[str, Any] | None = None,
+        tool_specs: dict[str, list[dict[str, Any]]] | None = None,
     ) -> str:
         """Render the per-turn user prompt.
 
@@ -368,7 +375,7 @@ class HonestVulnResearcher:
             f"{case_model}\n"
             f"\n"
             f"{operator_section}"
-            f"{_render_available_tools_section(target_kind)}"
+            f"{_render_available_tools_section(target_kind, tool_specs)}"
             f"# Instruction\n\n"
             f"Produce the next reasoning turn as a JSON object per the "
             f"system prompt schema."
@@ -688,50 +695,116 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     return set(KNOWN_TOOLS.keys())
 
 
-def _render_available_tools_section(target_kind: str | None = None) -> str:
+async def _fetch_tool_specs(
+    target_kind: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Fetch JSON-Schema-derived tool specs from the MCP bridges.
+
+    Returns ``{server_id: [spec, ...]}`` only for servers applicable
+    to ``target_kind`` so we don't pay the catalog fetch for a server
+    the agent isn't allowed to call. This helper itself does no
+    caching; the bridges back each call with a class-level cache so
+    the second invocation is a dict lookup, not an HTTP round-trip.
+    """
+    applicable = _applicable_servers_for_kind(target_kind)
+    out: dict[str, list[dict[str, Any]]] = {}
+    if "audit_mcp" in applicable:
+        out["audit_mcp"] = await AuditMcpBridgeTool().list_tool_specs()
+    if "ida_headless" in applicable:
+        out["ida_headless"] = await IDABridgeTool().list_tool_specs()
+    return out
+
+
+def _format_param(param: dict[str, Any]) -> str:
+    """Render one parameter as ``name: type [required]`` or
+    ``name: type = <default>`` so the agent sees exact call shape.
+    """
+    name = param.get("name", "?")
+    ptype = param.get("type", "any")
+    if param.get("required"):
+        return f"{name}: {ptype} [required]"
+    if "default" in param:
+        default = param["default"]
+        # json.dumps handles strings/numbers/bools/null + escapes;
+        # truncate over-long defaults so a paragraph-sized default
+        # doesn't wreck the signature.
+        rendered = json.dumps(default)
+        if len(rendered) > 60:
+            rendered = rendered[:57] + "..."
+        return f"{name}: {ptype} = {rendered}"
+    return f"{name}: {ptype}"
+
+
+def _render_available_tools_section(
+    target_kind: str | None = None,
+    tool_specs: dict[str, list[dict[str, Any]]] | None = None,
+) -> str:
     """Render the catalog of MCP tools the engine may invoke this turn.
 
-    Organized per MCP server. Tools with custom adapters (structured
-    payloads) are marked ``[structured]`` so the engine knows which
-    calls return high-fidelity rendering; everything else returns a
-    bounded TEXT payload via the generic fallback. The catalog is
-    derived from ``KNOWN_TOOLS`` + ``specialized_tools()`` so adding a
-    new tool only requires updating the registry.
+    When ``tool_specs`` carries per-server schemas (fetched live from
+    each MCP server's ``GET /tools``), every applicable tool renders
+    as ``server.name(p1: type [required], p2: type = default)`` so
+    the agent sees the exact parameter names + types it must use.
+    When schemas are missing (catalog fetch failed), falls back to a
+    name-only listing from ``KNOWN_TOOLS`` so the prompt still works.
 
     Servers irrelevant to the target's kind are SUPPRESSED with a
     short note instead of listed — the agent kept choosing
     ida_headless.list_binaries for a source_repo target because the
     catalog showed every server unconditionally. Filtering at render
     time prevents the wrong tool family from ever being the obvious
-    pick. Use ``target_kind=None`` to render everything (legacy
-    callers).
+    pick.
     """
     specialized = set(specialized_tools())
     applicable = _applicable_servers_for_kind(target_kind)
+    specs_by_server = tool_specs or {}
     parts: list[str] = ["# Available tools\n"]
     if target_kind:
         parts.append(
             f"\nTarget kind: `{target_kind}` — only servers applicable "
-            f"to this kind are listed below.\n",
+            f"to this kind are listed below. Use the **exact** "
+            f"parameter names shown in each signature; the bridge "
+            f"rejects unknown kwargs.\n",
         )
     for server in sorted(KNOWN_TOOLS):
-        tool_names = sorted(KNOWN_TOOLS[server])
         if server not in applicable:
             parts.append(
-                f"\n## {server} ({len(tool_names)} tools — "
-                f"NOT APPLICABLE for target kind `{target_kind}`)\n\n",
+                f"\n## {server} (NOT APPLICABLE for target kind "
+                f"`{target_kind}`)\n\n",
             )
             parts.append(
                 f"- skipped: {server} operates on a different target "
                 f"family. Do not invoke its tools.\n",
             )
             continue
-        parts.append(f"\n## {server} ({len(tool_names)} tools)\n\n")
-        for name in tool_names:
-            full = f"{server}.{name}"
-            marker = " [structured]" if full in specialized else ""
-            parts.append(f"- `{full}`{marker}\n")
-        parts.append("\n")
+
+        live_specs = specs_by_server.get(server) or []
+        if live_specs:
+            parts.append(
+                f"\n## {server} ({len(live_specs)} tools — live schema)\n\n",
+            )
+            for spec in sorted(live_specs, key=lambda s: s.get("name", "")):
+                tool_name = spec.get("name", "?")
+                full = f"{server}.{tool_name}"
+                marker = " [structured]" if full in specialized else ""
+                params = spec.get("params") or []
+                signature = ", ".join(_format_param(p) for p in params)
+                parts.append(f"- `{full}({signature})`{marker}\n")
+            parts.append("\n")
+        else:
+            # Catalog fetch failed — fall back to a name-only listing
+            # using the static KNOWN_TOOLS registry. Agent will still
+            # know which tools exist; it just won't see signatures.
+            tool_names = sorted(KNOWN_TOOLS[server])
+            parts.append(
+                f"\n## {server} ({len(tool_names)} tools — "
+                f"schema unavailable)\n\n",
+            )
+            for name in tool_names:
+                full = f"{server}.{name}"
+                marker = " [structured]" if full in specialized else ""
+                parts.append(f"- `{full}`{marker}\n")
+            parts.append("\n")
     return "".join(parts)
 
 

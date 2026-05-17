@@ -4,7 +4,6 @@ from __future__ import annotations
 import dataclasses
 
 import pydantic
-import pytest
 
 
 def test_scoring_candidate_is_dataclass():

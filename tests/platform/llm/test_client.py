@@ -6,9 +6,7 @@ Integration tests with real OpenRouter are in test_integration.py (Plan 03).
 
 from __future__ import annotations
 
-import asyncio
 import json
-from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,8 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from aila.platform.llm.client import AilaLLMClient, LLMResponse, _extract_usage, _merge_usage
-from aila.platform.llm.errors import LLMDisabledError, LLMError
-
+from aila.platform.llm.errors import LLMError
 
 # ---------------------------------------------------------------------------
 # Test models

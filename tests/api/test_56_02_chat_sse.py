@@ -15,7 +15,6 @@ from aila.platform.contracts._common import utc_now
 from aila.storage.database import session_scope
 from aila.storage.db_models import ApiKeyRecord, SessionMessageRecord, SessionRecord
 
-
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _seed_session(key: ApiKeyRecord, session_id: str = "sess-test-001") -> SessionRecord:

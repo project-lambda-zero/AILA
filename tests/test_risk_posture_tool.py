@@ -1,9 +1,7 @@
 """Tests for RiskPostureTool (ENT-07 / plan 27-02, Task 2)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 
 def _make_settings(tmp_path):
@@ -20,8 +18,8 @@ def _make_tool(tmp_path):
 
 def _insert_findings(tool, findings: list[dict]):
     """Insert LatestFindingRecord rows directly via session_scope."""
-    from aila.storage.database import session_scope
     from aila.modules.vulnerability.db_models import LatestFindingRecord
+    from aila.storage.database import session_scope
 
     with session_scope(tool.settings) as session:
         for f in findings:
@@ -33,8 +31,8 @@ def _insert_findings(tool, findings: list[dict]):
                 criticality=f["criticality"],
                 score=f.get("score", 5.0),
                 nvd_url="https://nvd.nist.gov/vuln/detail/" + f["cve_id"],
-                last_scanned_at=f.get("created_at", datetime(2024, 1, 1, tzinfo=timezone.utc)),
-                created_at=f.get("created_at", datetime(2024, 1, 1, tzinfo=timezone.utc)),
+                last_scanned_at=f.get("created_at", datetime(2024, 1, 1, tzinfo=UTC)),
+                created_at=f.get("created_at", datetime(2024, 1, 1, tzinfo=UTC)),
             )
             session.add(record)
         session.commit()
@@ -105,8 +103,8 @@ def test_all_findings_returned_regardless_of_host(tmp_path):
     Insert two rows with different host+cve_id combos and verify both are counted.
     """
     tool = _make_tool(tmp_path)
-    older_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    newer_time = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    older_time = datetime(2024, 1, 1, tzinfo=UTC)
+    newer_time = datetime(2024, 6, 1, tzinfo=UTC)
     findings = [
         {"host": "host-a", "cve_id": "CVE-2024-0001", "criticality": "Planned", "created_at": older_time},
         {"host": "host-b", "cve_id": "CVE-2024-0002", "criticality": "Immediate", "created_at": newer_time},

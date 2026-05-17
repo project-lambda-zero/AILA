@@ -12,7 +12,7 @@ from contextlib import contextmanager
 
 import pytest
 from sqlalchemy import create_engine
-from sqlmodel import Session, SQLModel
+from sqlmodel import Session
 
 # Separate Redis db so the test suite never touches the production queue.
 TEST_REDIS_URL_DEFAULT = "redis://127.0.0.1:6379/15"
@@ -131,8 +131,8 @@ def sqlite_db_env(tmp_path, name: str = "failsafe"):
     _db_module.async_session_scope = _fake_async_scope
     # Also patch the attribute on any already-imported modules that captured
     # a direct reference.
-    import aila.platform.tasks.worker as _worker
     import aila.platform.tasks.queue as _queue
+    import aila.platform.tasks.worker as _worker
     _worker.async_session_scope = _fake_async_scope
     _queue.async_session_scope = _fake_async_scope
 

@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, create_autospec, patch
 
 from aila.platform.tools.knowledge import KnowledgeRetrieveTool, KnowledgeStoreTool
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

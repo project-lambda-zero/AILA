@@ -1,12 +1,10 @@
 """Tests for mttr() and MttrTool (OPS-08 / plan 35-01, Task 1)."""
 from __future__ import annotations
 
-import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.dialects.sqlite import insert as sa_insert
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,7 +35,7 @@ def _insert_finding(
     from aila.modules.vulnerability.db_models import LatestFindingRecord
     from aila.storage.database import session_scope
 
-    now = created_at or datetime.now(timezone.utc)
+    now = created_at or datetime.now(UTC)
     stmt = (
         sa_insert(LatestFindingRecord)
         .values(
@@ -76,7 +74,7 @@ def _insert_remediation(
     from aila.modules.vulnerability.db_models import RemediationRecord
     from aila.storage.database import session_scope
 
-    now = updated_at or datetime.now(timezone.utc)
+    now = updated_at or datetime.now(UTC)
     stmt = (
         sa_insert(RemediationRecord)
         .values(
@@ -119,7 +117,7 @@ def test_single_remediated_finding_p50_p90_p99_equal(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     created = now - timedelta(days=5)
     remediated_at = now
 
@@ -158,7 +156,7 @@ def test_percentile_ordering(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for i in range(1, 11):
         cve = f"CVE-2024-{i:04d}"
         created = now - timedelta(days=i)
@@ -199,7 +197,7 @@ def test_multiple_criticalities_grouped(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Immediate finding: 1 day
     _insert_finding(
@@ -253,7 +251,7 @@ def test_unresolved_findings_excluded(tmp_path):
     settings = _make_settings(tmp_path)
     _setup_db(settings)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     _insert_finding(
         settings,

@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aila.modules.vulnerability.providers._base_client import BaseProviderClient
 from aila.modules.vulnerability.config_schema import VulnerabilityConfigSchema
+from aila.modules.vulnerability.providers._base_client import BaseProviderClient
 
 
 class TestBaseProviderClientInit:

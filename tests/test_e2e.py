@@ -22,9 +22,9 @@ import pytest
 def _infra_available() -> bool:
     """Check that at least one VM is SSH-reachable and LLM is configured."""
     try:
+        from aila.config import get_settings
         from aila.storage.provider_config import ProviderConfigStore
         from aila.storage.secrets import SecretStore
-        from aila.config import get_settings
         _settings = get_settings()
         _model_id = ProviderConfigStore(_settings).get_config("openai_model_id") or ""
         _api_key = SecretStore(_settings).resolve_provider_secret("openai_api_key")
@@ -235,11 +235,12 @@ class TestDataIntegrity:
 
     def test_workflow_run_record_persisted(self, full_analysis_response):
         """A WorkflowRunRecord must exist for the analysis run_id."""
+        from sqlmodel import select
+
         from aila.config import get_settings
         from aila.platform.config import build_platform_settings
         from aila.storage.database import session_scope
         from aila.storage.db_models import WorkflowRunRecord
-        from sqlmodel import select
 
         settings = build_platform_settings(get_settings())
         with session_scope(settings) as session:
@@ -253,11 +254,12 @@ class TestDataIntegrity:
 
     def test_audit_events_persisted(self, full_analysis_response):
         """Audit events must be written for the analysis run."""
+        from sqlmodel import select
+
         from aila.config import get_settings
         from aila.platform.config import build_platform_settings
         from aila.storage.database import session_scope
         from aila.storage.db_models import AuditEventRecord
-        from sqlmodel import select
 
         settings = build_platform_settings(get_settings())
         with session_scope(settings) as session:
@@ -274,11 +276,12 @@ class TestDataIntegrity:
         A system with all packages up-to-date may legitimately produce zero findings.
         We verify the query executes without error — count >= 0 is the contract.
         """
+        from sqlmodel import select
+
         from aila.config import get_settings
+        from aila.modules.vulnerability.db_models import LatestFindingRecord
         from aila.platform.config import build_platform_settings
         from aila.storage.database import session_scope
-        from aila.modules.vulnerability.db_models import LatestFindingRecord
-        from sqlmodel import select
 
         settings = build_platform_settings(get_settings())
         with session_scope(settings) as session:

@@ -16,6 +16,7 @@ auth check.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 
 import pytest
 from httpx import AsyncClient
@@ -30,9 +31,9 @@ PROTECTED_ENDPOINT = "/auth/keys"  # GET /auth/keys requires admin JWT
 
 
 def _utc_now():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _create_admin_key(created_by: str = "test-fixture") -> ApiKeyRecord:

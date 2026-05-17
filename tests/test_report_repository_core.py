@@ -10,7 +10,7 @@ the uncovered branches without filesystem I/O.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -34,7 +34,6 @@ from aila.storage.report_repository import (
     _parse_json_object,
 )
 from aila.storage.report_store import ReportArtifactBundle, ReportArtifactStore
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -71,7 +70,7 @@ def _make_run(
         status=status,
         route_json=route_json,
         summary_json=summary_json,
-        completed_at=completed_at or datetime.now(timezone.utc),
+        completed_at=completed_at or datetime.now(UTC),
     )
 
 
@@ -396,7 +395,7 @@ class TestLatestReportFleet:
         return ReportRepository(artifact_store=store)
 
     def test_fleet_report_basic(self, session):
-        run = _make_run(completed_at=datetime(2025, 1, 1, tzinfo=timezone.utc))
+        run = _make_run(completed_at=datetime(2025, 1, 1, tzinfo=UTC))
         session.add(run)
         session.commit()
 
@@ -492,12 +491,12 @@ class TestLatestReportFleet:
         run1 = _make_run(
             run_id="run-vuln",
             route_json=json.dumps({"selected_module": "vulnerability"}),
-            completed_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
+            completed_at=datetime(2025, 1, 2, tzinfo=UTC),
         )
         run2 = _make_run(
             run_id="run-comp",
             route_json=json.dumps({"selected_module": "compliance"}),
-            completed_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            completed_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
         session.add(run1)
         session.add(run2)
@@ -569,7 +568,7 @@ class TestLatestReportTarget:
         return ReportRepository(artifact_store=store)
 
     def test_target_report_basic(self, session):
-        run = _make_run(completed_at=datetime(2025, 1, 1, tzinfo=timezone.utc))
+        run = _make_run(completed_at=datetime(2025, 1, 1, tzinfo=UTC))
         session.add(run)
         session.commit()
 
@@ -1022,8 +1021,8 @@ class TestRegisterMaterializedQuery:
 class TestLatestReportMultipleRuns:
     def test_skips_first_run_continues_to_second(self, session):
         """When the first run's bundle has no report_path, skip it and try the next."""
-        run1 = _make_run(run_id="run-1", completed_at=datetime(2025, 1, 2, tzinfo=timezone.utc))
-        run2 = _make_run(run_id="run-2", completed_at=datetime(2025, 1, 1, tzinfo=timezone.utc))
+        run1 = _make_run(run_id="run-1", completed_at=datetime(2025, 1, 2, tzinfo=UTC))
+        run2 = _make_run(run_id="run-2", completed_at=datetime(2025, 1, 1, tzinfo=UTC))
         session.add(run1)
         session.add(run2)
         session.commit()
@@ -1053,12 +1052,12 @@ class TestLatestReportMultipleRuns:
         run_comp = _make_run(
             run_id="run-comp",
             route_json=json.dumps({"selected_module": "compliance"}),
-            completed_at=datetime(2025, 1, 3, tzinfo=timezone.utc),
+            completed_at=datetime(2025, 1, 3, tzinfo=UTC),
         )
         run_vuln = _make_run(
             run_id="run-vuln",
             route_json=json.dumps({"selected_module": "vulnerability"}),
-            completed_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
+            completed_at=datetime(2025, 1, 2, tzinfo=UTC),
         )
         session.add(run_comp)
         session.add(run_vuln)

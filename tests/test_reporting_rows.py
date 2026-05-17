@@ -33,7 +33,6 @@ from aila.modules.vulnerability.reporting.rows import (
     summarize_scoring_mode,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers — build realistic finding dicts
 # ---------------------------------------------------------------------------

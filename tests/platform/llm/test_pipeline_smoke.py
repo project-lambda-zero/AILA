@@ -1,9 +1,9 @@
 """Smoke test: pipeline module can be imported and PipelineRunner instantiated."""
 from __future__ import annotations
 
-from aila.platform.llm.pipeline import PipelineRunner, PRE_CALL_STEPS, POST_CALL_STEPS, StepFn
-from aila.platform.llm.config import LLMConfigProvider, LLMRouting
 from aila.platform.llm.client import LLMResponse
+from aila.platform.llm.config import LLMConfigProvider, LLMRouting
+from aila.platform.llm.pipeline import POST_CALL_STEPS, PRE_CALL_STEPS, PipelineRunner
 
 
 class FakeRegistry:

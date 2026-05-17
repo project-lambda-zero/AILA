@@ -12,22 +12,17 @@ Targets:
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from aila.modules.vulnerability.config_schema import VulnerabilityConfigSchema
 from aila.modules.vulnerability.contracts import (
     CVEKnowledge,
-    EnrichmentPlan,
     IntelEnrichmentResult,
-    IntelEnrichmentSummary,
     PrewarmResult,
     VulnerabilityMatch,
 )
 from aila.modules.vulnerability.services.intel import IntelService, _select_primary_cvss_metric
 from aila.platform.exceptions import RateLimitError
-
 
 # ---------------------------------------------------------------------------
 # Helpers

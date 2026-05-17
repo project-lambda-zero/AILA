@@ -7,6 +7,7 @@ sheet name truncation, and formula injection mitigation (T-136-09).
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from io import BytesIO
 from pathlib import Path
 
@@ -100,7 +101,7 @@ def _make_mock_session():
 
 def _make_mock_results(golden_resolution: dict) -> list:
     """Create mock result objects from golden fixture data."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     class _MockResult:
         def __init__(self, comp: dict):
@@ -109,7 +110,7 @@ def _make_mock_results(golden_resolution: dict) -> list:
             self.confidence = comp["confidence"]
             self.reasoning = comp.get("reasoning", "")
             self.cited_question_ids_json = json.dumps(comp.get("cited_question_ids", []))
-            self.resolved_at = datetime.now(timezone.utc)
+            self.resolved_at = datetime.now(UTC)
 
     return [_MockResult(c) for c in golden_resolution["components"]]
 
@@ -292,7 +293,7 @@ def test_sheet_name_truncation_to_31_chars():
     and verifying the resulting workbook has no sheet name over the Excel limit.
     Uses SCOPE prefix (maps to base_questionnaire) so the section is matched.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from aila.modules.sbd_nfr.reporting.excel_service import _build_workbook
 
@@ -320,7 +321,7 @@ def test_sheet_name_truncation_to_31_chars():
         confidence = 0.90
         reasoning = "External service."
         cited_question_ids_json = "[]"
-        resolved_at = datetime.now(timezone.utc)
+        resolved_at = datetime.now(UTC)
 
     wb_bytes = _build_workbook(
         session=_make_mock_session(),

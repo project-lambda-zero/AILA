@@ -4,8 +4,6 @@ from __future__ import annotations
 import inspect
 from unittest.mock import MagicMock
 
-import pytest
-
 from aila.modules.vulnerability.services.inventory import InventoryService
 
 
@@ -35,7 +33,7 @@ def test_collect_one_system_method_exists():
 
 def test_collect_one_system_returns_tuple():
     """_collect_one_system must return a (inventory|None, failure|None) tuple."""
-    from aila.modules.vulnerability.contracts import InventoryArtifact, InventoryFailure
+    from aila.modules.vulnerability.contracts import InventoryArtifact
 
     service = _make_inventory_service()
 

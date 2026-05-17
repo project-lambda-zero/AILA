@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import AsyncGenerator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,8 +22,7 @@ from aila.api.auth import issue_jwt_token
 from aila.platform.contracts._common import utc_now
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.storage.database import session_scope
-from aila.storage.db_models import ApiKeyRecord, SessionMessageRecord, SessionRecord
-
+from aila.storage.db_models import SessionMessageRecord, SessionRecord
 
 # ---------------------------------------------------------------------------
 # Helpers

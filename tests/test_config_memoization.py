@@ -6,7 +6,6 @@ Requirement: CONC-04 — get_settings() returns the same Settings instance
 on every call; mkdir side effects extracted into init_directories().
 """
 
-import pytest
 
 
 def test_get_settings_returns_same_instance() -> None:
@@ -50,6 +49,7 @@ def test_build_settings_has_lru_cache() -> None:
 def test_get_settings_is_thin_wrapper() -> None:
     """get_settings() should not contain any mkdir calls; it delegates to _build_settings."""
     import inspect
+
     from aila import config
 
     src = inspect.getsource(config.get_settings)
@@ -71,6 +71,7 @@ def test_init_directories_is_callable() -> None:
 def test_init_directories_accepts_optional_settings() -> None:
     """init_directories() must accept an optional Settings argument."""
     import inspect
+
     from aila.config import init_directories
 
     sig = inspect.signature(init_directories)
@@ -86,6 +87,7 @@ def test_init_directories_accepts_optional_settings() -> None:
 def test_settings_fields_intact() -> None:
     """Settings dataclass has exactly 5 infrastructure fields after HONEST-01 slim."""
     import dataclasses
+
     from aila.config import _build_settings, get_settings
 
     _build_settings.cache_clear()

@@ -27,7 +27,6 @@ from aila.platform.tasks.constants import (
 )
 from aila.storage.registry import ConfigRegistry
 
-
 # ---------------------------------------------------------------------------
 # Fixture: async client with PlatformConfigSchema registered
 # ---------------------------------------------------------------------------

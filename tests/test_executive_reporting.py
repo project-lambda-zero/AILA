@@ -17,7 +17,6 @@ import io
 import json
 import zipfile
 
-
 # ---------------------------------------------------------------------------
 # Executive router: severity breakdown helper
 # ---------------------------------------------------------------------------
@@ -161,8 +160,9 @@ def test_sha256_different_inputs_produce_different_hashes():
 
 def test_generate_scheduled_report_job_importable():
     """generate_scheduled_report_job is importable from report_tasks."""
-    from aila.platform.tasks.report_tasks import generate_scheduled_report_job
     import inspect
+
+    from aila.platform.tasks.report_tasks import generate_scheduled_report_job
 
     assert callable(generate_scheduled_report_job)
     assert inspect.iscoroutinefunction(generate_scheduled_report_job)
@@ -184,8 +184,8 @@ def test_report_tasks_module_structure():
 
 def test_worker_settings_includes_report_job():
     """WorkerSettings.functions includes generate_scheduled_report_job."""
-    from aila.platform.tasks.worker import WorkerSettings
     from aila.platform.tasks.report_tasks import generate_scheduled_report_job
+    from aila.platform.tasks.worker import WorkerSettings
 
     assert generate_scheduled_report_job in WorkerSettings.functions
 

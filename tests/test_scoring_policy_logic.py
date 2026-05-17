@@ -39,7 +39,6 @@ from aila.modules.vulnerability.agents.scoring.policy import (
 )
 from aila.modules.vulnerability.contracts import ScoringModeCounts, ScoringRunSummary, SignalAssessment
 
-
 # ---------------------------------------------------------------------------
 # Fixtures: reusable policy config and candidate builders
 # ---------------------------------------------------------------------------

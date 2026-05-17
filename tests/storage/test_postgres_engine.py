@@ -6,8 +6,6 @@ get_async_engine() in aila.storage.database.
 """
 from __future__ import annotations
 
-import pytest
-
 __all__: list[str] = []
 
 

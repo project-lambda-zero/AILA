@@ -24,10 +24,10 @@ TEST_DB_URL: str = os.environ.get(
 @pytest_asyncio.fixture(scope="session")
 async def _session_async_engine() -> AsyncGenerator[object, None]:
     """Session-scoped async engine: create tables once, shared across all tests."""
-    import aila.storage.db_models  # noqa: F401
-    import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.modules.sbd_nfr.db_models  # noqa: F401
+    import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.storage.database as _db_module
+    import aila.storage.db_models  # noqa: F401
 
     engine = create_async_engine(TEST_DB_URL, echo=False, pool_pre_ping=True)
 

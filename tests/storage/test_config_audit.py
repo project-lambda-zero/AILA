@@ -18,7 +18,6 @@ from sqlmodel import Session, SQLModel, create_engine
 from aila.platform.events.event import PlatformEvent
 from aila.storage.registry import ConfigRegistry
 
-
 # ---------------------------------------------------------------------------
 # Test schema with security-relevant and non-security keys
 # ---------------------------------------------------------------------------

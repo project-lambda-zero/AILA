@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 
 
 def test_get_logger_returns_logger_in_aila_hierarchy():

@@ -8,14 +8,14 @@ Covers:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 import pytest_asyncio
 
-from aila.api.schemas.comprehensive_health import SubsystemHealth
 from aila.api.routers.health import _aggregate_overall_status
+from aila.api.schemas.comprehensive_health import SubsystemHealth
 
 # Only async tests need the mark; sync aggregator tests set it per-function.
 
@@ -29,7 +29,7 @@ def _sh(name: str, status: str) -> SubsystemHealth:
     return SubsystemHealth(
         name=name,
         status=status,  # type: ignore[arg-type]
-        last_checked_at=datetime.now(tz=timezone.utc),
+        last_checked_at=datetime.now(tz=UTC),
     )
 
 
@@ -87,7 +87,7 @@ async def mock_all_probes_healthy(monkeypatch):
     """Replace every probe with a SubsystemHealth('healthy') stub."""
     from aila.platform.services import health_probes as hp
 
-    ts = datetime.now(tz=timezone.utc)
+    ts = datetime.now(tz=UTC)
 
     async def _ok(*args: Any, **kwargs: Any) -> SubsystemHealth:
         return SubsystemHealth(
@@ -153,7 +153,7 @@ async def test_comprehensive_single_probe_unreachable_degrades_whole(
     """One unreachable probe -> overall unhealthy, others still report."""
     from aila.platform.services import health_probes as hp
 
-    ts = datetime.now(tz=timezone.utc)
+    ts = datetime.now(tz=UTC)
 
     async def _ok(*args: Any, **kwargs: Any) -> SubsystemHealth:
         return SubsystemHealth(name="healthy-stub", status="healthy", last_checked_at=ts)
@@ -191,7 +191,7 @@ async def test_comprehensive_probe_exception_does_not_crash_handler(
     """A raising probe is captured and converted to a SubsystemHealth(error)."""
     from aila.platform.services import health_probes as hp
 
-    ts = datetime.now(tz=timezone.utc)
+    ts = datetime.now(tz=UTC)
 
     async def _ok(*args: Any, **kwargs: Any) -> SubsystemHealth:
         return SubsystemHealth(name="ok-stub", status="healthy", last_checked_at=ts)
@@ -233,7 +233,7 @@ async def test_comprehensive_exposes_worker_queue_details(
     """probe_arq_worker emits queue_depth / in_progress / dead_letter_count."""
     from aila.platform.services import health_probes as hp
 
-    ts = datetime.now(tz=timezone.utc)
+    ts = datetime.now(tz=UTC)
 
     async def _ok(*args: Any, **kwargs: Any) -> SubsystemHealth:
         return SubsystemHealth(name="stub", status="healthy", last_checked_at=ts)
@@ -277,7 +277,7 @@ async def test_comprehensive_frozen_worker_is_unhealthy(
     """Stale heartbeat (>60s) -> worker probe returns 'unhealthy', overall unhealthy."""
     from aila.platform.services import health_probes as hp
 
-    ts = datetime.now(tz=timezone.utc)
+    ts = datetime.now(tz=UTC)
 
     async def _ok(*args: Any, **kwargs: Any) -> SubsystemHealth:
         return SubsystemHealth(name="stub", status="healthy", last_checked_at=ts)

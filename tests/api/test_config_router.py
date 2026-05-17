@@ -18,7 +18,6 @@ from pydantic import BaseModel
 
 from aila.storage.registry import ConfigRegistry
 
-
 # ---------------------------------------------------------------------------
 # Local test schema for config registration
 # ---------------------------------------------------------------------------
