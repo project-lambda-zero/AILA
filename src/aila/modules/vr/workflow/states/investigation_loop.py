@@ -71,6 +71,7 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
         reasoning_engine=engine,
         investigation_id=investigation_id,
         branch_id=branch_id,
+        cve_intel=input.get("cve_intel") or [],
     )
     executor = ToolExecutor(
         ida=IDABridgeTool(),

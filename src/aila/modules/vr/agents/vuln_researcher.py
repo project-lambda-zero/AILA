@@ -107,10 +107,12 @@ class HonestVulnResearcher:
         reasoning_engine: CyberReasoningEngine,
         investigation_id: str,
         branch_id: str,
+        cve_intel: list[dict[str, Any]] | None = None,
     ) -> None:
         self._engine = reasoning_engine
         self.investigation_id = investigation_id
         self.branch_id = branch_id
+        self._cve_intel = list(cve_intel or [])
 
     async def run_turn(self) -> VulnResearcherTurnResult:
         """Run one turn for this branch and write the result to the DB.
@@ -135,6 +137,7 @@ class HonestVulnResearcher:
             case_state=case_state,
             turn=turn_number,
             pending_operator_messages=pending_operator_messages,
+            cve_intel=self._cve_intel,
         )
 
         # v0.4 GA-52: branch persona maps to a per-role task_type
@@ -255,12 +258,17 @@ class HonestVulnResearcher:
         case_state: ReasoningCaseState,
         turn: int,
         pending_operator_messages: list[dict[str, Any]] | None = None,
+        cve_intel: list[dict[str, Any]] | None = None,
     ) -> str:
         """Render the per-turn user prompt.
 
         Compact + structured. Includes the investigation question,
-        target reference, current case state model, turn counter, and
-        any pending operator messages (M3.R-6) consumed at this turn.
+        target reference, current case state model, turn counter,
+        any pending operator messages (M3.R-6) consumed at this turn,
+        and an external-intel section listing every CVE referenced
+        in the question with its NVD lookup status. The intel
+        section lets the agent branch on ``status=not_found``
+        instead of confabulating details.
         MCP tool results land in case_state.observables and surface via
         render_case_model.
         """
@@ -273,6 +281,7 @@ class HonestVulnResearcher:
         operator_section = _render_operator_messages_section(
             pending_operator_messages or [],
         )
+        cve_intel_section = _render_cve_intel_section(cve_intel or [])
 
         return (
             f"# Investigation\n\n"
@@ -284,6 +293,7 @@ class HonestVulnResearcher:
             f"Turn: {turn}\n"
             f"Branch: {branch.id} (persona: {branch.persona_voice or 'none'})\n"
             f"\n"
+            f"{cve_intel_section}"
             f"# Current case state\n\n"
             f"{case_model}\n"
             f"\n"
@@ -336,6 +346,80 @@ class HonestVulnResearcher:
                 uow.session.add(row)
             await uow.commit()
             return consumed
+
+
+def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
+    """Render every CVE id mentioned in the operator's question with
+    its resolved intel status (08_FRONTEND_UX.md §2.4).
+
+    The reasoning agent uses this to distinguish:
+      - ``status=found``     → real NVD/EPSS/KEV data — consume it
+      - ``status=not_found`` → no aggregator has the CVE — do NOT
+                                invent details; surface and ask
+      - ``status=error``     → transport failure — treat as unknown
+
+    Returns "" when no entries — caller concatenates unconditionally.
+    """
+    if not entries:
+        return ""
+    lines: list[str] = ["# External CVE intel\n"]
+    for entry in entries:
+        cve_id = entry.get("cve_id", "?")
+        status = entry.get("status", "unknown")
+        lines.append(f"## {cve_id} — status: {status}")
+        if status == "found":
+            desc = (entry.get("description") or "").strip()
+            if desc:
+                # Trim long descriptions; the agent needs the gist,
+                # not the full advisory body.
+                if len(desc) > 800:
+                    desc = desc[:797] + "..."
+                lines.append(f"description: {desc}")
+            cwe_ids = entry.get("cwe_ids") or []
+            if cwe_ids:
+                lines.append(f"cwe_ids: {', '.join(cwe_ids)}")
+            cvss = entry.get("cvss_score")
+            sev = entry.get("base_severity")
+            if cvss is not None or sev:
+                lines.append(
+                    f"cvss: {cvss if cvss is not None else 'n/a'} "
+                    f"({sev or 'unrated'})",
+                )
+            if entry.get("kev_listed"):
+                kev_date = entry.get("kev_date_added") or ""
+                lines.append(
+                    "**kev_listed: yes** — CISA flagged as actively "
+                    "exploited in the wild"
+                    + (f" (added {kev_date})" if kev_date else "")
+                )
+            epss_pct = entry.get("epss_percentile")
+            epss = entry.get("epss_score")
+            if epss_pct is not None or epss is not None:
+                lines.append(
+                    f"epss: score={epss if epss is not None else 'n/a'} "
+                    f"percentile={epss_pct if epss_pct is not None else 'n/a'}",
+                )
+            affected = entry.get("affected_products") or []
+            if affected:
+                preview = affected[:6]
+                more = f" (+{len(affected) - 6} more)" if len(affected) > 6 else ""
+                lines.append(f"affected: {', '.join(preview)}{more}")
+            notes = entry.get("notes") or []
+            for note in notes[:4]:
+                lines.append(f"note: {note}")
+        else:
+            err = (entry.get("error") or "").strip()
+            if err:
+                lines.append(f"reason: {err}")
+            lines.append(
+                "RULE: do not invent details for this CVE. Cite the "
+                "missing intel in your rationale and ask the operator "
+                "(via an AssessmentReport outcome) if the id is "
+                "load-bearing for the investigation.",
+            )
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
 
 
 def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:

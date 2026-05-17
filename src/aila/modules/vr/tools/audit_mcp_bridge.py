@@ -16,6 +16,7 @@ caller polls with ``action='poll_task'``).
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -89,6 +90,72 @@ class AuditMcpBridgeTool(Tool):
             pass
         return "http://127.0.0.1:18822"
 
+    # ── LLM kwarg synonym map ─────────────────────────────────────────
+    #
+    # The reasoning agent doesn't see audit-mcp tool signatures; it
+    # picks parameter names by feel. Most failures we observed are the
+    # same handful of synonyms — translate them to the canonical names
+    # the audit-mcp server accepts. Each entry is
+    # {synonym: canonical}. We apply BEFORE forwarding so the server
+    # never sees the alias.
+    #
+    # If the canonical name is already present we keep that value and
+    # discard the synonym (operator-supplied overrides win).
+    _KW_SYNONYMS: dict[str, str] = {
+        "top_n": "limit",
+        "top_k": "limit",
+        "n": "limit",
+        "count": "limit",
+        "max_results": "limit",
+        "complexity_threshold": "threshold",
+        "min_complexity": "threshold",
+        "function_name": "name",
+        "function": "name",
+        "fn_name": "name",
+        "symbol_name": "symbol",
+        "fn": "symbol",
+    }
+
+    @classmethod
+    def _normalize_kwargs(
+        cls, action: str, kwargs: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Rewrite known-synonym kwargs to their canonical names.
+
+        Returns ``(normalized, notes)`` — ``notes`` is a list of human
+        readable strings (one per rename) that the caller can log so
+        the operator can see when the LLM is mis-naming params.
+        """
+        if not kwargs:
+            return {}, []
+        out: dict[str, Any] = {}
+        notes: list[str] = []
+        for key, value in kwargs.items():
+            canonical = cls._KW_SYNONYMS.get(key)
+            if canonical is None:
+                out[key] = value
+                continue
+            if canonical in kwargs:
+                # Operator already gave the canonical name; drop the alias.
+                notes.append(
+                    f"{action}: dropping kwarg '{key}' (alias for "
+                    f"'{canonical}' which is already set)",
+                )
+                continue
+            if canonical in out:
+                # Two synonyms collided on the same canonical key — keep
+                # the first, log the second.
+                notes.append(
+                    f"{action}: dropping kwarg '{key}' (alias for "
+                    f"'{canonical}', already set by an earlier synonym)",
+                )
+                continue
+            out[canonical] = value
+            notes.append(
+                f"{action}: rewrote kwarg '{key}' -> '{canonical}'",
+            )
+        return out, notes
+
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the audit-mcp HTTP API.
 
@@ -104,6 +171,9 @@ class AuditMcpBridgeTool(Tool):
         """
         if not action:
             return await self._list_tools()
+        normalized_kwargs, kw_notes = self._normalize_kwargs(action, kwargs)
+        for note in kw_notes:
+            logging.getLogger(__name__).info("audit_mcp_bridge %s", note)
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
         from aila.modules.vr.services.mcp_call_logger import record_call  # noqa: PLC0415
@@ -111,7 +181,7 @@ class AuditMcpBridgeTool(Tool):
         async with record_call(server_id="audit_mcp", base_url=base, action=action) as ctx:
             try:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.post(url, json=kwargs)
+                    resp = await client.post(url, json=normalized_kwargs)
             except httpx.ConnectError as exc:
                 ctx["status"] = "error"
                 ctx["error_excerpt"] = str(exc)[:400]
