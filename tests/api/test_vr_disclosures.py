@@ -83,7 +83,7 @@ async def _setup_workspace_target_project_finding(
 
 
 @pytest.mark.asyncio
-async def test_list_tracks_returns_all_eleven_builtins(
+async def test_list_tracks_returns_all_fourteen_builtins(
     async_client: AsyncClient, admin_token: str,
 ) -> None:
     resp = await async_client.get(
@@ -93,9 +93,13 @@ async def test_list_tracks_returns_all_eleven_builtins(
     rows = resp.json()["data"]
     track_ids = {r["track_id"] for r in rows}
     assert track_ids == {
+        # v0.3 base
         "chrome_vrp", "blog_post", "vendor_direct", "cna_github_gsa",
+        # v0.3 extras
         "msrc", "mozilla_bb", "apple_security", "github_bb",
         "zdi", "cert_cc", "conference_cfp",
+        # v0.5 kernel
+        "linux_distros", "oss_security", "kernel_org_security",
     }
     # Spot-check shape
     chrome = next(r for r in rows if r["track_id"] == "chrome_vrp")
