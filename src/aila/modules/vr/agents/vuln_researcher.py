@@ -39,6 +39,7 @@ from aila.modules.vr.agents.mcp_adapters import (
     KNOWN_TOOLS,
     specialized_tools,
 )
+from aila.modules.vr.agents.persona_router import resolve_task_type
 from aila.modules.vr.contracts import (
     OutcomeConfidence,
     OutcomeKind,
@@ -136,9 +137,14 @@ class HonestVulnResearcher:
             pending_operator_messages=pending_operator_messages,
         )
 
+        # v0.4 GA-52: branch persona maps to a per-role task_type
+        # (researcher / implementer / critic). Falls back to the
+        # investigation's strategy_family when no persona is assigned.
+        task_type = resolve_task_type(branch.persona_voice) if branch.persona_voice else inv.strategy_family
+
         try:
             decision = await self._engine.decide_next_turn(
-                task_type=inv.strategy_family,
+                task_type=task_type,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
             )
