@@ -12,6 +12,8 @@ import {
   useFuzzCampaigns,
   useInvestigationMessages,
   useInvestigations,
+  useSystemHeartbeat,
+  useSystemMap,
   useTargetName,
   useVRFindings,
   useVRProject,
@@ -327,29 +329,9 @@ function OverviewTab({
         </AilaCard>
       </div>
 
-      {/* Workstation heartbeat (§1.3). The platform exposes
-          /systems but the per-project link (project.analysis_system_id)
-          isn't on VRProjectSummary yet. v0.5 surfaces "unknown" with a
-          backend-pending hint; LiveDot indicates connection state once
-          wired. */}
-      <AilaCard>
-        <div className="flex items-center gap-2 flex-wrap">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-            Workstation
-          </h3>
-          <AilaBadge severity="info" size="sm">unknown</AilaBadge>
-          <span className="text-[10px] text-text-muted ml-auto">
-            analysis_system_id missing on VRProjectSummary — backend
-            pending
-          </span>
-        </div>
-        <p className="text-[10px] text-text-muted mt-2">
-          Per §1.3 this should show "aila-research-04 — connected" with
-          a heartbeat dot driven by the SSH service health. Wiring
-          requires the project summary to project the system_id +
-          a /systems/:id/health endpoint.
-        </p>
-      </AilaCard>
+      {/* Workstation heartbeat (§1.3) — live SSH reachability
+          driven by /systems/:id/heartbeat (cached 30 s). */}
+      <WorkstationHeartbeatCard systemId={project.analysis_system_id} />
 
       {/* Recent reasoning rollup (§1.3) — last 10 turns across the
           project's investigations. Pulls from the existing investigation
@@ -749,5 +731,69 @@ function EventRow({
         </span>
       </div>
     </li>
+  );
+}
+
+/** Live workstation heartbeat card driven by /systems/:id/heartbeat
+ *  (08_FRONTEND_UX.md §1.3). Renders system name/host + reachability
+ *  dot + last-checked timestamp. "No workstation assigned" when the
+ *  project didn't pick a system. */
+function WorkstationHeartbeatCard({
+  systemId,
+}: {
+  systemId: number | null | undefined;
+}) {
+  const systems = useSystemMap();
+  const { data: heartbeat, isLoading } = useSystemHeartbeat(systemId ?? null);
+  if (!systemId) {
+    return (
+      <AilaCard>
+        <div className="flex items-center gap-2 flex-wrap">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+            Workstation
+          </h3>
+          <AilaBadge severity="info" size="sm">none assigned</AilaBadge>
+        </div>
+        <p className="text-[10px] text-text-muted mt-2">
+          The project did not pick an analysis system. Edit the
+          project to attach one (project create → step 2 wizard).
+        </p>
+      </AilaCard>
+    );
+  }
+  const sys = systems.get(systemId);
+  const live = heartbeat?.reachable === true;
+  return (
+    <AilaCard>
+      <div className="flex items-center gap-2 flex-wrap">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+          Workstation
+        </h3>
+        <span
+          className={
+            "inline-block w-2 h-2 rounded-full "
+            + (heartbeat
+              ? live ? "bg-green-500" : "bg-amber-500"
+              : "bg-text-muted animate-pulse")
+          }
+          aria-label={live ? "reachable" : heartbeat ? "unreachable" : "probing"}
+        />
+        <AilaBadge
+          severity={heartbeat ? live ? "low" : "high" : "info"}
+          size="sm"
+        >
+          {sys ? `${sys.name} (${sys.host})` : `system #${systemId}`}
+        </AilaBadge>
+        <span className="text-[10px] text-text-muted ml-auto">
+          {isLoading
+            ? "probing…"
+            : heartbeat
+              ? live
+                ? `${heartbeat.latency_ms ?? "?"} ms · last checked ${new Date(heartbeat.checked_at).toLocaleTimeString()}`
+                : `unreachable · ${heartbeat.error ?? "no response"}`
+              : "no data"}
+        </span>
+      </div>
+    </AilaCard>
   );
 }

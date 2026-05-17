@@ -312,50 +312,117 @@ def _normalize_audit_mcp_entries(
 ) -> list[RankedFunction]:
     """Map audit-mcp fuzzing_targets entries into RankedFunction[].
 
-    audit-mcp returns entries with at minimum ``function_name`` and a
-    score-like field. The exact shape varies by audit-mcp version so we
-    accept several common field names and ignore unknown fields.
+    Real composite score (08_FRONTEND_UX.md feedback — the prior
+    implementation returned 1.0 for every entry when audit-mcp
+    didn't ship a single dominant score field, making the rank
+    useless for filtering or sorting).
+
+    Signal weights (additive; each contribution is normalized to
+    [0, 1] across the page so the operator can tell entries apart
+    even when audit-mcp gives sparse data):
+
+      - blast_radius           × 0.40  (downstream-reach count)
+      - complexity (cyclomatic) × 0.25  (audit difficulty proxy)
+      - tainted_from           × 0.20  (reachable from user input)
+      - inverse entrypoint_distance × 0.10  (closer = better)
+      - position fallback      × 0.05  (audit-mcp's own ordering)
+
+    Entries missing all signals fall back to the position-only
+    score so even a sparse response yields a differentiable ranking.
     """
     if not raw:
         return []
-    raw_scores = [_audit_mcp_score(entry) for entry in raw]
-    max_score = max(raw_scores) if raw_scores else 1.0
-    if max_score <= 0:
-        max_score = 1.0
+
+    def _f(entry: dict[str, Any], key: str) -> float:
+        v = entry.get(key)
+        if isinstance(v, bool):
+            return 1.0 if v else 0.0
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, (list, tuple, set)):
+            return float(len(v))
+        return 0.0
+
+    # Collect raw signal columns across the slice we're ranking.
+    sliced = list(raw[:top_k])
+    n = len(sliced)
+    blast = [_f(e, "blast_radius") for e in sliced]
+    cx = [
+        max(_f(e, "complexity"), _f(e, "cyclomatic_complexity"))
+        for e in sliced
+    ]
+    taint = [_f(e, "tainted_from") for e in sliced]
+    # entrypoint_distance: lower is better. Convert to an "inverse"
+    # signal so larger is better. Missing → 0 (no contribution).
+    dist = [_f(e, "entrypoint_distance") for e in sliced]
+    inv_dist = [
+        0.0 if d <= 0 else 1.0 / d
+        for d in dist
+    ]
+    # Position fallback: position 1 → 1.0, position n → 1/n.
+    position = [1.0 / (i + 1) for i in range(n)]
+
+    def _norm(col: list[float]) -> list[float]:
+        peak = max(col) if col else 0.0
+        if peak <= 0:
+            return [0.0] * len(col)
+        return [v / peak for v in col]
+
+    nb, nc, nt, nd, np_ = (
+        _norm(blast), _norm(cx), _norm(taint), _norm(inv_dist), _norm(position),
+    )
 
     result: list[RankedFunction] = []
-    for pos, entry in enumerate(raw[:top_k], start=1):
+    for pos, entry in enumerate(sliced, start=1):
+        i = pos - 1
+        composite = (
+            nb[i] * 0.40
+            + nc[i] * 0.25
+            + nt[i] * 0.20
+            + nd[i] * 0.10
+            + np_[i] * 0.05
+        )
+        # Clamp + nudge zero scores to a small floor so distinct rows
+        # always sort below higher-signal rows but stay above absent
+        # rows. Floor proportional to position for stable ordering.
+        if composite <= 0:
+            composite = max(0.01, np_[i] * 0.05)
+        composite = max(0.0, min(1.0, composite))
+
         name = (
             entry.get("function_name")
             or entry.get("name")
             or entry.get("symbol")
             or "<unnamed>"
         )
-        score = _audit_mcp_score(entry) / max_score
         reasons: list[str] = []
-        if "blast_radius" in entry:
+        if entry.get("blast_radius") is not None:
             reasons.append(f"blast_radius={entry['blast_radius']}")
-        if "complexity" in entry:
+        if entry.get("complexity") is not None:
             reasons.append(f"complexity={entry['complexity']}")
-        if "tainted_from" in entry and entry["tainted_from"]:
-            reasons.append(f"tainted_from={entry['tainted_from']}")
-        if "entrypoint_distance" in entry:
+        elif entry.get("cyclomatic_complexity") is not None:
+            reasons.append(f"cyclomatic_complexity={entry['cyclomatic_complexity']}")
+        if entry.get("tainted_from"):
+            tval = entry["tainted_from"]
+            if isinstance(tval, (list, tuple, set)):
+                reasons.append(f"tainted_from={len(tval)} sources")
+            else:
+                reasons.append(f"tainted_from={tval}")
+        if entry.get("entrypoint_distance") is not None:
             reasons.append(f"entrypoint_distance={entry['entrypoint_distance']}")
+        if not reasons:
+            reasons.append(f"audit-mcp position #{pos}")
         result.append(RankedFunction(
             name=str(name)[:512],
             file_path=str(entry.get("file_path") or entry.get("file") or "")[:1024],
             line=entry.get("line") if isinstance(entry.get("line"), int) else None,
-            score=min(1.0, max(0.0, score)),
+            score=composite,
             rank=pos,
             reasons=reasons,
         ))
+    # Re-sort by composite (descending). Stable on tie so audit-mcp
+    # order is preserved, then re-assign rank positions.
+    result.sort(key=lambda r: r.score, reverse=True)
+    for new_rank, r in enumerate(result, start=1):
+        r.rank = new_rank
     return result
-
-
-def _audit_mcp_score(entry: dict[str, Any]) -> float:
-    """Extract a numeric score from an audit-mcp fuzzing_targets entry."""
-    for key in ("risk_score", "score", "priority", "blast_radius"):
-        value = entry.get(key)
-        if isinstance(value, (int, float)) and value > 0:
-            return float(value)
-    return 1.0

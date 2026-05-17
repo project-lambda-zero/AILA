@@ -14,6 +14,7 @@ import inspect
 import logging
 import time
 from datetime import UTC
+from typing import Any
 
 import sqlalchemy.exc
 from fastapi import APIRouter, Depends, Request
@@ -34,6 +35,24 @@ from aila.storage.database import async_session_scope
 __all__ = ["router"]
 
 _log = logging.getLogger(__name__)
+
+
+def _module_registry_from(request: Request) -> Any | None:
+    """Pull the platform's module registry off the FastAPI app state.
+
+    The platform is created in the FastAPI lifespan (api/app.py) and
+    exposes ``runtime.module_registry``. Returns None when the
+    platform hasn't initialized yet (rare — early-request race during
+    boot). Keeping the access tolerant means the probe degrades to
+    "unknown" instead of 500.
+    """
+    platform = getattr(request.app.state, "platform", None)
+    if platform is None:
+        return None
+    runtime = getattr(platform, "runtime", None)
+    if runtime is None:
+        return None
+    return getattr(runtime, "module_registry", None)
 
 _AILA_VERSION: str = _importlib_metadata.version("aila")
 
@@ -253,6 +272,7 @@ async def _run_single_health_check(check_fn: object) -> HealthCheckResult:
     summary="Admin-only deep health probe across all subsystems",
 )
 async def get_comprehensive_health(
+    request: Request,
     auth_ctx: AuthContext = Depends(require_user_or_api_key),
 ) -> DataEnvelope[ComprehensiveHealthResponse]:
     """Probe every subsystem concurrently and return per-subsystem status.
@@ -308,7 +328,7 @@ async def get_comprehensive_health(
         probe_nvd(),
         probe_ssh_reachability(systems),
         probe_arq_worker(),
-        probe_modules(team_id=auth_ctx.team_id),
+        probe_modules(team_id=auth_ctx.team_id, module_registry=_module_registry_from(request)),
     ]
 
     try:

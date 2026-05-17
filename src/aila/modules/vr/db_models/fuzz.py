@@ -44,7 +44,12 @@ class VRFuzzCampaignRecord(TeamScopedMixin, SQLModel, table=True):
 
     status: str = Field(default="created", max_length=24, index=True)
     duration_hours: int | None = Field(default=None)
-    workstation_host: str | None = Field(default=None, max_length=255, index=True)
+    analysis_system_id: int | None = Field(default=None, index=True)
+    remote_pid: int | None = Field(default=None)
+    remote_corpus_dir: str | None = Field(default=None, max_length=1024)
+    remote_crashes_dir: str | None = Field(default=None, max_length=1024)
+    launched_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    launch_log: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
 
     execs_per_sec: float | None = Field(default=None)
     total_execs: int = Field(default=0)

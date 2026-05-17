@@ -211,6 +211,8 @@ export interface VRProjectSummary {
   operator_id?: string | null;
   latest_disclosure_status?: string | null;
   disclosure_submission_count?: number;
+  analysis_system_id?: number | null;
+  poc_system_id?: number | null;
 }
 
 export interface CrashSignature {
@@ -580,7 +582,12 @@ export interface VRFuzzCampaignSummary {
   strategy_config: Record<string, unknown>;
   status: CampaignStatus;
   duration_hours?: number | null;
-  workstation_host?: string | null;
+  analysis_system_id?: number | null;
+  remote_pid?: number | null;
+  remote_corpus_dir?: string | null;
+  remote_crashes_dir?: string | null;
+  launched_at?: string | null;
+  launch_log?: string | null;
   execs_per_sec?: number | null;
   total_execs: number;
   corpus_size: number;

@@ -6,10 +6,14 @@ List endpoint returns enriched items with connectivity, tags, scan status, and t
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
+import time as _time
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, select
 
@@ -44,6 +48,27 @@ from aila.storage.db_models import ManagedSystemRecord, SystemPortRecord, Workfl
 __all__ = ["router"]
 
 _log = logging.getLogger(__name__)
+
+class HeartbeatResponse(BaseModel):
+    """Live SSH reachability result returned by /systems/{id}/heartbeat."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    system_id: int
+    reachable: bool
+    latency_ms: float | None
+    checked_at: str
+    error: str | None
+
+
+class HeartbeatEnvelope(BaseModel):
+    """Wrapper used by /systems/{id}/heartbeat to mirror DataEnvelope shape."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    data: HeartbeatResponse
+
+
 
 router = APIRouter(
     prefix="/systems",
@@ -331,6 +356,100 @@ async def get_system_connectivity(
             detail=f"System {system_id} not found -- verify the ID via GET /systems",
         )
     return result
+
+
+
+_HEARTBEAT_CACHE_TTL_S = 30.0
+_heartbeat_cache: dict[int, tuple[float, dict]] = {}
+_heartbeat_locks: dict[int, asyncio.Lock] = {}
+
+
+def _heartbeat_lock(system_id: int) -> asyncio.Lock:
+    lock = _heartbeat_locks.get(system_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _heartbeat_locks[system_id] = lock
+    return lock
+
+
+@router.get(
+    "/{system_id}/heartbeat",
+    response_model=HeartbeatEnvelope,
+    summary=(
+        "Live SSH reachability probe (echo ok, 3 s timeout). Cached "
+        "30 s server-side."
+    ),
+)
+@limiter.limit("60/minute")
+async def get_system_heartbeat(
+    system_id: int,
+    request: Request,
+) -> HeartbeatEnvelope:
+    """Live SSH heartbeat — opens a fresh paramiko connect with a 3 s
+    timeout, runs ``echo ok``, measures latency, and returns the
+    result. Cached for 30 s to avoid hammering the workstation when
+    the frontend polls every 30 s anyway.
+    """
+    del request
+    from aila.config import get_settings
+    from aila.platform.config import build_platform_settings
+    from aila.platform.services.ssh import SSHService
+
+    now = _time.monotonic()
+    cached = _heartbeat_cache.get(system_id)
+    if cached is not None and (now - cached[0]) < _HEARTBEAT_CACHE_TTL_S:
+        return HeartbeatEnvelope(data=HeartbeatResponse(**cached[1]))
+
+    async with _heartbeat_lock(system_id):
+        cached = _heartbeat_cache.get(system_id)
+        if cached is not None and (_time.monotonic() - cached[0]) < _HEARTBEAT_CACHE_TTL_S:
+            return HeartbeatEnvelope(data=HeartbeatResponse(**cached[1]))
+
+        async with async_session_scope() as session:
+            sys_record = await session.get(ManagedSystemRecord, system_id)
+            if sys_record is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"System {system_id} not found",
+                )
+            integration = {
+                "name": sys_record.name,
+                "host": sys_record.host,
+                "username": sys_record.username,
+                "port": sys_record.port,
+                "private_key_path": sys_record.private_key_path,
+                "password_secret_id": sys_record.password_secret_id,
+                "known_hosts_path": sys_record.known_hosts_path,
+                "host_key_fingerprint": sys_record.host_key_fingerprint,
+            }
+
+        ssh = SSHService(build_platform_settings(get_settings()))
+        checked_at = datetime.now(UTC).isoformat()
+        started = _time.monotonic()
+        reachable = False
+        latency_ms: float | None = None
+        error: str | None = None
+        try:
+            await ssh.run_command(
+                integration, "echo ok",
+                timeout_seconds=3.0, connect_timeout=3.0,
+            )
+            reachable = True
+            latency_ms = round((_time.monotonic() - started) * 1000.0, 1)
+        except (OSError, TimeoutError) as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        except Exception as exc:  # paramiko-specific errors
+            error = f"{type(exc).__name__}: {exc}"
+
+        payload = {
+            "system_id": system_id,
+            "reachable": reachable,
+            "latency_ms": latency_ms,
+            "checked_at": checked_at,
+            "error": error,
+        }
+        _heartbeat_cache[system_id] = (_time.monotonic(), payload)
+        return HeartbeatEnvelope(data=HeartbeatResponse(**payload))
 
 
 @router.get("/{system_id}", response_model=SystemDetailResponse, summary="Get system detail")

@@ -47,6 +47,7 @@ from aila.modules.vr.db_models import (
 )
 from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
+from aila.storage.db_models import ManagedSystemRecord
 
 __all__ = [
     "FuzzServiceError",
@@ -186,7 +187,12 @@ def _campaign_record_to_summary(
         strategy_config=json.loads(record.strategy_config_json or "{}"),
         status=CampaignStatus(record.status),
         duration_hours=record.duration_hours,
-        workstation_host=record.workstation_host,
+        analysis_system_id=record.analysis_system_id,
+        remote_pid=record.remote_pid,
+        remote_corpus_dir=record.remote_corpus_dir,
+        remote_crashes_dir=record.remote_crashes_dir,
+        launched_at=record.launched_at,
+        launch_log=record.launch_log,
         execs_per_sec=record.execs_per_sec,
         total_execs=record.total_execs,
         corpus_size=record.corpus_size,
@@ -341,6 +347,26 @@ class FuzzCampaignService:
                     f"workspace {body.workspace_id} not found",
                 )
 
+            # Validate the analysis_system_id FK if supplied — the
+            # operator-supplied id must resolve to a registered
+            # ManagedSystemRecord, and (when the team is set) belong
+            # to the same team. None is allowed for metadata-only
+            # campaigns that the operator drives by hand.
+            if body.analysis_system_id is not None:
+                sys_stmt = _select(ManagedSystemRecord).where(
+                    ManagedSystemRecord.id == body.analysis_system_id,
+                )
+                if team_id is not None:
+                    sys_stmt = sys_stmt.where(
+                        ManagedSystemRecord.team_id == team_id,
+                    )
+                system_row = (await uow.session.exec(sys_stmt)).first()
+                if system_row is None:
+                    raise FuzzServiceError(
+                        f"system {body.analysis_system_id} not found "
+                        f"or not accessible to your team",
+                    )
+
             record = VRFuzzCampaignRecord(
                 team_id=team_id,
                 target_id=body.target_id,
@@ -351,7 +377,7 @@ class FuzzCampaignService:
                 engine_config_json=json.dumps(body.engine_config),
                 strategy_config_json=json.dumps(body.strategy_config),
                 duration_hours=body.duration_hours,
-                workstation_host=body.workstation_host,
+                analysis_system_id=body.analysis_system_id,
                 notes=body.notes or "",
             )
             uow.session.add(record)

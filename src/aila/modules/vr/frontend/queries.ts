@@ -81,6 +81,40 @@ export function useRegisteredSystems() {
   });
 }
 
+/** id → RegisteredSystem map. Use to render a campaign's
+ *  analysis_system_id as a human-readable host instead of an int. */
+export function useSystemMap() {
+  const { data } = useRegisteredSystems();
+  const list: RegisteredSystem[] = data ?? [];
+  const map = new Map<number, RegisteredSystem>();
+  for (const s of list) map.set(s.id, s);
+  return map;
+}
+
+export interface SystemHeartbeat {
+  system_id: number;
+  reachable: boolean;
+  latency_ms: number | null;
+  checked_at: string;
+  error: string | null;
+}
+
+/** Polls /systems/:id/heartbeat (cached 30s server-side). Returns the
+ *  freshest reachable + latency reading; consumers render a LiveDot. */
+export function useSystemHeartbeat(systemId: number | null | undefined) {
+  return useQuery({
+    queryKey: ["platform", "system-heartbeat", systemId],
+    queryFn: async () => {
+      const res = await authorizedRequestJson<{ data: SystemHeartbeat }>(
+        `/systems/${systemId}/heartbeat`,
+      );
+      return res?.data;
+    },
+    enabled: !!systemId,
+    refetchInterval: 30000,
+  });
+}
+
 export function useInvestigations(offset = 0, limit = 50) {
   return useQuery({
     queryKey: ["vr", "investigations", offset, limit],
