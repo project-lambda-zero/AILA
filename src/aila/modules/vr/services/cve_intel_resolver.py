@@ -138,13 +138,16 @@ async def _get_intel_service() -> Any | None:
         _log.warning("cve_intel: get_worker_platform raised: %s", exc)
         return None
     try:
-        vuln_runtime = platform.runtime.module_registry.require("vulnerability")
+        vuln_runtime = platform.runtime.require_module("vulnerability")
     except KeyError:
         _log.info("cve_intel: vulnerability module not registered")
         return None
     intel = getattr(vuln_runtime, "intel", None)
     if intel is None:
-        _log.info("cve_intel: vulnerability runtime has no .intel attribute")
+        _log.info(
+            "cve_intel: vulnerability runtime exposes no .intel attribute "
+            "(runtime type: %s)", type(vuln_runtime).__name__,
+        )
         return None
     return intel
 

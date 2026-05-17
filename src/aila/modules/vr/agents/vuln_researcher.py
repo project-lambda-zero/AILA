@@ -121,7 +121,7 @@ class HonestVulnResearcher:
         and returns ``terminal=True`` so the workflow state knows to
         stop driving the branch.
         """
-        inv, branch = await self._load()
+        inv, branch, target_snapshot = await self._load()
 
         case_state = _decode_case_state(branch.case_state_json)
         turn_number = branch.turn_count + 1
@@ -138,6 +138,7 @@ class HonestVulnResearcher:
             turn=turn_number,
             pending_operator_messages=pending_operator_messages,
             cve_intel=self._cve_intel,
+            target_snapshot=target_snapshot,
         )
 
         # v0.4 GA-52: branch persona maps to a per-role task_type
@@ -223,7 +224,27 @@ class HonestVulnResearcher:
             terminal=terminal,
         )
 
-    async def _load(self) -> tuple[VRInvestigationRecord, VRInvestigationBranchRecord]:
+    async def _load(
+        self,
+    ) -> tuple[
+        VRInvestigationRecord,
+        VRInvestigationBranchRecord,
+        dict[str, Any],
+    ]:
+        """Load investigation + branch + a snapshot of the primary target.
+
+        Target snapshot has the fields the agent needs to pick the
+        right MCP family + ground its reasoning:
+          kind, display_name, primary_language, secondary_languages,
+          analysis_state, descriptor (repo_url / upload_filename /
+          binary_id / etc.), capability_profile.applicable_mcp_servers,
+          capability_profile.applicable_fuzzing_engines,
+          capability_profile.functions_of_interest (top 10),
+          mcp_handles (audit_mcp_index_id / binary_id) so the agent
+          knows what to pass to the bridge.
+        """
+        from aila.modules.vr.db_models import VRTargetRecord  # noqa: PLC0415
+
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
                 _select(VRInvestigationRecord).where(
@@ -248,7 +269,53 @@ class HonestVulnResearcher:
                     f"branch {self.branch_id} does not belong to investigation "
                     f"{self.investigation_id}",
                 )
-            return inv, branch
+            target_snapshot: dict[str, Any] = {}
+            if inv.target_id:
+                target = (await uow.session.exec(
+                    _select(VRTargetRecord).where(
+                        VRTargetRecord.id == inv.target_id,
+                    )
+                )).first()
+                if target is not None:
+                    target_snapshot = self._snapshot_target(target)
+            return inv, branch, target_snapshot
+
+    @staticmethod
+    def _snapshot_target(target: Any) -> dict[str, Any]:
+        """Compact dict the prompt builder renders."""
+        try:
+            descriptor = json.loads(target.descriptor_json or "{}")
+        except (ValueError, TypeError):
+            descriptor = {}
+        try:
+            capability = json.loads(target.capability_profile_json or "{}")
+        except (ValueError, TypeError):
+            capability = {}
+        try:
+            handles = json.loads(target.mcp_handles_json or "{}")
+        except (ValueError, TypeError):
+            handles = {}
+        try:
+            secondary = json.loads(target.secondary_languages_json or "[]")
+        except (ValueError, TypeError):
+            secondary = []
+        return {
+            "id": target.id,
+            "kind": target.kind,
+            "display_name": target.display_name,
+            "primary_language": target.primary_language or "",
+            "secondary_languages": secondary,
+            "analysis_state": target.analysis_state,
+            "analysis_state_message": getattr(target, "analysis_state_message", None) or "",
+            "descriptor": descriptor,
+            "applicable_mcp_servers": list(capability.get("applicable_mcp_servers") or []),
+            "applicable_fuzzing_engines": list(capability.get("applicable_fuzzing_engines") or []),
+            "applicable_strategies": list(capability.get("applicable_strategies") or []),
+            "functions_of_interest": list(capability.get("functions_of_interest") or [])[:10],
+            "attack_surface": list(capability.get("attack_surface") or [])[:10],
+            "mitigations": capability.get("mitigations") or {},
+            "mcp_handles": handles,
+        }
 
     def _build_user_prompt(
         self,
@@ -259,18 +326,18 @@ class HonestVulnResearcher:
         turn: int,
         pending_operator_messages: list[dict[str, Any]] | None = None,
         cve_intel: list[dict[str, Any]] | None = None,
+        target_snapshot: dict[str, Any] | None = None,
     ) -> str:
         """Render the per-turn user prompt.
 
         Compact + structured. Includes the investigation question,
-        target reference, current case state model, turn counter,
-        any pending operator messages (M3.R-6) consumed at this turn,
-        and an external-intel section listing every CVE referenced
-        in the question with its NVD lookup status. The intel
-        section lets the agent branch on ``status=not_found``
-        instead of confabulating details.
-        MCP tool results land in case_state.observables and surface via
-        render_case_model.
+        a target-snapshot block (kind, language, descriptor,
+        applicable MCP servers, ranked candidates), the current case
+        state model, turn counter, any pending operator messages
+        (M3.R-6), an External-CVE-intel block, and a target-kind-
+        filtered tool catalog. Render order is deliberate — target
+        first so the agent grounds on what's actually being audited
+        before it picks tools.
         """
         case_model = self._engine.render_case_model(case_state)
         secondary_refs = json.loads(inv.secondary_target_refs_json or "[]")
@@ -282,6 +349,8 @@ class HonestVulnResearcher:
             pending_operator_messages or [],
         )
         cve_intel_section = _render_cve_intel_section(cve_intel or [])
+        target_section = _render_target_snapshot_section(target_snapshot or {})
+        target_kind = (target_snapshot or {}).get("kind")
 
         return (
             f"# Investigation\n\n"
@@ -293,12 +362,13 @@ class HonestVulnResearcher:
             f"Turn: {turn}\n"
             f"Branch: {branch.id} (persona: {branch.persona_voice or 'none'})\n"
             f"\n"
+            f"{target_section}"
             f"{cve_intel_section}"
             f"# Current case state\n\n"
             f"{case_model}\n"
             f"\n"
             f"{operator_section}"
-            f"{_render_available_tools_section()}"
+            f"{_render_available_tools_section(target_kind)}"
             f"# Instruction\n\n"
             f"Produce the next reasoning turn as a JSON object per the "
             f"system prompt schema."
@@ -346,6 +416,163 @@ class HonestVulnResearcher:
                 uow.session.add(row)
             await uow.commit()
             return consumed
+
+
+def _render_target_snapshot_section(snapshot: dict[str, Any]) -> str:
+    """Render the primary-target snapshot so the agent grounds on
+    concrete artifact metadata instead of treating the target id as
+    an opaque UUID.
+
+    Without this block the agent saw only ``Primary target: <uuid>``
+    and defaulted to ``ida_headless.list_binaries`` even when the
+    target was a source repo already cloned + indexed by audit-mcp.
+    The block surfaces:
+      - kind + language
+      - descriptor (repo_url / upload_filename / binary_id)
+      - resolved MCP handles (audit_mcp_index_id / binary_id) so the
+        agent passes the right id to the bridge
+      - which MCP servers + fuzzing engines + strategies are
+        APPLICABLE to this target kind
+      - the top 5 ranked candidate functions, when capability_profile
+        carries them
+      - a hard rule that tells the agent which MCP family to use
+
+    Returns "" when snapshot is empty so the caller concatenates
+    unconditionally.
+    """
+    if not snapshot:
+        return ""
+    lines: list[str] = ["# Primary target snapshot\n"]
+    kind = snapshot.get("kind") or "?"
+    name = snapshot.get("display_name") or "?"
+    lang = snapshot.get("primary_language") or ""
+    sec_lang = snapshot.get("secondary_languages") or []
+    state = snapshot.get("analysis_state") or "?"
+    handles = snapshot.get("mcp_handles") or {}
+    descriptor = snapshot.get("descriptor") or {}
+    applicable_mcp = snapshot.get("applicable_mcp_servers") or []
+    applicable_engines = snapshot.get("applicable_fuzzing_engines") or []
+    applicable_strategies = snapshot.get("applicable_strategies") or []
+    ranked = snapshot.get("functions_of_interest") or []
+    attack_surface = snapshot.get("attack_surface") or []
+
+    lines.append(f"kind: {kind}")
+    lines.append(f"display_name: {name}")
+    if lang:
+        sec_str = (
+            f" (secondary: {', '.join(sec_lang)})" if sec_lang else ""
+        )
+        lines.append(f"language: {lang}{sec_str}")
+    lines.append(f"analysis_state: {state}")
+
+    descriptor_keys = ("repo_url", "vulnerable_ref", "patched_ref",
+                       "upload_filename", "binary_id", "download_url")
+    descriptor_pairs = [
+        f"{k}={descriptor[k]}" for k in descriptor_keys
+        if descriptor.get(k)
+    ]
+    if descriptor_pairs:
+        lines.append("descriptor: " + " · ".join(descriptor_pairs))
+
+    if handles:
+        handle_pairs = [f"{k}={v}" for k, v in handles.items() if v]
+        if handle_pairs:
+            lines.append("mcp_handles: " + " · ".join(handle_pairs))
+
+    # Hard rule on which MCP family to use. This is the most
+    # important line in the section — without it the LLM defaults
+    # to whichever tool name catches its eye.
+    rule = _mcp_family_rule_for_kind(kind, handles)
+    if rule:
+        lines.append("")
+        lines.append(rule)
+
+    if applicable_mcp:
+        lines.append(f"applicable_mcp_servers: {', '.join(applicable_mcp)}")
+    if applicable_engines:
+        lines.append(f"applicable_fuzzing_engines: {', '.join(applicable_engines)}")
+    if applicable_strategies:
+        lines.append(f"applicable_strategies: {', '.join(applicable_strategies)}")
+
+    if ranked:
+        lines.append("")
+        lines.append("ranked candidate functions (top 5 by composite score):")
+        for entry in ranked[:5]:
+            entry_name = (
+                entry.get("name") or entry.get("function_name") or "?"
+            )
+            score = entry.get("score")
+            score_str = f"score={score:.2f}" if isinstance(score, (int, float)) else ""
+            reasons = entry.get("reasons") or []
+            reason_str = "; ".join(str(r) for r in reasons[:2])
+            lines.append(
+                f"  - {entry_name}"
+                + (f" ({score_str})" if score_str else "")
+                + (f" — {reason_str}" if reason_str else "")
+            )
+
+    if attack_surface:
+        lines.append("")
+        lines.append("attack_surface entries (top 5):")
+        for entry in attack_surface[:5]:
+            ek = entry.get("kind") or "?"
+            en = entry.get("name") or "?"
+            loc = entry.get("location") or ""
+            sev = entry.get("severity_hint") or ""
+            extras = []
+            if loc:
+                extras.append(f"@{loc}")
+            if sev:
+                extras.append(f"sev={sev}")
+            lines.append(
+                f"  - [{ek}] {en}"
+                + (" " + " ".join(extras) if extras else "")
+            )
+
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def _mcp_family_rule_for_kind(
+    kind: str | None, handles: dict[str, Any],
+) -> str:
+    """Emit a one-line rule telling the agent which MCP server to use.
+
+    Picks the right family based on target kind + the handles that
+    actually exist. This is what stops the agent from calling
+    ``ida_headless.list_binaries`` when the target is a source repo
+    that's already been indexed by audit-mcp.
+    """
+    k = (kind or "").lower()
+    if k == "source_repo":
+        idx = handles.get("audit_mcp_index_id")
+        if idx:
+            return (
+                f"RULE: this is a source repo. Use **audit_mcp** tools "
+                f"with `index_id=\"{idx}\"`. Do NOT call ida_headless — "
+                f"the target was never opened in IDA."
+            )
+        return (
+            "RULE: this is a source repo. Use **audit_mcp** tools. "
+            "Do NOT call ida_headless. If you need an index_id, the "
+            "target's ingestion may not be complete (analysis_state)."
+        )
+    if k in {
+        "native_binary", "apk", "ipa", "jar", "dotnet_assembly",
+        "kernel_image", "kernel_module", "hypervisor_image",
+    }:
+        bid = handles.get("binary_id")
+        if bid:
+            return (
+                f"RULE: this is a binary target. Use **ida_headless** "
+                f"tools with `binary_id=\"{bid}\"`. Do NOT call audit_mcp."
+            )
+        return (
+            "RULE: this is a binary target. Use **ida_headless** "
+            "tools. Do NOT call audit_mcp."
+        )
+    return ""
+
 
 
 def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
@@ -440,7 +667,28 @@ def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_available_tools_section() -> str:
+_SOURCE_REPO_KINDS = frozenset({"source_repo"})
+_BINARY_KINDS = frozenset({
+    "native_binary", "apk", "ipa", "jar", "dotnet_assembly",
+    "kernel_image", "kernel_module", "hypervisor_image",
+})
+
+
+def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
+    """Return the MCP server ids the agent should consider given the
+    target's kind. Source repos resolve via audit-mcp; binary kinds
+    via ida_headless. Unknown / mixed kinds default to BOTH so the
+    agent isn't locked out of either path.
+    """
+    k = (target_kind or "").lower()
+    if k in _SOURCE_REPO_KINDS:
+        return {"audit_mcp"}
+    if k in _BINARY_KINDS:
+        return {"ida_headless"}
+    return set(KNOWN_TOOLS.keys())
+
+
+def _render_available_tools_section(target_kind: str | None = None) -> str:
     """Render the catalog of MCP tools the engine may invoke this turn.
 
     Organized per MCP server. Tools with custom adapters (structured
@@ -449,11 +697,35 @@ def _render_available_tools_section() -> str:
     bounded TEXT payload via the generic fallback. The catalog is
     derived from ``KNOWN_TOOLS`` + ``specialized_tools()`` so adding a
     new tool only requires updating the registry.
+
+    Servers irrelevant to the target's kind are SUPPRESSED with a
+    short note instead of listed — the agent kept choosing
+    ida_headless.list_binaries for a source_repo target because the
+    catalog showed every server unconditionally. Filtering at render
+    time prevents the wrong tool family from ever being the obvious
+    pick. Use ``target_kind=None`` to render everything (legacy
+    callers).
     """
     specialized = set(specialized_tools())
+    applicable = _applicable_servers_for_kind(target_kind)
     parts: list[str] = ["# Available tools\n"]
+    if target_kind:
+        parts.append(
+            f"\nTarget kind: `{target_kind}` — only servers applicable "
+            f"to this kind are listed below.\n",
+        )
     for server in sorted(KNOWN_TOOLS):
         tool_names = sorted(KNOWN_TOOLS[server])
+        if server not in applicable:
+            parts.append(
+                f"\n## {server} ({len(tool_names)} tools — "
+                f"NOT APPLICABLE for target kind `{target_kind}`)\n\n",
+            )
+            parts.append(
+                f"- skipped: {server} operates on a different target "
+                f"family. Do not invoke its tools.\n",
+            )
+            continue
         parts.append(f"\n## {server} ({len(tool_names)} tools)\n\n")
         for name in tool_names:
             full = f"{server}.{name}"
