@@ -528,3 +528,73 @@ export function useUploadTargetArtifact(targetId: string) {
     },
   });
 }
+
+// ─── Destructive deletes ───────────────────────────────────────────────
+// All seven hit a 204 endpoint. Each invalidates list + detail query
+// keys for its kind so the UI refreshes without a hard navigate. The
+// caller is responsible for confirm UX + post-delete navigation.
+
+type DeleteVariables = { id: string };
+
+function makeDeleter(
+  pathPrefix: string,
+  invalidateKeys: readonly string[],
+  noun: string,
+) {
+  return function useDeleteHook() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: ({ id }: DeleteVariables) =>
+        authorizedRequestJson<void>(
+          `${pathPrefix}/${encodeURIComponent(id)}`,
+          { method: "DELETE" },
+        ),
+      onSuccess: () => {
+        for (const key of invalidateKeys) {
+          queryClient.invalidateQueries({ queryKey: ["vr", key] });
+        }
+        toast.success(`${noun} deleted`);
+      },
+      onError: (err: Error) => {
+        // Most likely a 409 conflict: "has N investigation(s)" etc.
+        toast.error(`Failed to delete ${noun.toLowerCase()}: ${err.message}`);
+      },
+    });
+  };
+}
+
+export const useDeleteWorkspace = makeDeleter(
+  "/vr/workspaces",
+  ["workspaces", "targets", "investigations"],
+  "Workspace",
+);
+export const useDeleteTarget = makeDeleter(
+  "/vr/targets",
+  ["targets", "workspaces"],
+  "Target",
+);
+export const useDeleteInvestigation = makeDeleter(
+  "/vr/investigations",
+  ["investigations", "patterns"],
+  "Investigation",
+);
+export const useDeleteProject = makeDeleter(
+  "/vr/projects",
+  ["projects", "findings"],
+  "Project",
+);
+export const useDeletePattern = makeDeleter(
+  "/vr/patterns",
+  ["patterns"],
+  "Pattern",
+);
+export const useDeleteDisclosure = makeDeleter(
+  "/vr/disclosures",
+  ["disclosures"],
+  "Disclosure",
+);
+export const useDeleteFuzzCampaign = makeDeleter(
+  "/vr/fuzz/campaigns",
+  ["fuzz-campaigns", "fuzz-crashes"],
+  "Fuzz campaign",
+);

@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import { DeleteButton } from "../components/DeleteButton";
+import { useDeleteProject } from "../mutations";
 import { useTargetName, useVRFindings, useVRProject } from "../queries";
 import type {
   DisclosureStatus,
@@ -265,6 +267,8 @@ export function ProjectDetailPage() {
   const { data: project, isLoading, isError } = useVRProject(projectId);
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const headerTargetName = useTargetName(project?.target_id);
+  const deleteMut = useDeleteProject();
+  const navigate = useNavigate();
 
   if (isLoading) {
     return <LoadingSkeleton size="lg" width="full" />;
@@ -279,28 +283,36 @@ export function ProjectDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          {project.name}
-        </h1>
-        {project.cve_id && (
-          <a
-            href={nvdHref(project.cve_id)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-mono text-sm text-accent hover:underline"
-          >
-            {project.cve_id}
-          </a>
-        )}
-        <AilaBadge severity={projectStatusColor[project.status] ?? "info"} size="sm">
-          {project.status}
-        </AilaBadge>
-        {project.target_id && (
-          <AilaBadge severity="info" size="sm">
-            target: {headerTargetName}
+      <div className="flex flex-wrap items-center gap-3 justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-xl font-bold font-mono text-foreground">
+            {project.name}
+          </h1>
+          {project.cve_id && (
+            <a
+              href={nvdHref(project.cve_id)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono text-sm text-accent hover:underline"
+            >
+              {project.cve_id}
+            </a>
+          )}
+          <AilaBadge severity={projectStatusColor[project.status] ?? "info"} size="sm">
+            {project.status}
           </AilaBadge>
-        )}
+          {project.target_id && (
+            <AilaBadge severity="info" size="sm">
+              target: {headerTargetName}
+            </AilaBadge>
+          )}
+        </div>
+        <DeleteButton
+          id={project.id}
+          label={`project "${project.name}"`}
+          mutation={deleteMut}
+          onDeleted={() => navigate("/vr")}
+        />
       </div>
 
       <div className="border-b border-border-default flex gap-1">

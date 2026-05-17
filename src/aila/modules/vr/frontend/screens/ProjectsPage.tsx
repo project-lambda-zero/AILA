@@ -4,6 +4,8 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import { DeleteButton } from "../components/DeleteButton";
+import { useDeleteProject } from "../mutations";
 import { useTargetMap, useVRProjects } from "../queries";
 import type { VRProjectStatus } from "../types";
 
@@ -28,6 +30,7 @@ export function ProjectsPage() {
   const navigate = useNavigate();
   const { data: result, isLoading, isError } = useVRProjects();
   const targetMap = useTargetMap();
+  const deleteMut = useDeleteProject();
 
   const projects = result?.data ?? [];
 
@@ -85,6 +88,7 @@ export function ProjectsPage() {
                 <th className="px-4 py-2 font-semibold">Target</th>
                 <th className="px-4 py-2 font-semibold text-right">Findings</th>
                 <th className="px-4 py-2 font-semibold">Created</th>
+                <th className="px-2 py-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -115,6 +119,14 @@ export function ProjectsPage() {
                   </td>
                   <td className="px-4 py-2 font-mono text-text-muted">
                     {formatDate(project.created_at)}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    <DeleteButton
+                      id={project.id}
+                      label={`project "${project.name}"`}
+                      mutation={deleteMut}
+                      compact
+                    />
                   </td>
                 </tr>
               ))}

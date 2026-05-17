@@ -4,7 +4,8 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
-import { useCreateWorkspace } from "../mutations";
+import { DeleteButton } from "../components/DeleteButton";
+import { useCreateWorkspace, useDeleteWorkspace } from "../mutations";
 import { useWorkspaces } from "../queries";
 import type { WorkspaceTheme } from "../types";
 
@@ -29,6 +30,7 @@ function formatDate(value?: string | null): string {
 export function WorkspacesPage() {
   const { data: result, isLoading, isError } = useWorkspaces();
   const createMut = useCreateWorkspace();
+  const deleteMut = useDeleteWorkspace();
 
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");
@@ -169,6 +171,7 @@ export function WorkspacesPage() {
                   Active investigations
                 </th>
                 <th className="px-4 py-2 font-semibold">Created</th>
+                <th className="px-2 py-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -202,6 +205,14 @@ export function WorkspacesPage() {
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-muted">
                     {formatDate(ws.created_at)}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    <DeleteButton
+                      id={ws.id}
+                      label={`workspace "${ws.name}"`}
+                      mutation={deleteMut}
+                      compact
+                    />
                   </td>
                 </tr>
               ))}

@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import { DeleteButton } from "../components/DeleteButton";
 import {
+  useDeleteInvestigation,
   usePauseInvestigation,
   useResumeInvestigation,
   useSendOperatorMessage,
@@ -117,6 +119,8 @@ export function InvestigationDetailPage() {
   const pauseMut = usePauseInvestigation(invId);
   const resumeMut = useResumeInvestigation(invId);
   const sendMut = useSendOperatorMessage(invId);
+  const deleteMut = useDeleteInvestigation();
+  const navigate = useNavigate();
 
   const [messageText, setMessageText] = useState("");
   const [messageIntent, setMessageIntent] = useState<OperatorIntent | "">("");
@@ -141,12 +145,20 @@ export function InvestigationDetailPage() {
             {inv.kind} · target: {targetName}
           </p>
         </div>
-        <Link
-          to={`/vr/investigations/${invId}/tree`}
-          className="text-xs px-3 py-1.5 rounded-md bg-surface border border-border-default hover:bg-surface-hover text-foreground"
-        >
-          View branch tree →
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            to={`/vr/investigations/${invId}/tree`}
+            className="text-xs px-3 py-1.5 rounded-md bg-surface border border-border-default hover:bg-surface-hover text-foreground"
+          >
+            View branch tree →
+          </Link>
+          <DeleteButton
+            id={invId}
+            label={`investigation "${inv.title}"`}
+            mutation={deleteMut}
+            onDeleted={() => navigate("/vr/investigations")}
+          />
+        </div>
       </div>
 
       <div className="flex gap-2 items-center">

@@ -5,6 +5,8 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import { DeleteButton } from "../components/DeleteButton";
+import { useDeleteDisclosure } from "../mutations";
 import { useDisclosures, useDisclosureTracks } from "../queries";
 import type { DisclosureSubmissionStatus } from "../types";
 
@@ -33,6 +35,7 @@ export function DisclosuresPage() {
   const navigate = useNavigate();
   const { data: tracksData } = useDisclosureTracks();
   const tracks = tracksData ?? [];
+  const deleteMut = useDeleteDisclosure();
 
   const [trackFilter, setTrackFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<DisclosureSubmissionStatus | "">("");
@@ -122,6 +125,7 @@ export function DisclosuresPage() {
                 <th className="px-4 py-2 font-semibold">Embargo until</th>
                 <th className="px-4 py-2 font-semibold">Vendor ref</th>
                 <th className="px-4 py-2 font-semibold text-right">Bounty</th>
+                <th className="px-2 py-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -155,6 +159,14 @@ export function DisclosuresPage() {
                     {r.bounty_awarded_usd != null
                       ? `$${r.bounty_awarded_usd.toLocaleString()}`
                       : "—"}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    <DeleteButton
+                      id={r.id}
+                      label={`disclosure to ${r.track_id}`}
+                      mutation={deleteMut}
+                      compact
+                    />
                   </td>
                 </tr>
               ))}

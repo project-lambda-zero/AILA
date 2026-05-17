@@ -4,7 +4,8 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
-import { usePatchFuzzCampaign } from "../mutations";
+import { DeleteButton } from "../components/DeleteButton";
+import { useDeleteFuzzCampaign, usePatchFuzzCampaign } from "../mutations";
 import { useFuzzCampaign, useFuzzCrashes } from "../queries";
 import type { CampaignStatus, CrashTriageVerdict } from "../types";
 
@@ -49,6 +50,7 @@ export function FuzzCampaignDetailPage() {
   const { data: crashesData } = useFuzzCrashes({ campaignId: cid });
   const crashes = crashesData?.data ?? [];
   const patchMut = usePatchFuzzCampaign(cid);
+  const deleteMut = useDeleteFuzzCampaign();
 
   if (isLoading || !campaign) return <LoadingSkeleton size="lg" width="full" />;
 
@@ -56,14 +58,21 @@ export function FuzzCampaignDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          {campaign.name}
-        </h1>
-        <p className="text-sm text-text-muted mt-1 font-mono">
-          {campaign.engine_id} · {campaign.strategy_id} · target:
-          {campaign.target_id}
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-xl font-bold font-mono text-foreground">
+            {campaign.name}
+          </h1>
+          <p className="text-sm text-text-muted mt-1 font-mono">
+            {campaign.engine_id} · {campaign.strategy_id}
+          </p>
+        </div>
+        <DeleteButton
+          id={cid}
+          label={`fuzz campaign "${campaign.name}"`}
+          mutation={deleteMut}
+          onDeleted={() => navigate("/vr/fuzz/campaigns")}
+        />
       </div>
 
       <div className="flex gap-2 flex-wrap items-center">

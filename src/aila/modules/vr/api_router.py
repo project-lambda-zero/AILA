@@ -681,6 +681,45 @@ def create_vr_router() -> APIRouter:
 
         return DataEnvelope(data=_summary_from_record(project, finding_count))
 
+    @router.delete(
+        "/projects/{project_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        summary=(
+            "Delete a VR project and all of its findings. Targets created "
+            "from this project's spec are NOT deleted — they live in the "
+            "workspace independently."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def delete_project(
+        request: Request,
+        project_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> Response:
+        del request
+        from .db_models import VRFindingRecord, VRProjectRecord
+
+        async with UnitOfWork() as uow:
+            project = (await uow.session.exec(
+                select(VRProjectRecord).where(VRProjectRecord.id == project_id),
+            )).first()
+            if project is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"VR project {project_id!r} not found.",
+                )
+            _require_project_ownership(project, auth)
+
+            findings = (await uow.session.exec(
+                select(VRFindingRecord).where(VRFindingRecord.project_id == project_id),
+            )).all()
+            for f in findings:
+                await uow.session.delete(f)
+            await uow.session.delete(project)
+            await uow.session.commit()
+
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @router.get(
         "/projects/{project_id}/findings",
         response_model=DataEnvelope[list[VRFinding]],
@@ -1730,6 +1769,74 @@ def create_vr_router() -> APIRouter:
             outcome_count=int(outcome_count),
         ))
 
+    @router.delete(
+        "/investigations/{investigation_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        summary=(
+            "Delete an investigation and all of its branches, messages, "
+            "outcomes, and target join rows. Patterns referencing this "
+            "investigation are de-linked (investigation_id → NULL)."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def delete_investigation(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> Response:
+        del request
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationMessageRecord,
+            VRInvestigationOutcomeRecord,
+            VRInvestigationRecord,
+            VRInvestigationTargetRecord,
+            VRPatternRecord,
+        )
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                ),
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+
+            # De-link patterns (nullable FK).
+            patterns = (await uow.session.exec(
+                select(VRPatternRecord).where(
+                    VRPatternRecord.investigation_id == investigation_id,
+                ),
+            )).all()
+            for p in patterns:
+                p.investigation_id = None
+                uow.session.add(p)
+
+            # Hard-delete child rows in FK-safe order.
+            for model in (
+                VRInvestigationMessageRecord,
+                VRInvestigationOutcomeRecord,
+                VRInvestigationTargetRecord,
+                VRInvestigationBranchRecord,
+            ):
+                rows = (await uow.session.exec(
+                    select(model).where(model.investigation_id == investigation_id),
+                )).all()
+                for r in rows:
+                    await uow.session.delete(r)
+
+            await uow.session.delete(inv)
+            await uow.session.commit()
+
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @router.post(
         "/investigations/{investigation_id}/pause",
         response_model=DataEnvelope[VRInvestigationSummary],
@@ -2492,6 +2599,37 @@ def create_vr_router() -> APIRouter:
             ) from exc
         return DataEnvelope(data=summary)
 
+    @router.delete(
+        "/patterns/{pattern_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        summary="Delete a pattern. No cascade — patterns are leaf rows.",
+    )
+    @limiter.limit("10/minute")
+    async def delete_pattern(
+        request: Request,
+        pattern_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> Response:
+        del request
+        from .db_models import VRPatternRecord
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRPatternRecord).where(VRPatternRecord.id == pattern_id),
+                    VRPatternRecord, auth,
+                ),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Pattern {pattern_id} not found.",
+                )
+            await uow.session.delete(row)
+            await uow.session.commit()
+
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     # ── Disclosure submissions (Disclosure Lifecycle plan) ─────────────
 
     @router.get(
@@ -2634,6 +2772,39 @@ def create_vr_router() -> APIRouter:
             ) from exc
         return DataEnvelope(data=summary)
 
+    @router.delete(
+        "/disclosures/{submission_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        summary=(
+            "Delete a disclosure submission record. The finding it was for "
+            "is left untouched."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def delete_disclosure(
+        request: Request,
+        submission_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> Response:
+        del request, auth
+        from .db_models import VRDisclosureSubmissionRecord
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                select(VRDisclosureSubmissionRecord).where(
+                    VRDisclosureSubmissionRecord.id == submission_id,
+                ),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Disclosure submission {submission_id} not found.",
+                )
+            await uow.session.delete(row)
+            await uow.session.commit()
+
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @router.post(
         "/disclosures/{submission_id}/render",
         response_model=DataEnvelope[RenderedSubmission],
@@ -2772,6 +2943,44 @@ def create_vr_router() -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc),
             ) from exc
         return DataEnvelope(data=summary)
+
+    @router.delete(
+        "/fuzz/campaigns/{campaign_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        summary=(
+            "Delete a fuzz campaign and all of its crash records. The "
+            "underlying target is left untouched. Crashes that were "
+            "promoted to findings keep the finding row — the back-link "
+            "goes stale."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def delete_fuzz_campaign(
+        request: Request,
+        campaign_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> Response:
+        del request, auth
+        from .db_models import VRFuzzCampaignRecord, VRFuzzCrashRecord
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                select(VRFuzzCampaignRecord).where(VRFuzzCampaignRecord.id == campaign_id),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Fuzz campaign {campaign_id} not found.",
+                )
+            crashes = (await uow.session.exec(
+                select(VRFuzzCrashRecord).where(VRFuzzCrashRecord.campaign_id == campaign_id),
+            )).all()
+            for c in crashes:
+                await uow.session.delete(c)
+            await uow.session.delete(row)
+            await uow.session.commit()
+
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.post(
         "/fuzz/crashes",

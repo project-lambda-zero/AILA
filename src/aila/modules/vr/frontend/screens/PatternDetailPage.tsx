@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
-import { usePatchPattern } from "../mutations";
+import { DeleteButton } from "../components/DeleteButton";
+import { useDeletePattern, usePatchPattern } from "../mutations";
 import { usePattern } from "../queries";
 import type {
   PatternConfidence,
@@ -32,6 +33,8 @@ export function PatternDetailPage() {
   const pid = patternId ?? "";
   const { data: pattern, isLoading } = usePattern(pid);
   const patchMut = usePatchPattern(pid);
+  const deleteMut = useDeletePattern();
+  const navigate = useNavigate();
 
   const [editMode, setEditMode] = useState(false);
   const [body, setBody] = useState("");
@@ -46,16 +49,21 @@ export function PatternDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          {pattern.summary}
-        </h1>
-        <p className="text-sm text-text-muted mt-1 font-mono">
-          {pattern.kind} · workspace:{pattern.workspace_id}
-          {pattern.investigation_id && (
-            <> · from investigation:{pattern.investigation_id}</>
-          )}
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-xl font-bold font-mono text-foreground">
+            {pattern.summary}
+          </h1>
+          <p className="text-sm text-text-muted mt-1 font-mono">
+            {pattern.kind}
+          </p>
+        </div>
+        <DeleteButton
+          id={pid}
+          label={`pattern "${pattern.summary.slice(0, 40)}"`}
+          mutation={deleteMut}
+          onDeleted={() => navigate("/vr/patterns")}
+        />
       </div>
 
       <div className="flex gap-2 items-center flex-wrap">

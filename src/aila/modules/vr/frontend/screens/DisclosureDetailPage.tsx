@@ -1,10 +1,15 @@
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
-import { usePatchDisclosure, useRenderDisclosure } from "../mutations";
+import { DeleteButton } from "../components/DeleteButton";
+import {
+  useDeleteDisclosure,
+  usePatchDisclosure,
+  useRenderDisclosure,
+} from "../mutations";
 import { useDisclosure } from "../queries";
 import type { DisclosureSubmissionStatus } from "../types";
 
@@ -31,6 +36,8 @@ export function DisclosureDetailPage() {
   const { data: sub, isLoading } = useDisclosure(sid);
   const patchMut = usePatchDisclosure(sid);
   const renderMut = useRenderDisclosure(sid);
+  const deleteMut = useDeleteDisclosure();
+  const navigate = useNavigate();
 
   if (isLoading || !sub) return <LoadingSkeleton size="lg" width="full" />;
 
@@ -38,14 +45,21 @@ export function DisclosureDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          {sub.track_info?.display_name ?? sub.track_id}
-        </h1>
-        <p className="text-sm text-text-muted mt-1 font-mono">
-          finding:{sub.finding_id} · workspace:{sub.workspace_id} · status:
-          {sub.status}
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-xl font-bold font-mono text-foreground">
+            {sub.track_info?.display_name ?? sub.track_id}
+          </h1>
+          <p className="text-sm text-text-muted mt-1 font-mono">
+            status: {sub.status}
+          </p>
+        </div>
+        <DeleteButton
+          id={sid}
+          label={`disclosure to ${sub.track_id}`}
+          mutation={deleteMut}
+          onDeleted={() => navigate("/vr/disclosures")}
+        />
       </div>
 
       <div className="flex gap-2 flex-wrap">
