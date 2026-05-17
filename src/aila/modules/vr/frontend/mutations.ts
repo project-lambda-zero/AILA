@@ -513,6 +513,46 @@ export function usePatchFuzzCampaign(campaignId: string) {
   });
 }
 
+export interface LaunchFuzzCampaignResponse {
+  campaign_id: string;
+  status: string;
+  remote_pid?: number | null;
+  remote_corpus_dir?: string | null;
+  remote_crashes_dir?: string | null;
+  description?: string | null;
+  task_id?: string | null;
+}
+
+export function useLaunchFuzzCampaign(campaignId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ synchronous = false }: { synchronous?: boolean } = {}) =>
+      authorizedRequestJson<Envelope<LaunchFuzzCampaignResponse>>(
+        `/vr/fuzz/campaigns/${encodeURIComponent(campaignId)}/launch?synchronous=${synchronous}`,
+        { method: "POST" },
+      ),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "fuzz-campaign", campaignId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["vr", "fuzz-campaigns"] });
+      const r = res?.data;
+      if (r?.status === "queued") {
+        toast.success(`Launch queued (task ${r.task_id?.slice(0, 8) ?? "?"})`);
+      } else if (r?.status === "launched") {
+        toast.success(`Fuzzer launched · remote PID ${r.remote_pid ?? "?"}`);
+      } else if (r?.status === "already-running") {
+        toast.info(`Already running · PID ${r.remote_pid ?? "?"}`);
+      } else {
+        toast.success("Launch request accepted");
+      }
+    },
+    onError: (err: Error) => {
+      toast.error(`Launch failed: ${err.message}`);
+    },
+  });
+}
+
 // ─── MCP server retarget ───────────────────────────────────────────────
 
 export function useUpdateMcpServer() {

@@ -78,6 +78,7 @@ HONESTY_WHITELIST = [
     ("vr/_task_queue.py", "enqueue_vr_nday", "noqa"),
     ("vr/workflow/states/investigation_emit.py", "_run_pattern_extraction", "noqa"),
     ("vr/workflow/task.py", "run_target_analysis", "noqa"),
+    ("vr/workflow/task.py", "run_fuzz_campaign_launch", "noqa"),
     ("vr/services/target_analysis.py", "_run_git", "noqa"),
     ("vr/tools/audit_mcp_bridge.py", "_resolve_base_url", "noqa"),
     ("vr/tools/ida_bridge.py", "_resolve_base_url", "noqa"),

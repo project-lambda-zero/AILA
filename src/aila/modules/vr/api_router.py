@@ -3702,6 +3702,95 @@ def create_vr_router() -> APIRouter:
             ) from exc
         return DataEnvelope(data=summary)
 
+    class _LaunchResponse(BaseModel):
+        """Output of POST /vr/fuzz/campaigns/{id}/launch."""
+
+        model_config = ConfigDict(extra="forbid")
+
+        campaign_id: str
+        status: str
+        remote_pid: int | None = None
+        remote_corpus_dir: str | None = None
+        remote_crashes_dir: str | None = None
+        description: str | None = None
+        task_id: str | None = None
+
+    @router.post(
+        "/fuzz/campaigns/{campaign_id}/launch",
+        response_model=DataEnvelope[_LaunchResponse],
+        summary=(
+            "Enqueue a launcher task that SSHes to the campaign's "
+            "analysis_system_id, starts the fuzzer per its engine_id, "
+            "and records the remote PID + corpus/crashes dirs. "
+            "Idempotent — returns the existing PID when the campaign "
+            "is already running."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def launch_fuzz_campaign(
+        request: Request,
+        campaign_id: str,
+        synchronous: bool = Query(
+            default=False,
+            description=(
+                "If true, runs the launcher in-process (blocking up to "
+                "the SSH timeouts) and returns the resolved remote PID. "
+                "If false (default) enqueues an ARQ task and returns "
+                "a task_id; the campaign row is updated when the task "
+                "completes."
+            ),
+        ),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[_LaunchResponse]:
+        from aila.api.deps import get_task_queue
+        from aila.modules.vr.services import FuzzCampaignService, FuzzServiceError
+        from aila.modules.vr.workflow.task import run_fuzz_campaign_launch
+
+        # Ownership / team-scoping check.
+        from .db_models import VRFuzzCampaignRecord
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRFuzzCampaignRecord).where(
+                        VRFuzzCampaignRecord.id == campaign_id,
+                    ),
+                    VRFuzzCampaignRecord, auth,
+                ),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Fuzz campaign {campaign_id} not found.",
+                )
+
+        if synchronous:
+            svc = FuzzCampaignService()
+            try:
+                result = await svc.launch_campaign(campaign_id)
+            except FuzzServiceError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+            return DataEnvelope(data=_LaunchResponse(**result))
+
+        task_queue = get_task_queue("vr", request)
+        handle = await task_queue.submit(
+            track="vr",
+            fn=run_fuzz_campaign_launch,
+            kwargs={"campaign_id": campaign_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
+        return DataEnvelope(
+            data=_LaunchResponse(
+                campaign_id=campaign_id,
+                status="queued",
+                task_id=handle.task_id,
+            ),
+        )
+
     @router.delete(
         "/fuzz/campaigns/{campaign_id}",
         status_code=status.HTTP_204_NO_CONTENT,

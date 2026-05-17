@@ -30,6 +30,7 @@ from aila.platform.tasks.template import platform_task
 __all__ = [
     "run_capability_profile_build",
     "run_function_ranking",
+    "run_fuzz_campaign_launch",
     "run_target_analysis",
     "run_vr_investigate",
     "run_vr_nday",
@@ -94,3 +95,32 @@ async def run_target_analysis(
     svc = TargetAnalysisService()
     await svc.analyze(target_id)
     return {"target_id": target_id, "status": "ok"}
+
+
+@platform_task(
+    track="vr",
+    module_id="vr",
+    max_tries=1,
+    timeout_s=120.0,  # SSH connect + start fuzzer; not the campaign itself
+)
+async def run_fuzz_campaign_launch(
+    ctx: TaskContext,
+    campaign_id: str,
+    **_: Any,
+) -> dict[str, Any]:
+    """SSH to the campaign's analysis_system_id workstation, start
+    the fuzzer per its engine_id, capture remote PID + corpus/crashes
+    paths back onto the campaign row.
+
+    Per D-33 the workstation is dedicated — AILA never runs the
+    fuzzer in-process. This task only kicks off the remote process;
+    the sidecar at ``tools/aila_fuzz_reporter/`` reports its progress
+    back via PATCH /fuzz/campaigns/{id} + POST /fuzz/crashes.
+    """
+    del ctx
+    from aila.modules.vr.services.fuzz_service import (  # noqa: PLC0415
+        FuzzCampaignService,
+    )
+
+    svc = FuzzCampaignService()
+    return await svc.launch_campaign(campaign_id)

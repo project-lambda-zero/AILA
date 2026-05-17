@@ -26,6 +26,7 @@ from uuid import uuid4
 from sqlalchemy import func as sa_func
 from sqlmodel import select as _select
 
+from aila.config import get_settings
 from aila.modules.vr.contracts.fuzz import (
     CampaignStatus,
     CrashSeverity,
@@ -45,7 +46,14 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
     VRWorkspaceRecord,
 )
+from aila.modules.vr.services.fuzz_launcher import (
+    FuzzLauncherError,
+    build_launch_command,
+    serialize_for_log,
+)
+from aila.platform.config import build_platform_settings
 from aila.platform.contracts._common import utc_now
+from aila.platform.services.ssh import SSHService
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import ManagedSystemRecord
 
@@ -438,6 +446,153 @@ class FuzzCampaignService:
             )
             rows = (await uow.session.exec(stmt)).all()
             return [_campaign_record_to_summary(r) for r in rows], int(total)
+
+    async def launch_campaign(
+        self, campaign_id: str,
+    ) -> dict[str, Any]:
+        """SSH to the campaign's analysis_system_id workstation, start
+        the fuzzer per its engine_id, record the remote PID + corpus/
+        crashes dirs back onto the campaign row.
+
+        Idempotent on remote_pid: if the campaign already has a
+        remote_pid set + the campaign status is RUNNING, returns the
+        existing state without spawning a duplicate. Otherwise
+        composes the engine command via fuzz_launcher.build_launch_command,
+        runs the setup commands then the nohup-wrapped fuzzer command,
+        and captures stdout (which is the PID echoed by the nohup wrapper).
+        """
+        # ManagedSystemRecord, SSHService, build_platform_settings,
+        # get_settings, fuzz_launcher helpers are imported at module
+        # top — see imports near the top of this file.
+
+        async with UnitOfWork() as uow:
+            record = (await uow.session.exec(
+                _select(VRFuzzCampaignRecord).where(
+                    VRFuzzCampaignRecord.id == campaign_id,
+                ),
+            )).first()
+            if record is None:
+                raise FuzzServiceError(f"campaign {campaign_id} not found")
+            if record.analysis_system_id is None:
+                raise FuzzServiceError(
+                    f"campaign {campaign_id} has no analysis_system_id — "
+                    f"set one via campaign create before launch",
+                )
+            if record.remote_pid and record.status == CampaignStatus.RUNNING.value:
+                _log.info(
+                    "fuzz_campaign LAUNCH idempotent campaign_id=%s pid=%d",
+                    campaign_id, record.remote_pid,
+                )
+                return {
+                    "campaign_id": campaign_id,
+                    "status": "already-running",
+                    "remote_pid": record.remote_pid,
+                }
+            system_row = (await uow.session.exec(
+                _select(ManagedSystemRecord).where(
+                    ManagedSystemRecord.id == record.analysis_system_id,
+                ),
+            )).first()
+            if system_row is None:
+                raise FuzzServiceError(
+                    f"campaign {campaign_id} references system "
+                    f"#{record.analysis_system_id} which is not registered",
+                )
+            integration = {
+                "name": system_row.name,
+                "host": system_row.host,
+                "username": system_row.username,
+                "port": system_row.port,
+                "private_key_path": system_row.private_key_path,
+                "password_secret_id": system_row.password_secret_id,
+                "known_hosts_path": system_row.known_hosts_path,
+                "host_key_fingerprint": system_row.host_key_fingerprint,
+            }
+            engine_id = FuzzEngineId(record.engine_id)
+            engine_config = json.loads(record.engine_config_json or "{}")
+            strategy_config = json.loads(record.strategy_config_json or "{}")
+
+        try:
+            launch = build_launch_command(
+                campaign_id=campaign_id,
+                engine_id=engine_id,
+                engine_config=engine_config,
+                strategy_config=strategy_config,
+            )
+        except FuzzLauncherError as exc:
+            raise FuzzServiceError(
+                f"launch command construction failed: {exc}",
+            ) from exc
+
+        ssh = SSHService(build_platform_settings(get_settings()))
+        # Setup commands first (mkdir, copy seeds). Each is a separate
+        # round-trip so failures pinpoint which step blew up.
+        for cmd in launch.setup_commands:
+            try:
+                await ssh.run_command(
+                    integration, cmd,
+                    timeout_seconds=30.0, connect_timeout=10.0,
+                )
+            except (OSError, TimeoutError) as exc:
+                raise FuzzServiceError(
+                    f"setup command failed on workstation: {cmd!r} → {exc}",
+                ) from exc
+        # Now run the nohup-wrapped fuzzer command; the wrapper echoes
+        # the PID, which lands in stdout (which run_command returns).
+        try:
+            stdout = await ssh.run_command(
+                integration, launch.run_in_background,
+                timeout_seconds=20.0, connect_timeout=10.0,
+            )
+        except (OSError, TimeoutError) as exc:
+            raise FuzzServiceError(
+                f"fuzzer launch failed on workstation: {exc}",
+            ) from exc
+
+        remote_pid: int | None = None
+        for token in (stdout or "").split():
+            try:
+                remote_pid = int(token.strip())
+                break
+            except ValueError:
+                continue
+
+        async with UnitOfWork() as uow:
+            record = (await uow.session.exec(
+                _select(VRFuzzCampaignRecord).where(
+                    VRFuzzCampaignRecord.id == campaign_id,
+                ),
+            )).first()
+            if record is None:
+                raise FuzzServiceError(
+                    f"campaign {campaign_id} disappeared during launch",
+                )
+            now = utc_now()
+            record.remote_pid = remote_pid
+            record.remote_corpus_dir = launch.corpus_dir
+            record.remote_crashes_dir = launch.crashes_dir
+            record.launched_at = now
+            record.launch_log = serialize_for_log(launch)
+            record.status = CampaignStatus.RUNNING.value
+            if record.started_at is None:
+                record.started_at = now
+            record.last_progress_at = now
+            record.updated_at = now
+            await uow.session.commit()
+            await uow.session.refresh(record)
+
+        _log.info(
+            "fuzz_campaign LAUNCH ok campaign_id=%s engine=%s pid=%s",
+            campaign_id, engine_id.value, remote_pid,
+        )
+        return {
+            "campaign_id": campaign_id,
+            "status": "launched",
+            "remote_pid": remote_pid,
+            "remote_corpus_dir": launch.corpus_dir,
+            "remote_crashes_dir": launch.crashes_dir,
+            "description": launch.description,
+        }
 
     async def patch_campaign(
         self, campaign_id: str, body: VRFuzzCampaignPatch,
