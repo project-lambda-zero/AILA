@@ -325,6 +325,100 @@ class BranchManager:
                 reason=reason,
             )
 
+    async def spawn_strategy(
+        self,
+        *,
+        strategy_family: str,
+        persona_voice: str | None = None,
+        rationale: str = "",
+        parent_branch_id: str | None = None,
+    ) -> BranchOpResult:
+        """Spawn a new branch tagged with a strategy_family (v0.4 GA-50).
+
+        Used by the multi-strategy orchestration flow: one investigation
+        can carry N strategy branches running in parallel
+        (discovery_research + variant_hunt + patch_diff_analysis).
+
+        Differs from fork():
+          - parent_branch_id is OPTIONAL — the new branch can start from
+            the investigation root (no parent) for genuinely parallel
+            strategies that don't share state.
+          - strategy_family is REQUIRED and gets tagged on the new row
+            for per-turn strategy dispatch.
+          - When parent_branch_id is set, copies the parent's case_state
+            (same as fork) so the new branch inherits observables /
+            hypotheses.
+        """
+        if not strategy_family or not strategy_family.strip():
+            raise BranchManagerError(
+                "strategy_family is required for spawn_strategy",
+            )
+
+        async with UnitOfWork() as uow:
+            inherited_case_state = "{}"
+            parent_at_turn: int | None = None
+            if parent_branch_id:
+                parent = await self._load_branch(uow, parent_branch_id)
+                if parent.status != BranchStatus.ACTIVE.value:
+                    raise BranchManagerError(
+                        f"cannot spawn from parent {parent_branch_id} in "
+                        f"status {parent.status!r} — must be ACTIVE",
+                    )
+                inherited_case_state = parent.case_state_json or "{}"
+                parent_at_turn = parent.turn_count
+
+            child = VRInvestigationBranchRecord(
+                investigation_id=self.investigation_id,
+                parent_branch_id=parent_branch_id,
+                status=BranchStatus.ACTIVE.value,
+                persona_voice=persona_voice,
+                strategy_family=strategy_family,
+                fork_reason=rationale or f"spawn_strategy:{strategy_family}",
+                fork_at_turn=parent_at_turn,
+                case_state_json=inherited_case_state,
+                turn_count=0,
+                branch_cost_usd=0.0,
+            )
+            uow.session.add(child)
+            await uow.session.flush()
+            await uow.commit()
+
+            return BranchOpResult(
+                op=BranchOperation.SPAWN_STRATEGY,
+                investigation_id=self.investigation_id,
+                primary_branch_id=parent_branch_id or child.id,
+                new_branch_id=child.id,
+                affected_branch_ids=(
+                    [parent_branch_id] if parent_branch_id else []
+                ),
+                reason=rationale,
+            )
+
+    async def list_active_by_strategy(
+        self,
+    ) -> dict[str, list[str]]:
+        """Return active branches grouped by strategy_family.
+
+        Branches without a strategy_family (v0.3 legacy single-strategy
+        investigations) are grouped under the empty-string key for
+        backward compatibility.
+        """
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(VRInvestigationBranchRecord)
+                .where(
+                    VRInvestigationBranchRecord.investigation_id == self.investigation_id,
+                    VRInvestigationBranchRecord.status == BranchStatus.ACTIVE.value,
+                )
+                .order_by(VRInvestigationBranchRecord.created_at.asc()),
+            )).all()
+
+        groups: dict[str, list[str]] = {}
+        for row in rows:
+            key = row.strategy_family or ""
+            groups.setdefault(key, []).append(row.id)
+        return groups
+
     async def _load_branch(self, uow: Any, branch_id: str) -> VRInvestigationBranchRecord:
         branch = (await uow.session.exec(
             _select(VRInvestigationBranchRecord).where(

@@ -14,6 +14,7 @@ from .branch import (
     BranchOperation,
     BranchStatus,
     PersonaVoice,
+    StrategyBranchSpawn,
     VRBranchSummary,
 )
 from .disclosure import (
@@ -157,6 +158,7 @@ __all__ = [
     "PersonaVoice",
     "PoCResult",
     "SenderKind",
+    "StrategyBranchSpawn",
     "TargetCapabilityProfile",
     "TargetClass",
     "TargetFormat",

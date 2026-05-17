@@ -53,6 +53,7 @@ class VRInvestigationBranchRecord(SQLModel, table=True):
 
     status: str = Field(default="active", index=True, max_length=32)
     persona_voice: str | None = Field(default=None, max_length=32)
+    strategy_family: str | None = Field(default=None, max_length=128, index=True)
     fork_reason: str = Field(default="", sa_column=Column(Text))
     fork_at_turn: int | None = Field(default=None)
 

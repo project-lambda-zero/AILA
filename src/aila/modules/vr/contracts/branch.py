@@ -14,12 +14,13 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "BranchOperation",
     "BranchStatus",
     "PersonaVoice",
+    "StrategyBranchSpawn",
     "VRBranchSummary",
 ]
 
@@ -65,6 +66,7 @@ class BranchOperation(StrEnum):
     ABANDON = "abandon"
     PAUSE = "pause"
     RESUME = "resume"
+    SPAWN_STRATEGY = "spawn_strategy"
 
 
 class VRBranchSummary(BaseModel):
@@ -87,3 +89,21 @@ class VRBranchSummary(BaseModel):
     closed_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    strategy_family: str | None = None
+
+
+class StrategyBranchSpawn(BaseModel):
+    """POST payload for /investigations/{id}/strategy-branches (v0.4 GA-50).
+
+    Spawns a new branch tagged with a strategy_family. When
+    parent_branch_id is None the new branch starts fresh (genuinely
+    parallel strategy); when set, the new branch inherits the parent's
+    case_state.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    strategy_family: str = Field(min_length=1, max_length=128)
+    persona_voice: PersonaVoice | None = None
+    rationale: str = Field(default="", max_length=2048)
+    parent_branch_id: str | None = Field(default=None, max_length=64)

@@ -25,9 +25,10 @@ from aila.platform.contracts.reasoning import (
 
 
 class TestBranchOperationEnum:
-    def test_six_operations(self) -> None:
+    def test_seven_operations(self) -> None:
         assert {m.value for m in BranchOperation} == {
             "fork", "merge", "promote", "abandon", "pause", "resume",
+            "spawn_strategy",
         }
 
 
