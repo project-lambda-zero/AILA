@@ -17,6 +17,12 @@ from .branch import (
     StrategyBranchSpawn,
     VRBranchSummary,
 )
+from .cve import (
+    CVEFeedSource,
+    CVERecordSummary,
+    MemoInvalidationEvent,
+    VRCVERecordCreate,
+)
 from .disclosure import (
     ArtifactTier,
     DisclosureKind,
@@ -121,6 +127,10 @@ __all__ = [
     "AuditMemoSummary",
     "BranchOperation",
     "BranchStatus",
+    "CVEFeedSource",
+    "CVERecordSummary",
+    "MemoInvalidationEvent",
+    "VRCVERecordCreate",
     "CVSSVector",
     "CWEMapping",
     "CrashSignature",

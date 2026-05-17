@@ -6,6 +6,7 @@ Individual model definitions live in domain submodules.
 from __future__ import annotations
 
 from .branch import VRInvestigationBranchRecord
+from .cve import VRCVEFeedStateRecord, VRCVERecord
 from .disclosure import VRDisclosureSubmissionRecord
 from .finding import VRFindingRecord
 from .fuzz import VRFuzzCampaignRecord, VRFuzzCrashRecord
@@ -20,6 +21,8 @@ from .workspace import VRWorkspaceRecord
 
 __all__ = [
     "VRDisclosureSubmissionRecord",
+    "VRCVEFeedStateRecord",
+    "VRCVERecord",
     "VRFindingRecord",
     "VRFuzzCampaignRecord",
     "VRFuzzCrashRecord",
