@@ -9,6 +9,24 @@ import { useCreateTarget } from "../mutations";
 import { useTargets, useWorkspaces } from "../queries";
 import type { EnrichmentStatus, TargetKind, TargetStatus } from "../types";
 
+// Per-kind descriptor templates. Auto-fills the descriptor textarea
+// when the operator picks a target kind. Operators edit before submit.
+const DESCRIPTOR_TEMPLATES: Record<TargetKind, string> = {
+  native_binary: '{"binary_path": "/path/on/workstation"}',
+  source_repo: '{"repo_url": "https://github.com/x/y", "audit_mcp_index_id": ""}',
+  cve: '{"cve_id": "CVE-YYYY-NNNN"}',
+  protocol_capture: '{"pcap_path": "/path/to/capture.pcap"}',
+  crash_input: '{"crash_input_path": "/path/to/input.bin"}',
+  patch_diff: '{"diff_path": "/path/to/patch.diff"}',
+  apk: '{"apk_path": "/path/to/app.apk"}',
+  ipa: '{"ipa_path": "/path/to/app.ipa"}',
+  jar: '{"jar_path": "/path/to/app.jar"}',
+  dotnet_assembly: '{"dll_path": "/path/to/assembly.dll"}',
+  kernel_image: '{"image_path": "/path/vmlinuz", "kernel_version": "6.10", "arch": "x86_64"}',
+  kernel_module: '{"ko_path": "/path/buggy.ko", "kernel_image_id": "", "module_name": "buggy"}',
+  hypervisor_image: '{"binary_path": "/usr/bin/qemu-system-x86_64", "hypervisor_kind": "qemu", "version": "9.1.0"}',
+};
+
 const TARGET_KINDS: TargetKind[] = [
   "native_binary",
   "source_repo",
@@ -20,6 +38,9 @@ const TARGET_KINDS: TargetKind[] = [
   "ipa",
   "jar",
   "dotnet_assembly",
+  "kernel_image",
+  "kernel_module",
+  "hypervisor_image",
 ];
 
 const statusColor: Record<
@@ -101,10 +122,12 @@ export function TargetsPage() {
             Create target
           </h2>
           <p className="text-xs text-text-muted mb-3">
-            descriptor is kind-specific JSON. For native_binary use
-            {" "}<code>{`{"binary_path": "..."}`}</code> or
-            {" "}<code>{`{"binary_id": "..."}`}</code> if already in IDA MCP.
-            For source_repo use <code>{`{"repo_url": "...", "audit_mcp_index_id": "..."}`}</code>.
+            descriptor is kind-specific JSON.
+            <br /><strong>native_binary</strong>: <code>{`{"binary_path": "..."}`}</code> or <code>{`{"binary_id": "..."}`}</code> if already in IDA MCP.
+            <br /><strong>source_repo</strong>: <code>{`{"repo_url": "...", "audit_mcp_index_id": "..."}`}</code>
+            <br /><strong>kernel_image</strong>: <code>{`{"image_path": "/path/vmlinuz", "kernel_version": "6.10", "arch": "x86_64"}`}</code>
+            <br /><strong>kernel_module</strong>: <code>{`{"ko_path": "/path/buggy.ko", "kernel_image_id": "...", "module_name": "buggy"}`}</code>
+            <br /><strong>hypervisor_image</strong>: <code>{`{"binary_path": "/path/qemu-system-x86_64", "hypervisor_kind": "qemu", "version": "9.1.0"}`}</code>
           </p>
           <div className="space-y-2">
             <select
@@ -129,7 +152,11 @@ export function TargetsPage() {
             <div className="flex gap-2">
               <select
                 value={formKind}
-                onChange={(e) => setFormKind(e.target.value as TargetKind)}
+                onChange={(e) => {
+                  const newKind = e.target.value as TargetKind;
+                  setFormKind(newKind);
+                  setFormDescriptorJson(DESCRIPTOR_TEMPLATES[newKind]);
+                }}
                 className="px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
               >
                 {TARGET_KINDS.map((k) => (
