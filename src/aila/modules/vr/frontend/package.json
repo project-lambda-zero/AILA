@@ -17,6 +17,9 @@
     "react-router": "catalog:router",
     "@tanstack/react-query": "catalog:query"
   },
+  "dependencies": {
+    "@xyflow/react": "catalog:flow"
+  },
   "devDependencies": {
     "@aila/typescript-config": "workspace:*",
     "@storybook/react": "catalog:storybook",

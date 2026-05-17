@@ -6,6 +6,7 @@ import { TargetDetailPage } from "./screens/TargetDetailPage";
 import { TargetsPage } from "./screens/TargetsPage";
 import { WorkspacesPage } from "./screens/WorkspacesPage";
 import { DisclosureDetailPage } from "./screens/DisclosureDetailPage";
+import { BranchTreePage } from "./screens/BranchTreePage";
 import { DisclosuresPage } from "./screens/DisclosuresPage";
 import { FuzzCampaignDetailPage } from "./screens/FuzzCampaignDetailPage";
 import { FuzzCampaignsPage } from "./screens/FuzzCampaignsPage";
@@ -139,5 +140,14 @@ export const routes = [
     nav: false,
     slot: "page.full" as const,
     breadcrumb: "Fuzz Crash",
+  },
+  {
+    id: "vr.branch-tree",
+    path: "/vr/investigations/:investigationId/tree",
+    page: BranchTreePage,
+    title: "Branch Tree",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "Branch Tree",
   },
 ];

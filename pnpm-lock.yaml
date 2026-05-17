@@ -478,6 +478,9 @@ importers:
       '@tanstack/react-query':
         specifier: catalog:query
         version: 5.96.2(react@19.2.4)
+      '@xyflow/react':
+        specifier: catalog:flow
+        version: 12.10.2(@types/react@19.2.14)(immer@11.1.8)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       react:
         specifier: catalog:react19
         version: 19.2.4
