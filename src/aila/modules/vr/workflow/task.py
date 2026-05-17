@@ -14,11 +14,26 @@ from __future__ import annotations
 
 from typing import Any
 
+# Re-export enrichment-pipeline tasks so the platform worker bootstrap
+# (which loads only ``<module>/workflow/task.py``) picks them up and
+# registers them with the ARQ function table. Without these re-exports
+# the API can enqueue rank/profile jobs but the worker rejects them
+# with ``function 'run_function_ranking' not found``.
+from aila.modules.vr.enrichment.workers import (  # noqa: F401  (re-export for ARQ registration)
+    run_capability_profile_build,
+    run_function_ranking,
+)
 from aila.modules.vr.workflow.definitions import VR_INVESTIGATE_V1, VR_NDAY_V1
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 
-__all__ = ["run_target_analysis", "run_vr_investigate", "run_vr_nday"]
+__all__ = [
+    "run_capability_profile_build",
+    "run_function_ranking",
+    "run_target_analysis",
+    "run_vr_investigate",
+    "run_vr_nday",
+]
 
 
 @platform_task(
