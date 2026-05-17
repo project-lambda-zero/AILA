@@ -14,6 +14,7 @@ Timeout:
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -80,6 +81,44 @@ class IDABridgeTool(Tool):
             pass
         return "http://127.0.0.1:18821"
 
+    # ── LLM kwarg synonym map (mirrors AuditMcpBridgeTool) ────────────
+    _KW_SYNONYMS: dict[str, str] = {
+        "top_n": "limit",
+        "top_k": "limit",
+        "n": "limit",
+        "count": "limit",
+        "max_results": "limit",
+        "function_name": "address_or_name",
+        "function": "address_or_name",
+        "fn": "address_or_name",
+        "name": "address_or_name",
+        "addr": "address",
+        "ea": "address",
+    }
+
+    @classmethod
+    def _normalize_kwargs(
+        cls, action: str, kwargs: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[str]]:
+        if not kwargs:
+            return {}, []
+        out: dict[str, Any] = {}
+        notes: list[str] = []
+        for key, value in kwargs.items():
+            canonical = cls._KW_SYNONYMS.get(key)
+            if canonical is None:
+                out[key] = value
+                continue
+            if canonical in kwargs or canonical in out:
+                notes.append(
+                    f"{action}: dropping kwarg '{key}' (alias for "
+                    f"'{canonical}' already set)",
+                )
+                continue
+            out[canonical] = value
+            notes.append(f"{action}: rewrote kwarg '{key}' -> '{canonical}'")
+        return out, notes
+
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the MCP HTTP API.
 
@@ -96,6 +135,9 @@ class IDABridgeTool(Tool):
             return await self._list_tools()
         if action == "upload":
             return await self._upload_binary(**kwargs)
+        normalized_kwargs, kw_notes = self._normalize_kwargs(action, kwargs)
+        for note in kw_notes:
+            logging.getLogger(__name__).info("ida_bridge %s", note)
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
         from aila.modules.vr.services.mcp_call_logger import record_call  # noqa: PLC0415
@@ -103,7 +145,7 @@ class IDABridgeTool(Tool):
         async with record_call(server_id="ida_headless", base_url=base, action=action) as ctx:
             try:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.post(url, json=kwargs)
+                    resp = await client.post(url, json=normalized_kwargs)
             except httpx.ConnectError as exc:
                 ctx["status"] = "error"
                 ctx["error_excerpt"] = str(exc)[:400]

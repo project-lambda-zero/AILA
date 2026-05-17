@@ -63,9 +63,31 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
         uow.session.add(inv)
         await uow.commit()
 
+    # Resolve any CVE ids mentioned in the operator's question so the
+    # agent gets honest "found" / "not_found" / "error" status instead
+    # of inventing details when NVD has nothing. Mirrors the existing
+    # IntelService path used by the vulnerability module's read
+    # endpoint, but produces a structured list the prompt builder
+    # renders explicitly.
+    from aila.modules.vr.services.cve_intel_resolver import (  # noqa: PLC0415
+        extract_cve_ids,
+        resolve_cve_intel,
+    )
+    cve_ids = extract_cve_ids(inv.initial_question)
+    cve_intel: list[dict[str, Any]] = []
+    if cve_ids:
+        try:
+            resolutions = await resolve_cve_intel(cve_ids)
+            cve_intel = [r.to_dict() for r in resolutions]
+        except Exception as exc:  # noqa: BLE001 — never block setup on intel failure
+            _log.warning(
+                "investigation_setup: CVE intel resolve failed: %s", exc,
+            )
+
     _log.info(
-        "investigation_setup READY investigation_id=%s branch_id=%s strategy=%s",
-        investigation_id, branch.id, inv.strategy_family,
+        "investigation_setup READY investigation_id=%s branch_id=%s "
+        "strategy=%s cve_intel=%d",
+        investigation_id, branch.id, inv.strategy_family, len(cve_intel),
     )
 
     return StateResult(
@@ -77,5 +99,6 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
             "auto_pilot": inv.auto_pilot,
             "cost_budget_usd": inv.cost_budget_usd,
             "team_id": inv.team_id,
+            "cve_intel": cve_intel,
         },
     )
