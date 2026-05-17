@@ -2,6 +2,7 @@ import { useNavigate } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { SeverityPulse } from "@/components/aila/SeverityPulse";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
@@ -105,9 +106,19 @@ export function ProjectsPage() {
                     {project.cve_id ?? "—"}
                   </td>
                   <td className="px-4 py-2">
-                    <AilaBadge severity={statusColor[project.status] ?? "info"} size="sm">
-                      {project.status}
-                    </AilaBadge>
+                    <SeverityPulse
+                      active={
+                        project.status === "analyzing" ||
+                        project.status === "failed"
+                      }
+                    >
+                      <AilaBadge
+                        severity={statusColor[project.status] ?? "info"}
+                        size="sm"
+                      >
+                        {project.status}
+                      </AilaBadge>
+                    </SeverityPulse>
                   </td>
                   <td className="px-4 py-2 font-mono text-text-muted">
                     {project.target_id ? (

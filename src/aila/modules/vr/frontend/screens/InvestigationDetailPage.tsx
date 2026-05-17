@@ -11,6 +11,7 @@ import { SteeringDrawer } from "../components/SteeringDrawer";
 import { TurnCard } from "../components/TurnCard";
 import { WorkflowStepper } from "../components/WorkflowStepper";
 import { useInvestigationMessagesStream } from "../hooks/useInvestigationMessagesStream";
+import { useVRKeyboardShortcuts } from "../hooks/useVRKeyboardShortcuts";
 import {
   useDeleteInvestigation,
   usePauseInvestigation,
@@ -115,6 +116,7 @@ export function InvestigationDetailPage() {
   const [messageText, setMessageText] = useState("");
   const [messageIntent, setMessageIntent] = useState<OperatorIntent | "">("");
   const [steeringOpen, setSteeringOpen] = useState(false);
+  useVRKeyboardShortcuts({ onOpenSteering: () => setSteeringOpen(true) });
 
   // All hooks before any early return — keep React's hook ordering stable.
   const branches = branchesResult?.data ?? [];
