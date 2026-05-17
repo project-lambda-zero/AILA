@@ -189,6 +189,12 @@ export function InvestigationDetailPage() {
           >
             Branch tree →
           </Link>
+          <Link
+            to={`/vr/investigations/${invId}/graph`}
+            className="text-xs px-3 py-1.5 rounded-md bg-surface border border-border-default hover:bg-surface-hover text-foreground"
+          >
+            Evidence graph →
+          </Link>
           <button
             type="button"
             onClick={() => setSteeringOpen(true)}

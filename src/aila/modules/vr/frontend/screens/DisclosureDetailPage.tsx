@@ -5,6 +5,7 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
+import { CVSSCalculator } from "../components/CVSSCalculator";
 import {
   useDeleteDisclosure,
   usePatchDisclosure,
@@ -164,21 +165,77 @@ export function DisclosureDetailPage() {
 
       {/* Re-render */}
       <AilaCard>
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
           <h2 className="text-sm font-semibold text-foreground">
             Rendered submission body
           </h2>
-          <button
-            type="button"
-            onClick={() => renderMut.mutate()}
-            disabled={renderMut.isPending}
-            className="text-xs px-3 py-1 rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
-          >
-            {renderMut.isPending ? "Rendering…" : "Re-render"}
-          </button>
+          <div className="flex items-center gap-1">
+            {renderMut.data?.data.body && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(
+                      renderMut.data!.data.body,
+                    );
+                  }}
+                  className="text-xs px-2 py-1 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                  title="Copy as Markdown"
+                >
+                  Copy MD
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const blob = new Blob(
+                      [JSON.stringify(renderMut.data, null, 2)],
+                      { type: "application/json" },
+                    );
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `advisory_${sub.track_id}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="text-xs px-2 py-1 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                  title="Download as JSON (machine-readable)"
+                >
+                  Download JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const blob = new Blob(
+                      [renderMut.data!.data.body],
+                      { type: "text/markdown" },
+                    );
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `advisory_${sub.track_id}.md`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="text-xs px-2 py-1 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                  title="Download as Markdown (for emails)"
+                >
+                  Download MD
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => renderMut.mutate()}
+              disabled={renderMut.isPending}
+              className="text-xs px-3 py-1 rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+            >
+              {renderMut.isPending ? "Rendering…" : "Re-render"}
+            </button>
+          </div>
         </div>
         {renderMut.data ? (
-          <pre className="text-xs font-mono text-foreground whitespace-pre-wrap overflow-x-auto bg-surface p-3 rounded-md">
+          <pre className="text-xs font-mono text-foreground whitespace-pre-wrap overflow-x-auto bg-surface p-3 rounded-md max-h-96 overflow-y-auto">
             {renderMut.data.data.body}
           </pre>
         ) : (
@@ -188,6 +245,20 @@ export function DisclosureDetailPage() {
             the underlying finding.
           </p>
         )}
+      </AilaCard>
+
+      {/* CVSS calculator — interactive scoring per 08_FRONTEND_UX.md §1.8.2 */}
+      <AilaCard>
+        <h2 className="text-sm font-semibold text-foreground mb-2">
+          CVSS v3.1 score
+        </h2>
+        <p className="text-xs text-text-muted mb-3">
+          Pick one value per metric. Vector + base score recompute live.
+          Persisting the score back to the submission is{" "}
+          <em>backend pending</em> — copy the vector string into the
+          advisory body for now.
+        </p>
+        <CVSSCalculator />
       </AilaCard>
 
       {/* Track info */}

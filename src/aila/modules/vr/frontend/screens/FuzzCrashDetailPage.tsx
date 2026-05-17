@@ -88,6 +88,80 @@ export function FuzzCrashDetailPage() {
         </dl>
       </AilaCard>
 
+      {/* Triage chain — narrative of turns that touched this crash.
+          Per 08_FRONTEND_UX.md §1.6 / §2.4. The reasoning engine writes
+          turn→crash references on each triage step; this section walks
+          them in order. Backend reference table is pending. */}
+      <AilaCard>
+        <h2 className="text-sm font-semibold text-foreground mb-2">
+          Triage chain
+        </h2>
+        <ol className="space-y-2 text-xs">
+          <li className="border border-border-default rounded px-3 py-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <AilaBadge severity="info" size="sm">
+                step 1
+              </AilaBadge>
+              <span className="font-mono text-foreground">
+                crash_register
+              </span>
+              <span className="text-text-muted">
+                bucket created (stack hash matched) on{" "}
+                {crash.discovered_at
+                  ? new Date(crash.discovered_at).toLocaleString()
+                  : "—"}
+              </span>
+            </div>
+          </li>
+          {crash.triage_verdict !== "untriaged" && (
+            <li className="border border-border-default rounded px-3 py-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <AilaBadge severity="info" size="sm">
+                  step 2
+                </AilaBadge>
+                <span className="font-mono text-foreground">
+                  crash_triage
+                </span>
+                <span className="text-text-muted">
+                  verdict: <strong>{crash.triage_verdict}</strong>
+                </span>
+                {crash.triage_reason && (
+                  <span className="text-text-muted">
+                    — {crash.triage_reason}
+                  </span>
+                )}
+              </div>
+            </li>
+          )}
+          {crash.promoted_to_finding_id && (
+            <li className="border border-border-default rounded px-3 py-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <AilaBadge severity="low" size="sm">
+                  step 3
+                </AilaBadge>
+                <span className="font-mono text-foreground">
+                  promote_to_finding
+                </span>
+                <span className="text-text-muted">
+                  exploitability confirmed
+                </span>
+              </div>
+            </li>
+          )}
+        </ol>
+        <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40">
+          <AilaBadge severity="info" size="sm">
+            backend pending
+          </AilaBadge>
+          <p className="text-[10px] text-text-muted mt-1">
+            Spec §2.4 calls for per-turn reasoning rows (decompile_function,
+            data_flow_trace, hypothesis_create, exploitability_assess) with
+            jump-to-turn links. Wiring requires a crash → reasoning-turn
+            join table.
+          </p>
+        </div>
+      </AilaCard>
+
       <AilaCard>
         <h2 className="text-sm font-semibold text-foreground mb-2">
           Reproducer

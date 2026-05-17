@@ -60,18 +60,24 @@ function nvdHref(cveId: string): string {
   return `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(cveId)}`;
 }
 
-function FindingRow({ finding }: { finding: VRFinding }) {
+function FindingRow({
+  finding,
+  projectId,
+}: {
+  finding: VRFinding;
+  projectId: string;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const findingId = finding.id ?? "(unsaved)";
+  const findingId = finding.id ?? null;
 
   return (
     <div className="border border-border-default rounded-md">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-surface transition-colors"
-      >
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-3 flex-1 text-left"
+        >
           <span className="font-mono text-sm text-foreground">
             {finding.vulnerable_function || "(unknown function)"}
           </span>
@@ -86,18 +92,28 @@ function FindingRow({ finding }: { finding: VRFinding }) {
           >
             {finding.disclosure_status}
           </AilaBadge>
+        </button>
+        <div className="flex items-center gap-2">
+          {findingId && (
+            <Link
+              to={`/vr/projects/${projectId}/findings/${findingId}`}
+              className="text-xs px-2 py-0.5 font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
+            >
+              Open detail →
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-xs text-text-muted font-mono px-2"
+          >
+            {expanded ? "−" : "+"}
+          </button>
         </div>
-        <span className="text-xs text-text-muted font-mono">
-          {expanded ? "−" : "+"}
-        </span>
-      </button>
+      </div>
 
       {expanded && (
         <div className="border-t border-border-default px-4 py-3 space-y-3">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-text-muted">Finding ID</p>
-            <p className="font-mono text-sm text-foreground">{findingId}</p>
-          </div>
           <div>
             <p className="text-xs uppercase tracking-wide text-text-muted">Root Cause</p>
             <p className="text-sm text-foreground whitespace-pre-wrap">
@@ -372,7 +388,7 @@ function FindingsTab({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-2">
       {findings.map((f) => (
-        <FindingRow key={f.id ?? Math.random()} finding={f} />
+        <FindingRow key={f.id ?? Math.random()} finding={f} projectId={projectId} />
       ))}
     </div>
   );
@@ -550,6 +566,14 @@ export function ProjectDetailPage() {
             <AilaBadge severity="info" size="sm">
               target: {headerTargetName}
             </AilaBadge>
+          )}
+          {project.cve_id && (
+            <Link
+              to={`/vr/projects/${projectId}/ndays/${encodeURIComponent(project.cve_id)}`}
+              className="text-xs px-2 py-0.5 font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
+            >
+              N-day view →
+            </Link>
           )}
         </div>
         <DeleteButton
