@@ -78,6 +78,7 @@ HONESTY_WHITELIST = [
     ("vr/_task_queue.py", "enqueue_vr_nday", "noqa"),
     ("vr/workflow/states/investigation_emit.py", "_run_pattern_extraction", "noqa"),
     ("vr/workflow/task.py", "run_target_analysis", "noqa"),
+    ("vr/services/target_analysis.py", "_run_git", "noqa"),
 
     # Category (b): builtin disclosure tracks must share a uniform render()
     # signature even when a specific track doesn't consume embargo_days
