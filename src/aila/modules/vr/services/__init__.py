@@ -6,6 +6,10 @@ local construction sites) per the platform DI rules.
 """
 from __future__ import annotations
 
+from aila.modules.vr.services.cve_service import (
+    CVEService,
+    CVEServiceError,
+)
 from aila.modules.vr.services.fuzz_service import (
     FuzzCampaignService,
     FuzzServiceError,
@@ -26,6 +30,8 @@ from aila.modules.vr.services.target_ingestion import TargetIngestionService
 __all__ = [
     "FuzzCampaignService",
     "FuzzServiceError",
+    "CVEService",
+    "CVEServiceError",
     "MultiTargetService",
     "MultiTargetServiceError",
     "PatternRetrievalResult",

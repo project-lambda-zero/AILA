@@ -32,6 +32,8 @@ from .contracts import (
     CampaignStatus,
     CrashSeverity,
     CrashTriageVerdict,
+    CVEFeedSource,
+    CVERecordSummary,
     DisclosureStatus,
     DisclosureSubmissionStatus,
     DisclosureTrackInfo,
@@ -53,6 +55,7 @@ from .contracts import (
     TargetKind,
     TargetStatus,
     VRBranchSummary,
+    VRCVERecordCreate,
     VRDisclosureSubmissionCreate,
     VRDisclosureSubmissionPatch,
     VRDisclosureSubmissionSummary,
@@ -2843,5 +2846,91 @@ def create_vr_router() -> APIRouter:
                 "total_active_branches": sum(len(v) for v in groups.values()),
             },
         )
+
+    # ── CVE feed (v0.4 GA-51) ──────────────────────────────────────────
+
+    @router.post(
+        "/cves",
+        response_model=DataEnvelope[dict],
+        status_code=status.HTTP_201_CREATED,
+        summary=(
+            "Ingest a CVE record. Idempotent on cve_id; scans audit memos "
+            "for similarity matches on first insert."
+        ),
+    )
+    @limiter.limit("60/minute")
+    async def ingest_cve(
+        request: Request,
+        body: VRCVERecordCreate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request, auth
+        from aila.modules.vr.services import CVEService
+        from aila.platform.services.knowledge import KnowledgeService
+
+        svc = CVEService(knowledge=KnowledgeService())
+        result = await svc.ingest_cve(body)
+        return DataEnvelope(
+            data={
+                "cve": result.cve.model_dump(mode="json"),
+                "inserted": result.inserted,
+                "invalidation_events": [
+                    e.model_dump(mode="json") for e in result.invalidation_events
+                ],
+            },
+        )
+
+    @router.get(
+        "/cves",
+        response_model=DataEnvelope[list[CVERecordSummary]],
+        summary="List ingested CVE records.",
+    )
+    @limiter.limit("60/minute")
+    async def list_cves(
+        request: Request,
+        source: CVEFeedSource | None = Query(default=None),
+        min_cvss: float | None = Query(default=None, ge=0, le=10),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[CVERecordSummary]]:
+        del request, auth
+        from aila.modules.vr.services import CVEService
+        from aila.platform.services.knowledge import KnowledgeService
+
+        svc = CVEService(knowledge=KnowledgeService())
+        items, total = await svc.list_cves(
+            source=source, min_cvss=min_cvss, offset=offset, limit=limit,
+        )
+        return DataEnvelope(
+            data=items,
+            meta=PaginatedMeta(
+                total=int(total), offset=offset, limit=limit,
+            ).model_dump(),
+        )
+
+    @router.get(
+        "/cves/{cve_id}",
+        response_model=DataEnvelope[CVERecordSummary],
+        summary="Get one CVE record by cve_id (e.g. CVE-2026-1234).",
+    )
+    @limiter.limit("120/minute")
+    async def get_cve(
+        request: Request,
+        cve_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[CVERecordSummary]:
+        del request, auth
+        from aila.modules.vr.services import CVEService
+        from aila.platform.services.knowledge import KnowledgeService
+
+        svc = CVEService(knowledge=KnowledgeService())
+        summary = await svc.get(cve_id)
+        if summary is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"CVE {cve_id} not found.",
+            )
+        return DataEnvelope(data=summary)
 
     return router
