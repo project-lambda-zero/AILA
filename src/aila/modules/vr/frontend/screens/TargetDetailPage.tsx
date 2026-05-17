@@ -5,6 +5,10 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import {
+  MitigationsRibbon,
+  type MitigationFlags,
+} from "../components/MitigationsRibbon";
 import { DeleteButton } from "../components/DeleteButton";
 import {
   useAnalyzeTarget,
@@ -109,24 +113,7 @@ interface FunctionRanking {
   top_k?: RankedFunction[];
 }
 
-interface MitigationFlags {
-  nx?: boolean | null;
-  aslr?: boolean | null;
-  canary?: boolean | null;
-  cet?: boolean | null;
-  cfi?: boolean | null;
-  relro_partial?: boolean | null;
-  relro_full?: boolean | null;
-  pie?: boolean | null;
-  sanitizers?: string[];
-  notes?: string;
-}
-
-function fmtFlag(v?: boolean | null): { label: string; severity: "info" | "low" | "high" } {
-  if (v === true) return { label: "ON", severity: "low" };
-  if (v === false) return { label: "OFF", severity: "high" };
-  return { label: "?", severity: "info" };
-}
+// MitigationFlags interface lives in MitigationsRibbon (shared component).
 
 export function TargetDetailPage() {
   const { targetId } = useParams<{ targetId: string }>();
@@ -362,35 +349,13 @@ export function TargetDetailPage() {
         )}
       </AilaCard>
 
-      {/* Mitigations */}
+      {/* Mitigations — uses shared MitigationsRibbon (§1.4 promise) */}
       {target.analysis_state === "ready" && (
         <AilaCard>
           <h2 className="text-sm font-semibold text-foreground mb-2">
             Mitigations
           </h2>
-          <div className="flex flex-wrap gap-2 text-xs">
-            {(["nx", "aslr", "canary", "cet", "cfi", "pie"] as const).map((k) => {
-              const f = fmtFlag(mitigations[k]);
-              return (
-                <AilaBadge key={k} severity={f.severity} size="sm">
-                  {k.toUpperCase()}:{f.label}
-                </AilaBadge>
-              );
-            })}
-            {(mitigations.relro_full || mitigations.relro_partial) && (
-              <AilaBadge severity="low" size="sm">
-                RELRO:{mitigations.relro_full ? "full" : "partial"}
-              </AilaBadge>
-            )}
-            {(mitigations.sanitizers ?? []).map((s) => (
-              <AilaBadge key={s} severity="medium" size="sm">
-                {s}
-              </AilaBadge>
-            ))}
-          </div>
-          {mitigations.notes && (
-            <p className="text-xs text-text-muted mt-2">{mitigations.notes}</p>
-          )}
+          <MitigationsRibbon mitigations={mitigations} />
         </AilaCard>
       )}
 

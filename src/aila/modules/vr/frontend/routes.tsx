@@ -1,3 +1,5 @@
+import { lazy } from "react";
+
 import { InvestigationDetailPage } from "./screens/InvestigationDetailPage";
 import { InvestigationsListPage } from "./screens/InvestigationsListPage";
 import { ProjectDetailPage } from "./screens/ProjectDetailPage";
@@ -6,7 +8,6 @@ import { TargetDetailPage } from "./screens/TargetDetailPage";
 import { TargetsPage } from "./screens/TargetsPage";
 import { WorkspacesPage } from "./screens/WorkspacesPage";
 import { DisclosureDetailPage } from "./screens/DisclosureDetailPage";
-import { BranchTreePage } from "./screens/BranchTreePage";
 import { DisclosuresPage } from "./screens/DisclosuresPage";
 import { FuzzCampaignDetailPage } from "./screens/FuzzCampaignDetailPage";
 import { FuzzCampaignsPage } from "./screens/FuzzCampaignsPage";
@@ -16,10 +17,23 @@ import { PatternsPage } from "./screens/PatternsPage";
 import { McpServersPage } from "./screens/McpServersPage";
 import { McpCallLogPage } from "./screens/McpCallLogPage";
 import { FindingDetailPage } from "./screens/FindingDetailPage";
-import { EvidenceGraphPage } from "./screens/EvidenceGraphPage";
 import { NdayPage } from "./screens/NdayPage";
-import { ExploitEditorPage } from "./screens/ExploitEditorPage";
-import { NewProjectWizard } from "./screens/NewProjectWizard";
+
+// Heavy pages — ReactFlow / Monaco-style editor / wizard / branch tree
+// bundles add weight that users who never visit them shouldn't pay for
+// on the projects list. Lazy-loaded per 08_FRONTEND_UX.md §4.4.
+const EvidenceGraphPage = lazy(() =>
+  import("./screens/EvidenceGraphPage").then((m) => ({ default: m.EvidenceGraphPage })),
+);
+const ExploitEditorPage = lazy(() =>
+  import("./screens/ExploitEditorPage").then((m) => ({ default: m.ExploitEditorPage })),
+);
+const NewProjectWizard = lazy(() =>
+  import("./screens/NewProjectWizard").then((m) => ({ default: m.NewProjectWizard })),
+);
+const BranchTreePage = lazy(() =>
+  import("./screens/BranchTreePage").then((m) => ({ default: m.BranchTreePage })),
+);
 
 export const routes = [
   {

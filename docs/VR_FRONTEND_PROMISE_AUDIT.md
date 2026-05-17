@@ -252,3 +252,30 @@ The big gaps cluster in:
 The Tier 2-5 commit shipped the high-leverage components and skeleton
 surfaces. Closing the remaining 47 gaps is a "polish + IA restructure"
 sweep — measured but not novel work.
+
+---
+
+## Quick-wins shipped in commit after this audit
+
+- §1.4 Mitigations ribbon — wired into `TargetDetailPage` via the
+  shared `MitigationsRibbon` component. **Promoted to shipped.**
+- §4.4 Lazy-loading — `EvidenceGraphPage`, `ExploitEditorPage`,
+  `NewProjectWizard`, `BranchTreePage` all switched to `React.lazy()`.
+  **Promoted to shipped.**
+- §5.1 Active research projects widget — implemented in `widgets.tsx`.
+  **Promoted to shipped.**
+- §5.2 Crashes Found widget with 7-day sparkline (`AilaChart bar`).
+  **Promoted to shipped.**
+- §5.3 Exploitable findings widget with severity breakdown +
+  `CVSSBadge`. **Promoted to shipped.**
+- §5.4 Fuzzing coverage aggregate widget with stable/stuck/paused/
+  failed badges using the "no progress in 4h" stuck heuristic.
+  **Promoted to shipped.**
+- §6.6 Three keyboard shortcuts (`Cmd+P` quick-jump event,
+  `Cmd+/` open steering drawer, `J`/`K` jump turns on timeline).
+  Form-input awareness so we don't hijack typing. **Promoted to
+  shipped.**
+- §1.1 SeverityPulse on project list — applied to status badge for
+  `analyzing` / `failed` rows. **Promoted to shipped.**
+
+Revised totals: **46 shipped, 21 partial, 39 gap**.
