@@ -25,6 +25,39 @@ from aila.platform.tools._common import Tool
 __all__ = ["IDABridgeTool"]
 
 
+def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
+    """Project an MCP tool catalog entry into the form the prompt
+    builder + agent need. See ``audit_mcp_bridge._compact_spec`` for
+    rationale — duplicated rather than imported to keep tools/
+    package free of cross-bridge coupling.
+    """
+    name = str(raw.get("name") or "")
+    description = str(raw.get("description") or "").strip()
+    schema = raw.get("parameters") or raw.get("inputSchema") or {}
+    properties = schema.get("properties") or {}
+    required = list(schema.get("required") or [])
+    params: list[dict[str, Any]] = []
+    for pname in sorted(properties.keys()):
+        pspec = properties[pname] or {}
+        entry: dict[str, Any] = {
+            "name": pname,
+            "type": pspec.get("type") or "any",
+            "required": pname in required,
+        }
+        if "default" in pspec:
+            entry["default"] = pspec["default"]
+        pdesc = pspec.get("description")
+        if pdesc:
+            entry["description"] = str(pdesc)[:240]
+        params.append(entry)
+    return {
+        "name": name,
+        "description": description[:400],
+        "params": params,
+        "required": required,
+    }
+
+
 class IDABridgeTool(Tool):
     """Multi-action tool proxying 81 MCP tools over HTTP.
 
@@ -187,24 +220,39 @@ class IDABridgeTool(Tool):
                     ctx["error_excerpt"] = err[:400]
             return payload
 
+    # Schema-driven tool catalog cache — race-safe because each fetch
+    # writes the same value (idempotent).
+    _SPEC_CACHE: list[dict[str, Any]] | None = None
+
     async def _list_tools(self) -> dict:
-        """Return available MCP tool names when called with no action."""
+        """Return available MCP tool names + schemas."""
+        specs = await self.list_tool_specs()
+        return {
+            "status": "ready",
+            "tools": [s["name"] for s in specs],
+            "count": len(specs),
+            "specs": specs,
+        }
+
+    async def list_tool_specs(self) -> list[dict[str, Any]]:
+        """Fetch the IDA MCP catalog with parsed schemas. Cached per process."""
+        if self.__class__._SPEC_CACHE is not None:
+            return self.__class__._SPEC_CACHE
         base = await self._resolve_base_url()
         url = f"{base}/tools"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(url)
-            tools = resp.json()
-            return {
-                "status": "ready",
-                "tools": [t["name"] for t in tools],
-                "count": len(tools),
-            }
-        except (httpx.ConnectError, httpx.TimeoutException, ValueError):
-            return {
-                "status": "error",
-                "error": f"Cannot list tools from {url}",
-            }
+            raw = resp.json()
+        except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
+            logging.getLogger(__name__).warning(
+                "ida_headless catalog fetch failed (%s) — agent will see "
+                "name-only listing without schemas", exc,
+            )
+            self.__class__._SPEC_CACHE = []
+            return []
+        self.__class__._SPEC_CACHE = [_compact_spec(t) for t in raw]
+        return self.__class__._SPEC_CACHE
 
     async def _upload_binary(self, file_path: str | None = None, **_extra: Any) -> dict:
         """Upload a local binary to the MCP server for analysis.

@@ -13,10 +13,9 @@ Verifies that the 5-step durable cost recording block runs correctly:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -472,6 +471,7 @@ class TestTeamIdThreading:
     async def test_chat_structured_accepts_team_id(self) -> None:
         """chat_structured() accepts team_id keyword argument."""
         import json
+
         from pydantic import BaseModel as PydanticBaseModel
 
         class ScoreModel(PydanticBaseModel):

@@ -10,12 +10,12 @@ Run: pytest tests/platform/workflows/test_log_emit.py -v
 from __future__ import annotations
 
 import inspect
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def _utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def test_emit_signature_is_kwargs_only() -> None:

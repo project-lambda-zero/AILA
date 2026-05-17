@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from aila.modules.vulnerability.module import create_module
-from aila.platform.modules.protocol import ModuleCapabilityProfile, ModuleProtocol, ModuleRouteSpec
+from aila.platform.modules.protocol import ModuleProtocol, ModuleRouteSpec
 from aila.platform.modules.standard import build_module_factory, validate_module_layout
 from aila.tools.honesty_audit import HonestyAuditor
 

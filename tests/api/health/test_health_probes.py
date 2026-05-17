@@ -7,7 +7,6 @@ Covers:
 """
 from __future__ import annotations
 
-import asyncio
 import socket
 import threading
 
@@ -55,7 +54,7 @@ class _StubAsyncClient:
     def __init__(self, response: _StubResponse | Exception) -> None:
         self._response = response
 
-    async def __aenter__(self) -> "_StubAsyncClient":
+    async def __aenter__(self) -> _StubAsyncClient:
         return self
 
     async def __aexit__(self, *args) -> None:

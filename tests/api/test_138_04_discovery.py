@@ -11,6 +11,8 @@ All DB tests run against PostgreSQL via AILA_TEST_DATABASE_URL.
 """
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 import pytest_asyncio
 
@@ -211,7 +213,7 @@ class TestParseSystemctlServices:
 
 class TestDetectEdges:
     def test_detect_edges_between_registered_systems(self):
-        from aila.platform.tasks.discovery import parse_ss_connections, detect_edges
+        from aila.platform.tasks.discovery import detect_edges, parse_ss_connections
 
         connections = parse_ss_connections(SAMPLE_SS_CONNECTIONS)
         # system_id 1 is at 192.168.1.100, system_id 2 is at 192.168.1.200
@@ -233,7 +235,7 @@ class TestDetectEdges:
             assert edge["protocol"] == "tcp"
 
     def test_detect_edges_ignores_unknown_ips(self):
-        from aila.platform.tasks.discovery import parse_ss_connections, detect_edges
+        from aila.platform.tasks.discovery import detect_edges, parse_ss_connections
 
         connections = parse_ss_connections(SAMPLE_SS_CONNECTIONS)
         # Only register 192.168.1.100 as itself — 192.168.1.200 and 10.0.0.50 unknown
@@ -365,14 +367,14 @@ async def two_systems(test_db):
 @pytest.mark.asyncio
 async def test_persist_discovery_results(two_systems):
     """Verify ports, services, and connections are written to DB correctly."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from aila.platform.tasks.discovery import _persist_discovery_results
     from aila.storage.database import async_session_scope
     from aila.storage.db_models import SystemConnectionRecord, SystemPortRecord, SystemServiceRecord
 
     system1, system2 = two_systems
-    collected_at = datetime.now(tz=timezone.utc)
+    collected_at = datetime.now(tz=UTC)
 
     ports = [
         {"port": 22, "protocol": "tcp", "local_address": "0.0.0.0", "process_name": "sshd", "pid": 1234},
@@ -425,14 +427,14 @@ async def test_persist_discovery_results(two_systems):
 @pytest.mark.asyncio
 async def test_overwrite_previous_results(two_systems):
     """Verify second scan replaces first scan data (D-09 overwrite per scan)."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from aila.platform.tasks.discovery import _persist_discovery_results
     from aila.storage.database import async_session_scope
     from aila.storage.db_models import SystemPortRecord
 
     system1, _ = two_systems
-    collected_at = datetime.now(tz=timezone.utc)
+    collected_at = datetime.now(tz=UTC)
 
     # First scan: ports 22 and 80
     ports_first = [
@@ -461,14 +463,14 @@ async def test_overwrite_previous_results(two_systems):
 @pytest.mark.asyncio
 async def test_mark_system_stale(two_systems):
     """Verify stale marking sets is_stale=True on all records for the system (D-10)."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from aila.platform.tasks.discovery import _mark_system_stale, _persist_discovery_results
     from aila.storage.database import async_session_scope
     from aila.storage.db_models import SystemPortRecord, SystemServiceRecord
 
     system1, system2 = two_systems
-    collected_at = datetime.now(tz=timezone.utc)
+    collected_at = datetime.now(tz=UTC)
 
     ports = [{"port": 22, "protocol": "tcp", "local_address": "0.0.0.0", "process_name": "sshd", "pid": 1}]
     services = [{"service_name": "sshd", "state": "active", "sub_state": "running"}]
@@ -508,12 +510,12 @@ async def test_mark_system_stale(two_systems):
 @pytest_asyncio.fixture(scope="function")
 async def seeded_network(two_systems):
     """Seed network data for two systems with one inter-system connection."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from aila.platform.tasks.discovery import _persist_discovery_results
 
     system1, system2 = two_systems
-    collected_at = datetime.now(tz=timezone.utc)
+    collected_at = datetime.now(tz=UTC)
 
     ports1 = [
         {"port": 22, "protocol": "tcp", "local_address": "0.0.0.0", "process_name": "sshd", "pid": 1234},

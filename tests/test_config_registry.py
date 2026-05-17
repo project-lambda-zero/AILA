@@ -10,7 +10,6 @@ no sqlite-vec extension required.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
 
 import pytest
 from pydantic import BaseModel
@@ -18,7 +17,6 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from aila.storage.db_models import ConfigEntryRecord
 from aila.storage.registry import ConfigRegistry, SchemaRegistry, _cast_value, _field_type_name
-
 
 # ---------------------------------------------------------------------------
 # Test schema models

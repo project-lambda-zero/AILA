@@ -12,11 +12,9 @@ Verifies:
 from __future__ import annotations
 
 import inspect
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
-import pytest
 import sqlalchemy
-
 
 # ---------------------------------------------------------------------------
 # _plan_enrichment batch call tests

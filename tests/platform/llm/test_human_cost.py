@@ -15,10 +15,9 @@ to avoid real LLM calls. Mocks ConfigRegistry.get for hourly rate lookup.
 """
 from __future__ import annotations
 
-import json
 import os
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -26,10 +25,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 
 from aila.platform.llm.cost_record import LLMCostRecord
-from aila.platform.llm.human_cost import HumanCostEstimate, estimate_human_cost, _DEFAULT_HOURLY_RATE
+from aila.platform.llm.human_cost import _DEFAULT_HOURLY_RATE, HumanCostEstimate, estimate_human_cost
 from aila.storage.database import async_session_scope
 
-_UTC = timezone.utc
+_UTC = UTC
 
 TEST_DB_URL: str = os.environ.get(
     "AILA_TEST_DATABASE_URL",
@@ -49,8 +48,8 @@ def _utc_now() -> datetime:
 @pytest_asyncio.fixture(scope="session")
 async def _hc_session_engine():
     """Session-scoped async engine for human_cost tests."""
-    import aila.storage.db_models  # noqa: F401
     import aila.storage.database as _db_module
+    import aila.storage.db_models  # noqa: F401
 
     engine = create_async_engine(TEST_DB_URL, echo=False, pool_pre_ping=True)
     async with engine.begin() as conn:

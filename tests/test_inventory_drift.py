@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.dialects.sqlite import insert as sa_insert
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -57,8 +56,8 @@ def _insert_inventory(
         session.commit()
 
 
-_TS_OLDER = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
-_TS_NEWER = datetime(2026, 1, 2, 10, 0, 0, tzinfo=timezone.utc)
+_TS_OLDER = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
+_TS_NEWER = datetime(2026, 1, 2, 10, 0, 0, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------

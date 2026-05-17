@@ -11,7 +11,7 @@ Verifies:
 from __future__ import annotations
 
 import importlib
-from typing import ClassVar, get_type_hints
+from typing import get_type_hints
 
 import pytest
 

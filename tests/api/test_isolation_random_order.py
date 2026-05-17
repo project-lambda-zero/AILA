@@ -9,8 +9,6 @@ Run: pytest tests/api/ -p randomly --randomly-seed=12345 -x -q
 """
 from __future__ import annotations
 
-import pytest
-
 # Module-level mutable state — canary tests check that test_db fixture
 # isolation prevents cross-test pollution of this dict.
 _canary_state: dict[str, bool] = {}

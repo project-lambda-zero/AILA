@@ -13,8 +13,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -23,10 +22,8 @@ import pytest
 from aila.modules.sbd_nfr.contracts.resolution import (
     AssistRequest,
     AssistResponse,
-    ComponentClassificationResponse,
     ResolutionResultResponse,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -34,7 +31,7 @@ from aila.modules.sbd_nfr.contracts.resolution import (
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _make_auth_context(
@@ -139,8 +136,9 @@ class TestCompleteSession:
     @pytest.mark.asyncio
     async def test_complete_requires_ownership(self, async_db_session):
         """RESOLVE-04: Non-owner non-admin gets 403 on complete."""
-        from aila.modules.sbd_nfr.api_router import complete_session
         from fastapi import HTTPException
+
+        from aila.modules.sbd_nfr.api_router import complete_session
 
         session = await _seed_session(
             async_db_session,
@@ -181,7 +179,6 @@ class TestTriggerResolution:
         Verifies the endpoint returns the correct response dict.
         """
         from aila.modules.sbd_nfr.api_router import trigger_resolution
-        from aila.modules.sbd_nfr.contracts.responses import ResolutionTriggerResponse
 
         session = await _seed_session(
             async_db_session,
@@ -216,8 +213,9 @@ class TestTriggerResolution:
     @pytest.mark.asyncio
     async def test_manual_retry_wrong_status(self, async_db_session):
         """D-02: trigger_resolution returns 409 for non-resolution_failed sessions."""
-        from aila.modules.sbd_nfr.api_router import trigger_resolution
         from fastapi import HTTPException
+
+        from aila.modules.sbd_nfr.api_router import trigger_resolution
 
         session = await _seed_session(
             async_db_session,
@@ -244,8 +242,9 @@ class TestTriggerResolution:
         Pre-fills the rate limit store with 3 recent timestamps.
         The 4th call must be rejected with 429.
         """
-        from aila.modules.sbd_nfr.api_router import trigger_resolution, _resolve_rate_limits
         from fastapi import HTTPException
+
+        from aila.modules.sbd_nfr.api_router import _resolve_rate_limits, trigger_resolution
 
         session = await _seed_session(
             async_db_session,
@@ -272,8 +271,9 @@ class TestTriggerResolution:
     @pytest.mark.asyncio
     async def test_resolution_rbac(self, async_db_session):
         """T-135-10: Non-owner non-admin cannot trigger resolution (403)."""
-        from aila.modules.sbd_nfr.api_router import trigger_resolution
         from fastapi import HTTPException
+
+        from aila.modules.sbd_nfr.api_router import trigger_resolution
 
         session = await _seed_session(
             async_db_session,
@@ -459,8 +459,10 @@ class TestSseEvents:
     async def test_sse_events_requires_redis(self, async_db_session):
         """Session SSE returns 503 when Redis transport is unavailable."""
         from contextlib import asynccontextmanager
-        from aila.modules.sbd_nfr.api_router import stream_session_events
+
         from fastapi import HTTPException
+
+        from aila.modules.sbd_nfr.api_router import stream_session_events
 
         session_id = f"sess-{uuid4().hex[:8]}"
         await _seed_session(
@@ -535,8 +537,9 @@ class TestAssistEndpoint:
 
         Pre-fills the rate limit store with 20 timestamps (at the limit).
         """
-        from aila.modules.sbd_nfr.api_router import assist_question, _assist_rate_limits
         from fastapi import HTTPException
+
+        from aila.modules.sbd_nfr.api_router import _assist_rate_limits, assist_question
 
         auth_ctx = _make_auth_context(user_id="user-001", role="reader")
         request = AssistRequest(message="Help me", history=[])

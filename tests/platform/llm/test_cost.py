@@ -199,7 +199,8 @@ class TestCostIntegration:
 
         Returns (client, cost_tracker) pair.
         """
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import MagicMock
+
         from aila.platform.llm.client import AilaLLMClient
 
         reg_data: dict[str, Any] = {}
@@ -396,8 +397,8 @@ class TestCostIntegration:
     @pytest.mark.asyncio
     async def test_chat_json_accepts_run_id(self) -> None:
         """chat_json() also accepts run_id kwarg."""
-        from unittest.mock import AsyncMock, MagicMock, patch
         import json
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         client, tracker = self._make_client_with_tracker()
 
@@ -601,7 +602,8 @@ class TestPersistCostRecord:
     @pytest.mark.asyncio
     async def test_persist_cost_record_swallows_db_exception(self) -> None:
         """persist_cost_record() swallows DB exceptions and never raises."""
-        from unittest.mock import AsyncMock, patch, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from aila.platform.llm.cost import persist_cost_record
 
         # Patch async_session_scope to raise on commit
@@ -629,7 +631,8 @@ class TestPersistCostRecord:
     @pytest.mark.asyncio
     async def test_persist_cost_record_none_run_id_defaults(self) -> None:
         """persist_cost_record() with run_id=None uses '_no_run' sentinel."""
-        from unittest.mock import AsyncMock, patch, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from aila.platform.llm.cost import persist_cost_record
 
         added_records: list = []
@@ -658,7 +661,8 @@ class TestPersistCostRecord:
     @pytest.mark.asyncio
     async def test_persist_cost_record_sets_all_fields(self) -> None:
         """persist_cost_record() creates record with all fields set correctly."""
-        from unittest.mock import AsyncMock, patch, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from aila.platform.llm.cost import persist_cost_record
 
         added_records: list = []
@@ -703,7 +707,8 @@ class TestEmitMissingPricingNotification:
     @pytest.mark.asyncio
     async def test_emit_missing_pricing_notification_creates_record(self) -> None:
         """Creates a NotificationRecord with user_id='__system__' on first call."""
-        from unittest.mock import AsyncMock, patch, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from aila.platform.llm.cost import emit_missing_pricing_notification
 
         added_records: list = []
@@ -732,9 +737,10 @@ class TestEmitMissingPricingNotification:
     @pytest.mark.asyncio
     async def test_emit_missing_pricing_notification_idempotent(self) -> None:
         """Does NOT create a new record if one already exists (dedup)."""
-        from unittest.mock import AsyncMock, patch, MagicMock
-        from aila.storage.db_models import NotificationRecord
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from aila.platform.llm.cost import emit_missing_pricing_notification
+        from aila.storage.db_models import NotificationRecord
 
         added_records: list = []
 
@@ -762,6 +768,7 @@ class TestEmitMissingPricingNotification:
     async def test_emit_missing_pricing_notification_swallows_exception(self) -> None:
         """Swallows all exceptions and never raises."""
         from unittest.mock import AsyncMock, patch
+
         from aila.platform.llm.cost import emit_missing_pricing_notification
 
         mock_cm = AsyncMock()
@@ -776,7 +783,8 @@ class TestEmitMissingPricingNotification:
     @pytest.mark.asyncio
     async def test_emit_missing_pricing_notification_uses_system_user_id(self) -> None:
         """user_id is always '__system__' (required non-nullable field)."""
-        from unittest.mock import AsyncMock, patch, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from aila.platform.llm.cost import emit_missing_pricing_notification
 
         added_records: list = []
@@ -799,7 +807,8 @@ class TestEmitMissingPricingNotification:
     @pytest.mark.asyncio
     async def test_emit_missing_pricing_notification_source_entity_id_format(self) -> None:
         """source_entity_id uses 'pricing_missing:{model_id}' format for dedup."""
-        from unittest.mock import AsyncMock, patch, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
+
         from aila.platform.llm.cost import emit_missing_pricing_notification
 
         added_records: list = []

@@ -8,17 +8,16 @@ Created by Phase 65 Plan 01 for exhaustive audit router coverage.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
-from sqlmodel import SQLModel
 
 from aila.storage.db_models import AuditEventRecord
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ─── Local fixture: 5 audit events with diverse field values ──────────────────

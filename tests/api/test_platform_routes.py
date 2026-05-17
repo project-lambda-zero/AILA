@@ -9,9 +9,7 @@ All tests use real DB seeds (no mocks for DB queries).
 from __future__ import annotations
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient
-
 
 # ─── Audit Tests ────────────────────────────────────────────────────────────
 

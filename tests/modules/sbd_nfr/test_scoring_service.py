@@ -14,14 +14,12 @@ from __future__ import annotations
 import pytest
 
 from aila.modules.sbd_nfr.services.scoring_service import (
-    PostureResult,
     QuestionScoreInfo,
     SectionScore,
     compute_posture_index,
     compute_section_scores,
     derive_risk_tier,
 )
-
 
 # ---------------------------------------------------------------------------
 # compute_section_scores tests

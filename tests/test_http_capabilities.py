@@ -3,11 +3,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from aila.modules.vulnerability.config_schema import VulnerabilityConfigSchema
-from aila.platform.config import PlatformConfigSchema
 from aila.modules.vulnerability.providers._http import build_provider_http_client
+from aila.platform.config import PlatformConfigSchema
 
 
 class TestVulnerabilityConfigSchemaVerifyTls:

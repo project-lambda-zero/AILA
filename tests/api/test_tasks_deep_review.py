@@ -20,7 +20,6 @@ from httpx import AsyncClient
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.storage.database import session_scope
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

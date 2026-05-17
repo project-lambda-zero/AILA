@@ -5,13 +5,10 @@ Uses lightweight fakes for ConfigRegistry and SecretStore -- no DB needed.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from aila.platform.llm.config import LLMConfigProvider, LLMRouting
 from aila.platform.llm.errors import LLMError
-
 
 # ---------------------------------------------------------------------------
 # Fakes

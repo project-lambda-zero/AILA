@@ -17,7 +17,6 @@ from aila.modules.sbd_nfr.services.skip_logic import (
     compute_visible_question_ids,
 )
 
-
 # ---------------------------------------------------------------------------
 # Pure skip-logic visibility tests (no DB needed)
 # ---------------------------------------------------------------------------
@@ -251,11 +250,12 @@ _SKIP_DB = pytest.mark.skipif(
 @pytest.mark.asyncio
 async def test_bulk_upsert_creates_new_answer_records(async_db_session) -> None:
     """bulk_upsert_answers inserts new SbdNfrAnswerRecord rows when none exist."""
-    import json  # noqa: PLC0415
     from uuid import uuid4  # noqa: PLC0415
+
     from sqlmodel import select as sm_select  # noqa: PLC0415
-    from aila.modules.sbd_nfr.db_models import SbdNfrSessionRecord, SbdNfrAnswerRecord  # noqa: PLC0415
+
     from aila.modules.sbd_nfr.contracts.session import AnswerInput, BulkAnswerRequest  # noqa: PLC0415
+    from aila.modules.sbd_nfr.db_models import SbdNfrAnswerRecord, SbdNfrSessionRecord  # noqa: PLC0415
     from aila.modules.sbd_nfr.services.answer_service import bulk_upsert_answers  # noqa: PLC0415
     from aila.platform.contracts._common import utc_now  # noqa: PLC0415
 
@@ -304,12 +304,12 @@ async def test_bulk_upsert_creates_new_answer_records(async_db_session) -> None:
 @pytest.mark.asyncio
 async def test_bulk_upsert_updates_existing_answer(async_db_session) -> None:
     """bulk_upsert_answers overwrites existing answer_value (last-write-wins D-41)."""
-    import json  # noqa: PLC0415
     from uuid import uuid4  # noqa: PLC0415
-    from datetime import datetime, timezone  # noqa: PLC0415
+
     from sqlmodel import select as sm_select  # noqa: PLC0415
-    from aila.modules.sbd_nfr.db_models import SbdNfrSessionRecord, SbdNfrAnswerRecord  # noqa: PLC0415
+
     from aila.modules.sbd_nfr.contracts.session import AnswerInput, BulkAnswerRequest  # noqa: PLC0415
+    from aila.modules.sbd_nfr.db_models import SbdNfrAnswerRecord, SbdNfrSessionRecord  # noqa: PLC0415
     from aila.modules.sbd_nfr.services.answer_service import bulk_upsert_answers  # noqa: PLC0415
     from aila.platform.contracts._common import utc_now  # noqa: PLC0415
 

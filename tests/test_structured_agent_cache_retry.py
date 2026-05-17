@@ -11,7 +11,6 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-
 # ---------------------------------------------------------------------------
 # Minimal Pydantic model used across all tests
 # ---------------------------------------------------------------------------
@@ -40,7 +39,7 @@ def _make_mock_model(model_id: str = "test-model", response_json: str = '{"value
     return model
 
 
-def _make_agent(model=None, instructions: str = "") -> "StructuredAgent":
+def _make_agent(model=None, instructions: str = "") -> StructuredAgent:
     """Construct a StructuredAgent with a mock LLMClient."""
     from aila.platform.routing.agent import StructuredAgent
 
@@ -197,8 +196,9 @@ class TestAgentRetry:
 
     def test_retry_success_stored_in_cache_under_original_key(self):
         """On retry success, result is cached under the original (first-call) cache key."""
-        from aila.platform.llm import cache_key
         import json
+
+        from aila.platform.llm import cache_key
 
         model = MagicMock()
         model.model_id = "test-model"

@@ -11,18 +11,15 @@ Covers: CONF-01, CONF-02, CONF-03, CONF-04.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
-from dataclasses import replace
 
 import pytest
 
+from aila.platform.events.event import PlatformEvent
 from aila.platform.llm.client import LLMResponse
 from aila.platform.llm.config import LLMRouting
 from aila.platform.llm.errors import ConfidenceRejectedError
-from aila.platform.events.event import PlatformEvent
-
 
 # ---------------------------------------------------------------------------
 # Fakes (same patterns as test_validate.py / test_classify.py)
@@ -378,8 +375,8 @@ class TestRejectPropagation:
 
     @pytest.mark.asyncio
     async def test_reject_propagates_in_fail_open(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.pipeline import PipelineRunner
         from aila.platform.llm.gate import make_gate_step
+        from aila.platform.llm.pipeline import PipelineRunner
 
         # Config with fail-open for gate step
         config = FakeConfigProvider()
@@ -825,9 +822,9 @@ class TestGatePipelineIntegration:
     @pytest.mark.asyncio
     async def test_high_confidence_passes_through_pipeline(self, routing: LLMRouting) -> None:
         """HIGH response passes through pipeline with confidence=HIGH in enriched LLMResponse."""
-        from aila.platform.llm.pipeline import PipelineRunner
-        from aila.platform.llm.gate import make_gate_step
         from aila.platform.llm.client import _enrich_response
+        from aila.platform.llm.gate import make_gate_step
+        from aila.platform.llm.pipeline import PipelineRunner
 
         config = FakeConfigProvider()
         runner = PipelineRunner(config_provider=config)
@@ -866,8 +863,8 @@ class TestGatePipelineIntegration:
     @pytest.mark.asyncio
     async def test_reject_propagates_through_pipeline(self, routing: LLMRouting) -> None:
         """REJECT response raises ConfidenceRejectedError through pipeline (NOT swallowed by fail-open)."""
-        from aila.platform.llm.pipeline import PipelineRunner
         from aila.platform.llm.gate import make_gate_step
+        from aila.platform.llm.pipeline import PipelineRunner
 
         config = FakeConfigProvider()
         runner = PipelineRunner(config_provider=config)
@@ -898,8 +895,8 @@ class TestGatePipelineIntegration:
     @pytest.mark.asyncio
     async def test_gate_response_replacement_flows_through(self, routing: LLMRouting) -> None:
         """Consensus replaces ctx['response'] and pipeline returns the new response (D-15 fix)."""
-        from aila.platform.llm.pipeline import PipelineRunner
         from aila.platform.llm.gate import make_gate_step
+        from aila.platform.llm.pipeline import PipelineRunner
 
         # Thresholds: reject=0.1, medium=0.6, high=0.9
         config = FakeConfigProvider({
@@ -947,9 +944,9 @@ class TestGatePipelineIntegration:
     @pytest.mark.asyncio
     async def test_medium_flagged_enriches_response(self, routing: LLMRouting) -> None:
         """MEDIUM response is flagged correctly and enriched into LLMResponse."""
-        from aila.platform.llm.pipeline import PipelineRunner
-        from aila.platform.llm.gate import make_gate_step
         from aila.platform.llm.client import _enrich_response
+        from aila.platform.llm.gate import make_gate_step
+        from aila.platform.llm.pipeline import PipelineRunner
 
         config = FakeConfigProvider()
         runner = PipelineRunner(config_provider=config)
@@ -988,8 +985,8 @@ class TestGatePipelineIntegration:
     @pytest.mark.asyncio
     async def test_gate_disabled_via_config_skips(self, routing: LLMRouting) -> None:
         """Gate step disabled via config: step skipped, no confidence in ctx."""
-        from aila.platform.llm.pipeline import PipelineRunner
         from aila.platform.llm.gate import make_gate_step
+        from aila.platform.llm.pipeline import PipelineRunner
 
         config = FakeDisableableConfigProvider(
             disabled_steps={"gate_scoring": True},

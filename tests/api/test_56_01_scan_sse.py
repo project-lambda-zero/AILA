@@ -15,7 +15,6 @@ from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.storage.database import session_scope
 from aila.storage.db_models import ApiKeyRecord
 
-
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _seed_task(key: ApiKeyRecord, run_id: str = "scan-test-001") -> TaskRecord:

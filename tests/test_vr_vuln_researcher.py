@@ -18,6 +18,8 @@ from aila.modules.vr.agents.vuln_researcher import (
     _encode_case_state,
     _load_prompt,
     _outcome_payload,
+    _fetch_tool_specs,
+    _format_param,
     _render_available_tools_section,
     _render_operator_messages_section,
     _terminal_outcome_kind,
@@ -249,5 +251,180 @@ class TestRenderAvailableToolsSection:
 
     def test_includes_tool_count_per_server(self) -> None:
         out = _render_available_tools_section()
-        assert "(81 tools)" in out or "(80 tools)" in out  # ida_headless count
-        assert "(54 tools)" in out or "(53 tools)" in out  # audit_mcp count
+        # New header format carries a schema-availability suffix
+        # (``— live schema`` or ``— schema unavailable``); the count
+        # is the first thing after the open paren.
+        assert "(81 tools — " in out or "(80 tools — " in out  # ida_headless
+        assert "(54 tools — " in out or "(53 tools — " in out  # audit_mcp
+
+
+class TestFormatParam:
+    """Renders parameter signatures the agent must use verbatim."""
+
+    def test_required_param(self) -> None:
+        out = _format_param({"name": "index_id", "type": "string", "required": True})
+        assert out == "index_id: string [required]"
+
+    def test_optional_with_default(self) -> None:
+        out = _format_param({
+            "name": "limit",
+            "type": "integer",
+            "required": False,
+            "default": 100,
+        })
+        assert out == "limit: integer = 100"
+
+    def test_optional_string_default_is_quoted(self) -> None:
+        out = _format_param({
+            "name": "mode",
+            "type": "string",
+            "required": False,
+            "default": "fast",
+        })
+        # json.dumps quotes strings — so the agent sees mode: string = "fast"
+        assert out == 'mode: string = "fast"'
+
+    def test_optional_no_default(self) -> None:
+        out = _format_param({"name": "tag", "type": "string", "required": False})
+        assert out == "tag: string"
+
+    def test_truncates_huge_defaults(self) -> None:
+        big = "x" * 200
+        out = _format_param({
+            "name": "p", "type": "string", "required": False, "default": big,
+        })
+        # Cap is 60 chars (then "..."); prevents one runaway default from
+        # eating the whole prompt.
+        assert "..." in out
+        assert len(out) <= 80
+
+
+class TestRenderAvailableToolsWithSchemas:
+    """When tool_specs is provided, each tool renders with its full
+    signature so the agent never has to guess parameter names — which
+    is the bug that produced read_function(file_hint=...) etc.
+    """
+
+    def test_schema_renders_param_signatures(self) -> None:
+        specs = {
+            "audit_mcp": [
+                {
+                    "name": "read_function",
+                    "description": "Read function source",
+                    "params": [
+                        {"name": "index_id", "type": "string", "required": True},
+                        {"name": "file_path", "type": "string", "required": True},
+                        {"name": "name", "type": "string", "required": True},
+                    ],
+                    "required": ["index_id", "file_path", "name"],
+                },
+                {
+                    "name": "search_functions",
+                    "description": "Pattern search",
+                    "params": [
+                        {"name": "index_id", "type": "string", "required": True},
+                        {"name": "pattern", "type": "string", "required": True},
+                        {"name": "limit", "type": "integer", "required": False, "default": 100},
+                        {"name": "offset", "type": "integer", "required": False, "default": 0},
+                    ],
+                    "required": ["index_id", "pattern"],
+                },
+            ],
+        }
+        out = _render_available_tools_section(
+            target_kind="source_repo",
+            tool_specs=specs,
+        )
+        # Required params appear with [required]
+        assert (
+            "audit_mcp.read_function(index_id: string [required], "
+            "file_path: string [required], name: string [required])" in out
+        )
+        # Optional params show defaults
+        assert (
+            "search_functions(index_id: string [required], "
+            "pattern: string [required], limit: integer = 100, "
+            "offset: integer = 0)" in out
+        )
+        # Header announces live schema
+        assert "— live schema" in out
+
+    def test_schema_fallback_when_specs_missing(self) -> None:
+        """Empty specs => name-only listing with `schema unavailable` header."""
+        out = _render_available_tools_section(
+            target_kind="source_repo",
+            tool_specs={"audit_mcp": []},
+        )
+        assert "— schema unavailable" in out
+        # Still lists tools by name from KNOWN_TOOLS
+        assert "`audit_mcp." in out
+
+    def test_non_applicable_server_suppressed_even_with_specs(self) -> None:
+        """source_repo kind hides ida_headless even when specs are present."""
+        specs = {
+            "ida_headless": [
+                {"name": "decompile", "params": [], "required": []},
+            ],
+        }
+        out = _render_available_tools_section(
+            target_kind="source_repo",
+            tool_specs=specs,
+        )
+        assert "NOT APPLICABLE for target kind `source_repo`" in out
+        # Don't render the signature for a suppressed server
+        assert "ida_headless.decompile(" not in out
+
+
+class TestFetchToolSpecs:
+    """_fetch_tool_specs is the bridge between bridges and the prompt
+    builder. It must (a) filter by target kind, (b) call list_tool_specs
+    on each applicable bridge.
+    """
+
+    @pytest.mark.asyncio
+    async def test_source_repo_only_hits_audit_mcp(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        audit_calls: list[str] = []
+        ida_calls: list[str] = []
+
+        async def fake_audit_specs(self: object) -> list[dict]:
+            audit_calls.append("hit")
+            return [{"name": "read_function", "params": [], "required": []}]
+
+        async def fake_ida_specs(self: object) -> list[dict]:
+            ida_calls.append("hit")
+            return []
+
+        from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
+        from aila.modules.vr.tools.ida_bridge import IDABridgeTool
+        monkeypatch.setattr(AuditMcpBridgeTool, "list_tool_specs", fake_audit_specs)
+        monkeypatch.setattr(IDABridgeTool, "list_tool_specs", fake_ida_specs)
+
+        out = await _fetch_tool_specs(target_kind="source_repo")
+        assert "audit_mcp" in out
+        assert "ida_headless" not in out
+        assert audit_calls == ["hit"]
+        assert ida_calls == []
+
+    @pytest.mark.asyncio
+    async def test_binary_only_hits_ida(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        audit_calls: list[str] = []
+        ida_calls: list[str] = []
+
+        async def fake_audit_specs(self: object) -> list[dict]:
+            audit_calls.append("hit")
+            return []
+
+        async def fake_ida_specs(self: object) -> list[dict]:
+            ida_calls.append("hit")
+            return [{"name": "decompile", "params": [], "required": []}]
+
+        from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
+        from aila.modules.vr.tools.ida_bridge import IDABridgeTool
+        monkeypatch.setattr(AuditMcpBridgeTool, "list_tool_specs", fake_audit_specs)
+        monkeypatch.setattr(IDABridgeTool, "list_tool_specs", fake_ida_specs)
+
+        out = await _fetch_tool_specs(target_kind="native_binary")
+        assert "ida_headless" in out
+        assert "audit_mcp" not in out
+        assert ida_calls == ["hit"]
+        assert audit_calls == []

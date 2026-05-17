@@ -14,7 +14,7 @@ These tests require a live Redis — they skip cleanly otherwise.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlmodel import Session
@@ -81,7 +81,7 @@ async def test_orphan_lock_with_stale_db_record_is_deleted(
                 user_id="u",
                 group_id="operator",
                 status=TaskStatus.RUNNING,
-                heartbeat_at=datetime.now(tz=timezone.utc) - timedelta(seconds=86400 + 3600),
+                heartbeat_at=datetime.now(tz=UTC) - timedelta(seconds=86400 + 3600),
             )
             s.add(rec)
             s.commit()
@@ -126,7 +126,7 @@ async def test_fresh_heartbeat_lock_left_alone(
                 user_id="u",
                 group_id="operator",
                 status=TaskStatus.RUNNING,
-                started_at=datetime.now(tz=timezone.utc),
+                started_at=datetime.now(tz=UTC),
             )
             s.add(rec)
             s.commit()

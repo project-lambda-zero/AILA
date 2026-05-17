@@ -12,7 +12,6 @@ from router concerns.  HTTP-level export tests exist in test_57_export.py.
 from __future__ import annotations
 
 import csv
-import importlib.util
 import io
 import json
 

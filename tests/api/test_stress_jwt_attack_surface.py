@@ -18,7 +18,6 @@ import jwt as pyjwt
 import pytest
 from httpx import AsyncClient
 
-from aila.api.auth import issue_jwt_token
 from aila.api.constants import JWT_ALGORITHM, JWT_TYP_ACCESS
 
 # Consistent secret for test token crafting

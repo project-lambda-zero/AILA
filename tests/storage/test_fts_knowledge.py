@@ -38,10 +38,11 @@ async def test_gin_index_on_search_vector(pg_url):
 @pytest.mark.asyncio
 async def test_tsvector_fts_query(pg_session):
     """tsvector full-text search returns matching records."""
-    from aila.storage.database import init_db
-    from aila.storage.db_models import KnowledgeEntryRecord
     from sqlalchemy import func
     from sqlmodel import select
+
+    from aila.storage.database import init_db
+    from aila.storage.db_models import KnowledgeEntryRecord
 
     await init_db()
 

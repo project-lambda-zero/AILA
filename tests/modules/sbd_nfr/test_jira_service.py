@@ -206,7 +206,7 @@ def test_subtask_issue_type_is_subtask(golden_resolution):
 
 def test_jira_subtasks_only_high_confidence_triggered(golden_resolution):
     """Sub-tasks must only be created for classification='triggered' AND confidence >= threshold."""
-    from aila.modules.sbd_nfr.reporting.jira_service import _build_parent_issue, _build_subtask_issue
+    from aila.modules.sbd_nfr.reporting.jira_service import _build_subtask_issue
 
     components = golden_resolution["components"]
     all_cls = _make_mock_classifications(components)

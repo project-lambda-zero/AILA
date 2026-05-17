@@ -14,13 +14,7 @@ import pytest_asyncio
 from aila.platform.contracts._common import utc_now
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import (
-    AssetTagVocabRecord,
-    FindingWorkflowRecord,
-    ManagedSystemRecord,
     NotificationRecord,
-    SavedFilterRecord,
-    ScheduledReportRecord,
-    WidgetLayoutRecord,
 )
 
 # ---------------------------------------------------------------------------
@@ -726,8 +720,9 @@ async def test_notification_isolation(async_client, admin_token, operator_token,
     """Operator cannot access admin's notifications (T-138-18)."""
     # Create notification for admin
     async with async_session_scope() as session:
-        from aila.storage.db_models import ApiKeyRecord  # noqa: PLC0415
         from sqlmodel import select  # noqa: PLC0415
+
+        from aila.storage.db_models import ApiKeyRecord  # noqa: PLC0415
 
         admin_key = (await session.exec(select(ApiKeyRecord).where(ApiKeyRecord.role == "admin"))).first()
         if admin_key:
@@ -770,9 +765,10 @@ async def test_all_endpoints_use_envelope(admin_key_record, test_db):
     """
     import time
 
+    from httpx import ASGITransport, AsyncClient
+
     from aila.api.app import create_app
     from aila.api.auth import issue_jwt_token
-    from httpx import ASGITransport, AsyncClient
 
     token, _ = issue_jwt_token(admin_key_record)
 

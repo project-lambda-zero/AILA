@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import inspect
-import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -113,7 +112,7 @@ def test_socket_timeout_reraises_as_timeout_error():
     service = SSHService(mock_settings, secret_store=mock_secret_store)
 
     mock_channel = MagicMock()
-    mock_channel.recv_exit_status.side_effect = socket.timeout("timed out")
+    mock_channel.recv_exit_status.side_effect = TimeoutError("timed out")
     mock_stdout = MagicMock()
     mock_stdout.channel = mock_channel
 

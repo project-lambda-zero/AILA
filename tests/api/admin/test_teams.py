@@ -10,12 +10,12 @@ Covers:
 """
 from __future__ import annotations
 
+from datetime import UTC
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -25,12 +25,12 @@ from httpx import AsyncClient
 @pytest_asyncio.fixture(scope="function")
 async def seed_user(test_db) -> str:
     """Create a plain user and return the user id (for member add tests)."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from aila.storage.database import async_session_scope
     from aila.storage.db_models import UserRecord
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     user = UserRecord(
         username="team-member-1",
         email="tm1@example.com",

@@ -5,7 +5,7 @@ with admin auth, pagination, content gating, and date range filtering.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -14,7 +14,7 @@ from aila.storage.db_models import AuditSealRecord
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ def seal_records(test_db) -> list[AuditSealRecord]:
     """
     from aila.storage.database import session_scope
 
-    base_time = datetime(2026, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
+    base_time = datetime(2026, 3, 15, 12, 0, 0, tzinfo=UTC)
     records: list[AuditSealRecord] = []
 
     for i in range(8):

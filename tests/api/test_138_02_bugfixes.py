@@ -11,16 +11,14 @@ No SQLite references.
 from __future__ import annotations
 
 import time
+from datetime import UTC
 from unittest.mock import MagicMock
 
 import pytest
-import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from aila.api.routers.health import _run_single_health_check
-from aila.api.schemas.health import HealthCheckResult
 from aila.storage.db_models import ApiKeyRecord
-
 
 # ---------------------------------------------------------------------------
 # Task 1: BE-05 — async health checks correctly awaited
@@ -222,14 +220,14 @@ async def test_sbd_sessions_with_data(
     Seeds data via async_session_scope (PostgreSQL, no SQLite).
     """
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from aila.api.app import create_app
     from aila.modules.sbd_nfr.db_models import SbdNfrSessionRecord
     from aila.storage.database import async_session_scope
 
     session_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     async with async_session_scope() as db:
         db.add(
@@ -285,14 +283,14 @@ async def test_sbd_sessions_reader_sees_only_own(
     Creates the reader key record inline to avoid asyncio fixture lifecycle issues.
     """
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from aila.api.app import create_app
     from aila.api.auth import generate_api_key, hash_api_key, issue_jwt_token
     from aila.modules.sbd_nfr.db_models import SbdNfrSessionRecord
     from aila.storage.database import async_session_scope
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Create reader key record inline (avoiding async fixture chaining issues)
     raw_reader_key = generate_api_key()

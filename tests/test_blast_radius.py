@@ -1,11 +1,9 @@
 """Tests for blast_radius() query (INTEL-02 / plan 33-02, Task 1)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-import pytest
 from sqlalchemy.dialects.sqlite import insert as sa_insert
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,7 +35,7 @@ def _insert_finding(
     from aila.modules.vulnerability.db_models import LatestFindingRecord
     from aila.storage.database import session_scope
 
-    now = last_scanned_at or datetime.now(timezone.utc)
+    now = last_scanned_at or datetime.now(UTC)
     stmt = (
         sa_insert(LatestFindingRecord)
         .values(
@@ -68,7 +66,7 @@ def _insert_tag(settings, *, system_id: int, tag_key: str, tag_value: str) -> No
     from aila.modules.vulnerability.db_models import AssetTagRecord
     from aila.storage.database import session_scope
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stmt = (
         sa_insert(AssetTagRecord)
         .values(system_id=system_id, tag_key=tag_key, tag_value=tag_value, created_at=now, updated_at=now)

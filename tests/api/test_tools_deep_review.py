@@ -20,7 +20,6 @@ from unittest.mock import MagicMock
 import pytest
 from httpx import AsyncClient
 
-
 # ---------------------------------------------------------------------------
 # Mock tool matching ToolProtocol
 # ---------------------------------------------------------------------------

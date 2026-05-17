@@ -2323,10 +2323,11 @@ def create_vr_router() -> APIRouter:
         investigation_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
-        del request
+        from aila.api.deps import get_task_queue
         from aila.platform.contracts._common import utc_now
 
         from .db_models import VRInvestigationRecord
+        from .workflow.task import run_vr_investigate
 
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
@@ -2353,6 +2354,21 @@ def create_vr_router() -> APIRouter:
             uow.session.add(inv)
             await uow.session.commit()
             await uow.session.refresh(inv)
+
+        # Flipping status to RUNNING is not enough — the prior task
+        # has already returned. We must submit a fresh run so the
+        # investigation_loop actually starts ticking again. The loop
+        # picks up branch.turn_count from the DB so the engine
+        # resumes at the next turn instead of restarting from turn 1.
+        task_queue = get_task_queue("vr", request)
+        await task_queue.submit(
+            track="vr",
+            fn=run_vr_investigate,
+            kwargs={"investigation_id": investigation_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
 
         return DataEnvelope(data=_investigation_summary(inv))
 

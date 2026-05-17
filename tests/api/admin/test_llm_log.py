@@ -11,7 +11,7 @@ status, cost, and prompt_preview so each filter can assert a distinct row set.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -19,7 +19,7 @@ from httpx import AsyncClient
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @pytest_asyncio.fixture(scope="function")

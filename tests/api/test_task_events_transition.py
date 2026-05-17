@@ -14,11 +14,11 @@ Run: pytest tests/api/test_task_events_transition.py -v
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def _utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def test_transition_view_serializes_correctly() -> None:

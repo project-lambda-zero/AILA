@@ -12,7 +12,6 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-
 # -- GET /systems/{id} ---------------------------------------------------------
 
 

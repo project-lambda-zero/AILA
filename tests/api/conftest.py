@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncGenerator, Generator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -35,7 +35,7 @@ TEST_DB_URL: str = os.environ.get(
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -46,12 +46,11 @@ async def _session_async_engine() -> AsyncGenerator[object, None]:
     TSVECTOR and pgvector columns (both supported natively by PostgreSQL).
     """
     # Import all model modules to populate SQLModel.metadata
-    import aila.storage.db_models  # noqa: F401
-    import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.modules.sbd_nfr.db_models  # noqa: F401
     import aila.modules.vr.db_models  # noqa: F401
-
+    import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.storage.database as _db_module
+    import aila.storage.db_models  # noqa: F401
 
     engine = create_async_engine(TEST_DB_URL, echo=False, pool_pre_ping=True)
 

@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 import pytest
 from sqlmodel import Field, Session, SQLModel, create_engine
 
-
 # --- Minimal in-memory model for testing ---
 
 class _FakeRecord(SQLModel, table=True):
@@ -71,7 +70,7 @@ def test_db_upsert_updates_existing_record(session):
 # ---------------------------------------------------------------------------
 
 def test_db_delete_removes_matching_records(session):
-    from aila.storage.operations import db_upsert, db_delete
+    from aila.storage.operations import db_delete, db_upsert
 
     db_upsert(session, _FakeRecord, _FakeRecord.key == "gamma", {"key": "gamma", "value": "x"})
 

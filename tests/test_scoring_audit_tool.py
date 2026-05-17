@@ -1,11 +1,10 @@
 """Tests for scoring_audit() and ScoringAuditTool (OPS-11 / plan 35-02, Task 1)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.dialects.sqlite import insert as sa_insert
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,7 +34,7 @@ def _insert_finding(
     from aila.modules.vulnerability.db_models import LatestFindingRecord
     from aila.storage.database import session_scope
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stmt = (
         sa_insert(LatestFindingRecord)
         .values(

@@ -9,6 +9,8 @@ Complementary to test_schemas_p53_02.py -- focuses on deep review criteria.
 """
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 from pydantic import ValidationError
 
@@ -200,7 +202,7 @@ class TestPaginatedResponseConcreteAliases:
 
     def test_session_messages_response(self) -> None:
         """SessionMessagesResponse wraps SessionMessageResponse items."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from aila.api.schemas.sessions import (
             SessionMessageResponse,
@@ -211,7 +213,7 @@ class TestPaginatedResponseConcreteAliases:
             message_id="msg-1",
             role="user",
             content="hello",
-            created_at=datetime.now(tz=timezone.utc),
+            created_at=datetime.now(tz=UTC),
         )
         p = SessionMessagesResponse(total=1, page=1, page_size=10, pages=0, items=[item])
         assert p.pages == 1

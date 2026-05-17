@@ -25,7 +25,6 @@ import pytest
 
 from aila.modules.vulnerability.reporting.builder import VulnerabilityReportBuilder
 
-
 # ---------------------------------------------------------------------------
 # FILE-37: export_service.py -- batched streaming
 # ---------------------------------------------------------------------------

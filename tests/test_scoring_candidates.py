@@ -9,14 +9,6 @@ package_tokens_from_name, and nvd_product_match_rank.
 """
 from __future__ import annotations
 
-import pytest
-
-from aila.modules.vulnerability.contracts import (
-    CVEKnowledge,
-    NVDCpeMatch,
-    NVDEvidence,
-    VulnerabilityMatch,
-)
 from aila.modules.vulnerability.agents.scoring.candidates import (
     build_scoring_candidates,
     clip_text,
@@ -30,7 +22,12 @@ from aila.modules.vulnerability.agents.scoring.candidates import (
     unique_values,
 )
 from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate
-
+from aila.modules.vulnerability.contracts import (
+    CVEKnowledge,
+    NVDCpeMatch,
+    NVDEvidence,
+    VulnerabilityMatch,
+)
 
 # ---------------------------------------------------------------------------
 # Factories — keep test fixtures compact

@@ -12,7 +12,6 @@ Endpoints under test:
 from __future__ import annotations
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient
 
 pytestmark = pytest.mark.anyio

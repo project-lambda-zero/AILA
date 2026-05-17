@@ -5,7 +5,6 @@ import json
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -22,8 +21,8 @@ def _setup_db(settings):
 
 
 def _insert_knowledge(settings, *, namespace: str, content: str, entry_metadata=None) -> None:
-    from aila.storage.db_models import KnowledgeEntryRecord
     from aila.storage.database import session_scope
+    from aila.storage.db_models import KnowledgeEntryRecord
     with session_scope(settings) as session:
         record = KnowledgeEntryRecord(
             namespace=namespace,

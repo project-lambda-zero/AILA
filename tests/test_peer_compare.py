@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-import pytest
 from sqlalchemy.dialects.sqlite import insert as sa_insert
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -38,7 +36,7 @@ def _insert_finding(
     from aila.modules.vulnerability.db_models import LatestFindingRecord
     from aila.storage.database import session_scope
 
-    now = last_scanned_at or datetime.now(timezone.utc)
+    now = last_scanned_at or datetime.now(UTC)
     stmt = (
         sa_insert(LatestFindingRecord)
         .values(
@@ -78,7 +76,7 @@ def _insert_inventory(
     from aila.modules.vulnerability.db_models import InventoryArtifactRecord
     from aila.storage.database import session_scope
 
-    now = collected_at or datetime.now(timezone.utc)
+    now = collected_at or datetime.now(UTC)
     payload = json.dumps({"packages": packages, "kernel": "5.15", "os_release": {}})
     stmt = (
         sa_insert(InventoryArtifactRecord)

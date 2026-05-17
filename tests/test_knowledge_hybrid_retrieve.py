@@ -17,9 +17,9 @@ def populated_store(tmp_path):
     """Return (store, retrieve, settings) with two entries pre-loaded in 'SecAgent' namespace."""
     db_path = tmp_path / "test_hybrid.db"
     os.environ["AILA_DATABASE_URL"] = f"sqlite:///{db_path}"
-    from aila.storage.database import init_db
-    from aila.platform.tools.knowledge import KnowledgeStoreTool, KnowledgeRetrieveTool
     from aila.config import get_settings
+    from aila.platform.tools.knowledge import KnowledgeRetrieveTool, KnowledgeStoreTool
+    from aila.storage.database import init_db
 
     init_db()
     settings = get_settings()

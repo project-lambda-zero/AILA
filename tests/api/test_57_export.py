@@ -24,12 +24,10 @@ Task 3 tests (HTTP-level, Plan 03 — EXPORT-03):
 from __future__ import annotations
 
 import csv
-import importlib.util
 import io
 import json
 
 import pytest
-import pytest_asyncio
 
 from aila.modules.vulnerability.reporting.builder import VulnerabilityReportBuilder
 

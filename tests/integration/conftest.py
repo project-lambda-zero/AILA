@@ -56,6 +56,7 @@ def llm_client(openai_api_key: str, openai_base_url: str):
     base URL, and a mock SecretStore that returns the resolved API key.
     """
     from unittest.mock import MagicMock
+
     from aila.platform.llm import AilaLLMClient
 
     # Build a minimal ConfigRegistry with the values the client needs

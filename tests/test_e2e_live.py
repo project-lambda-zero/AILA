@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Module-level skip guard — live DB query, not an env var check.
 # ---------------------------------------------------------------------------
@@ -20,11 +19,12 @@ import pytest
 def _ubuntu_vm_registered() -> bool:
     """Returns True if a system named 'ubuntu-vm' exists in the platform DB."""
     try:
+        from sqlmodel import select
+
         from aila.config import get_settings
         from aila.platform.config import build_platform_settings
         from aila.storage.database import init_db, session_scope
         from aila.storage.db_models import ManagedSystemRecord
-        from sqlmodel import select
 
         settings = get_settings()
         platform_settings = build_platform_settings(settings)

@@ -16,22 +16,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aila.platform.events.event import PlatformEvent
 from aila.platform.llm.classify import (
+    _PATTERNS,
     ClassificationLevel,
-    ClassificationResult,
     classify_messages,
     make_classify_step,
     register_pattern,
-    _PATTERNS,
-    _redact_messages,
-    SensitivePattern,
 )
-from aila.platform.llm.client import AilaLLMClient, LLMResponse
+from aila.platform.llm.client import AilaLLMClient
 from aila.platform.llm.config import LLMConfigProvider, LLMRouting
 from aila.platform.llm.errors import ClassificationBlockedError, LLMError
 from aila.platform.llm.pipeline import PipelineRunner
-from aila.platform.events.event import PlatformEvent
-
 
 # ---------------------------------------------------------------------------
 # Fakes

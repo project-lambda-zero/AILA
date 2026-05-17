@@ -14,8 +14,9 @@ __all__: list[str] = []
 @pytest.mark.asyncio
 async def test_async_session_scope_yields_session(pg_url):
     """async_session_scope() yields a working AsyncSession."""
-    from aila.storage.database import async_session_scope
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from aila.storage.database import async_session_scope
 
     async with async_session_scope() as session:
         assert isinstance(session, AsyncSession)
@@ -24,8 +25,9 @@ async def test_async_session_scope_yields_session(pg_url):
 @pytest.mark.asyncio
 async def test_session_can_execute_query(pg_url):
     """Session can execute a simple SQL query."""
-    from aila.storage.database import async_session_scope
     from sqlalchemy import text
+
+    from aila.storage.database import async_session_scope
 
     async with async_session_scope() as session:
         result = await session.execute(text("SELECT 1"))

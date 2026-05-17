@@ -12,10 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from aila.tools.honesty_audit import Finding, HonestyAuditor, load_whitelist
-
 
 # ---------------------------------------------------------------------------
 # Helpers

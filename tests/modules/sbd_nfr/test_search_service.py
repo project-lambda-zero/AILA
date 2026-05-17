@@ -15,8 +15,7 @@ mocked by patching aila.modules.sbd_nfr.services.search_service.UnitOfWork.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,14 +28,13 @@ from aila.modules.sbd_nfr.contracts.search import (
 )
 from aila.modules.sbd_nfr.services.search_service import smart_search
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _make_session(

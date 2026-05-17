@@ -24,7 +24,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import create_engine
-from sqlmodel import SQLModel, Session, select
+from sqlmodel import Session, SQLModel, select
 
 from aila.api.auth import issue_jwt_token
 from aila.platform.contracts._common import utc_now
@@ -85,9 +85,9 @@ def _make_platform_stub_with_redis() -> MagicMock:
 
 def _make_test_engine(db_url: str):
     """Create a fresh SQLite engine with all SQLModel tables registered."""
+    import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.platform.tasks.models  # noqa: F401
     import aila.storage.db_models  # noqa: F401
-    import aila.modules.vulnerability.db_models  # noqa: F401
 
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)

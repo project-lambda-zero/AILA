@@ -1,9 +1,6 @@
 """Tests for OPT-02/OPT-03/OPT-04: category_rank caching and direct field access in build_scoring_evidence."""
 from __future__ import annotations
 
-import pytest
-
-
 POLICY_DATA = {
     "policy_id": "default",
     "category_order": ["Planned", "Moderate", "High", "Immediate"],
@@ -73,7 +70,7 @@ def test_category_rank_correct_values():
 
 def test_build_scoring_evidence_no_model_dump():
     """build_scoring_evidence must work and produce ScoringEvidence without using model_dump."""
-    from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate, ScoreBreakdown
+    from aila.modules.vulnerability.agents.scoring.models import ScoreBreakdown, ScoringCandidate
     from aila.modules.vulnerability.agents.scoring.policy import build_scoring_evidence
     from aila.modules.vulnerability.contracts import ScoringEvidence
 
@@ -124,7 +121,7 @@ def test_build_scoring_evidence_no_model_dump():
 
 def test_build_scoring_evidence_field_values_propagated():
     """All candidate and breakdown fields must flow through to ScoringEvidence correctly."""
-    from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate, ScoreBreakdown
+    from aila.modules.vulnerability.agents.scoring.models import ScoreBreakdown, ScoringCandidate
     from aila.modules.vulnerability.agents.scoring.policy import build_scoring_evidence
 
     c = ScoringCandidate(

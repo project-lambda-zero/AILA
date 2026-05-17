@@ -17,7 +17,6 @@ from httpx import AsyncClient
 
 from aila.api.routers.tools import _module_id_from_key
 
-
 # ---------------------------------------------------------------------------
 # Mock tool that satisfies ToolProtocol
 # ---------------------------------------------------------------------------

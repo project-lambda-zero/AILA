@@ -20,9 +20,8 @@ import ast
 import importlib
 import inspect
 import json
-from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import inspect as sa_inspect

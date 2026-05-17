@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
+
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 

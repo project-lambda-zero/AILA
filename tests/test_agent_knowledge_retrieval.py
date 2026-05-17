@@ -1,14 +1,13 @@
 """Tests for RiskScoringAgent prior assessment retrieval and injection."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, create_autospec
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from aila.modules.vulnerability.agents.scoring.agent import RiskScoringAgent
 from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate
 from aila.modules.vulnerability.contracts import SignalAssessment
-from aila.platform.tools.knowledge import KnowledgeRetrieveTool
 
 
 def _make_model():

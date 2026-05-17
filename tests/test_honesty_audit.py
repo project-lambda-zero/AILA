@@ -16,10 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
-from aila.tools.honesty_audit import Finding, HonestyAuditor, load_whitelist
-
+from aila.tools.honesty_audit import HonestyAuditor, load_whitelist
 
 # ---------------------------------------------------------------------------
 # Helpers

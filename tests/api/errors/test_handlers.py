@@ -11,11 +11,10 @@ the real DB, middleware chain, or platform lifespan.
 """
 from __future__ import annotations
 
+import pytest
 import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-import pytest
 
 from aila.api.errors import ErrorEnvelope, register_error_handlers
 from aila.api.errors.hints import ERROR_HINTS

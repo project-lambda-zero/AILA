@@ -20,8 +20,8 @@ def settings_with_temp_db(tmp_path):
     db_path = tmp_path / "test_knowledge.db"
     _build_settings.cache_clear()                              # clear stale cache
     os.environ["AILA_DATABASE_URL"] = f"sqlite:///{db_path}"
-    from aila.storage.database import init_db
     from aila.config import get_settings
+    from aila.storage.database import init_db
 
     init_db()
     yield get_settings()
@@ -76,9 +76,10 @@ def test_no_dedup_key_always_inserts(settings_with_temp_db):
 
 def test_dedup_key_not_in_stored_metadata(settings_with_temp_db):
     """_dedup_key must be stripped from stored entry_metadata."""
+    from sqlalchemy import text
+
     from aila.platform.tools.knowledge import KnowledgeStoreTool
     from aila.storage.database import session_scope
-    from sqlalchemy import text
 
     tool = KnowledgeStoreTool(namespace="TestNS", settings=settings_with_temp_db)
     r = tool.forward("test content", {"tag": "advisory", "_dedup_key": "k1"})

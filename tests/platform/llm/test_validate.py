@@ -8,16 +8,13 @@ audit emission, and _enrich_response propagation of evidence_validation.
 
 from __future__ import annotations
 
-import asyncio
-from dataclasses import asdict
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from aila.platform.llm.config import LLMRouting
 from aila.platform.events.event import PlatformEvent
-
+from aila.platform.llm.config import LLMRouting
 
 # ---------------------------------------------------------------------------
 # Fakes (same patterns as test_classify.py)
@@ -174,7 +171,7 @@ class TestMergeResults:
         assert report.overall_pass is True
 
     def test_merge_single_passing(self) -> None:
-        from aila.platform.llm.validate import _merge_results, ValidationResult, CitationResult
+        from aila.platform.llm.validate import CitationResult, ValidationResult, _merge_results
 
         result = ValidationResult(
             validator_name="test",
@@ -193,7 +190,7 @@ class TestMergeResults:
         assert report.overall_pass is True
 
     def test_merge_with_hallucinations(self) -> None:
-        from aila.platform.llm.validate import _merge_results, ValidationResult, CitationResult
+        from aila.platform.llm.validate import CitationResult, ValidationResult, _merge_results
 
         result = ValidationResult(
             validator_name="test",
@@ -211,7 +208,7 @@ class TestMergeResults:
         assert report.overall_pass is False
 
     def test_merge_multiple_results(self) -> None:
-        from aila.platform.llm.validate import _merge_results, ValidationResult, CitationResult
+        from aila.platform.llm.validate import CitationResult, ValidationResult, _merge_results
 
         r1 = ValidationResult(
             validator_name="v1",
@@ -237,7 +234,7 @@ class TestMergeResults:
         assert report.overall_pass is False
 
     def test_merge_deduplicates_hallucinated_ids(self) -> None:
-        from aila.platform.llm.validate import _merge_results, ValidationResult, CitationResult
+        from aila.platform.llm.validate import CitationResult, ValidationResult, _merge_results
 
         # Same CVE cited as hallucinated in two sub-assertions
         r1 = ValidationResult(
@@ -254,7 +251,7 @@ class TestMergeResults:
         assert report.hallucinated_ids == ["CVE-2099-9999"]
 
     def test_merge_counts_cve_id_type_only_for_found(self) -> None:
-        from aila.platform.llm.validate import _merge_results, ValidationResult, CitationResult
+        from aila.platform.llm.validate import CitationResult, ValidationResult, _merge_results
 
         result = ValidationResult(
             validator_name="test",
@@ -279,7 +276,7 @@ class TestEmitValidationEvent:
     """Verify audit event emission."""
 
     def test_emit_with_emitter(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.validate import _emit_validation_event, EvidenceValidationReport
+        from aila.platform.llm.validate import EvidenceValidationReport, _emit_validation_event
 
         emitter = FakeEmitter()
         ctx: dict[str, Any] = {"task_type": "scoring"}
@@ -303,7 +300,7 @@ class TestEmitValidationEvent:
         assert event.details["overall_pass"] is False
 
     def test_emit_with_none_emitter(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.validate import _emit_validation_event, EvidenceValidationReport
+        from aila.platform.llm.validate import EvidenceValidationReport, _emit_validation_event
 
         ctx: dict[str, Any] = {"task_type": "scoring"}
         report = EvidenceValidationReport()
@@ -321,12 +318,10 @@ class TestMakeValidateStep:
     @pytest.mark.asyncio
     async def test_factory_runs_validator_and_writes_ctx(self, routing: LLMRouting) -> None:
         from aila.platform.llm.validate import (
-            make_validate_step,
-            EvidenceValidator,
-            ValidationResult,
             CitationResult,
+            ValidationResult,
+            make_validate_step,
         )
-        from aila.platform.llm.client import LLMResponse
 
         class FakeValidator:
             async def validate(self, content: str, ctx: dict[str, Any]) -> ValidationResult:
@@ -367,7 +362,6 @@ class TestMakeValidateStep:
     @pytest.mark.asyncio
     async def test_factory_empty_content_writes_passing_report(self, routing: LLMRouting) -> None:
         from aila.platform.llm.validate import make_validate_step
-        from aila.platform.llm.client import LLMResponse
 
         step = make_validate_step([])
         ctx: dict[str, Any] = {
@@ -385,7 +379,6 @@ class TestMakeValidateStep:
     @pytest.mark.asyncio
     async def test_factory_emits_audit_event(self, routing: LLMRouting) -> None:
         from aila.platform.llm.validate import make_validate_step
-        from aila.platform.llm.client import LLMResponse
 
         emitter = FakeEmitter()
         step = make_validate_step([], emitter=emitter)
@@ -408,7 +401,7 @@ class TestEnrichResponse:
     """Verify _enrich_response propagates evidence_validation."""
 
     def test_propagates_evidence_validation(self) -> None:
-        from aila.platform.llm.client import _enrich_response, LLMResponse
+        from aila.platform.llm.client import _enrich_response
 
         response = LLMResponse(content="test", model="test-model")
         ev_data = {"citations_found": 2, "overall_pass": True}
@@ -419,7 +412,7 @@ class TestEnrichResponse:
         assert enriched.pipeline_metadata["evidence_validation"] == ev_data
 
     def test_no_evidence_validation_unchanged(self) -> None:
-        from aila.platform.llm.client import _enrich_response, LLMResponse
+        from aila.platform.llm.client import _enrich_response
 
         response = LLMResponse(content="test", model="test-model")
         ctx: dict[str, Any] = {}
@@ -429,7 +422,7 @@ class TestEnrichResponse:
         assert enriched.pipeline_metadata is None
 
     def test_merges_with_existing_metadata(self) -> None:
-        from aila.platform.llm.client import _enrich_response, LLMResponse
+        from aila.platform.llm.client import _enrich_response
 
         response = LLMResponse(content="test", model="test-model")
         ev_data = {"citations_found": 1, "overall_pass": True}
@@ -444,7 +437,7 @@ class TestEnrichResponse:
         assert enriched.pipeline_metadata["seal_id"] == "abc"
 
     def test_does_not_mutate_original_metadata(self) -> None:
-        from aila.platform.llm.client import _enrich_response, LLMResponse
+        from aila.platform.llm.client import _enrich_response
 
         response = LLMResponse(content="test", model="test-model")
         original_metadata = {"seal_id": "abc"}
@@ -700,9 +693,8 @@ class TestValidatePipelineStep:
 
     @pytest.mark.asyncio
     async def test_end_to_end_with_vuln_validator(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.validate import make_validate_step
-        from aila.platform.llm.client import LLMResponse
         from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
+        from aila.platform.llm.validate import make_validate_step
 
         with patch(
             "aila.modules.vulnerability.evidence_validator.session_scope",
@@ -732,8 +724,7 @@ class TestValidatePipelineStep:
 
 from unittest.mock import AsyncMock
 
-from aila.platform.llm.client import AilaLLMClient, LLMResponse
-from aila.platform.llm.config import LLMConfigProvider
+from aila.platform.llm.client import AilaLLMClient
 from aila.platform.llm.errors import LLMError
 
 
@@ -807,9 +798,8 @@ class TestValidatePipelineIntegration:
 
         # Create a FakeValidator that returns a known ValidationResult
         from aila.platform.llm.validate import (
-            EvidenceValidator,
-            ValidationResult,
             CitationResult,
+            ValidationResult,
             make_validate_step,
         )
 
@@ -865,8 +855,8 @@ class TestValidatePipelineIntegration:
         )
 
         from aila.platform.llm.validate import (
-            ValidationResult,
             CitationResult,
+            ValidationResult,
             make_validate_step,
         )
 
@@ -982,8 +972,8 @@ class TestValidatePipelineIntegration:
         (post-call). Both steps run in correct order and populate response."""
         from aila.platform.llm.classify import make_classify_step
         from aila.platform.llm.validate import (
-            ValidationResult,
             CitationResult,
+            ValidationResult,
             make_validate_step,
         )
 

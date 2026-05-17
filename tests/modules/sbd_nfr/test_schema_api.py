@@ -28,7 +28,6 @@ from aila.modules.sbd_nfr.services.schema_service import (
     get_schema_tree,
 )
 
-
 # ---------------------------------------------------------------------------
 # Seed helpers — accept db for direct insertion, do NOT call service functions
 # ---------------------------------------------------------------------------
@@ -657,10 +656,12 @@ async def test_list_questions_exposes_editor_metadata(async_db_session):
 def test_403_non_admin_mutation():
     """Non-admin caller gets 403 on POST /sbd_nfr/schema/subgroups (T-155-05)."""
     import time
+
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from aila.modules.sbd_nfr.api_router import create_sbd_nfr_router
-    from aila.platform.contracts.auth import require_auth, require_role
+    from aila.platform.contracts.auth import require_auth
 
     fake_reader = type("FakeAuth", (), {"user_id": "reader-001", "role": "reader", "auth_type": "api_key"})()
 
@@ -691,8 +692,10 @@ def test_200_admin_read_sections():
     """
     import time
     from unittest.mock import AsyncMock, patch
+
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from aila.modules.sbd_nfr.api_router import create_sbd_nfr_router
     from aila.platform.contracts.auth import require_auth
 

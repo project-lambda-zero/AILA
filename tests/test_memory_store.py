@@ -4,9 +4,8 @@ from __future__ import annotations
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from aila.storage.db_models import PermanentMemoryRecord
-from aila.storage.memory import PermanentMemoryStore, StoredMemoryEntry, append_run_event
 from aila.platform.contracts.runtime import RunState
+from aila.storage.memory import PermanentMemoryStore, StoredMemoryEntry, append_run_event
 
 
 @pytest.fixture

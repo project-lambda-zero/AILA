@@ -10,10 +10,10 @@ async_session_scope, and UnitOfWork all resolve to the test database.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncGenerator
 from pathlib import Path
-import json
 
 import pytest
 import pytest_asyncio
@@ -34,11 +34,10 @@ async def _sbd_engine() -> AsyncGenerator[object, None]:
     Imports all model modules so SQLModel.metadata is complete.
     Drops and recreates all tables to pick up any schema changes.
     """
-    import aila.storage.db_models  # noqa: F401
-    import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.modules.sbd_nfr.db_models  # noqa: F401
-
+    import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.storage.database as _db_module
+    import aila.storage.db_models  # noqa: F401
 
     engine = create_async_engine(TEST_DB_URL, echo=False, pool_pre_ping=True)
 

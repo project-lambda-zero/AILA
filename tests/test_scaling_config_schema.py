@@ -1,8 +1,6 @@
 """Tests for SCALE-01 / SCALE-02 config schema fields (Phase 21 Plan 01)."""
 from __future__ import annotations
 
-import pytest
-
 from aila.modules.vulnerability.config_schema import VulnerabilityConfigSchema
 
 

@@ -27,6 +27,42 @@ from aila.platform.tools._common import Tool
 __all__ = ["AuditMcpBridgeTool"]
 
 
+def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
+    """Project an MCP tool catalog entry into the form the prompt
+    builder + agent need.
+
+    Input shape (from /tools): ``{name, description, parameters:
+    {properties, required}}``. Output: ``{name, description,
+    params: [{name, type, required, default, description}],
+    required: [...]}``.
+    """
+    name = str(raw.get("name") or "")
+    description = str(raw.get("description") or "").strip()
+    schema = raw.get("parameters") or raw.get("inputSchema") or {}
+    properties = schema.get("properties") or {}
+    required = list(schema.get("required") or [])
+    params: list[dict[str, Any]] = []
+    for pname in sorted(properties.keys()):
+        pspec = properties[pname] or {}
+        entry: dict[str, Any] = {
+            "name": pname,
+            "type": pspec.get("type") or "any",
+            "required": pname in required,
+        }
+        if "default" in pspec:
+            entry["default"] = pspec["default"]
+        pdesc = pspec.get("description")
+        if pdesc:
+            entry["description"] = str(pdesc)[:240]
+        params.append(entry)
+    return {
+        "name": name,
+        "description": description[:400],
+        "params": params,
+        "required": required,
+    }
+
+
 class AuditMcpBridgeTool(Tool):
     """Multi-action tool proxying audit-mcp's 51 MCP tools over HTTP.
 
@@ -225,24 +261,50 @@ class AuditMcpBridgeTool(Tool):
                     ctx["error_excerpt"] = err[:400]
             return payload
 
+    # ── Schema-driven tool catalog ────────────────────────────────────
+    #
+    # The MCP server exposes the full JSON Schema for every tool via
+    # GET /tools. Fetch once per process, hand the parsed form to
+    # the prompt builder. The agent sees exact parameter names +
+    # required flag + default per tool, so it never has to guess —
+    # which is what was causing read_function(file_hint=...) etc.
+    _SPEC_CACHE: list[dict[str, Any]] | None = None
+
     async def _list_tools(self) -> dict:
-        """Return available audit-mcp tool names when called with no action."""
+        """Return available audit-mcp tool names + schemas."""
+        specs = await self.list_tool_specs()
+        return {
+            "status": "ready",
+            "tools": [s["name"] for s in specs],
+            "count": len(specs),
+            "specs": specs,
+        }
+
+    async def list_tool_specs(self) -> list[dict[str, Any]]:
+        """Fetch the MCP catalog with parsed schemas. Cached per process.
+
+        Each entry: ``{name, description, params: [{name, type,
+        required, default}], required: [...]}``. Race-safe: two
+        concurrent fetches may both hit the server on cold start;
+        each sets the same value so the cache converges.
+        """
+        if self.__class__._SPEC_CACHE is not None:
+            return self.__class__._SPEC_CACHE
         base = await self._resolve_base_url()
         url = f"{base}/tools"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(url)
-            tools = resp.json()
-            return {
-                "status": "ready",
-                "tools": [t["name"] for t in tools],
-                "count": len(tools),
-            }
-        except (httpx.ConnectError, httpx.TimeoutException, ValueError):
-            return {
-                "status": "error",
-                "error": f"Cannot list tools from {url}",
-            }
+            raw = resp.json()
+        except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
+            logging.getLogger(__name__).warning(
+                "audit_mcp catalog fetch failed (%s) — agent will see "
+                "name-only listing without schemas", exc,
+            )
+            self.__class__._SPEC_CACHE = []
+            return []
+        self.__class__._SPEC_CACHE = [_compact_spec(t) for t in raw]
+        return self.__class__._SPEC_CACHE
 
     async def health(self) -> dict:
         """Quick reachability check for machine readiness verification."""

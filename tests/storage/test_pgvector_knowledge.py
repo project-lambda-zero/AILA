@@ -25,9 +25,10 @@ async def test_knowledge_record_has_vector_column(pg_url):
 @pytest.mark.asyncio
 async def test_pgvector_insert_and_cosine_query(pg_session):
     """Insert a vector and query by cosine distance."""
+    from sqlmodel import select
+
     from aila.storage.database import init_db
     from aila.storage.db_models import KnowledgeEntryRecord
-    from sqlmodel import select
 
     # Create tables
     await init_db()

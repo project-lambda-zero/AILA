@@ -6,11 +6,8 @@ They verify the D-20 state machine and the D-23a/b/c permission model.
 
 from __future__ import annotations
 
-import pytest
-
 from aila.modules.sbd_nfr.services.auth import SessionAccessContext
 from aila.modules.sbd_nfr.services.session_service import _VALID_TRANSITIONS
-
 
 # ---------------------------------------------------------------------------
 # SessionAccessContext property tests

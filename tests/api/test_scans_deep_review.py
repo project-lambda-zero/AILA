@@ -30,7 +30,6 @@ from aila.platform.tasks.models import TaskHandle, TaskRecord, TaskStatus
 from aila.storage.database import session_scope
 from aila.storage.db_models import ApiKeyRecord
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

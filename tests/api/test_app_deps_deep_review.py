@@ -8,12 +8,10 @@ from __future__ import annotations
 import ast
 import inspect
 import os
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
-
 
 # ---------------------------------------------------------------------------
 # deps.py: get_platform
@@ -413,10 +411,11 @@ class TestLifespan:
     @pytest.mark.asyncio
     async def test_bootstrap_key_creates_admin_when_db_empty(self, test_db, monkeypatch) -> None:
         """AILA_BOOTSTRAP_KEY creates an admin key when DB has zero keys."""
+        from sqlmodel import select
+
         from aila.api.app import lifespan
         from aila.storage.database import session_scope
         from aila.storage.db_models import ApiKeyRecord
-        from sqlmodel import select
 
         monkeypatch.setenv("AILA_BOOTSTRAP_KEY", "test-bootstrap-key-12345")
         monkeypatch.setenv("AILA_ADMIN_PASSWORD", "test-admin-password")
@@ -436,12 +435,13 @@ class TestLifespan:
     @pytest.mark.asyncio
     async def test_bootstrap_key_idempotent_when_keys_exist(self, test_db, monkeypatch) -> None:
         """AILA_BOOTSTRAP_KEY does NOT create duplicate when keys already exist."""
+        from sqlmodel import select
+
         from aila.api.app import lifespan
         from aila.api.auth import hash_api_key
         from aila.platform.contracts._common import utc_now
         from aila.storage.database import session_scope
         from aila.storage.db_models import ApiKeyRecord
-        from sqlmodel import select
 
         # Seed one key first
         with session_scope() as session:
@@ -471,10 +471,11 @@ class TestLifespan:
     @pytest.mark.asyncio
     async def test_empty_bootstrap_key_ignored(self, test_db, monkeypatch) -> None:
         """Empty AILA_BOOTSTRAP_KEY is ignored (no key created)."""
+        from sqlmodel import select
+
         from aila.api.app import lifespan
         from aila.storage.database import session_scope
         from aila.storage.db_models import ApiKeyRecord
-        from sqlmodel import select
 
         monkeypatch.setenv("AILA_BOOTSTRAP_KEY", "")
         monkeypatch.setenv("AILA_ADMIN_PASSWORD", "test-admin-password")

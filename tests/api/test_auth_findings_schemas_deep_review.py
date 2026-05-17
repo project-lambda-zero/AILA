@@ -9,7 +9,7 @@ Complementary to test_common_schemas_deep_review.py -- focuses on auth and findi
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -36,7 +36,6 @@ from aila.api.schemas.findings import (
     FindingsListResponse,
 )
 
-
 # ---------------------------------------------------------------------------
 # Auth schemas -- extra="forbid"
 # ---------------------------------------------------------------------------
@@ -49,8 +48,8 @@ class TestAuthSchemaExtraForbid:
         "cls,kwargs",
         [
             (ApiKeyCreateRequest, {"role": "reader", "label": "x"}),
-            (ApiKeyCreateResponse, {"key_id": "k", "raw_key": "r", "key_prefix": "p", "role": "admin", "label": "", "created_at": datetime.now(tz=timezone.utc)}),
-            (ApiKeyListItem, {"key_id": "k", "key_prefix": "p", "role": "reader", "label": "", "created_by": "cli", "created_at": datetime.now(tz=timezone.utc)}),
+            (ApiKeyCreateResponse, {"key_id": "k", "raw_key": "r", "key_prefix": "p", "role": "admin", "label": "", "created_at": datetime.now(tz=UTC)}),
+            (ApiKeyListItem, {"key_id": "k", "key_prefix": "p", "role": "reader", "label": "", "created_by": "cli", "created_at": datetime.now(tz=UTC)}),
             (ApiKeyListResponse, {"keys": []}),
             (TokenRequest, {"api_key": "secret"}),
             (TokenResponse, {"access_token": "a", "refresh_token": "r", "expires_in": 3600}),
@@ -129,17 +128,17 @@ class TestAuthSchemaRequiredFields:
         """ApiKeyListItem.revoked_at defaults to None."""
         item = ApiKeyListItem(
             key_id="k", key_prefix="p", role="reader",
-            label="", created_by="cli", created_at=datetime.now(tz=timezone.utc),
+            label="", created_by="cli", created_at=datetime.now(tz=UTC),
         )
         assert item.revoked_at is None
 
     def test_api_key_list_item_revoked_at_set(self) -> None:
         """ApiKeyListItem accepts a revoked_at datetime."""
-        dt = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
         item = ApiKeyListItem(
             key_id="k", key_prefix="p", role="reader",
             label="", created_by="cli",
-            created_at=datetime.now(tz=timezone.utc),
+            created_at=datetime.now(tz=UTC),
             revoked_at=dt,
         )
         assert item.revoked_at == dt
@@ -180,7 +179,7 @@ class TestAuthSchemaDatetimeSerialization:
 
     def test_api_key_create_response_datetime_iso(self) -> None:
         """ApiKeyCreateResponse.created_at serializes to ISO 8601."""
-        dt = datetime(2026, 3, 15, 14, 30, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 3, 15, 14, 30, 0, tzinfo=UTC)
         r = ApiKeyCreateResponse(
             key_id="k", raw_key="r", key_prefix="p",
             role="admin", label="", created_at=dt,
@@ -190,8 +189,8 @@ class TestAuthSchemaDatetimeSerialization:
 
     def test_api_key_list_item_datetime_iso(self) -> None:
         """ApiKeyListItem.created_at and revoked_at serialize to ISO 8601."""
-        created = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-        revoked = datetime(2026, 6, 15, 23, 59, 59, tzinfo=timezone.utc)
+        created = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        revoked = datetime(2026, 6, 15, 23, 59, 59, tzinfo=UTC)
         item = ApiKeyListItem(
             key_id="k", key_prefix="p", role="reader",
             label="", created_by="cli",
@@ -206,7 +205,7 @@ class TestAuthSchemaDatetimeSerialization:
         item = ApiKeyListItem(
             key_id="k", key_prefix="p", role="reader",
             label="", created_by="cli",
-            created_at=datetime.now(tz=timezone.utc),
+            created_at=datetime.now(tz=UTC),
         )
         dumped = item.model_dump(mode="json")
         assert dumped["revoked_at"] is None
@@ -271,7 +270,7 @@ class TestFindingResponseFieldMapping:
 
     def test_full_construction(self) -> None:
         """All fields can be populated from LatestFindingRecord column values."""
-        dt = datetime(2026, 2, 20, 8, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 2, 20, 8, 0, 0, tzinfo=UTC)
         f = FindingResponse(
             id=42,
             run_id="run-abc",
@@ -297,7 +296,7 @@ class TestFindingResponseFieldMapping:
 
     def test_finding_datetime_serialization(self) -> None:
         """FindingResponse.created_at serializes to ISO 8601."""
-        dt = datetime(2026, 7, 4, 16, 45, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 7, 4, 16, 45, 0, tzinfo=UTC)
         f = FindingResponse(run_id="r", created_at=dt)
         dumped = f.model_dump(mode="json")
         assert dumped["created_at"] == "2026-07-04T16:45:00Z"
@@ -327,7 +326,7 @@ class TestFindingResponseFieldMapping:
             "criticality": "HIGH",
             "score": 0.72,
             "status": "open",
-            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
         }
         # This is how the router maps it (from api_router.py)
         f = FindingResponse(

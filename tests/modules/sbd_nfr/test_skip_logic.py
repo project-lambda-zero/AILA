@@ -12,17 +12,14 @@ All 7 required behaviors per PLAN 134-02, Task 1:
 
 from __future__ import annotations
 
-import pytest
-
 from aila.modules.sbd_nfr.services.skip_logic import (
     QuestionSkipInfo,
-    SectionSkipInfo,
     SectionProgressResult,
+    SectionSkipInfo,
+    compute_section_progress,
     compute_visible_question_ids,
     compute_visible_section_ids,
-    compute_section_progress,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers — build minimal skip-info objects

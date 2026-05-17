@@ -14,7 +14,6 @@ from __future__ import annotations
 import inspect
 from urllib.parse import urlparse
 
-
 # ---- Bug 1: DetachedInstanceError on record.id after session closes ----------
 
 

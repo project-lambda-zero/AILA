@@ -16,17 +16,16 @@ All tests run against PostgreSQL via AILA_TEST_DATABASE_URL (D-48/D-49).
 from __future__ import annotations
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlmodel import select
 
-from aila.api.auth import hash_user_password, issue_user_jwt, issue_user_refresh_token
+from aila.api.auth import hash_user_password, issue_user_jwt
 from aila.storage.database import async_session_scope, session_scope
 from aila.storage.db_models import AuditEventRecord, UserRecord
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -473,8 +472,6 @@ async def test_oidc_callback_creates_user(auth_client, test_db):
 @pytest.mark.asyncio
 async def test_startup_fails_without_admin_password(test_db):
     """When no UserRecord exists and AILA_ADMIN_PASSWORD is unset, lifespan raises RuntimeError."""
-    import contextlib
-    import time
 
     from fastapi import FastAPI
 

@@ -10,9 +10,8 @@ Covers:
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
 import os
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlmodel import Session, create_engine
@@ -22,7 +21,6 @@ from aila.modules.vulnerability.tools.cve_arrivals import (
     _parse_since,
     arrivals,
     departures,
-    arrivals_departures,
 )
 
 # Real PostgreSQL test database — same rule as the rest of the test suite.
@@ -110,7 +108,7 @@ def test_since_parse_iso_date():
     assert dt.day == 1
     assert dt.hour == 0
     assert dt.minute == 0
-    assert dt.tzinfo == timezone.utc
+    assert dt.tzinfo == UTC
 
 
 def test_since_parse_iso_datetime_with_tz():
@@ -124,9 +122,9 @@ def test_since_parse_iso_datetime_with_tz():
 
 def test_since_none_defaults_to_24h_ago():
     """since=None should return a datetime roughly 24 hours before now."""
-    before = datetime.now(tz=timezone.utc) - timedelta(hours=24, seconds=5)
+    before = datetime.now(tz=UTC) - timedelta(hours=24, seconds=5)
     result = _parse_since(None)
-    after = datetime.now(tz=timezone.utc) - timedelta(hours=24) + timedelta(seconds=5)
+    after = datetime.now(tz=UTC) - timedelta(hours=24) + timedelta(seconds=5)
     assert before <= result <= after
 
 
@@ -136,7 +134,7 @@ def test_since_none_defaults_to_24h_ago():
 
 def test_arrivals_query_function(session):
     """arrivals() returns rows with last_scanned_at >= since_ts."""
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     cutoff = now - timedelta(hours=24)
 
     recent = _make_finding(cve_id="CVE-2024-RECENT", last_scanned_at=now - timedelta(hours=2))
@@ -153,7 +151,7 @@ def test_arrivals_query_function(session):
 
 def test_departures_query_function(session):
     """departures() returns rows with last_scanned_at < since_ts."""
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     cutoff = now - timedelta(hours=24)
 
     recent = _make_finding(cve_id="CVE-2024-RECENT", last_scanned_at=now - timedelta(hours=2))
@@ -174,7 +172,7 @@ def test_departures_query_function(session):
 
 def test_arrivals_departures_split(session):
     """One recent finding is an arrival; one stale finding is a departure."""
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     cutoff = now - timedelta(hours=24)
 
     recent = _make_finding(cve_id="CVE-2024-A", last_scanned_at=now - timedelta(hours=2))
@@ -194,7 +192,7 @@ def test_arrivals_departures_split(session):
 
 def test_empty_table_returns_zero_counts(session):
     """Empty table produces arrivals_departures with zero counts and correct keys."""
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=24)
+    cutoff = datetime.now(tz=UTC) - timedelta(hours=24)
     arrival_rows = arrivals(session, cutoff)
     departure_rows = departures(session, cutoff)
 
@@ -217,7 +215,7 @@ def test_serialized_row_keys(session):
     """Each serialized arrival row must contain the required keys."""
     from aila.modules.vulnerability.tools.cve_arrivals import _serialize_row
 
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     finding = _make_finding(cve_id="CVE-2024-KEYS", last_scanned_at=now)
     session.add(finding)
     session.commit()

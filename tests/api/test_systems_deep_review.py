@@ -21,7 +21,6 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
 
@@ -364,6 +363,6 @@ def test_systems_router_has_no_module_imports() -> None:
             violations.append(f"line {node.lineno}: from {node.module} import ...")
 
     assert violations == [], (
-        f"Boundary violation: systems.py imports from aila.modules:\n"
+        "Boundary violation: systems.py imports from aila.modules:\n"
         + "\n".join(violations)
     )

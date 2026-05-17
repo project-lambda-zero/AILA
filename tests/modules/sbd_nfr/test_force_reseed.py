@@ -11,7 +11,6 @@ run itself.
 
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # Test 1: Module imports cleanly without triggering a DB connection
 # ---------------------------------------------------------------------------

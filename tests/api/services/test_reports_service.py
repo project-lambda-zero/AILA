@@ -12,7 +12,7 @@ Real PostgreSQL via the test_db fixture — no mocks. Verifies:
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -63,7 +63,7 @@ def _make_finding(
     criticality: str,
     package: str = "openssl",
 ) -> LatestFindingRecord:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return LatestFindingRecord(
         system_id=1,
         system_name=host,
@@ -82,7 +82,7 @@ def _make_finding(
 @pytest_asyncio.fixture
 async def seeded_team_reports(test_db):
     """Seed 25 reports for team-alpha, 5 for team-beta, and findings for each host."""
-    base_time = datetime.now(timezone.utc) - timedelta(days=30)
+    base_time = datetime.now(UTC) - timedelta(days=30)
 
     runs: list[WorkflowRunRecord] = []
     for i in range(25):
@@ -292,7 +292,7 @@ def test_schema_round_trip_report_summary():
         id="run-xyz",
         title="scan web01",
         target="web01",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
         status="completed",
         severity_counts={"critical": 1, "high": 2, "medium": 3, "low": 4, "info": 0},
         finding_count=10,
@@ -306,7 +306,7 @@ def test_schema_round_trip_report_detail():
         id="run-xyz",
         title="scan web01",
         target="web01",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
         status="completed",
         severity_counts={"critical": 1, "high": 0, "medium": 0, "low": 0, "info": 0},
         finding_count=1,

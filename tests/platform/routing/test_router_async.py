@@ -1,7 +1,6 @@
 """Tests for async routing in ModuleRouter (LLM-01)."""
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
 from unittest.mock import AsyncMock, MagicMock

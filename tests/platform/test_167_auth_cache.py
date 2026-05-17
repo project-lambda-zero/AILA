@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-import pytest_asyncio
 
 from aila.api.auth_cache import AuthRevocationCache, get_auth_cache, reset_auth_cache
 

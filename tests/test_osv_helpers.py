@@ -30,7 +30,6 @@ from aila.modules.vulnerability.contracts import (
     InventoryArtifact,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers to build realistic OSV-shaped test data
 # ---------------------------------------------------------------------------

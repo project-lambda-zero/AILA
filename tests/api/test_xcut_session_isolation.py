@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Session isolation (user_id scoping)
 # ---------------------------------------------------------------------------
@@ -169,10 +168,10 @@ class TestTaskIsolation:
         self, async_client, reader_token, operator_token, test_db,
     ):
         """Tasks with group_id='operator' are invisible to reader."""
+        import asyncio
+
         from aila.platform.tasks.models import TaskRecord, TaskStatus
         from aila.storage.database import session_scope
-
-        import asyncio
 
         def _seed_operator_task():
             with session_scope() as db:
@@ -214,10 +213,10 @@ class TestTaskIsolation:
         self, async_client, admin_token, test_db,
     ):
         """Admin can see tasks from any group_id."""
+        import asyncio
+
         from aila.platform.tasks.models import TaskRecord, TaskStatus
         from aila.storage.database import session_scope
-
-        import asyncio
 
         def _seed_tasks():
             with session_scope() as db:
@@ -261,10 +260,10 @@ class TestTaskIsolation:
         self, async_client, operator_token, test_db,
     ):
         """Tasks with group_id='reader' are invisible to operator."""
+        import asyncio
+
         from aila.platform.tasks.models import TaskRecord, TaskStatus
         from aila.storage.database import session_scope
-
-        import asyncio
 
         def _seed_reader_task():
             with session_scope() as db:

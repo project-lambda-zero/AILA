@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-import pytest
 from pydantic import BaseModel
 
 from aila.platform.routing.agent import (
@@ -183,6 +182,7 @@ def test_get_agent_stats_returns_dict():
 
 def test_cli_list_schemas_outputs_valid_json():
     from typer.testing import CliRunner
+
     from aila.cli import app
 
     runner = CliRunner()
@@ -199,6 +199,7 @@ def test_cli_list_schemas_outputs_valid_json():
 
 def test_cli_agent_stats_outputs_valid_json():
     from typer.testing import CliRunner
+
     from aila.cli import app
 
     runner = CliRunner()

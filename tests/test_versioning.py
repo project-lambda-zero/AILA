@@ -39,7 +39,6 @@ from aila.modules.vulnerability.versioning import (
     version_scheme_for_distribution,
 )
 
-
 # ---------------------------------------------------------------------------
 # VersionScheme enum
 # ---------------------------------------------------------------------------

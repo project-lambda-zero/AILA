@@ -16,6 +16,7 @@ import json
 
 import pytest
 
+from aila.modules.sbd_nfr.db_models import SbdNfrActivityRecord
 from aila.modules.sbd_nfr.services.activity_service import (
     EVENT_ANSWERS_SAVED,
     EVENT_LINK_ACCESSED,
@@ -30,8 +31,6 @@ from aila.modules.sbd_nfr.services.activity_service import (
     get_session_activity,
     log_activity,
 )
-from aila.modules.sbd_nfr.db_models import SbdNfrActivityRecord
-
 
 # ---------------------------------------------------------------------------
 # Event constant tests (no DB required)
