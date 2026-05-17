@@ -497,3 +497,34 @@ export function useUpdateMcpServer() {
     },
   });
 }
+
+// ─── Binary upload (multipart) ─────────────────────────────────────────
+// Streams a binary through AILA → IDA MCP /upload, persists the returned
+// handle on the target, then re-triggers analysis. Available for the
+// upload-capable kinds: native_binary, kernel_image, kernel_module,
+// hypervisor_image, apk, ipa, jar, dotnet_assembly.
+
+export function useUploadTargetArtifact(targetId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      // authorizedRequestJson normalizes FormData → leaves headers alone
+      // so the browser sets the multipart boundary itself.
+      return await authorizedRequestJson<
+        Envelope<{ task_id: string; target_id: string; uploaded_filename: string }>
+      >(`/vr/targets/${encodeURIComponent(targetId)}/upload`, {
+        method: "POST",
+        body: fd,
+      });
+    },
+    onSuccess: (resp) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "target", targetId] });
+      toast.success(`Uploaded ${resp.data.uploaded_filename} — re-analyzing`);
+    },
+    onError: (err: Error) => {
+      toast.error(`Upload failed: ${err.message}`);
+    },
+  });
+}

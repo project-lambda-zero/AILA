@@ -101,9 +101,6 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
     branches.forEach((b, rowIdx) => {
       const colour = STATUS_COLORS[b.status] ?? "#64748b";
       const border = STATUS_BORDER[b.status] ?? "#475569";
-      const personaSuffix = b.persona_voice
-        ? ` · ${b.persona_voice}`
-        : "";
       nodes.push({
         id: b.id,
         type: "default",
@@ -112,8 +109,8 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
           label: (
             <div style={{ textAlign: "left", color: "white", fontSize: 11 }}>
               <div style={{ fontWeight: 600 }}>
-                {b.id.slice(0, 8)}
-                {personaSuffix}
+                {b.persona_voice ?? "branch"}
+                {b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}
               </div>
               <div style={{ opacity: 0.8 }}>
                 {b.status} · turns:{b.turn_count}

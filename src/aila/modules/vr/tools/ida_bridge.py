@@ -98,30 +98,52 @@ class IDABridgeTool(Tool):
             return await self._upload_binary(**kwargs)
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
-        try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json=kwargs)
-        except httpx.ConnectError:
-            return {
-                "status": "error",
-                "error": (
-                    f"Cannot reach IDA Headless MCP at {base}. "
-                    "Ensure the HTTP server is running "
-                    "(ida-headless-http or python -m ida_headless_mcp.http_api)."
-                ),
-            }
-        except httpx.TimeoutException:
-            return {
-                "status": "error",
-                "error": f"Timeout ({self._timeout}s) calling {action}.",
-            }
-        try:
-            return resp.json()
-        except ValueError:
-            return {
-                "status": "error",
-                "error": f"Non-JSON response from {action}: {resp.text[:200]}",
-            }
+        from aila.modules.vr.services.mcp_call_logger import record_call  # noqa: PLC0415
+
+        async with record_call(server_id="ida_headless", base_url=base, action=action) as ctx:
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.post(url, json=kwargs)
+            except httpx.ConnectError as exc:
+                ctx["status"] = "error"
+                ctx["error_excerpt"] = str(exc)[:400]
+                return {
+                    "status": "error",
+                    "error": (
+                        f"Cannot reach IDA Headless MCP at {base}. "
+                        "Ensure the HTTP server is running "
+                        "(ida-headless-http or python -m ida_headless_mcp.http_api)."
+                    ),
+                }
+            except httpx.TimeoutException as exc:
+                ctx["status"] = "error"
+                ctx["error_excerpt"] = str(exc)[:400]
+                return {
+                    "status": "error",
+                    "error": f"Timeout ({self._timeout}s) calling {action}.",
+                }
+            ctx["http_status"] = resp.status_code
+            try:
+                payload = resp.json()
+            except ValueError as exc:
+                ctx["status"] = "error"
+                ctx["error_excerpt"] = str(exc)[:400]
+                return {
+                    "status": "error",
+                    "error": f"Non-JSON response from {action}: {resp.text[:200]}",
+                }
+            payload_status = payload.get("status") if isinstance(payload, dict) else None
+            if payload_status in ("ready", "pending", "error"):
+                ctx["status"] = payload_status
+            elif resp.status_code < 400:
+                ctx["status"] = "ready"
+            else:
+                ctx["status"] = "error"
+            if ctx["status"] == "error" and isinstance(payload, dict):
+                err = payload.get("error")
+                if isinstance(err, str):
+                    ctx["error_excerpt"] = err[:400]
+            return payload
 
     async def _list_tools(self) -> dict:
         """Return available MCP tool names when called with no action."""

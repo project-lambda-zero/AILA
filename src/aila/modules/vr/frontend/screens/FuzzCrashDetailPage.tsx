@@ -1,5 +1,4 @@
-import { useParams } from "react-router";
-
+import { Link, useParams } from "react-router";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
@@ -29,10 +28,15 @@ export function FuzzCrashDetailPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-bold font-mono text-foreground">
-          Crash {crash.id.slice(0, 8)}
+          {crash.crash_type ?? "Crash"}{" "}
+          <span className="text-text-muted text-sm">
+            (stack {crash.stack_hash.slice(0, 12)}…)
+          </span>
         </h1>
-        <p className="text-sm text-text-muted mt-1 font-mono">
-          campaign:{crash.campaign_id}
+        <p className="text-sm text-text-muted mt-1">
+          <Link to={`/vr/fuzz/campaigns/${crash.campaign_id}`} className="hover:underline">
+            in fuzz campaign →
+          </Link>
         </p>
       </div>
 
@@ -41,21 +45,23 @@ export function FuzzCrashDetailPage() {
           {crash.triage_verdict}
         </AilaBadge>
         <AilaBadge severity="medium" size="sm">
-          severity:{crash.severity}
+          severity: {crash.severity}
         </AilaBadge>
         {crash.crash_type && (
           <AilaBadge severity="info" size="sm">
-            type:{crash.crash_type}
+            type: {crash.crash_type}
           </AilaBadge>
         )}
         {crash.duplicate_of_crash_id && (
-          <AilaBadge severity="info" size="sm">
-            duplicate_of:{crash.duplicate_of_crash_id.slice(0, 8)}
-          </AilaBadge>
+          <Link to={`/vr/fuzz/crashes/${crash.duplicate_of_crash_id}`}>
+            <AilaBadge severity="info" size="sm">
+              duplicate of earlier crash →
+            </AilaBadge>
+          </Link>
         )}
         {crash.promoted_to_finding_id && (
           <AilaBadge severity="low" size="sm">
-            promoted_to:{crash.promoted_to_finding_id.slice(0, 8)}
+            promoted to finding
           </AilaBadge>
         )}
       </div>

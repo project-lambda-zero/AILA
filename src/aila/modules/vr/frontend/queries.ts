@@ -6,6 +6,7 @@ import type {
   DisclosureTrackInfo,
   Envelope,
   McpServerSummary,
+  McpCallLogEntry,
   RegisteredSystem,
   VRBranchSummary,
   VRDisclosureSubmissionSummary,
@@ -415,4 +416,63 @@ export function useMcpServers() {
       ),
     refetchInterval: 5000,
   });
+}
+
+export function useMcpCalls(opts?: { serverId?: string; status?: string }) {
+  const params = new URLSearchParams();
+  if (opts?.serverId) params.set("server_id", opts.serverId);
+  if (opts?.status) params.set("status", opts.status);
+  const qs = params.toString();
+  return useQuery({
+    queryKey: ["vr", "mcp-calls", opts?.serverId ?? "", opts?.status ?? ""],
+    queryFn: async () =>
+      await authorizedRequestJson<Envelope<McpCallLogEntry[]>>(
+        `/vr/mcp/calls${qs ? `?${qs}` : ""}`,
+      ),
+    refetchInterval: 3000,  // operator wants near-live tail
+  });
+}
+
+// ─── Tiny ID resolvers ─────────────────────────────────────────────────
+// Pages need human names instead of raw UUIDs. These hooks reuse the
+// existing list cache (no extra fetch when the list is already loaded)
+// and surface a stable fallback when the entity hasn't loaded yet.
+//
+// Two flavors:
+//  - useXName(id) for one-off lookups (page header, breadcrumb, etc.)
+//  - useXMap() returns an `id -> entity` Map for use inside .map() loops
+//    where calling a hook per row would violate the Rules of Hooks.
+
+export function useTargetMap(): Map<string, VRTargetSummary> {
+  const { data } = useTargets();
+  return new Map((data?.data ?? []).map((t) => [t.id, t]));
+}
+
+export function useTargetName(targetId: string | null | undefined): string {
+  const map = useTargetMap();
+  if (!targetId) return "—";
+  return map.get(targetId)?.display_name ?? "loading…";
+}
+
+export function useWorkspaceMap(): Map<string, VRWorkspaceSummary> {
+  const { data } = useWorkspaces();
+  return new Map((data?.data ?? []).map((w) => [w.id, w]));
+}
+
+export function useWorkspaceName(workspaceId: string | null | undefined): string {
+  const map = useWorkspaceMap();
+  if (!workspaceId) return "—";
+  return map.get(workspaceId)?.name ?? "loading…";
+}
+
+export function useBranchLabel(
+  branches: VRBranchSummary[] | undefined,
+  branchId: string | null | undefined,
+): string {
+  if (!branchId || !branches) return "—";
+  const hit = branches.find((b) => b.id === branchId);
+  if (!hit) return "branch";
+  const persona = hit.persona_voice ? `${hit.persona_voice}` : "branch";
+  // fork_at_turn disambiguates siblings spawned by the same persona
+  return hit.fork_at_turn != null ? `${persona} @t${hit.fork_at_turn}` : persona;
 }

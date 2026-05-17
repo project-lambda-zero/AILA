@@ -1,10 +1,15 @@
+import { useRef } from "react";
 import { useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
-import { useAnalyzeTarget, useRankTarget } from "../mutations";
+import {
+  useAnalyzeTarget,
+  useRankTarget,
+  useUploadTargetArtifact,
+} from "../mutations";
 import { useTarget, useWorkspaces } from "../queries";
 import type {
   AnalysisState,
@@ -62,6 +67,29 @@ function formatDate(value?: string | null): string {
   }
 }
 
+const UPLOAD_KINDS = new Set<TargetKind>([
+  "native_binary",
+  "kernel_image",
+  "kernel_module",
+  "hypervisor_image",
+  "apk",
+  "ipa",
+  "jar",
+  "dotnet_assembly",
+]);
+
+function isUploadableKind(kind: TargetKind): boolean {
+  return UPLOAD_KINDS.has(kind);
+}
+
+/** Operator-visible filename for an uploaded artifact, or null. The
+ *  backend projects this onto VRTargetSummary from mcp_handles_json. */
+function currentUploadedFilename(target: {
+  uploaded_filename?: string | null;
+}): string | null {
+  return target.uploaded_filename ?? null;
+}
+
 interface RankedFunction {
   name?: string;
   address?: string;
@@ -110,6 +138,8 @@ export function TargetDetailPage() {
 
   const analyzeMut = useAnalyzeTarget(tid);
   const rankMut = useRankTarget(tid);
+  const uploadMut = useUploadTargetArtifact(tid);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (isLoading || !target) {
     return <LoadingSkeleton size="lg" width="full" />;
@@ -214,6 +244,58 @@ export function TargetDetailPage() {
           </p>
         )}
       </AilaCard>
+
+      {/* Upload widget — only for upload-capable kinds. AILA streams the
+          file through to the IDA MCP; nothing is stored on the platform. */}
+      {isUploadableKind(target.kind) && (
+        <AilaCard>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">
+                Binary artifact
+              </h2>
+              <p className="text-xs text-text-muted mt-1">
+                Upload the {target.kind.replace(/_/g, " ")} from your
+                workstation. AILA streams it to the IDA MCP
+                (no copy stays on the platform) and re-runs analysis.
+                {currentUploadedFilename(target) ? (
+                  <>
+                    {" "}
+                    Current:{" "}
+                    <span className="font-mono text-foreground">
+                      {currentUploadedFilename(target)}
+                    </span>
+                  </>
+                ) : null}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) uploadMut.mutate(f);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadMut.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+              >
+                {uploadMut.isPending
+                  ? "Uploading…"
+                  : currentUploadedFilename(target)
+                    ? "Replace file"
+                    : "Choose file"}
+              </button>
+            </div>
+          </div>
+        </AilaCard>
+      )}
 
       {/* Capability profile */}
       <AilaCard>

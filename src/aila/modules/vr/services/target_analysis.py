@@ -78,6 +78,7 @@ class TargetAnalysisService:
             target = await self._load(target_id)
             kind = TargetKind(target.kind)
             descriptor = json.loads(target.descriptor_json or "{}")
+            current_handles = json.loads(target.mcp_handles_json or "{}")
 
             if kind in _NO_INGEST_KINDS:
                 # Nothing to ingest; just mark ready so dispatchers proceed.
@@ -98,7 +99,9 @@ class TargetAnalysisService:
                 TargetKind.JAR,
                 TargetKind.DOTNET_ASSEMBLY,
             }:
-                handles, language = await self._ingest_binary(kind, descriptor)
+                handles, language = await self._ingest_binary(
+                    kind, descriptor, current_handles,
+                )
             else:
                 raise TargetAnalysisError(
                     f"target kind {kind.value!r} has no ingestion path",
@@ -195,35 +198,57 @@ class TargetAnalysisService:
         return handles, language
 
     async def _ingest_binary(
-        self, kind: TargetKind, descriptor: dict[str, Any],
+        self,
+        kind: TargetKind,
+        descriptor: dict[str, Any],
+        current_handles: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], str | None]:
-        path_keys = ("binary_path", "image_path", "ko_path", "apk_path", "ipa_path", "jar_path", "dll_path")
-        binary_path: str | None = None
-        for key in path_keys:
-            v = descriptor.get(key)
-            if isinstance(v, str) and v:
-                binary_path = v
-                break
-        if not binary_path:
-            raise TargetAnalysisError(
-                f"{kind.value} target requires one of {list(path_keys)} in descriptor",
-            )
+        """Resolve a binary handle on the IDA MCP.
 
-        kickoff = await self._ida.forward(
-            action="upload", file_path=binary_path,
-        )
-        if kickoff.get("status") == "error":
-            raise TargetAnalysisError(
-                f"ida.upload failed: {kickoff.get('error')}",
-            )
-        binary_id = (
-            kickoff.get("binary_id")
-            or (kickoff.get("data") or {}).get("binary_id")
-        )
+        Two paths:
+
+        1. The browser uploaded the file via POST ``/vr/targets/{id}/upload``
+           — that endpoint streams bytes through to the IDA MCP and stores
+           the returned ``binary_id`` in ``mcp_handles_json``. We just poll.
+        2. Operator pasted a path in the descriptor that already exists on
+           the IDA MCP filesystem. Dispatch ``ida.upload(file_path=...)``
+           and store the new ``binary_id``.
+        """
+        current_handles = current_handles or {}
+        binary_id = current_handles.get("binary_id")
         if not binary_id:
-            raise TargetAnalysisError(
-                f"ida.upload returned no binary_id: {kickoff!r}",
+            path_keys = (
+                "binary_path", "image_path", "ko_path", "apk_path",
+                "ipa_path", "jar_path", "dll_path",
             )
+            binary_path: str | None = None
+            for key in path_keys:
+                v = descriptor.get(key)
+                if isinstance(v, str) and v:
+                    binary_path = v
+                    break
+            if not binary_path:
+                raise TargetAnalysisError(
+                    f"{kind.value} target requires an upload via "
+                    f"POST /vr/targets/{{id}}/upload, or a descriptor field "
+                    f"naming a file path the IDA MCP can read: {list(path_keys)}",
+                )
+
+            kickoff = await self._ida.forward(
+                action="upload", file_path=binary_path,
+            )
+            if kickoff.get("status") == "error":
+                raise TargetAnalysisError(
+                    f"ida.upload failed: {kickoff.get('error')}",
+                )
+            binary_id = (
+                kickoff.get("binary_id")
+                or (kickoff.get("data") or {}).get("binary_id")
+            )
+            if not binary_id:
+                raise TargetAnalysisError(
+                    f"ida.upload returned no binary_id: {kickoff!r}",
+                )
 
         await self._poll_ida(binary_id)
 
@@ -243,6 +268,11 @@ class TargetAnalysisService:
             )
 
         handles: dict[str, Any] = {"binary_id": binary_id}
+        # Preserve upload metadata across re-analysis.
+        if current_handles.get("uploaded_filename"):
+            handles["uploaded_filename"] = current_handles["uploaded_filename"]
+        if current_handles.get("uploaded_sha256"):
+            handles["uploaded_sha256"] = current_handles["uploaded_sha256"]
         if descriptor.get("kernel_version"):
             handles["kernel_version"] = descriptor["kernel_version"]
         if descriptor.get("arch"):

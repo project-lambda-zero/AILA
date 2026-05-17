@@ -5,7 +5,7 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
-import { useVRFindings, useVRProject } from "../queries";
+import { useTargetName, useVRFindings, useVRProject } from "../queries";
 import type {
   DisclosureStatus,
   VRFinding,
@@ -142,6 +142,8 @@ function OverviewTab({
 }: {
   project: NonNullable<ReturnType<typeof useVRProject>["data"]>;
 }) {
+  const targetName = useTargetName(project.target_id);
+  const patchedName = useTargetName(project.patched_target_id);
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <AilaCard>
@@ -160,13 +162,13 @@ function OverviewTab({
           <div className="flex justify-between gap-4">
             <dt className="text-text-muted">Target</dt>
             <dd className="font-mono text-foreground">
-              {project.target_id ? project.target_id.slice(0, 12) + "…" : "—"}
+              {project.target_id ? targetName : "—"}
             </dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-text-muted">Patched target</dt>
             <dd className="font-mono text-foreground">
-              {project.patched_target_id ? project.patched_target_id.slice(0, 12) + "…" : "—"}
+              {project.patched_target_id ? patchedName : "—"}
             </dd>
           </div>
           <div className="flex justify-between gap-4">
@@ -262,6 +264,7 @@ export function ProjectDetailPage() {
   const { projectId = "" } = useParams<{ projectId: string }>();
   const { data: project, isLoading, isError } = useVRProject(projectId);
   const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const headerTargetName = useTargetName(project?.target_id);
 
   if (isLoading) {
     return <LoadingSkeleton size="lg" width="full" />;
@@ -295,7 +298,7 @@ export function ProjectDetailPage() {
         </AilaBadge>
         {project.target_id && (
           <AilaBadge severity="info" size="sm">
-            target:{project.target_id.slice(0, 8)}
+            target: {headerTargetName}
           </AilaBadge>
         )}
       </div>

@@ -4,7 +4,7 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
-import { useVRProjects } from "../queries";
+import { useTargetMap, useVRProjects } from "../queries";
 import type { VRProjectStatus } from "../types";
 
 const statusColor: Record<VRProjectStatus, "info" | "low" | "medium" | "high" | "critical"> = {
@@ -27,6 +27,7 @@ function formatDate(value?: string | null): string {
 export function ProjectsPage() {
   const navigate = useNavigate();
   const { data: result, isLoading, isError } = useVRProjects();
+  const targetMap = useTargetMap();
 
   const projects = result?.data ?? [];
 
@@ -106,7 +107,7 @@ export function ProjectsPage() {
                   </td>
                   <td className="px-4 py-2 font-mono text-text-muted">
                     {project.target_id ? (
-                      <span className="text-foreground">{project.target_id.slice(0, 8)}…</span>
+                      <span className="text-foreground">{targetMap.get(project.target_id)?.display_name ?? "loading…"}</span>
                     ) : "—"}
                   </td>
                   <td className="px-4 py-2 font-mono text-right text-foreground">

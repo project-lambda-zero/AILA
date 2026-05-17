@@ -15,7 +15,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func as sa_func
@@ -306,12 +306,18 @@ def _target_summary(record: Any) -> VRTargetSummary:
         elif isinstance(entry, str):
             tags.append(TargetTag(tag=entry, source=TargetTagSource.OPERATOR))
 
+    handles = _json.loads(record.mcp_handles_json or "{}")
+    uploaded_filename = handles.get("uploaded_filename")
+    if not isinstance(uploaded_filename, str):
+        uploaded_filename = None
+
     return VRTargetSummary(
         id=record.id,
         workspace_id=record.workspace_id,
         display_name=record.display_name,
         kind=TargetKind(record.kind),
         descriptor=_json.loads(record.descriptor_json or "{}"),
+        uploaded_filename=uploaded_filename,
         primary_language=record.primary_language,
         secondary_languages=_json.loads(record.secondary_languages_json or "[]"),
         status=TargetStatus(record.status),
@@ -1399,6 +1405,143 @@ def create_vr_router() -> APIRouter:
             team_id=auth.team_id,
         )
         return DataEnvelope(data={"task_id": handle.task_id, "target_id": target_id})
+
+
+    @router.post(
+        "/targets/{target_id}/upload",
+        response_model=DataEnvelope[dict],
+        status_code=status.HTTP_202_ACCEPTED,
+        summary=(
+            "Upload a binary artifact for a native_binary / kernel_image / "
+            "hypervisor_image / apk / ipa / jar / dotnet_assembly target. "
+            "AILA streams the bytes through to the IDA MCP and stores the "
+            "returned binary handle in the target. Re-triggers analysis."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def upload_target_artifact(
+        request: Request,
+        target_id: str,
+        file: UploadFile = File(...),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        from aila.api.deps import get_task_queue
+
+        from .db_models import VRTargetRecord
+        from .tools.ida_bridge import IDABridgeTool
+        from .workflow.task import run_target_analysis
+
+        # 1) Resolve target + verify kind is uploadable.
+        upload_kinds = {
+            "native_binary", "kernel_image", "kernel_module",
+            "hypervisor_image", "apk", "ipa", "jar", "dotnet_assembly",
+        }
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target {target_id} not found.",
+                )
+            if row.kind not in upload_kinds:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Target kind {row.kind!r} does not accept uploads.",
+                )
+
+        # 2) Stream file → IDA MCP /upload. AILA holds bytes in flight but
+        #    never writes them to disk (D-33: no work in the platform).
+        if not file.filename:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="file.filename is required.",
+            )
+
+        import httpx  # noqa: PLC0415  (transit-only proxy; see whitelist)
+
+        bridge = IDABridgeTool()
+        base_url = await bridge._resolve_base_url()  # noqa: SLF001
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(
+                    f"{base_url}/upload",
+                    files={
+                        "file": (
+                            file.filename,
+                            file.file,
+                            file.content_type or "application/octet-stream",
+                        ),
+                    },
+                )
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"IDA MCP at {base_url} unreachable: {exc}",
+            ) from exc
+        try:
+            mcp_result = resp.json()
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"IDA MCP returned non-JSON: {resp.text[:200]}",
+            ) from exc
+        if resp.status_code >= 400 or mcp_result.get("status") == "error":
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"IDA MCP upload failed: {mcp_result.get('error', resp.text[:200])}",
+            )
+
+        binary_id = mcp_result.get("binary_id") or mcp_result.get("data", {}).get("binary_id")
+        if not binary_id:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"IDA MCP upload returned no binary_id: {mcp_result!r}",
+            )
+
+        # 3) Persist binary_id + filename into _mcp_handles_json (internal).
+        #    Operators only see "Ready" — they don't see this id.
+        import json as _json
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target {target_id} vanished mid-upload.",
+                )
+            handles = _json.loads(row.mcp_handles_json or "{}")
+            handles.update({
+                "binary_id": binary_id,
+                "uploaded_filename": file.filename,
+                "uploaded_sha256": mcp_result.get("sha256"),
+            })
+            row.mcp_handles_json = _json.dumps(handles)
+            uow.session.add(row)
+            await uow.session.commit()
+
+        # 4) Re-enqueue analysis so capability profile + ranking refresh.
+        task_queue = get_task_queue("vr", request)
+        handle = await task_queue.submit(
+            track="vr",
+            fn=run_target_analysis,
+            kwargs={"target_id": target_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
+        return DataEnvelope(
+            data={
+                "task_id": handle.task_id,
+                "target_id": target_id,
+                "uploaded_filename": file.filename,
+            },
+        )
 
     # ── Investigations (M3.R-1 schema, D-43, D-49/D-50) ───────────────
 
@@ -3023,5 +3166,50 @@ def create_vr_router() -> APIRouter:
                 detail=f"MCP server {server_id!r} not registered.",
             )
         return DataEnvelope(data=result)
+
+    @router.get(
+        "/mcp/calls",
+        summary=(
+            "List recent MCP call log entries (most recent first). "
+            "Operator-facing audit trail of every forward() through the "
+            "audit-mcp and ida-headless bridges."
+        ),
+    )
+    @limiter.limit("60/minute")
+    async def list_mcp_calls(
+        request: Request,
+        auth: AuthContext = Depends(require_auth),
+        server_id: str | None = Query(default=None),
+        status_filter: str | None = Query(default=None, alias="status"),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> DataEnvelope[list[dict[str, Any]]]:
+        del request, auth
+        from .db_models import VRMcpCallLogRecord
+
+        async with UnitOfWork() as uow:
+            stmt = select(VRMcpCallLogRecord)
+            if server_id:
+                stmt = stmt.where(VRMcpCallLogRecord.server_id == server_id)
+            if status_filter:
+                stmt = stmt.where(VRMcpCallLogRecord.status == status_filter)
+            stmt = stmt.order_by(VRMcpCallLogRecord.called_at.desc()).offset(offset).limit(limit)  # type: ignore[union-attr]
+            rows = (await uow.session.exec(stmt)).all()
+
+        items = [
+            {
+                "id": r.id,
+                "server_id": r.server_id,
+                "base_url": r.base_url,
+                "action": r.action,
+                "status": r.status,
+                "http_status": r.http_status,
+                "latency_ms": r.latency_ms,
+                "error_excerpt": r.error_excerpt,
+                "called_at": r.called_at.isoformat() if r.called_at else None,
+            }
+            for r in rows
+        ]
+        return DataEnvelope(data=items)
 
     return router

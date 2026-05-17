@@ -63,4 +63,12 @@ export const nav = [
     order: 75,
     description: "Configure + monitor delegated MCP workstations",
   },
+  {
+    id: "vr.mcp-calls",
+    slot: "sidebar.main" as const,
+    label: "MCP Call Log",
+    to: "/vr/mcp/calls",
+    order: 76,
+    description: "Live audit trail of every MCP call AILA forwarded",
+  },
 ];
