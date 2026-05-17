@@ -65,6 +65,10 @@ _APPLICABLE_MCP_BY_KIND: dict[str, list[str]] = {
     TargetKind.PROTOCOL_CAPTURE.value: [],
     TargetKind.CRASH_INPUT.value:     ["ida_headless"],
     TargetKind.PATCH_DIFF.value:      ["audit_mcp"],
+    # v0.5 GA-54 — kernel + hypervisor
+    TargetKind.KERNEL_IMAGE.value:    ["ida_headless", "audit_mcp"],
+    TargetKind.KERNEL_MODULE.value:   ["ida_headless"],
+    TargetKind.HYPERVISOR_IMAGE.value: ["ida_headless", "audit_mcp"],
 }
 
 # (target_kind, primary_language) → applicable fuzzing engines. Source
@@ -104,6 +108,12 @@ _APPLICABLE_FUZZING_ENGINES: dict[tuple[str, str], list[str]] = {
     # .NET — sharpfuzz coverage-guided fuzzer
     (TargetKind.DOTNET_ASSEMBLY.value, "c#"):       ["sharpfuzz"],
     (TargetKind.DOTNET_ASSEMBLY.value, "f#"):       ["sharpfuzz"],
+
+    # v0.5 GA-56 — kernel + hypervisor fuzzers
+    (TargetKind.KERNEL_IMAGE.value, "c"):           ["syzkaller", "kafl"],
+    (TargetKind.KERNEL_MODULE.value, "c"):          ["syzkaller", "kafl"],
+    (TargetKind.HYPERVISOR_IMAGE.value, "c"):       ["afl++", "qemu-fuzz"],
+    (TargetKind.HYPERVISOR_IMAGE.value, "c++"):     ["afl++", "qemu-fuzz"],
 }
 
 # (target_kind, primary_language) → reasoning strategy family default
@@ -123,6 +133,10 @@ _DEFAULT_REASONING_STRATEGY: dict[tuple[str, str], str] = {
     (TargetKind.APK.value, "*"):                    "vulnerability_research.discovery_research",
     (TargetKind.IPA.value, "*"):                    "vulnerability_research.discovery_research",
     (TargetKind.DOTNET_ASSEMBLY.value, "*"):        "vulnerability_research.discovery_research",
+    # v0.5 GA-56 — kernel-first audit; fuzz invoked from narrowed surface
+    (TargetKind.KERNEL_IMAGE.value, "*"):           "vulnerability_research.kernel_audit",
+    (TargetKind.KERNEL_MODULE.value, "*"):          "vulnerability_research.kernel_audit",
+    (TargetKind.HYPERVISOR_IMAGE.value, "*"):       "vulnerability_research.hypervisor_audit",
 }
 
 # target_kind → default disclosure tracks suggested at finding promotion.
@@ -139,6 +153,13 @@ _DEFAULT_DISCLOSURE_TRACKS: dict[str, list[str]] = {
     TargetKind.PROTOCOL_CAPTURE.value: ["cert_cc", "vendor_direct"],
     TargetKind.CRASH_INPUT.value:     ["vendor_direct", "blog_post"],
     TargetKind.PATCH_DIFF.value:      ["blog_post"],
+    # v0.5 GA-57 — kernel + hypervisor disclosure
+    # linux-distros / oss-security / kernel.org tracks ship in v0.5 phase 3.
+    # Until then, fall back to vendor_direct + blog_post; cert_cc covers
+    # multi-vendor coordination for hypervisor escapes.
+    TargetKind.KERNEL_IMAGE.value:    ["vendor_direct", "blog_post"],
+    TargetKind.KERNEL_MODULE.value:   ["vendor_direct", "blog_post"],
+    TargetKind.HYPERVISOR_IMAGE.value: ["cert_cc", "vendor_direct", "blog_post"],
 }
 
 # All pattern kinds defined in VR_V03_KNOWLEDGE_TRANSFER_PLAN.md GA-41 apply
@@ -164,6 +185,10 @@ _DEFAULT_COST_USD: dict[str, float] = {
     TargetKind.PROTOCOL_CAPTURE.value: 15.0,
     TargetKind.CRASH_INPUT.value:     15.0,
     TargetKind.PATCH_DIFF.value:      15.0,
+    # v0.5 — kernel work involves syzkaller campaigns + more turns
+    TargetKind.KERNEL_IMAGE.value:    60.0,
+    TargetKind.KERNEL_MODULE.value:   45.0,
+    TargetKind.HYPERVISOR_IMAGE.value: 75.0,
 }
 
 
