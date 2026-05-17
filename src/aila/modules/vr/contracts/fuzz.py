@@ -117,12 +117,13 @@ class VRFuzzCampaignCreate(BaseModel):
         le=720,  # 30 days
         description="Soft cap. Operator stops manually for indefinite runs.",
     )
-    workstation_host: str | None = Field(
+    analysis_system_id: int | None = Field(
         default=None,
-        max_length=255,
+        ge=1,
         description=(
-            "Dedicated fuzz workstation host (D-33). None = local dev only — "
-            "campaign records still persist but no worker is spawned."
+            "ManagedSystemRecord.id of the workstation that runs this "
+            "campaign (D-33). None = the campaign is metadata-only — "
+            "no launcher will SSH into a rig."
         ),
     )
     notes: str = ""
@@ -158,7 +159,12 @@ class VRFuzzCampaignSummary(BaseModel):
     strategy_config: dict[str, Any] = Field(default_factory=dict)
     status: CampaignStatus
     duration_hours: int | None = None
-    workstation_host: str | None = None
+    analysis_system_id: int | None = None
+    remote_pid: int | None = None
+    remote_corpus_dir: str | None = None
+    remote_crashes_dir: str | None = None
+    launched_at: datetime | None = None
+    launch_log: str | None = None
     execs_per_sec: float | None = None
     total_execs: int = 0
     corpus_size: int = 0

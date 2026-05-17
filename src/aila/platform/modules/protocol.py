@@ -289,6 +289,40 @@ class ModuleProtocol(Protocol):
         """
         return
 
+    def evidence_validators(
+        self, settings: Any,
+    ) -> list[Any]:
+        """Return EvidenceValidator instances this module contributes.
+
+        Called by the platform runtime builder during pipeline assembly
+        (see ``aila.platform.runtime.builder``). The platform then
+        registers the validate step with the union of all module
+        validators — platform code never imports a specific module's
+        validator class.
+
+        Default returns an empty list. Modules that ship a validator
+        (today: vulnerability) override this to return one instance.
+        """
+        del settings
+        return []
+
+    async def health_summary(
+        self, *, session: Any, team_id: str | None,
+    ) -> Any:
+        """Return a ModuleHealthSummary for this module (optional).
+
+        Called by the platform health probe at
+        ``aila.platform.services.health_probes.probe_modules``. When a
+        module does not override this, the probe falls back to a
+        generic ``WorkflowRunRecord`` query keyed on the module's id.
+
+        Override to expose richer health signal (e.g. fuzz campaigns
+        active, advisory queue depth) without coupling the platform
+        to module-specific tables.
+        """
+        del session, team_id
+        raise NotImplementedError
+
     def route_specs(self) -> list[ModuleRouteSpec]:
         """Declare HTTP routes this module handles.
 

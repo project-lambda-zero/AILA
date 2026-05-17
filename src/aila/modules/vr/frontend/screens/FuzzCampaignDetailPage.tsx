@@ -8,7 +8,13 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
 import { useDeleteFuzzCampaign, usePatchFuzzCampaign } from "../mutations";
-import { useCampaignTelemetry, useFuzzCampaign, useFuzzCrashes } from "../queries";
+import {
+  useCampaignTelemetry,
+  useFuzzCampaign,
+  useFuzzCrashes,
+  useSystemHeartbeat,
+  useSystemMap,
+} from "../queries";
 import type { CampaignStatus, CrashTriageVerdict } from "../types";
 
 const STATUS_COLOR: Record<
@@ -129,11 +135,7 @@ export function FuzzCampaignDetailPage() {
         <AilaBadge severity={STATUS_COLOR[campaign.status]} size="sm">
           {campaign.status}
         </AilaBadge>
-        {campaign.workstation_host && (
-          <AilaBadge severity="info" size="sm">
-            host:{campaign.workstation_host}
-          </AilaBadge>
-        )}
+        <WorkstationBadge systemId={campaign.analysis_system_id} />
         <StuckBadge lastProgressAt={campaign.last_progress_at} status={campaign.status} />
         {campaign.duration_hours && (
           <AilaBadge severity="info" size="sm">
@@ -344,9 +346,9 @@ export function FuzzCampaignDetailPage() {
           <p className="text-[10px] text-text-muted mt-2">
             Spec calls for per-instance CPU / memory / disk-write-rate polled
             from the workstation every 10 s.{" "}
-            {campaign.workstation_host
-              ? `Host: ${campaign.workstation_host}.`
-              : "No workstation host registered."}
+            {campaign.analysis_system_id
+              ? `Workstation: registered system #${campaign.analysis_system_id}.`
+              : "No analysis_system_id set on this campaign."}
           </p>
         </div>
       </AilaCard>
@@ -516,5 +518,46 @@ function StuckBadge({
     <AilaBadge severity="medium" size="sm">
       stuck · no progress in {hours}h
     </AilaBadge>
+  );
+}
+
+/** Workstation identity + live reachability for the campaign header.
+ *  Combines the system map (id → name/host lookup) with the heartbeat
+ *  poll (cached 30 s server-side). A green LiveDot + name when reachable,
+ *  amber when unreachable, "no workstation" when no FK is set. */
+function WorkstationBadge({ systemId }: { systemId: number | null | undefined }) {
+  const systems = useSystemMap();
+  const { data: heartbeat } = useSystemHeartbeat(systemId ?? null);
+  if (!systemId) {
+    return (
+      <AilaBadge severity="info" size="sm">
+        no workstation
+      </AilaBadge>
+    );
+  }
+  const sys = systems.get(systemId);
+  const label = sys ? `${sys.name} (${sys.host})` : `system #${systemId}`;
+  const live = heartbeat?.reachable === true;
+  const sev = heartbeat
+    ? heartbeat.reachable ? "low" : "high"
+    : "info";
+  const tooltip = heartbeat
+    ? heartbeat.reachable
+      ? `reachable · ${heartbeat.latency_ms ?? "?"} ms · checked ${new Date(heartbeat.checked_at).toLocaleTimeString()}`
+      : `unreachable: ${heartbeat.error ?? "no response"}`
+    : "probing…";
+  return (
+    <span className="inline-flex items-center gap-1" title={tooltip}>
+      <span
+        className={
+          "inline-block w-1.5 h-1.5 rounded-full "
+          + (live ? "bg-green-500" : "bg-amber-500")
+        }
+        aria-label={live ? "reachable" : "unreachable"}
+      />
+      <AilaBadge severity={sev} size="sm">
+        {label}
+      </AilaBadge>
+    </span>
   );
 }

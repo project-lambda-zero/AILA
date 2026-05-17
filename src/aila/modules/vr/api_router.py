@@ -193,6 +193,8 @@ def _summary_from_record(
         operator_id=getattr(record, "created_by", None),
         latest_disclosure_status=latest_disclosure_status,
         disclosure_submission_count=disclosure_submission_count,
+        analysis_system_id=getattr(record, "analysis_system_id", None),
+        poc_system_id=getattr(record, "poc_system_id", None),
         created_at=record.created_at.isoformat() if record.created_at else None,
     )
 

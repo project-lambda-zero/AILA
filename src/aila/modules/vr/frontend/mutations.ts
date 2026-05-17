@@ -459,7 +459,7 @@ export interface FuzzCampaignCreateBody {
   engine_config?: Record<string, unknown>;
   strategy_config?: Record<string, unknown>;
   duration_hours?: number;
-  workstation_host?: string;
+  analysis_system_id?: number | null;
   notes?: string;
 }
 

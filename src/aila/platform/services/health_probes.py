@@ -595,34 +595,84 @@ async def probe_arq_worker(redis_url: str | None = None) -> SubsystemHealth:
 # ---------------------------------------------------------------------------
 
 
-async def probe_modules(team_id: str | None = None) -> SubsystemHealth:
-    """Summarize module-level activity for the authenticated team.
+async def probe_modules(
+    team_id: str | None = None,
+    *,
+    module_registry: Any = None,
+) -> SubsystemHealth:
+    """Summarize per-module activity by iterating the platform module registry.
 
-    Reports:
-      - vulnerability: last inventory collection timestamp and run count
-      - sbd_nfr: assessment count
-      - scheduled_reports: last run timestamp
+    Platform stays generic — it never imports module IDs. For each
+    registered module the probe:
+
+      1. Calls ``module.health_summary(session, team_id)`` if the
+         module implements it (modules with non-WorkflowRunRecord
+         storage — e.g. fuzz campaigns — can produce a richer summary).
+      2. Falls back to a generic ``WorkflowRunRecord`` query on the
+         module's ``module_id`` — works for every module that emits
+         workflow runs without any module-specific code.
 
     A module is 'stale' when no activity is recorded in the last 24h.
-    The overall subsystem status is the worst module status.
-    """
-    from sqlalchemy import func
-    from sqlmodel import select
+    The overall subsystem status is the worst per-module status.
 
+    ``module_registry`` is passed in by the caller (the health router
+    reads it from ``app.state.platform``). When omitted the probe
+    returns an "unknown" subsystem with an explanatory message.
+    """
     from aila.storage.database import async_session_scope
-    from aila.storage.db_models import WorkflowRunRecord
+
+    if module_registry is None:
+        return SubsystemHealth(
+            name="modules",
+            status="unknown",
+            last_checked_at=_utcnow(),
+            message=(
+                "module registry not provided to probe_modules "
+                "(call site must pass module_registry=…)"
+            ),
+            details={"modules": []},
+        )
+
+    modules = list(getattr(module_registry, "modules", []) or [])
+    if not modules:
+        return SubsystemHealth(
+            name="modules",
+            status="unknown",
+            last_checked_at=_utcnow(),
+            message="no modules registered",
+            details={"modules": []},
+        )
 
     summaries: list[ModuleHealthSummary] = []
-
-    # Probes run via a single short-lived session. Exceptions are isolated
-    # per-module so a broken table does not bring down the probe.
     try:
         async with async_session_scope() as session:
-            summaries.append(await _module_summary_from_runs(session, team_id, "vulnerability"))
-            summaries.append(await _module_summary_from_runs(session, team_id, "sbd_nfr"))
-            summaries.append(await _scheduled_reports_summary(session, team_id))
-            # Silence unused-import warning during the awaited statements above.
-            _ = WorkflowRunRecord, select, func
+            for module in modules:
+                module_id = getattr(module, "module_id", "<unknown>")
+                custom = getattr(module, "health_summary", None)
+                if callable(custom):
+                    try:
+                        summary = await custom(session=session, team_id=team_id)
+                        if isinstance(summary, ModuleHealthSummary):
+                            summaries.append(summary)
+                            continue
+                        _log.debug(
+                            "module %s health_summary returned non-ModuleHealthSummary: %r",
+                            module_id, type(summary).__name__,
+                        )
+                    except Exception as exc:
+                        _log.debug(
+                            "module %s health_summary raised: %s",
+                            module_id, exc, exc_info=True,
+                        )
+                        summaries.append(ModuleHealthSummary(
+                            module_id=module_id,
+                            status="error",
+                            message=f"health_summary raised: {type(exc).__name__}",
+                        ))
+                        continue
+                summaries.append(
+                    await _module_summary_from_runs(session, team_id, module_id),
+                )
     except Exception as exc:
         _log.warning("module probe DB session failed: %s", exc)
         return SubsystemHealth(
@@ -660,7 +710,8 @@ def _module_summary_message(summaries: list[ModuleHealthSummary]) -> str:
 async def _module_summary_from_runs(
     session: Any, team_id: str | None, module_id: str
 ) -> ModuleHealthSummary:
-    """Summarize a module by its WorkflowRunRecord history."""
+    """Summarize a module by its WorkflowRunRecord history — generic
+    fallback used when a module does not implement health_summary()."""
     from sqlalchemy import func
     from sqlmodel import select
 
@@ -696,56 +747,6 @@ async def _module_summary_from_runs(
     status = _activity_status(last_at)
     return ModuleHealthSummary(
         module_id=module_id,
-        status=status,
-        last_activity_at=last_at,
-        activity_count=int(count_value or 0),
-        message=None,
-    )
-
-
-async def _scheduled_reports_summary(
-    session: Any, team_id: str | None
-) -> ModuleHealthSummary:
-    """Summarize the scheduled_reports module by last execution time."""
-    from sqlalchemy import func
-    from sqlmodel import select
-
-    try:
-        # ScheduledReportRecord may or may not exist depending on migrations.
-        from aila.storage.db_models import ScheduledReportRecord
-    except ImportError:
-        return ModuleHealthSummary(
-            module_id="scheduled_reports",
-            status="unknown",
-            message="module not installed",
-        )
-
-    try:
-        count_stmt = select(func.count()).select_from(ScheduledReportRecord)
-        last_stmt = select(func.max(ScheduledReportRecord.last_run_at))
-        if team_id is not None and hasattr(ScheduledReportRecord, "team_id"):
-            count_stmt = count_stmt.where(ScheduledReportRecord.team_id == team_id)
-            last_stmt = last_stmt.where(ScheduledReportRecord.team_id == team_id)
-
-        count_result = await session.exec(count_stmt)
-        count_value = count_result.one()
-        if isinstance(count_value, tuple):
-            count_value = count_value[0]
-
-        last_result = await session.exec(last_stmt)
-        last_at = last_result.one()
-        if isinstance(last_at, tuple):
-            last_at = last_at[0]
-    except Exception as exc:
-        return ModuleHealthSummary(
-            module_id="scheduled_reports",
-            status="error",
-            message=f"query failed: {type(exc).__name__}",
-        )
-
-    status = _activity_status(last_at) if count_value else "healthy"
-    return ModuleHealthSummary(
-        module_id="scheduled_reports",
         status=status,
         last_activity_at=last_at,
         activity_count=int(count_value or 0),

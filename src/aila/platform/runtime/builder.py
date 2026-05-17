@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from ...modules.vulnerability.evidence_validator import VulnEvidenceValidator
 from ...storage.registry import ConfigRegistry, SchemaRegistry
 from ...storage.secrets import SecretStore
 from ..config import ApplicationSettings, PlatformConfigSchema, PlatformSettings
@@ -98,13 +97,10 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     _classify_step = make_classify_step(registry=config_registry, emitter=None)
     runtime_model.pipeline.register("classify", _classify_step)
 
-    # Register validate pipeline step (Phase 118: Evidence Validation).
-    # VulnEvidenceValidator is the only shipping validator. The EvidenceValidator
-    # Protocol allows future modules to add their own validators.
-    # Emitter is None at startup -- same reasoning as classify step above.
-    _vuln_validator = VulnEvidenceValidator(settings=app_settings)
-    _validate_step = make_validate_step(validators=[_vuln_validator], emitter=None)
-    runtime_model.pipeline.register("validate", _validate_step)
+    # Validate pipeline step (Phase 118 — Evidence Validation). Modules
+    # contribute validators via ModuleProtocol.evidence_validators() so
+    # the platform stays module-agnostic; the step itself is registered
+    # below after the module registry is built.
 
     # Register gate pipeline step (Phase 119: Confidence Gating).
     # call_fn is _single_call for consensus retry calls that bypass the pipeline.
@@ -162,6 +158,16 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     module_registry = ModuleRegistry()
     register_builtin_modules(module_registry)
     await module_registry.register_tools(tool_registry, app_settings, config_registry, schema_registry)
+
+    # Now the registry is built, collect each module's evidence_validators()
+    # and register the validate pipeline step (Phase 118). Modules that
+    # ship no validator return [] from the default — the resulting step
+    # is a no-op for them.
+    _validators: list = []
+    for _module in module_registry.modules:
+        _validators.extend(_module.evidence_validators(settings=app_settings))
+    _validate_step = make_validate_step(validators=_validators, emitter=None)
+    runtime_model.pipeline.register("validate", _validate_step)
 
     from ...storage.database import async_session_scope, init_db
     await init_db(app_settings, schema_registry)
