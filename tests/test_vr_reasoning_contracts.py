@@ -69,6 +69,7 @@ class TestBranchEnums:
         # D-41 + pause/resume
         assert {m.value for m in BranchOperation} == {
             "fork", "merge", "promote", "abandon", "pause", "resume",
+            "spawn_strategy",
         }
 
 

@@ -49,6 +49,7 @@ from .contracts import (
     PersonaVoice,
     RenderedSubmission,
     SenderKind,
+    StrategyBranchSpawn,
     TargetKind,
     TargetStatus,
     VRBranchSummary,
@@ -377,6 +378,7 @@ def _branch_summary(record: Any) -> VRBranchSummary:
         closed_at=record.closed_at,
         created_at=record.created_at,
         updated_at=record.updated_at,
+        strategy_family=record.strategy_family,
     )
 
 
@@ -2765,5 +2767,81 @@ def create_vr_router() -> APIRouter:
                 ),
             )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    # ── Multi-strategy parallel branches (v0.4 GA-50) ──────────────────
+
+    @router.post(
+        "/investigations/{investigation_id}/strategy-branches",
+        response_model=DataEnvelope[dict],
+        status_code=status.HTTP_201_CREATED,
+        summary="Spawn a new branch tagged with a strategy_family.",
+    )
+    @limiter.limit("30/minute")
+    async def spawn_strategy_branch(
+        request: Request,
+        investigation_id: str,
+        body: StrategyBranchSpawn,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request, auth
+        from aila.modules.vr.agents.branch_manager import (
+            BranchManager,
+            BranchManagerError,
+        )
+
+        mgr = BranchManager(investigation_id=investigation_id)
+        try:
+            result = await mgr.spawn_strategy(
+                strategy_family=body.strategy_family,
+                persona_voice=body.persona_voice.value if body.persona_voice else None,
+                rationale=body.rationale,
+                parent_branch_id=body.parent_branch_id,
+            )
+        except BranchManagerError as exc:
+            msg = str(exc)
+            code = (
+                status.HTTP_404_NOT_FOUND
+                if "not found" in msg
+                else status.HTTP_409_CONFLICT
+            )
+            raise HTTPException(status_code=code, detail=msg) from exc
+        return DataEnvelope(
+            data={
+                "op": result.op.value,
+                "investigation_id": result.investigation_id,
+                "new_branch_id": result.new_branch_id,
+                "parent_branch_id": (
+                    result.affected_branch_ids[0]
+                    if result.affected_branch_ids
+                    else None
+                ),
+                "strategy_family": body.strategy_family,
+                "reason": result.reason,
+            },
+        )
+
+    @router.get(
+        "/investigations/{investigation_id}/strategy-branches",
+        response_model=DataEnvelope[dict],
+        summary="Active branches grouped by strategy_family.",
+    )
+    @limiter.limit("120/minute")
+    async def list_strategy_branches(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request, auth
+        from aila.modules.vr.agents.branch_manager import BranchManager
+
+        mgr = BranchManager(investigation_id=investigation_id)
+        groups = await mgr.list_active_by_strategy()
+        return DataEnvelope(
+            data={
+                "investigation_id": investigation_id,
+                "strategy_groups": groups,
+                "total_active_branches": sum(len(v) for v in groups.values()),
+            },
+        )
 
     return router
