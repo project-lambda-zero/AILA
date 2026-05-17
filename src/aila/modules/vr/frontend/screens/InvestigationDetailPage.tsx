@@ -1,11 +1,16 @@
-import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { useMemo, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
+import { LiveDot, type LiveStatus } from "../components/LiveDot";
+import { SteeringDrawer } from "../components/SteeringDrawer";
+import { TurnCard } from "../components/TurnCard";
+import { WorkflowStepper } from "../components/WorkflowStepper";
+import { useInvestigationMessagesStream } from "../hooks/useInvestigationMessagesStream";
 import {
   useDeleteInvestigation,
   usePauseInvestigation,
@@ -19,12 +24,12 @@ import {
   useInvestigationOutcomes,
   useTargetName,
 } from "../queries";
-import { useInvestigationMessagesStream } from "../hooks/useInvestigationMessagesStream";
 import type {
   BranchStatus,
   InvestigationStatus,
   OperatorIntent,
   OutcomeDispatchStatus,
+  VRMessageSummary,
 } from "../types";
 
 const investigationStatusColor: Record<
@@ -57,57 +62,43 @@ const dispatchColor: Record<
   pending: "info",
   dispatched: "low",
   failed: "critical",
-  skipped: "info",
+  skipped: "medium",
 };
-
-function fmtTime(value?: string | null): string {
-  if (!value) return "—";
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
-}
 
 function fmtUsd(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
-function PayloadPreview({
-  payload,
-}: {
-  payload: Record<string, unknown>;
-}) {
+function PayloadPreview({ payload }: { payload: Record<string, unknown> }) {
   const text = (payload?.text as string) || "";
-  const command = (payload?.command as string) || "";
   if (text) {
     return (
-      <p className="text-sm text-foreground whitespace-pre-wrap font-mono">
-        {text.slice(0, 600)}
-        {text.length > 600 ? "…" : ""}
+      <p className="text-xs text-foreground whitespace-pre-wrap font-mono">
+        {text.slice(0, 300)}
+        {text.length > 300 ? "…" : ""}
       </p>
     );
   }
-  if (command) {
-    return (
-      <p className="text-xs text-foreground font-mono">
-        <span className="text-text-muted">command:</span> {command.slice(0, 400)}
-      </p>
-    );
-  }
-  // Fallback: compact JSON
   const json = JSON.stringify(payload, null, 2);
   return (
-    <pre className="text-xs text-text-muted font-mono whitespace-pre-wrap">
-      {json.slice(0, 600)}
-      {json.length > 600 ? "…" : ""}
+    <pre className="text-[10px] text-text-muted font-mono whitespace-pre-wrap">
+      {json.slice(0, 240)}
+      {json.length > 240 ? "…" : ""}
     </pre>
   );
 }
 
+/** Investigation Timeline — designed per 08_FRONTEND_UX.md §1.10.
+ *
+ *  Single-column TurnCard stream with sticky filter bar. Live-tails via
+ *  the existing useInvestigationMessagesStream SSE hook; the LiveDot
+ *  reflects connection state. URL state for filters lets operators
+ *  deep-link a teammate to "look at this view of the timeline." */
 export function InvestigationDetailPage() {
   const { investigationId } = useParams<{ investigationId: string }>();
   const invId = investigationId ?? "";
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: inv, isLoading } = useInvestigation(invId);
   const { data: branchesResult } = useInvestigationBranches(invId);
@@ -120,25 +111,70 @@ export function InvestigationDetailPage() {
   const resumeMut = useResumeInvestigation(invId);
   const sendMut = useSendOperatorMessage(invId);
   const deleteMut = useDeleteInvestigation();
-  const navigate = useNavigate();
 
   const [messageText, setMessageText] = useState("");
   const [messageIntent, setMessageIntent] = useState<OperatorIntent | "">("");
+  const [steeringOpen, setSteeringOpen] = useState(false);
+
+  // All hooks before any early return — keep React's hook ordering stable.
+  const branches = branchesResult?.data ?? [];
+  const messages = messagesResult?.data ?? [];
+  const outcomes = outcomesResult?.data ?? [];
+
+  const senderFilter = searchParams.get("sender") ?? "";
+  const payloadFilter = searchParams.get("kind") ?? "";
+  const branchFilter = searchParams.get("branch") ?? "";
+
+  const senderKinds = useMemo(() => {
+    const s = new Set<string>();
+    for (const m of messages) if (m.sender_kind) s.add(m.sender_kind);
+    return Array.from(s).sort();
+  }, [messages]);
+  const payloadKinds = useMemo(() => {
+    const s = new Set<string>();
+    for (const m of messages) if (m.payload_kind) s.add(m.payload_kind);
+    return Array.from(s).sort();
+  }, [messages]);
+
+  const filtered: VRMessageSummary[] = useMemo(() => {
+    return messages.filter((m) => {
+      if (senderFilter && m.sender_kind !== senderFilter) return false;
+      if (payloadFilter && m.payload_kind !== payloadFilter) return false;
+      if (branchFilter && m.branch_id !== branchFilter) return false;
+      return true;
+    });
+  }, [messages, senderFilter, payloadFilter, branchFilter]);
 
   if (isLoading || !inv) {
     return <LoadingSkeleton size="lg" width="full" />;
   }
 
-  const branches = branchesResult?.data ?? [];
-  const messages = messagesResult?.data ?? [];
-  const outcomes = outcomesResult?.data ?? [];
+  function updateParam(key: string, value: string) {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setSearchParams(next, { replace: true });
+  }
+
+  // Live-tail status. The SSE hook doesn't expose its readyState yet —
+  // best-effort: green when investigation is running, amber when paused,
+  // muted when terminal.
+  const liveStatus: LiveStatus =
+    inv.status === "running"
+      ? "connected"
+      : inv.status === "paused"
+        ? "reconnecting"
+        : "disconnected";
+
+  const operatorComposerOpen =
+    inv.status === "running" || inv.status === "paused" || inv.status === "created";
 
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-bold font-mono text-foreground">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-xl font-bold font-mono text-foreground truncate">
             {inv.title}
           </h1>
           <p className="text-sm text-text-muted mt-1 font-mono">
@@ -146,12 +182,20 @@ export function InvestigationDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <LiveDot status={liveStatus} />
           <Link
             to={`/vr/investigations/${invId}/tree`}
             className="text-xs px-3 py-1.5 rounded-md bg-surface border border-border-default hover:bg-surface-hover text-foreground"
           >
-            View branch tree →
+            Branch tree →
           </Link>
+          <button
+            type="button"
+            onClick={() => setSteeringOpen(true)}
+            className="text-xs px-3 py-1.5 rounded-md bg-accent text-white hover:bg-accent/90"
+          >
+            Steering ⚙
+          </button>
           <DeleteButton
             id={invId}
             label={`investigation "${inv.title}"`}
@@ -161,110 +205,72 @@ export function InvestigationDetailPage() {
         </div>
       </div>
 
-      <div className="flex gap-2 items-center">
-        <AilaBadge
-          severity={investigationStatusColor[inv.status] ?? "info"}
-          size="sm"
-        >
-          {inv.pause_reason
-            ? `${inv.status}:${inv.pause_reason}`
-            : inv.status}
-        </AilaBadge>
-        <AilaBadge severity="info" size="sm">
-          {inv.strategy_family}
-        </AilaBadge>
-        {inv.auto_pilot && (
-          <AilaBadge severity="info" size="sm">
-            auto-pilot
-          </AilaBadge>
-        )}
-      </div>
-
-      {/* Action bar */}
-      <div className="flex gap-2 flex-wrap">
-        {inv.status === "running" && (
-          <button
-            type="button"
-            onClick={() => pauseMut.mutate()}
-            disabled={pauseMut.isPending}
-            className="px-3 py-1.5 text-sm font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover transition-colors disabled:opacity-50"
-          >
-            {pauseMut.isPending ? "Pausing…" : "Pause"}
-          </button>
-        )}
-        {inv.status === "paused" && (
-          <button
-            type="button"
-            onClick={() => resumeMut.mutate()}
-            disabled={resumeMut.isPending}
-            className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
-          >
-            {resumeMut.isPending ? "Resuming…" : "Resume"}
-          </button>
-        )}
-      </div>
-
-      {/* Send operator message */}
-      {(inv.status === "running" || inv.status === "paused" || inv.status === "created") && (
-        <AilaCard>
-          <h2 className="text-sm font-semibold text-foreground mb-2">
-            Send message to engine
-          </h2>
-          <p className="text-xs text-text-muted mb-2">
-            Engine will see this message on its next turn. Steering /
-            correction / dismissal intents bias how it incorporates the
-            input.
-          </p>
-          <textarea
-            value={messageText}
-            onChange={(e) => setMessageText(e.target.value)}
-            placeholder="e.g. 'check JSPI base address handling' or 'that hypothesis is wrong because…'"
-            rows={3}
-            className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-          />
-          <div className="flex gap-2 items-center mt-2">
-            <select
-              value={messageIntent}
-              onChange={(e) => setMessageIntent(e.target.value as OperatorIntent | "")}
-              className="px-2 py-1.5 text-xs font-mono rounded-md bg-surface border border-border-default"
-            >
-              <option value="">auto-classify</option>
-              <option value="steering">steering</option>
-              <option value="question">question</option>
-              <option value="correction">correction</option>
-              <option value="dismissal">dismissal</option>
-              <option value="outcome_selection">outcome_selection</option>
-              <option value="branch_command">branch_command</option>
-            </select>
-            <button
-              type="button"
-              disabled={!messageText.trim() || sendMut.isPending}
-              onClick={() => {
-                sendMut.mutate(
-                  {
-                    text: messageText.trim(),
-                    explicit_intent: messageIntent || undefined,
-                  },
-                  {
-                    onSuccess: () => {
-                      setMessageText("");
-                      setMessageIntent("");
-                    },
-                  },
-                );
-              }}
-              className="px-4 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
-            >
-              {sendMut.isPending ? "Sending…" : "Send"}
-            </button>
-          </div>
-        </AilaCard>
-      )}
-
-      {/* Cost panel */}
+      {/* Workflow stepper */}
       <AilaCard>
-        <h2 className="text-sm font-semibold text-foreground mb-2">Cost</h2>
-        <dl className="grid grid-cols-4 gap-3 text-sm">
+        <WorkflowStepper
+          flow="investigate"
+          currentState={
+            inv.status === "running"
+              ? "investigation_loop"
+              : inv.status === "completed"
+                ? "investigation_emit"
+                : inv.status === "failed"
+                  ? "investigation_loop"
+                  : "investigation_setup"
+          }
+          failedAt={inv.status === "failed" ? "investigation_loop" : null}
+        />
+      </AilaCard>
+
+      {/* Status + cost ribbon */}
+      <AilaCard>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <AilaBadge
+              severity={investigationStatusColor[inv.status] ?? "info"}
+              size="sm"
+            >
+              {inv.pause_reason
+                ? `${inv.status}:${inv.pause_reason}`
+                : inv.status}
+            </AilaBadge>
+            <AilaBadge severity="info" size="sm">
+              {inv.strategy_family}
+            </AilaBadge>
+            <AilaBadge severity="info" size="sm">
+              branches: {inv.branch_count}
+            </AilaBadge>
+            <AilaBadge severity="info" size="sm">
+              messages: {inv.message_count}
+            </AilaBadge>
+            <AilaBadge severity="info" size="sm">
+              outcomes: {inv.outcome_count}
+            </AilaBadge>
+          </div>
+          <div className="flex items-center gap-2">
+            {inv.status === "running" && (
+              <button
+                type="button"
+                onClick={() => pauseMut.mutate()}
+                disabled={pauseMut.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
+              >
+                {pauseMut.isPending ? "Pausing…" : "Pause"}
+              </button>
+            )}
+            {inv.status === "paused" && (
+              <button
+                type="button"
+                onClick={() => resumeMut.mutate()}
+                disabled={resumeMut.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+              >
+                {resumeMut.isPending ? "Resuming…" : "Resume"}
+              </button>
+            )}
+          </div>
+        </div>
+        <dl className="grid grid-cols-4 gap-3 text-sm mt-3 pt-3 border-t border-border-default">
           <div>
             <dt className="text-text-muted text-xs">Budget</dt>
             <dd className="font-mono text-foreground">
@@ -284,145 +290,239 @@ export function InvestigationDetailPage() {
             </dd>
           </div>
           <div>
-            <dt className="text-text-muted text-xs">MCP + fuzz</dt>
+            <dt className="text-text-muted text-xs">MCP calls</dt>
             <dd className="font-mono text-foreground">
-              {fmtUsd(inv.mcp_calls_cost_usd + inv.fuzz_infra_cost_usd)}
+              {fmtUsd(inv.mcp_calls_cost_usd)}
             </dd>
           </div>
         </dl>
       </AilaCard>
 
-      {/* Branches */}
-      <AilaCard>
-        <h2 className="text-sm font-semibold text-foreground mb-2">
-          Branches ({branches.length})
-        </h2>
-        {branches.length === 0 ? (
-          <p className="text-sm text-text-muted">No branches yet.</p>
-        ) : (
-          <ul className="space-y-2">
-            {branches.map((b) => (
-              <li
-                key={b.id}
-                className="border border-border-default rounded-md p-2 text-sm"
+      {/* Main grid: timeline left, side panels right */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
+        {/* Timeline column */}
+        <div className="space-y-3">
+          {/* Filter bar */}
+          <AilaCard>
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <span className="text-text-muted">Filter:</span>
+              <select
+                value={senderFilter}
+                onChange={(e) => updateParam("sender", e.target.value)}
+                className="px-2 py-1 rounded-md bg-surface border border-border-default font-mono"
+                aria-label="Filter by sender kind"
               >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-mono text-xs text-text-muted">
-                    {b.persona_voice ?? "branch"}{b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}
-                  </span>
-                  <AilaBadge
-                    severity={branchStatusColor[b.status] ?? "info"}
-                    size="sm"
-                  >
-                    {b.status}
-                  </AilaBadge>
-                  {b.persona_voice && (
-                    <AilaBadge severity="info" size="sm">
-                      {b.persona_voice}
-                    </AilaBadge>
-                  )}
-                  {b.promoted && (
-                    <AilaBadge severity="low" size="sm">
-                      promoted
-                    </AilaBadge>
-                  )}
-                </div>
-                <p className="text-xs text-text-muted">
-                  turns: {b.turn_count} · cost: {fmtUsd(b.branch_cost_usd)}
-                  {b.fork_reason && ` · reason: ${b.fork_reason}`}
-                </p>
-              </li>
-            ))}
-          </ul>
-        )}
-      </AilaCard>
+                <option value="">all senders</option>
+                {senderKinds.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={payloadFilter}
+                onChange={(e) => updateParam("kind", e.target.value)}
+                className="px-2 py-1 rounded-md bg-surface border border-border-default font-mono"
+                aria-label="Filter by payload kind"
+              >
+                <option value="">all kinds</option>
+                {payloadKinds.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+              {branches.length > 1 && (
+                <select
+                  value={branchFilter}
+                  onChange={(e) => updateParam("branch", e.target.value)}
+                  className="px-2 py-1 rounded-md bg-surface border border-border-default font-mono"
+                  aria-label="Filter by branch"
+                >
+                  <option value="">all branches</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.persona_voice ?? "branch"}
+                      {b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <span className="text-text-muted ml-auto">
+                {filtered.length} of {messages.length} turn
+                {messages.length === 1 ? "" : "s"}
+              </span>
+            </div>
+          </AilaCard>
 
-      {/* Outcomes */}
-      <AilaCard>
-        <h2 className="text-sm font-semibold text-foreground mb-2">
-          Outcomes ({outcomes.length})
-        </h2>
-        {outcomes.length === 0 ? (
-          <p className="text-sm text-text-muted">
-            No outcomes yet — engine hasn't submitted.
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {outcomes.map((o) => (
-              <li
-                key={o.id}
-                className="border border-border-default rounded-md p-2"
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-mono text-xs text-foreground">
-                    {o.outcome_kind}
-                  </span>
-                  <AilaBadge severity="info" size="sm">
-                    confidence:{o.confidence}
-                  </AilaBadge>
-                  <AilaBadge
-                    severity={dispatchColor[o.dispatch_status] ?? "info"}
-                    size="sm"
-                  >
-                    dispatch:{o.dispatch_status}
-                  </AilaBadge>
-                </div>
-                <PayloadPreview payload={o.payload} />
-                {o.dispatch_target && (
-                  <p className="text-xs text-text-muted mt-2 font-mono">
-                    → {o.dispatch_target}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </AilaCard>
+          {/* Turn stream */}
+          {filtered.length === 0 ? (
+            <AilaCard>
+              <p className="text-sm text-text-muted text-center py-6">
+                {messages.length === 0
+                  ? "No turns yet — engine hasn't started reasoning."
+                  : "Filters hide every turn. Clear filters above to see them."}
+              </p>
+            </AilaCard>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map((m, i) => (
+                <TurnCard key={m.id} message={m} index={i} />
+              ))}
+            </div>
+          )}
 
-      {/* Messages (turn log) */}
-      <AilaCard>
-        <h2 className="text-sm font-semibold text-foreground mb-2">
-          Messages ({messages.length})
-        </h2>
-        {messages.length === 0 ? (
-          <p className="text-sm text-text-muted">No messages yet.</p>
-        ) : (
-          <ul className="space-y-2">
-            {messages.map((m) => (
-              <li
-                key={m.id}
-                className="border border-border-default rounded-md p-2"
-              >
-                <div className="flex items-center gap-2 mb-1 text-xs">
-                  <span className="font-mono text-text-muted">
-                    {fmtTime(m.created_at)}
-                  </span>
-                  <AilaBadge
-                    severity={m.sender_kind === "engine" ? "info" : "medium"}
-                    size="sm"
+          {/* Operator composer (bottom of stream, like a chat input) */}
+          {operatorComposerOpen && (
+            <AilaCard>
+              <h2 className="text-sm font-semibold text-foreground mb-2">
+                Inject context for next turn
+              </h2>
+              <p className="text-xs text-text-muted mb-2">
+                The engine sees this verbatim as an operator note on its next
+                turn. Use{" "}
+                <span className="font-mono">steering</span> to redirect,{" "}
+                <span className="font-mono">correction</span> to contradict a
+                hypothesis,{" "}
+                <span className="font-mono">dismissal</span> to drop a thread.
+              </p>
+              <textarea
+                value={messageText}
+                onChange={(e) => setMessageText(e.target.value)}
+                placeholder="e.g. 'try the JSPI base address path' or 'that hypothesis is wrong because…'"
+                rows={3}
+                className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+              />
+              <div className="flex gap-2 items-center mt-2">
+                <select
+                  value={messageIntent}
+                  onChange={(e) =>
+                    setMessageIntent(e.target.value as OperatorIntent | "")
+                  }
+                  className="px-2 py-1.5 text-xs font-mono rounded-md bg-surface border border-border-default"
+                  aria-label="Operator intent"
+                >
+                  <option value="">auto-classify</option>
+                  <option value="steering">steering</option>
+                  <option value="question">question</option>
+                  <option value="correction">correction</option>
+                  <option value="dismissal">dismissal</option>
+                  <option value="outcome_selection">outcome_selection</option>
+                  <option value="branch_command">branch_command</option>
+                </select>
+                <button
+                  type="button"
+                  disabled={!messageText.trim() || sendMut.isPending}
+                  onClick={() => {
+                    sendMut.mutate(
+                      {
+                        text: messageText.trim(),
+                        explicit_intent: messageIntent || undefined,
+                      },
+                      {
+                        onSuccess: () => {
+                          setMessageText("");
+                          setMessageIntent("");
+                        },
+                      },
+                    );
+                  }}
+                  className="px-4 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+                >
+                  {sendMut.isPending ? "Sending…" : "Send"}
+                </button>
+              </div>
+            </AilaCard>
+          )}
+        </div>
+
+        {/* Side rail */}
+        <aside className="space-y-3">
+          {/* Branches summary */}
+          <AilaCard>
+            <h3 className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">
+              Branches ({branches.length})
+            </h3>
+            {branches.length === 0 ? (
+              <p className="text-xs text-text-muted">No forks yet.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {branches.map((b) => (
+                  <li
+                    key={b.id}
+                    className="text-xs border border-border-default rounded p-1.5"
                   >
-                    {m.sender_kind}
-                  </AilaBadge>
-                  <AilaBadge severity="info" size="sm">
-                    {m.payload_kind}
-                  </AilaBadge>
-                  {m.at_turn != null && (
-                    <span className="text-text-muted font-mono">
-                      turn {m.at_turn}
-                    </span>
-                  )}
-                  {m.operator_intent && (
-                    <span className="text-text-muted font-mono">
-                      intent:{m.operator_intent}
-                    </span>
-                  )}
-                </div>
-                <PayloadPreview payload={m.payload} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </AilaCard>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <AilaBadge
+                        severity={branchStatusColor[b.status] ?? "info"}
+                        size="sm"
+                      >
+                        {b.status}
+                      </AilaBadge>
+                      {b.persona_voice && (
+                        <AilaBadge severity="info" size="sm">
+                          {b.persona_voice}
+                        </AilaBadge>
+                      )}
+                      {b.promoted && (
+                        <AilaBadge severity="low" size="sm">
+                          promoted
+                        </AilaBadge>
+                      )}
+                    </div>
+                    <p className="text-text-muted font-mono mt-1">
+                      turns: {b.turn_count} · {fmtUsd(b.branch_cost_usd)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </AilaCard>
+
+          {/* Outcomes summary */}
+          <AilaCard>
+            <h3 className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">
+              Outcomes ({outcomes.length})
+            </h3>
+            {outcomes.length === 0 ? (
+              <p className="text-xs text-text-muted">
+                No outcomes yet — engine hasn't submitted.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {outcomes.map((o) => (
+                  <li
+                    key={o.id}
+                    className="text-xs border border-border-default rounded p-2"
+                  >
+                    <div className="flex items-center gap-1 flex-wrap mb-1">
+                      <span className="font-mono text-foreground">
+                        {o.outcome_kind}
+                      </span>
+                      <AilaBadge severity="info" size="sm">
+                        conf:{o.confidence}
+                      </AilaBadge>
+                      <AilaBadge
+                        severity={dispatchColor[o.dispatch_status] ?? "info"}
+                        size="sm"
+                      >
+                        {o.dispatch_status}
+                      </AilaBadge>
+                    </div>
+                    <PayloadPreview payload={o.payload} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </AilaCard>
+        </aside>
+      </div>
+      <SteeringDrawer
+        open={steeringOpen}
+        onClose={() => setSteeringOpen(false)}
+        investigationId={invId}
+        status={inv.status}
+      />
     </div>
   );
 }
