@@ -142,7 +142,10 @@ export type TargetKind =
   | "apk"
   | "ipa"
   | "jar"
-  | "dotnet_assembly";
+  | "dotnet_assembly"
+  | "kernel_image"
+  | "kernel_module"
+  | "hypervisor_image";
 
 export type TargetStatus = "active" | "archived" | "quarantined";
 
