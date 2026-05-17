@@ -1,13 +1,20 @@
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
+import { WorkflowStepper } from "../components/WorkflowStepper";
 import { useDeleteProject } from "../mutations";
-import { useTargetName, useVRFindings, useVRProject } from "../queries";
+import {
+  useFuzzCampaigns,
+  useInvestigations,
+  useTargetName,
+  useVRFindings,
+  useVRProject,
+} from "../queries";
 import type {
   DisclosureStatus,
   VRFinding,
@@ -146,67 +153,196 @@ function OverviewTab({
 }) {
   const targetName = useTargetName(project.target_id);
   const patchedName = useTargetName(project.patched_target_id);
+  // Investigations + campaigns scoped to this project's primary target.
+  // Lightweight: filter client-side from the full list to avoid adding
+  // a backend param.
+  const { data: invsResult } = useInvestigations();
+  const { data: fuzzResult } = useFuzzCampaigns({
+    targetId: project.target_id ?? undefined,
+  });
+  const allInvs = invsResult?.data ?? [];
+  const projInvs = allInvs.filter((i) => i.target_id === project.target_id);
+  const activeInvs = projInvs.filter(
+    (i) => i.status === "running" || i.status === "paused",
+  );
+  const fuzzCampaigns = fuzzResult?.data ?? [];
+  const activeFuzz = fuzzCampaigns.filter(
+    (c) => c.status === "running" || c.status === "paused",
+  );
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="space-y-4">
+      {/* Workflow stepper */}
       <AilaCard>
-        <h3 className="text-sm font-semibold font-mono text-foreground mb-3">
-          Project
-        </h3>
-        <dl className="space-y-2 text-sm">
-          <div className="flex justify-between gap-4">
-            <dt className="text-text-muted">Status</dt>
-            <dd>
-              <AilaBadge severity={projectStatusColor[project.status] ?? "info"} size="sm">
-                {project.status}
-              </AilaBadge>
+        <WorkflowStepper
+          flow="nday"
+          currentState={
+            project.status === "completed"
+              ? "response_emit"
+              : project.status === "failed"
+                ? "research"
+                : project.status === "analyzing"
+                  ? "research"
+                  : "setup"
+          }
+          failedAt={project.status === "failed" ? "research" : null}
+        />
+      </AilaCard>
+
+      {/* Hub panels — matches 08_FRONTEND_UX.md §1.3 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Targets panel */}
+        <AilaCard className="lg:col-span-1">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+            Targets
+          </h3>
+          <ul className="space-y-1.5 text-sm">
+            {project.target_id && (
+              <li className="flex items-center justify-between gap-2 border border-border-default rounded px-2 py-1.5">
+                <Link
+                  to={`/vr/targets/${project.target_id}`}
+                  className="font-mono text-foreground hover:underline truncate"
+                >
+                  {targetName}
+                </Link>
+                <AilaBadge severity="medium" size="sm">
+                  primary
+                </AilaBadge>
+              </li>
+            )}
+            {project.patched_target_id && (
+              <li className="flex items-center justify-between gap-2 border border-border-default rounded px-2 py-1.5">
+                <Link
+                  to={`/vr/targets/${project.patched_target_id}`}
+                  className="font-mono text-foreground hover:underline truncate"
+                >
+                  {patchedName}
+                </Link>
+                <AilaBadge severity="low" size="sm">
+                  patched
+                </AilaBadge>
+              </li>
+            )}
+            {!project.target_id && (
+              <li className="text-xs text-text-muted">No targets.</li>
+            )}
+          </ul>
+        </AilaCard>
+
+        {/* Active investigations */}
+        <AilaCard className="lg:col-span-1">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+            Investigations
+          </h3>
+          {projInvs.length === 0 ? (
+            <p className="text-xs text-text-muted">
+              No investigations on this target yet.
+            </p>
+          ) : (
+            <ul className="space-y-1.5 text-xs">
+              {projInvs.slice(0, 6).map((inv) => (
+                <li
+                  key={inv.id}
+                  className="border border-border-default rounded px-2 py-1.5"
+                >
+                  <Link
+                    to={`/vr/investigations/${inv.id}`}
+                    className="font-mono text-foreground hover:underline truncate block"
+                  >
+                    {inv.title}
+                  </Link>
+                  <div className="flex items-center gap-1 mt-1 flex-wrap">
+                    <AilaBadge
+                      severity={
+                        inv.status === "running"
+                          ? "medium"
+                          : inv.status === "completed"
+                            ? "low"
+                            : "info"
+                      }
+                      size="sm"
+                    >
+                      {inv.status}
+                    </AilaBadge>
+                    <span className="text-text-muted font-mono">
+                      {inv.message_count}t · ${inv.cost_actual_usd.toFixed(2)}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {activeInvs.length > 0 && (
+            <p className="text-[10px] text-text-muted mt-2">
+              {activeInvs.length} active
+            </p>
+          )}
+        </AilaCard>
+
+        {/* Findings summary */}
+        <AilaCard className="lg:col-span-1">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+            Findings
+          </h3>
+          <p className="text-2xl font-bold font-mono text-foreground">
+            {project.finding_count}
+          </p>
+          <p className="text-xs text-text-muted mt-1">
+            See <strong>Findings</strong> tab for per-vuln detail.
+          </p>
+          {activeFuzz.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-border-default">
+              <p className="text-xs text-text-muted">
+                {activeFuzz.length} active fuzz campaign
+                {activeFuzz.length === 1 ? "" : "s"}
+              </p>
+              {activeFuzz.slice(0, 3).map((c) => (
+                <Link
+                  key={c.id}
+                  to={`/vr/fuzz/campaigns/${c.id}`}
+                  className="text-xs font-mono text-foreground hover:underline block truncate mt-1"
+                >
+                  → {c.name}
+                </Link>
+              ))}
+            </div>
+          )}
+        </AilaCard>
+      </div>
+
+      {/* Project metadata strip */}
+      <AilaCard>
+        <dl className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          <div>
+            <dt className="text-text-muted text-xs">Workspace</dt>
+            <dd className="font-mono text-foreground truncate">
+              {project.workspace_id ?? "—"}
             </dd>
           </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-text-muted">Target</dt>
-            <dd className="font-mono text-foreground">
-              {project.target_id ? targetName : "—"}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-text-muted">Patched target</dt>
-            <dd className="font-mono text-foreground">
-              {project.patched_target_id ? patchedName : "—"}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-text-muted">Workspace</dt>
-            <dd className="font-mono text-foreground">{project.workspace_id ?? "—"}</dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-text-muted">Findings</dt>
-            <dd className="font-mono text-foreground">{project.finding_count}</dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-text-muted">Created</dt>
+          <div>
+            <dt className="text-text-muted text-xs">Created</dt>
             <dd className="font-mono text-foreground">
               {formatDateTime(project.created_at)}
             </dd>
           </div>
+          <div>
+            <dt className="text-text-muted text-xs">CVE</dt>
+            <dd className="font-mono text-foreground">
+              {project.cve_id ?? "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-text-muted text-xs">Status</dt>
+            <dd>
+              <AilaBadge
+                severity={projectStatusColor[project.status] ?? "info"}
+                size="sm"
+              >
+                {project.status}
+              </AilaBadge>
+            </dd>
+          </div>
         </dl>
-      </AilaCard>
-
-      <AilaCard>
-        <h3 className="text-sm font-semibold font-mono text-foreground mb-3">
-          Disclosure Obligations
-        </h3>
-        <p className="text-sm text-text-muted">
-          Coordinated-disclosure checklist will appear here once the analysis
-          produces findings (v0.2).
-        </p>
-      </AilaCard>
-
-      <AilaCard className="md:col-span-2">
-        <h3 className="text-sm font-semibold font-mono text-foreground mb-3">
-          Budget
-        </h3>
-        <p className="text-sm text-text-muted">
-          Token / runtime budget gauge will appear here while the agent runs (v0.2).
-        </p>
       </AilaCard>
     </div>
   );
@@ -228,37 +364,146 @@ function FindingsTab({ projectId }: { projectId: string }) {
     return (
       <AilaCard>
         <p className="text-sm text-text-muted text-center py-6">
-          No findings yet. They will appear here as the agent surfaces them.
+          No findings yet. They appear here once the engine completes a PoC.
         </p>
       </AilaCard>
     );
   }
   return (
     <div className="space-y-2">
-      {findings.map((f, i) => (
-        <FindingRow key={f.id ?? `${i}`} finding={f} />
+      {findings.map((f) => (
+        <FindingRow key={f.id ?? Math.random()} finding={f} />
       ))}
     </div>
   );
 }
 
-function AgentLogTab() {
+function AgentLogTab({
+  project,
+}: {
+  project: NonNullable<ReturnType<typeof useVRProject>["data"]>;
+}) {
+  // The "agent log" for an n-day VR project lives across its
+  // investigations. Link out to each — every investigation has its own
+  // dedicated TurnCard stream (the Investigation Timeline page).
+  const { data: invsResult, isLoading } = useInvestigations();
+  if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
+  const projInvs = (invsResult?.data ?? []).filter(
+    (i) => i.target_id === project.target_id,
+  );
+  if (projInvs.length === 0) {
+    return (
+      <AilaCard>
+        <p className="text-sm text-text-muted text-center py-6">
+          No investigations have been started for this project's target yet.
+          Create one from the <Link to="/vr/investigations" className="text-accent hover:underline">Investigations</Link>{" "}
+          page to drive the engine.
+        </p>
+      </AilaCard>
+    );
+  }
   return (
-    <AilaCard>
-      <p className="text-sm text-text-muted text-center py-6">
-        Agent log will appear here during analysis.
+    <div className="space-y-2">
+      <p className="text-xs text-text-muted px-1">
+        The engine's reasoning is per-investigation. Open one to see its
+        turn-by-turn timeline.
       </p>
-    </AilaCard>
+      {projInvs.map((inv) => (
+        <Link
+          key={inv.id}
+          to={`/vr/investigations/${inv.id}`}
+          className="block border border-border-default rounded-md px-3 py-2 hover:bg-surface-hover transition-colors"
+        >
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span className="text-sm font-mono text-foreground truncate">
+              {inv.title}
+            </span>
+            <div className="flex items-center gap-1.5 text-xs">
+              <AilaBadge
+                severity={
+                  inv.status === "running"
+                    ? "medium"
+                    : inv.status === "completed"
+                      ? "low"
+                      : inv.status === "failed"
+                        ? "critical"
+                        : "info"
+                }
+                size="sm"
+              >
+                {inv.status}
+              </AilaBadge>
+              <span className="text-text-muted font-mono">
+                {inv.message_count} turns · ${inv.cost_actual_usd.toFixed(2)}
+              </span>
+            </div>
+          </div>
+        </Link>
+      ))}
+    </div>
   );
 }
 
-function AdvisoryTab() {
+function AdvisoryTab({
+  project,
+}: {
+  project: NonNullable<ReturnType<typeof useVRProject>["data"]>;
+}) {
+  const { data: findingsResult, isLoading } = useVRFindings(project.id);
+  if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
+  const findings = findingsResult?.data ?? [];
+
+  if (findings.length === 0) {
+    return (
+      <AilaCard>
+        <p className="text-sm text-text-muted text-center py-6">
+          No findings to advise on yet. The engine produces an advisory as
+          part of the PoC workflow once a finding reaches the advisory state.
+        </p>
+      </AilaCard>
+    );
+  }
+
   return (
-    <AilaCard>
-      <p className="text-sm text-text-muted text-center py-6">
-        Advisory will be generated after analysis completes.
+    <div className="space-y-3">
+      <p className="text-xs text-text-muted px-1">
+        Per-finding disclosure state. Click <strong>Disclosures</strong> in
+        the sidebar for full advisory editing surface.
       </p>
-    </AilaCard>
+      {findings.map((f) => (
+        <AilaCard key={f.id ?? Math.random()}>
+          <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
+            <h3 className="text-sm font-semibold text-foreground font-mono truncate">
+              {f.vulnerable_function ?? "(unknown function)"}
+            </h3>
+            <AilaBadge
+              severity={disclosureStatusColor[f.disclosure_status] ?? "info"}
+              size="sm"
+            >
+              {f.disclosure_status}
+            </AilaBadge>
+          </div>
+          {f.assigned_cve_id && (
+            <p className="text-xs font-mono text-text-muted">
+              CVE: {f.assigned_cve_id}
+            </p>
+          )}
+          {f.root_cause && (
+            <p className="text-xs text-foreground mt-2 whitespace-pre-wrap line-clamp-4">
+              {f.root_cause}
+            </p>
+          )}
+          {f.advisory_id && (
+            <Link
+              to={`/vr/disclosures`}
+              className="text-xs text-accent hover:underline mt-2 inline-block"
+            >
+              Open in Disclosures →
+            </Link>
+          )}
+        </AilaCard>
+      ))}
+    </div>
   );
 }
 
@@ -338,8 +583,8 @@ export function ProjectDetailPage() {
 
       {activeTab === "overview" && <OverviewTab project={project} />}
       {activeTab === "findings" && <FindingsTab projectId={projectId} />}
-      {activeTab === "agent" && <AgentLogTab />}
-      {activeTab === "advisory" && <AdvisoryTab />}
+      {activeTab === "agent" && <AgentLogTab project={project} />}
+      {activeTab === "advisory" && <AdvisoryTab project={project} />}
     </div>
   );
 }
