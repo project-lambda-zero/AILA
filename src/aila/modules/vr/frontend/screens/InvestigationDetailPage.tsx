@@ -15,6 +15,7 @@ import {
   useInvestigationBranches,
   useInvestigationMessages,
   useInvestigationOutcomes,
+  useTargetName,
 } from "../queries";
 import { useInvestigationMessagesStream } from "../hooks/useInvestigationMessagesStream";
 import type {
@@ -111,6 +112,7 @@ export function InvestigationDetailPage() {
   const { data: messagesResult } = useInvestigationMessages(invId);
   useInvestigationMessagesStream(invId);
   const { data: outcomesResult } = useInvestigationOutcomes(invId);
+  const targetName = useTargetName(inv?.target_id);
 
   const pauseMut = usePauseInvestigation(invId);
   const resumeMut = useResumeInvestigation(invId);
@@ -136,7 +138,7 @@ export function InvestigationDetailPage() {
             {inv.title}
           </h1>
           <p className="text-sm text-text-muted mt-1 font-mono">
-            {inv.kind} · target:{inv.target_id.slice(0, 12)}…
+            {inv.kind} · target: {targetName}
           </p>
         </div>
         <Link
@@ -294,7 +296,7 @@ export function InvestigationDetailPage() {
               >
                 <div className="flex items-center gap-2 mb-1">
                   <span className="font-mono text-xs text-text-muted">
-                    {b.id.slice(0, 12)}…
+                    {b.persona_voice ?? "branch"}{b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}
                   </span>
                   <AilaBadge
                     severity={branchStatusColor[b.status] ?? "info"}

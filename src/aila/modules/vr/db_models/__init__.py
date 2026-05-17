@@ -12,6 +12,7 @@ from .finding import VRFindingRecord
 from .fuzz import VRFuzzCampaignRecord, VRFuzzCrashRecord
 from .investigation import VRInvestigationRecord
 from .investigation_target import VRInvestigationTargetRecord
+from .mcp_call_log import VRMcpCallLogRecord
 from .message import VRInvestigationMessageRecord
 from .outcome import VRInvestigationOutcomeRecord
 from .pattern import VRPatternRecord
@@ -29,6 +30,7 @@ __all__ = [
     "VRInvestigationBranchRecord",
     "VRInvestigationMessageRecord",
     "VRInvestigationOutcomeRecord",
+    "VRMcpCallLogRecord",
     "VRInvestigationRecord",
     "VRInvestigationTargetRecord",
     "VRPatternRecord",

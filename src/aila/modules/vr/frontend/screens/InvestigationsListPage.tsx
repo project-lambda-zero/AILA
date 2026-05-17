@@ -6,7 +6,7 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { useCreateInvestigation } from "../mutations";
-import { useInvestigations } from "../queries";
+import { useInvestigations, useTargetMap } from "../queries";
 import type { InvestigationKind, InvestigationStatus } from "../types";
 
 const statusColor: Record<
@@ -37,6 +37,7 @@ function fmtUsd(n: number): string {
 export function InvestigationsListPage() {
   const navigate = useNavigate();
   const { data: result, isLoading, isError } = useInvestigations();
+  const targetMap = useTargetMap();
   const createMut = useCreateInvestigation();
 
   const [showForm, setShowForm] = useState(false);
@@ -224,7 +225,7 @@ export function InvestigationsListPage() {
                     </AilaBadge>
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                    {inv.target_id.slice(0, 8)}…
+                    {targetMap.get(inv.target_id)?.display_name ?? "loading…"}
                   </td>
                   <td className="px-4 py-2 font-mono text-right text-foreground">
                     {inv.branch_count}

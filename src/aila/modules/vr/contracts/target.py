@@ -136,6 +136,14 @@ class VRTargetSummary(BaseModel):
     display_name: str
     kind: TargetKind
     descriptor: dict[str, Any] = Field(default_factory=dict)
+    uploaded_filename: str | None = Field(
+        default=None,
+        description=(
+            "When the operator uploaded a binary via POST /vr/targets/{id}/upload, "
+            "this is the original filename. None otherwise. Projected from "
+            "the backend-internal mcp_handles_json — never settable directly."
+        ),
+    )
     primary_language: str | None = None
     secondary_languages: list[str] = Field(default_factory=list)
     status: TargetStatus

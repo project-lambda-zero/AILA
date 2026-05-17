@@ -14,6 +14,7 @@ import { FuzzCrashDetailPage } from "./screens/FuzzCrashDetailPage";
 import { PatternDetailPage } from "./screens/PatternDetailPage";
 import { PatternsPage } from "./screens/PatternsPage";
 import { McpServersPage } from "./screens/McpServersPage";
+import { McpCallLogPage } from "./screens/McpCallLogPage";
 
 export const routes = [
   {
@@ -159,5 +160,14 @@ export const routes = [
     nav: true,
     slot: "page.full" as const,
     breadcrumb: "MCP Servers",
+  },
+  {
+    id: "vr.mcp-calls",
+    path: "/vr/mcp/calls",
+    page: McpCallLogPage,
+    title: "MCP Call Log",
+    nav: true,
+    slot: "page.full" as const,
+    breadcrumb: "MCP Call Log",
   },
 ];

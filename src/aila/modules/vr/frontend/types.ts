@@ -174,6 +174,7 @@ export interface VRTargetSummary {
   display_name: string;
   kind: TargetKind;
   descriptor: Record<string, unknown>;
+  uploaded_filename?: string | null;
   primary_language?: string | null;
   secondary_languages: string[];
   status: TargetStatus;
@@ -628,4 +629,18 @@ export interface McpServerSummary {
   tools: string[];                     // sorted tool names
   last_probed_at: string;              // ISO 8601
   error: string | null;                // when status='unreachable'
+}
+
+// ─── MCP call log (operator audit trail) ───────────────────────────────
+
+export interface McpCallLogEntry {
+  id: string;
+  server_id: string;          // 'audit_mcp' | 'ida_headless'
+  base_url: string;           // resolved URL at call time
+  action: string;             // MCP tool name
+  status: string;             // 'ready' | 'pending' | 'error'
+  http_status: number | null;
+  latency_ms: number | null;
+  error_excerpt: string | null;
+  called_at: string;          // ISO 8601
 }

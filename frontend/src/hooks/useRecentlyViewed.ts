@@ -18,6 +18,12 @@ const EXCLUDED_PATHS = new Set([
   "/500",
 ]);
 
+// Matches both canonical UUIDs (8-4-4-4-12) and 8-32 char hex slugs
+// that detail routes commonly use as ids. These segments would otherwise
+// render as raw UUIDs in the sidebar "Recent" list.
+const ID_LIKE = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const HEX_SLUG = /^[0-9a-f]{8,32}$/i;
+
 function pathToLabel(pathname: string): string {
   if (pathname === "/") return "Dashboard";
   return pathname
@@ -26,6 +32,7 @@ function pathToLabel(pathname: string): string {
     .filter(Boolean)
     .map((segment) => {
       if (/^\d+$/.test(segment)) return "Detail";
+      if (ID_LIKE.test(segment) || HEX_SLUG.test(segment)) return "Detail";
       return segment
         .split(/[-_]/g)
         .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
