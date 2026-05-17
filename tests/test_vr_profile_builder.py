@@ -166,6 +166,47 @@ class TestRuleTables:
     def test_wildcard_reasoning_strategy_for_cve(self) -> None:
         assert (TargetKind.CVE.value, "*") in _DEFAULT_REASONING_STRATEGY
 
+    def test_v04_audit_only_languages_have_empty_fuzz_engines(self) -> None:
+        # PHP + Ruby are audit-only — explicit empty entry means we
+        # surface 'no fuzz engines' rather than falling through to
+        # an unrelated default.
+        for lang in ("php", "ruby"):
+            key = (TargetKind.SOURCE_REPO.value, lang)
+            assert key in _APPLICABLE_FUZZING_ENGINES
+            assert _APPLICABLE_FUZZING_ENGINES[key] == []
+
+    def test_v04_swift_has_libfuzzer_swift(self) -> None:
+        assert _APPLICABLE_FUZZING_ENGINES.get(
+            (TargetKind.SOURCE_REPO.value, "swift"),
+        ) == ["libfuzzer-swift"]
+        assert _APPLICABLE_FUZZING_ENGINES.get(
+            (TargetKind.IPA.value, "swift"),
+        ) == ["libfuzzer-swift"]
+
+    def test_v04_android_native_libs_get_libfuzzer_android(self) -> None:
+        for lang in ("c", "c++"):
+            assert _APPLICABLE_FUZZING_ENGINES.get(
+                (TargetKind.APK.value, lang),
+            ) == ["libfuzzer-android"]
+
+    def test_v04_dotnet_uses_sharpfuzz(self) -> None:
+        for lang in ("c#", "f#"):
+            assert _APPLICABLE_FUZZING_ENGINES.get(
+                (TargetKind.DOTNET_ASSEMBLY.value, lang),
+            ) == ["sharpfuzz"]
+
+    def test_v04_audit_only_strategy_for_php_ruby_python(self) -> None:
+        for lang in ("php", "ruby", "python", "java", "kotlin"):
+            assert _DEFAULT_REASONING_STRATEGY.get(
+                (TargetKind.SOURCE_REPO.value, lang),
+            ) == "vulnerability_research.source_audit"
+
+    def test_v04_wildcard_strategies_for_mobile_and_dotnet(self) -> None:
+        for kind in (TargetKind.APK, TargetKind.IPA, TargetKind.DOTNET_ASSEMBLY):
+            assert _DEFAULT_REASONING_STRATEGY.get(
+                (kind.value, "*"),
+            ) == "vulnerability_research.discovery_research"
+
 
 class TestComposeProfile:
     def test_v8_binary_gets_fuzzilli(self) -> None:
