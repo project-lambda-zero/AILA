@@ -7,7 +7,11 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
-import { useDeleteFuzzCampaign, usePatchFuzzCampaign } from "../mutations";
+import {
+  useDeleteFuzzCampaign,
+  useLaunchFuzzCampaign,
+  usePatchFuzzCampaign,
+} from "../mutations";
 import {
   useCampaignTelemetry,
   useFuzzCampaign,
@@ -83,6 +87,7 @@ export function FuzzCampaignDetailPage() {
   const { data: crashesData } = useFuzzCrashes({ campaignId: cid });
   const crashes = crashesData?.data ?? [];
   const patchMut = usePatchFuzzCampaign(cid);
+  const launchMut = useLaunchFuzzCampaign(cid);
   const deleteMut = useDeleteFuzzCampaign();
   const [crashFilter, setCrashFilter] = useState<
     "all" | "exploitable" | "unique-stack" | "untriaged"
@@ -144,11 +149,48 @@ export function FuzzCampaignDetailPage() {
         )}
       </div>
 
-      {/* State transitions */}
+      {/* State control + Launcher (§1.5). Launch button enqueues an
+          ARQ task that SSHes to the campaign's analysis_system_id and
+          starts the fuzzer per its engine_id. Idempotent — clicking
+          while running returns the existing PID. */}
       <AilaCard>
-        <h2 className="text-sm font-semibold text-foreground mb-2">
-          State control
-        </h2>
+        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+          <h2 className="text-sm font-semibold text-foreground">
+            State control
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => launchMut.mutate({})}
+              disabled={
+                launchMut.isPending || !campaign.analysis_system_id
+              }
+              title={
+                campaign.analysis_system_id
+                  ? "Enqueue the launcher ARQ task — SSHes to the workstation and starts the fuzzer"
+                  : "Set analysis_system_id on the campaign before launching"
+              }
+              className="px-3 py-1.5 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-500 disabled:opacity-40"
+            >
+              {launchMut.isPending
+                ? "Launching…"
+                : campaign.remote_pid
+                  ? `Re-launch (current PID ${campaign.remote_pid})`
+                  : "Launch on workstation"}
+            </button>
+          </div>
+        </div>
+        {campaign.remote_pid && (
+          <p className="text-[10px] text-text-muted font-mono mb-2">
+            remote_pid={campaign.remote_pid}
+            {campaign.remote_corpus_dir
+              ? ` · corpus=${campaign.remote_corpus_dir}`
+              : ""}
+            {campaign.remote_crashes_dir
+              ? ` · crashes=${campaign.remote_crashes_dir}`
+              : ""}
+          </p>
+        )}
         {transitions.length === 0 ? (
           <p className="text-xs text-text-muted">Campaign is terminal.</p>
         ) : (
