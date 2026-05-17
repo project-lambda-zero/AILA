@@ -9,6 +9,7 @@ import { CVSSBadge } from "./components/CVSSBadge";
 import {
   useFuzzCampaigns,
   useFuzzCrashes,
+  useFuzzProposals,
   useInvestigations,
   useVRProjects,
 } from "./queries";
@@ -249,6 +250,54 @@ function bucketByDay<T extends { discovered_at?: string | null; created_at?: str
 const _unused = useInvestigations;
 void _unused;
 
+function PendingFuzzProposalsWidget() {
+  const { data, isLoading } = useFuzzProposals({ status: "pending" });
+  const proposals = data?.data ?? [];
+  return (
+    <AilaCard className="h-full flex flex-col">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+          Pending Fuzz Proposals
+        </h3>
+        <Link
+          to="/vr/investigations"
+          className="text-[10px] text-accent hover:underline"
+        >
+          review →
+        </Link>
+      </div>
+      <p className="text-3xl font-bold font-mono text-foreground">
+        {isLoading ? "—" : proposals.length}
+      </p>
+      <p className="text-xs text-text-muted mt-1">
+        agent-authored, awaiting operator decision
+      </p>
+      {proposals.length > 0 && (
+        <ul className="mt-2 space-y-1 text-[10px] font-mono max-h-32 overflow-y-auto">
+          {proposals.slice(0, 5).map((p) => (
+            <li
+              key={p.id}
+              className="border border-border-default rounded px-2 py-1 flex items-center justify-between gap-2"
+            >
+              <span className="text-foreground truncate">{p.profile}</span>
+              <AilaBadge
+                severity={
+                  p.confidence === "strong" || p.confidence === "exact"
+                    ? "info" : "medium"
+                }
+                size="sm"
+              >
+                {p.confidence}
+              </AilaBadge>
+            </li>
+          ))}
+        </ul>
+      )}
+    </AilaCard>
+  );
+}
+
+
 export const widgets: WidgetContribution[] = [
   {
     id: "vr.active-projects",
@@ -292,6 +341,17 @@ export const widgets: WidgetContribution[] = [
       "Aggregate coverage across running campaigns + stable / stuck / paused breakdown.",
     category: "vr",
     render: FuzzingCoverageWidget,
+    defaultSize: { w: 2, h: 1 },
+  },
+  {
+    id: "vr.pending-fuzz-proposals",
+    slot: "dashboard.primary",
+    order: 74,
+    name: "Pending Fuzz Proposals",
+    description:
+      "Operator-decision queue of agent-authored fuzz campaign proposals — full harness + seeds prepared.",
+    category: "vr",
+    render: PendingFuzzProposalsWidget,
     defaultSize: { w: 2, h: 1 },
   },
 ];

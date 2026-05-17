@@ -42,6 +42,9 @@ from .contracts import (
     EvidenceGraphEdge,
     EvidenceGraphNode,
     EvidenceGraphSnapshot,
+    FuzzProposalDecideAccept,
+    FuzzProposalDecideReject,
+    FuzzProposalStatus,
     FuzzTelemetryCreate,
     FuzzTelemetryPoint,
     HypothesisProjection,
@@ -73,6 +76,7 @@ from .contracts import (
     VRFinding,
     VRFuzzCampaignCreate,
     VRFuzzCampaignPatch,
+    VRFuzzCampaignProposalSummary,
     VRFuzzCampaignSummary,
     VRFuzzCrashCreate,
     VRFuzzCrashSummary,
@@ -227,6 +231,77 @@ def _finding_from_record(record: Any) -> VRFinding:
         assigned_cve_id=record.assigned_cve_id,
         patch_version=record.patch_version,
     )
+
+
+def _fuzz_proposal_summary(record: Any) -> VRFuzzCampaignProposalSummary:
+    """Project a VRFuzzCampaignProposalRecord row → public summary."""
+    import json as _json
+
+    from .contracts import SeedCorpusEntry
+
+    def _safe_dict(blob: str | None) -> dict[str, Any]:
+        if not blob:
+            return {}
+        try:
+            v = _json.loads(blob)
+            return v if isinstance(v, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+
+    seeds_raw = []
+    try:
+        decoded = _json.loads(record.seed_corpus_json or "[]")
+        if isinstance(decoded, list):
+            seeds_raw = decoded
+    except (ValueError, TypeError):
+        seeds_raw = []
+    seeds: list[SeedCorpusEntry] = []
+    for entry in seeds_raw:
+        if not isinstance(entry, dict):
+            continue
+        fn = entry.get("filename")
+        b64 = entry.get("content_base64")
+        if not fn or not b64:
+            continue
+        try:
+            seeds.append(SeedCorpusEntry(
+                filename=str(fn),
+                content_base64=str(b64),
+                notes=str(entry.get("notes") or ""),
+            ))
+        except (TypeError, ValueError):
+            continue
+
+    return VRFuzzCampaignProposalSummary(
+        id=record.id,
+        investigation_id=record.investigation_id,
+        outcome_id=record.outcome_id,
+        target_id=record.target_id,
+        workspace_id=record.workspace_id,
+        profile=record.profile,
+        rationale=record.rationale or "",
+        confidence=record.confidence or "medium",
+        target_descriptor=_safe_dict(record.target_descriptor_json),
+        suggested_engine_id=record.suggested_engine_id,
+        suggested_engine_config=_safe_dict(record.suggested_engine_config_json),
+        suggested_strategy_id=record.suggested_strategy_id,
+        suggested_duration_hours=record.suggested_duration_hours,
+        harness_source=record.harness_source,
+        harness_language=record.harness_language,
+        harness_build_command=record.harness_build_command,
+        harness_target_path=record.harness_target_path,
+        seed_corpus=seeds,
+        dictionary_content=record.dictionary_content,
+        status=FuzzProposalStatus(record.status),
+        accepted_campaign_id=record.accepted_campaign_id,
+        decided_at=record.decided_at,
+        decided_by=record.decided_by,
+        decision_reason=record.decision_reason,
+        prepare_log=record.prepare_log,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
 
 
 def _workspace_summary(
@@ -3828,6 +3903,202 @@ def create_vr_router() -> APIRouter:
             await uow.session.commit()
 
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    # ── Fuzz campaign proposals (operator-in-the-loop) ─────────────
+
+    @router.get(
+        "/fuzz/proposals",
+        response_model=DataEnvelope[list[VRFuzzCampaignProposalSummary]],
+        summary=(
+            "List fuzz campaign proposals emitted by reasoning agents. "
+            "Filterable by investigation_id, target_id, or status."
+        ),
+    )
+    @limiter.limit("120/minute")
+    async def list_fuzz_proposals(
+        request: Request,
+        investigation_id: str | None = Query(default=None),
+        target_id: str | None = Query(default=None),
+        status_filter: FuzzProposalStatus | None = Query(
+            default=None, alias="status",
+        ),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[VRFuzzCampaignProposalSummary]]:
+        del request
+        from .db_models import VRFuzzCampaignProposalRecord
+
+        async with UnitOfWork() as uow:
+            stmt = _team_filter(
+                select(VRFuzzCampaignProposalRecord),
+                VRFuzzCampaignProposalRecord, auth,
+            )
+            count_stmt = _team_filter(
+                select(sa_func.count()).select_from(
+                    VRFuzzCampaignProposalRecord,
+                ),
+                VRFuzzCampaignProposalRecord, auth,
+            )
+            if investigation_id:
+                stmt = stmt.where(
+                    VRFuzzCampaignProposalRecord.investigation_id
+                    == investigation_id,
+                )
+                count_stmt = count_stmt.where(
+                    VRFuzzCampaignProposalRecord.investigation_id
+                    == investigation_id,
+                )
+            if target_id:
+                stmt = stmt.where(
+                    VRFuzzCampaignProposalRecord.target_id == target_id,
+                )
+                count_stmt = count_stmt.where(
+                    VRFuzzCampaignProposalRecord.target_id == target_id,
+                )
+            if status_filter is not None:
+                stmt = stmt.where(
+                    VRFuzzCampaignProposalRecord.status
+                    == status_filter.value,
+                )
+                count_stmt = count_stmt.where(
+                    VRFuzzCampaignProposalRecord.status
+                    == status_filter.value,
+                )
+            total = (await uow.session.exec(count_stmt)).one()
+            rows = (await uow.session.exec(
+                stmt.order_by(VRFuzzCampaignProposalRecord.created_at.desc())
+                .offset(offset).limit(limit)
+            )).all()
+
+        items = [_fuzz_proposal_summary(r) for r in rows]
+        return DataEnvelope(
+            data=items,
+            meta=PaginatedMeta(
+                total=int(total), offset=offset, limit=limit,
+            ).model_dump(),
+        )
+
+    @router.get(
+        "/fuzz/proposals/{proposal_id}",
+        response_model=DataEnvelope[VRFuzzCampaignProposalSummary],
+        summary="Get one fuzz campaign proposal by id.",
+    )
+    @limiter.limit("120/minute")
+    async def get_fuzz_proposal(
+        request: Request,
+        proposal_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFuzzCampaignProposalSummary]:
+        del request
+        from .db_models import VRFuzzCampaignProposalRecord
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRFuzzCampaignProposalRecord).where(
+                        VRFuzzCampaignProposalRecord.id == proposal_id,
+                    ),
+                    VRFuzzCampaignProposalRecord, auth,
+                ),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Fuzz proposal {proposal_id} not found.",
+                )
+        return DataEnvelope(data=_fuzz_proposal_summary(row))
+
+    class _ProposalAcceptResponse(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        proposal_id: str
+        campaign_id: str
+        workdir: str
+        harness_path: str | None
+        seeds_written: int
+        dictionary_written: bool
+        auto_launched: bool
+        build_log: str
+
+    @router.post(
+        "/fuzz/proposals/{proposal_id}/accept",
+        response_model=DataEnvelope[_ProposalAcceptResponse],
+        summary=(
+            "Accept a pending fuzz proposal. ProposalPreparer SSHes "
+            "the workstation, writes the harness + seeds + dict, runs "
+            "the build, creates a campaign row, and (default) auto-"
+            "launches the fuzzer. The operator can override any of "
+            "the resolved defaults in the body."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def accept_fuzz_proposal(
+        request: Request,
+        proposal_id: str,
+        body: FuzzProposalDecideAccept,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[_ProposalAcceptResponse]:
+        del request
+        from aila.modules.vr.services.proposal_preparer import (
+            ProposalPrepareError,
+            ProposalPreparer,
+        )
+
+        preparer = ProposalPreparer()
+        try:
+            result = await preparer.accept(
+                proposal_id, body,
+                team_id=auth.team_id, user_id=auth.user_id,
+            )
+        except ProposalPrepareError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        return DataEnvelope(data=_ProposalAcceptResponse(
+            proposal_id=result.proposal_id,
+            campaign_id=result.campaign_id,
+            workdir=result.workdir,
+            harness_path=result.harness_path,
+            seeds_written=result.seeds_written,
+            dictionary_written=result.dictionary_written,
+            auto_launched=result.auto_launched,
+            build_log=result.build_log,
+        ))
+
+    @router.post(
+        "/fuzz/proposals/{proposal_id}/reject",
+        response_model=DataEnvelope[VRFuzzCampaignProposalSummary],
+        summary="Reject a pending fuzz proposal — reason recorded.",
+    )
+    @limiter.limit("30/minute")
+    async def reject_fuzz_proposal(
+        request: Request,
+        proposal_id: str,
+        body: FuzzProposalDecideReject,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFuzzCampaignProposalSummary]:
+        del request
+        from aila.modules.vr.services.proposal_preparer import (
+            ProposalPrepareError,
+            ProposalPreparer,
+        )
+
+        preparer = ProposalPreparer()
+        try:
+            row = await preparer.reject(
+                proposal_id,
+                body.decision_reason,
+                team_id=auth.team_id,
+                user_id=auth.user_id,
+            )
+        except ProposalPrepareError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        return DataEnvelope(data=_fuzz_proposal_summary(row))
+
 
     @router.post(
         "/fuzz/crashes",

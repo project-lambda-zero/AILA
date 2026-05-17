@@ -11,6 +11,7 @@ import { SteeringDrawer } from "../components/SteeringDrawer";
 import { TurnCard } from "../components/TurnCard";
 import { WorkflowStepper } from "../components/WorkflowStepper";
 import { HypothesisDetailRail } from "../components/HypothesisDetailRail";
+import { FuzzProposalsPanel } from "../components/FuzzProposalCard";
 import { useInvestigationMessagesStream } from "../hooks/useInvestigationMessagesStream";
 import { useVRKeyboardShortcuts } from "../hooks/useVRKeyboardShortcuts";
 import {
@@ -499,6 +500,9 @@ export function InvestigationDetailPage() {
         <aside className="space-y-3">
           {/* Hypothesis projection (08_FRONTEND_UX.md §2.3) */}
           <HypothesisDetailRail investigationId={invId} />
+          {/* Fuzz proposals queue (operator-in-the-loop) */}
+          <FuzzProposalsPanel investigationId={invId} />
+
 
           {/* Branches summary */}
           <AilaCard>

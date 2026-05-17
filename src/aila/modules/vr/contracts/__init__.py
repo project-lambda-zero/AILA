@@ -67,6 +67,13 @@ from .fuzz import (
     VRFuzzCrashCreate,
     VRFuzzCrashSummary,
 )
+from .fuzz_proposal import (
+    FuzzProposalDecideAccept,
+    FuzzProposalDecideReject,
+    FuzzProposalStatus,
+    SeedCorpusEntry,
+    VRFuzzCampaignProposalSummary,
+)
 from .hypothesis import HypothesisProjection, HypothesisState
 from .investigation import (
     InvestigationKind,
@@ -230,4 +237,9 @@ __all__ = [
     "EvidenceGraphEdge",
     "EvidenceGraphNode",
     "EvidenceGraphSnapshot",
+    "FuzzProposalDecideAccept",
+    "FuzzProposalDecideReject",
+    "FuzzProposalStatus",
+    "SeedCorpusEntry",
+    "VRFuzzCampaignProposalSummary",
 ]

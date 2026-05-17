@@ -47,6 +47,7 @@ from aila.modules.vr.contracts.investigation import (
 )
 from aila.modules.vr.db_models import (
     VRFindingRecord,
+    VRFuzzCampaignProposalRecord,
     VRInvestigationBranchRecord,
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
@@ -78,6 +79,23 @@ class OutcomeDispatchResult:
 # Outcome kinds whose downstream consumers don't yet exist in v0.3 v1.
 # Listed explicitly so the dispatcher emits SKIPPED with a real reason
 # rather than silently doing nothing.
+def _str_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s or None
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+
 _NOT_YET_DISPATCHABLE: dict[OutcomeKind, str] = {
     OutcomeKind.ASSESSMENT_REPORT: "assessment_reports_are_terminal_no_downstream",
     OutcomeKind.STRATEGY_DESCRIPTOR: "no_strategy_registry_consumer_yet",
@@ -410,20 +428,28 @@ class OutcomeDispatcher:
         payload: dict[str, Any],
         outcome: VRInvestigationOutcomeRecord,
     ) -> OutcomeDispatchResult:
-        """CAMPAIGN_LAUNCH → KnowledgeService write under
-        ``vr.campaign_request.workspace.<id>``.
+        """CAMPAIGN_LAUNCH → ``vr_fuzz_campaign_proposals`` row.
 
-        The downstream fuzz worker (out-of-process; not yet shipped as
-        an AILA module per D-37 "fuzzing is OPTIONAL") subscribes to
-        the same namespace and picks up the request. Until then, the
-        operator can list pending requests via /vr/knowledge queries.
+        The reasoning agent emits a fully prepared proposal: profile,
+        rationale, target descriptor, suggested engine + strategy +
+        duration + config, plus the harness source, build command,
+        seed corpus, and (optionally) a dictionary. The dispatcher
+        persists the row in ``pending`` status; the operator approves
+        or rejects via ``POST /vr/fuzz/proposals/{id}/{accept,reject}``.
+        Until accepted, no campaign row exists and no fuzzer runs.
 
         Required payload fields:
-          - profile: fuzzing profile name (e.g. "V8MapInferenceProfile")
-          - target_descriptor: what to fuzz (binary_path / harness_id)
-        Optional:
-          - duration_hours, parallel_jobs, corpus_seed
+          - profile: str
+          - target_descriptor: dict (at least ``harness`` / ``function``)
+        Recommended (operator can fill in on accept if missing):
+          - suggested_engine_id, suggested_strategy_id,
+            suggested_engine_config, suggested_duration_hours
+          - harness_source, harness_language, harness_build_command,
+            harness_target_path
+          - seed_corpus: list[{filename, content_base64, notes?}]
+          - dictionary_content
         """
+
         target_row, _ = await self._load_target_for_investigation(investigation_id)
         profile = str(payload.get("profile") or "").strip()
         target_descriptor = payload.get("target_descriptor") or {}
@@ -436,37 +462,95 @@ class OutcomeDispatcher:
                 reason="missing_profile_or_target_descriptor",
             )
 
-        workspace_id = target_row.workspace_id
-        namespace = f"vr.campaign_request.workspace.{workspace_id}"
-        content = (
-            f"Campaign request — profile={profile} target_id={target_row.id}\n"
-            f"descriptor={json.dumps(target_descriptor, sort_keys=True)}"
+        # Best-effort superseded marker: any prior PENDING proposal
+        # for the same investigation + same harness/function gets
+        # demoted so the operator only ever sees the newest.
+        descriptor_key = (
+            target_descriptor.get("harness")
+            or target_descriptor.get("function")
+            or target_descriptor.get("function_name")
+            or ""
         )
-        store_result = await self._knowledge.store(
-            namespace=namespace,
-            content=content,
-            metadata={
-                "investigation_id": investigation_id,
-                "target_id": target_row.id,
-                "workspace_id": workspace_id,
-                "profile": profile,
-                "target_descriptor": target_descriptor,
-                "duration_hours": payload.get("duration_hours"),
-                "parallel_jobs": payload.get("parallel_jobs"),
-                "corpus_seed": payload.get("corpus_seed"),
-                "confidence": outcome.confidence,
-                "outcome_id": outcome_id,
-                "status": "pending",
-            },
-            dedup_key=None,
-        )
-        entry_id = store_result.get("entry_id")
+
+        async with UnitOfWork() as uow:
+            if descriptor_key:
+                old_rows = (await uow.session.exec(
+                    _select(VRFuzzCampaignProposalRecord).where(
+                        VRFuzzCampaignProposalRecord.investigation_id
+                        == investigation_id,
+                        VRFuzzCampaignProposalRecord.target_id == target_row.id,
+                        VRFuzzCampaignProposalRecord.status == "pending",
+                    ),
+                )).all()
+                for old in old_rows:
+                    try:
+                        old_descriptor = json.loads(old.target_descriptor_json or "{}")
+                    except (ValueError, TypeError):
+                        continue
+                    old_key = (
+                        old_descriptor.get("harness")
+                        or old_descriptor.get("function")
+                        or old_descriptor.get("function_name")
+                        or ""
+                    )
+                    if old_key == descriptor_key:
+                        old.status = "superseded"
+                        old.updated_at = utc_now()
+                        uow.session.add(old)
+
+            row = VRFuzzCampaignProposalRecord(
+                investigation_id=investigation_id,
+                outcome_id=outcome_id,
+                target_id=target_row.id,
+                workspace_id=target_row.workspace_id,
+                team_id=target_row.team_id,
+                profile=profile,
+                rationale=str(payload.get("rationale") or "")[:8192],
+                confidence=str(outcome.confidence)[:24],
+                target_descriptor_json=json.dumps(target_descriptor),
+                suggested_engine_id=_str_or_none(
+                    payload.get("suggested_engine_id")
+                    or payload.get("engine_id"),
+                ),
+                suggested_engine_config_json=json.dumps(payload.get("suggested_engine_config")
+                or payload.get("engine_config")
+                or {}),
+                suggested_strategy_id=_str_or_none(
+                    payload.get("suggested_strategy_id")
+                    or payload.get("strategy_id"),
+                ),
+                suggested_duration_hours=_int_or_none(
+                    payload.get("suggested_duration_hours")
+                    or payload.get("duration_hours"),
+                ),
+                harness_source=_str_or_none(payload.get("harness_source")),
+                harness_language=_str_or_none(payload.get("harness_language")),
+                harness_build_command=_str_or_none(
+                    payload.get("harness_build_command"),
+                ),
+                harness_target_path=_str_or_none(
+                    payload.get("harness_target_path"),
+                ),
+                seed_corpus_json=json.dumps(payload.get("seed_corpus") or []),
+                dictionary_content=_str_or_none(
+                    payload.get("dictionary_content"),
+                ),
+                status="pending",
+            )
+            uow.session.add(row)
+            await uow.session.commit()
+            await uow.session.refresh(row)
+            proposal_id = row.id
+
         return OutcomeDispatchResult(
             outcome_id=outcome_id,
             outcome_kind=OutcomeKind.CAMPAIGN_LAUNCH,
             dispatch_status=OutcomeDispatchStatus.DISPATCHED,
-            dispatch_target=f"knowledge_entry:{entry_id}",
-            reason=f"namespace={namespace} profile={profile}",
+            dispatch_target=f"fuzz_proposal:{proposal_id}",
+            reason=(
+                f"target_id={target_row.id} profile={profile} "
+                f"status=pending awaiting operator approval"
+            ),
         )
 
     async def _dispatch_profile_spec_draft(

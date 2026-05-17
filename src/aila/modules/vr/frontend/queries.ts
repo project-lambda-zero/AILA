@@ -619,3 +619,75 @@ export function useBranchLabel(
   // fork_at_turn disambiguates siblings spawned by the same persona
   return hit.fork_at_turn != null ? `${persona} @t${hit.fork_at_turn}` : persona;
 }
+
+/** ── Fuzz campaign proposals (operator-in-the-loop) ────────────── */
+
+export type FuzzProposalStatus =
+  | "pending"
+  | "accepted"
+  | "rejected"
+  | "superseded";
+
+export interface SeedCorpusEntry {
+  filename: string;
+  content_base64: string;
+  notes: string;
+}
+
+export interface VRFuzzCampaignProposalSummary {
+  id: string;
+  investigation_id: string;
+  outcome_id: string;
+  target_id: string;
+  workspace_id: string;
+  profile: string;
+  rationale: string;
+  confidence: string;
+  target_descriptor: Record<string, unknown>;
+  suggested_engine_id: string | null;
+  suggested_engine_config: Record<string, unknown>;
+  suggested_strategy_id: string | null;
+  suggested_duration_hours: number | null;
+  harness_source: string | null;
+  harness_language: string | null;
+  harness_build_command: string | null;
+  harness_target_path: string | null;
+  seed_corpus: SeedCorpusEntry[];
+  dictionary_content: string | null;
+  status: FuzzProposalStatus;
+  accepted_campaign_id: string | null;
+  decided_at: string | null;
+  decided_by: string | null;
+  decision_reason: string | null;
+  prepare_log: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export function useFuzzProposals(opts?: {
+  investigationId?: string;
+  targetId?: string;
+  status?: FuzzProposalStatus;
+}) {
+  const { investigationId, targetId, status } = opts ?? {};
+  return useQuery({
+    queryKey: [
+      "vr",
+      "fuzz-proposals",
+      investigationId ?? null,
+      targetId ?? null,
+      status ?? null,
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (investigationId) params.set("investigation_id", investigationId);
+      if (targetId) params.set("target_id", targetId);
+      if (status) params.set("status", status);
+      const qs = params.toString();
+      return await authorizedRequestJson<
+        Envelope<VRFuzzCampaignProposalSummary[]>
+      >(`/vr/fuzz/proposals${qs ? `?${qs}` : ""}`);
+    },
+    refetchInterval: 8000,
+  });
+}
