@@ -92,15 +92,16 @@ class AuditMcpBridgeTool(Tool):
 
     # ── LLM kwarg synonym map ─────────────────────────────────────────
     #
-    # The reasoning agent doesn't see audit-mcp tool signatures; it
-    # picks parameter names by feel. Most failures we observed are the
-    # same handful of synonyms — translate them to the canonical names
-    # the audit-mcp server accepts. Each entry is
-    # {synonym: canonical}. We apply BEFORE forwarding so the server
-    # never sees the alias.
+    # audit-mcp normalized every "name of an entity" parameter to plain
+    # ``name`` (read_function / extract_class / taint_paths_to /
+    # functions_that_raise / children_of all migrated from typed names
+    # like ``function_name``). Per-tool overrides are no longer needed.
+    # We only translate the limit / threshold family (uniform across
+    # every tool that accepts them) plus a backstop mapping every
+    # legacy typed-name variant to plain ``name`` so older prompts /
+    # cached LLM outputs keep working against the normalized surface.
     #
-    # If the canonical name is already present we keep that value and
-    # discard the synonym (operator-supplied overrides win).
+    # Operator-supplied canonical names always win.
     _KW_SYNONYMS: dict[str, str] = {
         "top_n": "limit",
         "top_k": "limit",
@@ -110,10 +111,14 @@ class AuditMcpBridgeTool(Tool):
         "complexity_threshold": "threshold",
         "min_complexity": "threshold",
         "function_name": "name",
-        "function": "name",
+        "class_name": "name",
+        "sink_name": "name",
+        "exception_name": "name",
+        "symbol_name": "name",
         "fn_name": "name",
-        "symbol_name": "symbol",
-        "fn": "symbol",
+        "fn": "name",
+        "function": "name",
+        "symbol": "name",
     }
 
     @classmethod
@@ -122,9 +127,9 @@ class AuditMcpBridgeTool(Tool):
     ) -> tuple[dict[str, Any], list[str]]:
         """Rewrite known-synonym kwargs to their canonical names.
 
-        Returns ``(normalized, notes)`` — ``notes`` is a list of human
-        readable strings (one per rename) that the caller can log so
-        the operator can see when the LLM is mis-naming params.
+        Returns ``(normalized, notes)`` — ``notes`` is a list of
+        human-readable strings (one per rename) the caller logs so
+        the operator sees when the LLM is mis-naming params.
         """
         if not kwargs:
             return {}, []
@@ -132,19 +137,16 @@ class AuditMcpBridgeTool(Tool):
         notes: list[str] = []
         for key, value in kwargs.items():
             canonical = cls._KW_SYNONYMS.get(key)
-            if canonical is None:
+            if canonical is None or canonical == key:
                 out[key] = value
                 continue
             if canonical in kwargs:
-                # Operator already gave the canonical name; drop the alias.
                 notes.append(
                     f"{action}: dropping kwarg '{key}' (alias for "
                     f"'{canonical}' which is already set)",
                 )
                 continue
             if canonical in out:
-                # Two synonyms collided on the same canonical key — keep
-                # the first, log the second.
                 notes.append(
                     f"{action}: dropping kwarg '{key}' (alias for "
                     f"'{canonical}', already set by an earlier synonym)",
