@@ -10,6 +10,7 @@ import { useDeleteProject } from "../mutations";
 import { useProjectCompleteNotifier } from "../hooks/useProjectCompleteNotifier";
 import { useTargetMap, useVRProjects } from "../queries";
 import type { VRProjectStatus } from "../types";
+import { OperatorAvatar } from "../components/OperatorAvatar";
 
 const statusColor: Record<VRProjectStatus, "info" | "low" | "medium" | "high" | "critical"> = {
   created: "info",
@@ -181,10 +182,12 @@ export function ProjectsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+                <th className="px-2 py-2 font-semibold" aria-label="Operator"></th>
                 <th className="px-4 py-2 font-semibold">Name</th>
                 <th className="px-4 py-2 font-semibold">CVE</th>
                 <th className="px-4 py-2 font-semibold">Status</th>
                 <th className="px-4 py-2 font-semibold">Target</th>
+                <th className="px-4 py-2 font-semibold">Disclosure</th>
                 <th className="px-4 py-2 font-semibold text-right">Findings</th>
                 <th className="px-4 py-2 font-semibold">Created</th>
                 <th className="px-4 py-2 font-semibold">Last activity</th>
@@ -198,6 +201,9 @@ export function ProjectsPage() {
                   onClick={() => navigate(`/vr/projects/${project.id}`)}
                   className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
                 >
+                  <td className="px-2 py-2">
+                    <OperatorAvatar operatorId={project.operator_id} />
+                  </td>
                   <td className="px-4 py-2 font-mono font-semibold text-foreground">
                     {project.name}
                   </td>
@@ -223,6 +229,22 @@ export function ProjectsPage() {
                     {project.target_id ? (
                       <span className="text-foreground">{targetMap.get(project.target_id)?.display_name ?? "loading…"}</span>
                     ) : "—"}
+                  </td>
+                  <td className="px-4 py-2 font-mono text-text-muted">
+                    {project.latest_disclosure_status ? (
+                      <span className="flex items-center gap-1">
+                        <AilaBadge severity="info" size="sm">
+                          {project.latest_disclosure_status}
+                        </AilaBadge>
+                        {(project.disclosure_submission_count ?? 0) > 1 && (
+                          <span className="text-[10px]">
+                            ×{project.disclosure_submission_count}
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
                   </td>
                   <td className="px-4 py-2 font-mono text-right text-foreground">
                     {project.finding_count}

@@ -208,6 +208,9 @@ export interface VRProjectSummary {
   patched_target_id?: string | null;
   finding_count: number;
   created_at?: string | null;
+  operator_id?: string | null;
+  latest_disclosure_status?: string | null;
+  disclosure_submission_count?: number;
 }
 
 export interface CrashSignature {
