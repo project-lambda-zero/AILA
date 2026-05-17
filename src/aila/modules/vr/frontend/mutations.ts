@@ -254,20 +254,20 @@ export function useRankTarget(targetId: string) {
   });
 }
 
-export function useEnrichTarget(targetId: string) {
+export function useAnalyzeTarget(targetId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () =>
       authorizedRequestJson<Envelope<{ task_id: string; target_id: string }>>(
-        `/vr/targets/${encodeURIComponent(targetId)}/enrich`,
+        `/vr/targets/${encodeURIComponent(targetId)}/analyze`,
         { method: "POST" },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["vr", "target", targetId] });
-      toast.success("Capability profile enrichment enqueued");
+      toast.success("Re-analysis enqueued");
     },
     onError: (err: Error) => {
-      toast.error(`Enrich failed: ${err.message}`);
+      toast.error(`Analyze failed: ${err.message}`);
     },
   });
 }

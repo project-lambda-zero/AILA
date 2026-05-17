@@ -28,6 +28,7 @@ from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.uow import UnitOfWork
 
 from .contracts import (
+    AnalysisState,
     BranchStatus,
     CampaignStatus,
     CrashSeverity,
@@ -314,8 +315,16 @@ def _target_summary(record: Any) -> VRTargetSummary:
         primary_language=record.primary_language,
         secondary_languages=_json.loads(record.secondary_languages_json or "[]"),
         status=TargetStatus(record.status),
-        enrichment_status=record.enrichment_status,  # type: ignore[arg-type]
-        last_enriched_at=record.last_enriched_at.isoformat() if record.last_enriched_at else None,
+        analysis_state=AnalysisState(record.analysis_state),
+        analysis_state_message=record.analysis_state_message,
+        analysis_started_at=(
+            record.analysis_started_at.isoformat()
+            if record.analysis_started_at else None
+        ),
+        analysis_completed_at=(
+            record.analysis_completed_at.isoformat()
+            if record.analysis_completed_at else None
+        ),
         tags=tags,
         created_at=record.created_at.isoformat() if record.created_at else None,
         updated_at=record.updated_at.isoformat() if record.updated_at else None,
@@ -549,7 +558,6 @@ def create_vr_router() -> APIRouter:
                 status="active",
                 capability_profile_json="{}",
                 tags_json="[]",
-                enrichment_status="unenriched",
             )
             uow.session.add(primary_target)
             await uow.session.flush()
@@ -567,7 +575,6 @@ def create_vr_router() -> APIRouter:
                     status="active",
                     capability_profile_json="{}",
                     tags_json='["patched"]',
-                    enrichment_status="unenriched",
                 )
                 uow.session.add(patched_target)
                 await uow.session.flush()
@@ -1046,8 +1053,9 @@ def create_vr_router() -> APIRouter:
         body: VRTargetCreate,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRTargetSummary]:
-        del request
         import json as _json
+
+        from aila.api.deps import get_task_queue
 
         from .db_models import VRTargetRecord, VRWorkspaceRecord
 
@@ -1076,11 +1084,41 @@ def create_vr_router() -> APIRouter:
                 ),
                 status="active",
                 capability_profile_json="{}",
-                enrichment_status="unenriched",
             )
             uow.session.add(record)
             await uow.session.commit()
             await uow.session.refresh(record)
+            target_id = record.id
+
+        # Auto-enqueue backend ingestion (v0.4.5). Operator does not
+        # have to click anything — the dispatch starts immediately.
+        try:
+            from .workflow.task import run_target_analysis
+
+            task_queue = get_task_queue("vr", request)
+            await task_queue.submit(
+                track="vr",
+                fn=run_target_analysis,
+                kwargs={"target_id": target_id},
+                user_id=auth.user_id,
+                group_id=auth.role,
+                team_id=auth.team_id,
+            )
+        except (OSError, RuntimeError, HTTPException) as exc:
+            # Don't fail the create — operator can retry analyze
+            # via POST /vr/targets/{id}/analyze. Persist the reason
+            # on the row so the UI shows it.
+            async with UnitOfWork() as uow:
+                row = (await uow.session.exec(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                )).first()
+                if row is not None:
+                    row.analysis_state = AnalysisState.FAILED.value
+                    row.analysis_state_message = (
+                        f"failed to enqueue ingestion: {exc}"
+                    )
+                    uow.session.add(row)
+                    await uow.session.commit()
 
         return DataEnvelope(data=_target_summary(record))
 
@@ -1319,13 +1357,16 @@ def create_vr_router() -> APIRouter:
         return DataEnvelope(data={"task_id": handle.task_id, "target_id": target_id})
 
     @router.post(
-        "/targets/{target_id}/enrich",
+        "/targets/{target_id}/analyze",
         response_model=DataEnvelope[dict],
         status_code=status.HTTP_202_ACCEPTED,
-        summary="Enqueue capability profile build (M3.T-4) for one target.",
+        summary=(
+            "Re-run the backend ingestion pipeline for a target. "
+            "Idempotent — also runs automatically on target create."
+        ),
     )
     @limiter.limit("10/minute")
-    async def enqueue_enrichment(
+    async def enqueue_analyze(
         request: Request,
         target_id: str,
         auth: AuthContext = Depends(require_auth),
@@ -1333,14 +1374,14 @@ def create_vr_router() -> APIRouter:
         from aila.api.deps import get_task_queue
 
         from .db_models import VRTargetRecord
-        from .enrichment.workers import run_capability_profile_build
+        from .workflow.task import run_target_analysis
 
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
                 _team_filter(
                     select(VRTargetRecord).where(VRTargetRecord.id == target_id),
                     VRTargetRecord, auth,
-                )
+                ),
             )).first()
             if row is None:
                 raise HTTPException(
@@ -1351,7 +1392,7 @@ def create_vr_router() -> APIRouter:
         task_queue = get_task_queue("vr", request)
         handle = await task_queue.submit(
             track="vr",
-            fn=run_capability_profile_build,
+            fn=run_target_analysis,
             kwargs={"target_id": target_id},
             user_id=auth.user_id,
             group_id=auth.role,

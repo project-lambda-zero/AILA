@@ -4,9 +4,13 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
-import { useEnrichTarget, useRankTarget } from "../mutations";
-import { useTarget } from "../queries";
-import type { EnrichmentStatus, TargetStatus } from "../types";
+import { useAnalyzeTarget, useRankTarget } from "../mutations";
+import { useTarget, useWorkspaces } from "../queries";
+import type {
+  AnalysisState,
+  TargetKind,
+  TargetStatus,
+} from "../types";
 
 const statusColor: Record<
   TargetStatus,
@@ -17,15 +21,37 @@ const statusColor: Record<
   quarantined: "high",
 };
 
-const enrichmentColor: Record<
-  EnrichmentStatus,
+const analysisColor: Record<
+  AnalysisState,
   "info" | "low" | "medium" | "high" | "critical"
 > = {
-  unenriched: "info",
-  running: "medium",
-  complete: "low",
+  pending: "info",
+  ingesting: "medium",
+  ready: "low",
   failed: "critical",
 };
+
+/** Per-kind operator-readable label for each AnalysisState. */
+function analysisLabel(state: AnalysisState, kind: TargetKind): string {
+  if (state === "ready") return "Ready";
+  if (state === "failed") return "Failed";
+  if (state === "pending") return "Queued";
+  // ingesting
+  if (kind === "source_repo") return "Cloning + indexing source…";
+  if (kind === "cve") return "Resolving CVE record…";
+  if (
+    kind === "kernel_image" ||
+    kind === "kernel_module" ||
+    kind === "hypervisor_image" ||
+    kind === "apk" ||
+    kind === "ipa" ||
+    kind === "jar" ||
+    kind === "dotnet_assembly"
+  ) {
+    return "Uploading + analyzing in IDA…";
+  }
+  return "Uploading + analyzing…";
+}
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
@@ -47,7 +73,6 @@ interface RankedFunction {
 }
 
 interface FunctionRanking {
-  target_id?: string;
   source?: string;
   produced_at?: string;
   total_candidates?: number;
@@ -78,8 +103,13 @@ export function TargetDetailPage() {
   const tid = targetId ?? "";
 
   const { data: target, isLoading } = useTarget(tid);
+  const { data: workspacesResult } = useWorkspaces();
+  const workspaceName =
+    workspacesResult?.data.find((w) => w.id === target?.workspace_id)?.name ??
+    null;
+
+  const analyzeMut = useAnalyzeTarget(tid);
   const rankMut = useRankTarget(tid);
-  const enrichMut = useEnrichTarget(tid);
 
   if (isLoading || !target) {
     return <LoadingSkeleton size="lg" width="full" />;
@@ -100,61 +130,99 @@ export function TargetDetailPage() {
 
   return (
     <div className="space-y-4">
-      {/* Header */}
+      {/* Header — humans, not IDs */}
       <div>
         <h1 className="text-xl font-bold font-mono text-foreground">
           {target.display_name}
         </h1>
-        <p className="text-sm text-text-muted mt-1 font-mono">
-          {target.kind} · workspace:{target.workspace_id}
+        <p className="text-sm text-text-muted mt-1">
+          {workspaceName ? (
+            <span>
+              {workspaceName} <span className="text-text-muted">·</span>{" "}
+              {target.kind.replace(/_/g, " ")}
+            </span>
+          ) : (
+            <span>{target.kind.replace(/_/g, " ")}</span>
+          )}
         </p>
       </div>
 
-      <div className="flex gap-2 items-center flex-wrap">
-        <AilaBadge severity={statusColor[target.status] ?? "info"} size="sm">
-          {target.status}
-        </AilaBadge>
-        <AilaBadge
-          severity={enrichmentColor[target.enrichment_status] ?? "info"}
-          size="sm"
-        >
-          enrichment:{target.enrichment_status}
-        </AilaBadge>
-        {target.primary_language && (
-          <AilaBadge severity="info" size="sm">
-            {target.primary_language}
-          </AilaBadge>
+      {/* Status banner */}
+      <AilaCard
+        className={
+          target.analysis_state === "failed"
+            ? "border-border-danger"
+            : undefined
+        }
+      >
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <AilaBadge severity={analysisColor[target.analysis_state]} size="sm">
+              {analysisLabel(target.analysis_state, target.kind)}
+            </AilaBadge>
+            <AilaBadge severity={statusColor[target.status] ?? "info"} size="sm">
+              {target.status}
+            </AilaBadge>
+            {target.primary_language && (
+              <AilaBadge severity="info" size="sm">
+                {target.primary_language}
+              </AilaBadge>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {(target.analysis_state === "failed" ||
+              target.analysis_state === "ready") && (
+              <button
+                type="button"
+                onClick={() => analyzeMut.mutate()}
+                disabled={analyzeMut.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
+              >
+                {analyzeMut.isPending ? "Re-analyzing…" : "Re-analyze"}
+              </button>
+            )}
+            {target.analysis_state === "ready" && (
+              <button
+                type="button"
+                onClick={() => rankMut.mutate()}
+                disabled={rankMut.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+              >
+                {rankMut.isPending ? "Ranking…" : "Rank functions"}
+              </button>
+            )}
+          </div>
+        </div>
+        {target.analysis_state_message && (
+          <p
+            className={`text-xs mt-2 ${
+              target.analysis_state === "failed"
+                ? "text-text-danger"
+                : "text-text-muted"
+            }`}
+          >
+            {target.analysis_state_message}
+          </p>
         )}
-      </div>
-
-      {/* Action bar */}
-      <div className="flex gap-2 flex-wrap">
-        <button
-          type="button"
-          onClick={() => enrichMut.mutate()}
-          disabled={enrichMut.isPending}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
-        >
-          {enrichMut.isPending ? "Enqueuing…" : "Run enrichment"}
-        </button>
-        <button
-          type="button"
-          onClick={() => rankMut.mutate()}
-          disabled={rankMut.isPending}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover transition-colors disabled:opacity-50"
-        >
-          {rankMut.isPending ? "Enqueuing…" : "Run function ranking"}
-        </button>
-      </div>
+        {target.analysis_state === "ingesting" && (
+          <p className="text-xs text-text-muted mt-2">
+            Started{" "}
+            {target.analysis_started_at
+              ? new Date(target.analysis_started_at).toLocaleTimeString()
+              : "—"}
+            . This usually takes 30s–10min depending on artifact size.
+          </p>
+        )}
+      </AilaCard>
 
       {/* Capability profile */}
       <AilaCard>
         <h2 className="text-sm font-semibold text-foreground mb-2">
           Capability profile
         </h2>
-        {target.enrichment_status === "unenriched" ? (
+        {target.analysis_state !== "ready" ? (
           <p className="text-sm text-text-muted">
-            Not enriched yet. Click <strong>Run enrichment</strong> above.
+            Available once analysis completes.
           </p>
         ) : (
           <dl className="grid grid-cols-2 gap-3 text-sm">
@@ -167,9 +235,7 @@ export function TargetDetailPage() {
             <div>
               <dt className="text-text-muted text-xs">Applicable fuzzing engines</dt>
               <dd className="font-mono text-xs">
-                {applicableEngines.length > 0
-                  ? applicableEngines.join(", ")
-                  : "—"}
+                {applicableEngines.length > 0 ? applicableEngines.join(", ") : "—"}
               </dd>
             </div>
             <div>
@@ -183,9 +249,7 @@ export function TargetDetailPage() {
             <div>
               <dt className="text-text-muted text-xs">Default disclosure tracks</dt>
               <dd className="font-mono text-xs">
-                {defaultDisclosure.length > 0
-                  ? defaultDisclosure.join(", ")
-                  : "—"}
+                {defaultDisclosure.length > 0 ? defaultDisclosure.join(", ") : "—"}
               </dd>
             </div>
             <div>
@@ -205,103 +269,111 @@ export function TargetDetailPage() {
       </AilaCard>
 
       {/* Mitigations */}
-      <AilaCard>
-        <h2 className="text-sm font-semibold text-foreground mb-2">
-          Mitigations
-        </h2>
-        <div className="flex flex-wrap gap-2 text-xs">
-          {(["nx", "aslr", "canary", "cet", "cfi", "pie"] as const).map((k) => {
-            const f = fmtFlag(mitigations[k]);
-            return (
-              <AilaBadge key={k} severity={f.severity} size="sm">
-                {k.toUpperCase()}:{f.label}
+      {target.analysis_state === "ready" && (
+        <AilaCard>
+          <h2 className="text-sm font-semibold text-foreground mb-2">
+            Mitigations
+          </h2>
+          <div className="flex flex-wrap gap-2 text-xs">
+            {(["nx", "aslr", "canary", "cet", "cfi", "pie"] as const).map((k) => {
+              const f = fmtFlag(mitigations[k]);
+              return (
+                <AilaBadge key={k} severity={f.severity} size="sm">
+                  {k.toUpperCase()}:{f.label}
+                </AilaBadge>
+              );
+            })}
+            {(mitigations.relro_full || mitigations.relro_partial) && (
+              <AilaBadge severity="low" size="sm">
+                RELRO:{mitigations.relro_full ? "full" : "partial"}
               </AilaBadge>
-            );
-          })}
-          {(mitigations.relro_full || mitigations.relro_partial) && (
-            <AilaBadge severity="low" size="sm">
-              RELRO:{mitigations.relro_full ? "full" : "partial"}
-            </AilaBadge>
+            )}
+            {(mitigations.sanitizers ?? []).map((s) => (
+              <AilaBadge key={s} severity="medium" size="sm">
+                {s}
+              </AilaBadge>
+            ))}
+          </div>
+          {mitigations.notes && (
+            <p className="text-xs text-text-muted mt-2">{mitigations.notes}</p>
           )}
-          {(mitigations.sanitizers ?? []).map((s) => (
-            <AilaBadge key={s} severity="medium" size="sm">
-              {s}
-            </AilaBadge>
-          ))}
-        </div>
-        {mitigations.notes && (
-          <p className="text-xs text-text-muted mt-2">{mitigations.notes}</p>
-        )}
-      </AilaCard>
+        </AilaCard>
+      )}
 
       {/* Function ranking */}
-      <AilaCard>
-        <h2 className="text-sm font-semibold text-foreground mb-2">
-          Function ranking ({ranking.top_k?.length ?? 0} of{" "}
-          {ranking.total_candidates ?? 0})
-        </h2>
-        {!ranking.top_k || ranking.top_k.length === 0 ? (
-          <p className="text-sm text-text-muted">
-            No ranking yet. Click <strong>Run function ranking</strong> above.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border-default text-left text-text-muted">
-                  <th className="px-2 py-1 font-semibold w-10">#</th>
-                  <th className="px-2 py-1 font-semibold">Function</th>
-                  <th className="px-2 py-1 font-semibold w-20 text-right">Score</th>
-                  <th className="px-2 py-1 font-semibold">Reasons</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ranking.top_k.slice(0, 50).map((f, i) => (
-                  <tr
-                    key={`${f.address ?? f.file_path ?? "_"}-${i}`}
-                    className="border-b border-border-default last:border-b-0"
-                  >
-                    <td className="px-2 py-1 font-mono text-text-muted">
-                      {f.rank ?? i + 1}
-                    </td>
-                    <td className="px-2 py-1 font-mono text-foreground">
-                      {f.name ?? "<unnamed>"}
-                      {f.address && (
-                        <span className="text-text-muted ml-2">@ {f.address}</span>
-                      )}
-                      {f.file_path && (
-                        <span className="text-text-muted ml-2">
-                          {f.file_path}
-                          {f.line != null ? `:${f.line}` : ""}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-2 py-1 font-mono text-right text-foreground">
-                      {f.score?.toFixed(2) ?? "—"}
-                    </td>
-                    <td className="px-2 py-1 text-text-muted">
-                      {(f.reasons ?? []).join("; ")}
-                    </td>
+      {target.analysis_state === "ready" && (
+        <AilaCard>
+          <h2 className="text-sm font-semibold text-foreground mb-2">
+            Function ranking ({ranking.top_k?.length ?? 0} of{" "}
+            {ranking.total_candidates ?? 0})
+          </h2>
+          {!ranking.top_k || ranking.top_k.length === 0 ? (
+            <p className="text-sm text-text-muted">
+              No ranking yet. Click <strong>Rank functions</strong> above.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border-default text-left text-text-muted">
+                    <th className="px-2 py-1 font-semibold w-10">#</th>
+                    <th className="px-2 py-1 font-semibold">Function</th>
+                    <th className="px-2 py-1 font-semibold w-20 text-right">Score</th>
+                    <th className="px-2 py-1 font-semibold">Reasons</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {ranking.produced_at && (
-          <p className="text-xs text-text-muted mt-2 font-mono">
-            produced_at: {formatDate(ranking.produced_at)}
-            {ranking.source && ` · source: ${ranking.source}`}
-          </p>
-        )}
-      </AilaCard>
+                </thead>
+                <tbody>
+                  {ranking.top_k.slice(0, 50).map((f, i) => (
+                    <tr
+                      key={`${f.address ?? f.file_path ?? "_"}-${i}`}
+                      className="border-b border-border-default last:border-b-0"
+                    >
+                      <td className="px-2 py-1 font-mono text-text-muted">
+                        {f.rank ?? i + 1}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-foreground">
+                        {f.name ?? "<unnamed>"}
+                        {f.address && (
+                          <span className="text-text-muted ml-2">@ {f.address}</span>
+                        )}
+                        {f.file_path && (
+                          <span className="text-text-muted ml-2">
+                            {f.file_path}
+                            {f.line != null ? `:${f.line}` : ""}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-right text-foreground">
+                        {f.score?.toFixed(2) ?? "—"}
+                      </td>
+                      <td className="px-2 py-1 text-text-muted">
+                        {(f.reasons ?? []).join("; ")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {ranking.produced_at && (
+            <p className="text-xs text-text-muted mt-2 font-mono">
+              produced_at: {formatDate(ranking.produced_at)}
+              {ranking.source && ` · source: ${ranking.source}`}
+            </p>
+          )}
+        </AilaCard>
+      )}
 
-      {/* Descriptor (raw JSON) */}
+      {/* Descriptor — collapsed for debugging only */}
       <AilaCard>
-        <h2 className="text-sm font-semibold text-foreground mb-2">Descriptor</h2>
-        <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap overflow-x-auto">
-          {JSON.stringify(target.descriptor, null, 2)}
-        </pre>
+        <details>
+          <summary className="text-sm font-semibold text-foreground cursor-pointer">
+            Operator-supplied descriptor
+          </summary>
+          <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap overflow-x-auto mt-2">
+            {JSON.stringify(target.descriptor, null, 2)}
+          </pre>
+        </details>
       </AilaCard>
     </div>
   );

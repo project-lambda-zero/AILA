@@ -1,16 +1,21 @@
-"""Target contracts for the vulnerability research module.
+"""Target contracts (v0.4.5 — backend-managed ingestion).
 
-A VRTarget is a first-class persistent target identity (D-49/D-50). It
-lives inside a workspace and is referenced by investigations, fuzzing
-campaigns, findings, and disclosures. Capability profile (D-51) and
-tags (D-52) are stored as JSON on the target record.
+The operator never provides or sees MCP-internal ids. Per-kind
+descriptor carries only what the operator actually knows:
 
-Note: this is distinct from the v0.1 ``VRTarget`` ingestion payload in
-``contracts/project.py``, which describes HOW a binary gets onto the
-analysis workstation. The v0.1 ingestion payload is being phased out as
-part of the M3.T-1 -> M3.T-4 refactor: the new persistent
-``VRTargetRecord`` owns target identity, while ingestion concerns will
-move to a dedicated TargetIngestionSpec contract.
+  source_repo:      repo_url, ref
+  native_binary:    binary_path (or uploaded file ref)
+  kernel_image:     image_path, kernel_version, arch
+  kernel_module:    ko_path, module_name
+  hypervisor_image: binary_path, hypervisor_kind, version
+  cve:              cve_id, vendor
+  protocol_capture: pcap_path, protocol
+  crash_input:      crash_artifact_path, parent_finding_id
+  patch_diff:       vulnerable_ref, patched_ref, repo_url
+
+The backend ingests the artifact via TargetAnalysisService (calls
+audit_mcp.index_codebase / ida.upload / etc.), stores the resulting
+internal handles privately, and surfaces analysis_state to the UI.
 """
 from __future__ import annotations
 
@@ -20,7 +25,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
-    "EnrichmentStatus",
+    "AnalysisState",
     "TargetKind",
     "TargetStatus",
     "TargetTag",
@@ -51,20 +56,26 @@ class TargetKind(StrEnum):
 
 
 class TargetStatus(StrEnum):
-    """Lifecycle states for a target."""
+    """Operator lifecycle state."""
 
     ACTIVE = "active"
     ARCHIVED = "archived"
     QUARANTINED = "quarantined"
 
 
-class EnrichmentStatus(StrEnum):
-    """State of the M3.T enrichment pipeline for this target."""
+class AnalysisState(StrEnum):
+    """Backend ingestion + capability-profile lifecycle (v0.4.5).
 
-    UNENRICHED = "unenriched"
-    RUNNING = "running"
-    COMPLETE = "complete"
-    FAILED = "failed"
+    Operator-facing — the UI renders each value as a clear sentence
+    ('Pulling from GitHub…' / 'Analyzing in IDA…' / 'Ready' /
+    'Failed: <reason>'). Code reads the enum; UI never shows the
+    raw value.
+    """
+
+    PENDING = "pending"        # created, ingestion not yet started
+    INGESTING = "ingesting"    # uploading / cloning / indexing in progress
+    READY = "ready"            # backend handles populated, ready for use
+    FAILED = "failed"          # ingestion errored; analysis_state_message has the reason
 
 
 class TargetTagSource(StrEnum):
@@ -85,19 +96,10 @@ class TargetTag(BaseModel):
 
 
 class VRTargetCreate(BaseModel):
-    """Input payload for creating a persistent target.
+    """Operator-supplied fields for a new target.
 
-    The ``descriptor`` field shape depends on ``kind``:
-      - NATIVE_BINARY: {"binary_path": str, "version": str | None}
-      - SOURCE_REPO:   {"repo_url": str, "ref": str | None}
-      - CVE:           {"cve_id": str, "vendor": str | None}
-      - PROTOCOL_CAPTURE: {"pcap_path": str, "protocol": str}
-      - CRASH_INPUT:   {"crash_artifact_path": str, "parent_finding_id": str | None}
-      - PATCH_DIFF:    {"vulnerable_ref": str, "patched_ref": str, "repo_url": str}
-
-    The shape is validated kind-by-kind in the runtime layer, not in the
-    contract, because the kind set will grow over time and per-kind
-    Pydantic discriminated unions create churn we don't want yet.
+    The descriptor carries ONLY operator-known fields. Backend ingests
+    via TargetAnalysisService asynchronously.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -107,51 +109,48 @@ class VRTargetCreate(BaseModel):
     kind: TargetKind
     descriptor: dict[str, Any] = Field(
         default_factory=dict,
-        description="Kind-specific identification fields. Shape depends on kind.",
+        description=(
+            "Kind-specific operator-known fields. NEVER contains "
+            "backend MCP ids — those are populated automatically."
+        ),
     )
-    primary_language: str | None = Field(default=None, max_length=32)
+    primary_language: str | None = Field(
+        default=None,
+        max_length=32,
+        description=(
+            "Optional — backend auto-detects post-ingestion when omitted."
+        ),
+    )
     secondary_languages: list[str] = Field(default_factory=list)
-    tags: list[str] = Field(
-        default_factory=list,
-        description="Operator-supplied tags at creation time. System + pattern tags are added later by enrichment.",
-    )
+    tags: list[str] = Field(default_factory=list)
 
 
 class VRTargetSummary(BaseModel):
-    """Read-only projection of a target for list + detail views."""
+    """Read-only projection."""
 
     model_config = ConfigDict(extra="forbid")
 
     id: str
     workspace_id: str
+    workspace_name: str | None = None
     display_name: str
     kind: TargetKind
     descriptor: dict[str, Any] = Field(default_factory=dict)
     primary_language: str | None = None
     secondary_languages: list[str] = Field(default_factory=list)
     status: TargetStatus
-    enrichment_status: EnrichmentStatus
-    last_enriched_at: str | None = None
+    analysis_state: AnalysisState
+    analysis_state_message: str | None = None
+    analysis_started_at: str | None = None
+    analysis_completed_at: str | None = None
     tags: list[TargetTag] = Field(default_factory=list)
     created_at: str | None = None
     updated_at: str | None = None
 
 
 class VRTargetPatch(BaseModel):
-    """Partial-update payload for PATCH /api/vr/targets/{id}.
-
-    Immutable after creation: ``workspace_id`` (move-between-workspaces
-    needs a separate endpoint), ``kind`` (would invalidate
-    capability_profile + ranking + investigations), ``descriptor``
-    (identity field of the target — rebuild instead).
-
-    Mutable here:
-      - display_name: rename for UX
-      - primary_language / secondary_languages: re-tag once detected
-      - status: archive / quarantine / reactivate
-      - tags: replace operator-supplied tag set (system + pattern tags
-        survive via tag_index regen)
-    """
+    """Operator-mutable fields. ``workspace_id``, ``kind``, ``descriptor``
+    are immutable after creation — recreate the target instead."""
 
     model_config = ConfigDict(extra="forbid")
 

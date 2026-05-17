@@ -2,9 +2,9 @@
 
 Wires IDABridgeTool + AuditMcpBridgeTool into CapabilityProfileBuilder
 via @platform_task. Enqueued by:
-  * api_router on POST /api/vr/targets/<id>/enrich
+  * api_router on POST /vr/targets/<id>/analyze
   * future M3.R-* investigation engine when an investigation references
-    a target whose enrichment_status is unenriched/failed
+    a target whose analysis_state is pending/failed
 """
 from __future__ import annotations
 

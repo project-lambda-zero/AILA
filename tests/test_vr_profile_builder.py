@@ -58,7 +58,6 @@ def _target(kind: TargetKind, language: str | None = None) -> VRTargetRecord:
         status="active",
         capability_profile_json="{}",
         tags_json="[]",
-        enrichment_status="unenriched",
     )
 
 

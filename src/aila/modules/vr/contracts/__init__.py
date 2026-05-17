@@ -104,7 +104,7 @@ from .project import (
     VRProjectSummary,
 )
 from .target import (
-    EnrichmentStatus,
+    AnalysisState,
     TargetKind,
     TargetStatus,
     TargetTag,
@@ -146,7 +146,7 @@ __all__ = [
     "VRDisclosureSubmissionSummary",
     "EnrichmentError",
     "EnrichmentResult",
-    "EnrichmentStatus",
+    "AnalysisState",
     "InputSource",
     "InvestigationKind",
     "InvestigationPauseReason",

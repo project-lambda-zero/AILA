@@ -149,7 +149,7 @@ export type TargetKind =
 
 export type TargetStatus = "active" | "archived" | "quarantined";
 
-export type EnrichmentStatus = "unenriched" | "running" | "complete" | "failed";
+export type AnalysisState = "pending" | "ingesting" | "ready" | "failed";
 
 export type TargetTagSource = "operator" | "system" | "pattern";
 
@@ -177,8 +177,10 @@ export interface VRTargetSummary {
   primary_language?: string | null;
   secondary_languages: string[];
   status: TargetStatus;
-  enrichment_status: EnrichmentStatus;
-  last_enriched_at?: string | null;
+  analysis_state: AnalysisState;
+  analysis_state_message?: string | null;
+  analysis_started_at?: string | null;
+  analysis_completed_at?: string | null;
   tags: TargetTag[];
   created_at?: string | null;
   updated_at?: string | null;

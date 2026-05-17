@@ -18,7 +18,7 @@ from aila.modules.vr.workflow.definitions import VR_INVESTIGATE_V1, VR_NDAY_V1
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 
-__all__ = ["run_vr_investigate", "run_vr_nday"]
+__all__ = ["run_target_analysis", "run_vr_investigate", "run_vr_nday"]
 
 
 @platform_task(
@@ -53,3 +53,29 @@ async def run_vr_investigate(
     primary branch from the DB; operator does not provide branch_id.
     """
     ...
+
+
+@platform_task(
+    track="vr",
+    module_id="vr",
+    max_tries=2,
+    timeout_s=1800.0,  # 30 min — covers a clone + index + poll cycle
+)
+async def run_target_analysis(
+    ctx: TaskContext,
+    target_id: str,
+    **_: Any,
+) -> dict[str, Any]:
+    """Backend ingestion for one target. Idempotent.
+
+    Calls audit_mcp.index_codebase or ida.upload depending on kind,
+    polls until ready, stores backend handles + auto-detected language
+    on the row, and transitions analysis_state through INGESTING → READY
+    (or → FAILED with operator-visible message).
+    """
+    del ctx
+    from aila.modules.vr.services import TargetAnalysisService  # noqa: PLC0415  (lazy: avoids cycle)
+
+    svc = TargetAnalysisService()
+    await svc.analyze(target_id)
+    return {"target_id": target_id, "status": "ok"}
