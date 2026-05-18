@@ -307,6 +307,33 @@ async def _on_startup(ctx: dict[str, Any]) -> None:
     await _sweep_orphan_running_tasks()
 
 
+async def _workflow_cursor_is_resumable(session: Any, task_id: str) -> bool:
+    """Return True iff a workflow_state_cursor row exists for ``task_id``
+    AND its ``current_state`` is not a reserved terminal state.
+
+    Workflow tasks store their resumable position in workflow_state_cursor
+    keyed by run_id == task_id. If the cursor exists and the state is
+    non-terminal, the next worker pickup can resume the workflow from
+    that state — reaping the TaskRecord would defeat the durability
+    contract (D-86). Terminal states (__succeeded__/__failed__/
+    __cancelled__/__crashed__) mean the workflow already completed
+    one way or another; the TaskRecord SHOULD be reaped in that case.
+    """
+    from sqlalchemy import text as _sql_text
+
+    row = (await session.exec(
+        _sql_text(
+            "SELECT current_state FROM workflow_state_cursor WHERE run_id = :rid"
+        ).bindparams(rid=task_id),
+    )).first()
+    if row is None:
+        return False
+    current = str(row[0]) if row[0] is not None else ""
+    return current not in (
+        "__succeeded__", "__failed__", "__cancelled__", "__crashed__",
+    )
+
+
 async def _sweep_orphan_running_tasks() -> None:
     """Reap orphan tasks at startup using the same rules as the cron reaper,
     PLUS a reverse sweep that catches tasks whose ARQ lock was already
@@ -367,6 +394,18 @@ async def _sweep_orphan_running_tasks() -> None:
                 if hb is not None and hb > stale_cutoff:
                     # Lock missing but heartbeat is brand-new: very unlikely
                     # edge case, skip to avoid false positives.
+                    continue
+                # D-86: DurableStateMachine workflows persist via
+                # workflow_state_cursor. Reaping such a task on stale
+                # heartbeat is wrong — the cursor still carries the live
+                # state and the next worker run can resume from it. Only
+                # reap workflow tasks if the cursor itself reached a
+                # terminal reserved state.
+                if await _workflow_cursor_is_resumable(session, rec.id):
+                    _log.info(
+                        "worker.reverse_sweep: task_id=%s SKIPPED — workflow "
+                        "cursor is resumable (D-86)", rec.id,
+                    )
                     continue
                 reason = (
                     "lock_missing_or_stale_heartbeat"

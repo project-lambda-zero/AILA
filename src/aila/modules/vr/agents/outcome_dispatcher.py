@@ -341,12 +341,40 @@ class OutcomeDispatcher:
                 uow.session.add(inv_row)
                 await uow.session.commit()
 
+        # Bundled variant hunt orders: when the agent's submit payload
+        # carries ``variant_hunt_orders: list[dict]``, spawn each as a
+        # child investigation in the same dispatch pass. This lets a
+        # single submit produce one primary finding + N variant probes
+        # without the loop having to round-trip a separate VARIANT_
+        # HUNT_ORDER outcome (the loop terminates on first submit).
+        spawned_children: list[str] = []
+        spawn_errors: list[str] = []
+        variants = payload.get("variant_hunt_orders")
+        if isinstance(variants, list):
+            for raw in variants:
+                if not isinstance(raw, dict):
+                    continue
+                try:
+                    child_id = await self._spawn_variant_child(
+                        parent=inv,
+                        parent_target_id=target_row.id,
+                        payload=raw,
+                    )
+                    spawned_children.append(child_id)
+                except (ValueError, RuntimeError) as exc:
+                    spawn_errors.append(f"{type(exc).__name__}:{exc}")
+
+        reason_parts = [f"crash_type={crash_type}", f"fn={vulnerable_function}"]
+        if spawned_children:
+            reason_parts.append(f"variants_spawned={len(spawned_children)}")
+        if spawn_errors:
+            reason_parts.append(f"variant_errors={'; '.join(spawn_errors)[:200]}")
         return OutcomeDispatchResult(
             outcome_id=outcome_id,
             outcome_kind=OutcomeKind.DIRECT_FINDING,
             dispatch_status=OutcomeDispatchStatus.DISPATCHED,
             dispatch_target=f"vr_finding:{finding_id}",
-            reason=f"crash_type={crash_type} fn={vulnerable_function}",
+            reason=" ".join(reason_parts),
         )
 
     async def _dispatch_variant_hunt_order(
@@ -420,6 +448,69 @@ class OutcomeDispatcher:
             dispatch_target=f"vr_investigation:{child_id}",
             reason=f"target_id={child_target_id} budget=${child_budget:.2f}",
         )
+
+    async def _spawn_variant_child(
+        self,
+        *,
+        parent: VRInvestigationRecord,
+        parent_target_id: str,
+        payload: dict[str, Any],
+    ) -> str:
+        """Create a child variant-hunt investigation row + primary branch.
+
+        Shared between two paths:
+          - Standalone ``VARIANT_HUNT_ORDER`` outcome (one variant
+            per outcome row)
+          - Bundled ``variant_hunt_orders`` list inside a
+            ``DIRECT_FINDING`` payload (one outcome row spawns N
+            children atomically — needed because the reasoning loop
+            terminates on the first submit)
+
+        Returns the new investigation id. Raises ``ValueError`` when
+        the payload references a missing override target.
+        """
+        child_target_id = str(payload.get("target_id") or parent_target_id)
+        if child_target_id != parent_target_id:
+            async with UnitOfWork() as uow:
+                child_target = (await uow.session.exec(
+                    _select(VRTargetRecord).where(VRTargetRecord.id == child_target_id),
+                )).first()
+                if child_target is None:
+                    raise ValueError(f"override_target_id_not_found:{child_target_id}")
+
+        child_title = str(payload.get("title") or f"Variant hunt: {parent.title}")[:255]
+        child_question = str(
+            payload.get("question") or payload.get("hypothesis")
+            or f"Find variants of the issue identified in {parent.title}",
+        )
+        child_budget = float(
+            payload.get("cost_budget_usd") or (parent.cost_budget_usd * 0.5),
+        )
+
+        async with UnitOfWork() as uow:
+            child = VRInvestigationRecord(
+                target_id=child_target_id,
+                team_id=parent.team_id,
+                parent_investigation_id=parent.id,
+                kind=InvestigationKind.VARIANT_HUNT.value,
+                title=child_title,
+                initial_question=child_question,
+                status=InvestigationStatus.CREATED.value,
+                auto_pilot=parent.auto_pilot,
+                strategy_family="vulnerability_research.variant_hunt",
+                cost_budget_usd=child_budget,
+            )
+            uow.session.add(child)
+            await uow.session.flush()
+            primary_branch = VRInvestigationBranchRecord(
+                investigation_id=child.id,
+                status="active",
+                fork_reason="primary",
+            )
+            uow.session.add(primary_branch)
+            await uow.session.commit()
+            await uow.session.refresh(child)
+            return child.id
 
     async def _dispatch_campaign_launch(
         self,

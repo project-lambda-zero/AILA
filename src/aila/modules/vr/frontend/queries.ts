@@ -207,7 +207,7 @@ export function useInvestigationMessages(
   investigationId: string,
   branchId?: string,
   offset = 0,
-  limit = 100,
+  limit = 500,
 ) {
   return useQuery({
     queryKey: ["vr", "investigation-messages", investigationId, branchId, offset, limit],

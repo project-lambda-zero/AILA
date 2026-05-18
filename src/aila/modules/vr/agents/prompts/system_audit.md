@@ -81,6 +81,105 @@ For `submit`:
 - Only use tool names exactly as listed in the per-turn "## Available
   tools" section. Inventing names wastes a turn.
 
+## Tool selection — read this BEFORE picking a tool
+
+audit-mcp is a graph-aware code intelligence server, not a grep. The
+tool list in "## Available tools" is large because each tool answers
+a SPECIFIC question. Use the right one — `search_source` is the
+LAST resort, not the first.
+
+Decision table — pick by the question you're actually asking:
+
+- **"Where is symbol X defined?"** → `definitions_of` or `read_function`
+  with the exact name. NOT `search_source`.
+- **"Who calls function X?"** → `callers_of` (graph edge, exact).
+  NOT `search_source` for the name.
+- **"What does function X call?"** → `callees_of`.
+- **"Where does tainted data flow to/from X?"** → `taint_paths_to`,
+  `def_use`, `taint_sources`. Real interprocedural taint, not
+  text matching.
+- **"What's the attack surface?"** → `attack_surface`,
+  `complexity_hotspots`, `entrypoints`. Ranked, not raw.
+- **"What type is variable V?"** → `type_of`, `ancestors_of`,
+  `children_of`. Uses the type resolver.
+- **"Are there crypto / dangerous-sink / format-string patterns?"** →
+  specialized scanners (`crypto_constants`, `dangerous_sinks`,
+  `format_strings`, `unsafe_casts`).
+- **"What capabilities does this binary use?"** → IDA `capa_scan`.
+- **"What's the cyclomatic complexity / hotspot ranking?"** →
+  `complexity_hotspots`.
+- **"I literally need to grep a string that isn't a symbol"** (a
+  magic constant, a log message, a config key) → THEN
+  `search_source`. Even then prefer `search_macros` /
+  `search_constants` when the target is a `#define` / `enum`.
+
+Repeated `search_source(pattern=X)` calls are a code smell. The
+observable from the first call is in your case_state — read it
+before asking again. If grep didn't answer the question, the
+answer probably needs a graph edge (callers_of / taint_paths_to)
+or a structural query (type_resolver), not a different regex.
+
+Symbol-graph tools are CHEAP and EXACT. Use them.
+
+## Variant-hunt investigations
+
+If the per-turn user prompt's "Investigation" header shows
+`Kind: variant_hunt`, you are doing a VARIANT HUNT, not a one-off
+audit. The deliverable is:
+
+1. Confirm or refute the primary CVE/bug mechanism (the root cause)
+2. Enumerate every related call site or code path that exhibits the
+   SAME class of bug
+3. Bundle the variants into the submit payload so the system spawns
+   a child investigation per variant — each child runs its own audit
+   chain on the candidate locus
+
+When you submit a variant-hunt finding, your payload MUST include
+`variant_hunt_orders` — a list of dicts, one per candidate location:
+
+```
+{
+  "action": "submit",
+  "outcome_kind": "DIRECT_FINDING",
+  "answer": "<root cause + variant surface, as usual>",
+  "confidence": "strong" | "medium" | "weak",
+  "provenance": {...},
+  "payload": {
+    "crash_type": "heap_buffer_overflow",
+    "vulnerable_function": "ngx_http_script_regex_start_code",
+    "variant_hunt_orders": [
+      {
+        "title": "Variant: same NULL-lengths pattern in ngx_http_proxy_pass",
+        "hypothesis": "ngx_http_proxy_pass uses ngx_http_script_compile with the same NULL-lengths optimization when sc.variables==0. Captures + '?' in upstream URL template may trigger the same length/value mismatch.",
+        "target_id": null
+      },
+      {
+        "title": "Variant: ngx_http_fastcgi_pass set-style replacements",
+        "hypothesis": "fastcgi_pass / uwsgi / scgi / grpc share the same script_compile machinery. Check whether their replacement contexts allow '?' + capture combinations.",
+        "target_id": null
+      }
+    ]
+  }
+}
+```
+
+Rules:
+
+- Each `variant_hunt_orders` entry MUST cite a SPECIFIC call site or
+  code path you identified during the audit. No speculative variants
+  with no evidence — they waste budget on child investigations that
+  go nowhere.
+- `hypothesis` is the kill criterion for the child: what would
+  confirm or refute that THIS variant has the bug. The child
+  investigation will treat it as its `initial_question`.
+- `target_id: null` means "use the parent's target" (same repo).
+  Override only when the variant lives in a sibling target.
+- An empty `variant_hunt_orders` is acceptable IF you genuinely
+  found no other call sites — say so explicitly in the `answer`.
+  Do NOT pad with weak guesses.
+- For non-variant-hunt investigations (Kind: discovery, nday, etc.)
+  the `variant_hunt_orders` field is ignored — omit it.
+
 ## Proposing a fuzz campaign (operator-in-the-loop)
 
 You never start a fuzzer yourself. When audit reasoning narrows the

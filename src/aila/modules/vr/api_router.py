@@ -2545,6 +2545,62 @@ def create_vr_router() -> APIRouter:
         )
 
     @router.get(
+        "/investigations/{investigation_id}/report.pdf",
+        summary=(
+            "Enterprise-grade PDF report for a completed (or in-flight) "
+            "investigation. Calls the writer agent for prose synthesis "
+            "then renders via ReportLab. Returns application/pdf with "
+            "Content-Disposition: attachment."
+        ),
+        response_class=Response,
+        responses={
+            200: {
+                "description": "PDF report ready for download.",
+                "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}},
+            },
+        },
+    )
+    @limiter.limit("10/minute")
+    async def export_investigation_report(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> Response:
+        del request
+
+        from aila.modules.vr.reporting.pdf_report import render_investigation_pdf
+
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+        try:
+            pdf_bytes = await render_investigation_pdf(investigation_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Report writer unavailable: {exc}",
+            ) from exc
+
+        safe_title = (inv.title or "investigation").replace(" ", "_")[:80]
+        filename = f"AILA_VR_{safe_title}_{investigation_id[:8]}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @router.get(
         "/investigations/{investigation_id}/messages/stream",
         summary="SSE stream of new investigation messages (live tail).",
         response_class=StreamingResponse,

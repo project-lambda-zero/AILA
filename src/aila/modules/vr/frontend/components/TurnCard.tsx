@@ -76,6 +76,7 @@ export function TurnCard({
   message: VRMessageSummary;
   index: number;
 }) {
+  const [bodyOpen, setBodyOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const sender = message.sender_kind ?? "system";
   const payloadKind = message.payload_kind ?? "";
@@ -93,10 +94,13 @@ export function TurnCard({
       className="border border-border-default rounded-md bg-surface/40 overflow-hidden"
       id={`turn-${index}`}
     >
-      <header className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border-default bg-surface/60">
+      <header
+        className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border-default bg-surface/60 cursor-pointer hover:bg-surface select-none"
+        onClick={() => setBodyOpen((v) => !v)}
+      >
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] font-mono text-text-muted">
-            #{message.at_turn ?? index + 1}
+            {bodyOpen ? "▼" : "▶"} #{message.at_turn ?? index + 1}
           </span>
           <AilaBadge severity={senderTone} size="sm">
             {sender}
@@ -112,11 +116,18 @@ export function TurnCard({
               intent: {message.operator_intent}
             </AilaBadge>
           )}
+          {!bodyOpen && text && (
+            <span className="text-[10px] font-mono text-text-muted truncate max-w-md">
+              {text.slice(0, 80).replace(/\s+/g, " ")}
+            </span>
+          )}
         </div>
         <span className="text-[10px] font-mono text-text-muted whitespace-nowrap">
           {formatRelative(message.created_at)}
         </span>
       </header>
+
+      {bodyOpen && (
 
       <div className="px-3 py-2">
         <pre className="text-xs font-mono whitespace-pre-wrap text-foreground leading-relaxed break-words">
@@ -150,6 +161,7 @@ export function TurnCard({
           </div>
         )}
       </div>
+      )}
     </article>
   );
 }

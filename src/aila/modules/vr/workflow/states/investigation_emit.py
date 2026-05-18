@@ -2,9 +2,15 @@
 
 Finalizes the investigation row based on the loop's exit reason:
   terminal_submit             → COMPLETED, primary_outcome_id linked
-  max_turns                   → COMPLETED (no terminal outcome — operator
-                                can re-trigger another loop run, or
-                                accept the partial state)
+  max_turns                   → AUTO-RE-ENQUEUE (status stays RUNNING)
+                                if branch.turn_count < _OVERALL_TURN_CAP
+                                AND no terminal outcome — the agent
+                                keeps reasoning across multiple task
+                                runs until it converges or hits the
+                                cumulative cap. Operator can pause via
+                                the API at any time.
+  max_turns + cumulative cap  → COMPLETED with reason "exhausted —
+                                operator should review or re-enqueue"
   status_flipped:paused       → PAUSED stays PAUSED (don't overwrite)
   status_flipped:failed       → FAILED stays FAILED
   researcher_error:*          → FAILED, error recorded in observables
@@ -23,7 +29,7 @@ from aila.modules.vr.agents.pattern_extractor import (
     PatternExtractor,
 )
 from aila.modules.vr.contracts.investigation import InvestigationStatus
-from aila.modules.vr.db_models import VRInvestigationRecord
+from aila.modules.vr.db_models import VRInvestigationBranchRecord, VRInvestigationRecord
 from aila.modules.vr.services.pattern_store import PatternStore
 from aila.platform.contracts._common import utc_now
 from aila.platform.services.factory import ServiceFactory
@@ -33,6 +39,14 @@ from aila.platform.workflows.types import RESERVED_SUCCEEDED, StateResult
 __all__ = ["state_investigation_emit"]
 
 _log = logging.getLogger(__name__)
+
+# Per-task cap is 25 turns (_DEFAULT_MAX_TURNS in investigation_loop).
+# When the loop exits on max_turns without a terminal outcome we
+# auto-re-enqueue another task run so the agent keeps reasoning across
+# task boundaries. _OVERALL_TURN_CAP bounds the total branch turn
+# count so a hopelessly stuck investigation eventually surfaces to the
+# operator instead of burning LLM tokens forever.
+_OVERALL_TURN_CAP = 200
 
 
 def _resolve_final_status(exit_reason: str) -> str | None:
@@ -52,6 +66,55 @@ def _resolve_final_status(exit_reason: str) -> str | None:
     return InvestigationStatus.COMPLETED.value
 
 
+async def _should_auto_continue(
+    investigation_id: str,
+    exit_reason: str,
+    outcome_id: Any,
+) -> tuple[bool, int]:
+    """Decide whether to auto-re-enqueue + return the branch turn count.
+
+    True when the loop hit max_turns without a terminal outcome and the
+    cumulative branch.turn_count is still under _OVERALL_TURN_CAP. The
+    caller uses the returned turn_count for logging + the cap-hit
+    message it writes onto the investigation row.
+    """
+    if exit_reason != "max_turns" or outcome_id is not None:
+        return False, 0
+    async with UnitOfWork() as uow:
+        branch = (await uow.session.exec(
+            _select(VRInvestigationBranchRecord).where(
+                VRInvestigationBranchRecord.investigation_id == investigation_id,
+            ).order_by(VRInvestigationBranchRecord.created_at.asc()),
+        )).first()
+    turn_count = int(branch.turn_count) if branch is not None else 0
+    if turn_count >= _OVERALL_TURN_CAP:
+        return False, turn_count
+    return True, turn_count
+
+
+async def _enqueue_next_investigation_run(
+    investigation_id: str,
+    team_id: str | None,
+) -> None:
+    """Submit run_vr_investigate so the agent continues reasoning.
+
+    Imports are deferred so this module stays import-safe — the worker
+    boots before its ARQ client surface is wired through.
+    """
+    from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
+    from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
+
+    task_queue = default_task_queue()
+    await task_queue.submit(
+        track="vr",
+        fn=run_vr_investigate,
+        kwargs={"investigation_id": investigation_id},
+        user_id="system",
+        group_id="vr_auto_continue",
+        team_id=team_id,
+    )
+
+
 async def state_investigation_emit(input: dict[str, Any], services: Any) -> StateResult:
     """Finalize investigation row + emit terminal payload."""
     del services
@@ -59,6 +122,39 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
     investigation_id = str(input.get("investigation_id") or "")
     exit_reason = str(input.get("exit_reason") or "max_turns")
     outcome_id = input.get("outcome_id")
+
+    # Auto-continuation: on max_turns without a terminal outcome, re-
+    # enqueue another run_vr_investigate task so the agent keeps
+    # reasoning across task boundaries. Skip the finalization path —
+    # status stays RUNNING, no dispatch/extraction, no stopped_at.
+    auto_continue, turn_count = await _should_auto_continue(
+        investigation_id, exit_reason, outcome_id,
+    )
+    if auto_continue:
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
+                ),
+            )).first()
+            team_id = inv.team_id if inv is not None else None
+        await _enqueue_next_investigation_run(investigation_id, team_id)
+        _log.info(
+            "investigation_emit AUTO_CONTINUE investigation_id=%s turn_count=%d "
+            "cap=%d (re-enqueued run_vr_investigate)",
+            investigation_id, turn_count, _OVERALL_TURN_CAP,
+        )
+        return StateResult(
+            next_state=RESERVED_SUCCEEDED,
+            output={
+                "investigation_id": investigation_id,
+                "status": InvestigationStatus.RUNNING.value,
+                "exit_reason": "auto_continue",
+                "turn_count": turn_count,
+                "outcome_id": None,
+            },
+        )
+
     final_status = _resolve_final_status(exit_reason)
 
     if investigation_id:

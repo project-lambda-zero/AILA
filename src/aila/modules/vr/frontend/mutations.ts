@@ -118,6 +118,26 @@ export function useResumeInvestigation(investigationId: string) {
   });
 }
 
+export function useReenqueueInvestigation(investigationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<VRInvestigationSummary>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/re-enqueue`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigation-messages", investigationId] });
+      toast.success("Investigation re-enqueued — agent resumes from current case state");
+    },
+    onError: (err: Error) => {
+      toast.error(`Re-enqueue failed: ${err.message}`);
+    },
+  });
+}
+
 export interface SendOperatorMessageBody {
   text: string;
   branch_id?: string;

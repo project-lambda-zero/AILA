@@ -102,13 +102,21 @@ class CyberReasoningEngine:
         system_prompt: str,
         user_prompt: str,
     ) -> ReasoningTurnDecision:
-        """Return the next reasoning turn as a validated decision model."""
-        response = await self._llm_client.chat(
+        """Return the next reasoning turn as a validated decision model.
+
+        Uses ``chat_structured`` so the OpenAI-compatible gateway enforces
+        the ReasoningTurnDecision JSON schema upstream when the routed
+        model supports strict mode. Falls back to client-side parsing
+        when the model emits something close-but-not-exact (handled
+        below by the normalizer + extractor).
+        """
+        response = await self._llm_client.chat_structured(
             task_type=task_type,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            model_class=ReasoningTurnDecision,
         )
         if response.disabled:
             raise RuntimeError("LLM kill-switch active")
@@ -124,6 +132,40 @@ class CyberReasoningEngine:
                     str_field,
                 )
                 raw[str_field] = ''
+        # Some LLMs (Claude in particular when asked for a tool_run)
+        # ignore the documented ``command: "<json string>"`` shape and
+        # place the dispatch elsewhere. Three observed variants:
+        #   1. ``tool`` + ``args`` at top level (next to ``action``)
+        #   2. nested under a key matching the action name:
+        #      ``{"action":"tool_run","tool_run":{"command":"..."}}``
+        #   3. nested under ``tool_run`` with ``tool``+``args`` instead
+        #      of a pre-stringified ``command``
+        # Normalize all three into the documented top-level ``command``
+        # string so the executor gets a dispatchable payload.
+        if raw.get('action') == 'tool_run' and not raw.get('command'):
+            nested = raw.get('tool_run') if isinstance(raw.get('tool_run'), dict) else None
+            nested_cmd = nested.get('command') if nested else None
+            if isinstance(nested_cmd, str) and nested_cmd:
+                raw['command'] = nested_cmd
+                _log.info('LLM nested command under tool_run key — lifted to top level')
+            elif nested and isinstance(nested.get('tool'), str):
+                raw['command'] = json.dumps({
+                    'tool': nested['tool'],
+                    'args': nested.get('args') or {},
+                })
+                _log.info(
+                    'LLM nested tool/args under tool_run key — synthesized '
+                    'command for tool=%s', nested['tool'],
+                )
+            elif isinstance(raw.get('tool'), str):
+                raw['command'] = json.dumps({
+                    'tool': raw['tool'],
+                    'args': raw.get('args') or {},
+                })
+                _log.info(
+                    'LLM emitted top-level tool/args instead of nested command — '
+                    'synthesized command for tool=%s', raw['tool'],
+                )
         return ReasoningTurnDecision.model_validate(raw)
 
     def absorb(
@@ -136,7 +178,16 @@ class CyberReasoningEngine:
         if decision.contract is not None and not self._has_contract(case_state.contract):
             contract = decision.contract
 
-        hypotheses = decision.hypotheses or case_state.hypotheses
+        # Merge live hypotheses across turns instead of replacing.
+        # The LLM emits its CURRENT view each turn, but it may forget
+        # to repeat earlier ones — that previously caused live
+        # hypotheses to vanish silently. We:
+        #   1. Start with the existing live list
+        #   2. Drop any whose id is in the new rejected set
+        #   3. Upsert each new hypothesis: replace existing by id,
+        #      append unknown ones
+        # Result: nothing the agent ever proposed disappears; the
+        # only way to remove a hypothesis is to explicitly reject it.
         rejected = list(case_state.rejected)
         seen_rejected = {(item.id, item.claim) for item in rejected}
         for item in decision.rejected:
@@ -145,13 +196,28 @@ class CyberReasoningEngine:
                 continue
             seen_rejected.add(key)
             rejected.append(item)
+        newly_rejected_ids = {item.id for item in decision.rejected if item.id}
+
+        merged_live = [
+            h for h in case_state.hypotheses if h.id not in newly_rejected_ids
+        ]
+        for new_h in decision.hypotheses or []:
+            if not new_h.id:
+                merged_live.append(new_h)
+                continue
+            for i, existing in enumerate(merged_live):
+                if existing.id == new_h.id:
+                    merged_live[i] = new_h
+                    break
+            else:
+                merged_live.append(new_h)
 
         observables = dict(case_state.observables)
         observables.update({k: v for k, v in decision.observables.items() if str(k).strip()})
 
         return ReasoningCaseState(
             contract=contract,
-            hypotheses=hypotheses,
+            hypotheses=merged_live,
             rejected=rejected,
             observables=observables,
         )
@@ -463,14 +529,26 @@ class CyberReasoningEngine:
 
     @staticmethod
     def _extract_json_object(text: str) -> dict[str, object]:
+        """Pull the first complete JSON object out of an LLM reply.
+
+        The naive ``text[find('{'):rfind('}')+1]`` slice breaks when the
+        model emits prose then a second JSON-looking block (e.g. an
+        example follow-up), because the slice spans BOTH objects plus
+        the prose between them. ``json.JSONDecoder.raw_decode`` walks
+        one value starting at the given offset and returns where it
+        stopped — so we can ignore everything past the first object.
+        """
         start = text.find("{")
-        end = text.rfind("}") + 1
-        if start < 0 or end <= start:
-            raise ValidationError("Reasoning engine did not receive a JSON object from the LLM")
+        if start < 0:
+            raise ValidationError(
+                "Reasoning engine did not receive a JSON object from the LLM",
+            )
         try:
-            parsed = json.loads(text[start:end])
+            parsed, _ = json.JSONDecoder().raw_decode(text[start:])
         except json.JSONDecodeError as exc:
-            raise ValidationError(f"Reasoning engine received invalid JSON: {exc}") from exc
+            raise ValidationError(
+                f"Reasoning engine received invalid JSON: {exc}",
+            ) from exc
         if not isinstance(parsed, dict):
             raise ValidationError("Reasoning engine expected a top-level JSON object")
         return parsed
