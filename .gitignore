@@ -40,6 +40,25 @@ packages/*/node_modules/
 # Storybook static output
 storybook-static/
 
+# Operator-machine artifacts — UI tour scripts, screenshot dumps,
+# service logs/pids spawned by start.sh. None of this belongs in
+# version control; keeping it tracked once made every commit drag
+# stale binaries + logs into review.
+.audit*
+.logs/
+.backend*.log
+.backend*.err
+.vr*.log
+.vr*.err
+.vite-*.log
+.vite-*.err
+.test_*.pdf
+*.log
+*.err
+*.pid
+.tmp_*/
+PLAN.md
+
 
 # Runtime artifacts
 scratch/
