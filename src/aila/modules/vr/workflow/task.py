@@ -124,3 +124,121 @@ async def run_fuzz_campaign_launch(
 
     svc = FuzzCampaignService()
     return await svc.launch_campaign(campaign_id)
+
+
+@platform_task(
+    track="vr",
+    module_id="vr",
+    max_tries=2,
+    timeout_s=300.0,  # ~3-4 LLM round-trips for PocWriter + retries
+)
+async def run_vr_draft_poc(
+    ctx: TaskContext,
+    finding_id: str,
+    investigation_id: str,
+    **_: Any,
+) -> dict[str, Any]:
+    """Draft a PoC for a confirmed VR finding via PocWriter agent.
+
+    Loads facts from the source investigation (via pdf_report's
+    ``_collect_facts`` so PoC + PDF report see identical input),
+    runs the writer, persists the result onto ``VRFindingRecord.
+    poc_code`` + ``poc_language``.
+
+    Failures are caught + logged onto the finding's
+    ``draft_error_text`` field so operator sees what went wrong
+    rather than a silent miss.
+    """
+    del ctx
+    import json as _json  # noqa: PLC0415
+    import logging  # noqa: PLC0415
+
+    from sqlmodel import select  # noqa: PLC0415
+
+    from aila.modules.vr.db_models import VRFindingRecord  # noqa: PLC0415
+    from aila.modules.vr.reporting.pdf_report import (  # noqa: PLC0415
+        _collect_facts,
+    )
+    from aila.modules.vr.reporting.poc_writer import PocWriter  # noqa: PLC0415
+    from aila.platform.contracts._common import utc_now  # noqa: PLC0415
+    from aila.platform.uow import UnitOfWork  # noqa: PLC0415
+
+    log = logging.getLogger(__name__)
+
+    facts = await _collect_facts(investigation_id)
+    if facts is None:
+        return {
+            "finding_id": finding_id,
+            "status": "error",
+            "error": f"investigation {investigation_id} not found for PoC drafting",
+        }
+
+    poc_facts = {
+        **facts,
+        "vulnerability_class": (facts.get("final_answer") or "")[:120],
+        "root_cause_summary": (facts.get("final_reasoning") or "")[:2000],
+    }
+
+    try:
+        draft = await PocWriter().write(poc_facts)
+    except (RuntimeError, ValueError) as exc:
+        log.warning(
+            "run_vr_draft_poc: writer failed for finding_id=%s err=%s",
+            finding_id, exc,
+        )
+        return {
+            "finding_id": finding_id,
+            "status": "writer_error",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    persisted_at = utc_now()
+    async with UnitOfWork() as uow:
+        finding = (await uow.session.exec(
+            select(VRFindingRecord).where(VRFindingRecord.id == finding_id),
+        )).first()
+        if finding is None:
+            log.warning(
+                "run_vr_draft_poc: finding %s disappeared before persist",
+                finding_id,
+            )
+            return {
+                "finding_id": finding_id,
+                "status": "error",
+                "error": "finding row disappeared between dispatch and persist",
+            }
+        finding.poc_code = draft.code
+        finding.poc_language = draft.language[:32]
+        # Stash the structured draft (build/run commands, caveats) on
+        # evidence_refs_json as a single entry the UI can render —
+        # poc_code is just the source, the rest of PocDraft is
+        # metadata that doesn't have its own column.
+        existing_refs = _json.loads(finding.evidence_refs_json or "[]")
+        existing_refs.append({
+            "kind": "poc_draft_metadata",
+            "drafted_at": persisted_at.isoformat(),
+            "title": draft.title,
+            "build_command": draft.build_command,
+            "run_command": draft.run_command,
+            "target_setup": draft.target_setup,
+            "expected_outcome": draft.expected_outcome,
+            "can_run": draft.can_run,
+            "missing_inputs": draft.missing_inputs,
+            "caveats": draft.caveats,
+            "safety_notes": draft.safety_notes,
+        })
+        finding.evidence_refs_json = _json.dumps(existing_refs)
+        uow.session.add(finding)
+        await uow.session.commit()
+
+    log.info(
+        "run_vr_draft_poc: finding=%s language=%s can_run=%s code_lines=%d",
+        finding_id, draft.language, draft.can_run, draft.code.count("\n") + 1,
+    )
+    return {
+        "finding_id": finding_id,
+        "status": "ok",
+        "language": draft.language,
+        "can_run": draft.can_run,
+        "code_chars": len(draft.code),
+    }

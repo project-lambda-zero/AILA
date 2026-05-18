@@ -2600,6 +2600,59 @@ def create_vr_router() -> APIRouter:
             },
         )
 
+    @router.post(
+        "/findings/{finding_id}/draft-poc",
+        response_model=DataEnvelope[dict],
+        summary=(
+            "Trigger PocWriter to draft an exploit / PoC for this "
+            "finding. Runs asynchronously via the VR worker; result "
+            "lands on VRFindingRecord.poc_code when complete. Safe "
+            "to call multiple times — each call overwrites the "
+            "previous draft."
+        ),
+    )
+    @limiter.limit("5/minute")
+    async def trigger_poc_draft(
+        request: Request,
+        finding_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request
+
+        from aila.modules.vr._task_queue import default_task_queue
+        from aila.modules.vr.db_models import VRFindingRecord
+        from aila.modules.vr.workflow.task import run_vr_draft_poc
+
+        async with UnitOfWork() as uow:
+            finding = (await uow.session.exec(
+                _team_filter(
+                    select(VRFindingRecord).where(VRFindingRecord.id == finding_id),
+                    VRFindingRecord, auth,
+                ),
+            )).first()
+        if finding is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Finding {finding_id} not found.",
+            )
+        task_queue = default_task_queue()
+        handle = await task_queue.submit(
+            track="vr",
+            fn=run_vr_draft_poc,
+            kwargs={
+                "finding_id": finding_id,
+                "investigation_id": finding.investigation_id_source or "",
+            },
+            user_id=auth.user_id,
+            group_id="vr_poc_writer",
+            team_id=auth.team_id,
+        )
+        return DataEnvelope(data={
+            "finding_id": finding_id,
+            "task_id": str(getattr(handle, "task_id", "")),
+            "status": "queued",
+        })
+
     @router.get(
         "/investigations/{investigation_id}/messages/stream",
         summary="SSE stream of new investigation messages (live tail).",
