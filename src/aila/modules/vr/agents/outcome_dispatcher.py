@@ -279,21 +279,12 @@ class OutcomeDispatcher:
     ) -> OutcomeDispatchResult:
         """DIRECT_FINDING → vr_findings row.
 
-        Investigations without project_id skip this dispatch (vr_findings
-        requires project_id under current schema). Operator can manually
-        promote later by linking the investigation to a project, OR a
-        future commit makes project_id nullable for standalone findings.
+        Standalone investigations (no project_id) write a finding row
+        with ``project_id=NULL`` per migration 057. Operator can link
+        the finding to a project later — listings filter by
+        ``project_id IS NULL`` to surface orphans.
         """
         target_row, inv = await self._load_target_for_investigation(investigation_id)
-
-        if not inv.project_id:
-            return OutcomeDispatchResult(
-                outcome_id=outcome_id,
-                outcome_kind=OutcomeKind.DIRECT_FINDING,
-                dispatch_status=OutcomeDispatchStatus.SKIPPED,
-                dispatch_target=None,
-                reason="investigation_has_no_project_id",
-            )
 
         crash_type = payload.get("crash_type")
         vulnerable_function = payload.get("vulnerable_function")
