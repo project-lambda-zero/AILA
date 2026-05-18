@@ -363,10 +363,30 @@ class OutcomeDispatcher:
                     spawned_children.append(child_id)
                 except (ValueError, RuntimeError) as exc:
                     spawn_errors.append(f"{type(exc).__name__}:{exc}")
+        # Variant-child auto-PoC: when this DIRECT_FINDING came from
+        # a variant-hunt child investigation (parent_investigation_id
+        # is set) AND the agent didn't supply poc_code, queue the
+        # PoC writer asynchronously. The finding lands now; poc_code
+        # populates when the writer task completes. Skip when the
+        # finding already carries operator-supplied poc_code so we
+        # don't overwrite their work.
+        poc_queued: str | None = None
+        is_variant_child = bool(inv.parent_investigation_id)
+        if is_variant_child and not payload.get("poc_code"):
+            try:
+                poc_queued = await self._queue_poc_writer(
+                    finding_id=finding_id,
+                    investigation_id=investigation_id,
+                    team_id=inv.team_id,
+                )
+            except (ValueError, RuntimeError) as exc:
+                spawn_errors.append(f"poc_queue_failed:{type(exc).__name__}:{exc}")
 
         reason_parts = [f"crash_type={crash_type}", f"fn={vulnerable_function}"]
         if spawned_children:
             reason_parts.append(f"variants_spawned={len(spawned_children)}")
+        if poc_queued:
+            reason_parts.append(f"poc_task={poc_queued}")
         if spawn_errors:
             reason_parts.append(f"variant_errors={'; '.join(spawn_errors)[:200]}")
         return OutcomeDispatchResult(
@@ -511,6 +531,38 @@ class OutcomeDispatcher:
             await uow.session.commit()
             await uow.session.refresh(child)
             return child.id
+
+    async def _queue_poc_writer(
+        self,
+        *,
+        finding_id: str,
+        investigation_id: str,
+        team_id: str | None,
+    ) -> str:
+        """Submit a background task to draft a PoC for ``finding_id``.
+
+        Returns the task id. The task runs ``PocWriter`` against the
+        finding's investigation facts and UPDATEs the VRFindingRecord
+        with ``poc_code`` + ``poc_language`` when done. We don't
+        block dispatch on PoC generation (writer call is ~10-30s of
+        LLM time) — finding lands immediately, PoC trickles in.
+        """
+        from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
+        from aila.modules.vr.workflow.task import run_vr_draft_poc  # noqa: PLC0415
+
+        task_queue = default_task_queue()
+        handle = await task_queue.submit(
+            track="vr",
+            fn=run_vr_draft_poc,
+            kwargs={
+                "finding_id": finding_id,
+                "investigation_id": investigation_id,
+            },
+            user_id="system",
+            group_id="vr_poc_writer",
+            team_id=team_id,
+        )
+        return str(getattr(handle, "task_id", finding_id))
 
     async def _dispatch_campaign_launch(
         self,
