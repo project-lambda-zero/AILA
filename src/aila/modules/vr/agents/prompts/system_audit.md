@@ -147,6 +147,11 @@ When you submit a variant-hunt finding, your payload MUST include
   "payload": {
     "crash_type": "heap_buffer_overflow",
     "vulnerable_function": "ngx_http_script_regex_start_code",
+    "affected_components": [
+      {"file": "src/http/ngx_http_script.c", "function": "ngx_http_script_regex_start_code"},
+      {"file": "src/http/ngx_http_script.c", "function": "ngx_http_script_copy_capture_code"},
+      {"file": "src/http/ngx_http_script.c", "function": "ngx_http_script_add_args_code"}
+    ],
     "variant_hunt_orders": [
       {
         "title": "Variant: same NULL-lengths pattern in ngx_http_proxy_pass",
@@ -165,6 +170,15 @@ When you submit a variant-hunt finding, your payload MUST include
 
 Rules:
 
+- **`affected_components` is REQUIRED on every DIRECT_FINDING
+  submit.** List EVERY function involved in the bug chain — entry
+  point, intermediate code paths, sink — as concrete
+  `{file, function}` pairs you actually read during the audit.
+  The PDF report fetches real source bodies for each entry via
+  audit-mcp at render time, so these MUST match function names
+  audit-mcp can resolve. Prose-only answers without
+  `affected_components` mean the report can't embed the
+  vulnerable code — operator will have to grep the repo by hand.
 - Each `variant_hunt_orders` entry MUST cite a SPECIFIC call site or
   code path you identified during the audit. No speculative variants
   with no evidence — they waste budget on child investigations that
