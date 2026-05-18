@@ -72,15 +72,67 @@ async def render_investigation_pdf(investigation_id: str) -> bytes:
     ``ValueError`` when the investigation is missing, ``RuntimeError``
     when the writer agent can't produce content. Caller wraps in a
     FastAPI Response with the right Content-Type / Disposition.
+
+    When the investigation has a confirmed finding (terminal
+    DIRECT_FINDING) but NO PoC has been drafted yet, we run the
+    PocWriter inline here so the PDF always includes a reproduction
+    script. Cost: one extra LLM round-trip (~10-30s). Without this,
+    operator-triggered PDF export of any investigation that never
+    went through the variant-child auto-PoC pipeline would silently
+    drop the Reproduction scripts section.
     """
     facts = await _collect_facts(investigation_id)
     if facts is None:
         raise ValueError(f"Investigation {investigation_id} not found")
 
+    # On-demand PoC: only when the agent submitted a real finding
+    # (terminal exists) AND no PoC is attached yet. The drafted PoC
+    # is added to facts in-memory for THIS render only — persistence
+    # to VRFindingRecord requires a finding row, which standalone
+    # investigations (no project_id) don't have. Operator who wants
+    # the PoC persisted should hit POST /vr/findings/{id}/draft-poc
+    # on a finding-backed investigation.
+    if facts.get("final_answer") and not facts.get("poc_drafts"):
+        inline_poc = await _draft_poc_inline(facts)
+        if inline_poc is not None:
+            facts["poc_drafts"] = [inline_poc]
+
     writer = ReportWriter()
     content = await writer.write(facts)
 
     return _render_pdf(facts=facts, content=content)
+
+
+async def _draft_poc_inline(facts: dict[str, Any]) -> dict[str, Any] | None:
+    """Run PocWriter against the investigation facts and return a
+    poc_drafts-shaped dict for in-memory inclusion in the PDF.
+
+    Returns None when the writer fails — the report renders without
+    the Reproduction section rather than aborting the whole PDF.
+    """
+    from aila.modules.vr.reporting.poc_writer import PocWriter  # noqa: PLC0415
+
+    poc_facts = {
+        **facts,
+        "vulnerability_class": (facts.get("final_answer") or "")[:120],
+        "root_cause_summary": (facts.get("final_reasoning") or "")[:2000],
+    }
+    try:
+        draft = await PocWriter().write(poc_facts)
+    except (RuntimeError, ValueError) as exc:
+        _log.warning("inline PocWriter failed for export: %s", exc)
+        return None
+    return {
+        "finding_id": "inline-draft",
+        "language": draft.language,
+        "code": draft.code,
+        "title": draft.title,
+        "build_command": draft.build_command,
+        "run_command": draft.run_command,
+        "expected_outcome": draft.expected_outcome,
+        "can_run": draft.can_run,
+        "caveats": draft.caveats,
+    }
 
 
 # ----------------------------------------------------------------------
@@ -135,6 +187,18 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
             .order_by(VRInvestigationMessageRecord.created_at.desc())
             .limit(80),
         )).all()
+        # Total message count across all kinds (tool_call + executor
+        # responses + operator messages) — surfaced on the cover so
+        # the reader sees both turn count + total messages and isn't
+        # confused when total >> turns (each turn writes ~2 messages).
+        from sqlalchemy import text as _sql_text  # noqa: PLC0415
+        msg_count_row = (await uow.session.exec(
+            _sql_text(
+                "SELECT COUNT(*) FROM vr_investigation_messages "
+                "WHERE investigation_id = :inv",
+            ).bindparams(inv=investigation_id),
+        )).first()
+        message_count = int(msg_count_row[0]) if msg_count_row else 0
 
         # Variant-hunt children spawned by this investigation, with
         # their findings + PoC drafts. When the user exports the
@@ -303,6 +367,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         "key_insights": insights,
         "tool_call_summary": tool_call_summary,
         "branch_turn_count": branch.turn_count if branch else 0,
+        "message_count": message_count,
         "outcome_trail": outcome_trail,
         "variants_hunted": variants,
         "poc_drafts": poc_drafts,
@@ -359,7 +424,29 @@ def _resolve_audit_metadata(
     ref = descriptor.get("vulnerable_ref") or descriptor.get("ref") or "HEAD"
 
     commit_hash: str | None = None
+    commit_date: str | None = None
+    git_describe: str | None = None
+    tags_containing: list[str] = []
     clone_path: str | None = None
+
+    def _git(args: list[str], cwd: str, timeout: int = 5) -> str | None:
+        """Run a git subcommand in ``cwd`` and return stripped stdout
+        (or None on failure). Used so this helper degrades to a
+        partial result when individual git queries fail instead of
+        aborting the whole audit_metadata block.
+        """
+        try:
+            result = subprocess.run(  # noqa: S603, S607
+                ["git", "-C", cwd, *args],
+                capture_output=True, text=True,
+                timeout=timeout, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
+
     if repo_url:
         parsed = urlparse(repo_url)
         host = parsed.hostname or "unknown"
@@ -367,16 +454,39 @@ def _resolve_audit_metadata(
         clone_dirname = f"{host}_{path}@{ref}"
         candidate = _AUDIT_MCP_CLONE_DIR / clone_dirname
         if candidate.is_dir():
-            try:
-                result = subprocess.run(  # noqa: S603, S607
-                    ["git", "-C", str(candidate), "rev-parse", "HEAD"],
-                    capture_output=True, text=True, timeout=5, check=False,
+            clone = str(candidate)
+            commit_hash = _git(["rev-parse", "HEAD"], clone)
+            if commit_hash:
+                clone_path = clone
+                # audit-mcp typically clones shallow (--depth=1) so
+                # 'git describe' can't walk ancestry to find any tag.
+                # Lazy-upgrade the clone to full history + all tags
+                # on first report — subsequent reports are instant.
+                # ``--unshallow`` is a no-op when the clone is
+                # already full-history. 60s timeout covers a typical
+                # 30MB fetch on a residential connection.
+                _git(["fetch", "--unshallow", "--tags", "origin"], clone, timeout=60)
+                _git(["fetch", "--tags", "origin"], clone, timeout=30)
+                # Closest tag, falling back to a short SHA when no
+                # tags exist (--always). For nginx this resolves to
+                # 'release-1.27.3-83-geff1108854' or similar — the
+                # tag plus distance plus SHA tail.
+                git_describe = _git(["describe", "--tags", "--always", commit_hash], clone, timeout=10)
+                # Every tag that CONTAINS this commit — tells the
+                # reader which named releases are affected. Sorted
+                # by version under git's tag-sort heuristic.
+                tags_raw = _git(["tag", "--contains", commit_hash], clone, timeout=15)
+                if tags_raw:
+                    tags_containing = [
+                        line.strip()
+                        for line in tags_raw.splitlines()
+                        if line.strip()
+                    ][:25]  # cap for cover page readability
+                # ISO-8601 commit date. Useful when the reader needs
+                # to correlate with CVE publish date.
+                commit_date = _git(
+                    ["log", "-1", "--format=%cI", commit_hash], clone,
                 )
-                if result.returncode == 0:
-                    commit_hash = result.stdout.strip()
-                    clone_path = str(candidate)
-            except (OSError, subprocess.SubprocessError):
-                commit_hash = None
 
     return {
         "audit_started_at": started.isoformat() if started else None,
@@ -384,6 +494,10 @@ def _resolve_audit_metadata(
         "audit_duration_seconds": duration_seconds,
         "commit_hash": commit_hash,
         "commit_short": commit_hash[:12] if commit_hash else None,
+        "commit_date": commit_date,
+        "git_describe": git_describe,
+        "tags_containing": tags_containing,
+        "vulnerable_versions": tags_containing,  # alias for prompt clarity
         "ref": ref,
         "repo_url": repo_url or None,
         "clone_path": clone_path,
@@ -687,6 +801,20 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
         cover_meta.append(["Ref", meta.get("ref") or facts["target_ref"]])
     if meta.get("commit_hash"):
         cover_meta.append(["Commit (audited)", meta["commit_hash"]])
+    if meta.get("commit_date"):
+        cover_meta.append(["Commit date", meta["commit_date"][:10]])
+    if meta.get("git_describe"):
+        cover_meta.append(["Version (describe)", meta["git_describe"]])
+    tags_containing = meta.get("tags_containing") or []
+    if tags_containing:
+        shown = tags_containing[:8]
+        suffix = f" (+ {len(tags_containing) - 8} more)" if len(tags_containing) > 8 else ""
+        cover_meta.append(["Patched in releases", ", ".join(shown) + suffix])
+    elif meta.get("commit_hash"):
+        cover_meta.append([
+            "Patched in releases",
+            "NONE — commit not included in any tagged release; every published version is unpatched",
+        ])
     if meta.get("audit_started_at"):
         cover_meta.append(["Audit started", meta["audit_started_at"][:16].replace("T", " ") + " UTC"])
     if meta.get("audit_completed_at"):
@@ -702,7 +830,10 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
         datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M UTC"),
     ])
     cover_meta.append(["Investigation id", facts.get("investigation_id", "?")])
-    cover_meta.append(["Turns executed", str(facts.get("branch_turn_count", 0))])
+    cover_meta.append([
+        "Reasoning turns",
+        f"{facts.get('branch_turn_count', 0)} (over {facts.get('message_count', 0)} total messages)",
+    ])
     if facts.get("confidence"):
         cover_meta.append(["Audit confidence", str(facts["confidence"])])
 
