@@ -155,21 +155,65 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
                 .order_by(VRFindingRecord.created_at.desc())
                 .limit(3),
             )).all()
+            # Pull the child's terminal outcome too — full answer,
+            # reasoning, structured payload (affected_components,
+            # etc). The finding row only stores the projected fields;
+            # the outcome row carries the agent's full submit text.
+            c_outcome = (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.investigation_id == c.id)
+                .order_by(VRInvestigationOutcomeRecord.created_at.desc())
+                .limit(1),
+            )).first()
+            child_branch = (await uow.session.exec(
+                _select(VRInvestigationBranchRecord)
+                .where(VRInvestigationBranchRecord.investigation_id == c.id)
+                .order_by(VRInvestigationBranchRecord.created_at.asc()),
+            )).first()
+            try:
+                c_payload = json.loads(c_outcome.payload_json or "{}") if c_outcome else {}
+            except (ValueError, TypeError):
+                c_payload = {}
             variant_entry: dict[str, Any] = {
                 "child_id": c.id,
                 "title": c.title,
                 "status": c.status,
-                "question": c.initial_question[:300] if c.initial_question else "",
+                "question": c.initial_question or "",
+                "turn_count": child_branch.turn_count if child_branch else 0,
+                "terminal_answer": c_payload.get("answer") or "",
+                "terminal_reasoning": c_payload.get("reasoning") or "",
+                "terminal_confidence": c_outcome.confidence if c_outcome else None,
+                "terminal_kind": c_outcome.outcome_kind if c_outcome else None,
+                "affected_components": c_payload.get("affected_components") or [],
                 "findings": [],
             }
             for f in c_findings:
+                # Pull PoC draft metadata for this finding (matches
+                # _resolve_poc_drafts shape so the renderer can render
+                # uniformly).
+                meta: dict[str, Any] = {}
+                try:
+                    f_refs = json.loads(f.evidence_refs_json or "[]")
+                    for r in f_refs:
+                        if isinstance(r, dict) and r.get("kind") == "poc_draft_metadata":
+                            meta = r
+                            break
+                except (ValueError, TypeError):
+                    meta = {}
                 variant_entry["findings"].append({
                     "finding_id": f.id,
                     "crash_type": f.crash_type,
                     "vulnerable_function": f.vulnerable_function,
-                    "root_cause": (f.root_cause or "")[:600],
-                    "has_poc": bool(f.poc_code),
+                    "root_cause": f.root_cause or "",
+                    "crash_signature": f.crash_signature,
+                    "poc_code": f.poc_code or "",
                     "poc_language": f.poc_language,
+                    "poc_title": meta.get("title", ""),
+                    "poc_build_command": meta.get("build_command", ""),
+                    "poc_run_command": meta.get("run_command", ""),
+                    "poc_expected_outcome": meta.get("expected_outcome", ""),
+                    "poc_can_run": meta.get("can_run", False),
+                    "poc_caveats": meta.get("caveats") or [],
                 })
             variants.append(variant_entry)
 
@@ -265,12 +309,10 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         "audit_metadata": _resolve_audit_metadata(inv, descriptor),
         "vulnerable_code_excerpts": await _resolve_code_excerpts(
             descriptor=descriptor,
-            hypotheses=hypotheses,
-            final_answer=(
-                (json.loads(terminal.payload_json or "{}").get("answer") or "")
-                if terminal else ""
+            affected_components=(
+                json.loads(terminal.payload_json or "{}").get("affected_components") or []
+                if terminal else []
             ),
-            poc_drafts=poc_drafts,
         ),
     }
 
@@ -348,48 +390,32 @@ def _resolve_audit_metadata(
     }
 
 
-_CODE_EXCERPT_PATTERN = re.compile(
-    r"`?([A-Za-z_][A-Za-z0-9_]+)`?\s*(?:in|at|\(|in file)?\s*"
-    r"`?([\w/.\-]+\.(?:c|cc|cpp|cxx|h|hpp|py|rs|go|js|ts|java))`?"
-    r"(?:[:\s](\d{1,6}))?",
-)
-
-
 async def _resolve_code_excerpts(
     *,
     descriptor: dict[str, Any],
-    hypotheses: list[Any],
-    final_answer: str,
-    poc_drafts: list[dict[str, Any]],
+    affected_components: list[Any],
 ) -> list[dict[str, Any]]:
-    """Pull actual vulnerable function bodies for the report.
+    """Fetch real source for each entry the agent listed in
+    ``affected_components``.
 
-    Scans final_answer + live hypothesis text for ``function in
-    file.c`` references, then fetches each via audit-mcp's
-    ``read_function`` (the same tool the agent uses). Cap of 6
-    excerpts keeps the PDF readable. Best-effort: missing index or
-    audit-mcp down → empty list, no error.
+    The agent's DIRECT_FINDING / ASSESSMENT_REPORT submit payload
+    carries an explicit ``affected_components`` list — the agent
+    saw these locations during its own tool calls, so it knows
+    them concretely. We render the actual function bodies via
+    audit-mcp; no regex mining of prose, no guessing.
+
+    Each entry is expected to be::
+
+        {"file": "src/http/ngx_http_script.c",
+         "function": "ngx_http_script_regex_start_code"}
+
+    String entries (legacy submit shape) are also parsed:
+    ``"src/http/ngx_http_script.c:1038 ngx_http_script_regex_start_code"``
+
+    Best-effort: missing index, audit-mcp down, or unparseable
+    entry → that entry is skipped, not raised.
     """
-    del poc_drafts  # reserved for future use; PoC code already renders elsewhere
-
-    candidates: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-
-    def _push(text: str) -> None:
-        for m in _CODE_EXCERPT_PATTERN.finditer(text or ""):
-            fn, fp = m.group(1), m.group(2)
-            key = (fn, fp)
-            if key in seen:
-                return
-            seen.add(key)
-            candidates.append(key)
-
-    _push(final_answer)
-    for h in hypotheses[:6]:
-        claim = h.get("claim", "") if isinstance(h, dict) else getattr(h, "claim", "")
-        kill = h.get("kill_criterion", "") if isinstance(h, dict) else getattr(h, "kill_criterion", "")
-        _push(f"{claim} {kill}")
-    if not candidates:
+    if not affected_components:
         return []
 
     index_id = (
@@ -399,11 +425,28 @@ async def _resolve_code_excerpts(
     if not index_id:
         return []
 
-    from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool  # noqa: PLC0415
+    normalized: list[tuple[str, str]] = []
+    for raw in affected_components[:8]:
+        if isinstance(raw, dict):
+            fp = str(raw.get("file") or "").strip()
+            fn = str(raw.get("function") or "").strip()
+            if fp and fn:
+                normalized.append((fp, fn))
+            continue
+        if isinstance(raw, str):
+            parts = raw.strip().split()
+            if len(parts) < 2:
+                continue
+            loc = parts[0]
+            fn = parts[1]
+            fp = loc.partition(":")[0]
+            if fp and fn:
+                normalized.append((fp, fn))
 
+    from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool  # noqa: PLC0415
     bridge = AuditMcpBridgeTool()
     excerpts: list[dict[str, Any]] = []
-    for fn, fp in candidates[:6]:
+    for fp, fn in normalized:
         try:
             result = await bridge.forward(
                 action="read_function",
@@ -416,10 +459,7 @@ async def _resolve_code_excerpts(
         if not isinstance(result, dict) or result.get("status") == "error":
             continue
         body = result.get("body") or []
-        if isinstance(body, list):
-            code = "\n".join(str(b) for b in body)
-        else:
-            code = str(body)
+        code = "\n".join(str(b) for b in body) if isinstance(body, list) else str(body)
         if not code.strip():
             continue
         excerpts.append({
@@ -484,7 +524,6 @@ def _extract_cve_id(text: str) -> str | None:
     Used to surface the CVE on the cover page when the investigation
     title or question references one. Returns ``None`` when no match.
     """
-    import re  # noqa: PLC0415
     match = re.search(r"CVE-\d{4}-\d{4,7}", text, re.IGNORECASE)
     return match.group(0).upper() if match else None
 
@@ -819,6 +858,113 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
     ))
     _render_markdown_body(content.remediation.body_markdown, styles, story)
 
+    variants_full = facts.get("variants_hunted") or []
+    if variants_full:
+        story.append(PageBreak())
+        story.append(Paragraph(
+            f"Variant investigations ({len(variants_full)} children)",
+            styles["section_h1"],
+        ))
+        story.append(Paragraph(
+            "Each variant below is rendered in full from the raw "
+            "investigation record — no LLM summary, no truncation. "
+            "Per variant: the child investigation's question, status, "
+            "every confirmed finding (root cause, crash signature, "
+            "vulnerable function), and any PoC drafted for it (full "
+            "source + build/run commands).",
+            styles["body"],
+        ))
+        for i, v in enumerate(variants_full):
+            story.append(Spacer(1, 0.2 * inch))
+            story.append(Paragraph(
+                f"Variant {i + 1}: {_escape_for_paragraph(v.get('title') or '(untitled)')}",
+                styles["section_h1"],
+            ))
+            status_line = (
+                f"<b>Status:</b> {_escape_for_paragraph(v.get('status') or '?')}"
+                f"  <b>Turns:</b> {v.get('turn_count', 0)}"
+                f"  <b>Child id:</b> <font name='Courier'>{_escape_for_paragraph(v.get('child_id') or '?')}</font>"
+            )
+            story.append(Paragraph(status_line, styles["body"]))
+            if v.get("question"):
+                story.append(Paragraph("<b>Hypothesis under investigation:</b>", styles["body"]))
+                story.append(Paragraph(
+                    _escape_for_paragraph(v["question"]),
+                    styles["body"],
+                ))
+            if v.get("terminal_kind") and v.get("terminal_answer"):
+                story.append(Paragraph(
+                    f"<b>Outcome:</b> {_escape_for_paragraph(v['terminal_kind'])} "
+                    f"(confidence {_escape_for_paragraph(v.get('terminal_confidence') or 'unknown')})",
+                    styles["body"],
+                ))
+                story.append(Paragraph(
+                    _escape_for_paragraph(v["terminal_answer"])[:4000],
+                    styles["body"],
+                ))
+            v_findings = v.get("findings") or []
+            if not v_findings:
+                story.append(Paragraph(
+                    "<i>No confirmed findings on this variant.</i>",
+                    styles["body"],
+                ))
+                continue
+            for j, f in enumerate(v_findings):
+                story.append(Paragraph(
+                    f"<b>Finding {j + 1}.</b> "
+                    f"<font name='Courier'>{_escape_for_paragraph(f.get('crash_type') or '(no crash type)')}</font> "
+                    f"in <font name='Courier'>{_escape_for_paragraph(f.get('vulnerable_function') or '?')}</font>",
+                    styles["section_h2"],
+                ))
+                if f.get("crash_signature"):
+                    story.append(Paragraph(
+                        f"<b>Crash signature:</b> "
+                        f"<font name='Courier'>{_escape_for_paragraph(f['crash_signature'])}</font>",
+                        styles["body"],
+                    ))
+                if f.get("root_cause"):
+                    story.append(Paragraph("<b>Root cause:</b>", styles["body"]))
+                    story.append(Paragraph(
+                        _escape_for_paragraph(f["root_cause"]),
+                        styles["body"],
+                    ))
+                if f.get("poc_code"):
+                    runnable = "RUNNABLE" if f.get("poc_can_run") else "SKELETON"
+                    badge = "#65a30d" if f.get("poc_can_run") else "#c2410c"
+                    story.append(Paragraph(
+                        f"<b>PoC:</b> {_escape_for_paragraph(f.get('poc_title') or '(untitled)')}  "
+                        f"<font color='{badge}'>[{runnable}]</font>  "
+                        f"<font color='#64748b'>{_escape_for_paragraph(f.get('poc_language') or 'text')}</font>",
+                        styles["body"],
+                    ))
+                    if f.get("poc_expected_outcome"):
+                        story.append(Paragraph(
+                            f"<b>Expected:</b> {_escape_for_paragraph(f['poc_expected_outcome'])}",
+                            styles["body"],
+                        ))
+                    if f.get("poc_build_command"):
+                        story.append(Paragraph("<b>Build:</b>", styles["body"]))
+                        story.append(Paragraph(
+                            _escape_for_paragraph(f["poc_build_command"]),
+                            styles["mono"],
+                        ))
+                    if f.get("poc_run_command"):
+                        story.append(Paragraph("<b>Run:</b>", styles["body"]))
+                        story.append(Paragraph(
+                            _escape_for_paragraph(f["poc_run_command"]),
+                            styles["mono"],
+                        ))
+                    story.append(Paragraph("<b>Source:</b>", styles["body"]))
+                    story.append(Paragraph(
+                        _escape_for_paragraph(f["poc_code"][:8000]).replace("\n", "<br/>"),
+                        styles["mono"],
+                    ))
+                    for caveat in f.get("poc_caveats") or []:
+                        story.append(Paragraph(
+                            f"&#9888;&nbsp; <i>{_escape_for_paragraph(str(caveat))}</i>",
+                            styles["body"],
+                        ))
+
     if content.variant_surface:
         story.append(Paragraph("Variant surface to re-audit", styles["section_h1"]))
         _render_markdown_body(content.variant_surface, styles, story)
@@ -905,7 +1051,6 @@ def _inline_markdown(text: str) -> str:
     escaped = _escape_for_paragraph(text)
     # Replace `code` with monospaced font. Use a simple non-greedy
     # regex; this is presentation, not security-critical parsing.
-    import re  # noqa: PLC0415
     return re.sub(
         r"`([^`]+)`",
         lambda m: f"<font name='Courier' color='#0f172a'>{m.group(1)}</font>",
