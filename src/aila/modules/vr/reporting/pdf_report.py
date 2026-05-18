@@ -112,13 +112,17 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
             .order_by(VRInvestigationBranchRecord.created_at.asc()),
         )).first()
 
-        # Final submitted outcome (most recent terminal)
+        # Every outcome the agent emitted (chronological asc), not
+        # just the terminal one. Earlier outcomes (AssessmentReport
+        # mid-investigation, intermediate triage) carry context the
+        # writer needs to describe the audit progression. The DESC
+        # query is for picking ``terminal`` only.
         outcomes = (await uow.session.exec(
             _select(VRInvestigationOutcomeRecord)
             .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
-            .order_by(VRInvestigationOutcomeRecord.created_at.desc()),
+            .order_by(VRInvestigationOutcomeRecord.created_at.asc()),
         )).all()
-        terminal = outcomes[0] if outcomes else None
+        terminal = outcomes[-1] if outcomes else None
 
         # Tool call summary: last 40 calls, distinct (tool, key_arg) pairs
         msgs = (await uow.session.exec(
@@ -129,18 +133,86 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
             .limit(80),
         )).all()
 
+        # Variant-hunt children spawned by this investigation, with
+        # their findings + PoC drafts. When the user exports the
+        # PARENT, the report should describe every variant the system
+        # has explored — including PoC status. When the user exports
+        # a child, this list is empty (children don't spawn variants).
+        from aila.modules.vr.db_models import VRFindingRecord  # noqa: PLC0415
+        children = (await uow.session.exec(
+            _select(VRInvestigationRecord)
+            .where(VRInvestigationRecord.parent_investigation_id == investigation_id)
+            .order_by(VRInvestigationRecord.created_at.asc()),
+        )).all()
+        variants: list[dict[str, Any]] = []
+        for c in children:
+            c_findings = (await uow.session.exec(
+                _select(VRFindingRecord)
+                .where(VRFindingRecord.target_id == c.target_id)
+                .order_by(VRFindingRecord.created_at.desc())
+                .limit(3),
+            )).all()
+            variant_entry: dict[str, Any] = {
+                "child_id": c.id,
+                "title": c.title,
+                "status": c.status,
+                "question": c.initial_question[:300] if c.initial_question else "",
+                "findings": [],
+            }
+            for f in c_findings:
+                variant_entry["findings"].append({
+                    "finding_id": f.id,
+                    "crash_type": f.crash_type,
+                    "vulnerable_function": f.vulnerable_function,
+                    "root_cause": (f.root_cause or "")[:600],
+                    "has_poc": bool(f.poc_code),
+                    "poc_language": f.poc_language,
+                })
+            variants.append(variant_entry)
+
+        # Findings on THIS investigation's own target — if a PoC was
+        # auto-drafted (variant-child path) or operator-triggered,
+        # surface the PoC code + metadata so the writer mentions it
+        # in remediation / reproduction.
+        own_findings = (await uow.session.exec(
+            _select(VRFindingRecord)
+            .where(VRFindingRecord.target_id == inv.target_id)
+            .order_by(VRFindingRecord.created_at.desc())
+            .limit(3),
+        )).all()
+        poc_drafts: list[dict[str, Any]] = []
+        for f in own_findings:
+            if not f.poc_code:
+                continue
+            meta: dict[str, Any] = {}
+            try:
+                refs = json.loads(f.evidence_refs_json or "[]")
+                for r in refs:
+                    if isinstance(r, dict) and r.get("kind") == "poc_draft_metadata":
+                        meta = r
+                        break
+            except (ValueError, TypeError):
+                meta = {}
+            poc_drafts.append({
+                "finding_id": f.id,
+                "language": f.poc_language,
+                "code": f.poc_code,
+                "title": meta.get("title", ""),
+                "build_command": meta.get("build_command", ""),
+                "run_command": meta.get("run_command", ""),
+                "expected_outcome": meta.get("expected_outcome", ""),
+                "can_run": meta.get("can_run", False),
+                "caveats": meta.get("caveats") or [],
+            })
+
     case = json.loads(branch.case_state_json or "{}") if branch else {}
     hypotheses = case.get("hypotheses") or []
     rejected = case.get("rejected") or []
     observables = case.get("observables") or {}
-    # Promote any string observable that looks like a captured insight
-    # (the agent's own ``key_insight`` / ``current_insight`` keys) to
-    # the insights list the writer will reference.
     insights: list[str] = []
     for k, v in observables.items():
         if "insight" in k.lower() and isinstance(v, str) and v.strip():
             insights.append(f"{k}: {v}")
-    # Add 'key_insight' first if it exists
     if "key_insight" in observables and isinstance(observables["key_insight"], str):
         kv = observables["key_insight"]
         if not any(kv in i for i in insights):
@@ -149,6 +221,22 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
     tool_call_summary = _summarize_tool_calls(msgs)
 
     descriptor = json.loads(target.descriptor_json or "{}") if target else {}
+
+    # Render every outcome (not just terminal) into a short trail so
+    # the writer can reference earlier conclusions when narrating the
+    # audit progression.
+    outcome_trail: list[dict[str, Any]] = []
+    for o in outcomes:
+        try:
+            p = json.loads(o.payload_json or "{}")
+        except (ValueError, TypeError):
+            p = {}
+        outcome_trail.append({
+            "kind": o.outcome_kind,
+            "confidence": o.confidence,
+            "answer": (p.get("answer") or "")[:400],
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+        })
 
     facts: dict[str, Any] = {
         "investigation_id": investigation_id,
@@ -168,6 +256,9 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         "key_insights": insights,
         "tool_call_summary": tool_call_summary,
         "branch_turn_count": branch.turn_count if branch else 0,
+        "outcome_trail": outcome_trail,
+        "variants_hunted": variants,
+        "poc_drafts": poc_drafts,
     }
 
     if terminal is not None:

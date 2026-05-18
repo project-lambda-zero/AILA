@@ -213,6 +213,20 @@ class ReportWriter:
             "the conclusion was reached in root_cause_analysis.\n"
             "- DO include URLs in references when the CVE intel block "
             "supplies them.\n"
+            "- When the input has a 'Variant investigations spawned' "
+            "section, EACH variant + its findings MUST appear in the "
+            "variant_surface output. Name each child variant, its "
+            "status, and any confirmed finding inside it. Do not "
+            "collapse them into a sentence.\n"
+            "- When the input has a 'PoC drafts available' section, "
+            "the reproduction_conditions output MUST reference the "
+            "PoC (build + run commands, expected outcome, runnable "
+            "vs skeleton status). The remediation output should "
+            "acknowledge the PoC exists as evidence of exploitability.\n"
+            "- When the input has an 'Outcome trail' with multiple "
+            "entries, the technical_summary should briefly narrate "
+            "the audit progression (hypothesis refinement, key "
+            "pivots) instead of summarizing only the final state.\n"
             "- Output MUST be valid JSON matching the ReportContent "
             "schema. No prose outside the JSON object."
         )
@@ -292,6 +306,64 @@ class ReportWriter:
                 out.append(f"- {line}")
             if len(tool_calls) > 50:
                 out.append(f"  ... and {len(tool_calls) - 50} more calls")
+            out.append("")
+
+        outcome_trail = facts.get("outcome_trail") or []
+        if len(outcome_trail) > 1:
+            out.append("# Outcome trail (every conclusion the agent emitted)")
+            for o in outcome_trail:
+                if not isinstance(o, dict):
+                    continue
+                kind = o.get("kind") or "?"
+                conf = o.get("confidence") or "?"
+                when = (o.get("created_at") or "")[:16]
+                snippet = (o.get("answer") or "")[:160]
+                out.append(f"- [{when}] {kind} (conf={conf}): {snippet}")
+            out.append("")
+
+        variants = facts.get("variants_hunted") or []
+        if variants:
+            out.append("# Variant investigations spawned (children)")
+            for v in variants:
+                if not isinstance(v, dict):
+                    continue
+                out.append(f"- {v.get('title', '?')} [status={v.get('status', '?')}]")
+                if v.get("question"):
+                    out.append(f"  Question: {v['question']}")
+                for f in v.get("findings") or []:
+                    if not isinstance(f, dict):
+                        continue
+                    poc_tag = (
+                        f" PoC: {f.get('poc_language', '?')}"
+                        if f.get("has_poc") else " (no PoC yet)"
+                    )
+                    out.append(
+                        f"  ↳ finding: {f.get('crash_type', '?')} in "
+                        f"`{f.get('vulnerable_function', '?')}`{poc_tag}",
+                    )
+                    if f.get("root_cause"):
+                        out.append(f"     {f['root_cause'][:300]}")
+            out.append("")
+
+        pocs = facts.get("poc_drafts") or []
+        if pocs:
+            out.append("# PoC drafts available for this investigation's findings")
+            for p in pocs:
+                if not isinstance(p, dict):
+                    continue
+                runnable = "RUNNABLE" if p.get("can_run") else "SKELETON"
+                out.append(
+                    f"- [{runnable}] {p.get('title', '(untitled)')} "
+                    f"({p.get('language', '?')}, {len(p.get('code', ''))} chars)",
+                )
+                if p.get("expected_outcome"):
+                    out.append(f"  Expected: {p['expected_outcome'][:200]}")
+                if p.get("build_command"):
+                    out.append(f"  Build: {p['build_command'][:200]}")
+                if p.get("run_command"):
+                    out.append(f"  Run: {p['run_command'][:200]}")
+                for c in p.get("caveats") or []:
+                    out.append(f"  ⚠ {str(c)[:150]}")
             out.append("")
 
         if facts.get("final_answer"):
