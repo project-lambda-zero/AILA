@@ -33,8 +33,14 @@ export function ExportReportButton({
     setError(null);
     try {
       const token = await getAuthTokenStandalone();
+      // Cache-buster query param so the browser never serves a
+      // previously-cached PDF blob for the same URL. The backend
+      // sets Cache-Control: no-store, but that only applies to
+      // future responses — entries already in the disk cache from
+      // earlier visits survive until the cache evicts them. ``ts``
+      // changes per click so each request is a unique URL.
       const payload = await requestBlob(
-        `/vr/investigations/${encodeURIComponent(invId)}/report.pdf`,
+        `/vr/investigations/${encodeURIComponent(invId)}/report.pdf?ts=${Date.now()}`,
         { method: "GET", token },
       );
       const safeTitle = (title ?? "investigation")
