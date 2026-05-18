@@ -118,13 +118,28 @@ export function useResumeInvestigation(investigationId: string) {
   });
 }
 
+export type InvestigationKindOverride =
+  | "discovery"
+  | "variant_hunt"
+  | "triage"
+  | "n_day"
+  | "audit";
+
+export interface ReenqueueBody {
+  /** Optional kind override — backend updates inv.kind +
+   *  strategy_family before submitting the new task. Omit to keep
+   *  the existing kind.
+   */
+  kind?: InvestigationKindOverride;
+}
+
 export function useReenqueueInvestigation(investigationId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (body?: ReenqueueBody) =>
       authorizedRequestJson<Envelope<VRInvestigationSummary>>(
         `/vr/investigations/${encodeURIComponent(investigationId)}/re-enqueue`,
-        { method: "POST" },
+        { method: "POST", body: JSON.stringify(body ?? {}) },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });

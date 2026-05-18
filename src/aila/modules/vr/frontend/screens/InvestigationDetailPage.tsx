@@ -7,6 +7,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
 import { ExportReportButton } from "../components/ExportReportButton";
+import { ReenqueuePicker } from "../components/ReenqueuePicker";
 import { LiveDot, type LiveStatus } from "../components/LiveDot";
 import { SteeringDrawer } from "../components/SteeringDrawer";
 import { TurnCard } from "../components/TurnCard";
@@ -308,15 +309,10 @@ export function InvestigationDetailPage() {
               </button>
             )}
             {(inv.status === "completed" || inv.status === "failed") && (
-              <button
-                type="button"
-                onClick={() => reenqueueMut.mutate()}
-                disabled={reenqueueMut.isPending}
-                className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
-                title="Reset to created + submit a fresh run_vr_investigate task. The branch case state (hypotheses, observables) is preserved — the agent resumes from where it left off, not from turn 1."
-              >
-                {reenqueueMut.isPending ? "Re-enqueueing…" : "Re-enqueue ↻"}
-              </button>
+              <ReenqueuePicker
+                currentKind={inv.kind}
+                mutation={reenqueueMut}
+              />
             )}
           </div>
         </div>
