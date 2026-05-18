@@ -36,9 +36,11 @@ from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import (
+    BaseDocTemplate,
+    Frame,
     PageBreak,
+    PageTemplate,
     Paragraph,
-    SimpleDocTemplate,
     Spacer,
     Table,
     TableStyle,
@@ -416,9 +418,12 @@ def _resolve_audit_metadata(
 
     started = inv.created_at
     stopped = inv.stopped_at or inv.updated_at
-    duration_seconds: int | None = None
-    if started and stopped:
-        duration_seconds = int((stopped - started).total_seconds())
+    # ACTIVE duration: sum of completed task-run intervals from
+    # taskrecord (heartbeat - started). The wall-clock delta
+    # between inv.created_at and inv.updated_at spans every idle
+    # hour between re-enqueues which is misleading — the user
+    # wants "how long was the agent actually working".
+    duration_seconds = _sum_active_task_runtime(inv.id)
 
     repo_url = descriptor.get("repo_url") or ""
     ref = descriptor.get("vulnerable_ref") or descriptor.get("ref") or "HEAD"
@@ -502,6 +507,52 @@ def _resolve_audit_metadata(
         "repo_url": repo_url or None,
         "clone_path": clone_path,
     }
+
+
+def _sum_active_task_runtime(investigation_id: str) -> int | None:
+    """Return total seconds the agent was actively working —
+    sum of (completed_at - started_at) (or heartbeat - started)
+    across every taskrecord row whose kwargs reference this
+    investigation.
+
+    The wall-clock ``inv.updated_at - inv.created_at`` measure
+    includes every idle hour between re-enqueues, which inflates
+    the duration to days for an investigation that was only
+    actively running for ~30min. This helper sums only the
+    intervals where a worker was actually executing the task.
+
+    Best-effort: returns ``None`` when the taskrecord table can't
+    be read (so the report still renders without the field).
+    """
+    try:
+        from urllib.parse import urlparse  # noqa: PLC0415
+
+        import psycopg  # noqa: PLC0415
+
+        from aila.config import get_settings  # noqa: PLC0415
+
+        url = get_settings().database_url.replace("postgresql+asyncpg://", "postgresql://")
+        parsed = urlparse(url)
+        with psycopg.connect(
+            host=parsed.hostname,
+            port=parsed.port or 5432,
+            user=parsed.username,
+            password=parsed.password,
+            dbname=(parsed.path or "/").lstrip("/"),
+        ) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(SUM(EXTRACT(EPOCH FROM "
+                "(COALESCE(completed_at, heartbeat_at) - started_at))), 0) "
+                "FROM taskrecord "
+                "WHERE started_at IS NOT NULL "
+                "AND kwargs_json::text LIKE %s",
+                (f"%{investigation_id}%",),
+            )
+            row = cur.fetchone()
+            secs = int(row[0]) if row and row[0] else 0
+            return secs if secs > 0 else None
+    except (OSError, ValueError, RuntimeError, ImportError):
+        return None
 
 
 async def _resolve_code_excerpts(
@@ -760,6 +811,111 @@ def _build_styles() -> dict[str, ParagraphStyle]:
     return styles
 
 
+
+# ── Pygments syntax highlighting → ReportLab Paragraph ──────────────
+
+try:
+    from pygments import lex as _pyg_lex
+    from pygments.lexers import get_lexer_by_name as _pyg_get_lexer
+    from pygments.token import Token as _PygToken
+    from pygments.util import ClassNotFound as _PygClassNotFound
+    _PYGMENTS_AVAILABLE = True
+except ImportError:
+    _PYGMENTS_AVAILABLE = False
+
+_PYG_COLOR_MAP: dict[Any, str] = {}
+if _PYGMENTS_AVAILABLE:
+    _PYG_COLOR_MAP = {
+        _PygToken.Keyword:                 "#ff5f87",
+        _PygToken.Keyword.Constant:        "#b092ff",
+        _PygToken.Keyword.Declaration:     "#ff5f87",
+        _PygToken.Keyword.Namespace:       "#d7afd7",
+        _PygToken.Keyword.Type:            "#f0a8c7",
+        _PygToken.Name.Builtin:            "#f0a8c7",
+        _PygToken.Name.Class:              "#f0a8c7",
+        _PygToken.Name.Function:           "#97dbbe",
+        _PygToken.Name.Decorator:          "#d7afd7",
+        _PygToken.Name.Namespace:          "#d7afd7",
+        _PygToken.Name.Tag:                "#ff5f87",
+        _PygToken.Name.Attribute:          "#97dbbe",
+        _PygToken.Literal.String:          "#97dbbe",
+        _PygToken.Literal.String.Doc:      "#808080",
+        _PygToken.Literal.String.Escape:   "#b092ff",
+        _PygToken.Literal.Number:          "#b092ff",
+        _PygToken.Literal:                 "#b092ff",
+        _PygToken.Operator:                "#d7afd7",
+        _PygToken.Operator.Word:           "#ff5f87",
+        _PygToken.Punctuation:             "#ffd7af",
+        _PygToken.Comment:                 "#808080",
+        _PygToken.Comment.Single:          "#808080",
+        _PygToken.Comment.Multiline:       "#808080",
+        _PygToken.Comment.Preproc:         "#d7afd7",
+    }
+
+
+def _format_code_block(
+    code: str,
+    language: str,
+    styles: dict[str, ParagraphStyle],
+) -> Paragraph:
+    """Render ``code`` as a syntax-highlighted Paragraph in the
+    dark Midnight Cloud palette. Falls back to plain mono when
+    pygments is missing or the language has no lexer.
+    """
+    if not code.strip():
+        return Paragraph("", styles["mono"])
+    if not _PYGMENTS_AVAILABLE:
+        return Paragraph(
+            _escape_for_paragraph(code).replace("\n", "<br/>"),
+            styles["mono"],
+        )
+    try:
+        lexer = _pyg_get_lexer(language or "text")
+    except _PygClassNotFound:
+        try:
+            lexer = _pyg_get_lexer("text")
+        except _PygClassNotFound:
+            return Paragraph(
+                _escape_for_paragraph(code).replace("\n", "<br/>"),
+                styles["mono"],
+            )
+    parts: list[str] = []
+    for ttype, value in _pyg_lex(code, lexer):
+        if not value:
+            continue
+        cur = ttype
+        color = None
+        while cur is not None:
+            if cur in _PYG_COLOR_MAP:
+                color = _PYG_COLOR_MAP[cur]
+                break
+            cur = cur.parent
+        escaped = _escape_for_paragraph(value).replace("\n", "<br/>")
+        parts.append(f'<font color="{color}">{escaped}</font>' if color else escaped)
+    return Paragraph("".join(parts), styles["mono"])
+
+
+def _guess_lang_from_snippet(snippet: str) -> str:
+    """Heuristic language guess for a code snippet that doesn't
+    carry an explicit language tag. Looks at the first 400 chars
+    for distinctive tokens. Defaults to ``text`` which gets a
+    plain mono render with no highlighting.
+    """
+    head = snippet[:400].lower()
+    if "static ngx_" in head or "u_char" in head or "ngx_int_t" in head:
+        return "c"
+    if "def " in head and ":" in head:
+        return "python"
+    if "fn " in head and "->" in head:
+        return "rust"
+    if "func " in head and "package " in head:
+        return "go"
+    if "function " in head and "{" in head:
+        return "javascript"
+    if "#include" in head or "void " in head or "int main" in head:
+        return "c"
+    return "text"
+
 def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
     """Render the final PDF.
 
@@ -783,17 +939,44 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
         References
     """
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(
+    # Custom doc template so we can paint the dark page background
+    # BEFORE the content draws. SimpleDocTemplate's onFirstPage /
+    # onLaterPages fire AFTER the frame, so painting bg there
+    # covered all the text (manifested as "broken" pages with
+    # ripped flowables). _DarkPageTemplate.beforeDrawPage paints
+    # the rect first; _draw_footer keeps running as the
+    # afterDrawPage hook for the page number + branding strip.
+    margin = 0.75 * inch
+    frame = Frame(
+        margin, margin,
+        LETTER[0] - 2 * margin, LETTER[1] - 2 * margin,
+        id="body",
+        leftPadding=0, rightPadding=0,
+        topPadding=0, bottomPadding=0,
+    )
+
+    class _DarkPage(PageTemplate):
+        def beforeDrawPage(self, canvas: Any, doc: Any) -> None:
+            del doc
+            canvas.saveState()
+            canvas.setFillColor(_BG_PAGE)
+            canvas.rect(0, 0, LETTER[0], LETTER[1], stroke=0, fill=1)
+            canvas.restoreState()
+
+    doc = BaseDocTemplate(
         buf,
         pagesize=LETTER,
-        leftMargin=0.75 * inch,
-        rightMargin=0.75 * inch,
-        topMargin=0.75 * inch,
-        bottomMargin=0.75 * inch,
+        leftMargin=margin,
+        rightMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
         title=content.title,
         author=content.auditor,
         subject=facts.get("cve_id") or "Vulnerability report",
     )
+    doc.addPageTemplates([
+        _DarkPage(id="dark", frames=[frame], onPage=_draw_footer),
+    ])
     styles = _build_styles()
     story: list[Any] = []
 
@@ -925,7 +1108,7 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
                 styles["body"],
             ))
 
-    doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
+    doc.build(story)
     return buf.getvalue()
 
 
@@ -1161,15 +1344,17 @@ def _append_finding_block(
 
     if finding.proof_of_concept and finding.proof_of_concept.strip():
         story.append(Paragraph("Proof of Concept", styles["section_h2"]))
-        story.append(Paragraph(
-            _escape_for_paragraph(finding.proof_of_concept[:8000]).replace("\n", "<br/>"),
-            styles["mono"],
+        story.append(_format_code_block(
+            finding.proof_of_concept[:8000],
+            _guess_lang_from_snippet(finding.proof_of_concept),
+            styles,
         ))
 
     story.append(Paragraph("Code Location", styles["section_h2"]))
-    story.append(Paragraph(
-        _escape_for_paragraph(finding.code_location[:8000]).replace("\n", "<br/>"),
-        styles["mono"],
+    story.append(_format_code_block(
+        finding.code_location[:8000],
+        _guess_lang_from_snippet(finding.code_location),
+        styles,
     ))
 
     story.append(Paragraph("Recommendation", styles["section_h2"]))
