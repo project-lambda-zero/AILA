@@ -30,7 +30,7 @@ class VRFindingRecord(SQLModel, table=True):
     __tablename__ = "vr_findings"
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    project_id: str = Field(index=True, max_length=64)
+    project_id: str | None = Field(default=None, index=True, max_length=64)
     target_id: str | None = Field(
         default=None,
         sa_column=Column(
