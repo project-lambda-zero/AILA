@@ -647,26 +647,42 @@ def _extract_cve_id(text: str) -> str | None:
 # ----------------------------------------------------------------------
 
 
-# Pastel severity palette — soft / muted versions of the standard
-# alert reds and greens so the report reads as a curated document
-# rather than a SOC alert console. Each badge is the dominant
-# coloured surface on the cover page so we pick from the high-
-# saturation pastel family (~70% lightness) rather than bordering
-# washed-out.
+# Midnight Cloud 8 palette — dark page, cream foreground text,
+# pastel accents for severity / headings / syntax highlighting.
+# Sourced from the operator's neovim theme so the report visual
+# matches the editor they live in.
+_BG_PAGE        = colors.HexColor("#121212")  # main page background
+_BG_SURFACE     = colors.HexColor("#1f1d1d")  # table / mono block bg (slight lift)
+_BG_BORDER      = colors.HexColor("#3c3836")  # subtle separators
+_FG_TEXT        = colors.HexColor("#ffd7af")  # body cream
+_FG_MUTED       = colors.HexColor("#808080")  # comments / meta
+_FG_HEADING     = colors.HexColor("#97dbbe")  # mint — section_h1
+_FG_SUBHEAD     = colors.HexColor("#f0a8c7")  # peach — section_h2
+_FG_ACCENT      = colors.HexColor("#d7afd7")  # orchid — table headers
+_FG_LINK        = colors.HexColor("#af87d7")  # lavender
+
+# Severity badges — sit on _BG_PAGE; bright enough to stay legible.
 _SEVERITY_COLOR = {
-    "Critical":      colors.HexColor("#e8889a"),  # dusty rose
-    "High":          colors.HexColor("#f0b9a3"),  # soft coral / peach
-    "Medium":        colors.HexColor("#f5d491"),  # warm sand
-    "Low":           colors.HexColor("#b8d8a8"),  # soft sage
-    "Informational": colors.HexColor("#aac8e0"),  # dusty sky blue
+    "CRITICAL":      colors.HexColor("#ff5f87"),  # pink-red, alert
+    "HIGH":          colors.HexColor("#f0a8c7"),  # peach pink
+    "MEDIUM":        colors.HexColor("#d7afd7"),  # orchid
+    "LOW":           colors.HexColor("#b092ff"),  # violet
+    "INFORMATIONAL": colors.HexColor("#97dbbe"),  # mint
+    # Lowercase aliases for callers that still pass title-case.
+    "Critical": colors.HexColor("#ff5f87"),
+    "High":     colors.HexColor("#f0a8c7"),
+    "Medium":   colors.HexColor("#d7afd7"),
+    "Low":      colors.HexColor("#b092ff"),
+    "Informational": colors.HexColor("#97dbbe"),
 }
 
 
 def _build_styles() -> dict[str, ParagraphStyle]:
     """ParagraphStyle dictionary used across the report.
 
-    All styles inherit from the sample stylesheet then override
-    specifics. Kept in one place so the look stays consistent.
+    All styles target the dark Midnight Cloud 8 surface — cream
+    body text on the dark page, mint headings, peach subheads,
+    pastel mono blocks for code excerpts.
     """
     base = getSampleStyleSheet()
     styles: dict[str, ParagraphStyle] = {}
@@ -676,7 +692,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         fontSize=28,
         leading=34,
         alignment=TA_CENTER,
-        textColor=colors.HexColor("#4a4458"),
+        textColor=_FG_HEADING,
         spaceAfter=24,
     )
     styles["cover_subtitle"] = ParagraphStyle(
@@ -685,7 +701,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         fontSize=16,
         leading=20,
         alignment=TA_CENTER,
-        textColor=colors.HexColor("#475569"),
+        textColor=_FG_SUBHEAD,
         spaceAfter=12,
     )
     styles["section_h1"] = ParagraphStyle(
@@ -693,10 +709,10 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         parent=base["Heading1"],
         fontSize=18,
         leading=22,
-        textColor=colors.HexColor("#0f172a"),
-        spaceBefore=12,
+        textColor=_FG_HEADING,
+        spaceBefore=14,
         spaceAfter=8,
-        borderColor=colors.HexColor("#cbd5e1"),
+        borderColor=_BG_BORDER,
         borderWidth=0,
         borderPadding=0,
     )
@@ -705,7 +721,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         parent=base["Heading2"],
         fontSize=13,
         leading=16,
-        textColor=colors.HexColor("#1e293b"),
+        textColor=_FG_SUBHEAD,
         spaceBefore=10,
         spaceAfter=4,
     )
@@ -714,7 +730,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         parent=base["BodyText"],
         fontSize=10.5,
         leading=15,
-        textColor=colors.HexColor("#1f2937"),
+        textColor=_FG_TEXT,
         alignment=TA_LEFT,
         spaceAfter=6,
     )
@@ -724,11 +740,11 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         fontName="Courier",
         fontSize=9,
         leading=12,
-        textColor=colors.HexColor("#0f172a"),
-        backColor=colors.HexColor("#f1f5f9"),
-        borderColor=colors.HexColor("#e2e8f0"),
+        textColor=_FG_TEXT,
+        backColor=_BG_SURFACE,
+        borderColor=_BG_BORDER,
         borderWidth=0.5,
-        borderPadding=6,
+        borderPadding=8,
         leftIndent=8,
         rightIndent=8,
         spaceAfter=8,
@@ -738,7 +754,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         parent=base["BodyText"],
         fontSize=9,
         leading=12,
-        textColor=colors.HexColor("#64748b"),
+        textColor=_FG_MUTED,
         spaceAfter=2,
     )
     return styles
@@ -1254,15 +1270,25 @@ def _escape_for_paragraph(text: str) -> str:
 
 
 def _draw_footer(canvas: Any, doc: Any) -> None:
-    """Page footer: page number left, AILA branding right.
+    """Per-page background + footer chrome.
 
     Drawn on every page via SimpleDocTemplate's onFirstPage /
-    onLaterPages hooks. Keeps the footer consistent without
-    bloating the story list.
+    onLaterPages hooks. We paint the full-page dark background here
+    FIRST (saveState → fill → restoreState), then the footer text
+    on top in cream. The story flowables render between the bg
+    fill and the footer text on the page, so they sit on the dark
+    surface naturally.
     """
+    del doc
+    # Full-page dark background — Midnight Cloud 8 page color.
+    canvas.saveState()
+    canvas.setFillColor(_BG_PAGE)
+    canvas.rect(0, 0, LETTER[0], LETTER[1], stroke=0, fill=1)
+    canvas.restoreState()
+    # Footer
     canvas.saveState()
     canvas.setFont("Helvetica", 8)
-    canvas.setFillColor(colors.HexColor("#94a3b8"))
+    canvas.setFillColor(_FG_MUTED)
     page_num = canvas.getPageNumber()
     canvas.drawString(0.75 * inch, 0.4 * inch, f"Page {page_num}")
     canvas.drawRightString(
