@@ -45,13 +45,46 @@ def provenance_stamp(ctx: AdapterContext) -> dict[str, str]:
 def obs_key_for(ctx: AdapterContext, suffix: str = "") -> str:
     """Canonical observables key for a tool call.
 
-    Format: ``<server>.<tool>[.<suffix>]``. Suffix lets adapters disambiguate
-    multiple calls of the same tool in one branch (e.g. different functions).
+    Format: ``<server>.<tool>[.<suffix-or-arg-fingerprint>]``. When the
+    caller supplies an explicit ``suffix`` (e.g. a function name) we use
+    it verbatim. Otherwise we derive a short fingerprint from
+    ``ctx.args`` so two calls with different arguments do NOT collide
+    on the same key — the prior behaviour silently overwrote each
+    other, which caused the agent to forget what it had already
+    looked up and keep re-issuing the same call.
     """
     base = f"{ctx.mcp_server_id}.{ctx.tool_name}"
     if suffix:
         return f"{base}.{suffix}"
+    arg_fp = _args_fingerprint(ctx.args)
+    if arg_fp:
+        return f"{base}.{arg_fp}"
     return base
+
+
+def _args_fingerprint(args: dict[str, Any]) -> str:
+    """Stable short fingerprint of significant tool args.
+
+    Drops noise that's identical across all calls of one tool
+    (``index_id``, ``binary_id``) and pagination knobs that don't
+    change the conceptual question (``limit``, ``offset``). What's
+    left identifies WHAT the agent asked about — e.g. ``pattern`` for
+    a search, ``name`` for read_function. The fingerprint is the
+    sorted ``key=value`` list joined with ``__``, truncated to keep
+    the observable key readable.
+    """
+    noise = {"index_id", "binary_id", "limit", "offset"}
+    significant = {k: v for k, v in (args or {}).items() if k not in noise and v not in (None, "", [])}
+    if not significant:
+        return ""
+    parts = [f"{k}={significant[k]}" for k in sorted(significant)]
+    joined = "__".join(parts)
+    # Cap individual args at ~40 chars so a giant value doesn't blow
+    # out the observable key; the full args still go to the message
+    # payload for the operator UI.
+    if len(joined) > 120:
+        joined = joined[:117] + "..."
+    return joined
 
 
 def bounded_dump(value: Any, max_chars: int = MAX_OBS_DUMP_CHARS) -> str:

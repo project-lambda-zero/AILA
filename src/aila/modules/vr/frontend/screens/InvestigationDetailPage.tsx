@@ -6,6 +6,7 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
+import { ExportReportButton } from "../components/ExportReportButton";
 import { LiveDot, type LiveStatus } from "../components/LiveDot";
 import { SteeringDrawer } from "../components/SteeringDrawer";
 import { TurnCard } from "../components/TurnCard";
@@ -17,6 +18,7 @@ import { useVRKeyboardShortcuts } from "../hooks/useVRKeyboardShortcuts";
 import {
   useDeleteInvestigation,
   usePauseInvestigation,
+  useReenqueueInvestigation,
   useResumeInvestigation,
   useSendOperatorMessage,
 } from "../mutations";
@@ -112,6 +114,7 @@ export function InvestigationDetailPage() {
 
   const pauseMut = usePauseInvestigation(invId);
   const resumeMut = useResumeInvestigation(invId);
+  const reenqueueMut = useReenqueueInvestigation(invId);
   const sendMut = useSendOperatorMessage(invId);
   const deleteMut = useDeleteInvestigation();
 
@@ -231,6 +234,7 @@ export function InvestigationDetailPage() {
           >
             Steering ⚙
           </button>
+          <ExportReportButton invId={invId} title={inv.title} />
           <DeleteButton
             id={invId}
             label={`investigation "${inv.title}"`}
@@ -301,6 +305,17 @@ export function InvestigationDetailPage() {
                 className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
               >
                 {resumeMut.isPending ? "Resuming…" : "Resume"}
+              </button>
+            )}
+            {(inv.status === "completed" || inv.status === "failed") && (
+              <button
+                type="button"
+                onClick={() => reenqueueMut.mutate()}
+                disabled={reenqueueMut.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
+                title="Reset to created + submit a fresh run_vr_investigate task. The branch case state (hypotheses, observables) is preserved — the agent resumes from where it left off, not from turn 1."
+              >
+                {reenqueueMut.isPending ? "Re-enqueueing…" : "Re-enqueue ↻"}
               </button>
             )}
           </div>

@@ -84,6 +84,17 @@ HONESTY_WHITELIST = [
     ("vr/tools/ida_bridge.py", "_resolve_base_url", "noqa"),
     ("vr/tools/audit_mcp_bridge.py", "forward", "noqa"),
     ("vr/tools/ida_bridge.py", "forward", "noqa"),
+
+    # Category (b): _enqueue_next_investigation_run lives in
+    # workflow/states/investigation_emit.py — a state file. Workflow
+    # registration loads every state file, then loads workflow.task
+    # which imports those state functions to build the definition.
+    # Top-level importing default_task_queue (which lazy-loads
+    # workflow.task internally) or run_vr_investigate directly would
+    # create a cycle during registration. The lazy import here defers
+    # those references until the state actually runs, by which point
+    # registration is complete.
+    ("vr/workflow/states/investigation_emit.py", "_enqueue_next_investigation_run", "noqa"),
     ("vr/agents/outcome_dispatcher.py", "_int_or_none", "inlining"),
     ("vr/api_router.py", "_fuzz_proposal_summary", "inlining"),
 

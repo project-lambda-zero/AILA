@@ -362,6 +362,7 @@ class HonestVulnResearcher:
         return (
             f"# Investigation\n\n"
             f"Title: {inv.title}\n"
+            f"Kind: {inv.kind}\n"
             f"Question: {inv.initial_question}\n"
             f"Primary target: {inv.target_id}\n"
             f"Secondary targets: {secondary_str}\n"

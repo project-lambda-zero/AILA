@@ -41,7 +41,14 @@ __all__ = [
 ]
 
 
-_MAX_OBS_READ_FUNCTION = 3000
+# Bumped from 3000 → 12000 after observing the agent loop on
+# read_function for nginx's ngx_http_script_regex_start_code (154
+# lines, 3669 chars). At 3000 the agent saw a truncated head + a
+# truncation marker pointing at a message id it couldn't fetch, so
+# it kept re-issuing read_function expecting different results.
+# 12000 chars covers ~99% of real-world C functions while still
+# bounding case_state growth across many tool calls.
+_MAX_OBS_READ_FUNCTION = 12000
 
 
 def _list_or_empty(raw: dict[str, Any], *keys: str) -> list[Any]:
@@ -439,11 +446,20 @@ def adapt_read_function(
         or ctx.args.get("symbol")
         or "<unknown>",
     )
-    body = str(raw.get("source") or raw.get("body") or raw.get("text") or "")
+    # audit-mcp's read_function returns ``body`` as a list of source
+    # lines (and ``start_line``/``end_line`` as int positions). Earlier
+    # MCP versions and IDA's decompile return a flat ``source``/``text``
+    # string. Accept both — when ``body`` is a list, join with newlines
+    # so the agent sees real source instead of the Python list repr.
+    raw_body = raw.get("source") or raw.get("body") or raw.get("text") or ""
+    if isinstance(raw_body, list):
+        body = "\n".join(str(line) for line in raw_body)
+    else:
+        body = str(raw_body)
     language = str(raw.get("language") or "")
-    path = str(raw.get("file") or raw.get("path") or "")
-    line = raw.get("line")
-    line_count = body.count("\n") + (1 if body else 0)
+    path = str(raw.get("file_path") or raw.get("file") or raw.get("path") or "")
+    line = raw.get("start_line") or raw.get("line")
+    line_count = int(raw.get("line_count") or (body.count("\n") + (1 if body else 0)))
 
     payload: dict[str, Any] = {
         "function_name": fn_name,
