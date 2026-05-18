@@ -24,7 +24,10 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
+import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from reportlab.lib import colors
@@ -259,6 +262,16 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         "outcome_trail": outcome_trail,
         "variants_hunted": variants,
         "poc_drafts": poc_drafts,
+        "audit_metadata": _resolve_audit_metadata(inv, descriptor),
+        "vulnerable_code_excerpts": await _resolve_code_excerpts(
+            descriptor=descriptor,
+            hypotheses=hypotheses,
+            final_answer=(
+                (json.loads(terminal.payload_json or "{}").get("answer") or "")
+                if terminal else ""
+            ),
+            poc_drafts=poc_drafts,
+        ),
     }
 
     if terminal is not None:
@@ -269,6 +282,167 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         facts["outcome_kind"] = terminal.outcome_kind
         facts["outcome_dispatch_status"] = terminal.dispatch_status
     return facts
+
+
+_AUDIT_MCP_CLONE_DIR = (
+    Path(os.environ.get("AUDIT_MCP_CLONE_DIR"))
+    if os.environ.get("AUDIT_MCP_CLONE_DIR")
+    else Path.home() / ".cache" / "audit-mcp" / "clones"
+)
+
+
+def _resolve_audit_metadata(
+    inv: VRInvestigationRecord,
+    descriptor: dict[str, Any],
+) -> dict[str, Any]:
+    """Pin the report to a specific commit + audit window.
+
+    Returns commit SHA from the cached clone (so the reader knows
+    EXACTLY what got audited, not just the symbolic ref the
+    investigation was opened against), the audit start/stop window
+    + duration, and the symbolic ref. Best-effort: when the clone
+    is gone or git fails, returns ``commit_hash=None`` and the PDF
+    falls back to showing just the ref.
+    """
+    import subprocess  # noqa: PLC0415
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    started = inv.created_at
+    stopped = inv.stopped_at or inv.updated_at
+    duration_seconds: int | None = None
+    if started and stopped:
+        duration_seconds = int((stopped - started).total_seconds())
+
+    repo_url = descriptor.get("repo_url") or ""
+    ref = descriptor.get("vulnerable_ref") or descriptor.get("ref") or "HEAD"
+
+    commit_hash: str | None = None
+    clone_path: str | None = None
+    if repo_url:
+        parsed = urlparse(repo_url)
+        host = parsed.hostname or "unknown"
+        path = (parsed.path or "").lstrip("/").replace("/", "_").replace(".git", "")
+        clone_dirname = f"{host}_{path}@{ref}"
+        candidate = _AUDIT_MCP_CLONE_DIR / clone_dirname
+        if candidate.is_dir():
+            try:
+                result = subprocess.run(  # noqa: S603, S607
+                    ["git", "-C", str(candidate), "rev-parse", "HEAD"],
+                    capture_output=True, text=True, timeout=5, check=False,
+                )
+                if result.returncode == 0:
+                    commit_hash = result.stdout.strip()
+                    clone_path = str(candidate)
+            except (OSError, subprocess.SubprocessError):
+                commit_hash = None
+
+    return {
+        "audit_started_at": started.isoformat() if started else None,
+        "audit_completed_at": stopped.isoformat() if stopped else None,
+        "audit_duration_seconds": duration_seconds,
+        "commit_hash": commit_hash,
+        "commit_short": commit_hash[:12] if commit_hash else None,
+        "ref": ref,
+        "repo_url": repo_url or None,
+        "clone_path": clone_path,
+    }
+
+
+_CODE_EXCERPT_PATTERN = re.compile(
+    r"`?([A-Za-z_][A-Za-z0-9_]+)`?\s*(?:in|at|\(|in file)?\s*"
+    r"`?([\w/.\-]+\.(?:c|cc|cpp|cxx|h|hpp|py|rs|go|js|ts|java))`?"
+    r"(?:[:\s](\d{1,6}))?",
+)
+
+
+async def _resolve_code_excerpts(
+    *,
+    descriptor: dict[str, Any],
+    hypotheses: list[Any],
+    final_answer: str,
+    poc_drafts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Pull actual vulnerable function bodies for the report.
+
+    Scans final_answer + live hypothesis text for ``function in
+    file.c`` references, then fetches each via audit-mcp's
+    ``read_function`` (the same tool the agent uses). Cap of 6
+    excerpts keeps the PDF readable. Best-effort: missing index or
+    audit-mcp down → empty list, no error.
+    """
+    del poc_drafts  # reserved for future use; PoC code already renders elsewhere
+
+    candidates: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _push(text: str) -> None:
+        for m in _CODE_EXCERPT_PATTERN.finditer(text or ""):
+            fn, fp = m.group(1), m.group(2)
+            key = (fn, fp)
+            if key in seen:
+                return
+            seen.add(key)
+            candidates.append(key)
+
+    _push(final_answer)
+    for h in hypotheses[:6]:
+        claim = h.get("claim", "") if isinstance(h, dict) else getattr(h, "claim", "")
+        kill = h.get("kill_criterion", "") if isinstance(h, dict) else getattr(h, "kill_criterion", "")
+        _push(f"{claim} {kill}")
+    if not candidates:
+        return []
+
+    index_id = (
+        descriptor.get("audit_mcp_index_id")
+        or (descriptor.get("mcp_handles") or {}).get("audit_mcp_index_id")
+    )
+    if not index_id:
+        return []
+
+    from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool  # noqa: PLC0415
+
+    bridge = AuditMcpBridgeTool()
+    excerpts: list[dict[str, Any]] = []
+    for fn, fp in candidates[:6]:
+        try:
+            result = await bridge.forward(
+                action="read_function",
+                index_id=index_id,
+                file_path=fp,
+                name=fn,
+            )
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if not isinstance(result, dict) or result.get("status") == "error":
+            continue
+        body = result.get("body") or []
+        if isinstance(body, list):
+            code = "\n".join(str(b) for b in body)
+        else:
+            code = str(body)
+        if not code.strip():
+            continue
+        excerpts.append({
+            "file": fp,
+            "function": fn,
+            "start_line": result.get("start_line"),
+            "end_line": result.get("end_line"),
+            "language": _guess_language(fp),
+            "code": code[:6000],
+            "truncated": len(code) > 6000,
+        })
+    return excerpts
+
+
+def _guess_language(file_path: str) -> str:
+    """Map file extensions → syntax labels for the PDF code blocks."""
+    ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
+    return {
+        "c": "c", "h": "c",
+        "cc": "cpp", "cpp": "cpp", "cxx": "cpp", "hpp": "cpp",
+        "py": "python", "rs": "rust", "go": "go",
+        "js": "javascript", "ts": "typescript", "java": "java",
+    }.get(ext, "text")
 
 
 def _summarize_tool_calls(
@@ -463,14 +637,27 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
     story.append(Spacer(1, 0.4 * inch))
 
     # Cover metadata table
+    meta = facts.get("audit_metadata") or {}
     cover_meta = [
         ["Target", facts.get("target_display") or "(unknown)"],
         ["Target kind", facts.get("target_kind") or "unknown"],
     ]
-    if facts.get("target_repo"):
-        cover_meta.append(["Repository", facts["target_repo"]])
-    if facts.get("target_ref"):
-        cover_meta.append(["Ref", facts["target_ref"]])
+    if meta.get("repo_url") or facts.get("target_repo"):
+        cover_meta.append(["Repository", meta.get("repo_url") or facts["target_repo"]])
+    if meta.get("ref") or facts.get("target_ref"):
+        cover_meta.append(["Ref", meta.get("ref") or facts["target_ref"]])
+    if meta.get("commit_hash"):
+        cover_meta.append(["Commit (audited)", meta["commit_hash"]])
+    if meta.get("audit_started_at"):
+        cover_meta.append(["Audit started", meta["audit_started_at"][:16].replace("T", " ") + " UTC"])
+    if meta.get("audit_completed_at"):
+        cover_meta.append(["Audit completed", meta["audit_completed_at"][:16].replace("T", " ") + " UTC"])
+    if meta.get("audit_duration_seconds") is not None:
+        secs = meta["audit_duration_seconds"]
+        if secs >= 60:
+            cover_meta.append(["Audit duration", f"{secs // 60}m {secs % 60}s"])
+        else:
+            cover_meta.append(["Audit duration", f"{secs}s"])
     cover_meta.append([
         "Report generated",
         datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M UTC"),
@@ -547,6 +734,84 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
 
     story.append(Paragraph("Reproduction conditions", styles["section_h1"]))
     _render_markdown_body(content.reproduction_conditions, styles, story)
+
+    excerpts = facts.get("vulnerable_code_excerpts") or []
+    if excerpts:
+        story.append(Paragraph("Vulnerable code", styles["section_h1"]))
+        story.append(Paragraph(
+            "The following excerpts were resolved from the audited commit "
+            f"<font name='Courier'>{_escape_for_paragraph((facts.get('audit_metadata') or {}).get('commit_short') or '(commit unavailable)')}</font>. "
+            "Line numbers reflect the file as it existed at audit time; "
+            "diff against your tree before patching.",
+            styles["body"],
+        ))
+        for ex in excerpts:
+            header = (
+                f"<b>{_escape_for_paragraph(ex.get('function', '?'))}</b>  "
+                f"<font color='#64748b'>{_escape_for_paragraph(ex.get('file', '?'))}"
+                f":{ex.get('start_line', '?')}-{ex.get('end_line', '?')}"
+                f"  [{_escape_for_paragraph(ex.get('language', 'text'))}]</font>"
+            )
+            story.append(Paragraph(header, styles["section_h2"]))
+            code_text = ex.get("code", "")
+            if ex.get("truncated"):
+                code_text += "\n... [excerpt truncated for PDF; full body in audit-mcp index]"
+            story.append(Paragraph(
+                _escape_for_paragraph(code_text).replace("\n", "<br/>"),
+                styles["mono"],
+            ))
+
+    pocs = facts.get("poc_drafts") or []
+    if pocs:
+        story.append(Paragraph(
+            "Reproduction scripts (replayable PoCs)",
+            styles["section_h1"],
+        ))
+        story.append(Paragraph(
+            "Each PoC below was drafted by the writer agent against the "
+            "audited commit. Treat <font name='Courier'>RUNNABLE</font> "
+            "entries as ready-to-execute on an isolated test instance; "
+            "<font name='Courier'>SKELETON</font> entries need the listed "
+            "missing inputs filled in before they trigger the bug.",
+            styles["body"],
+        ))
+        for poc in pocs:
+            runnable_tag = "RUNNABLE" if poc.get("can_run") else "SKELETON"
+            badge_color = "#65a30d" if poc.get("can_run") else "#c2410c"
+            story.append(Paragraph(
+                f"<b>{_escape_for_paragraph(poc.get('title') or '(untitled PoC)')}</b>  "
+                f"<font color='{badge_color}'>[{runnable_tag}]</font>  "
+                f"<font color='#64748b'>language: {_escape_for_paragraph(poc.get('language', '?'))}</font>",
+                styles["section_h2"],
+            ))
+            if poc.get("expected_outcome"):
+                story.append(Paragraph(
+                    f"<b>Expected outcome:</b> {_escape_for_paragraph(poc['expected_outcome'])}",
+                    styles["body"],
+                ))
+            if poc.get("build_command"):
+                story.append(Paragraph("<b>Build:</b>", styles["body"]))
+                story.append(Paragraph(
+                    _escape_for_paragraph(poc["build_command"]),
+                    styles["mono"],
+                ))
+            if poc.get("run_command"):
+                story.append(Paragraph("<b>Run:</b>", styles["body"]))
+                story.append(Paragraph(
+                    _escape_for_paragraph(poc["run_command"]),
+                    styles["mono"],
+                ))
+            if poc.get("code"):
+                story.append(Paragraph("<b>Source:</b>", styles["body"]))
+                story.append(Paragraph(
+                    _escape_for_paragraph(poc["code"][:8000]).replace("\n", "<br/>"),
+                    styles["mono"],
+                ))
+            for caveat in poc.get("caveats") or []:
+                story.append(Paragraph(
+                    f"&#9888;&nbsp; <i>{_escape_for_paragraph(str(caveat))}</i>",
+                    styles["body"],
+                ))
 
     story.append(Paragraph(
         content.remediation.heading or "Remediation",
