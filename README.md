@@ -56,18 +56,23 @@ and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.
 - **Modules** (`src/aila/modules/`) -- domain logic. Each module is a
   self-contained package implementing `ModuleProtocol`. One module never
   imports from another. Layout is fixed by `docs/MODULE_STANDARD.md`.
-- **API** (`src/aila/api/`) -- FastAPI application (`aila.api.app:app`) with
-  28 routers covering auth, scans, sessions, tasks, search, dashboards,
-  topology, admin, and more. Modules contribute additional routers via
-  `api_router.py`.
+  Current modules: `vulnerability` (CVE/CWE scanning + intel),
+  `forensics` (DFIR investigations), `sbd_nfr` (Security-by-Design NFR
+  assessments), `vr` (vulnerability research — graph-aware audit, fuzz
+  campaign proposals, enterprise PDF reports, exploit/PoC writer
+  agent), and the `hello_world` reference module.
+- **API** (`src/aila/api/`) -- FastAPI application (`aila.api.app:app`).
+  Modules contribute additional routers via `api_router.py`.
 - **Frontend** (`frontend/`) -- top-level Vite + React + TypeScript shell.
   Module UIs live under `src/aila/modules/<id>/frontend/` and are mounted by
-  the shell through the frontend module spec.
+  the shell through the frontend module spec. Managed as a **pnpm
+  workspace** at the repo root.
 - **Storage** (`src/aila/storage/`) -- SQLModel models, Alembic migrations,
   config registry, secret store. Vector search uses pgvector with
   384-dimensional embeddings.
 - **Task queue** -- ARQ on Redis, with per-module queue tracks (default,
-  vulnerability, forensics) so long-running jobs do not starve each other.
+  vulnerability, forensics, vr, sbd_nfr) so long-running jobs don't
+  starve each other.
 
 For deeper detail see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -98,7 +103,7 @@ For deeper detail see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 3. Install frontend dependencies.
 
    ```bash
-   cd frontend && npm install && cd ..
+   corepack enable && pnpm install
    ```
 
 4. Create the database.
@@ -161,8 +166,8 @@ common pitfalls, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 | `vulnerability` | SSH package inventory, distro-aware advisory resolution, CVE enrichment, scoring, and reporting.  | production |
 | `forensics`     | Remote forensic evidence triage over SSH: disk images, memory dumps, PCAPs, write-up generation.  | production |
 | `sbd_nfr`       | Security-by-Design NFR assessment: questionnaire-driven workbook generation and Jira handoff.     | production |
+| `vr`            | Vulnerability research: graph-aware source/binary audit (audit-mcp + IDA Headless MCP), hypothesis-driven reasoning, fuzz campaign proposals (audit→fuzz pipeline), enterprise PDF reports with LLM writer agent, automatic exploit/PoC drafting, variant hunting with child-investigation spawning. | production |
 | `hello_world`   | Minimal reference module proving the `ModuleProtocol` contract end-to-end.                        | example    |
-
 Modules are auto-discovered at platform boot by scanning `src/aila/modules/*`.
 Packages whose name starts with `_` are skipped (used for templates and
 fixtures). To add a new module, follow [docs/MODULE_STANDARD.md](docs/MODULE_STANDARD.md)
@@ -174,21 +179,25 @@ Common targets in the root `Makefile`:
 
 | Target                  | What it runs                                                              |
 |-------------------------|---------------------------------------------------------------------------|
-| `make install`          | `pip install -e ".[dev]"` plus `npm install` in `frontend/`               |
-| `make dev`              | Prints the three commands to launch backend, frontend, and worker         |
+| `make install`          | `pip install -e ".[dev]"` plus `corepack enable && pnpm install`          |
+| `make dev`              | Prints the commands to launch backend, frontend, audit-mcp, and all workers |
 | `make backend`          | `uvicorn aila.api.app:app --host 0.0.0.0 --port 8000 --reload`            |
-| `make frontend`         | `cd frontend && npm run dev`                                              |
+| `make frontend`         | `pnpm dev` (Vite on `:3000`)                                              |
 | `make worker`           | `python -m aila worker` (default queue)                                   |
+| `make worker-vr`        | `python -m aila worker -q vr`                                             |
 | `make worker-vuln`      | `python -m aila worker -q vulnerability`                                  |
 | `make worker-forensics` | `python -m aila worker -q forensics`                                      |
+| `make worker-sbd-nfr`   | `python -m aila worker -q sbd_nfr`                                        |
+| `bash start.sh`         | Spawn every service (audit-mcp + backend + 5 workers + frontend) in one shot, Git-Bash + PowerShell on Windows |
+| `docker compose -f infra/utilities/docker-compose.full.yml up --build` | Full-stack containers: postgres + redis + api + 5 workers + frontend. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
 | `make migrate`          | `cd src/aila && alembic upgrade head`                                     |
 | `make test`             | `pytest`, excluding `tests/test_e2e*.py`                                  |
 | `make test-e2e`         | `pytest tests/test_e2e.py -v` (requires live infrastructure)              |
 | `make lint`             | `ruff check src/aila/`                                                    |
-| `make typecheck`        | `cd frontend && npm run typecheck`                                        |
+| `make typecheck`        | `pnpm -r run type-check` (every workspace package, shell + modules)       |
 | `make honesty`          | `python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py` |
 | `make compile`          | `python -m compileall -q src/aila`                                        |
-| `make build`            | `cd frontend && npm run build`                                            |
+| `make build`            | `pnpm --filter @aila/shell run build` (production SPA bundle)             |
 | `make check`            | `lint` + `honesty` + `compile` + `typecheck` (the full pre-PR gate)       |
 | `make security-scan`    | `pip-audit --strict --desc` and `bandit -r src/aila -q -ll`               |
 | `make clean`            | Remove `__pycache__/` directories and coverage artifacts                  |

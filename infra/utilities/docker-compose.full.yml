@@ -1,0 +1,213 @@
+# AILA full stack — postgres + redis + API + workers + frontend.
+#
+# This is the "everything in one shot" compose for developers who
+# want to docker-up without managing 7 separate processes. For the
+# minimal infra-only compose (just postgres + redis, run AILA
+# locally), use ``docker-compose.yml`` in this directory.
+#
+# Usage:
+#   cp .env.example .env                          # at repo root
+#   docker compose -f infra/utilities/docker-compose.full.yml up --build
+#
+# After bring-up:
+#   API:       http://localhost:8000
+#   Frontend:  http://localhost:3000
+#   Postgres:  localhost:5432   (postgres / changeme)
+#   Redis:     localhost:6379
+#
+# Override env per-service via the .env file at repo root. The
+# compose file deliberately does NOT bake credentials — they come
+# from .env so dev / staging / production use the same shape.
+
+name: aila-full
+
+x-aila-env: &aila-env
+  # Shared env block — each backend service pulls .env from the
+  # repo root + these overrides for in-cluster service discovery.
+  AILA_PLATFORM_DATABASE_URL: postgresql://postgres:changeme@postgres:5432/aila
+  AILA_PLATFORM_REDIS_URL: redis://redis:6379/0
+  AILA_PLATFORM_BIND_HOST: 0.0.0.0
+  AILA_PLATFORM_BIND_PORT: "8000"
+  AILA_PLATFORM_FRONTEND_URL: http://localhost:3000
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aila-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: aila
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - aila_postgres_data:/var/lib/postgresql/data
+      - ../postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aila"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: aila-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - aila_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: aila-api
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      <<: *aila-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    # The image's default CMD already runs `aila serve` on 0.0.0.0:8000.
+
+  # One worker container per queue. Workers share the API image — the
+  # entrypoint is the same `aila` CLI, only the CMD differs. Per
+  # D-13 each queue has its own worker process so a slow vr task
+  # can't block forensics dispatch.
+  worker-default:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: aila-worker-default
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      <<: *aila-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["worker", "-q", "default"]
+
+  worker-vr:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: aila-worker-vr
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      <<: *aila-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["worker", "-q", "vr"]
+
+  worker-vulnerability:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: aila-worker-vulnerability
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      <<: *aila-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["worker", "-q", "vulnerability"]
+
+  worker-forensics:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: aila-worker-forensics
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      <<: *aila-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["worker", "-q", "forensics"]
+
+  worker-sbd-nfr:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: aila-worker-sbd-nfr
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      <<: *aila-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["worker", "-q", "sbd_nfr"]
+
+  frontend:
+    image: node:20-bookworm-slim
+    container_name: aila-frontend
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ../..:/app
+      - aila_frontend_node_modules:/app/node_modules
+      - aila_frontend_pnpm_store:/root/.local/share/pnpm
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    ports:
+      - "3000:3000"
+    # Vite dev server. For production, build a static bundle and
+    # serve via nginx/caddy instead — this compose targets
+    # developer-machine iteration.
+    command:
+      - sh
+      - -c
+      - |
+        corepack enable && \
+        corepack prepare pnpm@10.30.3 --activate && \
+        pnpm install --frozen-lockfile && \
+        pnpm --filter @aila/shell run dev -- --host 0.0.0.0
+    depends_on:
+      - api
+
+volumes:
+  aila_postgres_data:
+    name: aila_postgres_data
+  aila_redis_data:
+    name: aila_redis_data
+  aila_frontend_node_modules:
+    name: aila_frontend_node_modules
+  aila_frontend_pnpm_store:
+    name: aila_frontend_pnpm_store

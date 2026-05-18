@@ -1,0 +1,73 @@
+# Keep the build context small + deterministic. Anything that
+# would re-bust the deps layer on every code edit is excluded.
+
+# Frontend — served separately, not bundled in the API image.
+frontend/
+src/aila/modules/*/frontend/
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Tests + planning + docs (image doesn't need them)
+tests/
+docs/
+.planning/
+
+# Local-only files
+.env
+.env.*
+!.env.example
+.git/
+.github/
+.gitignore
+.gitattributes
+.audit*
+.logs/
+.backend*.log
+.backend*.err
+.vr*.log
+.vr*.err
+.vite-*.log
+*.log
+*.err
+*.pid
+.test_*.pdf
+.tmp_*/
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Data + reports baked at runtime
+data/
+reports/
+src/data/
+src/reports/
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Node — the API image doesn't need any of it
+node_modules/
+**/node_modules/
+pnpm-lock.yaml
+package-lock.json
+yarn.lock

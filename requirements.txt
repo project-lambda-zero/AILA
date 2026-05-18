@@ -1,0 +1,36 @@
+# AILA core dependencies — generated from pyproject.toml [project.dependencies]
+# Source of truth is pyproject.toml. Regenerate via:
+#   python -c "import tomllib;print(chr(10).join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" > requirements.txt
+# For dev/test deps install via: pip install -e .[dev]
+croniter==6.2.2
+cryptography==46.0.5
+filelock==3.25.2
+fastapi==0.135.3
+httpx==0.28.1
+paramiko==4.0.0
+pwdlib[bcrypt]==0.3.0
+argon2-cffi==25.1.0
+slowapi==0.1.9
+python-dotenv==1.2.2
+pydantic==2.11.7
+PyJWT==2.12.1
+sentence-transformers==5.3.0
+asyncpg==0.31.0
+psycopg[binary]==3.3.3
+alembic==1.18.4
+pgvector==0.4.2
+sqlmodel==0.0.37
+typer==0.24.1
+uvicorn==0.43.0
+arq==0.27.0
+redis==5.3.1
+openai==2.30.0
+prometheus-client==0.22.1
+tiktoken==0.12.0
+openpyxl==3.1.5
+structlog==25.5.0
+sqlalchemy==2.0.45
+jinja2==3.1.6
+reportlab==4.5.1
+python-magic==0.4.27; platform_system != "Windows"
+python-magic-bin==0.4.14; platform_system == "Windows"
