@@ -5,6 +5,107 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- `vr` module: enterprise PDF report renderer (`reporting/pdf_report.py`)
+  with cover page + severity callout + sectioned body. Built on
+  ReportLab so the install path has no native deps. Export button on
+  `InvestigationDetailPage` triggers `GET /vr/investigations/{id}/report.pdf`.
+- `vr` module: `ReportWriter` LLM agent (`reporting/writer_agent.py`)
+  produces polished prose for each PDF section under a strict typed
+  schema. Refuses to invent facts not present in the investigation
+  trail. Surfaces variants spawned + PoC drafts in the report body.
+- `vr` module: `PocWriter` LLM agent (`reporting/poc_writer.py`) plus
+  `run_vr_draft_poc` task. Drafts a runnable exploit / PoC for a
+  confirmed finding. `can_run=False` skeleton when the finding lacks
+  inputs (no fabricated exploits). Auto-queued when a variant-child
+  investigation lands a `DIRECT_FINDING`; also exposed via
+  `POST /vr/findings/{id}/draft-poc`.
+- `vr` module: variant-hunt pipeline — `system_audit.md` mandate to
+  emit `variant_hunt_orders` for `kind=variant_hunt` investigations;
+  dispatcher walks the bundle and spawns child investigations via
+  the shared `_spawn_variant_child` helper. One submit → primary
+  finding + N variant probes.
+- `vr` module: Re-enqueue button on `InvestigationDetailPage` (visible
+  when status is `completed` or `failed`). Resets to `created` and
+  submits a fresh `run_vr_investigate` task while preserving the
+  branch case state.
+- `vr` module: schema-driven prompt — agent now sees per-tool
+  signatures (`audit_mcp.read_function(index_id: string [required],
+  file_path: string [required], name: string [required])`) instead
+  of just tool names. Fetched live from each MCP server's `/tools`
+  catalog and cached per process.
+- `Dockerfile` + `.dockerignore` — multi-stage build producing a
+  minimal runtime image for the API and workers. ENTRYPOINT is
+  `aila`; override CMD to switch between `serve` and `worker -q <q>`.
+- `infra/utilities/docker-compose.full.yml` — full-stack compose
+  spinning up postgres + redis + api + 5 workers + frontend. The
+  existing `docker-compose.yml` (infra-only) remains the default
+  for developers running AILA locally.
+- `requirements.txt` + `requirements-dev.txt` — generated from
+  `pyproject.toml` for pip-only workflows. `pyproject.toml` is still
+  the source of truth.
+- Tool-priority steering section in `system_audit.md`: agent is now
+  told to prefer symbol-graph tools (`callers_of`, `taint_paths_to`,
+  `type_resolver`) over `search_source` (raw grep). Repeated
+  `search_source` calls are flagged as a code smell.
+
+### Changed
+
+- `pyproject.toml` core deps: added `sqlalchemy==2.0.45`,
+  `jinja2==3.1.6`, `reportlab==4.5.1`. WeasyPrint moved to optional
+  `[pdf-weasyprint]` extra since the default PDF renderer uses
+  ReportLab (no native deps on Windows).
+- `CyberReasoningEngine.absorb` merges live hypotheses by id instead
+  of replacing the entire list every turn. Previously, if the LLM
+  forgot to repeat h3 in its current view, h3 silently disappeared.
+  Now the only way to remove a hypothesis is to explicitly reject it.
+- `CyberReasoningEngine.decide_next_turn` uses `chat_structured`
+  instead of plain `chat` — gateway enforces the
+  `ReasoningTurnDecision` JSON schema upstream when the routed model
+  supports strict mode. Removes the prior failure mode where the LLM
+  emitted partial schemas missing required fields.
+- `_extract_json_object` uses `json.JSONDecoder.raw_decode` so an LLM
+  emitting two JSON-looking blocks no longer breaks parsing.
+- `audit-mcp` adapter observable keys carry an args fingerprint so
+  repeated `search_source(pattern=X)` calls no longer overwrite each
+  other in `case_state.observables`.
+- `_MAX_OBS_READ_FUNCTION` bumped 3KB → 12KB so most C functions fit
+  in the observable without truncation.
+- `investigation_emit` auto-re-enqueues on `max_turns` exit without
+  terminal outcome, bounded by `_OVERALL_TURN_CAP=200`. Per-task cap
+  of 25 is no longer a hard stop.
+- `/vr/investigations/{id}/resume` endpoint now submits a fresh
+  `run_vr_investigate` task. Previously it just flipped status and
+  left the investigation dead.
+- `DurableStateMachine` reaper at worker startup SKIPS task records
+  whose workflow cursor is still in a non-terminal state (D-86).
+- Frontend message limit raised 100 → 500 in `useInvestigationMessages`
+  so long investigations past T100 actually render.
+- `TurnCard` collapses by default — click the header to expand the
+  body. One-line preview when collapsed.
+- Documentation: README module inventory now lists `vr` with its
+  full capability surface. Quick-start uses `pnpm` (not `npm`) and
+  references the full-stack docker compose option.
+
+### Fixed
+
+- `audit-mcp` `read_function` / `extract_class` AST-only resolution
+  via `TypeResolver` — eliminates three classes of failure: Windows
+  path slash mismatch, K&R-style multi-line definitions, and matching
+  call sites instead of definitions.
+- VR adapter for `audit_mcp.read_function`: handles the list-of-lines
+  body shape by joining with newlines instead of `str(list)`. Agent
+  no longer sees a Python list repr in observables.
+- Repository hygiene: stripped 60+ tracked `.audit*`, `.logs/`,
+  `.backend_*`, `.vr_*`, `.test_*` artifacts from full history via
+  `git filter-repo`. `.gitignore` extended to keep them out.
+
+---
+
+
 ## [v7.0] - 2026-04-29 -- Repository Zero Checkpoint
 
 Onboarding-ready repository for new module contributors. Documentation remaster, directory cleanup, developer tooling.
