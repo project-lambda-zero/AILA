@@ -2372,6 +2372,26 @@ def create_vr_router() -> APIRouter:
 
         return DataEnvelope(data=_investigation_summary(inv))
 
+    class _ReenqueueBody(BaseModel):
+        """Optional body for the re-enqueue endpoint.
+
+        When ``kind`` is supplied, the investigation's kind is
+        updated BEFORE the task is submitted. Lets the operator
+        convert a finished discovery into a variant_hunt without
+        going through the DB, or vice versa. ``strategy_family``
+        moves with it via the kind→strategy default map.
+        """
+        model_config = ConfigDict(extra="forbid")
+        kind: InvestigationKind | None = Field(default=None)
+
+    _KIND_DEFAULT_STRATEGY: dict[InvestigationKind, str] = {
+        InvestigationKind.DISCOVERY:     "vulnerability_research.discovery_research",
+        InvestigationKind.VARIANT_HUNT:  "vulnerability_research.variant_hunt",
+        InvestigationKind.TRIAGE:        "vulnerability_research.triage",
+        InvestigationKind.N_DAY:         "vulnerability_research.nday",
+        InvestigationKind.AUDIT:         "vulnerability_research.audit",
+    }
+
     @router.post(
         "/investigations/{investigation_id}/re-enqueue",
         response_model=DataEnvelope[VRInvestigationSummary],
@@ -2386,6 +2406,7 @@ def create_vr_router() -> APIRouter:
     async def reenqueue_investigation(
         request: Request,
         investigation_id: str,
+        body: _ReenqueueBody | None = None,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
         from aila.api.deps import get_task_queue
@@ -2401,13 +2422,16 @@ def create_vr_router() -> APIRouter:
                         VRInvestigationRecord.id == investigation_id,
                     ),
                     VRInvestigationRecord, auth,
-                )
+                ),
             )).first()
             if inv is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
+            if body and body.kind is not None and body.kind.value != inv.kind:
+                inv.kind = body.kind.value
+                inv.strategy_family = _KIND_DEFAULT_STRATEGY[body.kind]
             inv.status = InvestigationStatus.CREATED.value
             inv.pause_reason = None
             inv.updated_at = utc_now()
