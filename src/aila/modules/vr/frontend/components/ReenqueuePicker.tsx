@@ -44,12 +44,12 @@ export function ReenqueuePicker({
     : `Reset to created + submit a fresh run_vr_investigate task. Case state (hypotheses, observables) is preserved — the agent resumes from where it left off, not from turn 1.`;
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1 flex-wrap min-w-0 max-w-full">
       <select
         value={picked}
         onChange={(e) => setPicked(e.target.value as InvestigationKindOverride | "")}
         disabled={mutation.isPending}
-        className="text-xs px-2 py-1.5 rounded-md bg-surface border border-border-default text-foreground disabled:opacity-50"
+        className="text-xs px-2 py-1.5 rounded-md bg-surface border border-border-default text-foreground disabled:opacity-50 max-w-[10rem] truncate"
         title="Optionally convert to a different kind before re-enqueueing"
       >
         <option value="">keep: {currentKind}</option>
@@ -63,7 +63,7 @@ export function ReenqueuePicker({
         type="button"
         onClick={() => mutation.mutate(picked ? { kind: picked } : undefined)}
         disabled={mutation.isPending}
-        className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
+        className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50 whitespace-nowrap"
         title={tooltip}
       >
         {label}
