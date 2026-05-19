@@ -1180,7 +1180,17 @@ def _to_outcome_confidence(decision: ReasoningTurnDecision) -> OutcomeConfidence
 
 
 def _outcome_payload(decision: ReasoningTurnDecision) -> dict[str, Any]:
-    return {
+    """Build the outcome row payload from the decision.
+
+    Merges the agent's structured ``decision.payload`` dict (which
+    carries affected_components, variant_hunt_orders, crash_type,
+    poc_code, etc. per the system_audit.md submission schema) with
+    the top-level answer / reasoning / provenance / contract fields.
+
+    The structured payload keys win on conflict so the agent's intent
+    is preserved.
+    """
+    base: dict[str, Any] = {
         "answer": decision.answer or "",
         "reasoning": decision.reasoning,
         "provenance": decision.provenance.model_dump(mode="json"),
@@ -1188,6 +1198,13 @@ def _outcome_payload(decision: ReasoningTurnDecision) -> dict[str, Any]:
             decision.contract.model_dump(mode="json") if decision.contract else None
         ),
     }
+    # Promote everything the agent supplied under `payload` to the
+    # top level so the dispatcher's payload.get('variant_hunt_orders')
+    # etc. lookups resolve.
+    structured = decision.payload or {}
+    for k, v in structured.items():
+        base[k] = v
+    return base
 
 
 _OUTCOME_KIND_RANK = {
