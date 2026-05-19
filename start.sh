@@ -82,13 +82,49 @@ kill_matching() {
     2>/dev/null || true
 }
 
+kill_by_cmdline_substring() {
+  # Kill every python.exe whose cmdline contains the given
+  # substring. Broader than ``kill_matching`` because uvicorn's
+  # --reload child workers, manually-spawned helpers, and stray
+  # test runs all have slightly different cmdlines but share the
+  # ``aila`` token. Catching all of them prevents the
+  # multiple-listeners-on-8000 problem where stale module caches
+  # served stale code.
+  local needle="$1"
+  "$PS" -NoProfile -Command \
+    "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | \
+     Where-Object { \$_.CommandLine -like '*${needle}*' } | \
+     ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }" \
+    2>/dev/null || true
+}
+
+kill_port_owner() {
+  # Find whatever owns ``port`` and kill it. Last-resort cleanup
+  # for ghost listeners — Windows sometimes shows stale PIDs in
+  # netstat after a hard kill, and the next bind fails because
+  # the OS still has the socket. ``Stop-Process`` on the owner
+  # forces TCP cleanup so the next ``Start-Process`` can bind.
+  local port="$1"
+  "$PS" -NoProfile -Command \
+    "Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | \
+     ForEach-Object { Stop-Process -Id \$_.OwningProcess -Force -ErrorAction SilentlyContinue }" \
+    2>/dev/null || true
+}
+
 kill_aila_processes() {
   echo "[aila] Stopping AILA processes..."
-  kill_matching "python.exe" \
-    "uvicorn aila\.api\.app" \
-    "aila worker" \
-    "audit_mcp" \
-    "ida_headless_mcp"
+  # First pass: cmdline-substring kill catches everything with
+  # ``aila`` in its command line — uvicorn parent + --reload child,
+  # all 5 workers, audit_mcp, helper scripts, test runners.
+  kill_by_cmdline_substring "aila"
+  kill_by_cmdline_substring "audit_mcp"
+  kill_by_cmdline_substring "ida_headless_mcp"
+  # Second pass: kill any process still listening on the ports
+  # we own. Catches the case where the cmdline match missed a
+  # straggler (different exe name, hidden window, etc.).
+  kill_port_owner "${BACKEND_PORT:-8000}"
+  kill_port_owner "${AUDIT_MCP_PORT:-18822}"
+  # Frontend: kill node processes running our vite shell.
   kill_matching "node.exe" "vite|aila/shell"
   sleep 2
   echo "[aila] Stopped."
