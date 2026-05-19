@@ -34,6 +34,7 @@ __all__ = [
     "run_target_analysis",
     "run_vr_investigate",
     "run_vr_nday",
+    "run_vr_synthesis",
 ]
 
 
@@ -242,3 +243,29 @@ async def run_vr_draft_poc(
         "can_run": draft.can_run,
         "code_chars": len(draft.code),
     }
+
+@platform_task(
+    track="vr",
+    module_id="vr",
+    max_tries=2,
+    timeout_s=900.0,  # 15 min — one synthesis LLM call + DB writes
+)
+async def run_vr_synthesis(
+    ctx: TaskContext,
+    investigation_id: str,
+    **_: Any,
+) -> dict[str, Any]:
+    """Consolidate every persona branch's terminal outcome into one
+    final synthesis outcome for the investigation.
+
+    Triggered by ``investigation_emit._maybe_trigger_synthesis`` once
+    every branch in the panel has submitted a terminal outcome.
+    Idempotent — exits early if ``inv.primary_outcome_id`` is already
+    set (synthesis already ran).
+    """
+    del ctx
+    from aila.modules.vr.agents.synthesis_agent import (  # noqa: PLC0415
+        SynthesisAgent,
+    )
+    agent = SynthesisAgent(investigation_id=investigation_id)
+    return await agent.run()

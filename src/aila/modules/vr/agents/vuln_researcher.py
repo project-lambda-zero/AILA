@@ -150,6 +150,7 @@ class HonestVulnResearcher:
         # variants. Loading prior outcomes into the prompt forces it
         # to acknowledge prior work and EXTEND instead of REPEAT.
         prior_outcomes = await self._load_prior_outcomes()
+        sibling_context = await self._load_sibling_context()
 
         system_prompt = _load_prompt(inv.strategy_family)
         tool_specs = await _fetch_tool_specs(
@@ -165,6 +166,7 @@ class HonestVulnResearcher:
             target_snapshot=target_snapshot,
             tool_specs=tool_specs,
             prior_outcomes=prior_outcomes,
+            sibling_context=sibling_context,
         )
 
         # v0.4 GA-52: branch persona maps to a per-role task_type
@@ -345,6 +347,74 @@ class HonestVulnResearcher:
             })
         return out
 
+    async def _load_sibling_context(self) -> list[dict[str, Any]]:
+        """Load active sibling branches' latest case_state + last outcome.
+
+        Each entry: {branch_id, persona_voice, turn_count, hypotheses,
+        rejected, key_observables, terminal_outcome}. Used by
+        _build_user_prompt to inject a '# Sibling deliberations'
+        section so this branch can REACT to what other personas have
+        hypothesised/concluded. This is what makes adversarial
+        deliberation real: HALVAR proposes -> MADDIE sees it next
+        turn and counter-proposes -> HALVAR sees counter the turn
+        after.
+        """
+        async with UnitOfWork() as uow:
+            siblings = (await uow.session.exec(
+                _select(VRInvestigationBranchRecord)
+                .where(VRInvestigationBranchRecord.investigation_id == self.investigation_id)
+                .where(VRInvestigationBranchRecord.id != self.branch_id)
+                .order_by(VRInvestigationBranchRecord.created_at.asc()),
+            )).all()
+            out: list[dict[str, Any]] = []
+            for s in siblings:
+                terminal = (await uow.session.exec(
+                    _select(VRInvestigationOutcomeRecord)
+                    .where(VRInvestigationOutcomeRecord.investigation_id == self.investigation_id)
+                    .where(VRInvestigationOutcomeRecord.branch_id == s.id)
+                    .order_by(VRInvestigationOutcomeRecord.created_at.desc())
+                    .limit(1),
+                )).first()
+                cs = _decode_case_state(s.case_state_json)
+                t_payload: dict[str, Any] | None = None
+                if terminal is not None:
+                    try:
+                        tp = json.loads(terminal.payload_json or "{}")
+                    except (ValueError, TypeError):
+                        tp = {}
+                    t_payload = {
+                        "outcome_kind": terminal.outcome_kind,
+                        "confidence": terminal.confidence,
+                        "answer": (tp.get("answer") or "")[:1500],
+                        "variant_hunt_orders_count": len(tp.get("variant_hunt_orders") or []),
+                    }
+                hyps = [
+                    {"id": h.id, "claim": h.claim[:240]}
+                    for h in (cs.hypotheses or [])[:5]
+                ]
+                rej = [
+                    {"id": h.id, "claim": h.claim[:160]}
+                    for h in (cs.rejected or [])[:5]
+                ]
+                key_obs: dict[str, Any] = {}
+                for k, v in (cs.observables or {}).items():
+                    if k.startswith("_") or not isinstance(v, (str, int, float, bool)):
+                        continue
+                    key_obs[k] = str(v)[:240]
+                    if len(key_obs) >= 8:
+                        break
+                out.append({
+                    "branch_id": s.id,
+                    "persona_voice": s.persona_voice or "(none)",
+                    "turn_count": s.turn_count,
+                    "hypotheses": hyps,
+                    "rejected": rej,
+                    "key_observables": key_obs,
+                    "terminal_outcome": t_payload,
+                })
+            return out
+
+
     @staticmethod
     def _snapshot_target(target: Any) -> dict[str, Any]:
         """Compact dict the prompt builder renders."""
@@ -394,6 +464,7 @@ class HonestVulnResearcher:
         target_snapshot: dict[str, Any] | None = None,
         tool_specs: dict[str, list[dict[str, Any]]] | None = None,
         prior_outcomes: list[dict[str, Any]] | None = None,
+        sibling_context: list[dict[str, Any]] | None = None,
     ) -> str:
         """Render the per-turn user prompt.
 
@@ -420,6 +491,10 @@ class HonestVulnResearcher:
         prior_submissions_section = _render_prior_submissions_section(
             prior_outcomes or [], inv.kind,
         )
+        sibling_section = _render_sibling_context_section(
+            sibling_context or [],
+            this_persona=branch.persona_voice,
+        )
         target_kind = (target_snapshot or {}).get("kind")
 
         return (
@@ -440,6 +515,7 @@ class HonestVulnResearcher:
             f"\n"
             f"{operator_section}"
             f"{prior_submissions_section}"
+            f"{sibling_section}"
             f"{_render_available_tools_section(target_kind, tool_specs)}"
             f"# Instruction\n\n"
             f"Produce the next reasoning turn as a JSON object per the "
@@ -727,6 +803,81 @@ def _render_prior_submissions_section(
             "scope). Do NOT re-derive the same conclusion in different "
             "wording - that produces duplicate outcomes.",
         )
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def _render_sibling_context_section(
+    siblings: list[dict[str, Any]],
+    this_persona: str | None,
+) -> str:
+    """Render sibling branches' current state so this branch can react.
+
+    Empty string when no siblings exist (single-branch fallback mode).
+    Otherwise produces a '# Sibling deliberations (other personas)'
+    block listing each sibling's persona, turn count, top hypotheses,
+    rejected hypotheses, key observables, and latest terminal outcome.
+    The agent is then told explicitly: REACT to these — challenge,
+    refine, or build on them.
+    """
+    if not siblings:
+        return ""
+    lines: list[str] = [
+        "# Sibling deliberations (other personas reasoning in parallel)",
+        "",
+        f"You are the **{this_persona or 'primary'}** voice. Two other "
+        f"persona branches are reasoning about this SAME investigation in "
+        f"parallel, each driven by a different LLM routing. Their latest "
+        f"state is below. Your turn MUST react: agree with evidence, "
+        f"counter with new evidence, or escalate by spawning a tool call "
+        f"that settles a disagreement. Silently ignoring sibling "
+        f"hypotheses defeats the deliberation.",
+        "",
+    ]
+    for s in siblings:
+        persona = s.get("persona_voice") or "(no persona)"
+        turn = s.get("turn_count") or 0
+        lines.append(f"## Sibling: **{persona}** (turn {turn})")
+        hyps = s.get("hypotheses") or []
+        if hyps:
+            lines.append("Active hypotheses:")
+            for h in hyps:
+                lines.append(f"  - [{h.get('id','?')}] {h.get('claim','')}")
+        rej = s.get("rejected") or []
+        if rej:
+            lines.append("Rejected hypotheses:")
+            for h in rej:
+                lines.append(f"  - [{h.get('id','?')}] {h.get('claim','')}")
+        key_obs = s.get("key_observables") or {}
+        if key_obs:
+            lines.append("Key observables:")
+            for k, v in key_obs.items():
+                lines.append(f"  - {k}: {v}")
+        term = s.get("terminal_outcome")
+        if term:
+            lines.append(
+                f"**Submitted**: {term.get('outcome_kind','?')} "
+                f"(confidence {term.get('confidence','?')}, "
+                f"variant_hunt_orders={term.get('variant_hunt_orders_count',0)})",
+            )
+            ans = term.get("answer") or ""
+            if ans:
+                lines.append(f"Their answer (excerpt): {ans[:600]}")
+        else:
+            lines.append("(no terminal outcome yet — still reasoning)")
+        lines.append("")
+    lines.append("# Your reaction is mandatory")
+    lines.append("")
+    lines.append(
+        "Before choosing this turn's action you MUST address at least one "
+        "of the sibling hypotheses or outcomes above in your reasoning. "
+        "If a sibling has submitted a verdict you disagree with, name "
+        "the disagreement explicitly and either (a) emit a tool call "
+        "that produces evidence to settle it, or (b) refine your own "
+        "hypothesis to incorporate their finding. If you agree with a "
+        "sibling's verdict, say so explicitly — but only after the "
+        "critic-voice in your reasoning has tried to falsify it.",
+    )
     lines.append("")
     return "\n".join(lines) + "\n"
 

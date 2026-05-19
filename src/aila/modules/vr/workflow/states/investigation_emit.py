@@ -221,6 +221,21 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 outcome_id, exc,
             )
 
+    # Multi-persona deliberation synthesis trigger. When this branch
+    # finishes with a terminal outcome AND every other persona branch
+    # in this investigation has also finished with a terminal outcome,
+    # enqueue a synthesis task that consolidates all persona verdicts
+    # into one final outcome. Idempotent — synthesis dedupes itself by
+    # checking inv.primary_outcome_id before producing a new one.
+    if outcome_id is not None:
+        try:
+            await _maybe_trigger_synthesis(investigation_id)
+        except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+            _log.warning(
+                "investigation_emit SYNTHESIS_TRIGGER FAILED inv=%s err=%s",
+                investigation_id, exc,
+            )
+
     _log.info(
         "investigation_emit DONE investigation_id=%s exit_reason=%s final_status=%s outcome_id=%s",
         investigation_id, exit_reason, final_status, outcome_id,
@@ -241,6 +256,74 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
             "pattern_extraction_count": extraction_count,
             "pattern_extraction_reason": extraction_reason,
         },
+    )
+
+
+async def _maybe_trigger_synthesis(investigation_id: str) -> None:
+    """Enqueue the synthesis task if every active persona branch has
+    submitted a terminal outcome AND no synthesis is already done.
+
+    Idempotency: synthesis sets inv.primary_outcome_id to its own
+    outcome id. Subsequent triggers that find primary_outcome_id
+    already populated by a synthesis-kind outcome exit early.
+
+    Race-safe: when two sibling branches finish at the same moment,
+    both may call this and both may enqueue the synthesis task. The
+    synthesis task itself dedupes by checking primary_outcome_id at
+    its own start, so the second one becomes a no-op.
+    """
+    from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
+    from aila.modules.vr.db_models import (  # noqa: PLC0415
+        VRInvestigationBranchRecord,
+        VRInvestigationOutcomeRecord,
+        VRInvestigationRecord,
+    )
+    from aila.modules.vr.workflow.task import run_vr_synthesis  # noqa: PLC0415
+
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            _select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == investigation_id,
+            )
+        )).first()
+        if inv is None:
+            return
+        # Skip if synthesis has already run for this investigation.
+        if inv.primary_outcome_id:
+            return
+
+        branches = (await uow.session.exec(
+            _select(VRInvestigationBranchRecord).where(
+                VRInvestigationBranchRecord.investigation_id == investigation_id,
+            )
+        )).all()
+        if len(branches) < 2:
+            # Single-branch investigation — no panel to synthesise.
+            return
+        # Every branch must have at least one outcome (the terminal).
+        for b in branches:
+            terminal = (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+                .where(VRInvestigationOutcomeRecord.branch_id == b.id)
+                .limit(1)
+            )).first()
+            if terminal is None:
+                return  # still waiting on this sibling
+        team_id = inv.team_id
+
+    task_queue = default_task_queue()
+    await task_queue.submit(
+        track="vr",
+        fn=run_vr_synthesis,
+        kwargs={"investigation_id": investigation_id},
+        user_id="system",
+        group_id="vr_synthesis",
+        team_id=team_id,
+    )
+    _log.info(
+        "investigation_emit SYNTHESIS_TRIGGER queued investigation_id=%s",
+        investigation_id,
     )
 
 
