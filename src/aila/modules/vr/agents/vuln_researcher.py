@@ -231,17 +231,18 @@ class HonestVulnResearcher:
 
             if terminal:
                 outcome_kind = _terminal_outcome_kind(decision)
-                outcome_row = VRInvestigationOutcomeRecord(
+                new_payload = _outcome_payload(decision)
+                new_confidence = _to_outcome_confidence(decision).value
+                outcome_id = await _upsert_canonical_outcome(
+                    uow=uow,
                     investigation_id=self.investigation_id,
                     branch_id=self.branch_id,
-                    outcome_kind=outcome_kind.value,
-                    payload_json=json.dumps(_outcome_payload(decision)),
-                    confidence=_to_outcome_confidence(decision).value,
-                    evidence_refs_json="[]",
+                    persona_voice=branch_row.persona_voice,
+                    new_outcome_kind=outcome_kind.value,
+                    new_confidence=new_confidence,
+                    new_payload=new_payload,
+                    at_turn=turn_number,
                 )
-                uow.session.add(outcome_row)
-                await uow.session.flush()
-                outcome_id = outcome_row.id
 
             await uow.session.commit()
             await uow.session.refresh(msg)
@@ -1187,6 +1188,175 @@ def _outcome_payload(decision: ReasoningTurnDecision) -> dict[str, Any]:
             decision.contract.model_dump(mode="json") if decision.contract else None
         ),
     }
+
+
+_OUTCOME_KIND_RANK = {
+    "direct_finding": 0,
+    "patch_assessment_report": 1,
+    "variant_hunt_order": 2,
+    "assessment_report": 3,
+    "audit_memo": 4,
+}
+_CONFIDENCE_RANK = {
+    "exact": 0, "strong": 1, "medium": 2,
+    "caveated": 3, "weak": 4, "unknown": 5,
+}
+
+
+async def _upsert_canonical_outcome(
+    *,
+    uow: Any,
+    investigation_id: str,
+    branch_id: str,
+    persona_voice: str | None,
+    new_outcome_kind: str,
+    new_confidence: str,
+    new_payload: dict[str, Any],
+    at_turn: int,
+) -> str:
+    """Merge a branch's terminal submission into the single canonical
+    outcome row, creating it on first submission.
+
+    At most ONE canonical outcome row per investigation. Subsequent
+    submissions (from any persona) merge in additively:
+      - affected_components: union dedupe by (file, function)
+      - variant_hunt_orders: union dedupe by title
+      - poc_code: take new if existing is empty
+      - outcome_kind: prefer more-specific via _OUTCOME_KIND_RANK
+      - confidence: keep highest via _CONFIDENCE_RANK
+      - answer: replace if new is ≥20% longer OR comes from a more-
+        specific outcome_kind
+      - panel_contributions: append every submission as
+        {persona, branch_id, at_turn, submitted_at, outcome_kind,
+         confidence, answer_brief} — full audit trail
+
+    inv.primary_outcome_id always points at the canonical row.
+    """
+    existing = (await uow.session.exec(
+        _select(VRInvestigationOutcomeRecord)
+        .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+        .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+        .limit(1),
+    )).first()
+
+    persona = (persona_voice or "primary").lower()
+    now = utc_now()
+    contribution = {
+        "persona": persona,
+        "branch_id": branch_id,
+        "at_turn": at_turn,
+        "submitted_at": now.isoformat(),
+        "outcome_kind": new_outcome_kind,
+        "confidence": new_confidence,
+        "answer_brief": (new_payload.get("answer") or "")[:240],
+    }
+
+    if existing is None:
+        seed_payload = dict(new_payload)
+        seed_payload["panel_contributions"] = [contribution]
+        seed_payload["canonical"] = True
+        row = VRInvestigationOutcomeRecord(
+            investigation_id=investigation_id,
+            branch_id=branch_id,
+            outcome_kind=new_outcome_kind,
+            confidence=new_confidence,
+            payload_json=json.dumps(seed_payload),
+            evidence_refs_json="[]",
+        )
+        uow.session.add(row)
+        await uow.session.flush()
+        inv = (await uow.session.exec(
+            _select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == investigation_id,
+            )
+        )).first()
+        if inv is not None:
+            inv.primary_outcome_id = row.id
+            inv.updated_at = now
+            uow.session.add(inv)
+        return row.id
+
+    try:
+        old_payload = json.loads(existing.payload_json or "{}")
+    except (ValueError, TypeError):
+        old_payload = {}
+
+    changed = False
+
+    old_components = old_payload.get("affected_components") or []
+    seen_components: set[tuple[str, str]] = {
+        (c.get("file") or "", c.get("function") or "")
+        for c in old_components if isinstance(c, dict)
+    }
+    for c in new_payload.get("affected_components") or []:
+        if not isinstance(c, dict):
+            continue
+        key = (c.get("file") or "", c.get("function") or "")
+        if key not in seen_components:
+            seen_components.add(key)
+            old_components.append(c)
+            changed = True
+    old_payload["affected_components"] = old_components
+
+    old_orders = old_payload.get("variant_hunt_orders") or []
+    seen_titles: set[str] = {
+        (o.get("title") or "") for o in old_orders if isinstance(o, dict)
+    }
+    for o in new_payload.get("variant_hunt_orders") or []:
+        if not isinstance(o, dict):
+            continue
+        title = (o.get("title") or "").strip()
+        if title and title not in seen_titles:
+            seen_titles.add(title)
+            old_orders.append(o)
+            changed = True
+    old_payload["variant_hunt_orders"] = old_orders
+
+    if new_payload.get("poc_code") and not old_payload.get("poc_code"):
+        old_payload["poc_code"] = new_payload["poc_code"]
+        old_payload["poc_language"] = new_payload.get("poc_language", "text")
+        changed = True
+
+    new_kind_rank = _OUTCOME_KIND_RANK.get(new_outcome_kind, 99)
+    old_kind_rank = _OUTCOME_KIND_RANK.get(existing.outcome_kind, 99)
+    if new_kind_rank < old_kind_rank:
+        existing.outcome_kind = new_outcome_kind
+        changed = True
+
+    new_conf_rank = _CONFIDENCE_RANK.get(new_confidence, 9)
+    old_conf_rank = _CONFIDENCE_RANK.get(existing.confidence, 9)
+    if new_conf_rank < old_conf_rank:
+        existing.confidence = new_confidence
+        changed = True
+
+    old_answer = old_payload.get("answer") or ""
+    new_answer = new_payload.get("answer") or ""
+    if new_answer and (
+        len(new_answer) > len(old_answer) * 1.2
+        or new_kind_rank < old_kind_rank
+    ):
+        old_payload["answer"] = new_answer
+        changed = True
+
+    contributions = old_payload.get("panel_contributions") or []
+    contributions.append(contribution)
+    old_payload["panel_contributions"] = contributions
+
+    existing.payload_json = json.dumps(old_payload)
+    uow.session.add(existing)
+
+    inv = (await uow.session.exec(
+        _select(VRInvestigationRecord).where(
+            VRInvestigationRecord.id == investigation_id,
+        )
+    )).first()
+    if inv is not None and inv.primary_outcome_id != existing.id:
+        inv.primary_outcome_id = existing.id
+        inv.updated_at = now
+        uow.session.add(inv)
+
+    _ = changed  # tracked for log later; same row id either way
+    return existing.id
 
 
 def _load_prompt(strategy_family: str, persona_voice: str | None = None) -> str:
