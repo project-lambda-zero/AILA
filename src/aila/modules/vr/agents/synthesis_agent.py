@@ -22,11 +22,9 @@ from sqlmodel import select as _select
 
 from aila.modules.vr.contracts import (
     OutcomeConfidence,
-    OutcomeKind,
-    SenderKind,
 )
+from aila.modules.vr.contracts.investigation import InvestigationStatus
 from aila.modules.vr.db_models import (
-    VRInvestigationBranchRecord,
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
 )
@@ -48,7 +46,18 @@ class SynthesisAgent:
         self.investigation_id = investigation_id
 
     async def run(self) -> dict[str, Any]:
-        # Load investigation + every branch's latest terminal outcome.
+        """Consolidate panel persona submissions into a synthesis verdict.
+
+        D-101 architecture: ONE canonical outcome row per investigation
+        holds every persona's submission inside ``payload.panel_contributions``.
+        Synthesis reads that array (NOT per-branch outcome rows — there
+        is only one row), produces a consolidated narrative via LLM,
+        writes ``panel_summary`` into the canonical row's payload, and
+        flips ``inv.status`` to COMPLETED + ``stopped_at``.
+
+        Idempotency: skips if the canonical row's payload already has
+        ``panel_summary`` (real synthesis output marker).
+        """
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
                 _select(VRInvestigationRecord).where(
@@ -57,55 +66,51 @@ class SynthesisAgent:
             )).first()
             if inv is None:
                 return {"status": "skipped", "reason": "investigation_not_found"}
-            if inv.primary_outcome_id:
+
+            canonical = (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.investigation_id == self.investigation_id)
+                .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+                .limit(1)
+            )).first()
+            if canonical is None:
+                return {"status": "skipped", "reason": "no_canonical_outcome"}
+
+            try:
+                canonical_payload = json.loads(canonical.payload_json or "{}")
+            except (ValueError, TypeError):
+                canonical_payload = {}
+            if "panel_summary" in canonical_payload:
                 return {
                     "status": "skipped",
-                    "reason": "primary_outcome_already_set",
-                    "primary_outcome_id": inv.primary_outcome_id,
+                    "reason": "already_synthesized",
+                    "canonical_outcome_id": canonical.id,
                 }
 
-            branches = (await uow.session.exec(
-                _select(VRInvestigationBranchRecord).where(
-                    VRInvestigationBranchRecord.investigation_id == self.investigation_id,
-                )
-            )).all()
+            contributions = canonical_payload.get("panel_contributions") or []
+            if not contributions:
+                return {"status": "skipped", "reason": "no_panel_contributions"}
 
+            # Build the per-persona panel from contributions. answer_brief
+            # carries up to 4000 chars of each persona's submission —
+            # enough for the synthesiser without extra DB round-trips.
             panel: list[dict[str, Any]] = []
-            primary_branch: VRInvestigationBranchRecord | None = None
-            for b in branches:
-                if b.parent_branch_id is None:
-                    primary_branch = b
-                latest = (await uow.session.exec(
-                    _select(VRInvestigationOutcomeRecord)
-                    .where(VRInvestigationOutcomeRecord.investigation_id == self.investigation_id)
-                    .where(VRInvestigationOutcomeRecord.branch_id == b.id)
-                    .order_by(VRInvestigationOutcomeRecord.created_at.desc())
-                    .limit(1),
-                )).first()
-                if latest is None:
-                    return {
-                        "status": "skipped",
-                        "reason": f"branch_{b.persona_voice or b.id[:8]}_has_no_terminal",
-                    }
-                try:
-                    payload = json.loads(latest.payload_json or "{}")
-                except (ValueError, TypeError):
-                    payload = {}
+            for c in contributions:
+                if not isinstance(c, dict):
+                    continue
                 panel.append({
-                    "branch_id": b.id,
-                    "persona_voice": b.persona_voice or "(none)",
-                    "turn_count": b.turn_count,
-                    "outcome_id": latest.id,
-                    "outcome_kind": latest.outcome_kind,
-                    "confidence": latest.confidence,
-                    "answer": (payload.get("answer") or "")[:6000],
-                    "reasoning": (payload.get("reasoning") or "")[:6000],
-                    "affected_components": payload.get("affected_components") or [],
-                    "variant_hunt_orders": payload.get("variant_hunt_orders") or [],
+                    "branch_id": c.get("branch_id") or "",
+                    "persona_voice": c.get("persona") or "(none)",
+                    "turn_count": c.get("at_turn") or 0,
+                    "outcome_kind": c.get("outcome_kind") or "",
+                    "confidence": c.get("confidence") or "unknown",
+                    "answer": c.get("answer_brief") or "",
+                    "reasoning": "",
+                    "affected_components": canonical_payload.get("affected_components") or [],
+                    "variant_hunt_orders": canonical_payload.get("variant_hunt_orders") or [],
                 })
-
-        if primary_branch is None:
-            return {"status": "skipped", "reason": "no_primary_branch"}
+            if not panel:
+                return {"status": "skipped", "reason": "no_valid_contributions"}
 
         # Synthesise via LLM.
         services = ServiceFactory()
@@ -129,95 +134,65 @@ class SynthesisAgent:
         if not synthesis_text:
             return {"status": "failed", "reason": "empty_llm_response"}
 
-        # Aggregate variant_hunt_orders across all branches (dedupe by title).
-        seen_titles: set[str] = set()
-        aggregated_orders: list[dict[str, Any]] = []
-        for p in panel:
-            for o in p.get("variant_hunt_orders") or []:
-                if not isinstance(o, dict):
-                    continue
-                title = (o.get("title") or "").strip()
-                if title and title in seen_titles:
-                    continue
-                seen_titles.add(title)
-                aggregated_orders.append(o)
-
-        # Pick the highest-confidence individual outcome's components as the
-        # baseline affected_components; aggregate any others on top.
-        _conf_rank = {"strong": 0, "exact": 0, "medium": 1, "caveated": 2, "weak": 3, "unknown": 4}
-        panel_sorted = sorted(panel, key=lambda p: _conf_rank.get(p.get("confidence", "unknown"), 9))
-        baseline_components: list[dict[str, Any]] = []
-        seen_components: set[tuple[str, str]] = set()
-        for p in panel_sorted:
-            for c in p.get("affected_components") or []:
-                if not isinstance(c, dict):
-                    continue
-                key = (c.get("file") or "", c.get("function") or "")
-                if key in seen_components:
-                    continue
-                seen_components.add(key)
-                baseline_components.append(c)
-
-        synthesis_payload = {
-            "answer": synthesis_text,
-            "panel_summary": [
-                {
-                    "persona": p["persona_voice"],
-                    "kind": p["outcome_kind"],
-                    "confidence": p["confidence"],
-                    "outcome_id": p["outcome_id"],
-                }
-                for p in panel
-            ],
-            "affected_components": baseline_components,
-            "variant_hunt_orders": aggregated_orders,
-            "source_outcome_ids": [p["outcome_id"] for p in panel],
-        }
-
+        # Update the canonical row's payload in-place. Don't create a
+        # new outcome row — D-101 mandates exactly one canonical row per
+        # investigation.
         async with UnitOfWork() as uow:
+            canonical_row = (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord).where(
+                    VRInvestigationOutcomeRecord.id == canonical.id,
+                )
+            )).first()
+            if canonical_row is None:
+                return {"status": "skipped", "reason": "canonical_disappeared"}
+            try:
+                payload = json.loads(canonical_row.payload_json or "{}")
+            except (ValueError, TypeError):
+                payload = {}
+            if "panel_summary" in payload:
+                return {
+                    "status": "skipped",
+                    "reason": "already_synthesized_under_lock",
+                    "canonical_outcome_id": canonical_row.id,
+                }
+            payload["panel_summary"] = {
+                "narrative": synthesis_text,
+                "personas": [
+                    {
+                        "persona": p["persona_voice"],
+                        "branch_id": p["branch_id"],
+                        "kind": p["outcome_kind"],
+                        "confidence": p["confidence"],
+                    }
+                    for p in panel
+                ],
+                "synthesized_at": utc_now().isoformat(),
+            }
+            canonical_row.payload_json = json.dumps(payload)
+            canonical_row.confidence = _synthesis_confidence(panel).value
+            uow.session.add(canonical_row)
+
+            # Flip investigation status to COMPLETED + record stopped_at.
             inv_row = (await uow.session.exec(
                 _select(VRInvestigationRecord).where(
                     VRInvestigationRecord.id == self.investigation_id,
                 )
             )).first()
-            if inv_row is None:
-                return {"status": "skipped", "reason": "investigation_not_found"}
-            # Re-check idempotency under the write lock.
-            if inv_row.primary_outcome_id:
-                return {
-                    "status": "skipped",
-                    "reason": "primary_outcome_already_set",
-                    "primary_outcome_id": inv_row.primary_outcome_id,
-                }
-
-            synthesis_outcome = VRInvestigationOutcomeRecord(
-                investigation_id=self.investigation_id,
-                branch_id=primary_branch.id,
-                outcome_kind=OutcomeKind.ASSESSMENT_REPORT.value,
-                confidence=_synthesis_confidence(panel).value,
-                payload_json=json.dumps(synthesis_payload),
-                dispatch_status="pending",
-                sender_kind=SenderKind.ENGINE.value,
-            )
-            uow.session.add(synthesis_outcome)
-            await uow.session.flush()
-            await uow.session.refresh(synthesis_outcome)
-
-            inv_row.primary_outcome_id = synthesis_outcome.id
-            inv_row.updated_at = utc_now()
-            uow.session.add(inv_row)
+            if inv_row is not None:
+                inv_row.status = InvestigationStatus.COMPLETED.value
+                inv_row.stopped_at = utc_now()
+                inv_row.updated_at = utc_now()
+                uow.session.add(inv_row)
             await uow.commit()
-            synthesis_outcome_id = synthesis_outcome.id
 
         _log.info(
-            "synthesis DONE inv=%s outcome_id=%s panel=%d",
-            self.investigation_id, synthesis_outcome_id, len(panel),
+            "synthesis DONE inv=%s canonical_outcome_id=%s panel=%d",
+            self.investigation_id, canonical.id, len(panel),
         )
         return {
             "status": "ok",
-            "synthesis_outcome_id": synthesis_outcome_id,
+            "canonical_outcome_id": canonical.id,
             "panel_size": len(panel),
-            "aggregated_variant_orders": len(aggregated_orders),
         }
 
 

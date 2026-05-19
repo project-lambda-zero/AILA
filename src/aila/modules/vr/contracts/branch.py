@@ -33,6 +33,7 @@ class BranchStatus(StrEnum):
     MERGED = "merged"
     PROMOTED = "promoted"
     ABANDONED = "abandoned"
+    COMPLETED = "completed"
 
 
 class PersonaVoice(StrEnum):
