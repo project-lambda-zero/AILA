@@ -428,17 +428,45 @@ class ReportWriter:
             out.append("")
 
         outcome_trail = facts.get("outcome_trail") or []
-        if len(outcome_trail) > 1:
-            out.append("# Outcome trail")
+        if outcome_trail:
+            # Group by normalized prose prefix so the writer can see
+            # "N submissions of the same root cause" vs "N distinct
+            # bugs". Bucketing key: first 240 chars of the answer with
+            # whitespace collapsed and casefolded — enough to distinguish
+            # genuinely different findings but tolerant of re-wording.
+            import re as _re  # noqa: PLC0415
+            def _bucket(text: str) -> str:
+                return _re.sub(r"\s+", " ", (text or "")[:240]).casefold().strip()
+            buckets: dict[str, int] = {}
             for o in outcome_trail:
+                if isinstance(o, dict):
+                    buckets[_bucket(o.get("answer") or "")] = buckets.get(_bucket(o.get("answer") or ""), 0) + 1
+            unique = sum(1 for c in buckets.values() if c)
+            duplicated = sum(c for c in buckets.values() if c > 1)
+            out.append("# Outcome submission trail")
+            out.append(
+                f"Total submissions: {len(outcome_trail)} | "
+                f"Unique root-cause clusters: {unique} | "
+                f"Re-confirmations of same cluster: {duplicated}",
+            )
+            out.append(
+                "If the same cluster appears N times, the agent was re-asked "
+                "the same question N times and re-derived the same conclusion — "
+                "this is high-confidence reproducibility, not N separate bugs. "
+                "Emit ONE FindingSection per cluster, and mention reproducibility "
+                "in audit_summary.",
+            )
+            out.append("")
+            for i, o in enumerate(outcome_trail, 1):
                 if not isinstance(o, dict):
                     continue
                 out.append(
-                    f"- [{(o.get('created_at') or '')[:16]}] "
-                    f"{o.get('kind', '?')} "
-                    f"(conf={o.get('confidence', '?')}): "
-                    f"{(o.get('answer') or '')[:160]}",
+                    f"## Submission [{i}/{len(outcome_trail)}] — "
+                    f"{(o.get('created_at') or '')[:19]} "
+                    f"({o.get('kind', '?')}, conf={o.get('confidence', '?')})",
                 )
+                out.append((o.get("answer") or "")[:6000])
+                out.append("")
             out.append("")
 
         variants = facts.get("variants_hunted") or []
