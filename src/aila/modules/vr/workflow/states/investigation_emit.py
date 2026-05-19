@@ -46,7 +46,7 @@ _log = logging.getLogger(__name__)
 # task boundaries. _OVERALL_TURN_CAP bounds the total branch turn
 # count so a hopelessly stuck investigation eventually surfaces to the
 # operator instead of burning LLM tokens forever.
-_OVERALL_TURN_CAP = 200
+_OVERALL_TURN_CAP = int(__import__("os").environ.get("VR_OVERALL_TURN_CAP", "500"))
 
 
 def _resolve_final_status(exit_reason: str) -> str | None:

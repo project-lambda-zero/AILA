@@ -35,10 +35,15 @@ __all__ = ["state_investigation_loop"]
 
 _log = logging.getLogger(__name__)
 
-# Hard upper bound on turns per single loop entry. Configurable per-
-# strategy in a future commit; v0.3 v1 ships a single cap. Operator
-# pauses + budget exhaustion break out earlier.
-_DEFAULT_MAX_TURNS = 25
+# Per-task turn budget. Loop returns on submit, status flip, researcher
+# error, or when this cap hits — at which point investigation_emit
+# auto-re-enqueues another task (status stays RUNNING) until the
+# overall branch.turn_count hits _OVERALL_TURN_CAP. Configurable via
+# env so an operator running a deep variant chase can extend without
+# a code change.
+import os as _os
+
+_DEFAULT_MAX_TURNS = int(_os.environ.get("VR_MAX_TURNS_PER_TASK", "60"))
 
 
 async def _investigation_status(investigation_id: str) -> str | None:
