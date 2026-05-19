@@ -232,10 +232,10 @@ spawn() {
   log_path="${RUN_DIR_ABS}/${slug}.log"
   local pidv
   pidv=$("$PS" -NoProfile -Command \
-    "(Start-Process python -ArgumentList $ps_args -WindowStyle Hidden -PassThru -RedirectStandardOutput '${log_path}' -RedirectStandardError '${log_path%.log}.err').Id" \
+    "(Start-Process python -ArgumentList $ps_args -WindowStyle Hidden -PassThru).Id" \
     2>/dev/null | tr -d '\r\n ')
   record_pid "$label" "$pidv"
-  echo "[aila]   $label started (PID $pidv, log $RUN_DIR/${slug}.log)"
+  echo "[aila]   $label started (PID $pidv)"
 }
 
 # pnpm dev needs cmd as shell host. Start-Process cmd /c "..." returns the
