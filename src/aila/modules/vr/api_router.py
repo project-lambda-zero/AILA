@@ -2438,7 +2438,15 @@ def create_vr_router() -> APIRouter:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
-            if body and body.kind is not None and body.kind.value != inv.kind:
+            # Always sync strategy_family to kind's default when the
+            # operator re-enqueues with an explicit kind — covers both
+            # 'change the kind' and 'fix a mismatch where the strategy
+            # was stuck on the wrong default from earlier create-time
+            # bug'. Without this, an investigation created with
+            # kind=variant_hunt but strategy_family=discovery_research
+            # (the pre-006047d default-fallback bug) couldn't be
+            # repaired without a direct DB edit.
+            if body and body.kind is not None:
                 inv.kind = body.kind.value
                 inv.strategy_family = _KIND_DEFAULT_STRATEGY[body.kind]
             inv.status = InvestigationStatus.CREATED.value
