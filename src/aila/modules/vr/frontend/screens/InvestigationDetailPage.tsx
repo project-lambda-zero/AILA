@@ -225,7 +225,7 @@ export function InvestigationDetailPage() {
     inv.status === "running" || inv.status === "paused" || inv.status === "created";
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 max-w-full min-w-0 overflow-x-hidden break-words">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0 flex-1">

@@ -54,8 +54,8 @@ function HypothesisRow({ h }: { h: HypothesisProjection }) {
   const sev =
     h.state === "live" ? "info" : h.state === "rejected" ? "low" : "medium";
   return (
-    <li className="border border-border-default rounded p-2 bg-surface/40">
-      <div className="flex items-start justify-between gap-2">
+    <li className="border border-border-default rounded p-2 bg-surface/40 break-words">
+      <div className="flex items-start justify-between gap-2 min-w-0">
         <p className="text-sm text-foreground flex-1">{h.claim || h.id}</p>
         <AilaBadge severity={sev} size="sm">
           {h.state}
