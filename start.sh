@@ -14,6 +14,12 @@
 #   AILA workers         one per queue in $WORKERS
 #   AILA frontend        Vite on ${FRONTEND_PORT:-3000}     (toggle: AILA_START_FRONTEND=0)
 #
+# PID tracking:
+#   Every spawned process writes its PID to .run/<label>.pid. ``stop`` walks
+#   .run/*.pid and tree-kills each one via taskkill /T /F, then clears the
+#   pidfile. Falls back to port-owner / cmdline sweep only if a tracked PID
+#   is gone (orphaned by a hard reboot, manual kill, etc.).
+#
 # Env overrides (read from .env or shell):
 #   BACKEND_PORT          default 8000
 #   FRONTEND_PORT         default 3000
@@ -37,7 +43,11 @@ COMMAND="${1:-start}"
 : "${AILA_START_FRONTEND:=1}"
 : "${AILA_START_AUDIT_MCP:=1}"
 
-# ── PowerShell detection ────────────────────────────────────────────────────
+RUN_DIR=".run"
+mkdir -p "$RUN_DIR"
+RUN_DIR_ABS="$(cd "$RUN_DIR" && pwd -W 2>/dev/null || (cd "$RUN_DIR" && pwd))"
+
+# ── PowerShell + taskkill detection ─────────────────────────────────────────
 PS=""
 for candidate in \
   powershell.exe \
@@ -54,6 +64,19 @@ if [[ -z "$PS" ]]; then
   exit 1
 fi
 
+TASKKILL=""
+for candidate in \
+  taskkill.exe \
+  taskkill \
+  /c/Windows/System32/taskkill.exe \
+  /c/WINDOWS/System32/taskkill.exe; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    TASKKILL="$candidate"
+    break
+  fi
+done
+# taskkill is optional — we fall back to PowerShell Stop-Process when missing.
+
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 load_env() {
@@ -65,6 +88,74 @@ load_env() {
   else
     echo "[aila] WARNING: .env not found -- copy .env.example to .env first"
   fi
+}
+
+# Turn a free-form label like "backend (port 8000)" or "worker:vr" into a
+# safe filename slug like "backend" or "worker-vr". Used for .run/<slug>.pid.
+slugify() {
+  local raw="$1"
+  # Lowercase, replace any non-alnum run with '-', strip leading/trailing '-'.
+  printf '%s' "$raw" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g'
+}
+
+# Tree-kill one PID + every descendant. Prefers ``taskkill /T /F`` (kills
+# the whole process tree in one call), falls back to PowerShell that walks
+# Win32_Process.ParentProcessId recursively.
+tree_kill_pid() {
+  local pidv="$1"
+  [[ -z "$pidv" ]] && return 0
+  if [[ -n "$TASKKILL" ]]; then
+    "$TASKKILL" /T /F /PID "$pidv" >/dev/null 2>&1 || true
+    return 0
+  fi
+  "$PS" -NoProfile -Command "
+    function Kill-Tree(\$id) {
+      Get-CimInstance Win32_Process -Filter \"ParentProcessId=\$id\" -ErrorAction SilentlyContinue |
+        ForEach-Object { Kill-Tree \$_.ProcessId }
+      Stop-Process -Id \$id -Force -ErrorAction SilentlyContinue
+    }
+    Kill-Tree $pidv
+  " 2>/dev/null || true
+}
+
+# Write a tracked PID to .run/<slug>.pid. Append-only — multiple PIDs per
+# label (rare) are space-separated on one line.
+record_pid() {
+  local label="$1"
+  local pidv="$2"
+  [[ -z "$pidv" || "$pidv" == "0" ]] && return 0
+  mkdir -p "$RUN_DIR"
+  local slug
+  slug=$(slugify "$label")
+  echo "$pidv" >> "$RUN_DIR/${slug}.pid"
+}
+
+# Walk every .run/*.pid, tree-kill each PID it contains, then delete the
+# pidfile. Returns the count of PIDs killed.
+kill_tracked_pids() {
+  local killed=0
+  if [[ ! -d "$RUN_DIR" ]]; then
+    return 0
+  fi
+  local f
+  for f in "$RUN_DIR"/*.pid; do
+    [[ -e "$f" ]] || continue
+    local label
+    label=$(basename "$f" .pid)
+    while IFS= read -r pidv; do
+      [[ -z "$pidv" ]] && continue
+      # Is the PID still alive? PowerShell Get-Process returns non-zero exit
+      # when the process is gone. We tree-kill unconditionally — taskkill
+      # silently no-ops on dead PIDs anyway.
+      tree_kill_pid "$pidv"
+      killed=$((killed + 1))
+    done < "$f"
+    rm -f "$f"
+    echo "[aila]   killed tracked: $label"
+  done
+  return 0
 }
 
 kill_matching() {
@@ -83,13 +174,9 @@ kill_matching() {
 }
 
 kill_by_cmdline_substring() {
-  # Kill every python.exe whose cmdline contains the given
-  # substring. Broader than ``kill_matching`` because uvicorn's
-  # --reload child workers, manually-spawned helpers, and stray
-  # test runs all have slightly different cmdlines but share the
-  # ``aila`` token. Catching all of them prevents the
-  # multiple-listeners-on-8000 problem where stale module caches
-  # served stale code.
+  # FALLBACK ONLY — used when tracked pidfiles are missing (orphans from
+  # a hard reboot, manual taskmgr kill, etc). Kill every python.exe whose
+  # cmdline contains the given substring.
   local needle="$1"
   "$PS" -NoProfile -Command \
     "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | \
@@ -99,11 +186,7 @@ kill_by_cmdline_substring() {
 }
 
 kill_port_owner() {
-  # Find whatever owns ``port`` and kill it. Last-resort cleanup
-  # for ghost listeners — Windows sometimes shows stale PIDs in
-  # netstat after a hard kill, and the next bind fails because
-  # the OS still has the socket. ``Stop-Process`` on the owner
-  # forces TCP cleanup so the next ``Start-Process`` can bind.
+  # Last-resort cleanup for ghost listeners on a port.
   local port="$1"
   "$PS" -NoProfile -Command \
     "Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | \
@@ -113,28 +196,27 @@ kill_port_owner() {
 
 kill_aila_processes() {
   echo "[aila] Stopping AILA processes..."
-  # First pass: cmdline-substring kill catches everything with
-  # ``aila`` in its command line — uvicorn parent + --reload child,
-  # all 5 workers, audit_mcp, helper scripts, test runners.
+  # PRIMARY: kill every PID we recorded at spawn time. taskkill /T /F kills
+  # the whole tree, so uvicorn --reload's child worker dies with its parent.
+  kill_tracked_pids
+  # FALLBACK 1: sweep by cmdline substring in case a process orphaned its
+  # pidfile (system reboot mid-run, manual kill in taskmgr, etc).
   kill_by_cmdline_substring "aila"
   kill_by_cmdline_substring "audit_mcp"
   kill_by_cmdline_substring "ida_headless_mcp"
-  # Second pass: kill any process still listening on the ports
-  # we own. Catches the case where the cmdline match missed a
-  # straggler (different exe name, hidden window, etc.).
+  # FALLBACK 2: anything still holding our ports.
   kill_port_owner "${BACKEND_PORT:-8000}"
   kill_port_owner "${AUDIT_MCP_PORT:-18822}"
-  # Frontend: kill node processes running our vite shell.
+  # Frontend: vite spawns under node.exe.
   kill_matching "node.exe" "vite|aila/shell"
   sleep 2
   echo "[aila] Stopped."
 }
 
-# Spawn detached python via PowerShell Start-Process. Inherits the CALLER's
-# cwd — caller must `cd` into the right repo before invoking spawn.
-# This is the same minimal pattern that worked before — no -WorkingDirectory,
-# no -RedirectStandardOutput. Logs go to a file via the bash redirect on the
-# spawn call itself (see audit-mcp / backend / worker sections below).
+# Spawn detached python via PowerShell Start-Process -PassThru. Captures
+# the spawned PID and records it under .run/<slug>.pid so ``stop`` can
+# tree-kill it reliably without having to grep cmdlines. Inherits the
+# CALLER's cwd — caller must ``cd`` into the right repo before invoking.
 spawn() {
   local label="$1"; shift
   local ps_args=""
@@ -142,19 +224,29 @@ spawn() {
     [[ -n "$ps_args" ]] && ps_args+=","
     ps_args+="'${arg}'"
   done
-  "$PS" -NoProfile -Command \
-    "Start-Process python -ArgumentList $ps_args -WindowStyle Hidden"
-  echo "[aila]   $label started"
+  local slug log_path
+  slug=$(slugify "$label")
+  log_path="${RUN_DIR_ABS}/${slug}.log"
+  local pidv
+  pidv=$("$PS" -NoProfile -Command \
+    "(Start-Process python -ArgumentList $ps_args -WindowStyle Hidden -PassThru -RedirectStandardOutput '${log_path}' -RedirectStandardError '${log_path%.log}.err').Id" \
+    2>/dev/null | tr -d '\r\n ')
+  record_pid "$label" "$pidv"
+  echo "[aila]   $label started (PID $pidv, log $RUN_DIR/${slug}.log)"
 }
 
-# pnpm dev needs cmd as shell host — Start-Process cmd /c "<cmd>" runs
-# from caller's cwd just like spawn().
+# pnpm dev needs cmd as shell host. Start-Process cmd /c "..." returns the
+# cmd.exe PID; the actual node/pnpm runs as its child. taskkill /T /F on the
+# cmd PID kills the whole tree.
 spawn_shell() {
   local label="$1"; shift
   local cmdline="$*"
-  "$PS" -NoProfile -Command \
-    "Start-Process cmd -ArgumentList '/c','$cmdline' -WindowStyle Hidden"
-  echo "[aila]   $label started"
+  local pidv
+  pidv=$("$PS" -NoProfile -Command \
+    "(Start-Process cmd -ArgumentList '/c','$cmdline' -WindowStyle Hidden -PassThru).Id" \
+    2>/dev/null | tr -d '\r\n ')
+  record_pid "$label" "$pidv"
+  echo "[aila]   $label started (PID $pidv)"
 }
 
 probe() {
@@ -170,10 +262,34 @@ probe() {
 }
 
 show_status() {
-  echo "[aila] Live processes:"
+  echo "[aila] Tracked PIDs (.run/*.pid):"
+  if [[ -d "$RUN_DIR" ]]; then
+    local any=0
+    local f
+    for f in "$RUN_DIR"/*.pid; do
+      [[ -e "$f" ]] || continue
+      any=1
+      local label
+      label=$(basename "$f" .pid)
+      while IFS= read -r pidv; do
+        [[ -z "$pidv" ]] && continue
+        # Liveness check.
+        if "$PS" -NoProfile -Command "Get-Process -Id $pidv -ErrorAction SilentlyContinue | Out-Null; exit \$LASTEXITCODE" 2>/dev/null; then
+          echo "  ✓ $label  PID $pidv (alive)"
+        else
+          echo "  ✗ $label  PID $pidv (dead)"
+        fi
+      done < "$f"
+    done
+    [[ "$any" == "0" ]] && echo "  (none — start first)"
+  else
+    echo "  (no .run/ — start first)"
+  fi
+  echo ""
+  echo "[aila] All matching processes (scan):"
   "$PS" -NoProfile -Command \
-    "Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='node.exe'\" | \
-     Where-Object { \$_.CommandLine -match 'uvicorn aila|aila worker|audit_mcp|vite' } | \
+    "Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='node.exe' OR Name='cmd.exe'\" | \
+     Where-Object { \$_.CommandLine -match 'uvicorn aila|aila worker|audit_mcp|vite|aila/shell' } | \
      ForEach-Object { 'PID {0,6}  {1}' -f \$_.ProcessId, \$_.CommandLine.Substring(0, [Math]::Min(110, \$_.CommandLine.Length)) }" \
     2>/dev/null || true
   echo ""
@@ -187,24 +303,25 @@ show_status() {
 # ── Commands ────────────────────────────────────────────────────────────────
 
 case "$COMMAND" in
-  stop)    kill_aila_processes; exit 0 ;;
-  status)  show_status; exit 0 ;;
-  restart) kill_aila_processes ;;
+  stop)    load_env; kill_aila_processes; exit 0 ;;
+  status)  load_env; show_status; exit 0 ;;
+  restart) echo "[aila] Restart: stop + start" ;;
   start)   ;;
-  *)       echo "[aila] Unknown command: $COMMAND (start|stop|restart|status)" >&2; exit 1 ;;
+  *)       echo "Unknown command: $COMMAND. Use start | stop | status | restart"; exit 1 ;;
 esac
 
 REPO="$PWD"
 
 load_env
 kill_aila_processes
+mkdir -p "$RUN_DIR"
 
 # ── audit-mcp (in its own repo) ─────────────────────────────────────────────
 if [[ "$AILA_START_AUDIT_MCP" == "1" && -d "$AUDIT_MCP_DIR" ]]; then
   echo "[aila] Starting audit-mcp..."
   (
     cd "$AUDIT_MCP_DIR" && \
-    spawn "audit-mcp (port ${AUDIT_MCP_PORT})" \
+    spawn "audit-mcp" \
       -m audit_mcp --mode http --port "$AUDIT_MCP_PORT" --host 127.0.0.1
   )
 elif [[ "$AILA_START_AUDIT_MCP" == "1" ]]; then
@@ -216,14 +333,14 @@ fi
 # ── Backend ─────────────────────────────────────────────────────────────────
 echo "[aila] Starting backend..."
 cd "$REPO"
-spawn "backend (port ${BACKEND_PORT})" \
+spawn "backend" \
   -m uvicorn aila.api.app:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload
 sleep 4
 
 # ── Workers ─────────────────────────────────────────────────────────────────
 echo "[aila] Starting workers: $WORKERS"
 for q in $WORKERS; do
-  spawn "worker:$q" -m aila worker -q "$q"
+  spawn "worker-$q" -m aila worker -q "$q"
 done
 
 # ── Frontend ────────────────────────────────────────────────────────────────
@@ -234,7 +351,7 @@ if [[ "$AILA_START_FRONTEND" == "1" ]]; then
       corepack pnpm install 2>&1 | tail -3
     fi
     echo "[aila] Starting frontend..."
-    spawn_shell "frontend (port ${FRONTEND_PORT})" \
+    spawn_shell "frontend" \
       "corepack pnpm --filter @aila/shell run dev"
   else
     echo "[aila]   WARNING: frontend/ not found -- skipping"
