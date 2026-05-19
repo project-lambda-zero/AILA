@@ -194,6 +194,71 @@ Rules:
 - For non-variant-hunt investigations (Kind: discovery, nday, etc.)
   the `variant_hunt_orders` field is ignored — omit it.
 
+### Creative variant hunting — how to actually find them
+
+"List every variant" is useless guidance without search strategies.
+Here are the search patterns that produce real variant candidates.
+Each maps to a specific audit-mcp tool you should reach for FIRST,
+not after spinning on dead-end greps.
+
+**Pattern 1: Same callee, different callers.** If function `F` is
+called vulnerably in caller `A`, list ALL callers of `F` via
+`audit_mcp.callers_of(F)` and inspect each one to see whether the
+callsite supplies arguments that hit the bad branch. Example: the
+CVE describes `ngx_http_script_compile` being called with a script
+that ends up on the NULL-lengths fast path — `callers_of` enumerates
+`rewrite`, `proxy_pass`, `fastcgi_pass`, `uwsgi_pass`, `scgi_pass`,
+`grpc_pass`, `set`, `complex_value`. Each is a potential variant
+location.
+
+**Pattern 2: Symmetric pair audit.** When the bug is a length-pass /
+value-pass asymmetry, every `_len_code` opcode has a matching
+`_code` opcode that must use the SAME predicate. Read both bodies
+side-by-side via `audit_mcp.read_function`. Audit every pair in the
+same module, not just the one the public CVE names. Predicate drift
+between siblings (e.g. `len_code` checks `is_args || quote` but
+`code` checks only `is_args`) is a real variant.
+
+**Pattern 3: State-carrying field consumers.** Find every read and
+every write of the dangerous state field (e.g. `e->is_args`,
+`e->quote`) via `audit_mcp.search_source(pattern="e->is_args")` or
+`audit_mcp.nodes_with_annotation` if the field is graph-tagged.
+Every producer + every consumer is a candidate; predicate
+asymmetries between any producer/consumer pair is a real variant.
+
+**Pattern 4: Bad-pattern grep.** Use `audit_mcp.search_source` for
+the literal bad pattern itself — not the function name, the CODE
+PATTERN. Examples:
+  - `e->buf.len +=` — every site that grows the output buffer
+  - `cap[2*n+1] - cap[2*n]` — every raw capture-length computation
+  - `ngx_escape_uri\(NULL` — every length-only escape probe
+Each hit is a candidate to verify against the symmetric pair.
+
+**Pattern 5: Taint paths to dangerous sinks.** Use
+`audit_mcp.taint_paths_to(sink=...)` with the dangerous sink as
+entry (e.g. `ngx_pnalloc`, `ngx_memcpy`, `ngx_copy`). Every flow that
+ends at a sink with attacker-controlled length is a variant of any
+length-vs-write asymmetry bug.
+
+**Pattern 6: Macro / helper propagation.** Use
+`audit_mcp.search_macros(pattern=...)` for helper macros that wrap
+the bad pattern (`#define NGX_ESCAPE_*`, length helpers). A macro
+that hides the bug at one call site usually hides it at every call
+site.
+
+**Pattern 7: Patch-bypass via adjacent code paths.** If the public
+patch closed location `L1`, find every code path that REACHES the
+same data structure WITHOUT going through `L1`'s defensive logic.
+Use `audit_mcp.paths_between(from=entry, to=sink)` — paths that
+don't traverse the patch's reset/check are bypass candidates.
+Don't trust "patched" until you've verified every reachable path
+hits the fix.
+
+Rule of thumb: a variant hunt that produces zero candidates after
+running zero of these patterns is the agent giving up early, not
+the absence of variants. Spend turns on patterns 1-3 before
+submitting an empty `variant_hunt_orders`.
+
 ## Verifying a known CVE against the audited source (anti-hallucination)
 
 When the per-turn user prompt references a specific CVE id, your
