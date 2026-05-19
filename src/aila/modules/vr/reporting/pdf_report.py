@@ -926,32 +926,50 @@ if _PYGMENTS_AVAILABLE:
     }
 
 
+_MD_FENCE_RE = re.compile(r"^\s*```([\w+\-]*)\s*\n(.*?)\n\s*```\s*$", re.DOTALL)
+
+
+def _strip_md_fence(text: str) -> tuple[str, str]:
+    """If ``text`` is a single markdown fenced block, return (inner, language).
+
+    Returns (text, "") when there's no fence — caller falls back to
+    heuristic language detection. Tolerates leading/trailing whitespace
+    around the fence markers.
+    """
+    if not text:
+        return text, ""
+    m = _MD_FENCE_RE.match(text.strip())
+    if m:
+        return m.group(2), m.group(1) or ""
+    return text, ""
+
+
 def _format_code_block(
     code: str,
     language: str,
     styles: dict[str, ParagraphStyle],
-) -> Paragraph:
-    """Render ``code`` as a syntax-highlighted Paragraph in the
-    dark Midnight Cloud palette. Falls back to plain mono when
-    pygments is missing or the language has no lexer.
+) -> Any:
+    """Render ``code`` as a syntax-highlighted code block in the dark
+    Midnight Cloud palette.
+
+    Uses XPreformatted (not Paragraph) so indentation, alignment,
+    and runs of spaces are preserved verbatim — Paragraph collapses
+    whitespace and breaks Python / shell layouts. Falls back to plain
+    mono XPreformatted when pygments is missing or the language has
+    no lexer.
     """
+    from reportlab.platypus import XPreformatted  # noqa: PLC0415
     if not code.strip():
-        return Paragraph("", styles["mono"])
+        return XPreformatted("", styles["mono"])
     if not _PYGMENTS_AVAILABLE:
-        return Paragraph(
-            _escape_for_paragraph(code).replace("\n", "<br/>"),
-            styles["mono"],
-        )
+        return XPreformatted(_escape_for_paragraph(code), styles["mono"])
     try:
         lexer = _pyg_get_lexer(language or "text")
     except _PygClassNotFound:
         try:
             lexer = _pyg_get_lexer("text")
         except _PygClassNotFound:
-            return Paragraph(
-                _escape_for_paragraph(code).replace("\n", "<br/>"),
-                styles["mono"],
-            )
+            return XPreformatted(_escape_for_paragraph(code), styles["mono"])
     parts: list[str] = []
     for ttype, value in _pyg_lex(code, lexer):
         if not value:
@@ -963,9 +981,10 @@ def _format_code_block(
                 color = _PYG_COLOR_MAP[cur]
                 break
             cur = cur.parent
-        escaped = _escape_for_paragraph(value).replace("\n", "<br/>")
+        # XPreformatted keeps newlines verbatim, do NOT convert to <br/>.
+        escaped = _escape_for_paragraph(value)
         parts.append(f'<font color="{color}">{escaped}</font>' if color else escaped)
-    return Paragraph("".join(parts), styles["mono"])
+    return XPreformatted("".join(parts), styles["mono"])
 
 
 def _guess_lang_from_snippet(snippet: str) -> str:
@@ -1501,36 +1520,57 @@ def _append_finding_block(
         styles["section_h1"],
     ))
 
-    story.append(Paragraph("Description", styles["section_h2"]))
-    story.append(Paragraph(
-        _escape_for_paragraph(finding.description),
-        styles["body"],
-    ))
+    # Description: route through markdown body so inline `code`
+    # spans get monospace fontification and any fenced blocks
+    # render with syntax highlighting. Plain Paragraph would
+    # leave backticks visible as literal text.
+    desc_flow: list[Any] = [Paragraph("Description", styles["section_h2"])]
+    desc_buf: list[Any] = []
+    _render_markdown_body(finding.description, styles, desc_buf)
+    desc_flow.extend(desc_buf[:3])  # bind heading + first 3 paragraphs together
+    story.append(KeepTogether(desc_flow))
+    for flow in desc_buf[3:]:
+        story.append(flow)
 
-    story.append(Paragraph("Risk Level", styles["section_h2"]))
-    story.append(Paragraph(
-        f"<b>Likelihood &ndash; {finding.likelihood}</b><br/>"
-        f"<b>Impact &ndash; {finding.impact}</b><br/>"
-        f"<b>Severity:</b> {sev} (L+I = {finding.likelihood + finding.impact})",
-        styles["body"],
-    ))
+    story.append(KeepTogether([
+        Paragraph("Risk Level", styles["section_h2"]),
+        Paragraph(
+            f"<b>Likelihood &ndash; {finding.likelihood}</b><br/>"
+            f"<b>Impact &ndash; {finding.impact}</b><br/>"
+            f"<b>Severity:</b> {sev} (L+I = {finding.likelihood + finding.impact})",
+            styles["body"],
+        ),
+    ]))
 
     if finding.proof_of_concept and finding.proof_of_concept.strip():
-        story.append(Paragraph("Proof of Concept", styles["section_h2"]))
-        story.append(_format_code_block(
-            finding.proof_of_concept[:8000],
-            _guess_lang_from_snippet(finding.proof_of_concept),
-            styles,
-        ))
+        poc_code, poc_lang = _strip_md_fence(finding.proof_of_concept)
+        story.append(KeepTogether([
+            Paragraph("Proof of Concept", styles["section_h2"]),
+            _format_code_block(
+                poc_code[:8000],
+                poc_lang or _guess_lang_from_snippet(poc_code),
+                styles,
+            ),
+        ]))
 
-    story.append(Paragraph("Code Location", styles["section_h2"]))
-    story.append(_format_code_block(
-        finding.code_location[:8000],
-        _guess_lang_from_snippet(finding.code_location),
-        styles,
-    ))
+    # Code Location: writer often emits multiple fenced blocks
+    # (fast-path code + value-pass code + slow-path code). Route
+    # through _render_markdown_body so each fence renders as its
+    # own highlighted block instead of being dumped as one
+    # flat code page with literal ``` markers in the text.
+    cl_heading = Paragraph("Code Location", styles["section_h2"])
+    cl_buf: list[Any] = []
+    _render_markdown_body(finding.code_location, styles, cl_buf)
+    if cl_buf:
+        story.append(KeepTogether([cl_heading, cl_buf[0]]))
+        for flow in cl_buf[1:]:
+            story.append(flow)
+    else:
+        story.append(cl_heading)
 
-    story.append(Paragraph("Recommendation", styles["section_h2"]))
+    story.append(KeepTogether([
+        Paragraph("Recommendation", styles["section_h2"]),
+    ]))
     _render_markdown_body(finding.recommendation, styles, story)
 
 
