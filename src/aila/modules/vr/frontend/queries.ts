@@ -255,10 +255,12 @@ export interface HypothesisProjection {
   claim: string;
   why_plausible: string;
   kill_criterion: string;
-  state: "live" | "rejected" | "mixed";
+  state: "live" | "rejected" | "resolved" | "mixed";
   rejection_reason: string | null;
+  resolution_note: string | null;
   live_in_branches: string[];
   rejected_in_branches: string[];
+  resolved_in_branches: string[];
 }
 
 export function useInvestigationHypotheses(investigationId: string) {

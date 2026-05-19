@@ -60,7 +60,7 @@ from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
     ReasoningContract,
     ReasoningTurnDecision,
-    RejectedHypothesis,
+    ResolvedHypothesis,
 )
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
@@ -242,7 +242,7 @@ class HonestVulnResearcher:
                 # frontend forever unless we close it here. Carries an
                 # explicit reason so the audit trail shows it was
                 # auto-closed rather than reasoned-through.
-                _auto_reject_live_on_terminal(
+                _auto_resolve_live_on_terminal(
                     new_case_state,
                     turn=turn_number,
                     outcome_kind=outcome_kind.value,
@@ -551,44 +551,68 @@ class HonestVulnResearcher:
         self,
         turn_number: int,
     ) -> list[dict[str, Any]]:
-        """Read + consume operator messages with at_turn IS NULL.
+        """Load recent operator messages for this investigation.
 
-        Stamps at_turn=turn_number so subsequent turns don't re-read
-        them. Returns the consumed messages' text + intent for prompt
-        rendering. Engine messages are ignored — they're already in
-        case_state via prior absorb() calls.
+        Behavior (post-fix): EVERY branch sees EVERY operator message
+        posted to the investigation, and messages stay visible across
+        turns. Without this, the previous one-shot per-branch delivery
+        meant:
+          - a steering message posted to the primary branch never
+            reached the sibling personas at all (the WHERE clause was
+            branch_id == self.branch_id);
+          - the message was consumed (stamped at_turn) on its first
+            read so by turn N+1 the agent had forgotten it — agents
+            drifted back to the rejected behavior within 1-2 turns.
+
+        New rule: render the most recent 10 operator messages for the
+        investigation on every turn. First-seen turn is stamped on
+        each row (still useful for the UI's "delivered at turn N"
+        badge) but stamping doesn't gate visibility — the agent always
+        sees the recent steering window.
         """
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
                 _select(VRInvestigationMessageRecord)
                 .where(
-                    VRInvestigationMessageRecord.branch_id == self.branch_id,
+                    VRInvestigationMessageRecord.investigation_id == self.investigation_id,
                     VRInvestigationMessageRecord.sender_kind == SenderKind.OPERATOR.value,
-                    VRInvestigationMessageRecord.at_turn.is_(None),
                 )
-                .order_by(VRInvestigationMessageRecord.created_at.asc())
+                .order_by(VRInvestigationMessageRecord.created_at.desc())
+                .limit(10)
             )).all()
 
             if not rows:
                 return []
 
-            consumed: list[dict[str, Any]] = []
+            messages: list[dict[str, Any]] = []
+            stamped = False
             for row in rows:
                 try:
                     payload = json.loads(row.payload_json or "{}")
                 except json.JSONDecodeError:
                     payload = {}
                 text = str(payload.get("text", "")).strip()
-                consumed.append({
+                messages.append({
                     "id": row.id,
                     "text": text,
                     "intent": row.operator_intent or "unclassified",
                     "sender_id": row.sender_id,
+                    "delivered_at_turn": row.at_turn,
+                    "branch_addressed": row.branch_id,
                 })
-                row.at_turn = turn_number
-                uow.session.add(row)
-            await uow.commit()
-            return consumed
+                # Stamp first-seen turn for the UI badge (don't gate
+                # future visibility — agents still see this message on
+                # subsequent turns).
+                if row.at_turn is None:
+                    row.at_turn = turn_number
+                    uow.session.add(row)
+                    stamped = True
+            if stamped:
+                await uow.commit()
+            # Order chronologically for the prompt (oldest first) so the
+            # agent reads the steering in posting order.
+            messages.reverse()
+            return messages
 
 
 def _render_target_snapshot_section(snapshot: dict[str, Any]) -> str:
@@ -1151,34 +1175,56 @@ def _encode_case_state(state: ReasoningCaseState) -> str:
     return json.dumps(state.model_dump(mode="json"))
 
 
-def _auto_reject_live_on_terminal(
+def _auto_resolve_live_on_terminal(
     state: ReasoningCaseState,
     *,
     turn: int,
     outcome_kind: str,
 ) -> None:
-    """Move every still-live hypothesis to ``state.rejected`` in place.
+    """Move every still-live hypothesis to ``state.resolved`` in place.
 
     Called from ``run_turn`` immediately before the case_state is
-    serialised for a terminal submission. Without this step, anything
-    the agent left in ``hypotheses`` survives forever as "live" in
-    the frontend rail even though the investigation has concluded.
-    The rejection ``reason`` records that the closure was automatic
-    (not a reasoned-through refutation) so the audit trail stays
-    honest.
+    serialised for a terminal submission. A hypothesis sitting in
+    ``state.hypotheses`` at submit time can be in three states the
+    agent never explicitly labels:
+      - CONFIRMED: agent relied on it as the basis of the finding
+      - REJECTED: agent ran out of turns / refuted but forgot to move
+      - SUPERSEDED: subsumed by a finer hypothesis but never killed
+
+    Without auto-bucketing, these hypotheses stay "live" in the rail
+    forever even though the investigation has concluded. The previous
+    implementation moved them to ``state.rejected`` — but that's
+    actively misleading for confirmed claims (e.g. the agent's
+    'predicate symmetry holds' claim that grounds a 'VARIANT DEAD'
+    finding shouldn't be labeled 'rejected' in red).
+
+    New behavior: move to ``state.resolved`` with a neutral note that
+    points the reader at the terminal outcome for the actual
+    classification. The frontend renders ``resolved`` with a yellow
+    badge — neither red (rejected) nor green (confirmed) — so readers
+    know to consult the canonical outcome.
     """
     if not state.hypotheses:
         return
-    reason = (
-        f"auto-closed at turn {turn}: branch submitted terminal "
-        f"{outcome_kind} without explicitly rejecting this hypothesis"
+    note = (
+        f"auto-resolved at turn {turn}: branch submitted terminal "
+        f"{outcome_kind} — see canonical outcome for whether this "
+        f"claim was confirmed (basis of finding) or refuted "
+        f"(unaddressed alternative)"
     )
-    seen_ids = {r.id for r in state.rejected}
+    seen_resolved = {r.id for r in state.resolved}
+    seen_rejected = {r.id for r in state.rejected}
     for h in state.hypotheses:
-        if h.id in seen_ids:
+        if h.id in seen_resolved or h.id in seen_rejected:
             continue
-        state.rejected.append(
-            RejectedHypothesis(id=h.id, claim=h.claim, reason=reason),
+        state.resolved.append(
+            ResolvedHypothesis(
+                id=h.id,
+                claim=h.claim,
+                resolved_at_turn=turn,
+                terminal_outcome_kind=outcome_kind,
+                note=note,
+            ),
         )
     state.hypotheses = []
 

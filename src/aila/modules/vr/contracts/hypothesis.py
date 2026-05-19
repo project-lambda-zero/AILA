@@ -26,7 +26,8 @@ class HypothesisState(StrEnum):
 
     LIVE = "live"          # still in case_state.hypotheses on >=1 branch
     REJECTED = "rejected"  # moved to case_state.rejected on >=1 branch
-    MIXED = "mixed"        # live on some branches, rejected on others
+    RESOLVED = "resolved"  # auto-bucketed on terminal — see canonical outcome
+    MIXED = "mixed"        # state differs across branches
 
 
 class HypothesisProjection(BaseModel):
@@ -41,9 +42,11 @@ class HypothesisProjection(BaseModel):
 
     state: HypothesisState
     rejection_reason: str | None = None
+    resolution_note: str | None = None
 
     # Branch attribution: which branches currently host this hypothesis
-    # (live) and which host it as rejected. Operator clicks into a
-    # branch to see the engine state in context.
+    # (live) and which host it as rejected or resolved. Operator clicks
+    # into a branch to see the engine state in context.
     live_in_branches: list[str] = Field(default_factory=list)
     rejected_in_branches: list[str] = Field(default_factory=list)
+    resolved_in_branches: list[str] = Field(default_factory=list)

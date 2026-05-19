@@ -2948,8 +2948,10 @@ def create_vr_router() -> APIRouter:
         # hyp id → projection (built up as we walk branches)
         live_branches: dict[str, list[str]] = {}
         rejected_branches: dict[str, list[str]] = {}
+        resolved_branches: dict[str, list[str]] = {}
         claims: dict[str, dict[str, str]] = {}
         rejection_reasons: dict[str, str] = {}
+        resolution_notes: dict[str, str] = {}
 
         for b in rows:
             try:
@@ -2978,16 +2980,42 @@ def create_vr_router() -> APIRouter:
                 })
                 if h.get("reason"):
                     rejection_reasons.setdefault(hid, h["reason"])
+            for h in state.get("resolved", []) or []:
+                hid = h.get("id")
+                if not hid:
+                    continue
+                resolved_branches.setdefault(hid, []).append(b.id)
+                claims.setdefault(hid, {
+                    "claim": h.get("claim", ""),
+                    "why_plausible": "",
+                    "kill_criterion": "",
+                })
+                if h.get("note"):
+                    resolution_notes.setdefault(hid, h["note"])
 
-        all_ids = set(live_branches) | set(rejected_branches)
+        all_ids = set(live_branches) | set(rejected_branches) | set(resolved_branches)
         items: list[HypothesisProjection] = []
         for hid in sorted(all_ids):
             live = live_branches.get(hid, [])
             rejected = rejected_branches.get(hid, [])
-            if live and rejected:
+            resolved = resolved_branches.get(hid, [])
+            # State precedence:
+            #   live + (rejected or resolved on other branch) → MIXED
+            #   any rejected and nothing else → REJECTED
+            #   any resolved and nothing else → RESOLVED
+            #   live only → LIVE
+            #   rejected + resolved (no live) → REJECTED (more specific)
+            distinct_states = (
+                (1 if live else 0)
+                + (1 if rejected else 0)
+                + (1 if resolved else 0)
+            )
+            if distinct_states >= 2:
                 hstate = HypothesisState.MIXED
             elif rejected:
                 hstate = HypothesisState.REJECTED
+            elif resolved:
+                hstate = HypothesisState.RESOLVED
             else:
                 hstate = HypothesisState.LIVE
             c = claims.get(hid, {})
@@ -2998,8 +3026,10 @@ def create_vr_router() -> APIRouter:
                 kill_criterion=c.get("kill_criterion", ""),
                 state=hstate,
                 rejection_reason=rejection_reasons.get(hid),
+                resolution_note=resolution_notes.get(hid),
                 live_in_branches=live,
                 rejected_in_branches=rejected,
+                resolved_in_branches=resolved,
             ))
 
         return DataEnvelope(data=items)
