@@ -40,12 +40,14 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
+    KeepTogether,
     PageBreak,
     PageTemplate,
     Paragraph,
     Spacer,
     Table,
     TableStyle,
+    XPreformatted,
 )
 from sqlmodel import select as _select
 
@@ -958,7 +960,6 @@ def _format_code_block(
     mono XPreformatted when pygments is missing or the language has
     no lexer.
     """
-    from reportlab.platypus import XPreformatted  # noqa: PLC0415
     if not code.strip():
         return XPreformatted("", styles["mono"])
     if not _PYGMENTS_AVAILABLE:
@@ -1218,7 +1219,6 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
         story.append(Spacer(1, 0.15 * inch))
 
     # ── Risk Methodology (static block) ──────────────────────────
-    from reportlab.platypus import KeepTogether  # noqa: PLC0415
     methodology_flow: list[Any] = [
         Paragraph("Risk Methodology", styles["section_h1"]),
         Paragraph(
