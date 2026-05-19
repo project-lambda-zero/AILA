@@ -315,7 +315,14 @@ Rules:
   found no other call sites — say so explicitly in the `answer`.
   Do NOT pad with weak guesses.
 - For non-variant-hunt investigations (Kind: discovery, nday, etc.)
-  the `variant_hunt_orders` field is ignored — omit it.
+  the `variant_hunt_orders` field is STILL respected by the
+  dispatcher: when present on a DIRECT_FINDING or
+  PATCH_ASSESSMENT_REPORT payload, it spawns one child investigation
+  per entry. Emit it whenever you identify a real adjacent code path
+  worth a separate audit (residual gaps, sibling functions, patch
+  bypass candidates) — regardless of the parent investigation's
+  kind. "Field is ignored — omit it" was an older rule and no longer
+  applies.
 
 ### Creative variant hunting — how to actually find them
 
