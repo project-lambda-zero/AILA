@@ -151,20 +151,20 @@ export function AppHeader() {
   }, []);
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface px-4">
+    <header className="flex h-14 min-w-0 w-full shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4 overflow-hidden">
       {/* Left side: hamburger toggle + separator + breadcrumbs */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
         <SidebarTrigger className="-ml-1" />
         <Separator orientation="vertical" className="mx-1 h-4" />
-        <Breadcrumb>
-          <BreadcrumbList>
+        <Breadcrumb className="min-w-0 flex-1 overflow-hidden">
+          <BreadcrumbList className="flex-nowrap overflow-hidden">
             {crumbs.map((crumb, index) => (
-              <BreadcrumbItem key={crumb.path}>
-                {index > 0 && <BreadcrumbSeparator />}
+              <BreadcrumbItem key={crumb.path} className="min-w-0 shrink truncate">
+                {index > 0 && <BreadcrumbSeparator className="shrink-0" />}
                 {crumb.isLast ? (
-                  <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
+                  <BreadcrumbPage className="truncate">{crumb.label}</BreadcrumbPage>
                 ) : (
-                  <BreadcrumbLink render={<Link to={crumb.path} />}>
+                  <BreadcrumbLink className="truncate" render={<Link to={crumb.path} />}>
                     {crumb.label}
                   </BreadcrumbLink>
                 )}
@@ -175,7 +175,7 @@ export function AppHeader() {
       </div>
 
       {/* Right side: cmd+k trigger, notification bell, user avatar */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 shrink-0">
         <Button
           variant="outline"
           size="sm"
