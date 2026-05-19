@@ -578,7 +578,31 @@ class OutcomeDispatcher:
             uow.session.add(primary_branch)
             await uow.session.commit()
             await uow.session.refresh(child)
-            return child.id
+            child_id = child.id
+            child_team_id = child.team_id
+
+        # Enqueue the run_vr_investigate task so the child actually
+        # executes — without this the child investigation sits in
+        # status=CREATED forever waiting for someone to drive it.
+        # Same pattern as the API's create_investigation endpoint.
+        try:
+            from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
+            from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
+            task_queue = default_task_queue()
+            await task_queue.submit(
+                track="vr",
+                fn=run_vr_investigate,
+                kwargs={"investigation_id": child_id},
+                user_id="system",
+                group_id="vr_variant_child",
+                team_id=child_team_id,
+            )
+        except (OSError, RuntimeError, TimeoutError, ImportError) as exc:
+            _log.warning(
+                "_spawn_variant_child: enqueue failed child=%s err=%s",
+                child_id, exc,
+            )
+        return child_id
 
     async def _queue_poc_writer(
         self,
