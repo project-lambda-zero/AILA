@@ -93,7 +93,7 @@ function PayloadPreview({ payload }: { payload: Record<string, unknown> }) {
       ? proseCandidate
       : proseCandidate.slice(0, 600) + "…";
     return (
-      <div className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">
+      <div className="text-xs text-foreground whitespace-pre-wrap leading-relaxed break-words">
         {shown}
         {truncated && (
           <button
@@ -109,7 +109,7 @@ function PayloadPreview({ payload }: { payload: Record<string, unknown> }) {
   }
   const json = JSON.stringify(payload, null, 2);
   return (
-    <pre className="text-[10px] text-text-muted font-mono whitespace-pre-wrap">
+    <pre className="text-[10px] text-text-muted font-mono whitespace-pre-wrap break-words">
       {json.slice(0, 240)}
       {json.length > 240 ? "…" : ""}
     </pre>
@@ -369,9 +369,9 @@ export function InvestigationDetailPage() {
       </AilaCard>
 
       {/* Main grid: timeline left, side panels right */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4">
         {/* Timeline column */}
-        <div className="space-y-3">
+        <div className="space-y-3 min-w-0">
           {/* Filter bar */}
           <AilaCard>
             <div className="flex items-center gap-2 flex-wrap text-xs">
@@ -532,7 +532,7 @@ export function InvestigationDetailPage() {
         </div>
 
         {/* Side rail */}
-        <aside className="space-y-3">
+        <aside className="space-y-3 min-w-0">
           {/* Hypothesis projection (08_FRONTEND_UX.md §2.3) */}
           <HypothesisDetailRail investigationId={invId} />
           {/* Fuzz proposals queue (operator-in-the-loop) */}
