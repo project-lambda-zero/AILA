@@ -1029,7 +1029,7 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
     )
 
     class _DarkPage(PageTemplate):
-        def beforeDrawPage(self, canvas: Any, doc: Any) -> None:
+        def beforeDrawPage(self, canvas: Any, doc: Any) -> None:  # noqa: N802
             del doc
             canvas.saveState()
             canvas.setFillColor(_BG_PAGE)

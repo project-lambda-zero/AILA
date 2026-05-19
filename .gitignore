@@ -91,3 +91,4 @@ dump.rdb
 # Dev scaffolding (FUZZILLI bring-up, leftover toolchain archives)
 .tmp_fuzzilli_setup/
 swiftly-*.tar.gz
+.run/
