@@ -184,3 +184,12 @@ class ReasoningTurnDecision(BaseModel):
     answer: str | None = None
     confidence: ReasoningConfidence | None = None
     provenance: EvidenceProvenance = Field(default_factory=EvidenceProvenance)
+    # Structured submit-payload for terminal outcomes. The system prompt
+    # for vuln-research investigations places affected_components,
+    # variant_hunt_orders, crash_type, poc_code, etc. under a `payload`
+    # key on the submit action. Without this field on the schema,
+    # Pydantic silently dropped everything inside `payload` — the agent
+    # emitted the right structure but the dispatcher saw empty lists
+    # everywhere. Stored as a free-form dict so the schema doesn't have
+    # to enumerate every submit-payload variant per module.
+    payload: dict[str, Any] = Field(default_factory=dict)
