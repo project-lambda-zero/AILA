@@ -308,63 +308,60 @@ class OutcomeDispatcher:
         """
         target_row, inv = await self._load_target_for_investigation(investigation_id)
 
-        # Variant-hunt insufficiency gate: a DIRECT_FINDING submitted
-        # against a kind=variant_hunt investigation MUST either carry
-        # `variant_hunt_orders` with at least one entry OR start the
-        # `answer` with `NO FURTHER VARIANTS`. Without this gate, the
-        # agent submits a root-cause-only finding on turn 6 and the
-        # loop exits — the entire variant hunt deliverable is silently
-        # skipped. With this gate, an insufficient submit is recorded
-        # as a SKIPPED outcome with explicit reason, the investigation
-        # is reset to RUNNING, and a fresh run_vr_investigate task is
-        # queued so the next pass sees the rejected submission in its
-        # prior_outcomes section and acts accordingly.
+        # Variant-hunt advisory: a DIRECT_FINDING on a kind=variant_hunt
+        # investigation with empty variant_hunt_orders MAY be premature
+        # (agent short-circuited the hunt) or MAY be a legitimate
+        # exhaustion declaration ("variant DEAD", "no variants exist",
+        # "zero callers", "exhaustive negative"). The earlier hard gate
+        # tried to enforce this via string matching on the answer,
+        # marked the outcome SKIPPED, and looped back into another
+        # run_vr_investigate task — but agents kept inventing new
+        # phrasings of "we found nothing" that didn't match the regex,
+        # so the loop never terminated and the investigation got
+        # stuck status=running forever.
+        #
+        # New policy: trust the agent's submission. Log + flag the
+        # outcome's payload with `variant_hunt_advisory` so the operator
+        # (and the synthesis prompt) can see the panel didn't produce
+        # explicit variant orders. The operator can re-enqueue with
+        # steering if they think the agent gave up early — the panel of
+        # 3 personas + critic role + synthesiser is the multi-layered
+        # check, not a single string-match gate.
         if inv.kind == "variant_hunt":
             raw_orders = payload.get("variant_hunt_orders")
             order_count = len(raw_orders) if isinstance(raw_orders, list) else 0
-            answer_text = (payload.get("answer") or "").strip().upper()
-            declares_exhaustion = bool(
-                _VARIANT_EXHAUSTION_PATTERN.search(answer_text[:400]),
-            )
-            if order_count == 0 and not declares_exhaustion:
+            if order_count == 0:
+                answer_text = (payload.get("answer") or "").strip().upper()
+                declares_exhaustion = bool(
+                    _VARIANT_EXHAUSTION_PATTERN.search(answer_text[:400]),
+                )
+                advisory = (
+                    "exhaustion_declared"
+                    if declares_exhaustion
+                    else "no_orders_no_exhaustion_phrase"
+                )
+                _log.info(
+                    "variant_hunt advisory inv=%s outcome=%s flag=%s",
+                    investigation_id, outcome_id, advisory,
+                )
+                # Stamp the outcome payload so the operator + synthesis
+                # prompt can see the advisory without changing the
+                # outcome_kind or blocking dispatch.
                 async with UnitOfWork() as uow:
-                    inv_row = (await uow.session.exec(
-                        _select(VRInvestigationRecord).where(
-                            VRInvestigationRecord.id == investigation_id,
+                    out_row = (await uow.session.exec(
+                        _select(VRInvestigationOutcomeRecord).where(
+                            VRInvestigationOutcomeRecord.id == outcome_id,
                         )
                     )).first()
-                    if inv_row is not None:
-                        inv_row.status = InvestigationStatus.RUNNING.value
-                        inv_row.updated_at = utc_now()
-                        uow.session.add(inv_row)
+                    if out_row is not None:
+                        try:
+                            stored = json.loads(out_row.payload_json or "{}")
+                        except (ValueError, TypeError):
+                            stored = {}
+                        stored["variant_hunt_advisory"] = advisory
+                        out_row.payload_json = json.dumps(stored)
+                        uow.session.add(out_row)
                         await uow.session.commit()
-                try:
-                    from aila.modules.vr.workflow.task import (  # noqa: PLC0415
-                        run_vr_investigate,
-                    )
-                    task_queue = _build_default_task_queue()
-                    await task_queue.submit(
-                        track="vr",
-                        fn=run_vr_investigate,
-                        kwargs={"investigation_id": investigation_id},
-                        user_id=inv.team_id or "system",
-                        group_id="dispatcher_reenqueue",
-                        team_id=inv.team_id,
-                    )
-                except (OSError, RuntimeError, TimeoutError, ImportError) as exc:
-                    _log.warning(
-                        "variant_hunt re-enqueue FAILED investigation_id=%s err=%s",
-                        investigation_id, exc,
-                    )
-                return OutcomeDispatchResult(
-                    outcome_id=outcome_id,
-                    outcome_kind=OutcomeKind.DIRECT_FINDING,
-                    dispatch_status=OutcomeDispatchStatus.SKIPPED,
-                    dispatch_target=None,
-                    reason=(
-                        "insufficient_variant_hunt:no_orders_and_no_exhaustion_declaration"
-                    ),
-                )
 
 
         crash_type = payload.get("crash_type")
