@@ -286,6 +286,63 @@ class OutcomeDispatcher:
         """
         target_row, inv = await self._load_target_for_investigation(investigation_id)
 
+        # Variant-hunt insufficiency gate: a DIRECT_FINDING submitted
+        # against a kind=variant_hunt investigation MUST either carry
+        # `variant_hunt_orders` with at least one entry OR start the
+        # `answer` with `NO FURTHER VARIANTS`. Without this gate, the
+        # agent submits a root-cause-only finding on turn 6 and the
+        # loop exits — the entire variant hunt deliverable is silently
+        # skipped. With this gate, an insufficient submit is recorded
+        # as a SKIPPED outcome with explicit reason, the investigation
+        # is reset to RUNNING, and a fresh run_vr_investigate task is
+        # queued so the next pass sees the rejected submission in its
+        # prior_outcomes section and acts accordingly.
+        if inv.kind == "variant_hunt":
+            raw_orders = payload.get("variant_hunt_orders")
+            order_count = len(raw_orders) if isinstance(raw_orders, list) else 0
+            answer_text = (payload.get("answer") or "").strip().upper()
+            declares_exhaustion = answer_text.startswith("NO FURTHER VARIANTS")
+            if order_count == 0 and not declares_exhaustion:
+                async with UnitOfWork() as uow:
+                    inv_row = (await uow.session.exec(
+                        _select(VRInvestigationRecord).where(
+                            VRInvestigationRecord.id == investigation_id,
+                        )
+                    )).first()
+                    if inv_row is not None:
+                        inv_row.status = InvestigationStatus.RUNNING.value
+                        inv_row.updated_at = utc_now()
+                        uow.session.add(inv_row)
+                        await uow.session.commit()
+                try:
+                    from aila.modules.vr.workflow.task import (  # noqa: PLC0415
+                        run_vr_investigate,
+                    )
+                    task_queue = _build_default_task_queue()
+                    await task_queue.submit(
+                        track="vr",
+                        fn=run_vr_investigate,
+                        kwargs={"investigation_id": investigation_id},
+                        user_id=inv.team_id or "system",
+                        group_id="dispatcher_reenqueue",
+                        team_id=inv.team_id,
+                    )
+                except (OSError, RuntimeError, TimeoutError, ImportError) as exc:
+                    _log.warning(
+                        "variant_hunt re-enqueue FAILED investigation_id=%s err=%s",
+                        investigation_id, exc,
+                    )
+                return OutcomeDispatchResult(
+                    outcome_id=outcome_id,
+                    outcome_kind=OutcomeKind.DIRECT_FINDING,
+                    dispatch_status=OutcomeDispatchStatus.SKIPPED,
+                    dispatch_target=None,
+                    reason=(
+                        "insufficient_variant_hunt:no_orders_and_no_exhaustion_declaration"
+                    ),
+                )
+
+
         crash_type = payload.get("crash_type")
         vulnerable_function = payload.get("vulnerable_function")
         root_cause = payload.get("answer") or payload.get("reasoning") or ""
