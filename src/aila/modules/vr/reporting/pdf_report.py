@@ -869,7 +869,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         textColor=_FG_TEXT,
         backColor=_BG_SURFACE,
         borderColor=_BG_BORDER,
-        borderWidth=0.5,
+        borderWidth=0,
         borderPadding=8,
         leftIndent=8,
         rightIndent=8,
@@ -1085,7 +1085,8 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
 
     # ── Cover page ────────────────────────────────────────────────
     story.append(Spacer(1, 0.6 * inch))
-    story.append(Paragraph(content.title, styles["cover_title"]))
+    _cover_title = re.sub(r"\s*\(CVE-\d{4}-\d{4,7}\)\s*$", "", content.title) if facts.get("cve_id") else content.title
+    story.append(Paragraph(_escape_for_paragraph(_cover_title), styles["cover_title"]))
     if facts.get("cve_id"):
         story.append(Paragraph(facts["cve_id"], styles["cover_subtitle"]))
     story.append(Paragraph(content.auditor, styles["cover_subtitle"]))
@@ -1545,15 +1546,19 @@ def _append_finding_block(
     ]))
 
     if finding.proof_of_concept and finding.proof_of_concept.strip():
-        poc_code, poc_lang = _strip_md_fence(finding.proof_of_concept)
-        story.append(KeepTogether([
-            Paragraph("Proof of Concept", styles["section_h2"]),
-            _format_code_block(
-                poc_code[:8000],
-                poc_lang or _guess_lang_from_snippet(poc_code),
-                styles,
-            ),
-        ]))
+        # Writer often emits PoC as Python block + prose + bash invocation
+        # block. _render_markdown_body handles the multi-block case;
+        # _format_code_block would render the whole payload (fences and
+        # all) as one literal text dump.
+        poc_heading = Paragraph("Proof of Concept", styles["section_h2"])
+        poc_buf: list[Any] = []
+        _render_markdown_body(finding.proof_of_concept, styles, poc_buf)
+        if poc_buf:
+            story.append(KeepTogether([poc_heading, poc_buf[0]]))
+            for flow in poc_buf[1:]:
+                story.append(flow)
+        else:
+            story.append(poc_heading)
 
     # Code Location: writer often emits multiple fenced blocks
     # (fast-path code + value-pass code + slow-path code). Route
