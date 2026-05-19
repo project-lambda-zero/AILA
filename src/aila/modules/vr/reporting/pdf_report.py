@@ -35,6 +35,8 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
@@ -728,6 +730,71 @@ _SEVERITY_COLOR = {
 }
 
 
+# ── Font registration ──────────────────────────────────────────────
+#
+# Tahoma for body / headings (clean, no serifs, ships everywhere)
+# and a developer-grade mono (Cascadia Mono → Consolas → Courier)
+# for code blocks — fits the security-research / editor aesthetic.
+# Registration is best-effort: missing font files fall through to
+# the next candidate and ultimately to ReportLab's built-in
+# Helvetica / Courier so the report still renders on any host.
+
+_FONT_BODY: str = "Helvetica"
+_FONT_BODY_BOLD: str = "Helvetica-Bold"
+_FONT_MONO: str = "Courier"
+
+
+def _register_theme_fonts() -> None:
+    """Walk known Windows + Linux font paths, register the first
+    match per role, and update the module-level font aliases.
+    """
+    global _FONT_BODY, _FONT_BODY_BOLD, _FONT_MONO
+
+    body_candidates = [
+        ("Tahoma", "Tahoma-Bold",
+         r"C:\Windows\Fonts\tahoma.ttf",
+         r"C:\Windows\Fonts\tahomabd.ttf"),
+        ("Tahoma", "Tahoma-Bold",
+         "/usr/share/fonts/truetype/msttcorefonts/tahoma.ttf",
+         "/usr/share/fonts/truetype/msttcorefonts/tahomabd.ttf"),
+    ]
+    mono_candidates = [
+        ("CascadiaMono", r"C:\Windows\Fonts\CascadiaMono.ttf"),
+        ("CascadiaCode", r"C:\Windows\Fonts\CascadiaCode.ttf"),
+        ("Consolas",     r"C:\Windows\Fonts\consola.ttf"),
+        ("JetBrainsMono",
+         "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf"),
+        ("FiraCode",
+         "/usr/share/fonts/truetype/firacode/FiraCode-Regular.ttf"),
+    ]
+
+    for reg, bold, reg_path, bold_path in body_candidates:
+        if os.path.isfile(reg_path):
+            try:
+                pdfmetrics.registerFont(TTFont(reg, reg_path))
+                _FONT_BODY = reg
+                if os.path.isfile(bold_path):
+                    pdfmetrics.registerFont(TTFont(bold, bold_path))
+                    _FONT_BODY_BOLD = bold
+                else:
+                    _FONT_BODY_BOLD = reg
+                break
+            except (OSError, RuntimeError):
+                continue
+
+    for name, path in mono_candidates:
+        if os.path.isfile(path):
+            try:
+                pdfmetrics.registerFont(TTFont(name, path))
+                _FONT_MONO = name
+                break
+            except (OSError, RuntimeError):
+                continue
+
+
+_register_theme_fonts()
+
+
 def _build_styles() -> dict[str, ParagraphStyle]:
     """ParagraphStyle dictionary used across the report.
 
@@ -743,6 +810,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         fontSize=28,
         leading=34,
         alignment=TA_CENTER,
+        fontName=_FONT_BODY_BOLD,
         textColor=_FG_HEADING,
         spaceAfter=24,
     )
@@ -752,6 +820,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         fontSize=16,
         leading=20,
         alignment=TA_CENTER,
+        fontName=_FONT_BODY,
         textColor=_FG_SUBHEAD,
         spaceAfter=12,
     )
@@ -761,6 +830,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         fontSize=18,
         leading=22,
         textColor=_FG_HEADING,
+        fontName=_FONT_BODY_BOLD,
         spaceBefore=14,
         spaceAfter=8,
         borderColor=_BG_BORDER,
@@ -773,6 +843,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         fontSize=13,
         leading=16,
         textColor=_FG_SUBHEAD,
+        fontName=_FONT_BODY_BOLD,
         spaceBefore=10,
         spaceAfter=4,
     )
@@ -782,13 +853,14 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         fontSize=10.5,
         leading=15,
         textColor=_FG_TEXT,
+        fontName=_FONT_BODY,
         alignment=TA_LEFT,
         spaceAfter=6,
     )
     styles["mono"] = ParagraphStyle(
         "Mono",
         parent=base["Code"],
-        fontName="Courier",
+        fontName=_FONT_MONO,
         fontSize=9,
         leading=12,
         textColor=_FG_TEXT,
@@ -806,6 +878,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         fontSize=9,
         leading=12,
         textColor=_FG_MUTED,
+        fontName=_FONT_BODY,
         spaceAfter=2,
     )
     return styles
@@ -1183,11 +1256,17 @@ def _append_cover_meta_table(
         f"{facts.get('branch_turn_count', 0)} (over {facts.get('message_count', 0)} total messages)",
     ])
 
-    meta_table = Table(cover_meta, colWidths=[1.6 * inch, 4.4 * inch])
+    body_style = styles["body"]
+    cover_meta = [
+        [Paragraph(f"<font color='#808080'>{_escape_for_paragraph(k)}</font>", body_style),
+         Paragraph(_escape_for_paragraph(v), body_style)]
+        for k, v in cover_meta
+    ]
+    meta_table = Table(cover_meta, colWidths=[1.6 * inch, 4.6 * inch])
     meta_table.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
-        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#8a7a90")),
-        ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#4a4458")),
+        ("TEXTCOLOR", (0, 0), (0, -1), _FG_MUTED),
+        ("TEXTCOLOR", (1, 0), (1, -1), _FG_TEXT),
         ("ALIGN", (0, 0), (0, -1), "RIGHT"),
         ("ALIGN", (1, 0), (1, -1), "LEFT"),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -1267,7 +1346,7 @@ def _append_findings_index_table(
                 styles["body"],
             ),
             Paragraph(
-                f"<font color='#4a4458'><b>{sev}</b></font>",
+                f"<font color='#ffd7af'><b>{sev}</b></font>",
                 styles["body"],
             ),
             Paragraph("FIX AVAILABLE", styles["body"]),
@@ -1275,7 +1354,7 @@ def _append_findings_index_table(
         # Tint the risk-level cell with the pastel severity color.
         rows[-1][1] = Paragraph(
             f"<b>{sev}</b>",
-            ParagraphStyle("sev_cell", parent=styles["body"], textColor=colors.HexColor("#4a4458")),
+            ParagraphStyle("sev_cell", parent=styles["body"], textColor=_FG_TEXT),
         )
         # we keep simple text; cell background is applied via style cmd below
         del sev_color
@@ -1324,7 +1403,7 @@ def _append_finding_block(
     story.append(Paragraph(
         f"[{_escape_for_paragraph(finding.id)}] "
         f"{_escape_for_paragraph(finding.title)} &mdash; "
-        f"<font color='#4a4458'>{sev}</font>",
+        f"<font color='#ffd7af'>{sev}</font>",
         styles["section_h1"],
     ))
 
@@ -1383,20 +1462,21 @@ def _render_markdown_body(
         return
 
     in_code = False
+    code_lang = "text"
     code_buffer: list[str] = []
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
         if line.strip().startswith("```"):
             if in_code:
-                # close code block
                 code_text = "\n".join(code_buffer)
-                story.append(Paragraph(
-                    _escape_for_paragraph(code_text).replace("\n", "<br/>"),
-                    styles["mono"],
-                ))
+                story.append(_format_code_block(code_text, code_lang, styles))
                 code_buffer = []
+                code_lang = "text"
                 in_code = False
             else:
+                # capture language hint after the opening fence
+                hint = line.strip().lstrip("`").strip()
+                code_lang = hint if hint else "text"
                 in_code = True
             continue
         if in_code:
@@ -1416,10 +1496,7 @@ def _render_markdown_body(
             story.append(Paragraph(_inline_markdown(line), styles["body"]))
 
     if in_code and code_buffer:
-        story.append(Paragraph(
-            _escape_for_paragraph("\n".join(code_buffer)).replace("\n", "<br/>"),
-            styles["mono"],
-        ))
+        story.append(_format_code_block("\n".join(code_buffer), code_lang, styles))
 
 
 def _inline_markdown(text: str) -> str:
@@ -1433,7 +1510,7 @@ def _inline_markdown(text: str) -> str:
     # regex; this is presentation, not security-critical parsing.
     return re.sub(
         r"`([^`]+)`",
-        lambda m: f"<font name='Courier' color='#0f172a'>{m.group(1)}</font>",
+        lambda m: f"<font name='Courier' color='#ffd7af'>{m.group(1)}</font>",
         escaped,
     )
 
