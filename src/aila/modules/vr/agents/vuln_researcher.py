@@ -93,7 +93,17 @@ class VulnResearcherTurnResult:
 
 
 class VulnResearcherError(Exception):
-    """Raised on fatal agent failures (branch not found, prompt missing, etc.)."""
+    """Raised on fatal agent failures (branch not found, prompt missing, etc.).
+
+    ``retryable`` is True when the underlying cause was a transient LLM
+    failure (rate limit, provider overload, network) — the workflow
+    finalizer reads this to choose between auto-re-enqueue and
+    marking the investigation FAILED.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class HonestVulnResearcher:
@@ -168,10 +178,20 @@ class HonestVulnResearcher:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
             )
-        except RuntimeError as exc:
+        except Exception as exc:  # noqa: BLE001 — any engine/LLM failure must
+            # surface as VulnResearcherError so the loop catches it, marks
+            # exit_reason='researcher_error:<msg>', and the workflow
+            # finalises with status=FAILED instead of silently completing
+            # the task with no outcome and status=RUNNING. Previously
+            # only RuntimeError was caught — LLMError (subclass of
+            # Exception) propagated past the loop and the task framework
+            # marked the task 'done' with the investigation orphaned in
+            # RUNNING state forever.
             raise VulnResearcherError(
                 f"engine.decide_next_turn failed for investigation_id="
-                f"{self.investigation_id} branch_id={self.branch_id}: {exc}",
+                f"{self.investigation_id} branch_id={self.branch_id}: "
+                f"{type(exc).__name__}: {exc}",
+                retryable=bool(getattr(exc, "retryable", False)),
             ) from exc
 
         new_case_state = self._engine.absorb(case_state, decision)

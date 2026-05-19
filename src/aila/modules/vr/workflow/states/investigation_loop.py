@@ -96,10 +96,11 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
         try:
             result = await researcher.run_turn()
         except VulnResearcherError as exc:
-            exit_reason = f"researcher_error:{exc}"
+            tag = "researcher_error_retryable" if getattr(exc, "retryable", False) else "researcher_error"
+            exit_reason = f"{tag}:{exc}"
             _log.warning(
-                "investigation_loop ERROR investigation_id=%s after_turn=%d err=%s",
-                investigation_id, last_turn_idx, exc,
+                "investigation_loop ERROR investigation_id=%s after_turn=%d retryable=%s err=%s",
+                investigation_id, last_turn_idx, getattr(exc, "retryable", False), exc,
             )
             break
 
