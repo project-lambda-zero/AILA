@@ -132,6 +132,15 @@ class HonestVulnResearcher:
             turn_number,
         )
 
+        # Re-enqueue blindness fix: on a continuation run (operator
+        # re-enqueued a completed investigation), the agent has zero
+        # awareness it already submitted DIRECT_FINDINGs in prior
+        # passes. Without this, it re-investigates from scratch every
+        # time and lands on the same root cause — 6 outcomes, 0 new
+        # variants. Loading prior outcomes into the prompt forces it
+        # to acknowledge prior work and EXTEND instead of REPEAT.
+        prior_outcomes = await self._load_prior_outcomes()
+
         system_prompt = _load_prompt(inv.strategy_family)
         tool_specs = await _fetch_tool_specs(
             target_kind=(target_snapshot or {}).get("kind"),
@@ -145,6 +154,7 @@ class HonestVulnResearcher:
             cve_intel=self._cve_intel,
             target_snapshot=target_snapshot,
             tool_specs=tool_specs,
+            prior_outcomes=prior_outcomes,
         )
 
         # v0.4 GA-52: branch persona maps to a per-role task_type
@@ -286,6 +296,35 @@ class HonestVulnResearcher:
                     target_snapshot = self._snapshot_target(target)
             return inv, branch, target_snapshot
 
+    async def _load_prior_outcomes(self) -> list[dict[str, Any]]:
+        """Load every prior VRInvestigationOutcomeRecord for this investigation,
+        oldest first. Used by ``_build_user_prompt`` to render a
+        ``# Prior submissions`` section so the agent doesn't re-derive
+        the same root cause on every re-enqueue.
+        """
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.investigation_id == self.investigation_id)
+                .order_by(VRInvestigationOutcomeRecord.created_at.asc()),
+            )).all()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row.payload_json or "{}")
+            except (ValueError, TypeError):
+                payload = {}
+            out.append({
+                "outcome_id": row.id,
+                "outcome_kind": row.outcome_kind,
+                "confidence": row.confidence,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "answer": payload.get("answer") or "",
+                "variant_hunt_orders": payload.get("variant_hunt_orders") or [],
+                "affected_components": payload.get("affected_components") or [],
+            })
+        return out
+
     @staticmethod
     def _snapshot_target(target: Any) -> dict[str, Any]:
         """Compact dict the prompt builder renders."""
@@ -334,6 +373,7 @@ class HonestVulnResearcher:
         cve_intel: list[dict[str, Any]] | None = None,
         target_snapshot: dict[str, Any] | None = None,
         tool_specs: dict[str, list[dict[str, Any]]] | None = None,
+        prior_outcomes: list[dict[str, Any]] | None = None,
     ) -> str:
         """Render the per-turn user prompt.
 
@@ -357,6 +397,9 @@ class HonestVulnResearcher:
         )
         cve_intel_section = _render_cve_intel_section(cve_intel or [])
         target_section = _render_target_snapshot_section(target_snapshot or {})
+        prior_submissions_section = _render_prior_submissions_section(
+            prior_outcomes or [], inv.kind,
+        )
         target_kind = (target_snapshot or {}).get("kind")
 
         return (
@@ -376,6 +419,7 @@ class HonestVulnResearcher:
             f"{case_model}\n"
             f"\n"
             f"{operator_section}"
+            f"{prior_submissions_section}"
             f"{_render_available_tools_section(target_kind, tool_specs)}"
             f"# Instruction\n\n"
             f"Produce the next reasoning turn as a JSON object per the "

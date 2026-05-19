@@ -1110,51 +1110,81 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
     story.append(Paragraph(_escape_for_paragraph(content.test_approach), styles["body"]))
     story.append(Spacer(1, 0.15 * inch))
 
-    # ── Submission Timeline (when agent emitted >1 terminal outcome) ──
+    # ── Submission Timeline (collapse duplicates by root-cause cluster) ──
     outcome_trail = facts.get("outcome_trail") or []
     if len(outcome_trail) > 1:
-        story.append(Paragraph("Submission Timeline", styles["section_h1"]))
-        story.append(Paragraph(
-            f"The agent submitted <b>{len(outcome_trail)}</b> terminal outcomes "
-            f"across the audit window. Each row below is one submission event; "
-            f"repeated re-confirmations of the same root cause indicate high "
-            f"reproducibility, not separate bugs.",
-            styles["body"],
-        ))
-        story.append(Spacer(1, 0.08 * inch))
-        timeline_rows: list[list[Any]] = [[
-            Paragraph("<font color='#97dbbe'><b>#</b></font>", styles["body"]),
-            Paragraph("<font color='#97dbbe'><b>TIMESTAMP</b></font>", styles["body"]),
-            Paragraph("<font color='#97dbbe'><b>KIND</b></font>", styles["body"]),
-            Paragraph("<font color='#97dbbe'><b>CONF</b></font>", styles["body"]),
-            Paragraph("<font color='#97dbbe'><b>EXCERPT</b></font>", styles["body"]),
-        ]]
-        for i, o in enumerate(outcome_trail, 1):
+        # Bucket outcomes by a normalized 240-char prose prefix.
+        # Two outcomes that re-derive the same root cause in slightly
+        # different wording land in the same bucket. Show ONE row per
+        # bucket — repeating 6 near-identical rows is worse than no
+        # timeline at all.
+        def _bucket_key(text: str) -> str:
+            return re.sub(r"\s+", " ", (text or "")[:240]).casefold().strip()
+        buckets: dict[str, list[dict[str, Any]]] = {}
+        for o in outcome_trail:
             if not isinstance(o, dict):
                 continue
-            ts = (o.get("created_at") or "")[:19].replace("T", " ")
-            excerpt = (o.get("answer") or "").strip().splitlines()[0][:180] if o.get("answer") else "(empty)"
-            timeline_rows.append([
-                Paragraph(str(i), styles["body"]),
-                Paragraph(_escape_for_paragraph(ts), styles["mono"]),
-                Paragraph(_escape_for_paragraph(o.get("kind") or "?"), styles["body"]),
-                Paragraph(_escape_for_paragraph(str(o.get("confidence") or "?")), styles["body"]),
-                Paragraph(_escape_for_paragraph(excerpt), styles["body"]),
-            ])
-        tl_table = Table(
-            timeline_rows,
-            colWidths=[0.3 * inch, 1.4 * inch, 1.1 * inch, 0.6 * inch, 3.2 * inch],
-        )
-        tl_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), _BG_SURFACE),
-            ("GRID", (0, 0), (-1, -1), 0.4, _BG_BORDER),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ]))
-        story.append(tl_table)
+            buckets.setdefault(_bucket_key(o.get("answer") or ""), []).append(o)
+        unique_count = len(buckets)
+        total = len(outcome_trail)
+        story.append(Paragraph("Submission Timeline", styles["section_h1"]))
+        if unique_count == 1:
+            (only_bucket,) = buckets.values()
+            first = only_bucket[0]
+            extras = len(only_bucket) - 1
+            ts_list = ", ".join((o.get("created_at") or "")[:19].replace("T", " ") for o in only_bucket)
+            story.append(Paragraph(
+                f"The agent submitted <b>{total}</b> terminal outcomes during the audit, "
+                f"all resolving to the <b>same root-cause cluster</b>. Re-derivations like "
+                f"this indicate strong reproducibility, not separate findings.",
+                styles["body"],
+            ))
+            story.append(Spacer(1, 0.08 * inch))
+            story.append(Paragraph(
+                f"<b>First submission:</b> {_escape_for_paragraph((first.get('created_at') or '')[:19].replace('T', ' '))} "
+                f"({_escape_for_paragraph(first.get('kind') or '?')}, conf={_escape_for_paragraph(str(first.get('confidence') or '?'))})<br/>"
+                f"<b>Re-confirmations:</b> {extras}<br/>"
+                f"<b>All submission timestamps:</b> {_escape_for_paragraph(ts_list)}",
+                styles["body"],
+            ))
+        else:
+            story.append(Paragraph(
+                f"The agent submitted <b>{total}</b> terminal outcomes across <b>{unique_count}</b> "
+                f"distinct root-cause clusters. Each row below is one cluster with its "
+                f"first-seen timestamp and re-confirmation count.",
+                styles["body"],
+            ))
+            story.append(Spacer(1, 0.08 * inch))
+            timeline_rows: list[list[Any]] = [[
+                Paragraph("<font color='#97dbbe'><b>#</b></font>", styles["body"]),
+                Paragraph("<font color='#97dbbe'><b>FIRST SEEN</b></font>", styles["body"]),
+                Paragraph("<font color='#97dbbe'><b>RE-CONF</b></font>", styles["body"]),
+                Paragraph("<font color='#97dbbe'><b>EXCERPT</b></font>", styles["body"]),
+            ]]
+            for i, (_, group) in enumerate(buckets.items(), 1):
+                first = group[0]
+                ts = (first.get("created_at") or "")[:19].replace("T", " ")
+                excerpt = (first.get("answer") or "").strip().splitlines()[0][:180] if first.get("answer") else "(empty)"
+                timeline_rows.append([
+                    Paragraph(str(i), styles["body"]),
+                    Paragraph(_escape_for_paragraph(ts), styles["mono"]),
+                    Paragraph(str(len(group) - 1), styles["body"]),
+                    Paragraph(_escape_for_paragraph(excerpt), styles["body"]),
+                ])
+            tl_table = Table(
+                timeline_rows,
+                colWidths=[0.3 * inch, 1.5 * inch, 0.9 * inch, 3.9 * inch],
+            )
+            tl_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), _BG_SURFACE),
+                ("GRID", (0, 0), (-1, -1), 0.4, _BG_BORDER),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]))
+            story.append(tl_table)
         story.append(Spacer(1, 0.15 * inch))
 
     # ── Risk Methodology (static block) ──────────────────────────
