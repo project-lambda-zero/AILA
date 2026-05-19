@@ -334,7 +334,11 @@ fi
 echo "[aila] Starting backend..."
 cd "$REPO"
 spawn "backend" \
-  -m uvicorn aila.api.app:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload
+  -m uvicorn aila.api.app:app --host 0.0.0.0 --port "$BACKEND_PORT"
+# NO --reload on Windows: it spawns child workers that get orphaned on
+# kill, and orphans keep holding the TCP socket via the kernel — new
+# requests hit STALE code while you assume the latest edit is live.
+# Code changes require an explicit ``bash start.sh restart``.
 sleep 4
 
 # ── Workers ─────────────────────────────────────────────────────────────────
