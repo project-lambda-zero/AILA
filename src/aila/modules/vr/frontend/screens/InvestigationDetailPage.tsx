@@ -330,7 +330,9 @@ export function InvestigationDetailPage() {
                 {resumeMut.isPending ? "Resuming…" : "Resume"}
               </button>
             )}
-            {(inv.status === "completed" || inv.status === "failed") && (
+            {(inv.status === "completed"
+              || inv.status === "failed"
+              || inv.status === "created") && (
               <ReenqueuePicker
                 currentKind={inv.kind}
                 mutation={reenqueueMut}
