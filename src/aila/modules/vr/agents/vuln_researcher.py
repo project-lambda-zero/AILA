@@ -627,6 +627,90 @@ def _mcp_family_rule_for_kind(
 
 
 
+def _render_prior_submissions_section(
+    outcomes: list[dict[str, Any]],
+    investigation_kind: str,
+) -> str:
+    """Render prior submissions as a markdown block for the prompt.
+
+    Tells the agent what it already concluded on prior runs so it
+    doesn't re-derive the same root cause on every re-enqueue.
+    Returns "" when no prior outcomes — caller concatenates
+    unconditionally.
+    """
+    if not outcomes:
+        return ""
+    lines: list[str] = [
+        "# Prior submissions (you have run this investigation before)",
+        "",
+        f"You previously submitted **{len(outcomes)}** terminal outcome(s) "
+        f"for this investigation. The platform has those answers on file. "
+        f"Your job on this run is NOT to re-derive the same root cause "
+        f"and re-submit it.",
+        "",
+    ]
+    for i, o in enumerate(outcomes, 1):
+        ts = (o.get("created_at") or "")[:19].replace("T", " ")
+        kind = o.get("outcome_kind") or "?"
+        conf = o.get("confidence") or "?"
+        ans = (o.get("answer") or "").strip()
+        excerpt = ans[:600] + ("..." if len(ans) > 600 else "")
+        orders = o.get("variant_hunt_orders") or []
+        comp = o.get("affected_components") or []
+        lines.append(f"## Prior submission {i}/{len(outcomes)} - {ts} ({kind}, conf={conf})")
+        lines.append(f"variant_hunt_orders emitted: {len(orders)}")
+        lines.append(f"affected_components emitted: {len(comp)}")
+        lines.append("")
+        lines.append(excerpt or "(empty)")
+        lines.append("")
+    lines.append("# What this run must do")
+    lines.append("")
+    if investigation_kind == "variant_hunt":
+        lines.append(
+            "This is a `variant_hunt` investigation. You have already "
+            "established the root cause above. Re-submitting another "
+            "DIRECT_FINDING with the same root cause is WASTE - it "
+            "produces a duplicate outcome row and contributes nothing. "
+            "Two acceptable actions:",
+        )
+        lines.append("")
+        lines.append(
+            "1. **Emit `variant_hunt_orders`** for SPECIFIC NEW call sites "
+            "you identified that share the bug class but were NOT in any "
+            "prior submission's `variant_hunt_orders`. Each entry must "
+            "cite a concrete `{file, function}` you read via audit-mcp "
+            "during the audit. Cross-reference the prior submissions' "
+            "`affected_components` and `variant_hunt_orders` so you don't "
+            "re-list known sites.",
+        )
+        lines.append(
+            "2. **Declare exhaustion**: submit a final DIRECT_FINDING "
+            "whose `answer` starts with `NO FURTHER VARIANTS` and whose "
+            "`variant_hunt_orders` is `[]`. Use this only after you have "
+            "audited every plausible call site of the shared machinery "
+            "and found no new candidates. Cite which call sites you "
+            "reviewed in the answer body.",
+        )
+        lines.append("")
+        lines.append(
+            "Do NOT re-submit a third option (re-state the root cause). "
+            "The dispatcher records every submission; duplicate answers "
+            "are visible to the operator and reflect badly on the audit.",
+        )
+    else:
+        lines.append(
+            "You have already submitted a terminal outcome for this "
+            "investigation. Either (a) explicitly EXTEND the prior "
+            "analysis with new evidence the prior runs did not have, "
+            "or (b) explicitly state in `answer` why a re-submission is "
+            "warranted (e.g. operator-supplied new context, refined "
+            "scope). Do NOT re-derive the same conclusion in different "
+            "wording - that produces duplicate outcomes.",
+        )
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
     """Render every CVE id mentioned in the operator's question with
     its resolved intel status (08_FRONTEND_UX.md §2.4).
