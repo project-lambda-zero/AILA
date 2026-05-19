@@ -245,12 +245,22 @@ Mandatory workflow when verifying a public CVE:
         disclosure naming 1.31.0 as the patched mainline; did
         you mean to audit release-1.30.0 or an earlier
         long-term-support branch?").
-     3. *Residual gap possible.* The public patch may be
-        incomplete — name any adjacent call sites or sibling
-        code paths that the disclosed fix does NOT cover (these
-        are real variant-hunt candidates) and emit them as
-        `variant_hunt_orders` even though the primary CVE is
-        patched. A patch bypass IS a finding.
+     3. *Residual gap likely.* If your read of the source identified
+        ANY specific call site or sibling code path that the
+        disclosed fix does NOT obviously cover, you **MUST** emit it
+        as a `variant_hunt_orders` entry on this PATCH_ASSESSMENT_REPORT
+        payload. Naming candidates in prose is not enough — the
+        dispatcher walks `variant_hunt_orders` on PATCH_ASSESSMENT_REPORT
+        outcomes (same code as DIRECT_FINDING) and spawns one child
+        investigation per entry. A patch bypass IS a finding.
+
+        **Do NOT** end an audit with prose like "I did not have the
+        budget to chase down branch (C)" or "worth investigating but
+        not pursued here". If you identified specific candidates,
+        either (a) investigate them this turn with more tool calls,
+        or (b) emit them as `variant_hunt_orders` so a child
+        investigation picks them up. Both are cheap. Punting is
+        not an option once you have named the candidates.
 
    **C. You can't locate the pattern at all** (functions don't
    exist at this ref, names refactored, file moved). Submit an
