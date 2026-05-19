@@ -92,3 +92,9 @@ dump.rdb
 .tmp_fuzzilli_setup/
 swiftly-*.tar.gz
 .run/
+
+# stray test artifacts from interactive debugging
+.direct_pdf.pdf
+.live_*.pdf
+.test_*.pdf
+.pre-filter-head.txt
