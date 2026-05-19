@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 
 import { authorizedRequestJson } from "@platform/api/http";
 
@@ -271,6 +271,70 @@ export function useInvestigationHypotheses(investigationId: string) {
     enabled: !!investigationId,
     refetchInterval: 8000,
   });
+}
+
+/**
+ * Hypothesis aggregation across every investigation rooted on one target.
+ *
+ * Server has no `/targets/:id/hypotheses` endpoint yet — this hook fans
+ * out to `/investigations/:id/hypotheses` per investigation that has
+ * actually run (status != 'created') and flattens the results with
+ * investigation-context attached. UI uses this to render a single
+ * sortable + filterable table on the target's Hypotheses tab.
+ */
+export interface TargetHypothesisRow extends HypothesisProjection {
+  investigation_id: string;
+  investigation_title: string;
+  investigation_kind: string;
+  investigation_status: string;
+}
+
+export function useTargetHypotheses(targetId: string) {
+  const invsQuery = useInvestigationsForTarget(targetId);
+  const investigations = invsQuery.data?.data ?? [];
+  // Only fetch hypotheses for investigations that have actually run.
+  // `created` status means agents never started — endpoint returns []
+  // and 24 empty subqueries just add latency + noise.
+  const ran = investigations.filter((inv) => inv.status !== "created");
+
+  const hypothesisQueries = useQueries({
+    queries: ran.map((inv) => ({
+      queryKey: ["vr", "investigation-hypotheses", inv.id] as const,
+      queryFn: async () =>
+        await authorizedRequestJson<Envelope<HypothesisProjection[]>>(
+          `/vr/investigations/${encodeURIComponent(inv.id)}/hypotheses`,
+        ),
+      enabled: !!inv.id,
+      refetchInterval: 12000,
+    })),
+  });
+
+  const isLoading =
+    invsQuery.isLoading || hypothesisQueries.some((q) => q.isLoading);
+  const isError =
+    invsQuery.isError || hypothesisQueries.some((q) => q.isError);
+
+  const rows: TargetHypothesisRow[] = [];
+  ran.forEach((inv, i) => {
+    const items = hypothesisQueries[i]?.data?.data ?? [];
+    for (const h of items) {
+      rows.push({
+        ...h,
+        investigation_id: inv.id,
+        investigation_title: inv.title,
+        investigation_kind: inv.kind,
+        investigation_status: inv.status,
+      });
+    }
+  });
+
+  return {
+    isLoading,
+    isError,
+    rows,
+    investigationCount: ran.length,
+    skippedCreatedCount: investigations.length - ran.length,
+  };
 }
 
 export function useWorkspaces(offset = 0, limit = 50) {
