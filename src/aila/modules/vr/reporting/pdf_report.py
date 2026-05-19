@@ -843,11 +843,12 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         "SectionH2",
         parent=base["Heading2"],
         fontSize=13,
-        leading=16,
+        leading=18,
         textColor=_FG_SUBHEAD,
         fontName=_FONT_BODY_BOLD,
-        spaceBefore=10,
-        spaceAfter=4,
+        spaceBefore=12,
+        spaceAfter=6,
+        keepWithNext=1,
     )
     styles["body"] = ParagraphStyle(
         "Body",
@@ -1054,7 +1055,7 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
         LETTER[0] - 2 * margin, LETTER[1] - 2 * margin,
         id="body",
         leftPadding=0, rightPadding=0,
-        topPadding=0, bottomPadding=0,
+        topPadding=12, bottomPadding=6,
     )
 
     class _DarkPage(PageTemplate):
@@ -1375,18 +1376,19 @@ def _append_cover_meta_table(
     ]
     meta_table = Table(cover_meta, colWidths=[1.6 * inch, 4.6 * inch])
     meta_table.setStyle(TableStyle([
-        ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
+        ("FONT", (0, 0), (-1, -1), _FONT_BODY, 10),
         ("TEXTCOLOR", (0, 0), (0, -1), _FG_MUTED),
         ("TEXTCOLOR", (1, 0), (1, -1), _FG_TEXT),
         ("ALIGN", (0, 0), (0, -1), "RIGHT"),
         ("ALIGN", (1, 0), (1, -1), "LEFT"),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#faf6fc")),
-        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#d8d0e0")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("BACKGROUND", (0, 0), (-1, -1), _BG_SURFACE),
+        ("LINEAFTER", (0, 0), (0, -1), 0.5, _BG_BORDER),
+        ("BOX", (0, 0), (-1, -1), 0.5, _BG_BORDER),
     ]))
     meta_table.hAlign = "CENTER"
     story.append(meta_table)
