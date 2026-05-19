@@ -368,8 +368,7 @@ fi
 
 # ── Health check ────────────────────────────────────────────────────────────
 echo ""
-echo "[aila] Waiting for services..."
-sleep 10
+echo "[aila] Spawned. Health may take a few seconds — re-run 'bash start.sh status' if any service is red."
 show_status
 echo ""
 echo "[aila] Restart: bash start.sh restart"
