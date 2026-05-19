@@ -18,6 +18,7 @@ Finalizes the investigation row based on the loop's exit reason:
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -288,9 +289,27 @@ async def _maybe_trigger_synthesis(investigation_id: str) -> None:
         )).first()
         if inv is None:
             return
-        # Skip if synthesis has already run for this investigation.
+        # Skip only when the primary outcome row IS already a synthesis
+        # output. Without this distinction, the legacy 'first terminal
+        # wins primary_outcome_id' path (investigation_emit body line
+        # ~170) blocks synthesis forever, because primary_outcome_id
+        # gets set on the first persona's submission before siblings
+        # exist. Real synthesis outcomes carry a 'panel_summary' field
+        # populated by SynthesisAgent — use that as the unique marker.
         if inv.primary_outcome_id:
-            return
+            primary_outcome = (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord).where(
+                    VRInvestigationOutcomeRecord.id == inv.primary_outcome_id,
+                )
+            )).first()
+            if primary_outcome is not None:
+                try:
+                    primary_payload = json.loads(primary_outcome.payload_json or "{}")
+                except (ValueError, TypeError):
+                    primary_payload = {}
+                if "panel_summary" in primary_payload:
+                    # Real synthesis already ran — nothing to do.
+                    return
 
         branches = (await uow.session.exec(
             _select(VRInvestigationBranchRecord).where(
