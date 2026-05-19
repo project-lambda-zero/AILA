@@ -61,6 +61,10 @@ def _resolve_final_status(exit_reason: str) -> str | None:
         return InvestigationStatus.COMPLETED.value
     if exit_reason.startswith("status_flipped:"):
         return None
+    if exit_reason.startswith("researcher_error_retryable:"):
+        # Transient LLM failure (rate limit, provider overload, network) —
+        # don't mark FAILED. _should_auto_continue handles re-enqueueing.
+        return None
     if exit_reason.startswith("researcher_error:"):
         return InvestigationStatus.FAILED.value
     return InvestigationStatus.COMPLETED.value
