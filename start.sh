@@ -44,8 +44,12 @@ COMMAND="${1:-start}"
 : "${AILA_START_AUDIT_MCP:=1}"
 
 RUN_DIR=".run"
-mkdir -p "$RUN_DIR"
-RUN_DIR_ABS="$(cd "$RUN_DIR" && pwd -W 2>/dev/null || (cd "$RUN_DIR" && pwd))"
+mkdir -p "$RUN_DIR" 2>/dev/null || true
+RUN_DIR_ABS="$PWD/$RUN_DIR"
+# On Git Bash, convert /c/... to C:/... so PowerShell Start-Process accepts it.
+if command -v cygpath >/dev/null 2>&1; then
+  RUN_DIR_ABS=$(cygpath -m "$RUN_DIR_ABS" 2>/dev/null || echo "$RUN_DIR_ABS")
+fi
 
 # ── PowerShell + taskkill detection ─────────────────────────────────────────
 PS=""
@@ -209,7 +213,6 @@ kill_aila_processes() {
   kill_port_owner "${AUDIT_MCP_PORT:-18822}"
   # Frontend: vite spawns under node.exe.
   kill_matching "node.exe" "vite|aila/shell"
-  sleep 2
   echo "[aila] Stopped."
 }
 
@@ -339,7 +342,6 @@ spawn "backend" \
 # kill, and orphans keep holding the TCP socket via the kernel — new
 # requests hit STALE code while you assume the latest edit is live.
 # Code changes require an explicit ``bash start.sh restart``.
-sleep 4
 
 # ── Workers ─────────────────────────────────────────────────────────────────
 echo "[aila] Starting workers: $WORKERS"
