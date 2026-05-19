@@ -438,6 +438,9 @@ def _investigation_summary(
     branch_count: int = 0,
     message_count: int = 0,
     outcome_count: int = 0,
+    primary_outcome_kind: str | None = None,
+    primary_outcome_confidence: str | None = None,
+    primary_outcome_verdict_head: str | None = None,
 ) -> VRInvestigationSummary:
     """Project a VRInvestigationRecord row to the public summary."""
     import json as _json
@@ -465,6 +468,9 @@ def _investigation_summary(
         message_count=message_count,
         outcome_count=outcome_count,
         primary_outcome_id=record.primary_outcome_id,
+        primary_outcome_kind=primary_outcome_kind,
+        primary_outcome_confidence=primary_outcome_confidence,
+        primary_outcome_verdict_head=primary_outcome_verdict_head,
         linked_campaign_ids=_json.loads(record.linked_campaign_ids_json or "[]"),
         linked_finding_ids=_json.loads(record.linked_finding_ids_json or "[]"),
         started_at=record.started_at,
@@ -2135,7 +2141,87 @@ def create_vr_router() -> APIRouter:
                 base.order_by(VRInvestigationRecord.created_at.desc()).offset(offset).limit(limit)
             )).all()
 
-        items = [_investigation_summary(r) for r in rows]
+        # Batch-load counts + primary outcome details so the list page
+        # shows real numbers and the canonical verdict per row without
+        # an N+1 round-trip to the detail endpoint. Previous behavior
+        # passed 0 for every count, so even completed investigations
+        # appeared empty on the list — and there was no way to see at
+        # a glance whether an investigation had landed a finding.
+        if rows:
+            import json as _json  # noqa: PLC0415
+
+            from .db_models import (  # noqa: PLC0415
+                VRInvestigationBranchRecord,
+                VRInvestigationMessageRecord,
+                VRInvestigationOutcomeRecord,
+            )
+            row_ids = [r.id for r in rows]
+            primary_ids = {r.id: r.primary_outcome_id for r in rows if r.primary_outcome_id}
+
+            async with UnitOfWork() as uow:
+                br_pairs = (await uow.session.exec(
+                    select(
+                        VRInvestigationBranchRecord.investigation_id,
+                        sa_func.count(),
+                    )
+                    .where(VRInvestigationBranchRecord.investigation_id.in_(row_ids))
+                    .group_by(VRInvestigationBranchRecord.investigation_id),
+                )).all()
+                br_counts = {iid: int(c) for iid, c in br_pairs}
+                msg_pairs = (await uow.session.exec(
+                    select(
+                        VRInvestigationMessageRecord.investigation_id,
+                        sa_func.count(),
+                    )
+                    .where(VRInvestigationMessageRecord.investigation_id.in_(row_ids))
+                    .group_by(VRInvestigationMessageRecord.investigation_id),
+                )).all()
+                msg_counts = {iid: int(c) for iid, c in msg_pairs}
+                oc_pairs = (await uow.session.exec(
+                    select(
+                        VRInvestigationOutcomeRecord.investigation_id,
+                        sa_func.count(),
+                    )
+                    .where(VRInvestigationOutcomeRecord.investigation_id.in_(row_ids))
+                    .group_by(VRInvestigationOutcomeRecord.investigation_id),
+                )).all()
+                oc_counts = {iid: int(c) for iid, c in oc_pairs}
+                outcome_rows: list[Any] = []
+                if primary_ids:
+                    outcome_rows = (await uow.session.exec(
+                        select(VRInvestigationOutcomeRecord)
+                        .where(VRInvestigationOutcomeRecord.id.in_(list(primary_ids.values()))),
+                    )).all()
+                primary_by_inv: dict[str, Any] = {}
+                for o in outcome_rows:
+                    primary_by_inv[o.investigation_id] = o
+
+            items = []
+            for r in rows:
+                primary = primary_by_inv.get(r.id)
+                verdict_head: str | None = None
+                if primary is not None:
+                    try:
+                        payload = _json.loads(primary.payload_json or "{}")
+                    except (ValueError, TypeError):
+                        payload = {}
+                    ps = payload.get("panel_summary")
+                    if isinstance(ps, dict):
+                        verdict_head = ((ps.get("narrative") or "").splitlines() or [""])[0][:140]
+                    if not verdict_head:
+                        verdict_head = ((payload.get("answer") or "").splitlines() or [""])[0][:140]
+                items.append(_investigation_summary(
+                    r,
+                    branch_count=br_counts.get(r.id, 0),
+                    message_count=msg_counts.get(r.id, 0),
+                    outcome_count=oc_counts.get(r.id, 0),
+                    primary_outcome_kind=primary.outcome_kind if primary else None,
+                    primary_outcome_confidence=primary.confidence if primary else None,
+                    primary_outcome_verdict_head=verdict_head or None,
+                ))
+        else:
+            items = []
+
         return DataEnvelope(
             data=items,
             meta=PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump(),
@@ -2202,11 +2288,41 @@ def create_vr_router() -> APIRouter:
                 .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
             )).one()
 
+            primary_outcome_kind: str | None = None
+            primary_outcome_confidence: str | None = None
+            primary_outcome_verdict_head: str | None = None
+            if inv.primary_outcome_id:
+                primary = (await uow.session.exec(
+                    select(VRInvestigationOutcomeRecord).where(
+                        VRInvestigationOutcomeRecord.id == inv.primary_outcome_id,
+                    ),
+                )).first()
+                if primary is not None:
+                    primary_outcome_kind = primary.outcome_kind
+                    primary_outcome_confidence = primary.confidence
+                    import json as _json  # noqa: PLC0415
+                    try:
+                        payload = _json.loads(primary.payload_json or "{}")
+                    except (ValueError, TypeError):
+                        payload = {}
+                    ps = payload.get("panel_summary")
+                    if isinstance(ps, dict):
+                        primary_outcome_verdict_head = (
+                            (ps.get("narrative") or "").splitlines() or [""]
+                        )[0][:140]
+                    if not primary_outcome_verdict_head:
+                        primary_outcome_verdict_head = (
+                            (payload.get("answer") or "").splitlines() or [""]
+                        )[0][:140] or None
+
         return DataEnvelope(data=_investigation_summary(
             inv,
             branch_count=int(branch_count),
             message_count=int(message_count),
             outcome_count=int(outcome_count),
+            primary_outcome_kind=primary_outcome_kind,
+            primary_outcome_confidence=primary_outcome_confidence,
+            primary_outcome_verdict_head=primary_outcome_verdict_head,
         ))
 
     @router.delete(
