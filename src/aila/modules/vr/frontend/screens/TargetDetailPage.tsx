@@ -19,11 +19,11 @@ import {
   useUploadTargetArtifact,
 } from "../mutations";
 import {
-  useInvestigationsForTarget,
   useTarget,
+  useTargetHypotheses,
   useWorkspaces,
 } from "../queries";
-import { HypothesisDetailRail } from "../components/HypothesisDetailRail";
+import { Link } from "react-router";
 import type {
   AnalysisState,
   TargetKind,
@@ -201,26 +201,160 @@ function AttackSurfaceTab({
 }
 
 function HypothesesTab({ targetId }: { targetId: string }) {
-  // Per-investigation hypothesis API; we surface the union across
-  // investigations rooted on this target. The endpoint lives at
-  // /vr/investigations/:id/hypotheses (08_FRONTEND_UX.md §2.3).
-  const { data: invsRes } = useInvestigationsForTarget(targetId);
-  const investigations = invsRes?.data ?? [];
-  if (investigations.length === 0) {
+  // Per-target aggregated hypothesis table. Replaces the prior
+  // "one card per investigation" rail which (a) drowned real data
+  // under 24+ empty cards for status=created investigations and
+  // (b) had no investigation context on each card so users couldn't
+  // tell which inv any hypothesis belonged to.
+  const { rows, isLoading, isError, investigationCount, skippedCreatedCount } =
+    useTargetHypotheses(targetId);
+  const [filter, setFilter] = useState<"all" | "live" | "rejected" | "mixed">(
+    "all",
+  );
+
+  const visible = rows.filter((r) => filter === "all" || r.state === filter);
+  const sorted = visible.slice().sort((a, b) => {
+    // live first, then mixed, then rejected — within each state, oldest investigation
+    const rank: Record<string, number> = { live: 0, mixed: 1, rejected: 2 };
+    const rs = (rank[a.state] ?? 9) - (rank[b.state] ?? 9);
+    if (rs !== 0) return rs;
+    return a.investigation_title.localeCompare(b.investigation_title);
+  });
+
+  const counts = {
+    all: rows.length,
+    live: rows.filter((r) => r.state === "live").length,
+    mixed: rows.filter((r) => r.state === "mixed").length,
+    rejected: rows.filter((r) => r.state === "rejected").length,
+  };
+
+  if (isLoading && rows.length === 0) {
+    return <LoadingSkeleton size="md" width="full" />;
+  }
+
+  if (!isLoading && rows.length === 0) {
     return (
       <AilaCard>
         <EmptyState
-          title="No hypotheses yet"
-          description="Open an investigation on this target — the reasoning engine populates hypotheses per branch as evidence lands."
+          title="No hypotheses on this target yet"
+          description={
+            investigationCount === 0
+              ? "No investigation on this target has produced hypotheses yet. Start one — agents populate hypotheses as evidence lands."
+              : `Aggregated across ${investigationCount} investigation(s) that have run. Hypotheses are emitted by the reasoning engine as it processes evidence.`
+          }
         />
       </AilaCard>
     );
   }
+
   return (
-    <div className="space-y-3">
-      {investigations.map((inv) => (
-        <HypothesisDetailRail key={inv.id} investigationId={inv.id} />
-      ))}
+    <div className="space-y-3 min-w-0">
+      <AilaCard>
+        <div className="flex items-center justify-between gap-3 flex-wrap min-w-0">
+          <div className="text-sm font-semibold text-foreground">
+            {rows.length} hypotheses across {investigationCount} investigation
+            {investigationCount === 1 ? "" : "s"}
+            {skippedCreatedCount > 0 && (
+              <span className="ml-2 text-xs text-text-muted font-normal">
+                ({skippedCreatedCount} pending investigation
+                {skippedCreatedCount === 1 ? "" : "s"} not yet running)
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1 flex-wrap">
+            {(["all", "live", "mixed", "rejected"] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFilter(f)}
+                className={
+                  "px-2 py-1 text-xs rounded-md border transition-colors " +
+                  (filter === f
+                    ? "border-accent bg-accent/10 text-foreground"
+                    : "border-border-default text-text-muted hover:text-foreground")
+                }
+              >
+                {f} ({counts[f]})
+              </button>
+            ))}
+          </div>
+        </div>
+        {isError && (
+          <p className="mt-2 text-xs text-text-danger">
+            One or more per-investigation fetches failed; partial data shown.
+          </p>
+        )}
+      </AilaCard>
+
+      <AilaCard className="p-0 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+              <th className="px-3 py-2 font-semibold">State</th>
+              <th className="px-3 py-2 font-semibold">Investigation</th>
+              <th className="px-3 py-2 font-semibold">Hypothesis</th>
+              <th className="px-3 py-2 font-semibold">Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r, i) => (
+              <tr
+                key={`${r.investigation_id}:${r.id}:${i}`}
+                className="border-b border-border-default last:border-b-0 align-top hover:bg-surface transition-colors"
+              >
+                <td className="px-3 py-2 whitespace-nowrap">
+                  <AilaBadge
+                    severity={
+                      r.state === "live"
+                        ? "info"
+                        : r.state === "rejected"
+                          ? "low"
+                          : "medium"
+                    }
+                    size="sm"
+                  >
+                    {r.state}
+                  </AilaBadge>
+                </td>
+                <td className="px-3 py-2 min-w-0 max-w-[260px]">
+                  <Link
+                    to={`/vr/investigations/${r.investigation_id}`}
+                    className="text-foreground hover:underline break-words text-xs"
+                  >
+                    {r.investigation_title}
+                  </Link>
+                  <div className="text-[10px] font-mono text-text-muted mt-0.5">
+                    {r.investigation_kind} · {r.investigation_status}
+                  </div>
+                </td>
+                <td className="px-3 py-2 min-w-0 break-words">
+                  <div className="text-foreground">{r.claim}</div>
+                  <div className="text-[10px] font-mono text-text-muted mt-0.5">
+                    {r.id}
+                  </div>
+                </td>
+                <td className="px-3 py-2 min-w-0 break-words text-xs">
+                  {r.rejection_reason ? (
+                    <div className="text-text-muted">
+                      <span className="text-text-danger">rejected:</span>{" "}
+                      {r.rejection_reason}
+                    </div>
+                  ) : r.why_plausible ? (
+                    <div className="text-text-muted">{r.why_plausible}</div>
+                  ) : r.kill_criterion ? (
+                    <div className="text-text-muted">
+                      <span className="text-text-muted">kill if:</span>{" "}
+                      {r.kill_criterion}
+                    </div>
+                  ) : (
+                    <span className="text-text-muted italic">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </AilaCard>
     </div>
   );
 }
