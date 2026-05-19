@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -63,6 +64,27 @@ __all__ = [
 ]
 
 _log = logging.getLogger(__name__)
+
+
+# Accepted ways for an agent to declare it has exhausted the variant
+# search on a kind=variant_hunt investigation. Matches "VARIANT DEAD",
+# "VARIANT IS DEAD", "DEAD VARIANT", "NO VARIANT EXISTS/FOUND",
+# "VARIANT NOT FOUND", "VARIANT ABSENT", "NO (NEW|FURTHER) VARIANT(S)",
+# "NO ADJACENT VARIANT(S)". Checked against the first 400 chars of the
+# answer (upper-cased). Without this broad matching the gate forced
+# the agent into a strict literal prefix and rejected semantically
+# equivalent declarations, triggering an infinite re-enqueue loop.
+_VARIANT_EXHAUSTION_PATTERN = re.compile(
+    r"\b("
+    r"NO\s+(?:FURTHER|NEW|ADJACENT|REMAINING|OTHER)\s+VARIANTS?"
+    r"|NO\s+VARIANT\s+(?:EXISTS?|FOUND|REMAINS?|CANDIDATES?)"
+    r"|VARIANT\s+(?:IS\s+)?DEAD"
+    r"|DEAD\s+VARIANT"
+    r"|VARIANT\s+(?:NOT\s+FOUND|ABSENT|EXHAUSTED)"
+    r"|VARIANT\s+HUNT\s+(?:EXHAUSTED|COMPLETE|CONCLUDED)"
+    r"|EXHAUSTIVE\s+(?:NEGATIVE|SEARCH)"
+    r")\b"
+)
 
 
 @dataclass(slots=True)
@@ -301,7 +323,9 @@ class OutcomeDispatcher:
             raw_orders = payload.get("variant_hunt_orders")
             order_count = len(raw_orders) if isinstance(raw_orders, list) else 0
             answer_text = (payload.get("answer") or "").strip().upper()
-            declares_exhaustion = answer_text.startswith("NO FURTHER VARIANTS")
+            declares_exhaustion = bool(
+                _VARIANT_EXHAUSTION_PATTERN.search(answer_text[:400]),
+            )
             if order_count == 0 and not declares_exhaustion:
                 async with UnitOfWork() as uow:
                     inv_row = (await uow.session.exec(

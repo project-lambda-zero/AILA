@@ -46,6 +46,7 @@ from aila.modules.vr.contracts import (
     PayloadKind,
     SenderKind,
 )
+from aila.modules.vr.contracts.branch import BranchStatus
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
@@ -59,6 +60,7 @@ from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
     ReasoningContract,
     ReasoningTurnDecision,
+    RejectedHypothesis,
 )
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
@@ -233,6 +235,19 @@ class HonestVulnResearcher:
                 outcome_kind = _terminal_outcome_kind(decision)
                 new_payload = _outcome_payload(decision)
                 new_confidence = _to_outcome_confidence(decision).value
+                # Auto-reject any hypothesis still in `hypotheses` at
+                # submit time. The agent had every prior turn to call
+                # reject_hypothesis manually; whatever survives to the
+                # terminal turn is "unresolved" and stays "live" in the
+                # frontend forever unless we close it here. Carries an
+                # explicit reason so the audit trail shows it was
+                # auto-closed rather than reasoned-through.
+                _auto_reject_live_on_terminal(
+                    new_case_state,
+                    turn=turn_number,
+                    outcome_kind=outcome_kind.value,
+                )
+                branch_row.case_state_json = _encode_case_state(new_case_state)
                 outcome_id = await _upsert_canonical_outcome(
                     uow=uow,
                     investigation_id=self.investigation_id,
@@ -243,6 +258,15 @@ class HonestVulnResearcher:
                     new_payload=new_payload,
                     at_turn=turn_number,
                 )
+                # Close the branch — BranchStatus.COMPLETED + closed_reason
+                # + closed_at — so _maybe_trigger_synthesis can count it
+                # against the "expected to submit" set and the UI shows
+                # the branch as done rather than perpetually active.
+                branch_row.status = BranchStatus.COMPLETED.value
+                branch_row.closed_reason = (
+                    f"terminal_submit:turn_{turn_number}:{outcome_kind.value}"
+                )
+                branch_row.closed_at = utc_now()
 
             await uow.session.commit()
             await uow.session.refresh(msg)
@@ -1127,6 +1151,38 @@ def _encode_case_state(state: ReasoningCaseState) -> str:
     return json.dumps(state.model_dump(mode="json"))
 
 
+def _auto_reject_live_on_terminal(
+    state: ReasoningCaseState,
+    *,
+    turn: int,
+    outcome_kind: str,
+) -> None:
+    """Move every still-live hypothesis to ``state.rejected`` in place.
+
+    Called from ``run_turn`` immediately before the case_state is
+    serialised for a terminal submission. Without this step, anything
+    the agent left in ``hypotheses`` survives forever as "live" in
+    the frontend rail even though the investigation has concluded.
+    The rejection ``reason`` records that the closure was automatic
+    (not a reasoned-through refutation) so the audit trail stays
+    honest.
+    """
+    if not state.hypotheses:
+        return
+    reason = (
+        f"auto-closed at turn {turn}: branch submitted terminal "
+        f"{outcome_kind} without explicitly rejecting this hypothesis"
+    )
+    seen_ids = {r.id for r in state.rejected}
+    for h in state.hypotheses:
+        if h.id in seen_ids:
+            continue
+        state.rejected.append(
+            RejectedHypothesis(id=h.id, claim=h.claim, reason=reason),
+        )
+    state.hypotheses = []
+
+
 def _decision_to_message_payload(
     decision: ReasoningTurnDecision,
 ) -> tuple[PayloadKind, dict[str, Any]]:
@@ -1265,7 +1321,7 @@ async def _upsert_canonical_outcome(
         "submitted_at": now.isoformat(),
         "outcome_kind": new_outcome_kind,
         "confidence": new_confidence,
-        "answer_brief": (new_payload.get("answer") or "")[:240],
+        "answer_brief": (new_payload.get("answer") or "")[:4000],
     }
 
     if existing is None:

@@ -311,6 +311,34 @@ async def _maybe_trigger_synthesis(investigation_id: str) -> None:
                     # Real synthesis already ran — nothing to do.
                     return
 
+        # Per D-101: ONE canonical outcome row, panel_contributions[]
+        # tracks each persona's submission. Synthesis fires when every
+        # branch that's expected to submit (status ACTIVE or COMPLETED;
+        # PAUSED/MERGED/ABANDONED don't contribute) has at least one
+        # entry in panel_contributions. Without this check the trigger
+        # relied on per-branch outcome rows that no longer exist —
+        # synthesis NEVER fired in the new architecture, leaving the
+        # investigation status stuck at RUNNING forever.
+        from aila.modules.vr.contracts.branch import BranchStatus  # noqa: PLC0415
+
+        canonical = (await uow.session.exec(
+            _select(VRInvestigationOutcomeRecord)
+            .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+            .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+            .limit(1),
+        )).first()
+        if canonical is None:
+            return  # no terminal submissions yet
+        try:
+            canonical_payload = json.loads(canonical.payload_json or "{}")
+        except (ValueError, TypeError):
+            canonical_payload = {}
+        contributions = canonical_payload.get("panel_contributions") or []
+        contributed_branch_ids = {
+            (c.get("branch_id") or "") for c in contributions if isinstance(c, dict)
+        }
+        contributed_branch_ids.discard("")
+
         branches = (await uow.session.exec(
             _select(VRInvestigationBranchRecord).where(
                 VRInvestigationBranchRecord.investigation_id == investigation_id,
@@ -319,16 +347,18 @@ async def _maybe_trigger_synthesis(investigation_id: str) -> None:
         if len(branches) < 2:
             # Single-branch investigation — no panel to synthesise.
             return
-        # Every branch must have at least one outcome (the terminal).
-        for b in branches:
-            terminal = (await uow.session.exec(
-                _select(VRInvestigationOutcomeRecord)
-                .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
-                .where(VRInvestigationOutcomeRecord.branch_id == b.id)
-                .limit(1)
-            )).first()
-            if terminal is None:
-                return  # still waiting on this sibling
+        expected_branch_ids = {
+            b.id for b in branches
+            if b.status in (BranchStatus.ACTIVE.value, BranchStatus.COMPLETED.value)
+        }
+        missing = expected_branch_ids - contributed_branch_ids
+        if missing:
+            _log.info(
+                "investigation_emit SYNTHESIS_WAIT inv=%s contributed=%d expected=%d missing=%s",
+                investigation_id, len(contributed_branch_ids),
+                len(expected_branch_ids), sorted(missing)[:3],
+            )
+            return
         team_id = inv.team_id
 
     task_queue = default_task_queue()
