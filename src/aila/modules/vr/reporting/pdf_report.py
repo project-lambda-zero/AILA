@@ -184,7 +184,56 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
             .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
             .order_by(VRInvestigationOutcomeRecord.created_at.asc()),
         )).all()
-        terminal = outcomes[-1] if outcomes else None
+        # Synthesis-aware terminal pick: when the multi-persona panel
+        # ran, the SynthesisAgent sets ``inv.primary_outcome_id`` on the
+        # consolidated verdict outcome. That IS the headline finding —
+        # use it. Fall back to the latest outcome only when synthesis
+        # didn't run (single-branch investigations or pre-panel data).
+        terminal = None
+        if inv.primary_outcome_id:
+            terminal = next(
+                (o for o in outcomes if o.id == inv.primary_outcome_id),
+                None,
+            )
+        if terminal is None and outcomes:
+            terminal = outcomes[-1]
+
+        # Build a per-persona panel snapshot for the Deliberation Panel
+        # section. Each entry pairs a sibling branch's persona with its
+        # latest terminal outcome. Empty list when not a panel run.
+        panel_branches = (await uow.session.exec(
+            _select(VRInvestigationBranchRecord)
+            .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
+            .order_by(VRInvestigationBranchRecord.created_at.asc()),
+        )).all()
+        panel_verdicts: list[dict[str, Any]] = []
+        for pb in panel_branches:
+            if not pb.persona_voice:
+                continue
+            pb_terminal = next(
+                (
+                    o for o in reversed(outcomes)
+                    if o.branch_id == pb.id and o.id != (inv.primary_outcome_id or "")
+                ),
+                None,
+            )
+            if pb_terminal is None:
+                continue
+            try:
+                pb_payload = json.loads(pb_terminal.payload_json or "{}")
+            except (ValueError, TypeError):
+                pb_payload = {}
+            panel_verdicts.append({
+                "branch_id": pb.id,
+                "persona_voice": pb.persona_voice,
+                "turn_count": pb.turn_count,
+                "outcome_id": pb_terminal.id,
+                "outcome_kind": pb_terminal.outcome_kind,
+                "confidence": pb_terminal.confidence,
+                "answer": (pb_payload.get("answer") or "")[:3000],
+                "affected_components_count": len(pb_payload.get("affected_components") or []),
+                "variant_hunt_orders_count": len(pb_payload.get("variant_hunt_orders") or []),
+            })
 
         # Tool call summary: last 40 calls, distinct (tool, key_arg) pairs
         msgs = (await uow.session.exec(
@@ -377,6 +426,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         "message_count": message_count,
         "outcome_trail": outcome_trail,
         "variants_hunted": variants,
+        "panel_verdicts": panel_verdicts,
         "poc_drafts": poc_drafts,
         "audit_metadata": _resolve_audit_metadata(inv, descriptor),
         "vulnerable_code_excerpts": await _resolve_code_excerpts(
@@ -1240,6 +1290,52 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
         story.append(Spacer(1, 0.15 * inch))
 
     # ── Risk Methodology (static block) ──────────────────────────
+    # ── Deliberation Panel (multi-persona panel verdicts) ────────
+    panel_verdicts = facts.get("panel_verdicts") or []
+    if len(panel_verdicts) >= 2:
+        _append_section_h1(story, "Deliberation Panel", styles)
+        story.append(Paragraph(
+            f"Investigation was reasoned by a panel of <b>{len(panel_verdicts)}</b> "
+            f"persona branches, each driven by an independent LLM routing "
+            f"(researcher / critic / implementer). Per-persona verdicts below; "
+            f"the consolidated synthesis verdict is rendered as the headline "
+            f"finding above.",
+            styles["body"],
+        ))
+        story.append(Spacer(1, 0.1 * inch))
+        for v in panel_verdicts:
+            persona = (v.get("persona_voice") or "?").upper()
+            kind = v.get("outcome_kind") or "?"
+            conf = v.get("confidence") or "?"
+            turns = v.get("turn_count") or 0
+            ac = v.get("affected_components_count") or 0
+            vh = v.get("variant_hunt_orders_count") or 0
+            answer = (v.get("answer") or "").strip()
+            header = Paragraph(
+                f"<font color='#121212' size='9'><b>{_escape_for_paragraph(persona)}</b></font> "
+                f"<font color='#121212' size='8'>· {turns} turns · "
+                f"{_escape_for_paragraph(kind)} · conf={_escape_for_paragraph(conf)} · "
+                f"components={ac} · variant_orders={vh}</font>",
+                styles["body"],
+            )
+            header_table = Table([[header]], colWidths=[6.7 * inch])
+            header_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), _BG_SURFACE),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("LINEBEFORE", (0, 0), (0, -1), 3, _SEVERITY_COLOR.get("INFORMATIONAL", _FG_HEADING)),
+            ]))
+            body_para = Paragraph(
+                _inline_markdown(answer)
+                if answer
+                else "<i>No answer body recorded.</i>",
+                styles["body"],
+            )
+            story.append(KeepTogether([header_table, Spacer(1, 0.05 * inch), body_para]))
+            story.append(Spacer(1, 0.12 * inch))
+
     methodology_flow: list[Any] = [
         Paragraph("Risk Methodology", styles["section_h1"]),
         Paragraph(
