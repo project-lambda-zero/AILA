@@ -1298,10 +1298,11 @@ def _append_severity_count_table(
             counts[sev] += 1
 
     header = [Paragraph(
-        f"<font color='white'><b>{label}</b></font>", _build_styles()["body"],
+        f"<font color='#121212'><b>{label}</b></font>", _build_styles()["body"],
     ) for label in _SEVERITY_ORDER]
     body = [Paragraph(
-        f"<b><font size='14'>{counts[label]}</font></b>", _build_styles()["body"],
+        f"<font color='#ffd7af'><b><font size='14'>{counts[label]}</font></b></font>",
+        _build_styles()["body"],
     ) for label in _SEVERITY_ORDER]
 
     table = Table([header, body], colWidths=[1.2 * inch] * len(_SEVERITY_ORDER))
@@ -1333,9 +1334,9 @@ def _append_findings_index_table(
     Each cell is a Paragraph so long titles wrap cleanly.
     """
     rows: list[list[Any]] = [[
-        Paragraph("<b>SECURITY ANALYSIS</b>", styles["body"]),
-        Paragraph("<b>RISK LEVEL</b>", styles["body"]),
-        Paragraph("<b>RECOMMENDATION</b>", styles["body"]),
+        Paragraph("<font color='#97dbbe'><b>SECURITY ANALYSIS</b></font>", styles["body"]),
+        Paragraph("<font color='#97dbbe'><b>RISK LEVEL</b></font>", styles["body"]),
+        Paragraph("<font color='#97dbbe'><b>RECOMMENDATION</b></font>", styles["body"]),
     ]]
     for f in findings:
         sev = (getattr(f, "severity", "") or "").upper()
@@ -1346,7 +1347,7 @@ def _append_findings_index_table(
                 styles["body"],
             ),
             Paragraph(
-                f"<font color='#ffd7af'><b>{sev}</b></font>",
+                f"<font color='#121212'><b>{sev}</b></font>",
                 styles["body"],
             ),
             Paragraph("FIX AVAILABLE", styles["body"]),
@@ -1354,7 +1355,7 @@ def _append_findings_index_table(
         # Tint the risk-level cell with the pastel severity color.
         rows[-1][1] = Paragraph(
             f"<b>{sev}</b>",
-            ParagraphStyle("sev_cell", parent=styles["body"], textColor=_FG_TEXT),
+            ParagraphStyle("sev_cell", parent=styles["body"], textColor=colors.HexColor("#121212")),
         )
         # we keep simple text; cell background is applied via style cmd below
         del sev_color
