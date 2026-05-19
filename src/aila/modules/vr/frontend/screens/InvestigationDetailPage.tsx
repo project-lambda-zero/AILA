@@ -330,9 +330,18 @@ export function InvestigationDetailPage() {
                 {resumeMut.isPending ? "Resuming…" : "Resume"}
               </button>
             )}
-            {(inv.status === "completed"
-              || inv.status === "failed"
-              || inv.status === "created") && (
+            {inv.status === "created" && (
+              <button
+                type="button"
+                onClick={() => reenqueueMut.mutate(undefined)}
+                disabled={reenqueueMut.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 whitespace-nowrap"
+                title="Start this investigation (enqueue run_vr_investigate task)"
+              >
+                {reenqueueMut.isPending ? "Starting…" : "Start ▶"}
+              </button>
+            )}
+            {(inv.status === "completed" || inv.status === "failed") && (
               <ReenqueuePicker
                 currentKind={inv.kind}
                 mutation={reenqueueMut}
