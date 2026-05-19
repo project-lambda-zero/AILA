@@ -152,7 +152,7 @@ class HonestVulnResearcher:
         prior_outcomes = await self._load_prior_outcomes()
         sibling_context = await self._load_sibling_context()
 
-        system_prompt = _load_prompt(inv.strategy_family)
+        system_prompt = _load_prompt(inv.strategy_family, branch.persona_voice)
         tool_specs = await _fetch_tool_specs(
             target_kind=(target_snapshot or {}).get("kind"),
         )
@@ -1189,18 +1189,33 @@ def _outcome_payload(decision: ReasoningTurnDecision) -> dict[str, Any]:
     }
 
 
-def _load_prompt(strategy_family: str) -> str:
-    """Load the system prompt for a strategy family.
+def _load_prompt(strategy_family: str, persona_voice: str | None = None) -> str:
+    """Load the system prompt for a strategy family + optional persona.
 
-    v0.3 v1 ships only ``system_audit.md``; other strategy families
-    fall through to it for now. Per-family prompts land as needed.
+    When ``persona_voice`` is supplied AND a per-persona prompt file
+    exists at ``prompts/persona_<voice>.md``, that file's content is
+    prepended to the base audit prompt as a role-specific opening
+    section. The persona file should focus on ROLE BEHAVIOUR (what
+    this voice's job is in the deliberation), not repeat the common
+    audit rules — those come from the base prompt below.
+
+    Falls through to base ``system_<strategy>.md`` (or
+    ``system_audit.md``) when no persona is set or no persona file
+    exists.
     """
-    candidate = _PROMPT_DIR / f"system_{strategy_family.rsplit('.', 1)[-1]}.md"
-    if not candidate.exists():
-        candidate = _PROMPT_DIR / "system_audit.md"
-    if not candidate.exists():
-        raise VulnResearcherError(f"prompt file missing: {candidate}")
-    return candidate.read_text(encoding="utf-8")
+    base_candidate = _PROMPT_DIR / f"system_{strategy_family.rsplit('.', 1)[-1]}.md"
+    if not base_candidate.exists():
+        base_candidate = _PROMPT_DIR / "system_audit.md"
+    if not base_candidate.exists():
+        raise VulnResearcherError(f"prompt file missing: {base_candidate}")
+    base = base_candidate.read_text(encoding="utf-8")
+
+    if persona_voice:
+        persona_candidate = _PROMPT_DIR / f"persona_{persona_voice.lower()}.md"
+        if persona_candidate.exists():
+            persona_prefix = persona_candidate.read_text(encoding="utf-8")
+            return f"{persona_prefix}\n\n---\n\n{base}"
+    return base
 
 
 # Resolves Pydantic forward refs when this module is imported standalone.
