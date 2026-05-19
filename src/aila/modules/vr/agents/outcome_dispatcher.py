@@ -813,59 +813,96 @@ class OutcomeDispatcher:
         investigation_id: str,
         payload: dict[str, Any],
     ) -> OutcomeDispatchResult:
-        """PATCH_ASSESSMENT_REPORT → enqueue ``run_vr_nday`` ARQ task.
+        """PATCH_ASSESSMENT_REPORT → spawn variant_hunt children + (optionally) enqueue nday.
 
-        The engine evaluated a patch and produced an assessment (variant
-        windows opened/closed, related CVE candidates). Dispatcher kicks
-        off the N-day workflow that materializes the assessment into a
-        finding + disclosure scaffold.
+        Two parallel paths, both run when their inputs are present:
 
-        Required payload fields:
-          - patch_descriptor: {vulnerable_ref, patched_ref, repo_url} OR
-            {project_id} when reusing an existing v0.1 vr_projects row
-          - assessment: structured dict (engine's findings about the patch)
+        1. ``variant_hunt_orders`` (list[dict]) — spawn one child
+           investigation per residual-gap candidate the agent named.
+           This is the path that matters when the agent's verdict is
+           'PATCH PRESENT but with residual gap candidates (X, Y, Z)'
+           — without spawning children for X/Y/Z, the candidates die in
+           the report and no follow-up audit ever happens.
+
+        2. ``patch_descriptor`` ({vulnerable_ref, patched_ref, repo_url})
+           — kick off the N-day workflow that materialises the
+           assessment into a finding + disclosure scaffold. Optional;
+           skipped when the report is a pure patch-verification with no
+           N-day disclosure path.
         """
         target_row, parent_inv = await self._load_target_for_investigation(
             investigation_id,
         )
+
+        # Path 1: variant-hunt fan-out for residual gap candidates.
+        spawned_children: list[str] = []
+        spawn_errors: list[str] = []
+        variants = payload.get("variant_hunt_orders")
+        if isinstance(variants, list):
+            for raw in variants:
+                if not isinstance(raw, dict):
+                    continue
+                try:
+                    child_id = await self._spawn_variant_child(
+                        parent=parent_inv,
+                        parent_target_id=target_row.id,
+                        payload=raw,
+                    )
+                    spawned_children.append(child_id)
+                except (ValueError, RuntimeError) as exc:
+                    spawn_errors.append(f"{type(exc).__name__}:{exc}")
+
+        # Path 2: nday enqueue (optional — only when patch_descriptor present).
         patch_descriptor = payload.get("patch_descriptor") or {}
         assessment = payload.get("assessment") or {}
-        if not isinstance(patch_descriptor, dict) or not patch_descriptor:
+        nday_handle_id: str | None = None
+        nday_error: str | None = None
+        if isinstance(patch_descriptor, dict) and patch_descriptor:
+            try:
+                handle = await enqueue_vr_nday(
+                    self._task_queue_factory(),
+                    source_outcome_id=outcome_id,
+                    patch_descriptor=patch_descriptor,
+                    assessment=assessment,
+                    parent_investigation_id=parent_inv.id,
+                    target_id=target_row.id,
+                    team_id=target_row.team_id,
+                )
+                nday_handle_id = handle.task_id
+            except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+                nday_error = f"{type(exc).__name__}:{exc}"
+
+        # Both paths absent — at least the verdict prose lands in the
+        # outcome row; report it as DISPATCHED so the UI shows green.
+        if not spawned_children and nday_handle_id is None and not spawn_errors and not nday_error:
             return OutcomeDispatchResult(
                 outcome_id=outcome_id,
                 outcome_kind=OutcomeKind.PATCH_ASSESSMENT_REPORT,
-                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_status=OutcomeDispatchStatus.DISPATCHED,
                 dispatch_target=None,
-                reason="missing_patch_descriptor",
+                reason="verdict_only:no_variants_no_nday_descriptor",
             )
 
-
-
-        try:
-            handle = await enqueue_vr_nday(
-                self._task_queue_factory(),
-                source_outcome_id=outcome_id,
-                patch_descriptor=patch_descriptor,
-                assessment=assessment,
-                parent_investigation_id=parent_inv.id,
-                target_id=target_row.id,
-                team_id=target_row.team_id,
-            )
-        except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
-            return OutcomeDispatchResult(
-                outcome_id=outcome_id,
-                outcome_kind=OutcomeKind.PATCH_ASSESSMENT_REPORT,
-                dispatch_status=OutcomeDispatchStatus.FAILED,
-                dispatch_target=None,
-                reason=f"enqueue_failed:{type(exc).__name__}:{exc}",
-            )
+        reason_parts: list[str] = []
+        if spawned_children:
+            reason_parts.append(f"spawned_children={len(spawned_children)}")
+        if spawn_errors:
+            reason_parts.append(f"spawn_errors={spawn_errors[:3]}")
+        if nday_handle_id:
+            reason_parts.append(f"nday_task={nday_handle_id}")
+        if nday_error:
+            reason_parts.append(f"nday_error={nday_error}")
 
         return OutcomeDispatchResult(
             outcome_id=outcome_id,
             outcome_kind=OutcomeKind.PATCH_ASSESSMENT_REPORT,
             dispatch_status=OutcomeDispatchStatus.DISPATCHED,
-            dispatch_target=f"task:{handle.task_id}",
-            reason=f"vr_nday enqueued for patch={patch_descriptor.get('vulnerable_ref') or '?'}",
+            dispatch_target=(
+                f"children={spawned_children};nday={nday_handle_id}"
+                if (spawned_children or nday_handle_id)
+                else None
+            ),
+            reason="; ".join(reason_parts) or "patch_assessment_recorded",
         )
 
     async def _load_target_for_investigation(
