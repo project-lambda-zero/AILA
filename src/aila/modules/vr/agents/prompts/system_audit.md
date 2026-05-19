@@ -349,6 +349,35 @@ same module, not just the one the public CVE names. Predicate drift
 between siblings (e.g. `len_code` checks `is_args || quote` but
 `code` checks only `is_args`) is a real variant.
 
+**Pattern 2a (corollary): Before claiming a length-pass counterpart is
+MISSING, grep the codebase for the paired-emit pattern.** Length/value
+opcode pairs are almost always emitted together by an
+`add_*_code(sc)` compile helper that calls `add_code` against
+`sc->lengths` and `sc->values` in sequence. Search for the value-pass
+opcode name and look at the surrounding helper:
+  - `audit_mcp.search_source(pattern="<value_opcode_name>", limit=50)`
+  - If the only hit beyond the function body is inside an `add_*_code`
+    helper, READ that helper — the line above the value-pass
+    assignment usually sets `mark_*_code` / `start_*_len_code` /
+    `setup_*_len_code` on `sc->lengths`.
+  - Read THAT helper's body via `audit_mcp.read_function` and verify
+    whether the length-pass mirror exists and mirrors the relevant
+    state mutation.
+Submitting a "no length-pass counterpart exists → length-vs-value
+asymmetry → heap overflow" finding without doing this check is a
+classic false-positive shape. The mirror is usually named
+`mark_*_code` (one-shot state setter), `start_*_len_code` (counterpart
+to `start_*_code`), or `setup_*_len_code`. Always grep before
+claiming absence.
+
+**Pattern 2b (corollary): Use `audit_mcp.search_types` for structs and
+typedefs, NOT `audit_mcp.read_function`.** `read_function` errors with
+"Function 'X' not indexed" on type names. If you need the field
+layout of an engine struct (`ngx_http_script_engine_t`,
+`ngx_stream_script_engine_t`, etc.), call
+`audit_mcp.search_types(name="<type>")` to get the typedef. Don't
+waste a turn calling `read_function` on a typedef.
+
 **Pattern 3: State-carrying field consumers.** Find every read and
 every write of the dangerous state field (e.g. `e->is_args`,
 `e->quote`) via `audit_mcp.search_source(pattern="e->is_args")` or
