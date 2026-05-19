@@ -2047,6 +2047,15 @@ def create_vr_router() -> APIRouter:
                     detail=f"Target {body.target_id} not found or not owned by your team.",
                 )
 
+            # Derive strategy_family from kind when caller didn't pick
+            # one explicitly. Without this, VARIANT_HUNT investigations
+            # silently used discovery_research (the Pydantic default),
+            # so the variant-hunt system prompt + dispatcher rules
+            # never fired.
+            resolved_strategy = (
+                body.strategy_family
+                or _KIND_DEFAULT_STRATEGY.get(body.kind, "vulnerability_research.discovery_research")
+            )
             record = VRInvestigationRecord(
                 target_id=body.target_id,
                 team_id=auth.team_id,
@@ -2057,7 +2066,7 @@ def create_vr_router() -> APIRouter:
                 initial_question=body.initial_question,
                 status=InvestigationStatus.CREATED.value,
                 auto_pilot=body.auto_pilot,
-                strategy_family=body.strategy_family,
+                strategy_family=resolved_strategy,
                 cost_budget_usd=body.cost_budget_usd,
             )
             uow.session.add(record)

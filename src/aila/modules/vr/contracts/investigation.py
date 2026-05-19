@@ -83,9 +83,16 @@ class VRInvestigationCreate(BaseModel):
         default=None,
         description="Set when this is a spawned variant hunt or sub-investigation.",
     )
-    strategy_family: str = Field(
-        default="vulnerability_research.discovery_research",
-        description="ReasoningStrategyFamily value. Inherits from target.capability_profile.default_reasoning_strategy if not set.",
+    strategy_family: str | None = Field(
+        default=None,
+        description=(
+            "ReasoningStrategyFamily value. When omitted, the server "
+            "derives it from `kind` via _KIND_DEFAULT_STRATEGY "
+            "(DISCOVERY -> discovery_research, VARIANT_HUNT -> "
+            "variant_hunt, TRIAGE -> triage, N_DAY -> nday). Send an "
+            "explicit value only when you need to override the "
+            "kind-default (rare)."
+        ),
     )
     auto_pilot: bool = Field(
         default=True,
