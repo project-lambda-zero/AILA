@@ -82,7 +82,8 @@ async def _should_auto_continue(
     caller uses the returned turn_count for logging + the cap-hit
     message it writes onto the investigation row.
     """
-    if exit_reason != "max_turns" or outcome_id is not None:
+    is_retryable_failure = exit_reason.startswith("researcher_error_retryable:")
+    if (exit_reason != "max_turns" and not is_retryable_failure) or outcome_id is not None:
         return False, 0
     async with UnitOfWork() as uow:
         branch = (await uow.session.exec(
