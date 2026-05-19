@@ -40,6 +40,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
+    HRFlowable,
     KeepTogether,
     PageBreak,
     PageTemplate,
@@ -947,6 +948,24 @@ def _strip_md_fence(text: str) -> tuple[str, str]:
     return text, ""
 
 
+def _append_section_h1(story: list[Any], title: str, styles: dict[str, ParagraphStyle]) -> None:
+    """Append a section h1 heading plus a thin accent rule.
+
+    Mirrors the OZ/CS audit-report convention of headings with a
+    horizontal accent line extending to the right margin — gives
+    the eye a strong section break instead of floating colored text.
+    """
+    story.append(Paragraph(title, styles["section_h1"]))
+    story.append(HRFlowable(
+        width="100%",
+        thickness=0.6,
+        color=_FG_HEADING,
+        spaceBefore=0,
+        spaceAfter=6,
+        lineCap="square",
+    ))
+
+
 def _format_code_block(
     code: str,
     language: str,
@@ -1129,17 +1148,17 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
     story.append(PageBreak())
 
     # ── Introduction ─────────────────────────────────────────────
-    story.append(Paragraph("Introduction", styles["section_h1"]))
+    _append_section_h1(story, "Introduction", styles)
     story.append(Paragraph(_escape_for_paragraph(content.introduction), styles["body"]))
     story.append(Spacer(1, 0.15 * inch))
 
     # ── Audit Summary ────────────────────────────────────────────
-    story.append(Paragraph("Audit Summary", styles["section_h1"]))
+    _append_section_h1(story, "Audit Summary", styles)
     story.append(Paragraph(_escape_for_paragraph(content.audit_summary), styles["body"]))
     story.append(Spacer(1, 0.15 * inch))
 
     # ── Test Approach ────────────────────────────────────────────
-    story.append(Paragraph("Test Approach", styles["section_h1"]))
+    _append_section_h1(story, "Test Approach", styles)
     story.append(Paragraph(_escape_for_paragraph(content.test_approach), styles["body"]))
     story.append(Spacer(1, 0.15 * inch))
 
@@ -1160,7 +1179,7 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
             buckets.setdefault(_bucket_key(o.get("answer") or ""), []).append(o)
         unique_count = len(buckets)
         total = len(outcome_trail)
-        story.append(Paragraph("Submission Timeline", styles["section_h1"]))
+        _append_section_h1(story, "Submission Timeline", styles)
         if unique_count == 1:
             (only_bucket,) = buckets.values()
             first = only_bucket[0]
@@ -1243,7 +1262,7 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
     story.append(Spacer(1, 0.15 * inch))
 
     # ── Scope ────────────────────────────────────────────────────
-    story.append(Paragraph("Scope", styles["section_h1"]))
+    _append_section_h1(story, "Scope", styles)
     if content.scope:
         for c in content.scope:
             line = (
@@ -1262,10 +1281,7 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
 
     # ── Assessment Summary & Findings Overview ───────────────────
     story.append(PageBreak())
-    story.append(Paragraph(
-        "Assessment Summary &amp; Findings Overview",
-        styles["section_h1"],
-    ))
+    _append_section_h1(story, "Assessment Summary &amp; Findings Overview", styles)
     story.append(Paragraph(
         _escape_for_paragraph(content.assessment_overview),
         styles["body"],
@@ -1279,14 +1295,14 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
     # ── Findings & Tech Details ──────────────────────────────────
     if content.findings:
         story.append(PageBreak())
-        story.append(Paragraph("Findings &amp; Tech Details", styles["section_h1"]))
+        _append_section_h1(story, "Findings &amp; Tech Details", styles)
         for finding in content.findings:
             _append_finding_block(story, finding, styles)
 
     # ── References ───────────────────────────────────────────────
     if content.references:
         story.append(Spacer(1, 0.25 * inch))
-        story.append(Paragraph("References", styles["section_h1"]))
+        _append_section_h1(story, "References", styles)
         for ref in content.references:
             story.append(Paragraph(
                 f"&bull;&nbsp; <font color='#7a6f9e'>"
@@ -1514,35 +1530,93 @@ def _append_finding_block(
           Code Location               section_h2 + mono
           Recommendation              section_h2 + body (optional inline code)
     """
-    story.append(Spacer(1, 0.25 * inch))
+    story.append(Spacer(1, 0.3 * inch))
     sev = (getattr(finding, "severity", "") or "").upper()
-    story.append(Paragraph(
-        f"[{_escape_for_paragraph(finding.id)}] "
-        f"{_escape_for_paragraph(finding.title)} &mdash; "
-        f"<font color='#ffd7af'>{sev}</font>",
-        styles["section_h1"],
-    ))
+    sev_color = _SEVERITY_COLOR.get(sev, colors.HexColor("#aac8e0"))
+
+    # Finding title bar: severity-tinted background, white-ish title,
+    # uppercase severity badge on the right. Replaces the floating
+    # section_h1 heading so the eye gets a strong containment cue
+    # at the start of each finding.
+    title_cell = Paragraph(
+        f"<font color='#121212' size='8'><b>{_escape_for_paragraph(finding.id)}</b></font>"
+        f"<br/>"
+        f"<font color='#121212' size='13'><b>{_escape_for_paragraph(finding.title)}</b></font>",
+        styles["body"],
+    )
+    sev_cell = Paragraph(
+        f"<para alignment='center'>"
+        f"<font color='#121212' size='8'><b>SEVERITY</b></font><br/>"
+        f"<font color='#121212' size='13'><b>{sev}</b></font>"
+        f"</para>",
+        styles["body"],
+    )
+    title_table = Table([[title_cell, sev_cell]], colWidths=[5.2 * inch, 1.5 * inch])
+    title_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), sev_color),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+        ("TOPPADDING", (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+        ("LINEAFTER", (0, 0), (0, 0), 0.5, colors.HexColor("#121212")),
+    ]))
+    story.append(title_table)
+    story.append(Spacer(1, 0.12 * inch))
 
     # Description: route through markdown body so inline `code`
     # spans get monospace fontification and any fenced blocks
-    # render with syntax highlighting. Plain Paragraph would
-    # leave backticks visible as literal text.
-    desc_flow: list[Any] = [Paragraph("Description", styles["section_h2"])]
+    # render with syntax highlighting.
+    desc_flow: list[Any] = [Paragraph("DESCRIPTION", styles["section_h2"])]
     desc_buf: list[Any] = []
     _render_markdown_body(finding.description, styles, desc_buf)
-    desc_flow.extend(desc_buf[:3])  # bind heading + first 3 paragraphs together
+    desc_flow.extend(desc_buf[:3])
     story.append(KeepTogether(desc_flow))
     for flow in desc_buf[3:]:
         story.append(flow)
 
+    # Risk Level: horizontal 3-pill row instead of stacked text.
+    risk_likelihood = Paragraph(
+        f"<para alignment='center'>"
+        f"<font color='#808080' size='8'><b>LIKELIHOOD</b></font><br/>"
+        f"<font color='#ffd7af' size='18'><b>{finding.likelihood}</b></font>"
+        f"<font color='#808080' size='10'> / 5</font>"
+        f"</para>",
+        styles["body"],
+    )
+    risk_impact = Paragraph(
+        f"<para alignment='center'>"
+        f"<font color='#808080' size='8'><b>IMPACT</b></font><br/>"
+        f"<font color='#ffd7af' size='18'><b>{finding.impact}</b></font>"
+        f"<font color='#808080' size='10'> / 5</font>"
+        f"</para>",
+        styles["body"],
+    )
+    risk_total = Paragraph(
+        f"<para alignment='center'>"
+        f"<font color='#808080' size='8'><b>SEVERITY (L+I={finding.likelihood + finding.impact})</b></font><br/>"
+        f"<font color='#121212' size='14'><b>{sev}</b></font>"
+        f"</para>",
+        styles["body"],
+    )
+    risk_table = Table(
+        [[risk_likelihood, risk_impact, risk_total]],
+        colWidths=[2.0 * inch, 2.0 * inch, 2.7 * inch],
+    )
+    risk_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (1, 0), _BG_SURFACE),
+        ("BACKGROUND", (2, 0), (2, 0), sev_color),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+        ("LINEAFTER", (0, 0), (1, 0), 0.5, _BG_BORDER),
+    ]))
     story.append(KeepTogether([
-        Paragraph("Risk Level", styles["section_h2"]),
-        Paragraph(
-            f"<b>Likelihood &ndash; {finding.likelihood}</b><br/>"
-            f"<b>Impact &ndash; {finding.impact}</b><br/>"
-            f"<b>Severity:</b> {sev} (L+I = {finding.likelihood + finding.impact})",
-            styles["body"],
-        ),
+        Paragraph("RISK LEVEL", styles["section_h2"]),
+        risk_table,
     ]))
 
     if finding.proof_of_concept and finding.proof_of_concept.strip():
