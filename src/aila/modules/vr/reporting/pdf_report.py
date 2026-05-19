@@ -349,7 +349,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         outcome_trail.append({
             "kind": o.outcome_kind,
             "confidence": o.confidence,
-            "answer": (p.get("answer") or "")[:400],
+            "answer": (p.get("answer") or ""),
             "created_at": o.created_at.isoformat() if o.created_at else None,
         })
 
@@ -1109,6 +1109,53 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
     story.append(Paragraph("Test Approach", styles["section_h1"]))
     story.append(Paragraph(_escape_for_paragraph(content.test_approach), styles["body"]))
     story.append(Spacer(1, 0.15 * inch))
+
+    # ── Submission Timeline (when agent emitted >1 terminal outcome) ──
+    outcome_trail = facts.get("outcome_trail") or []
+    if len(outcome_trail) > 1:
+        story.append(Paragraph("Submission Timeline", styles["section_h1"]))
+        story.append(Paragraph(
+            f"The agent submitted <b>{len(outcome_trail)}</b> terminal outcomes "
+            f"across the audit window. Each row below is one submission event; "
+            f"repeated re-confirmations of the same root cause indicate high "
+            f"reproducibility, not separate bugs.",
+            styles["body"],
+        ))
+        story.append(Spacer(1, 0.08 * inch))
+        timeline_rows: list[list[Any]] = [[
+            Paragraph("<font color='#97dbbe'><b>#</b></font>", styles["body"]),
+            Paragraph("<font color='#97dbbe'><b>TIMESTAMP</b></font>", styles["body"]),
+            Paragraph("<font color='#97dbbe'><b>KIND</b></font>", styles["body"]),
+            Paragraph("<font color='#97dbbe'><b>CONF</b></font>", styles["body"]),
+            Paragraph("<font color='#97dbbe'><b>EXCERPT</b></font>", styles["body"]),
+        ]]
+        for i, o in enumerate(outcome_trail, 1):
+            if not isinstance(o, dict):
+                continue
+            ts = (o.get("created_at") or "")[:19].replace("T", " ")
+            excerpt = (o.get("answer") or "").strip().splitlines()[0][:180] if o.get("answer") else "(empty)"
+            timeline_rows.append([
+                Paragraph(str(i), styles["body"]),
+                Paragraph(_escape_for_paragraph(ts), styles["mono"]),
+                Paragraph(_escape_for_paragraph(o.get("kind") or "?"), styles["body"]),
+                Paragraph(_escape_for_paragraph(str(o.get("confidence") or "?")), styles["body"]),
+                Paragraph(_escape_for_paragraph(excerpt), styles["body"]),
+            ])
+        tl_table = Table(
+            timeline_rows,
+            colWidths=[0.3 * inch, 1.4 * inch, 1.1 * inch, 0.6 * inch, 3.2 * inch],
+        )
+        tl_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), _BG_SURFACE),
+            ("GRID", (0, 0), (-1, -1), 0.4, _BG_BORDER),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(tl_table)
+        story.append(Spacer(1, 0.15 * inch))
 
     # ── Risk Methodology (static block) ──────────────────────────
     story.append(Paragraph("Risk Methodology", styles["section_h1"]))
