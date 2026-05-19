@@ -208,14 +208,16 @@ function HypothesesTab({ targetId }: { targetId: string }) {
   // tell which inv any hypothesis belonged to.
   const { rows, isLoading, isError, investigationCount, skippedCreatedCount } =
     useTargetHypotheses(targetId);
-  const [filter, setFilter] = useState<"all" | "live" | "rejected" | "mixed">(
-    "all",
-  );
+  const [filter, setFilter] = useState<
+    "all" | "live" | "rejected" | "resolved" | "mixed"
+  >("all");
 
   const visible = rows.filter((r) => filter === "all" || r.state === filter);
   const sorted = visible.slice().sort((a, b) => {
-    // live first, then mixed, then rejected — within each state, oldest investigation
-    const rank: Record<string, number> = { live: 0, mixed: 1, rejected: 2 };
+    // live first, then mixed, then resolved, then rejected
+    const rank: Record<string, number> = {
+      live: 0, mixed: 1, resolved: 2, rejected: 3,
+    };
     const rs = (rank[a.state] ?? 9) - (rank[b.state] ?? 9);
     if (rs !== 0) return rs;
     return a.investigation_title.localeCompare(b.investigation_title);
@@ -225,6 +227,7 @@ function HypothesesTab({ targetId }: { targetId: string }) {
     all: rows.length,
     live: rows.filter((r) => r.state === "live").length,
     mixed: rows.filter((r) => r.state === "mixed").length,
+    resolved: rows.filter((r) => r.state === "resolved").length,
     rejected: rows.filter((r) => r.state === "rejected").length,
   };
 
@@ -262,7 +265,7 @@ function HypothesesTab({ targetId }: { targetId: string }) {
             )}
           </div>
           <div className="flex items-center gap-1 flex-wrap">
-            {(["all", "live", "mixed", "rejected"] as const).map((f) => (
+            {(["all", "live", "mixed", "resolved", "rejected"] as const).map((f) => (
               <button
                 key={f}
                 type="button"
@@ -338,6 +341,11 @@ function HypothesesTab({ targetId }: { targetId: string }) {
                     <div className="text-text-muted">
                       <span className="text-text-danger">rejected:</span>{" "}
                       {r.rejection_reason}
+                    </div>
+                  ) : r.resolution_note ? (
+                    <div className="text-text-muted">
+                      <span className="text-amber-400">resolved:</span>{" "}
+                      {r.resolution_note}
                     </div>
                   ) : r.why_plausible ? (
                     <div className="text-text-muted">{r.why_plausible}</div>

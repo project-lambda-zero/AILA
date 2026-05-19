@@ -81,6 +81,26 @@ class RejectedHypothesis(BaseModel):
     reason: str = ""
 
 
+class ResolvedHypothesis(BaseModel):
+    """One hypothesis closed automatically when a branch submitted a
+    terminal outcome without explicitly classifying it as either
+    confirmed or rejected.
+
+    Distinct from ``RejectedHypothesis`` because we DON'T know whether
+    the claim was disproved or supported by the terminal — it may have
+    been the basis of the finding (confirmed) or an unaddressed
+    competing explanation (effectively rejected) or simply abandoned
+    as the agent ran out of turns. The frontend renders ``resolved``
+    with a neutral badge so readers know to consult the terminal
+    outcome for the actual classification.
+    """
+
+    id: str
+    claim: str
+    resolved_at_turn: int = 0
+    terminal_outcome_kind: str = ""
+    note: str = ""
+
 class EvidenceProvenance(BaseModel):
     """Primary and supporting evidence attached to an answer candidate."""
 
@@ -129,6 +149,7 @@ class ReasoningCaseState(BaseModel):
     contract: ReasoningContract = Field(default_factory=ReasoningContract)
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     rejected: list[RejectedHypothesis] = Field(default_factory=list)
+    resolved: list[ResolvedHypothesis] = Field(default_factory=list)
     observables: dict[str, Any] = Field(default_factory=dict)
 
 
