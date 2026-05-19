@@ -244,13 +244,14 @@ export function InvestigationsListPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
-                <th className="px-4 py-2 font-semibold">Title</th>
+                <th className="px-4 py-2 font-semibold">Title / Verdict</th>
                 <th className="px-4 py-2 font-semibold">Kind</th>
                 <th className="px-4 py-2 font-semibold">Status</th>
                 <th className="px-4 py-2 font-semibold">Target</th>
-                <th className="px-4 py-2 font-semibold text-right">Branches</th>
-                <th className="px-4 py-2 font-semibold text-right">Msgs</th>
-                <th className="px-4 py-2 font-semibold text-right">Outcomes</th>
+                <th className="px-4 py-2 font-semibold text-right" title="Findings linked to this investigation">Find</th>
+                <th className="px-4 py-2 font-semibold text-right">Br</th>
+                <th className="px-4 py-2 font-semibold text-right">Msg</th>
+                <th className="px-4 py-2 font-semibold text-right">Out</th>
                 <th className="px-4 py-2 font-semibold text-right">Cost</th>
                 <th className="px-4 py-2 font-semibold">Created</th>
                 <th className="px-2 py-2"></th>
@@ -263,8 +264,38 @@ export function InvestigationsListPage() {
                   onClick={() => navigate(`/vr/investigations/${inv.id}`)}
                   className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
                 >
-                  <td className="px-4 py-2 font-semibold text-foreground">
-                    {inv.title}
+                  <td className="px-4 py-2 align-top min-w-0 max-w-[380px]">
+                    <div className="font-semibold text-foreground break-words">
+                      {inv.title}
+                    </div>
+                    {inv.primary_outcome_kind && (
+                      <div className="mt-1 flex items-center gap-1 flex-wrap">
+                        <AilaBadge
+                          severity={
+                            inv.primary_outcome_kind === "direct_finding"
+                              ? "high"
+                              : inv.primary_outcome_kind === "patch_assessment_report"
+                                ? "info"
+                                : inv.primary_outcome_kind === "variant_hunt_order"
+                                  ? "medium"
+                                  : "low"
+                          }
+                          size="sm"
+                        >
+                          {inv.primary_outcome_kind}
+                        </AilaBadge>
+                        {inv.primary_outcome_confidence && (
+                          <span className="text-[10px] font-mono text-text-muted">
+                            conf:{inv.primary_outcome_confidence}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {inv.primary_outcome_verdict_head && (
+                      <div className="mt-1 text-xs text-text-muted line-clamp-2 break-words">
+                        {inv.primary_outcome_verdict_head}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-muted">
                     {inv.kind}
@@ -281,6 +312,15 @@ export function InvestigationsListPage() {
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-muted">
                     {targetMap.get(inv.target_id)?.display_name ?? "loading…"}
+                  </td>
+                  <td className="px-4 py-2 font-mono text-right text-foreground">
+                    {inv.linked_finding_ids.length > 0 ? (
+                      <span className="text-emerald-400 font-semibold">
+                        {inv.linked_finding_ids.length}
+                      </span>
+                    ) : (
+                      <span className="text-text-muted">0</span>
+                    )}
                   </td>
                   <td className="px-4 py-2 font-mono text-right text-foreground">
                     {inv.branch_count}

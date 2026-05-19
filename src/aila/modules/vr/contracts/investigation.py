@@ -128,6 +128,9 @@ class VRInvestigationSummary(BaseModel):
     message_count: int = 0
     outcome_count: int = 0
     primary_outcome_id: str | None = None
+    primary_outcome_kind: str | None = None
+    primary_outcome_confidence: str | None = None
+    primary_outcome_verdict_head: str | None = None
     linked_campaign_ids: list[str] = Field(default_factory=list)
     linked_finding_ids: list[str] = Field(default_factory=list)
     started_at: datetime | None = None
