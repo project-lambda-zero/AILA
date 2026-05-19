@@ -589,28 +589,55 @@ export function InvestigationDetailPage() {
               </p>
             ) : (
               <ul className="space-y-2">
-                {outcomes.map((o) => (
-                  <li
-                    key={o.id}
-                    className="text-xs border border-border-default rounded p-2"
-                  >
-                    <div className="flex items-center gap-1 flex-wrap mb-1">
-                      <span className="font-mono text-foreground">
-                        {o.outcome_kind}
-                      </span>
-                      <AilaBadge severity="info" size="sm">
-                        conf:{o.confidence}
-                      </AilaBadge>
-                      <AilaBadge
-                        severity={dispatchColor[o.dispatch_status] ?? "info"}
-                        size="sm"
+                {[...outcomes]
+                  .sort((a, b) => {
+                    // synthesis / primary first
+                    const aPrim = a.id === inv.primary_outcome_id ? -1 : 0;
+                    const bPrim = b.id === inv.primary_outcome_id ? -1 : 0;
+                    if (aPrim !== bPrim) return aPrim - bPrim;
+                    // then newest first
+                    return (b.created_at ?? "").localeCompare(a.created_at ?? "");
+                  })
+                  .map((o) => {
+                    const persona = branches.find((b) => b.id === o.branch_id)?.persona_voice ?? null;
+                    const isPrimary = o.id === inv.primary_outcome_id;
+                    return (
+                      <li
+                        key={o.id}
+                        className={`text-xs border rounded p-2 ${
+                          isPrimary
+                            ? "border-accent-default bg-surface-emphasised"
+                            : "border-border-default"
+                        }`}
                       >
-                        {o.dispatch_status}
-                      </AilaBadge>
-                    </div>
-                    <PayloadPreview payload={o.payload} />
-                  </li>
-                ))}
+                        <div className="flex items-center gap-1 flex-wrap mb-1">
+                          {isPrimary && (
+                            <AilaBadge severity="critical" size="sm">
+                              SYNTHESIS · PRIMARY
+                            </AilaBadge>
+                          )}
+                          {persona && !isPrimary && (
+                            <AilaBadge severity="info" size="sm">
+                              {persona}
+                            </AilaBadge>
+                          )}
+                          <span className="font-mono text-foreground">
+                            {o.outcome_kind}
+                          </span>
+                          <AilaBadge severity="info" size="sm">
+                            conf:{o.confidence}
+                          </AilaBadge>
+                          <AilaBadge
+                            severity={dispatchColor[o.dispatch_status] ?? "info"}
+                            size="sm"
+                          >
+                            {o.dispatch_status}
+                          </AilaBadge>
+                        </div>
+                        <PayloadPreview payload={o.payload} />
+                      </li>
+                    );
+                  })}
               </ul>
             )}
           </AilaCard>
