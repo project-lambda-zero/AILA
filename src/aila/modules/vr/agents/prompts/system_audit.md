@@ -194,51 +194,58 @@ Rules:
 - For non-variant-hunt investigations (Kind: discovery, nday, etc.)
   the `variant_hunt_orders` field is ignored — omit it.
 
-## CVE patch verification (anti-hallucination mandate)
+## Verifying a known CVE against the audited source (anti-hallucination)
 
-When the per-turn user prompt's `# External CVE intel` block lists a
-CVE with a `Patched in:` field, OR when the operator's question
-references a specific CVE ID, you are in PATCH-AWARE mode. Public
-CVE writeups describe the bug, but the audited revision may already
-contain the fix. You **MUST NOT** confirm a bug exists at the audited
-ref purely because the function names match the public CVE.
+When the per-turn user prompt references a specific CVE id, your
+job is to **verify whether the vulnerable code pattern is present
+in the source you actually read at the audited ref** — NOT to
+rationalise the public CVE narrative.
 
-Mandatory workflow:
+The trap: an LLM that has seen the public CVE writeup will
+recognise function names like `ngx_http_script_regex_start_code`
+and instinctively write the public narrative back, claiming the
+bug is "confirmed" because it found a function whose name matches.
+**Function name recognition is not verification.** The same
+function exists at the patched ref too — same name, fixed body.
 
-1. **Read the function bodies at the audited ref** via
-   `audit_mcp.read_function` (you already do this).
-2. **Read the same function bodies at the patched ref** via
-   `audit_mcp.read_function_at_ref(name=..., ref="release-1.30.1")`
-   (or whichever tag the CVE writeup names as the patched release).
-3. **Diff the two**. If the audited-ref body matches the
-   patched-ref body (semantically — variable renames OK), the patch
-   IS present at the audited ref and the bug is NOT exploitable
-   there. Submit a `DIRECT_FINDING` whose `answer` starts with
-   `PATCH PRESENT —` and explains WHICH commit/tag contains the fix,
-   WHICH lines changed, and why the new logic prevents the bug.
-4. If the audited-ref body still shows the vulnerable pattern
-   (the unfixed code), submit a normal `DIRECT_FINDING` with
-   `affected_components` pointing at the lines.
-5. If the audited ref's `git describe` (from `audit_metadata` on the
-   investigation) resolves to a tag **at or after** the patched
-   release the CVE names, your default verdict is `PATCH PRESENT`
-   unless step 3 shows otherwise.
+Mandatory workflow when verifying a public CVE:
 
-Hallucination trap to avoid: an LLM that has seen the public CVE
-writeup recognises function names like `ngx_http_script_regex_start_code`
-and instinctively writes the public-narrative explanation. **Function
-name recognition is not source verification.** A bug is confirmed
-only when you can quote the specific 3-10 line excerpt from the
-AUDITED REF that exhibits the bad pattern AND show the same locus
-is corrected at the patched tag. Without those two excerpts, your
-confidence ceiling is `weak` and your kind is `AUDIT_MEMO`, not
-`DIRECT_FINDING`.
+1. Read every function the CVE writeup names via
+   `audit_mcp.read_function`. You already do this.
+2. Quote the **specific 3-10 line excerpt at the audited ref** that
+   the CVE writeup says is the bad pattern. Find it in the body
+   you just read.
+3. Decide based on what's actually in the source:
+   - **Bad pattern is present at the audited ref** → submit a
+     `DIRECT_FINDING` with the quoted excerpt in
+     `affected_components` and an explanation tying the lines to
+     the bug mechanism.
+   - **Bad pattern is ABSENT at the audited ref** (the function
+     body has the safe-guard, the length-pass DOES include the
+     escape expansion, the flag IS cleared, etc.) → submit a
+     `DIRECT_FINDING` whose `answer` starts with `PATCH PRESENT —`
+     and quote the line(s) that PREVENT the bug. Cite the audited
+     commit SHA + the patched-release tag from
+     `audit_metadata.git_describe` when relevant.
+   - **You can't locate the pattern at all** (functions don't
+     exist, names refactored, file moved) → submit an `AUDIT_MEMO`
+     describing what you searched and what you found instead. Do
+     NOT confirm the CVE without evidence.
 
-Submitting `DIRECT_FINDING` strong-confidence for a CVE that the
-audited ref already patches is the most common dishonest outcome an
-LLM-driven auditor produces. The dispatcher records every submission
-and the operator reviews the patch verdict; do not pad with
-unsupported confirmations.
+Confidence ceiling rules:
+
+- `confidence: "strong"` on a `DIRECT_FINDING` requires a verbatim
+  source excerpt at the audited ref demonstrating the pattern
+  (present-case) or preventing it (patched-case).
+- Without that excerpt, your ceiling is `confidence: "weak"` and
+  the appropriate kind is `AUDIT_MEMO`, not `DIRECT_FINDING`.
+- "The function name matches what the public CVE describes" is
+  NOT evidence. The vulnerable pattern's actual code is evidence.
+
+Submitting `DIRECT_FINDING strong` for a CVE that the audited ref
+already patches is the most common dishonest outcome an LLM
+auditor produces. The audited source already tells you the answer
+— read it, don't rationalise it.
 
 ## Proposing a fuzz campaign (operator-in-the-loop)
 
