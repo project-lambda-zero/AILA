@@ -76,13 +76,35 @@ function fmtUsd(n: number): string {
 }
 
 function PayloadPreview({ payload }: { payload: Record<string, unknown> }) {
-  const text = (payload?.text as string) || "";
-  if (text) {
+  const [expanded, setExpanded] = useState(false);
+  // Outcome payloads carry the agent prose under one of these fields,
+  // in priority order. assessment_report and patch_assessment_report
+  // use `answer`; older shapes used `text`. Fall through to JSON for
+  // structured payloads with no prose.
+  const proseCandidate =
+    (payload?.answer as string) ||
+    (payload?.text as string) ||
+    (payload?.summary as string) ||
+    (payload?.description as string) ||
+    "";
+  if (proseCandidate) {
+    const truncated = proseCandidate.length > 600;
+    const shown = expanded || !truncated
+      ? proseCandidate
+      : proseCandidate.slice(0, 600) + "…";
     return (
-      <p className="text-xs text-foreground whitespace-pre-wrap font-mono">
-        {text.slice(0, 300)}
-        {text.length > 300 ? "…" : ""}
-      </p>
+      <div className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">
+        {shown}
+        {truncated && (
+          <button
+            type="button"
+            onClick={() => setExpanded((e) => !e)}
+            className="block mt-1 text-text-muted hover:text-foreground underline text-[10px]"
+          >
+            {expanded ? "Collapse" : `Show full (${proseCandidate.length} chars)`}
+          </button>
+        )}
+      </div>
     );
   }
   const json = JSON.stringify(payload, null, 2);
