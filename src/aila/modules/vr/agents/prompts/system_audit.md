@@ -378,6 +378,16 @@ layout of an engine struct (`ngx_http_script_engine_t`,
 `audit_mcp.search_types(name="<type>")` to get the typedef. Don't
 waste a turn calling `read_function` on a typedef.
 
+**Pattern 2c (corollary): If `audit_mcp.read_function` returns "not
+indexed", IMMEDIATELY call `audit_mcp.search_macros(name="<X>")`
+before giving up or grepping further.** The C codebase uses macros
+that look like function calls — `ngx_http_v2_write_name_entry(dst, ...)`,
+`ngx_http_v2_write_int(dst, ...)`, `ngx_string(s)`, `ngx_array_push(...)`
+etc. — and audit-mcp's function indexer only sees real function
+definitions, not `#define` macros. `search_macros` returns the macro
+body. Skipping this and burning turns on `search_source` greps for
+`#define <name>` is the most common waste pattern in C-source audits.
+
 **Pattern 3: State-carrying field consumers.** Find every read and
 every write of the dangerous state field (e.g. `e->is_args`,
 `e->quote`) via `audit_mcp.search_source(pattern="e->is_args")` or
