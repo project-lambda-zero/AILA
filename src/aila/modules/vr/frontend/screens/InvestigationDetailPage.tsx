@@ -644,7 +644,41 @@ export function InvestigationDetailPage() {
                           >
                             {o.dispatch_status}
                           </AilaBadge>
+                          {(() => {
+                            const vr = (o.payload as Record<string, unknown> | undefined)
+                              ?.verifier_report as
+                              | { verdict?: string; confidence?: number; summary?: string; counter_evidence?: string }
+                              | undefined;
+                            if (!vr || !vr.verdict) return null;
+                            const sev =
+                              vr.verdict === "refuted"
+                                ? "critical"
+                                : vr.verdict === "confirmed"
+                                  ? "low"
+                                  : "medium";
+                            return (
+                              <AilaBadge severity={sev} size="sm" title={vr.summary || vr.verdict}>
+                                verifier: {vr.verdict}
+                                {typeof vr.confidence === "number"
+                                  ? ` (${vr.confidence.toFixed(2)})`
+                                  : ""}
+                              </AilaBadge>
+                            );
+                          })()}
                         </div>
+                        {(() => {
+                          const vr = (o.payload as Record<string, unknown> | undefined)
+                            ?.verifier_report as
+                            | { verdict?: string; counter_evidence?: string; summary?: string }
+                            | undefined;
+                          if (!vr || vr.verdict !== "refuted" || !vr.counter_evidence) return null;
+                          return (
+                            <div className="mt-1 mb-2 text-[11px] border border-red-500/50 bg-red-500/10 rounded p-2 text-red-300">
+                              <div className="font-semibold mb-1">verifier refuted this finding:</div>
+                              <div className="break-words whitespace-pre-wrap">{vr.counter_evidence}</div>
+                            </div>
+                          );
+                        })()}
                         <PayloadPreview payload={o.payload} />
                       </li>
                     );

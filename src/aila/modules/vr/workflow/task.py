@@ -269,3 +269,34 @@ async def run_vr_synthesis(
     )
     agent = SynthesisAgent(investigation_id=investigation_id)
     return await agent.run()
+
+
+@platform_task(
+    track="vr",
+    module_id="vr",
+    max_tries=2,
+    timeout_s=600.0,  # 10 min — two LLM calls + N audit-mcp probes
+)
+async def run_vr_claim_verifier(
+    ctx: TaskContext,
+    investigation_id: str,
+    **_: Any,
+) -> dict[str, Any]:
+    """Adversarially verify the canonical outcome's claim.
+
+    Three-stage pipeline (extract preconditions → probe audit-mcp →
+    classify verdict) that writes ``verifier_report`` into the
+    canonical outcome's payload. Triggered post-synthesis so the
+    operator sees an independent confirmed/refuted verdict next to
+    the panel's narrative — catches the false-positive classes the
+    deliberation panel keeps missing on shape-pattern-matching alone.
+
+    Idempotent — exits early when ``verifier_report`` is already in
+    the canonical payload.
+    """
+    del ctx
+    from aila.modules.vr.agents.claim_verifier import (  # noqa: PLC0415
+        ClaimVerifierAgent,
+    )
+    agent = ClaimVerifierAgent(investigation_id=investigation_id)
+    return await agent.run()

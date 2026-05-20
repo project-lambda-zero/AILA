@@ -279,7 +279,10 @@ async def _maybe_trigger_synthesis(investigation_id: str) -> None:
         VRInvestigationOutcomeRecord,
         VRInvestigationRecord,
     )
-    from aila.modules.vr.workflow.task import run_vr_synthesis  # noqa: PLC0415
+    from aila.modules.vr.workflow.task import (  # noqa: PLC0415
+        run_vr_claim_verifier,
+        run_vr_synthesis,
+    )
 
     async with UnitOfWork() as uow:
         inv = (await uow.session.exec(
@@ -370,8 +373,21 @@ async def _maybe_trigger_synthesis(investigation_id: str) -> None:
         group_id="vr_synthesis",
         team_id=team_id,
     )
+    # Adversarial verifier — runs in parallel with synthesis. Both are
+    # idempotent and operate on the canonical outcome; whichever lands
+    # last just sees its predecessor's marker key in the payload and
+    # bails. The verifier's verdict ends up alongside panel_summary so
+    # the operator sees an independent confirmed/refuted classification.
+    await task_queue.submit(
+        track="vr",
+        fn=run_vr_claim_verifier,
+        kwargs={"investigation_id": investigation_id},
+        user_id="system",
+        group_id="vr_claim_verifier",
+        team_id=team_id,
+    )
     _log.info(
-        "investigation_emit SYNTHESIS_TRIGGER queued investigation_id=%s",
+        "investigation_emit SYNTHESIS+VERIFIER queued investigation_id=%s",
         investigation_id,
     )
 
