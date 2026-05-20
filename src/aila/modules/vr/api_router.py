@@ -441,6 +441,8 @@ def _investigation_summary(
     primary_outcome_kind: str | None = None,
     primary_outcome_confidence: str | None = None,
     primary_outcome_verdict_head: str | None = None,
+    verifier_verdict: str | None = None,
+    verifier_confidence: float | None = None,
 ) -> VRInvestigationSummary:
     """Project a VRInvestigationRecord row to the public summary."""
     import json as _json
@@ -472,6 +474,8 @@ def _investigation_summary(
         primary_outcome_kind=primary_outcome_kind,
         primary_outcome_confidence=primary_outcome_confidence,
         primary_outcome_verdict_head=primary_outcome_verdict_head,
+        verifier_verdict=verifier_verdict,
+        verifier_confidence=verifier_confidence,
         linked_campaign_ids=_json.loads(record.linked_campaign_ids_json or "[]"),
         linked_finding_ids=_json.loads(record.linked_finding_ids_json or "[]"),
         started_at=record.started_at,
@@ -2210,6 +2214,8 @@ def create_vr_router() -> APIRouter:
             for r in rows:
                 primary = primary_by_inv.get(r.id)
                 verdict_head: str | None = None
+                verifier_verdict: str | None = None
+                verifier_confidence: float | None = None
                 if primary is not None:
                     try:
                         payload = _json.loads(primary.payload_json or "{}")
@@ -2220,6 +2226,12 @@ def create_vr_router() -> APIRouter:
                         verdict_head = ((ps.get("narrative") or "").splitlines() or [""])[0][:140]
                     if not verdict_head:
                         verdict_head = ((payload.get("answer") or "").splitlines() or [""])[0][:140]
+                    vr = payload.get("verifier_report")
+                    if isinstance(vr, dict):
+                        verifier_verdict = str(vr.get("verdict") or "") or None
+                        vc = vr.get("confidence")
+                        if isinstance(vc, (int, float)):
+                            verifier_confidence = float(vc)
                 items.append(_investigation_summary(
                     r,
                     branch_count=br_counts.get(r.id, 0),
@@ -2228,6 +2240,8 @@ def create_vr_router() -> APIRouter:
                     primary_outcome_kind=primary.outcome_kind if primary else None,
                     primary_outcome_confidence=primary.confidence if primary else None,
                     primary_outcome_verdict_head=verdict_head or None,
+                    verifier_verdict=verifier_verdict,
+                    verifier_confidence=verifier_confidence,
                 ))
         else:
             items = []
@@ -2301,6 +2315,8 @@ def create_vr_router() -> APIRouter:
             primary_outcome_kind: str | None = None
             primary_outcome_confidence: str | None = None
             primary_outcome_verdict_head: str | None = None
+            verifier_verdict: str | None = None
+            verifier_confidence: float | None = None
             if inv.primary_outcome_id:
                 primary = (await uow.session.exec(
                     select(VRInvestigationOutcomeRecord).where(
@@ -2324,6 +2340,12 @@ def create_vr_router() -> APIRouter:
                         primary_outcome_verdict_head = (
                             (payload.get("answer") or "").splitlines() or [""]
                         )[0][:140] or None
+                    vr = payload.get("verifier_report")
+                    if isinstance(vr, dict):
+                        verifier_verdict = str(vr.get("verdict") or "") or None
+                        vc = vr.get("confidence")
+                        if isinstance(vc, (int, float)):
+                            verifier_confidence = float(vc)
 
         return DataEnvelope(data=_investigation_summary(
             inv,
@@ -2333,6 +2355,8 @@ def create_vr_router() -> APIRouter:
             primary_outcome_kind=primary_outcome_kind,
             primary_outcome_confidence=primary_outcome_confidence,
             primary_outcome_verdict_head=primary_outcome_verdict_head,
+            verifier_verdict=verifier_verdict,
+            verifier_confidence=verifier_confidence,
         ))
 
     @router.patch(

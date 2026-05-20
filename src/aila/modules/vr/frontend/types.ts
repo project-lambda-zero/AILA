@@ -366,6 +366,8 @@ export interface VRInvestigationSummary {
   primary_outcome_kind?: string | null;
   primary_outcome_confidence?: string | null;
   primary_outcome_verdict_head?: string | null;
+  verifier_verdict?: string | null;
+  verifier_confidence?: number | null;
   linked_campaign_ids: string[];
   linked_finding_ids: string[];
   started_at?: string | null;

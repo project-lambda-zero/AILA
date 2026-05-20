@@ -53,6 +53,7 @@ export function InvestigationsListPage() {
   const [kindFilter, setKindFilter] = useState<string>("");
   const [findingsOnly, setFindingsOnly] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [verifierFilter, setVerifierFilter] = useState<string>("");
   const [pageSize, setPageSize] = useState(100);
   const [offset, setOffset] = useState(0);
 
@@ -82,9 +83,14 @@ export function InvestigationsListPage() {
   const investigationsRaw = result?.data ?? [];
   // findingsOnly applies client-side over the current page (server has no
   // such filter — would need a join on linked_finding_ids json length).
-  const investigations = findingsOnly
+  let investigations = findingsOnly
     ? investigationsRaw.filter((i) => i.linked_finding_ids.length > 0)
     : investigationsRaw;
+  if (verifierFilter) {
+    investigations = investigations.filter(
+      (i) => (i.verifier_verdict ?? "") === verifierFilter,
+    );
+  }
 
   // Whenever a filter changes, snap back to page 1.
   function resetToFirstPage() {
@@ -302,6 +308,20 @@ export function InvestigationsListPage() {
             />
             findings only
           </label>
+          <select
+            value={verifierFilter}
+            onChange={(e) => {
+              setVerifierFilter(e.target.value);
+              resetToFirstPage();
+            }}
+            className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
+            title="Filter by verifier verdict"
+          >
+            <option value="">all verifier</option>
+            <option value="confirmed">verifier: confirmed</option>
+            <option value="refuted">verifier: refuted</option>
+            <option value="inconclusive">verifier: inconclusive</option>
+          </select>
           <button
             type="button"
             onClick={() => {
@@ -332,7 +352,7 @@ export function InvestigationsListPage() {
             <option value="200">200/page</option>
             <option value="500">500/page</option>
           </select>
-          {(searchQ || statusFilter || kindFilter || findingsOnly || favoritesOnly) && (
+          {(searchQ || statusFilter || kindFilter || findingsOnly || favoritesOnly || verifierFilter) && (
             <button
               type="button"
               onClick={() => {
@@ -341,6 +361,7 @@ export function InvestigationsListPage() {
                 setKindFilter("");
                 setFindingsOnly(false);
                 setFavoritesOnly(false);
+                setVerifierFilter("");
                 resetToFirstPage();
               }}
               className="px-2 py-1.5 text-xs rounded-md border border-border-default text-text-muted hover:text-foreground"
@@ -472,6 +493,25 @@ export function InvestigationsListPage() {
                     {inv.primary_outcome_verdict_head && (
                       <div className="mt-1 text-xs text-text-muted line-clamp-2 break-words">
                         {inv.primary_outcome_verdict_head}
+                      </div>
+                    )}
+                    {inv.verifier_verdict && (
+                      <div className="mt-1">
+                        <AilaBadge
+                          severity={
+                            inv.verifier_verdict === "refuted"
+                              ? "critical"
+                              : inv.verifier_verdict === "confirmed"
+                                ? "low"
+                                : "medium"
+                          }
+                          size="sm"
+                        >
+                          verifier: {inv.verifier_verdict}
+                          {typeof inv.verifier_confidence === "number"
+                            ? ` (${inv.verifier_confidence.toFixed(2)})`
+                            : ""}
+                        </AilaBadge>
                       </div>
                     )}
                   </td>
