@@ -122,6 +122,7 @@ export interface InvestigationListFilters {
   kind?: string;
   targetId?: string;
   q?: string;
+  favorites?: boolean;
 }
 
 export function useInvestigations(filters: InvestigationListFilters = {}) {
@@ -132,6 +133,7 @@ export function useInvestigations(filters: InvestigationListFilters = {}) {
     kind,
     targetId,
     q,
+    favorites,
   } = filters;
   const qs = new URLSearchParams({
     offset: String(offset),
@@ -141,8 +143,9 @@ export function useInvestigations(filters: InvestigationListFilters = {}) {
   if (kind) qs.set("kind", kind);
   if (targetId) qs.set("target_id", targetId);
   if (q && q.trim()) qs.set("q", q.trim());
+  if (favorites) qs.set("favorites", "true");
   return useQuery({
-    queryKey: ["vr", "investigations", offset, limit, status, kind, targetId, q],
+    queryKey: ["vr", "investigations", offset, limit, status, kind, targetId, q, favorites],
     queryFn: async () =>
       await authorizedRequestJson<Envelope<VRInvestigationSummary[]>>(
         `/vr/investigations?${qs.toString()}`,

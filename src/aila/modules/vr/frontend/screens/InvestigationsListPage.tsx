@@ -6,7 +6,11 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
-import { useCreateInvestigation, useDeleteInvestigation } from "../mutations";
+import {
+  useCreateInvestigation,
+  useDeleteInvestigation,
+  useToggleInvestigationFavorite,
+} from "../mutations";
 import {
   useInvestigations,
   useTargetMap,
@@ -48,6 +52,7 @@ export function InvestigationsListPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [kindFilter, setKindFilter] = useState<string>("");
   const [findingsOnly, setFindingsOnly] = useState(false);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [pageSize, setPageSize] = useState(100);
   const [offset, setOffset] = useState(0);
 
@@ -57,12 +62,14 @@ export function InvestigationsListPage() {
     status: statusFilter || undefined,
     kind: kindFilter || undefined,
     q: searchQ || undefined,
+    favorites: favoritesOnly || undefined,
   });
   const targetMap = useTargetMap();
   const { data: targetsResult } = useTargets();
   const { data: workspacesResult } = useWorkspaces();
   const createMut = useCreateInvestigation();
   const deleteMut = useDeleteInvestigation();
+  const favMut = useToggleInvestigationFavorite();
 
   const [showForm, setShowForm] = useState(false);
   const [formTitle, setFormTitle] = useState("");
@@ -295,6 +302,22 @@ export function InvestigationsListPage() {
             />
             findings only
           </label>
+          <button
+            type="button"
+            onClick={() => {
+              setFavoritesOnly((v) => !v);
+              resetToFirstPage();
+            }}
+            className={
+              "px-2 py-1.5 text-xs rounded-md border transition-colors " +
+              (favoritesOnly
+                ? "border-amber-400 bg-amber-400/10 text-amber-300"
+                : "border-border-default text-text-muted hover:text-foreground")
+            }
+            title="Show only favorited investigations"
+          >
+            {favoritesOnly ? "★" : "☆"} favorites
+          </button>
           <select
             value={pageSize}
             onChange={(e) => {
@@ -309,7 +332,7 @@ export function InvestigationsListPage() {
             <option value="200">200/page</option>
             <option value="500">500/page</option>
           </select>
-          {(searchQ || statusFilter || kindFilter || findingsOnly) && (
+          {(searchQ || statusFilter || kindFilter || findingsOnly || favoritesOnly) && (
             <button
               type="button"
               onClick={() => {
@@ -317,6 +340,7 @@ export function InvestigationsListPage() {
                 setStatusFilter("");
                 setKindFilter("");
                 setFindingsOnly(false);
+                setFavoritesOnly(false);
                 resetToFirstPage();
               }}
               className="px-2 py-1.5 text-xs rounded-md border border-border-default text-text-muted hover:text-foreground"
@@ -378,6 +402,7 @@ export function InvestigationsListPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+                <th className="px-2 py-2 font-semibold text-center" title="Favorite">★</th>
                 <th className="px-4 py-2 font-semibold">Title / Verdict</th>
                 <th className="px-4 py-2 font-semibold">Kind</th>
                 <th className="px-4 py-2 font-semibold">Status</th>
@@ -398,6 +423,25 @@ export function InvestigationsListPage() {
                   onClick={() => navigate(`/vr/investigations/${inv.id}`)}
                   className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
                 >
+                  <td
+                    className="px-2 py-2 align-top text-center"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      favMut.mutate(inv.id);
+                    }}
+                  >
+                    <span
+                      className={
+                        "cursor-pointer text-base " +
+                        (inv.is_favorite
+                          ? "text-amber-400"
+                          : "text-text-muted hover:text-amber-300")
+                      }
+                      title={inv.is_favorite ? "Unfavorite" : "Favorite"}
+                    >
+                      {inv.is_favorite ? "★" : "☆"}
+                    </span>
+                  </td>
                   <td className="px-4 py-2 align-top min-w-0 max-w-[380px]">
                     <div className="font-semibold text-foreground break-words">
                       {inv.title}
