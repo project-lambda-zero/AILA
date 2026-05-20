@@ -115,14 +115,39 @@ export function useSystemHeartbeat(systemId: number | null | undefined) {
   });
 }
 
-export function useInvestigations(offset = 0, limit = 50) {
+export interface InvestigationListFilters {
+  offset?: number;
+  limit?: number;
+  status?: string;
+  kind?: string;
+  targetId?: string;
+  q?: string;
+}
+
+export function useInvestigations(filters: InvestigationListFilters = {}) {
+  const {
+    offset = 0,
+    limit = 50,
+    status,
+    kind,
+    targetId,
+    q,
+  } = filters;
+  const qs = new URLSearchParams({
+    offset: String(offset),
+    limit: String(limit),
+  });
+  if (status) qs.set("status", status);
+  if (kind) qs.set("kind", kind);
+  if (targetId) qs.set("target_id", targetId);
+  if (q && q.trim()) qs.set("q", q.trim());
   return useQuery({
-    queryKey: ["vr", "investigations", offset, limit],
+    queryKey: ["vr", "investigations", offset, limit, status, kind, targetId, q],
     queryFn: async () =>
       await authorizedRequestJson<Envelope<VRInvestigationSummary[]>>(
-        `/vr/investigations?offset=${offset}&limit=${limit}`,
+        `/vr/investigations?${qs.toString()}`,
       ),
-    refetchInterval: 5000, // poll while a frontend SSE stream isn't wired
+    refetchInterval: 5000,
   });
 }
 
