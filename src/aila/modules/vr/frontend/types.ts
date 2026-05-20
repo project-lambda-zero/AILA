@@ -352,6 +352,7 @@ export interface VRInvestigationSummary {
   status: InvestigationStatus;
   pause_reason?: InvestigationPauseReason | null;
   auto_pilot: boolean;
+  is_favorite: boolean;
   strategy_family: string;
   cost_budget_usd: number;
   cost_actual_usd: number;

@@ -218,6 +218,26 @@ export function useCreateInvestigation() {
   });
 }
 
+export function useToggleInvestigationFavorite() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (investigationId: string) =>
+      authorizedRequestJson<Envelope<VRInvestigationSummary>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/favorite`,
+        { method: "PATCH" },
+      ),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      toast.success(
+        result.data.is_favorite ? "Added to favorites" : "Removed from favorites",
+      );
+    },
+    onError: (err: Error) => {
+      toast.error(`Favorite toggle failed: ${err.message}`);
+    },
+  });
+}
+
 export interface CreateWorkspaceBody {
   name: string;
   slug: string;

@@ -458,6 +458,7 @@ def _investigation_summary(
             if record.pause_reason else None
         ),
         auto_pilot=record.auto_pilot,
+        is_favorite=getattr(record, "is_favorite", False),
         strategy_family=record.strategy_family,
         cost_budget_usd=record.cost_budget_usd,
         cost_actual_usd=record.cost_actual_usd,
@@ -2115,6 +2116,7 @@ def create_vr_router() -> APIRouter:
         kind: str | None = Query(default=None),
         investigation_status: str | None = Query(default=None, alias="status"),
         q: str | None = Query(default=None, description="Case-insensitive title substring filter."),
+        favorites: bool = Query(default=False, description="Restrict to is_favorite=true rows."),
         offset: int = Query(default=0, ge=0),
         limit: int = Query(default=50, ge=1, le=500),
     ) -> DataEnvelope[list[VRInvestigationSummary]]:
@@ -2140,6 +2142,9 @@ def create_vr_router() -> APIRouter:
                 pattern = f"%{q.strip()}%"
                 base = base.where(VRInvestigationRecord.title.ilike(pattern))
                 count_base = count_base.where(VRInvestigationRecord.title.ilike(pattern))
+            if favorites:
+                base = base.where(VRInvestigationRecord.is_favorite.is_(True))
+                count_base = count_base.where(VRInvestigationRecord.is_favorite.is_(True))
 
             total = (await uow.session.exec(count_base)).one()
             rows = (await uow.session.exec(
@@ -2329,6 +2334,43 @@ def create_vr_router() -> APIRouter:
             primary_outcome_confidence=primary_outcome_confidence,
             primary_outcome_verdict_head=primary_outcome_verdict_head,
         ))
+
+    @router.patch(
+        "/investigations/{investigation_id}/favorite",
+        response_model=DataEnvelope[VRInvestigationSummary],
+        summary="Toggle or set is_favorite on an investigation.",
+    )
+    @limiter.limit("60/minute")
+    async def toggle_investigation_favorite(
+        request: Request,
+        investigation_id: str,
+        is_favorite: bool = Query(default=None, description="Explicit set; omit to toggle."),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRInvestigationSummary]:
+        del request
+        from .db_models import VRInvestigationRecord  # noqa: PLC0415
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                )
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            inv.is_favorite = (not inv.is_favorite) if is_favorite is None else bool(is_favorite)
+            inv.updated_at = utc_now()
+            uow.session.add(inv)
+            await uow.commit()
+            await uow.session.refresh(inv)
+
+        return DataEnvelope(data=_investigation_summary(inv))
 
     @router.delete(
         "/investigations/{investigation_id}",

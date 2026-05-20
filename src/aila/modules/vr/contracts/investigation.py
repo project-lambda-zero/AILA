@@ -118,6 +118,7 @@ class VRInvestigationSummary(BaseModel):
     status: InvestigationStatus
     pause_reason: InvestigationPauseReason | None = None
     auto_pilot: bool
+    is_favorite: bool = False
     strategy_family: str
     cost_budget_usd: float
     cost_actual_usd: float = 0.0

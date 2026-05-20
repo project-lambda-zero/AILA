@@ -57,6 +57,7 @@ class VRInvestigationRecord(TeamScopedMixin, SQLModel, table=True):
     status: str = Field(default="created", index=True, max_length=32)
     pause_reason: str | None = Field(default=None, max_length=32)
     auto_pilot: bool = Field(default=True)
+    is_favorite: bool = Field(default=False, index=True)
 
     strategy_family: str = Field(
         default="vulnerability_research.discovery_research", max_length=64,
