@@ -42,7 +42,22 @@ function fmtUsd(n: number): string {
 
 export function InvestigationsListPage() {
   const navigate = useNavigate();
-  const { data: result, isLoading, isError } = useInvestigations();
+
+  // Filter + pagination state
+  const [searchQ, setSearchQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [kindFilter, setKindFilter] = useState<string>("");
+  const [findingsOnly, setFindingsOnly] = useState(false);
+  const [pageSize, setPageSize] = useState(100);
+  const [offset, setOffset] = useState(0);
+
+  const { data: result, isLoading, isError } = useInvestigations({
+    offset,
+    limit: pageSize,
+    status: statusFilter || undefined,
+    kind: kindFilter || undefined,
+    q: searchQ || undefined,
+  });
   const targetMap = useTargetMap();
   const { data: targetsResult } = useTargets();
   const { data: workspacesResult } = useWorkspaces();
@@ -56,7 +71,18 @@ export function InvestigationsListPage() {
   const [formKind, setFormKind] = useState<InvestigationKind>("discovery");
   const [formBudget, setFormBudget] = useState("50");
 
-  const investigations = result?.data ?? [];
+  const totalRaw = (result?.meta as { total?: number } | undefined)?.total ?? 0;
+  const investigationsRaw = result?.data ?? [];
+  // findingsOnly applies client-side over the current page (server has no
+  // such filter — would need a join on linked_finding_ids json length).
+  const investigations = findingsOnly
+    ? investigationsRaw.filter((i) => i.linked_finding_ids.length > 0)
+    : investigationsRaw;
+
+  // Whenever a filter changes, snap back to page 1.
+  function resetToFirstPage() {
+    setOffset(0);
+  }
 
   return (
     <div className="space-y-4">
@@ -217,6 +243,114 @@ export function InvestigationsListPage() {
           </div>
         </AilaCard>
       )}
+
+      {/* Filter bar — always visible above results */}
+      <AilaCard>
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
+          <input
+            type="search"
+            value={searchQ}
+            onChange={(e) => {
+              setSearchQ(e.target.value);
+              resetToFirstPage();
+            }}
+            placeholder="Search title (server-side ILIKE)…"
+            className="flex-1 min-w-[180px] px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              resetToFirstPage();
+            }}
+            className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
+          >
+            <option value="">all status</option>
+            <option value="created">created</option>
+            <option value="running">running</option>
+            <option value="paused">paused</option>
+            <option value="completed">completed</option>
+            <option value="failed">failed</option>
+          </select>
+          <select
+            value={kindFilter}
+            onChange={(e) => {
+              setKindFilter(e.target.value);
+              resetToFirstPage();
+            }}
+            className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
+          >
+            <option value="">all kind</option>
+            <option value="discovery">discovery</option>
+            <option value="variant_hunt">variant_hunt</option>
+            <option value="triage">triage</option>
+            <option value="n_day">n_day</option>
+            <option value="audit">audit</option>
+          </select>
+          <label className="flex items-center gap-1 text-xs text-text-muted">
+            <input
+              type="checkbox"
+              checked={findingsOnly}
+              onChange={(e) => setFindingsOnly(e.target.checked)}
+            />
+            findings only
+          </label>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(parseInt(e.target.value, 10));
+              resetToFirstPage();
+            }}
+            className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
+            title="Page size"
+          >
+            <option value="50">50/page</option>
+            <option value="100">100/page</option>
+            <option value="200">200/page</option>
+            <option value="500">500/page</option>
+          </select>
+          {(searchQ || statusFilter || kindFilter || findingsOnly) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQ("");
+                setStatusFilter("");
+                setKindFilter("");
+                setFindingsOnly(false);
+                resetToFirstPage();
+              }}
+              className="px-2 py-1.5 text-xs rounded-md border border-border-default text-text-muted hover:text-foreground"
+            >
+              clear
+            </button>
+          )}
+        </div>
+        <div className="mt-2 flex items-center justify-between text-xs text-text-muted">
+          <span>
+            {investigations.length === investigationsRaw.length
+              ? `Showing ${offset + 1}–${offset + investigations.length} of ${totalRaw}`
+              : `Showing ${investigations.length} of ${investigationsRaw.length} (page) · ${totalRaw} total server-side`}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={offset === 0}
+              onClick={() => setOffset(Math.max(0, offset - pageSize))}
+              className="px-2 py-1 rounded-md border border-border-default disabled:opacity-40 hover:text-foreground"
+            >
+              ‹ Prev
+            </button>
+            <button
+              type="button"
+              disabled={offset + pageSize >= totalRaw}
+              onClick={() => setOffset(offset + pageSize)}
+              className="px-2 py-1 rounded-md border border-border-default disabled:opacity-40 hover:text-foreground"
+            >
+              Next ›
+            </button>
+          </div>
+        </div>
+      </AilaCard>
 
 
       {isLoading && <LoadingSkeleton size="lg" width="full" />}

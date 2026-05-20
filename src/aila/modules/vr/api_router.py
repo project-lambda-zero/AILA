@@ -2105,7 +2105,7 @@ def create_vr_router() -> APIRouter:
     @router.get(
         "/investigations",
         response_model=DataEnvelope[list[VRInvestigationSummary]],
-        summary="List investigations (filterable by target_id + kind + status).",
+        summary="List investigations (filterable by target_id, kind, status, q).",
     )
     @limiter.limit("60/minute")
     async def list_investigations(
@@ -2114,8 +2114,9 @@ def create_vr_router() -> APIRouter:
         target_id: str | None = Query(default=None),
         kind: str | None = Query(default=None),
         investigation_status: str | None = Query(default=None, alias="status"),
+        q: str | None = Query(default=None, description="Case-insensitive title substring filter."),
         offset: int = Query(default=0, ge=0),
-        limit: int = Query(default=50, ge=1, le=200),
+        limit: int = Query(default=50, ge=1, le=500),
     ) -> DataEnvelope[list[VRInvestigationSummary]]:
         del request
         from .db_models import VRInvestigationRecord
@@ -2135,6 +2136,10 @@ def create_vr_router() -> APIRouter:
             if investigation_status is not None:
                 base = base.where(VRInvestigationRecord.status == investigation_status)
                 count_base = count_base.where(VRInvestigationRecord.status == investigation_status)
+            if q is not None and q.strip():
+                pattern = f"%{q.strip()}%"
+                base = base.where(VRInvestigationRecord.title.ilike(pattern))
+                count_base = count_base.where(VRInvestigationRecord.title.ilike(pattern))
 
             total = (await uow.session.exec(count_base)).one()
             rows = (await uow.session.exec(
