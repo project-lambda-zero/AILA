@@ -156,7 +156,26 @@ class ToolExecutor:
             )
 
         if raw.get("status") == "error":
-            err = f"{server_id}.{tool_name} returned error: {raw.get('error')!r}"
+            raw_err = raw.get("error") or ""
+            err = f"{server_id}.{tool_name} returned error: {raw_err!r}"
+            # Common false-negative: audit_mcp.read_function says
+            # 'Function X not indexed' — but the identifier is a
+            # #define macro, not a function. Append a hint so the
+            # agent's next turn calls audit_mcp.search_macros instead
+            # of grinding on more search_source attempts.
+            if (
+                server_id == "audit_mcp"
+                and tool_name == "read_function"
+                and isinstance(raw_err, str)
+                and "not indexed" in raw_err.lower()
+            ):
+                requested = args.get("name") or args.get("function") or "<symbol>"
+                err += (
+                    f"\n\nHINT: '{requested}' may be a macro (#define), not a function. "
+                    f"Try audit_mcp.search_macros(name={requested!r}) BEFORE giving up — "
+                    f"identifiers that look like function calls (e.g. ngx_http_v2_write_*) "
+                    f"are often macros that read_function can't see."
+                )
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
             )
