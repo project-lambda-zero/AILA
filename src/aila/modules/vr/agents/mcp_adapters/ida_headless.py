@@ -51,8 +51,14 @@ __all__ = [
 # Per-adapter caps on observables size. Pseudocode and disassembly
 # are the worst offenders for prompt bloat. Raw responses remain in
 # the message store; observables only hold a bounded head slice.
-_MAX_OBS_PSEUDOCODE = 3000
-_MAX_OBS_DISASM = 2500
+# Observable caps bumped 3000/2500 → 50000 to match audit_mcp's
+# read_function fix — at the prior caps, long decompiled functions
+# were truncated before the load-bearing branch / sink was visible
+# and the agent submitted false-positive findings on partial reads.
+# 50000 chars covers ~600 lines of pseudocode / ~1500 disasm
+# instructions; full bodies stay in the message store regardless.
+_MAX_OBS_PSEUDOCODE = 50000
+_MAX_OBS_DISASM = 50000
 _MAX_OBS_CALLSITES = 25
 
 

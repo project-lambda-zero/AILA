@@ -26,8 +26,14 @@ __all__ = [
 
 # Cap on JSON-ish dumps pushed into observables. ~2KB ≈ 500 tokens per
 # observation entry — enough context for the next reasoning turn without
-# blowing the prompt budget at turn 25.
-MAX_OBS_DUMP_CHARS = 2000
+# Cap for the generic JSON-dump fallback (adapt_generic). Bumped
+# 2000 → 15000 — at 2000 chars a typical search_source response with
+# limit=50 was truncated to ~6-8 matches and the agent never saw the
+# load-bearing line. Specialized adapters override this with their
+# own dense renderers (see audit_mcp._render_matches_dense at 30000);
+# this constant only governs the catch-all path for unspecialized
+# tools.
+MAX_OBS_DUMP_CHARS = 15000
 
 # Cap on per-list previews surfaced into observables.
 MAX_LIST_PREVIEW = 20

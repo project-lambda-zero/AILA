@@ -38,6 +38,11 @@ __all__ = [
     "adapt_export_graph",
     "adapt_diff_codebases",
     "adapt_read_function",
+    "adapt_search_source",
+    "adapt_search_macros",
+    "adapt_search_constants",
+    "adapt_search_types",
+    "adapt_search_functions",
 ]
 
 
@@ -487,3 +492,82 @@ def adapt_read_function(
         observables_delta={obs_key_for(ctx, f"source.{fn_name}"): obs_value},
         summary=f"read_function {fn_name} ({line_count} lines, lang={language or '?'})",
     )
+
+
+# ----------------------------------------------------------------------
+# search_* family — specialized dense rendering
+# ----------------------------------------------------------------------
+
+# Per-result observable cap for search_* adapters. 30000 chars covers
+# ~200-400 matches in dense file:line:text format vs ~8 matches when
+# the old generic JSON-dump path capped at MAX_OBS_DUMP_CHARS=2000.
+_MAX_OBS_SEARCH = 30000
+
+
+def _render_matches_dense(raw: dict[str, Any]) -> tuple[str, int]:
+    """Render a search_* result as file:line: text matches, one per line.
+
+    Returns ``(rendered_text, total_match_count)``. Output is at most
+    ``_MAX_OBS_SEARCH`` chars with a trailing truncation marker when
+    the full list overflows.
+    """
+    matches = (raw.get("matches") or raw.get("results")
+               or raw.get("hits") or [])
+    if not isinstance(matches, list):
+        return bounded_dump(raw, max_chars=_MAX_OBS_SEARCH), 0
+    lines: list[str] = []
+    for m in matches:
+        if not isinstance(m, dict):
+            lines.append(str(m))
+            continue
+        fp = m.get("file_path") or m.get("file") or m.get("path") or "?"
+        ln = m.get("line") or m.get("start_line") or "?"
+        txt = (m.get("text") or m.get("snippet")
+               or m.get("match") or m.get("body") or "")
+        if isinstance(txt, list):
+            txt = " ".join(str(x) for x in txt)
+        txt = str(txt).strip()
+        lines.append(f"{fp}:{ln}: {txt}")
+    body = "\n".join(lines)
+    if len(body) > _MAX_OBS_SEARCH:
+        kept = body[:_MAX_OBS_SEARCH].rsplit("\n", 1)[0]
+        body = kept + (
+            f"\n... [truncated — {len(matches)} matches total, full"
+            f" {len(body)} chars in message store; narrow your pattern"
+            f" or add file_path scope to reduce noise]"
+        )
+    return body, len(matches)
+
+
+def _adapt_search(tool_label: str) -> Any:
+    """Factory: produce a specialized search_* adapter for one tool name.
+
+    Same dense rendering for every search_* tool (search_source,
+    search_macros, search_constants, search_types, search_functions) —
+    only the summary label changes.
+    """
+    def _adapter(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+        body, count = _render_matches_dense(raw)
+        summary = f"{tool_label}: count={count}, matches_len={count}"
+        payload = {
+            "tool": tool_label,
+            "match_count": count,
+            "matches_text": body,
+            "raw": raw,
+        }
+        obs_key = obs_key_for(ctx, f"{tool_label}.{ctx.args.get('pattern') or ctx.args.get('name') or '_'}")
+        return AdapterResult(
+            payload_kind=PayloadKind.TEXT,
+            payload=payload,
+            observables_delta={obs_key: body},
+            summary=summary,
+        )
+    _adapter.__name__ = f"adapt_{tool_label}"
+    return _adapter
+
+
+adapt_search_source = _adapt_search("search_source")
+adapt_search_macros = _adapt_search("search_macros")
+adapt_search_constants = _adapt_search("search_constants")
+adapt_search_types = _adapt_search("search_types")
+adapt_search_functions = _adapt_search("search_functions")
