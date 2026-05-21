@@ -146,6 +146,7 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
         next_state="investigation_emit",
         output={
             **input,
+            "branch_id": branch_id,
             "exit_reason": exit_reason,
             "last_turn_idx": last_turn_idx,
             "last_action": last_action,
