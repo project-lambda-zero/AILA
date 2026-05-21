@@ -61,7 +61,34 @@ from aila.platform.contracts._common import utc_now
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["ClaimVerifierAgent"]
+_NEGATIVE_ANSWER_PREFIXES = (
+    "NEGATIVE",
+    "NOT VULNERABLE",
+    "NO BUG",
+    "NO VULNERABILITY",
+    "NO FINDING",
+    "PATCH PRESENT",
+    "VARIANT DEAD",
+    "VARIANT IS DEAD",
+    "NO VARIANTS",
+)
+
+_AUTO_PROMOTE_MIN_CONFIDENCE = 0.70
+
+
+def is_negative_finding_claim(answer: str) -> bool:
+    """A 'confirmed' verifier verdict only means the agent's CLAIM was
+    correct — not that a bug exists. When the agent's claim is 'this
+    is NOT vulnerable / patch present / no variants', the verdict
+    'confirmed' actually means 'confirmed there is no bug'. Those
+    must NOT be auto-promoted to direct_finding.
+    """
+    head = (answer or "").strip().upper()[:80]
+    return any(head.startswith(p) for p in _NEGATIVE_ANSWER_PREFIXES)
+
+
+
+__all__ = ["ClaimVerifierAgent", "is_negative_finding_claim"]
 
 _log = logging.getLogger(__name__)
 
@@ -457,9 +484,31 @@ class ClaimVerifierAgent:
             uow.session.add(row)
             await uow.commit()
 
+        # Auto-promote on verifier-confirmed positive findings.
+        # Only fires when:
+        #   - verdict == confirmed AND confidence >= 0.70
+        #   - outcome currently sits in the assessment_report /
+        #     dispatch=skipped trap (the routing dead-end fixed by the
+        #     operator-promote endpoint; this path closes the loop so
+        #     the operator doesn't have to click the button by hand
+        #     for every confirmed finding)
+        #   - agent's answer doesn't open with NEGATIVE / PATCH
+        #     PRESENT / NO VULNERABILITY / etc. (a confirmed-negative
+        #     means "confirmed no bug", which must not be promoted)
+        #   - payload doesn't already carry promoted_from (idempotent)
+        promote_result: dict[str, Any] | None = None
+        if verifier_report["verdict"] == "confirmed":
+            promote_result = await self._maybe_auto_promote(
+                canonical_id=canonical.id,
+                confidence=verifier_report.get("confidence"),
+                summary=verifier_report.get("summary") or "",
+            )
+
         _log.info(
-            "claim_verifier DONE inv=%s verdict=%s probes=%d",
-            self.investigation_id, verifier_report["verdict"], len(probe_results),
+            "claim_verifier DONE inv=%s verdict=%s probes=%d auto_promote=%s",
+            self.investigation_id, verifier_report["verdict"],
+            len(probe_results),
+            (promote_result or {}).get("status", "not_attempted"),
         )
         return {
             "status": "ok",
@@ -467,6 +516,103 @@ class ClaimVerifierAgent:
             "preconditions_count": len(preconditions),
             "probes_run": len(probe_results),
             "canonical_outcome_id": canonical.id,
+            "auto_promote": promote_result,
+        }
+
+    async def _maybe_auto_promote(
+        self,
+        *,
+        canonical_id: str,
+        confidence: Any,
+        summary: str,
+    ) -> dict[str, Any]:
+        """Promote a confirmed assessment_report -> direct_finding +
+        re-dispatch through OutcomeDispatcher, so the verifier-confirmed
+        finding lands in vr_findings with a PoC writer task enqueued
+        (on variant children). Returns a small dict describing what
+        happened for the run() return payload.
+        """
+        from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher  # noqa: PLC0415
+        from aila.modules.vr.contracts import (  # noqa: PLC0415
+            OutcomeDispatchStatus,
+            OutcomeKind,
+        )
+
+        if not isinstance(confidence, (int, float)):
+            return {"status": "skipped", "reason": "no_numeric_confidence"}
+        conf = float(confidence)
+        if conf < _AUTO_PROMOTE_MIN_CONFIDENCE:
+            return {"status": "skipped", "reason": f"confidence_below_floor:{conf:.2f}<{_AUTO_PROMOTE_MIN_CONFIDENCE}"}
+
+        # Re-load the canonical outcome row to mutate it transactionally
+        # (the verifier_report write happened in a previous UoW; another
+        # writer could have raced in between, so we re-read + re-check).
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord).where(
+                    VRInvestigationOutcomeRecord.id == canonical_id,
+                )
+            )).first()
+            if row is None:
+                return {"status": "skipped", "reason": "outcome_disappeared"}
+            if row.outcome_kind != OutcomeKind.ASSESSMENT_REPORT.value:
+                return {
+                    "status": "skipped",
+                    "reason": f"outcome_kind_not_assessment:{row.outcome_kind}",
+                }
+            if row.dispatch_status != OutcomeDispatchStatus.SKIPPED.value:
+                return {
+                    "status": "skipped",
+                    "reason": f"dispatch_status_not_skipped:{row.dispatch_status}",
+                }
+            try:
+                payload = json.loads(row.payload_json or "{}")
+            except (ValueError, TypeError):
+                return {"status": "skipped", "reason": "payload_unparseable"}
+            if payload.get("promoted_from"):
+                return {"status": "skipped", "reason": "already_promoted"}
+            if is_negative_finding_claim(payload.get("answer") or ""):
+                return {
+                    "status": "skipped",
+                    "reason": "answer_starts_negative_no_bug_to_promote",
+                }
+
+            payload["promoted_from"] = {
+                "kind": OutcomeKind.ASSESSMENT_REPORT.value,
+                "at": utc_now().isoformat(),
+                "by_user_id": "verifier_auto_promote",
+                "reason": f"verifier confirmed conf={conf:.2f} | {summary[:300]}",
+                "prior_dispatch_status": row.dispatch_status,
+            }
+            row.outcome_kind = OutcomeKind.DIRECT_FINDING.value
+            row.payload_json = json.dumps(payload)
+            row.dispatch_status = OutcomeDispatchStatus.PENDING.value
+            row.dispatch_target = None
+            uow.session.add(row)
+            await uow.commit()
+
+        try:
+            dispatcher = OutcomeDispatcher(knowledge=ServiceFactory().knowledge)
+            result = await dispatcher.dispatch(canonical_id)
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log.warning(
+                "auto_promote dispatch FAILED inv=%s outcome=%s err=%s",
+                self.investigation_id, canonical_id, exc,
+            )
+            return {
+                "status": "promoted_dispatch_failed",
+                "reason": f"{type(exc).__name__}:{exc}",
+            }
+        _log.info(
+            "auto_promote OK inv=%s outcome=%s -> %s (%s)",
+            self.investigation_id, canonical_id,
+            result.dispatch_target, result.dispatch_status.value,
+        )
+        return {
+            "status": "promoted",
+            "dispatch_status": result.dispatch_status.value,
+            "dispatch_target": result.dispatch_target,
+            "dispatch_reason": result.reason[:200],
         }
 
     async def _load_context(self) -> dict[str, Any]:
