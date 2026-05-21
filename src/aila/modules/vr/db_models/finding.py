@@ -48,6 +48,7 @@ class VRFindingRecord(SQLModel, table=True):
     poc_code: str | None = Field(default=None, sa_column=Column(Text))
     poc_language: str | None = Field(default=None, max_length=32)
     poc_reliability: str | None = Field(default=None, max_length=16)
+    poc_skip_reason: str | None = Field(default=None, sa_column=Column(Text))
     asan_report: str | None = Field(default=None, sa_column=Column(Text))
     cvss_vector: str | None = Field(default=None, max_length=128)
     cvss_score: float | None = Field(default=None, sa_column=Column(Float))
