@@ -166,6 +166,55 @@ async def run_vr_draft_poc(
 
     log = logging.getLogger(__name__)
 
+    # Gate: if the verifier already refuted this investigation's finding,
+    # skip the PoC write entirely. Writing a PoC for a refuted claim
+    # burns ~3 LLM round-trips on code that cannot reproduce a non-bug,
+    # and the resulting "PoC" misleads operators into trusting the
+    # finding. Mark the finding row with the skip reason instead.
+
+    from aila.modules.vr.db_models import (  # noqa: PLC0415
+        VRInvestigationOutcomeRecord,
+    )
+
+    async with UnitOfWork() as uow:
+        canonical = (await uow.session.exec(
+            select(VRInvestigationOutcomeRecord)
+            .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+            .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+            .limit(1)
+        )).first()
+        if canonical is not None:
+            try:
+                cp = _json.loads(canonical.payload_json or "{}")
+            except (ValueError, TypeError):
+                cp = {}
+            vr = cp.get("verifier_report") or {}
+            if vr.get("verdict") == "refuted":
+                conf = vr.get("confidence")
+                conf_str = f"{conf:.2f}" if isinstance(conf, (int, float)) else "?"
+                skip_reason = (
+                    f"verifier_refuted_conf_{conf_str}: "
+                    f"{(vr.get('summary') or '')[:300]}"
+                )
+                finding = (await uow.session.exec(
+                    select(VRFindingRecord).where(VRFindingRecord.id == finding_id),
+                )).first()
+                if finding is not None:
+                    finding.poc_skip_reason = skip_reason
+                    finding.updated_at = utc_now()
+                    uow.session.add(finding)
+                    await uow.commit()
+                log.info(
+                    "run_vr_draft_poc SKIPPED finding=%s reason=verifier_refuted conf=%s",
+                    finding_id, conf_str,
+                )
+                return {
+                    "finding_id": finding_id,
+                    "status": "skipped",
+                    "reason": "verifier_refuted",
+                    "verifier_confidence": conf,
+                }
+
     facts = await _collect_facts(investigation_id)
     if facts is None:
         return {
