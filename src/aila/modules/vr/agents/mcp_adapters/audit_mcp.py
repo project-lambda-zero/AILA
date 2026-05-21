@@ -41,14 +41,23 @@ __all__ = [
 ]
 
 
-# Bumped from 3000 → 12000 after observing the agent loop on
-# read_function for nginx's ngx_http_script_regex_start_code (154
-# lines, 3669 chars). At 3000 the agent saw a truncated head + a
-# truncation marker pointing at a message id it couldn't fetch, so
-# it kept re-issuing read_function expecting different results.
-# 12000 chars covers ~99% of real-world C functions while still
-# bounding case_state growth across many tool calls.
-_MAX_OBS_READ_FUNCTION = 12000
+# Observable cap for read_function output. Bumped progressively after
+# observing the agent loop on functions that exceeded the cap:
+#   3000  → ngx_http_script_regex_start_code (154 lines, 3669 chars)
+#           agent saw head + truncation marker, looped re-issuing
+#   12000 → ngx_http_proxy_merge_loc_conf (513 lines, ~40000 chars)
+#           agent saw first ~150 lines (the prologue), missed the
+#           body-compile block at line 4067 where complete_lengths=1
+#           is set, submitted a false-positive "missing NULL sentinel"
+#           finding (investigations 179f6db0 + 9f2c0b39)
+#   50000 → covers ~600+ lines of typical C, enough for every
+#           in-tree nginx function we've seen the agent need.
+# The FULL body is always preserved in payload.pseudocode (message
+# store) — this cap is only the per-turn slice the agent sees via
+# observables. Future fix: stream a structured summary (signature
+# + N anchor lines around each search_source hit) for functions
+# that overflow this cap.
+_MAX_OBS_READ_FUNCTION = 50000
 
 
 def _list_or_empty(raw: dict[str, Any], *keys: str) -> list[Any]:

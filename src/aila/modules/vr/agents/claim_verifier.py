@@ -121,6 +121,77 @@ async def _fetch_audit_mcp_signatures() -> str:
         lines.append(sig)
     return "\n".join(lines)
 
+def _render_probe_payload(tool: str, raw: Any) -> str:
+    """Format an audit-mcp probe response for the verifier verdict prompt.
+
+    Tool-aware so each probe shape produces the densest readable
+    output. ``read_function`` joins the ``body`` line list back into
+    real source (vs JSON-encoding which 2x's the byte cost from
+    quote-escapes). ``search_*`` emits one match per line in
+    ``file:line: text`` form. Everything else falls back to
+    JSON.dumps. Callers should still clamp the result — this helper
+    only chooses the encoding; bounding is the caller's job.
+    """
+    if not isinstance(raw, dict):
+        try:
+            return json.dumps(raw)
+        except (TypeError, ValueError):
+            return repr(raw)
+
+    tool_name = tool.split(".", 1)[1] if "." in tool else tool
+
+    if tool_name == "read_function":
+        body = raw.get("body") or raw.get("source") or raw.get("text") or ""
+        if isinstance(body, list):
+            body_text = "\n".join(str(line) for line in body)
+        else:
+            body_text = str(body)
+        fp = raw.get("file_path") or raw.get("file") or ""
+        ln = raw.get("start_line") or raw.get("line") or ""
+        header = f"// {fp}:{ln}  ({raw.get('line_count','?')} lines)" if fp else ""
+        return f"{header}\n{body_text}" if header else body_text
+
+    if tool_name in ("search_source", "search_macros", "search_constants",
+                     "search_types", "search_functions"):
+        matches = (raw.get("matches") or raw.get("results")
+                   or raw.get("hits") or [])
+        if not isinstance(matches, list):
+            return json.dumps(raw)
+        lines = [f"({len(matches)} matches)"]
+        for m in matches:
+            if not isinstance(m, dict):
+                lines.append(str(m))
+                continue
+            fp = m.get("file_path") or m.get("file") or m.get("path") or "?"
+            ln = m.get("line") or m.get("start_line") or "?"
+            txt = (m.get("text") or m.get("snippet")
+                   or m.get("match") or m.get("body") or "").strip()
+            if isinstance(txt, list):
+                txt = " ".join(str(x) for x in txt).strip()
+            lines.append(f"{fp}:{ln}: {txt}")
+        return "\n".join(lines)
+
+    if tool_name in ("callers_of", "callees_of"):
+        entries = (raw.get("callers") or raw.get("callees")
+                   or raw.get("results") or [])
+        if isinstance(entries, list):
+            lines = [f"({len(entries)} entries)"]
+            for e in entries:
+                if isinstance(e, dict):
+                    name = e.get("name") or e.get("function_name") or "?"
+                    fp = e.get("file_path") or e.get("file") or ""
+                    ln = e.get("line") or e.get("start_line") or ""
+                    lines.append(f"{name}  {fp}:{ln}")
+                else:
+                    lines.append(str(e))
+            return "\n".join(lines)
+
+    try:
+        return json.dumps(raw)
+    except (TypeError, ValueError):
+        return repr(raw)
+
+
 _EXTRACTOR_SYSTEM_PROMPT = """You are an adversarial vulnerability-finding verifier.
 
 You are given a finding produced by a panel of reasoning agents about a
@@ -155,13 +226,30 @@ Rules:
     the index — the executor substitutes the real id.
   - Prefer probes that, if they return ZERO matches, would refute the
     precondition. The whole point is asymmetric refutation.
+  - **CRITICAL — probe sizing rule**: when verifying whether a SPECIFIC
+    PATTERN (e.g. `sc.complete_lengths = 1`, `mark_args_code`, an
+    `if (x->is_args)` gate) is present or absent inside a function,
+    ALWAYS use `search_source` with the exact pattern — NEVER use
+    `read_function`. `read_function` returns the whole function body
+    and a 500-line function's body will not fit in the verifier's
+    per-probe budget; the load-bearing region almost always lives in
+    the middle or end of large functions, gets truncated, and the
+    verifier returns inconclusive when it should return refuted.
+    `search_source` returns one line per match — bounded, cheap,
+    diagnostic. Only fall back to `read_function` when the
+    precondition is about overall function structure (e.g. "function
+    is short enough that no missing-counterpart can hide") rather
+    than about a specific pattern.
   - Examples of high-value precondition shapes:
       * "Opcode X is reachable from bytecode Y because callsite Z sets
         sc.compile_args = 1" → probe: search_source for
         'compile_args = 1' across the file containing the relevant
         init_params function.
-      * "Function F is missing the per-iteration reset" → probe:
-        read_function on F, look for "is_args = 0" inside the while loop.
+      * "Function F is missing the per-iteration reset of e->is_args" →
+        probe: search_source for `e->is_args = 0` scoped to F's file.
+      * "Block X does NOT set sc.complete_lengths" → probe:
+        search_source for `complete_lengths` scoped to F's file (NOT
+        read_function on the wrapper — too long to fit).
       * "Macro M expands to a length-prefix write" → probe:
         search_macros for M.
 """
@@ -485,9 +573,27 @@ class ClaimVerifierAgent:
             elif not r["ok"]:
                 out.append(f"probe_result: ERROR {r.get('error')}")
             else:
-                # Truncate raw to keep prompt bounded
-                raw_str = json.dumps(r["raw"])[:1800]
-                out.append(f"probe_result: {raw_str}")
+                # Format the probe result smartly by shape:
+                #   read_function → join the `body` list as raw source
+                #     (avoids the 2x cost of JSON-escaping every line)
+                #   search_source / search_macros / search_constants →
+                #     emit matches one per line as `file:line: text`
+                #   everything else → JSON-stringified
+                # Then truncate to 40000 chars (was 1800 — way too small;
+                # at 1800 a single read_function on a 500-line function
+                # comes back as ~40 lines, so the verifier never sees
+                # the load-bearing region of the function).
+                raw = r["raw"]
+                tool = (p.get("probe") or {}).get("tool") or ""
+                rendered = _render_probe_payload(tool, raw)
+                if len(rendered) > 40000:
+                    rendered = rendered[:40000] + (
+                        f"\n... [truncated — {len(rendered)} chars total; "
+                        f"if load-bearing region of the function is past this, "
+                        f"re-issue with a narrower search_source probe targeting "
+                        f"the exact pattern]"
+                    )
+                out.append(f"probe_result:\n{rendered}")
             out.append("")
         out.append(
             "Now produce the JSON verdict per the system prompt. Be willing"

@@ -388,6 +388,37 @@ definitions, not `#define` macros. `search_macros` returns the macro
 body. Skipping this and burning turns on `search_source` greps for
 `#define <name>` is the most common waste pattern in C-source audits.
 
+**Pattern 2d (corollary): When you need to check a SPECIFIC PATTERN
+inside a function (a flag assignment, a guard branch, a missing
+reset), ALWAYS reach for `search_source` BEFORE `read_function`.**
+The observable that survives across turns from `read_function` is
+capped at ~50000 characters (~600 lines). Functions like
+`ngx_http_proxy_merge_loc_conf` (513 lines), `ngx_http_request_t`
+handlers, and any merge_loc_conf in a large module overflow that
+cap — and the load-bearing line you care about (e.g.
+`sc.complete_lengths = 1;` at line 4067) is almost always in the
+middle or end of the function body, past the truncation. The
+observable will show you the prologue + setup, you will conclude
+"the flag isn't set", and the conclusion will be wrong. Specific-
+pattern checks belong to `search_source`:
+
+  - "Does this block set sc.complete_lengths?" →
+    `search_source(pattern="complete_lengths = 1", limit=50)` then
+    visually filter to hits inside the file/line range you care about
+  - "Is there a per-iteration `is_args = 0` reset in F?" →
+    `search_source(pattern="is_args = 0", limit=20)` scoped to F's file
+  - "Does the emission loop call ngx_escape_uri?" →
+    `search_source(pattern="ngx_escape_uri", limit=30)` scoped to the
+    module
+
+Only use `read_function` when you genuinely need the FULL body for
+control-flow tracing — and even then, follow up with `search_source`
+for any specific-line claim you intend to submit as evidence. This
+rule has killed at least two confirmed false-positive findings
+(investigations 179f6db0 + 9f2c0b39, both claiming "missing
+sc.complete_lengths" in code that had it on a line past the
+truncation point).
+
 **Pattern 3: State-carrying field consumers.** Find every read and
 every write of the dangerous state field (e.g. `e->is_args`,
 `e->quote`) via `audit_mcp.search_source(pattern="e->is_args")` or
