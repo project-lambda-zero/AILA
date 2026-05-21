@@ -176,6 +176,50 @@ class ToolExecutor:
                     f"identifiers that look like function calls (e.g. ngx_http_v2_write_*) "
                     f"are often macros that read_function can't see."
                 )
+            # Repeat-failure circuit breaker. Without this, an agent
+            # that hallucinates a function name (e.g. ngx_http_proxy_set_body
+            # for the proxy_set_body DIRECTIVE) will reissue the exact same
+            # failing read_function call 100+ times across turns because
+            # observables only store the latest result per key and the
+            # agent has no per-turn memory of prior failures. Count
+            # identical failed calls by branch, and after 3 force a
+            # pivot via prominent prompt-style hint in the error.
+            repeat_count = await self._count_prior_failures(
+                branch_id, server_id, tool_name, args,
+            )
+            if repeat_count >= 2:
+                ident = (
+                    args.get("name") or args.get("function")
+                    or args.get("pattern") or "<args>"
+                )
+                alternatives: list[str] = []
+                if server_id == "audit_mcp" and tool_name == "read_function":
+                    alternatives.extend([
+                        f"  - audit_mcp.search_functions(query={ident!r})  # find similar function names",
+                        f"  - audit_mcp.search_source(pattern={ident!r}, limit=30)  # find any mention in source",
+                        f"  - audit_mcp.search_macros(name={ident!r})  # check if it's a #define",
+                    ])
+                elif server_id == "audit_mcp" and tool_name == "search_source":
+                    alternatives.extend([
+                        f"  - audit_mcp.search_macros(name={ident!r})  # if checking for a symbol, try macros",
+                        f"  - audit_mcp.search_constants(name={ident!r})  # if checking for a constant",
+                        "  - try a shorter / broader pattern",
+                    ])
+                err += (
+                    f"\n\n*** REPEAT-FAILURE CIRCUIT BREAKER ***\n"
+                    f"You have already issued THIS EXACT CALL "
+                    f"{repeat_count + 1} times in this branch — all failed with the "
+                    f"same error. STOP. The identifier {ident!r} does not exist "
+                    f"in the form you expect. Possible reasons:\n"
+                    f"  (a) it's a directive name, not a function (directives are\n"
+                    f"      registered in a static array, not exported as a function\n"
+                    f"      with that exact name);\n"
+                    f"  (b) it's a macro / typedef / constant, not a function;\n"
+                    f"  (c) it never existed and a sibling persona hallucinated it.\n\n"
+                    f"PIVOT — your next tool call MUST NOT be the same call again."
+                    + ("\nTry one of:\n" + "\n".join(alternatives) if alternatives else "")
+                    + "\nOR submit a finding noting 'identifier not present in tree'."
+                )
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
             )
@@ -249,6 +293,85 @@ class ToolExecutor:
             payload={"text": error_text, "is_error": True},
             at_turn=at_turn,
         )
+
+    async def _count_prior_failures(
+        self,
+        branch_id: str,
+        server_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> int:
+        """Count prior error-messages on this branch with the same
+        ``server_id.tool_name`` and the same ``args``.
+
+        Args are JSON-canonicalised (sorted keys) for the comparison
+        so semantic-equivalence holds regardless of dict order. Used
+        by the repeat-failure circuit breaker — when the same tool
+        call has failed 3+ times on the same branch, the executor
+        injects a hard pivot hint into the next error.
+        """
+        canonical = json.dumps(args, sort_keys=True, default=str)
+        prefix = f"{server_id}.{tool_name} returned error"
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(VRInvestigationMessageRecord)
+                .where(VRInvestigationMessageRecord.branch_id == branch_id)
+                .where(VRInvestigationMessageRecord.payload_kind == PayloadKind.TEXT.value)
+                .order_by(VRInvestigationMessageRecord.created_at.desc())
+                .limit(50)
+            )).all()
+        count = 0
+        for r in rows:
+            try:
+                payload = json.loads(r.payload_json or "{}")
+            except (ValueError, TypeError):
+                continue
+            if not payload.get("is_error"):
+                continue
+            text = str(payload.get("text") or "")
+            if not text.startswith(prefix):
+                continue
+            # Walk back the call that produced this error: look at the
+            # message immediately before with payload_kind=tool_call and
+            # check whether its args match.
+            prior_call = next(
+                (mm for mm in await self._messages_before(uow_branch_id=branch_id, before_id=r.id)
+                 if mm[0] == "tool_call"),
+                None,
+            )
+            if prior_call is None:
+                continue
+            try:
+                cmd = json.loads(json.loads(prior_call[1]).get("command") or "{}")
+                cmd_args = cmd.get("args") or {}
+                if json.dumps(cmd_args, sort_keys=True, default=str) == canonical:
+                    count += 1
+            except (ValueError, TypeError):
+                continue
+        return count
+
+    async def _messages_before(
+        self, *, uow_branch_id: str, before_id: str,
+    ) -> list[tuple[str, str]]:
+        """Helper for _count_prior_failures: returns up to 3 messages
+        immediately before ``before_id`` on the same branch as
+        ``(payload_kind, payload_json)`` tuples."""
+        async with UnitOfWork() as uow:
+            anchor = (await uow.session.exec(
+                _select(VRInvestigationMessageRecord).where(
+                    VRInvestigationMessageRecord.id == before_id,
+                )
+            )).first()
+            if anchor is None:
+                return []
+            rows = (await uow.session.exec(
+                _select(VRInvestigationMessageRecord)
+                .where(VRInvestigationMessageRecord.branch_id == uow_branch_id)
+                .where(VRInvestigationMessageRecord.created_at < anchor.created_at)
+                .order_by(VRInvestigationMessageRecord.created_at.desc())
+                .limit(3)
+            )).all()
+        return [(r.payload_kind, r.payload_json or "") for r in rows]
 
     async def _merge_observables(
         self,
