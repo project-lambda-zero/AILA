@@ -263,6 +263,47 @@ export function useReverifyInvestigation() {
     },
   });
 }
+
+export function usePromoteOutcomeToFinding(investigationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ outcomeId, reason }: { outcomeId: string; reason?: string }) =>
+      authorizedRequestJson<Envelope<{
+        outcome_id: string;
+        promoted_to: string;
+        dispatch_status: string;
+        dispatch_target: string | null;
+        reason: string;
+      }>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/outcomes/${encodeURIComponent(outcomeId)}/promote-to-finding`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason: reason ?? "" }),
+        },
+      ),
+    onSuccess: (envelope) => {
+      const result = envelope.data;
+      queryClient.invalidateQueries({ queryKey: ["vr", "outcomes", investigationId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "findings"] });
+      if (result.dispatch_status === "dispatched") {
+        toast.success(
+          result.dispatch_target
+            ? `Promoted → direct_finding (${result.dispatch_target})`
+            : "Promoted → direct_finding (dispatched)",
+        );
+      } else {
+        toast.error(
+          `Promoted but dispatch ${result.dispatch_status}: ${result.reason}`,
+        );
+      }
+    },
+    onError: (err: Error) => {
+      toast.error(`Promote failed: ${err.message}`);
+    },
+  });
+}
+
 export interface CreateWorkspaceBody {
   name: string;
   slug: string;
