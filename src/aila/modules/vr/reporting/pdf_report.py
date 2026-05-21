@@ -50,7 +50,7 @@ from reportlab.platypus import (
     TableStyle,
     XPreformatted,
 )
-from sqlmodel import select as _select
+from sqlmodel import func as _sa_func, select as _select
 
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
@@ -247,12 +247,10 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         # responses + operator messages) — surfaced on the cover so
         # the reader sees both turn count + total messages and isn't
         # confused when total >> turns (each turn writes ~2 messages).
-        from sqlalchemy import text as _sql_text  # noqa: PLC0415
         msg_count_row = (await uow.session.exec(
-            _sql_text(
-                "SELECT COUNT(*) FROM vr_investigation_messages "
-                "WHERE investigation_id = :inv",
-            ).bindparams(inv=investigation_id),
+            _select(_sa_func.count())
+            .select_from(VRInvestigationMessageRecord)
+            .where(VRInvestigationMessageRecord.investigation_id == investigation_id)
         )).first()
         message_count = int(msg_count_row[0]) if msg_count_row else 0
 
