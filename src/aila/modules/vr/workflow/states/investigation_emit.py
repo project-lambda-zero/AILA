@@ -75,23 +75,35 @@ async def _should_auto_continue(
     investigation_id: str,
     exit_reason: str,
     outcome_id: Any,
+    branch_id: str | None = None,
 ) -> tuple[bool, int]:
     """Decide whether to auto-re-enqueue + return the branch turn count.
 
     True when the loop hit max_turns without a terminal outcome and the
-    cumulative branch.turn_count is still under _OVERALL_TURN_CAP. The
-    caller uses the returned turn_count for logging + the cap-hit
-    message it writes onto the investigation row.
+    branch's cumulative turn_count is still under _OVERALL_TURN_CAP.
+    Branch-scoped: when ``branch_id`` is passed (always, from a real
+    loop exit), we check THAT branch's turn count, not the primary's.
+    Without the branch-scoping, the previous implementation always
+    looked at the primary, decided based on its turn count, and the
+    sibling auto-continue then enqueued without branch_id → setup
+    defaulted to primary → siblings starved.
     """
     is_retryable_failure = exit_reason.startswith("researcher_error_retryable:")
     if (exit_reason != "max_turns" and not is_retryable_failure) or outcome_id is not None:
         return False, 0
     async with UnitOfWork() as uow:
-        branch = (await uow.session.exec(
-            _select(VRInvestigationBranchRecord).where(
-                VRInvestigationBranchRecord.investigation_id == investigation_id,
-            ).order_by(VRInvestigationBranchRecord.created_at.asc()),
-        )).first()
+        if branch_id:
+            branch = (await uow.session.exec(
+                _select(VRInvestigationBranchRecord).where(
+                    VRInvestigationBranchRecord.id == branch_id,
+                )
+            )).first()
+        else:
+            branch = (await uow.session.exec(
+                _select(VRInvestigationBranchRecord).where(
+                    VRInvestigationBranchRecord.investigation_id == investigation_id,
+                ).order_by(VRInvestigationBranchRecord.created_at.asc()),
+            )).first()
     turn_count = int(branch.turn_count) if branch is not None else 0
     if turn_count >= _OVERALL_TURN_CAP:
         return False, turn_count
@@ -101,8 +113,17 @@ async def _should_auto_continue(
 async def _enqueue_next_investigation_run(
     investigation_id: str,
     team_id: str | None,
+    branch_id: str | None = None,
 ) -> None:
-    """Submit run_vr_investigate so the agent continues reasoning.
+    """Submit run_vr_investigate so the agent continues reasoning on
+    the SAME branch it was running.
+
+    Without ``branch_id``, the investigation_setup state defaults to
+    the primary branch — which is correct for ROOT auto-continues
+    (single-branch investigations) but WRONG for sibling personas
+    (every sibling re-enqueue would silently redirect to primary).
+    Always pass branch_id when the caller knows which branch's loop
+    just exited.
 
     Imports are deferred so this module stays import-safe — the worker
     boots before its ARQ client surface is wired through.
@@ -110,11 +131,14 @@ async def _enqueue_next_investigation_run(
     from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
     from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
 
+    kwargs: dict[str, Any] = {"investigation_id": investigation_id}
+    if branch_id:
+        kwargs["branch_id"] = branch_id
     task_queue = default_task_queue()
     await task_queue.submit(
         track="vr",
         fn=run_vr_investigate,
-        kwargs={"investigation_id": investigation_id},
+        kwargs=kwargs,
         user_id="system",
         group_id="vr_auto_continue",
         team_id=team_id,
@@ -126,6 +150,7 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
     del services
 
     investigation_id = str(input.get("investigation_id") or "")
+    branch_id = str(input.get("branch_id") or "") or None
     exit_reason = str(input.get("exit_reason") or "max_turns")
     outcome_id = input.get("outcome_id")
 
@@ -134,7 +159,7 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
     # reasoning across task boundaries. Skip the finalization path —
     # status stays RUNNING, no dispatch/extraction, no stopped_at.
     auto_continue, turn_count = await _should_auto_continue(
-        investigation_id, exit_reason, outcome_id,
+        investigation_id, exit_reason, outcome_id, branch_id=branch_id,
     )
     if auto_continue:
         async with UnitOfWork() as uow:
@@ -144,7 +169,9 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 ),
             )).first()
             team_id = inv.team_id if inv is not None else None
-        await _enqueue_next_investigation_run(investigation_id, team_id)
+        await _enqueue_next_investigation_run(
+            investigation_id, team_id, branch_id=branch_id,
+        )
         _log.info(
             "investigation_emit AUTO_CONTINUE investigation_id=%s turn_count=%d "
             "cap=%d (re-enqueued run_vr_investigate)",
