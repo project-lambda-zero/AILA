@@ -2471,6 +2471,122 @@ def create_vr_router() -> APIRouter:
             "cleared_prior_report": had_prior,
         }
 
+    class PromoteOutcomeResponse(BaseModel):
+        """Result of promoting an assessment_report -> direct_finding."""
+
+        outcome_id: str
+        promoted_to: str
+        dispatch_status: str
+        dispatch_target: str | None
+        reason: str
+
+    @router.post(
+        "/investigations/{investigation_id}/outcomes/{outcome_id}/promote-to-finding",
+        response_model=DataEnvelope[PromoteOutcomeResponse],
+        summary=(
+            "Promote an outcome currently bucketed as ASSESSMENT_REPORT "
+            "(skipped by the dispatcher because there is no downstream) "
+            "to DIRECT_FINDING, then re-dispatch. Creates a vr_findings "
+            "row, auto-enqueues run_vr_draft_poc on variant-child "
+            "investigations (PoC writer self-gates on verifier verdict), "
+            "and stamps payload.promoted_from with the prior kind + "
+            "operator note for audit trail."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def promote_outcome_to_finding(
+        request: Request,
+        investigation_id: str,
+        outcome_id: str,
+        body: dict | None = None,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[PromoteOutcomeResponse]:
+        del request
+        import json as _json  # noqa: PLC0415
+
+        from aila.platform.services.factory import ServiceFactory  # noqa: PLC0415
+
+        from .agents.outcome_dispatcher import OutcomeDispatcher  # noqa: PLC0415
+        from .contracts import OutcomeDispatchStatus, OutcomeKind  # noqa: PLC0415
+        from .db_models import (  # noqa: PLC0415
+            VRInvestigationOutcomeRecord,
+            VRInvestigationRecord,
+        )
+
+        reason_note = ""
+        if isinstance(body, dict):
+            reason_note = str(body.get("reason") or "")[:500]
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                )
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            oc = (await uow.session.exec(
+                select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.id == outcome_id)
+                .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+            )).first()
+            if oc is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Outcome {outcome_id} not found on investigation "
+                        f"{investigation_id}."
+                    ),
+                )
+            if oc.outcome_kind != OutcomeKind.ASSESSMENT_REPORT.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Outcome is {oc.outcome_kind} — only "
+                        f"assessment_report outcomes can be promoted to "
+                        f"direct_finding (other kinds already have their "
+                        f"own dispatch path)."
+                    ),
+                )
+            try:
+                payload = _json.loads(oc.payload_json or "{}")
+            except (ValueError, TypeError):
+                payload = {}
+            payload["promoted_from"] = {
+                "kind": OutcomeKind.ASSESSMENT_REPORT.value,
+                "at": utc_now().isoformat(),
+                "by_user_id": auth.user_id,
+                "reason": reason_note,
+                "prior_dispatch_status": oc.dispatch_status,
+            }
+            oc.outcome_kind = OutcomeKind.DIRECT_FINDING.value
+            oc.payload_json = _json.dumps(payload)
+            # Clear dispatch status so the dispatcher will re-route the
+            # outcome through _dispatch_direct_finding from scratch
+            # (creates vr_findings row, auto-enqueues PoC writer on
+            # variant-child investigations).
+            oc.dispatch_status = OutcomeDispatchStatus.PENDING.value
+            oc.dispatch_target = None
+            uow.session.add(oc)
+            await uow.commit()
+
+        dispatcher = OutcomeDispatcher(knowledge=ServiceFactory().knowledge)
+        result = await dispatcher.dispatch(outcome_id)
+        return DataEnvelope(data=PromoteOutcomeResponse(
+            outcome_id=outcome_id,
+            promoted_to=OutcomeKind.DIRECT_FINDING.value,
+            dispatch_status=result.dispatch_status.value,
+            dispatch_target=result.dispatch_target,
+            reason=result.reason,
+        ))
+
+
     @router.delete(
         "/investigations/{investigation_id}",
         status_code=status.HTTP_204_NO_CONTENT,

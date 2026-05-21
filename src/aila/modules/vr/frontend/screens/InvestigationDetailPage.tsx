@@ -22,6 +22,7 @@ import {
   useReenqueueInvestigation,
   useResumeInvestigation,
   useReverifyInvestigation,
+  usePromoteOutcomeToFinding,
   useSendOperatorMessage,
 } from "../mutations";
 import {
@@ -142,6 +143,7 @@ export function InvestigationDetailPage() {
   const sendMut = useSendOperatorMessage(invId);
   const deleteMut = useDeleteInvestigation();
   const reverifyMut = useReverifyInvestigation();
+  const promoteMut = usePromoteOutcomeToFinding(invId);
 
   const [messageText, setMessageText] = useState("");
   const [messageIntent, setMessageIntent] = useState<OperatorIntent | "">("");
@@ -683,6 +685,45 @@ export function InvestigationDetailPage() {
                                     }
                                   >
                                     {reverifyMut.isPending ? "…" : (vr?.verdict ? "↻ re-verify" : "▶ verify")}
+                                  </button>
+                                )}
+                                {o.outcome_kind === "assessment_report" &&
+                                  o.dispatch_status === "skipped" && (
+                                  <button
+                                    type="button"
+                                    disabled={promoteMut.isPending}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const verdict = vr?.verdict;
+                                      const conf =
+                                        typeof vr?.confidence === "number"
+                                          ? vr.confidence.toFixed(2)
+                                          : "?";
+                                      const note =
+                                        verdict === "confirmed"
+                                          ? `operator promote — verifier confirmed conf=${conf}`
+                                          : verdict
+                                            ? `operator promote — verifier ${verdict} conf=${conf}`
+                                            : "operator promote — no verifier verdict";
+                                      promoteMut.mutate({
+                                        outcomeId: o.id,
+                                        reason: note,
+                                      });
+                                    }}
+                                    className={
+                                      vr?.verdict === "confirmed"
+                                        ? "px-2 py-0.5 text-[10px] rounded border border-emerald-500/60 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50"
+                                        : "px-2 py-0.5 text-[10px] rounded border border-border-default text-text-muted hover:text-foreground hover:border-accent disabled:opacity-50"
+                                    }
+                                    title={
+                                      vr?.verdict === "confirmed"
+                                        ? `Verifier CONFIRMED this assessment — promote to direct_finding to create a vr_finding row and (on variant-child investigations) auto-enqueue the PoC writer.`
+                                        : vr?.verdict === "refuted"
+                                          ? `Verifier REFUTED — promoting will still create a finding row, but the PoC writer will skip itself per the verifier-gate.`
+                                          : "Promote this assessment_report to direct_finding (creates vr_finding row + dispatches downstream)."
+                                    }
+                                  >
+                                    {promoteMut.isPending ? "…" : "↗ promote to finding"}
                                   </button>
                                 )}
                               </>
