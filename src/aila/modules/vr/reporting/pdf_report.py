@@ -50,7 +50,8 @@ from reportlab.platypus import (
     TableStyle,
     XPreformatted,
 )
-from sqlmodel import func as _sa_func, select as _select
+from sqlmodel import func as _sa_func
+from sqlmodel import select as _select
 
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
