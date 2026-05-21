@@ -21,6 +21,7 @@ import {
   usePauseInvestigation,
   useReenqueueInvestigation,
   useResumeInvestigation,
+  useReverifyInvestigation,
   useSendOperatorMessage,
 } from "../mutations";
 import {
@@ -140,6 +141,7 @@ export function InvestigationDetailPage() {
   const reenqueueMut = useReenqueueInvestigation(invId);
   const sendMut = useSendOperatorMessage(invId);
   const deleteMut = useDeleteInvestigation();
+  const reverifyMut = useReverifyInvestigation();
 
   const [messageText, setMessageText] = useState("");
   const [messageIntent, setMessageIntent] = useState<OperatorIntent | "">("");
@@ -649,20 +651,41 @@ export function InvestigationDetailPage() {
                               ?.verifier_report as
                               | { verdict?: string; confidence?: number; summary?: string; counter_evidence?: string }
                               | undefined;
-                            if (!vr || !vr.verdict) return null;
                             const sev =
-                              vr.verdict === "refuted"
+                              vr?.verdict === "refuted"
                                 ? "critical"
-                                : vr.verdict === "confirmed"
+                                : vr?.verdict === "confirmed"
                                   ? "low"
                                   : "medium";
                             return (
-                              <AilaBadge severity={sev} size="sm" title={vr.summary || vr.verdict}>
-                                verifier: {vr.verdict}
-                                {typeof vr.confidence === "number"
-                                  ? ` (${vr.confidence.toFixed(2)})`
-                                  : ""}
-                              </AilaBadge>
+                              <>
+                                {vr?.verdict && (
+                                  <AilaBadge severity={sev} size="sm" title={vr.summary || vr.verdict}>
+                                    verifier: {vr.verdict}
+                                    {typeof vr.confidence === "number"
+                                      ? ` (${vr.confidence.toFixed(2)})`
+                                      : ""}
+                                  </AilaBadge>
+                                )}
+                                {isPrimary && (
+                                  <button
+                                    type="button"
+                                    disabled={reverifyMut.isPending}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      reverifyMut.mutate(invId);
+                                    }}
+                                    className="px-2 py-0.5 text-[10px] rounded border border-border-default text-text-muted hover:text-foreground hover:border-accent disabled:opacity-50"
+                                    title={
+                                      vr?.verdict
+                                        ? "Clear current verifier_report and re-run the verifier on this finding"
+                                        : "Manually trigger the claim verifier on this finding"
+                                    }
+                                  >
+                                    {reverifyMut.isPending ? "…" : (vr?.verdict ? "↻ re-verify" : "▶ verify")}
+                                  </button>
+                                )}
+                              </>
                             );
                           })()}
                         </div>

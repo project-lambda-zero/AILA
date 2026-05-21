@@ -2396,6 +2396,81 @@ def create_vr_router() -> APIRouter:
 
         return DataEnvelope(data=_investigation_summary(inv))
 
+    @router.post(
+        "/investigations/{investigation_id}/verify",
+        summary=(
+            "Manually trigger the claim verifier on this investigation's "
+            "canonical outcome. Clears any prior verifier_report and "
+            "re-enqueues run_vr_claim_verifier. Useful when prior "
+            "verifier runs hit truncation / had stale prompts / etc."
+        ),
+    )
+    @limiter.limit("20/minute")
+    async def reverify_investigation(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> dict[str, Any]:
+        del request
+        import json as _json  # noqa: PLC0415
+
+        from ._task_queue import default_task_queue  # noqa: PLC0415
+        from .db_models import (  # noqa: PLC0415
+            VRInvestigationOutcomeRecord,
+            VRInvestigationRecord,
+        )
+        from .workflow.task import run_vr_claim_verifier  # noqa: PLC0415
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                )
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            oc = (await uow.session.exec(
+                select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+                .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+                .limit(1)
+            )).first()
+            if oc is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Investigation has no canonical outcome yet — nothing to verify.",
+                )
+            try:
+                payload = _json.loads(oc.payload_json or "{}")
+            except (ValueError, TypeError):
+                payload = {}
+            had_prior = payload.pop("verifier_report", None) is not None
+            oc.payload_json = _json.dumps(payload)
+            uow.session.add(oc)
+            await uow.commit()
+            team_id = inv.team_id
+
+        task_queue = default_task_queue()
+        handle = await task_queue.submit(
+            track="vr",
+            fn=run_vr_claim_verifier,
+            kwargs={"investigation_id": investigation_id},
+            user_id=auth.user_id,
+            group_id="manual_reverify",
+            team_id=team_id,
+        )
+        return {
+            "task_id": str(handle),
+            "canonical_outcome_id": oc.id,
+            "cleared_prior_report": had_prior,
+        }
+
     @router.delete(
         "/investigations/{investigation_id}",
         status_code=status.HTTP_204_NO_CONTENT,

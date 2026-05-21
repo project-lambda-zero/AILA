@@ -238,6 +238,31 @@ export function useToggleInvestigationFavorite() {
   });
 }
 
+
+export function useReverifyInvestigation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (investigationId: string) =>
+      authorizedRequestJson<{ task_id: string; cleared_prior_report: boolean }>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/verify`,
+        { method: "POST" },
+      ),
+    onSuccess: (result, investigationId) => {
+      // poll outcomes more aggressively for ~60s; the new verifier_report
+      // lands ~30-60s after task submit
+      queryClient.invalidateQueries({ queryKey: ["vr", "outcomes", investigationId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      toast.success(
+        result.cleared_prior_report
+          ? "Re-verify started (prior report cleared) — verdict in ~30s"
+          : "Verifier started — verdict in ~30s",
+      );
+    },
+    onError: (err: Error) => {
+      toast.error(`Re-verify failed: ${err.message}`);
+    },
+  });
+}
 export interface CreateWorkspaceBody {
   name: string;
   slug: string;
