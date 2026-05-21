@@ -26,6 +26,11 @@ from .audit_mcp import (
     adapt_fuzzing_targets,
     adapt_paths_between,
     adapt_read_function,
+    adapt_search_constants,
+    adapt_search_functions,
+    adapt_search_macros,
+    adapt_search_source,
+    adapt_search_types,
     adapt_taint_paths_to,
 )
 from .base import AdapterFn
@@ -98,6 +103,14 @@ _SPECIALIZED: dict[tuple[str, str], AdapterFn] = {
     ("audit_mcp", "attack_surface"): adapt_attack_surface,
     ("audit_mcp", "complexity_hotspots"): adapt_complexity_hotspots,
     ("audit_mcp", "fuzzing_targets"): adapt_fuzzing_targets,
+    # audit_mcp — search_* family (dense file:line:text rendering;
+    # replaces generic JSON-dump path which capped at 2000 chars =
+    # ~8 matches and routinely truncated past the load-bearing region)
+    ("audit_mcp", "search_source"): adapt_search_source,
+    ("audit_mcp", "search_macros"): adapt_search_macros,
+    ("audit_mcp", "search_constants"): adapt_search_constants,
+    ("audit_mcp", "search_types"): adapt_search_types,
+    ("audit_mcp", "search_functions"): adapt_search_functions,
 }
 
 
