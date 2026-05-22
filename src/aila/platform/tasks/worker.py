@@ -79,11 +79,27 @@ def _should_drop_lock(
 
 
 async def reaper(ctx: dict[str, object]) -> None:
-    """ARQ cron — every minute. Reconciles orphan ``arq:in-progress:*`` locks."""
+    """ARQ cron — every minute. Reconciles orphan locks AND orphan TaskRecord rows.
+
+    Two complementary sweeps:
+      - ``_reconcile_orphan_arq_locks`` walks ``arq:in-progress:*`` keys and
+        reaps tasks whose ARQ lock is still present but the owning worker
+        is dead.
+      - ``_sweep_orphan_running_tasks`` (also called at worker boot) does the
+        reverse: walks DB rows in TaskStatus.RUNNING and reaps any whose
+        ARQ lock has already been evicted. Without this in the periodic cron,
+        phantom rows where the lock died but the DB row remained at RUNNING
+        only got reaped at the next worker restart, blocking max_jobs
+        until then.
+    """
     try:
         await _reconcile_orphan_arq_locks()
-    except Exception:
-        _log.warning("reaper: arq lock reconciliation failed", exc_info=True)
+    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+        _log.warning("reaper: arq lock reconciliation failed: %s", exc, exc_info=True)
+    try:
+        await _sweep_orphan_running_tasks()
+    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+        _log.warning("reaper: orphan running-task sweep failed: %s", exc, exc_info=True)
 
 
 async def _reconcile_orphan_arq_locks() -> None:
