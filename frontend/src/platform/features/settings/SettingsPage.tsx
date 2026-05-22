@@ -119,6 +119,86 @@ const THEME_META: Record<Theme, ThemeMeta> = {
 };
 
 function ThemePreview({ theme }: { theme: Theme }) {
+  if (theme === "midnight-cloud-8") {
+    return (
+      <div
+        className="relative h-28 overflow-hidden rounded-md"
+        style={{ background: "#121212" }}
+      >
+        {/* Subtle horizontal scanlines — 1px every 3px, opacity 0.06 */}
+        <div
+          aria-hidden
+          className="absolute inset-0"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(0deg, rgba(255,215,175,0.06) 0px, rgba(255,215,175,0.06) 1px, transparent 1px, transparent 3px)",
+            mixBlendMode: "overlay",
+          }}
+        />
+        {/* Dusk glow — soft pink wash at the bottom */}
+        <div
+          aria-hidden
+          className="absolute inset-x-0 bottom-0"
+          style={{
+            height: "55%",
+            background:
+              "radial-gradient(ellipse 90% 100% at 50% 100%, rgba(255,95,135,0.32) 0%, rgba(240,168,199,0.16) 35%, transparent 70%)",
+          }}
+        />
+        {/* Top hairline — transparent → accent → transparent (the techBorder cue) */}
+        <div
+          aria-hidden
+          className="absolute inset-x-0 top-0 h-px"
+          style={{
+            background:
+              "linear-gradient(90deg, transparent, rgba(255,95,135,0.6), transparent)",
+          }}
+        />
+        {/* L-shaped corner brackets */}
+        <div aria-hidden className="absolute top-1 left-1 h-3 w-3" style={{ borderTop: "2px solid rgba(255,95,135,0.55)", borderLeft: "2px solid rgba(255,95,135,0.55)" }} />
+        <div aria-hidden className="absolute top-1 right-1 h-3 w-3" style={{ borderTop: "2px solid rgba(255,95,135,0.55)", borderRight: "2px solid rgba(255,95,135,0.55)" }} />
+        <div aria-hidden className="absolute bottom-1 left-1 h-3 w-3" style={{ borderBottom: "2px solid rgba(255,95,135,0.55)", borderLeft: "2px solid rgba(255,95,135,0.55)" }} />
+        <div aria-hidden className="absolute bottom-1 right-1 h-3 w-3" style={{ borderBottom: "2px solid rgba(255,95,135,0.55)", borderRight: "2px solid rgba(255,95,135,0.55)" }} />
+        {/* Wordmark + tagline */}
+        <div className="absolute left-3 top-3 right-3 flex flex-col gap-0.5">
+          <div
+            className="text-[14px] font-bold tracking-tight"
+            style={{
+              color: "#ffd7af",
+              fontFamily: "'Bricolage Grotesque', 'Geist', sans-serif",
+              textShadow:
+                "0 0 1px rgba(255,95,135,0.6), 0 0 18px rgba(255,95,135,0.45)",
+            }}
+          >
+            AILA
+          </div>
+          <div
+            className="text-[9px]"
+            style={{
+              color: "#f0a8c7",
+              fontFamily: "'Cascadia Mono', 'Cascadia Code', monospace",
+              letterSpacing: "0.08em",
+            }}
+          >
+            MIDNIGHT/CLOUD/8
+          </div>
+        </div>
+        {/* Cream-outlined button — the theme's button style */}
+        <div
+          className="absolute right-3 bottom-2 text-[9px] font-medium px-2 py-0.5"
+          style={{
+            color: "#ffd7af",
+            border: "1px solid #ffd7af",
+            fontFamily: "'Cascadia Mono', 'Cascadia Code', monospace",
+            letterSpacing: "0.04em",
+          }}
+        >
+          ENTER
+        </div>
+      </div>
+    );
+  }
+
   if (theme === "frutiger-aero") {
     return (
       <div

@@ -1,4 +1,19 @@
-export const nav = [
+import {
+  Briefcase,
+  Bug,
+  ClipboardText,
+  Crosshair,
+  EnvelopeSimple,
+  Folders,
+  MagnifyingGlass,
+  Pulse,
+  Plugs,
+  Receipt,
+} from "@phosphor-icons/react";
+
+import type { NavContribution } from "@platform/extension-registry/types";
+
+export const nav: NavContribution[] = [
   {
     id: "vr.projects",
     slot: "sidebar.main" as const,
@@ -6,6 +21,7 @@ export const nav = [
     to: "/vr",
     order: 70,
     description: "N-day vulnerability research projects",
+    icon: Briefcase,
   },
   {
     id: "vr.investigations",
@@ -14,6 +30,7 @@ export const nav = [
     to: "/vr/investigations",
     order: 71,
     description: "Hypothesis-driven investigations across targets",
+    icon: MagnifyingGlass,
   },
   {
     id: "vr.workspaces",
@@ -22,6 +39,7 @@ export const nav = [
     to: "/vr/workspaces",
     order: 69,
     description: "Thematic workspaces grouping related VR targets",
+    icon: Folders,
   },
   {
     id: "vr.targets",
@@ -30,6 +48,7 @@ export const nav = [
     to: "/vr/targets",
     order: 69.5,
     description: "Persistent VR targets across workspaces",
+    icon: Crosshair,
   },
   {
     id: "vr.patterns",
@@ -38,6 +57,7 @@ export const nav = [
     to: "/vr/patterns",
     order: 72,
     description: "Reusable patterns extracted from successful investigations",
+    icon: Pulse,
   },
   {
     id: "vr.disclosures",
@@ -46,6 +66,7 @@ export const nav = [
     to: "/vr/disclosures",
     order: 73,
     description: "Multi-track disclosure submission lifecycle",
+    icon: EnvelopeSimple,
   },
   {
     id: "vr.fuzz-campaigns",
@@ -54,6 +75,7 @@ export const nav = [
     to: "/vr/fuzz/campaigns",
     order: 74,
     description: "Fuzzing campaigns + crash triage",
+    icon: Bug,
   },
   {
     id: "vr.mcp-servers",
@@ -62,6 +84,7 @@ export const nav = [
     to: "/vr/mcp/servers",
     order: 75,
     description: "Configure + monitor delegated MCP workstations",
+    icon: Plugs,
   },
   {
     id: "vr.audit-log",
@@ -70,6 +93,7 @@ export const nav = [
     to: "/vr/audit",
     order: 76.5,
     description: "Who-did-what-when audit trail for VR engagements",
+    icon: ClipboardText,
   },
   {
     id: "vr.mcp-calls",
@@ -78,5 +102,6 @@ export const nav = [
     to: "/vr/mcp/calls",
     order: 76,
     description: "Live audit trail of every MCP call AILA forwarded",
+    icon: Receipt,
   },
 ];

@@ -413,7 +413,15 @@ export function getSidebarSections(moduleSpecs: ModuleFrontendSpec[]): SidebarSe
   const moduleItems: SidebarItem[] = moduleSpecs
     .flatMap((spec) => spec.nav ?? [])
     .filter((item) => item.slot === "sidebar.main")
-    .map((item) => ({ ...item, section: "modules" as NavSection }))
+    .map((item) => ({
+      ...item,
+      section: "modules" as NavSection,
+      // NavContribution.icon (optional) is now plumbed through to
+      // SidebarItem.icon so module-contributed nav rows render the
+      // module's chosen icon. Before this change, only platformSidebarItems
+      // got icons; spec.nav items always rendered iconless.
+      icon: item.icon ?? undefined,
+    }))
     .sort((a, b) => a.order - b.order);
 
   const platformItems = platformSidebarItems
@@ -438,7 +446,11 @@ export function getSidebarSections(moduleSpecs: ModuleFrontendSpec[]): SidebarSe
     for (const spec of moduleSpecs) {
       const specItems = (spec.nav ?? [])
         .filter((item) => item.slot === "sidebar.main")
-        .map((item) => ({ ...item, section: "modules" as NavSection }))
+        .map((item) => ({
+          ...item,
+          section: "modules" as NavSection,
+          icon: item.icon ?? undefined,
+        }))
         .sort((a, b) => a.order - b.order);
       if (specItems.length > 0) {
         subgroupMap.set(spec.moduleId, {

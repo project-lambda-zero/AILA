@@ -1,6 +1,12 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Per-theme distinctive fonts. One Google Fonts URL → 19 families,
+   all with display=swap so first paint isn't blocked. Each theme's
+   --font-display / --font-sans / --font-mono is overridden inside its
+   [data-theme] block below. */
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=Cascadia+Code:ital,wght@0,200..700;1,200..700&family=DM+Serif+Display&family=Quicksand:wght@300..700&family=VT323&family=Michroma&family=Rajdhani:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Lora:ital,wght@0,400..700;1,400..700&family=Black+Ops+One&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&family=Pacifico&family=UnifrakturMaguntia&family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400;1,600;1,700&family=IBM+Plex+Mono:ital,wght@0,100..700;1,100..700&family=Share+Tech+Mono&family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&family=Orbitron:wght@400..900&family=Press+Start+2P&display=swap");
+
 /* Dark variant — targets .dark class on <html> */
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -320,6 +326,14 @@
    ===================================================================== */
 
 [data-theme="frutiger-aero"] {
+  /* Per-theme typography — DM Serif Display (mid-2000s editorial
+     contrast for the Vista/iPod aqua headlines), Quicksand (the
+     rounded humanist sans 2006-2010 product UIs leaned on heavily),
+     Cascadia Code for the few mono callouts. */
+  --font-display: "DM Serif Display", "Segoe UI", "Calibri", serif;
+  --font-sans: "Quicksand", "Segoe UI", "Calibri", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Consolas", monospace;
+
   /* Surfaces — Bliss sky with translucent glass panels */
   --color-base: #b8dff0;
   --color-surface: rgba(255, 255, 255, 0.72);
@@ -2164,6 +2178,12 @@ a:hover {
    ===================================================================== */
 
 [data-theme="ps1"] {
+  /* Per-theme typography — Press Start 2P (8-bit pixel headlines),
+     VT323 (CRT terminal body), VT323 (same for code). */
+  --font-display: "Press Start 2P", "Courier New", monospace;
+  --font-sans: "VT323", "Courier New", monospace;
+  --font-mono: "VT323", "Courier New", monospace;
+
   --color-base: #c7c6c1;
   --color-surface: #d8d7d2;
   --color-elevated: #e6e5df;
@@ -2447,6 +2467,12 @@ a:hover {
    ===================================================================== */
 
 [data-theme="ps2"] {
+  /* Per-theme typography — Michroma (wide aerospace display for the
+     PS2 sleek-black aesthetic), Geist (clean body), Share Tech Mono. */
+  --font-display: "Michroma", "Eurostile", "Geist", sans-serif;
+  --font-sans: "Geist", system-ui, sans-serif;
+  --font-mono: "Share Tech Mono", "Courier New", monospace;
+
   --color-base: #000000;
   --color-surface: #080814;
   --color-elevated: #0f0f22;
@@ -2669,6 +2695,12 @@ a:hover {
    ===================================================================== */
 
 [data-theme="cyberpunk-2077"] {
+  /* Per-theme typography — Orbitron (sharp angular display for NCPD
+     panels), Rajdhani (technical condensed sans body), Share Tech Mono. */
+  --font-display: "Orbitron", "Michroma", system-ui, sans-serif;
+  --font-sans: "Rajdhani", system-ui, sans-serif;
+  --font-mono: "Share Tech Mono", "Consolas", monospace;
+
   --color-base: #05070a;
   --color-surface: #0c0f16;
   --color-elevated: #12161f;
@@ -2909,6 +2941,13 @@ a:hover {
    ===================================================================== */
 
 [data-theme="matrix"] {
+  /* Per-theme typography — VT323 monoculture. Phosphor CRT
+     terminal aesthetic; no sans, no display separation. The whole
+     interface IS the terminal. */
+  --font-display: "VT323", "Courier New", monospace;
+  --font-sans: "VT323", "Courier New", monospace;
+  --font-mono: "VT323", "Courier New", monospace;
+
   --color-base: #000000;
   --color-surface: #050b05;
   --color-elevated: #081808;
@@ -3137,6 +3176,13 @@ a:hover {
    ===================================================================== */
 
 [data-theme="truman-show"] {
+  /* Per-theme typography — Playfair Display (high-contrast 50s
+     magazine masthead), Lora (warm serif body), Courier Prime
+     (the typewriter the network producer reads scripts on). */
+  --font-display: "Playfair Display", "Georgia", serif;
+  --font-sans: "Lora", "Georgia", serif;
+  --font-mono: "Courier Prime", "Courier New", monospace;
+
   --color-base: #e9f3f5;
   --color-surface: #fffdf4;
   --color-elevated: #ffffff;
@@ -3342,6 +3388,13 @@ a:hover {
    ===================================================================== */
 
 [data-theme="half-life-1"] {
+  /* Per-theme typography — Black Ops One (industrial stenciled
+     hazard-bay signage), Roboto Mono throughout the rest (1998
+     Black Mesa terminal aesthetic). */
+  --font-display: "Black Ops One", "Impact", sans-serif;
+  --font-sans: "Roboto Mono", "Consolas", monospace;
+  --font-mono: "Roboto Mono", "Consolas", monospace;
+
   --color-base: #0f1012;
   --color-surface: #1a1b1f;
   --color-elevated: #22232a;
@@ -3571,6 +3624,12 @@ a:hover {
    ===================================================================== */
 
 [data-theme="y2k-fever"] {
+  /* Per-theme typography — Pacifico (bubble script, classic Y2K
+     iMac branding), Quicksand (rounded sans body), Share Tech Mono. */
+  --font-display: "Pacifico", "Comic Sans MS", cursive;
+  --font-sans: "Quicksand", system-ui, sans-serif;
+  --font-mono: "Share Tech Mono", "Courier New", monospace;
+
   --color-base: #e8f7ff;
   --color-surface: #ffffff;
   --color-elevated: #ffffff;
@@ -3829,6 +3888,14 @@ a:hover {
    ===================================================================== */
 
 [data-theme="vendetta"] {
+  /* Per-theme typography — UnifrakturMaguntia (blackletter for
+     the V-for-Vendetta propaganda masthead), Crimson Text (warm
+     serif body matching old printed propaganda), Courier Prime
+     for code (the underground samizdat aesthetic). */
+  --font-display: "UnifrakturMaguntia", "Times New Roman", serif;
+  --font-sans: "Crimson Text", "Times New Roman", serif;
+  --font-mono: "Courier Prime", "Courier New", monospace;
+
   --color-base: #07040a;
   --color-surface: #0d0609;
   --color-elevated: #140a0d;
@@ -4293,6 +4360,13 @@ a:hover {
    ===================================================================== */
 
 [data-theme="midnight-cloud-8"] {
+  /* Per-theme typography — Bricolage Grotesque (warm grotesque,
+     optical sizing), Geist (clean modern sans, inherited body),
+     Cascadia Code (Microsoft's open-source retro-flavoured mono). */
+  --font-display: "Bricolage Grotesque", "Geist", system-ui, sans-serif;
+  --font-sans: "Geist", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
+
   /* Surfaces — warm charcoal lineage. NOT pure black; #121212 reads
      warm because of the cream text contrast. */
   --color-base: #121212;
