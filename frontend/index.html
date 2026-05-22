@@ -7,19 +7,20 @@
 
     <!--
       Flash-free theme init — runs BEFORE React mounts.
-      Eleven themes are valid. Invalid / legacy stored values fall back
-      to 'synthwave' (default).
+      Twelve themes are valid. Invalid / legacy stored values fall back
+      to 'midnight-cloud-8' (default).
     -->
     <script>
       (function () {
         var valid = [
+          "midnight-cloud-8",
           "frutiger-aero", "synthwave", "vaporwave",
           "ps1", "ps2", "cyberpunk-2077", "matrix",
           "truman-show", "half-life-1", "y2k-fever", "vendetta"
         ];
         var light = ["frutiger-aero", "ps1", "truman-show", "y2k-fever"];
         var stored = localStorage.getItem("aila-theme");
-        var theme = valid.indexOf(stored) !== -1 ? stored : "synthwave";
+        var theme = valid.indexOf(stored) !== -1 ? stored : "midnight-cloud-8";
         if (stored !== theme) localStorage.setItem("aila-theme", theme);
         var storedMode = localStorage.getItem("aila-mode");
         var mode =

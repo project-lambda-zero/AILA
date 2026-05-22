@@ -20,6 +20,7 @@ function getUserInitials(username: string | null | undefined): string {
 }
 
 const THEME_LABELS: Record<string, string> = {
+  "midnight-cloud-8": "Midnight Cloud 8",
   "frutiger-aero": "Frutiger Aero",
   synthwave: "Synthwave",
   vaporwave: "Vaporwave",

@@ -3,9 +3,15 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
 /**
  * AILA theme system — extended pack.
  *
- * Eleven themes, each a named era / cultural moment, engineered to be
+ * Twelve themes, each a named era / cultural moment, engineered to be
  * recognizable within a second of opening the app:
  *
+ *   - midnight-cloud-8: 2022 Istanbul-at-dusk neovim palette
+ *                       (echel0n/midnight-cloud-8). Warm charcoal base,
+ *                       cream foreground, hot-pink + lavender accents,
+ *                       mint highlights. Distinct from synthwave's pure
+ *                       neon — softer, atmospheric, vaguely melancholic.
+ *                       Default theme.
  *   - frutiger-aero:  2004-2012 iPod/Vista aqua glass, Bliss sky, bokeh
  *   - synthwave:      1984 neon grid + chromatic aberration
  *   - vaporwave:      1995 Windows 98 + pastel mall aesthetic
@@ -24,6 +30,7 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
  */
 
 const THEMES = [
+  "midnight-cloud-8",
   "frutiger-aero",
   "synthwave",
   "vaporwave",
@@ -48,7 +55,7 @@ const NATURALLY_LIGHT: ReadonlySet<Theme> = new Set<Theme>([
   "y2k-fever",
 ]);
 
-const DEFAULT_THEME: Theme = "synthwave";
+const DEFAULT_THEME: Theme = "midnight-cloud-8";
 const THEME_KEY = "aila-theme";
 const MODE_KEY = "aila-mode";
 
