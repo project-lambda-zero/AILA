@@ -67,55 +67,53 @@ export function SchemaEditorPage() {
   );
   return (
     <div className="flex flex-col gap-6 min-h-screen bg-base p-4 lg:p-6">
-      <AilaCard variant="elevated" padding="lg" className="bg-elevated border-border">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-          <div className="space-y-3">
-            <p className="font-mono text-xs uppercase tracking-[0.3em] text-text-muted">Blueprint Schema Studio</p>
-            <div className="space-y-1">
-              <h1 className="font-mono text-2xl font-semibold text-text">Schema Editor</h1>
-              <p className="max-w-3xl text-sm leading-6 text-text-muted">
-                Build the assessment blueprint visually: reorder sections, edit question logic, preview conditional branches, and keep mappings readable for the team using the questionnaire.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {version !== undefined && <AilaBadge severity="medium" size="sm">Schema v{version}</AilaBadge>}
-              {versionQuery.data?.published_at === null && <AilaBadge severity="high" size="sm">Draft</AilaBadge>}
-              <AilaBadge severity="info" size="sm">{sections.length} sections</AilaBadge>
-              <AilaBadge severity="info" size="sm">{subgroupCount} subgroups</AilaBadge>
-              <AilaBadge severity="info" size="sm">{allQuestions.length} questions</AilaBadge>
-              <AilaBadge severity={conditionalCount > 0 ? "medium" : "neutral"} size="sm">{conditionalCount} logic links</AilaBadge>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3 xl:items-end">
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setPreviewOpen(true)}
-                className="font-mono text-xs"
-              >
-                <Eye className="mr-1.5 h-4 w-4" />
-                Preview Wizard
-              </Button>
-              <Button
-                type="button"
-                disabled={version === undefined}
-                onClick={() => setPublishOpen(true)}
-                className="font-mono text-xs"
-              >
-                <CloudArrowUp className="mr-1.5 h-4 w-4" />
-                {version !== undefined ? `Publish v${version + 1}` : "Publish"}
-              </Button>
-            </div>
-            <p className="font-mono text-[11px] text-text-muted">
-              {versionQuery.data?.published_at
-                ? `Published ${new Date(versionQuery.data.published_at).toLocaleDateString()}`
-                : "Draft changes are local until you publish a new schema version."}
+      <AilaCard variant="elevated" padding="lg" className="bg-elevated border-border" techBorder glow><div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+        <div className="space-y-3">
+          <p className="font-mono text-xs uppercase tracking-[0.3em] text-text-muted">Blueprint Schema Studio</p>
+          <div className="space-y-1">
+            <h1 className="font-mono text-2xl font-semibold text-text">Schema Editor</h1>
+            <p className="max-w-3xl text-sm leading-6 text-text-muted">
+              Build the assessment blueprint visually: reorder sections, edit question logic, preview conditional branches, and keep mappings readable for the team using the questionnaire.
             </p>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {version !== undefined && <AilaBadge severity="medium" size="sm">Schema v{version}</AilaBadge>}
+            {versionQuery.data?.published_at === null && <AilaBadge severity="high" size="sm">Draft</AilaBadge>}
+            <AilaBadge severity="info" size="sm">{sections.length} sections</AilaBadge>
+            <AilaBadge severity="info" size="sm">{subgroupCount} subgroups</AilaBadge>
+            <AilaBadge severity="info" size="sm">{allQuestions.length} questions</AilaBadge>
+            <AilaBadge severity={conditionalCount > 0 ? "medium" : "neutral"} size="sm">{conditionalCount} logic links</AilaBadge>
+          </div>
         </div>
-      </AilaCard>
+      
+        <div className="flex flex-col gap-3 xl:items-end">
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPreviewOpen(true)}
+              className="font-mono text-xs"
+            >
+              <Eye className="mr-1.5 h-4 w-4" />
+              Preview Wizard
+            </Button>
+            <Button
+              type="button"
+              disabled={version === undefined}
+              onClick={() => setPublishOpen(true)}
+              className="font-mono text-xs"
+            >
+              <CloudArrowUp className="mr-1.5 h-4 w-4" />
+              {version !== undefined ? `Publish v${version + 1}` : "Publish"}
+            </Button>
+          </div>
+          <p className="font-mono text-[11px] text-text-muted">
+            {versionQuery.data?.published_at
+              ? `Published ${new Date(versionQuery.data.published_at).toLocaleDateString()}`
+              : "Draft changes are local until you publish a new schema version."}
+          </p>
+        </div>
+      </div></AilaCard>
 
       <div className="flex-1">
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "editor" | "mappings" | "logic")} className="flex flex-col gap-4">

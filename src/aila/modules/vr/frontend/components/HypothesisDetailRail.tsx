@@ -23,30 +23,28 @@ export function HypothesisDetailRail({
   const items: HypothesisProjection[] = data?.data ?? [];
 
   return (
-    <AilaCard>
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-semibold text-foreground">
-          Hypotheses
-        </h2>
-        <span className="text-[10px] text-text-muted font-mono">
-          {items.length} tracked
-        </span>
-      </div>
-      {isLoading ? (
-        <p className="text-xs text-text-muted">Loading…</p>
-      ) : items.length === 0 ? (
-        <EmptyState
-          title="No hypotheses yet"
-          description="The reasoning engine populates hypotheses as it observes evidence on each branch."
-        />
-      ) : (
-        <ul className="space-y-2">
-          {items.map((h) => (
-            <HypothesisRow key={h.id} h={h} />
-          ))}
-        </ul>
-      )}
-    </AilaCard>
+    <AilaCard  techBorder glow><div className="flex items-center justify-between mb-2">
+      <h2 className="text-sm font-semibold text-foreground">
+        Hypotheses
+      </h2>
+      <span className="text-[10px] text-text-muted font-mono">
+        {items.length} tracked
+      </span>
+    </div>
+    {isLoading ? (
+      <p className="text-xs text-text-muted">Loading…</p>
+    ) : items.length === 0 ? (
+      <EmptyState
+        title="No hypotheses yet"
+        description="The reasoning engine populates hypotheses as it observes evidence on each branch."
+      />
+    ) : (
+      <ul className="space-y-2">
+        {items.map((h) => (
+          <HypothesisRow key={h.id} h={h} />
+        ))}
+      </ul>
+    )}</AilaCard>
   );
 }
 

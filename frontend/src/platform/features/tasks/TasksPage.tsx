@@ -80,29 +80,23 @@ function TaskDetailPanel({ taskId }: { taskId: string }) {
 
   if (!taskId) {
     return (
-      <AilaCard variant="default" padding="md">
-        <p className="font-mono text-xs text-text-muted">
-          Select a task row to inspect its lifecycle details.
-        </p>
-      </AilaCard>
+      <AilaCard variant="default" padding="md" techBorder glow><p className="font-mono text-xs text-text-muted">
+        Select a task row to inspect its lifecycle details.
+      </p></AilaCard>
     );
   }
 
   if (taskDetailQuery.isLoading) {
     return (
-      <AilaCard variant="default" padding="md">
-        <LoadingSkeletonGroup lines={6} />
-      </AilaCard>
+      <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
     );
   }
 
   if (taskDetailQuery.isError) {
     return (
-      <AilaCard variant="default" padding="md">
-        <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-          {(taskDetailQuery.error as Error).message}
-        </div>
-      </AilaCard>
+      <AilaCard variant="default" padding="md" techBorder glow><div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+        {(taskDetailQuery.error as Error).message}
+      </div></AilaCard>
     );
   }
 
@@ -110,47 +104,45 @@ function TaskDetailPanel({ taskId }: { taskId: string }) {
   if (!task) return null;
 
   return (
-    <AilaCard variant="elevated" padding="md">
-      <h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">
-        Task Detail
-      </h2>
-      <div className="flex flex-col gap-2">
-        {[
-          { label: "Status", value: <AilaBadge severity={statusSeverity(task.status)} size="sm">{task.status}</AilaBadge> },
-          { label: "Track", value: task.track },
-          { label: "Module", value: task.fn_module },
-          { label: "Function", value: task.fn_path },
-          { label: "Created", value: formatTimestamp(task.created_at) },
-          { label: "Started", value: formatTimestamp(task.started_at) },
-          { label: "Completed", value: formatTimestamp(task.completed_at) },
-          { label: "Heartbeat", value: formatTimestamp(task.heartbeat_at) },
-          { label: "Checkpoint", value: task.has_checkpoint ? "Available" : "None" },
-        ].map(({ label, value }) => (
-          <div key={label} className="flex items-start justify-between gap-2 border-b border-border pb-1.5 last:border-0">
-            <span className="font-mono text-xs text-text-muted shrink-0">{label}</span>
-            <span className="font-mono text-xs text-text text-right break-all">{value}</span>
-          </div>
-        ))}
-        {task.error && (
-          <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-            {task.error}
-          </div>
-        )}
-        {task.result_path && (
-          <div className="flex flex-col gap-0.5">
-            <span className="font-mono text-xs text-text-muted">Result path</span>
-            <code className="font-mono text-xs text-text break-all bg-base px-2 py-1 rounded-[2px]">
-              {task.result_path}
-            </code>
-          </div>
-        )}
-      </div>
-      <TransitionTimeline
-        rows={transitionsQuery.data ?? []}
-        isLoading={transitionsQuery.isLoading}
-        isError={transitionsQuery.isError}
-      />
-    </AilaCard>
+    <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">
+      Task Detail
+    </h2>
+    <div className="flex flex-col gap-2">
+      {[
+        { label: "Status", value: <AilaBadge severity={statusSeverity(task.status)} size="sm">{task.status}</AilaBadge> },
+        { label: "Track", value: task.track },
+        { label: "Module", value: task.fn_module },
+        { label: "Function", value: task.fn_path },
+        { label: "Created", value: formatTimestamp(task.created_at) },
+        { label: "Started", value: formatTimestamp(task.started_at) },
+        { label: "Completed", value: formatTimestamp(task.completed_at) },
+        { label: "Heartbeat", value: formatTimestamp(task.heartbeat_at) },
+        { label: "Checkpoint", value: task.has_checkpoint ? "Available" : "None" },
+      ].map(({ label, value }) => (
+        <div key={label} className="flex items-start justify-between gap-2 border-b border-border pb-1.5 last:border-0">
+          <span className="font-mono text-xs text-text-muted shrink-0">{label}</span>
+          <span className="font-mono text-xs text-text text-right break-all">{value}</span>
+        </div>
+      ))}
+      {task.error && (
+        <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+          {task.error}
+        </div>
+      )}
+      {task.result_path && (
+        <div className="flex flex-col gap-0.5">
+          <span className="font-mono text-xs text-text-muted">Result path</span>
+          <code className="font-mono text-xs text-text break-all bg-base px-2 py-1 rounded-[2px]">
+            {task.result_path}
+          </code>
+        </div>
+      )}
+    </div>
+    <TransitionTimeline
+      rows={transitionsQuery.data ?? []}
+      isLoading={transitionsQuery.isLoading}
+      isError={transitionsQuery.isError}
+    /></AilaCard>
   );
 }
 
@@ -250,43 +242,41 @@ export function TasksPage() {
       </div>
 
       {/* Filters */}
-      <AilaCard variant="default" padding="md">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex flex-col gap-1 min-w-[140px]">
-            <label className="font-mono text-xs text-text-muted" htmlFor="task-track">Track</label>
-            <input
-              id="task-track"
-              className="h-8 rounded-[2px] border border-border bg-base px-2.5 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors min-w-[120px]"
-              type="text"
-              value={trackFilter}
-              onChange={(e) =>
-                setSearchParams(updateSearchParams(searchParams, { track: e.target.value }))
-              }
-              placeholder="vulnerability"
-            />
-          </div>
-          <div className="flex flex-col gap-1 min-w-[120px]">
-            <label className="font-mono text-xs text-text-muted" htmlFor="task-status">Status</label>
-            <select
-              id="task-status"
-              className="h-8 rounded-[2px] border border-border bg-base px-2 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors"
-              value={statusFilter ?? ""}
-              onChange={(e) =>
-                setSearchParams(updateSearchParams(searchParams, { status: e.target.value || null }))
-              }
-            >
-              <option value="">all</option>
-              <option value="queued">queued</option>
-              <option value="waiting">waiting</option>
-              <option value="running">running</option>
-              <option value="paused">paused</option>
-              <option value="done">done</option>
-              <option value="failed">failed</option>
-              <option value="cancelled">cancelled</option>
-            </select>
-          </div>
+      <AilaCard variant="default" padding="md" techBorder glow><div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-col gap-1 min-w-[140px]">
+          <label className="font-mono text-xs text-text-muted" htmlFor="task-track">Track</label>
+          <input
+            id="task-track"
+            className="h-8 rounded-[2px] border border-border bg-base px-2.5 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors min-w-[120px]"
+            type="text"
+            value={trackFilter}
+            onChange={(e) =>
+              setSearchParams(updateSearchParams(searchParams, { track: e.target.value }))
+            }
+            placeholder="vulnerability"
+          />
         </div>
-      </AilaCard>
+        <div className="flex flex-col gap-1 min-w-[120px]">
+          <label className="font-mono text-xs text-text-muted" htmlFor="task-status">Status</label>
+          <select
+            id="task-status"
+            className="h-8 rounded-[2px] border border-border bg-base px-2 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors"
+            value={statusFilter ?? ""}
+            onChange={(e) =>
+              setSearchParams(updateSearchParams(searchParams, { status: e.target.value || null }))
+            }
+          >
+            <option value="">all</option>
+            <option value="queued">queued</option>
+            <option value="waiting">waiting</option>
+            <option value="running">running</option>
+            <option value="paused">paused</option>
+            <option value="done">done</option>
+            <option value="failed">failed</option>
+            <option value="cancelled">cancelled</option>
+          </select>
+        </div>
+      </div></AilaCard>
 
       {/* Error */}
       {tasksQuery.isError && (
@@ -297,9 +287,7 @@ export function TasksPage() {
 
       {/* Loading */}
       {tasksQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {/* Split layout: table + detail */}
@@ -315,39 +303,37 @@ export function TasksPage() {
                 action={{ label: "Go to Console", href: "/console" }}
               />
             ) : (
-              <AilaCard variant="default" padding="none">
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-border">
-                        <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Task ID</th>
-                        <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Track</th>
-                        <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Status</th>
-                        <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden sm:table-cell">Module</th>
-                        <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden lg:table-cell">Created</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tasks.map((task) => (
-                        <TaskRow
-                          key={task.task_id}
-                          task={task}
-                          isSelected={task.task_id === selectedTaskId}
-                          onSelect={() => {
-                            // D-04 + D-14: navigate to /tasks/:taskId detail route.
-                            // The detail route currently reuses TasksPage; the
-                            // ?task= param keeps the side-panel selection in sync.
-                            navigate(`/tasks/${encodeURIComponent(task.task_id)}`);
-                            setSearchParams(
-                              updateSearchParams(searchParams, { task: task.task_id }),
-                            );
-                          }}
-                        />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </AilaCard>
+              <AilaCard variant="default" padding="none" techBorder glow><div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Task ID</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Track</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Status</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden sm:table-cell">Module</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden lg:table-cell">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tasks.map((task) => (
+                      <TaskRow
+                        key={task.task_id}
+                        task={task}
+                        isSelected={task.task_id === selectedTaskId}
+                        onSelect={() => {
+                          // D-04 + D-14: navigate to /tasks/:taskId detail route.
+                          // The detail route currently reuses TasksPage; the
+                          // ?task= param keeps the side-panel selection in sync.
+                          navigate(`/tasks/${encodeURIComponent(task.task_id)}`);
+                          setSearchParams(
+                            updateSearchParams(searchParams, { task: task.task_id }),
+                          );
+                        }}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div></AilaCard>
             )}
           </div>
 

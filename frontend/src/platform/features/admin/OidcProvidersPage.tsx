@@ -696,22 +696,18 @@ export function OidcProvidersPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total providers
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {providersQuery.isLoading ? "—" : totalProviders}
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Enabled
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {providersQuery.isLoading ? "—" : enabledProviders}
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Total providers
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {providersQuery.isLoading ? "—" : totalProviders}
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Enabled
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {providersQuery.isLoading ? "—" : enabledProviders}
+        </p></AilaCard>
       </div>
 
       {providersQuery.isError && (
@@ -721,9 +717,7 @@ export function OidcProvidersPage() {
       )}
 
       {providersQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {!providersQuery.isLoading && !providersQuery.isError && providers.length === 0 && (

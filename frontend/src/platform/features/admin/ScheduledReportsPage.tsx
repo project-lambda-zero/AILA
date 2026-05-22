@@ -540,37 +540,31 @@ export function ScheduledReportsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total Reports
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {reportsQuery.isLoading ? "—" : reports.length}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">All configured</p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Active
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {reportsQuery.isLoading ? "—" : activeCount}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Firing on schedule
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Paused
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {reportsQuery.isLoading ? "—" : reports.length - activeCount}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Won't fire automatically
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Total Reports
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {reportsQuery.isLoading ? "—" : reports.length}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">All configured</p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Active
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {reportsQuery.isLoading ? "—" : activeCount}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Firing on schedule
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Paused
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {reportsQuery.isLoading ? "—" : reports.length - activeCount}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Won't fire automatically
+        </p></AilaCard>
       </div>
 
       {reportsQuery.isError && (
@@ -580,9 +574,7 @@ export function ScheduledReportsPage() {
       )}
 
       {reportsQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {!reportsQuery.isLoading &&

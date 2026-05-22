@@ -79,123 +79,121 @@ export function AnalystDirectivesPanel({
     "Optional directives to guide the investigator (focus areas, files to extract, hypotheses to pursue).";
 
   return (
-    <AilaCard>
+    <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-2 text-left flex-1 min-w-0"
+        aria-expanded={expanded}
+        title={expanded ? "Collapse" : "Expand"}
+      >
+        <span
+          className="text-text-muted text-xs w-3 inline-block"
+          aria-hidden="true"
+        >
+          {expanded ? "▾" : "▸"}
+        </span>
+        <h3 className="text-sm font-semibold text-foreground truncate">
+          {heading}
+        </h3>
+        <span className="text-xs text-text-muted">
+          {items.length} active
+        </span>
+      </button>
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        onClick={(e) => {
+          e.stopPropagation();
+          downloadMut.mutate({
+            investigationId: investigationId ?? null,
+          });
+        }}
+        disabled={downloadMut.isPending || items.length === 0}
+        title="Download directives as Markdown"
+      >
+        {downloadMut.isPending ? "…" : ".md"}
+      </Button>
+    </div>
+    
+    {!expanded ? null : (
+    <>
+    <form onSubmit={onSubmit} className="space-y-2 mb-4 mt-3">
+      <Textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={placeholder}
+        rows={compact ? 2 : 3}
+        className="text-sm"
+        disabled={createMut.isPending}
+      />
       <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="flex items-center gap-2 text-left flex-1 min-w-0"
-          aria-expanded={expanded}
-          title={expanded ? "Collapse" : "Expand"}
-        >
-          <span
-            className="text-text-muted text-xs w-3 inline-block"
-            aria-hidden="true"
-          >
-            {expanded ? "▾" : "▸"}
-          </span>
-          <h3 className="text-sm font-semibold text-foreground truncate">
-            {heading}
-          </h3>
+        {investigationId ? (
+          <div className="flex items-center gap-2 text-xs">
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="radio"
+                checked={scope === "investigation"}
+                onChange={() => setScope("investigation")}
+              />
+              <span>This investigation only</span>
+            </label>
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="radio"
+                checked={scope === "project"}
+                onChange={() => setScope("project")}
+              />
+              <span>Project-wide</span>
+            </label>
+          </div>
+        ) : (
           <span className="text-xs text-text-muted">
-            {items.length} active
+            Project-wide — applies to every investigation
           </span>
-        </button>
+        )}
         <Button
-          type="button"
+          type="submit"
           size="sm"
-          variant="secondary"
-          onClick={(e) => {
-            e.stopPropagation();
-            downloadMut.mutate({
-              investigationId: investigationId ?? null,
-            });
-          }}
-          disabled={downloadMut.isPending || items.length === 0}
-          title="Download directives as Markdown"
+          disabled={!text.trim() || createMut.isPending}
         >
-          {downloadMut.isPending ? "…" : ".md"}
+          {createMut.isPending ? "Adding…" : "Add Directive"}
         </Button>
       </div>
-
-      {!expanded ? null : (
-      <>
-      <form onSubmit={onSubmit} className="space-y-2 mb-4 mt-3">
-        <Textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={placeholder}
-          rows={compact ? 2 : 3}
-          className="text-sm"
-          disabled={createMut.isPending}
-        />
-        <div className="flex items-center justify-between gap-2">
-          {investigationId ? (
-            <div className="flex items-center gap-2 text-xs">
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input
-                  type="radio"
-                  checked={scope === "investigation"}
-                  onChange={() => setScope("investigation")}
-                />
-                <span>This investigation only</span>
-              </label>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input
-                  type="radio"
-                  checked={scope === "project"}
-                  onChange={() => setScope("project")}
-                />
-                <span>Project-wide</span>
-              </label>
-            </div>
-          ) : (
-            <span className="text-xs text-text-muted">
-              Project-wide — applies to every investigation
-            </span>
-          )}
-          <Button
-            type="submit"
-            size="sm"
-            disabled={!text.trim() || createMut.isPending}
-          >
-            {createMut.isPending ? "Adding…" : "Add Directive"}
-          </Button>
-        </div>
-      </form>
-
-      {directivesQ.isLoading ? (
-        <LoadingSkeleton size="sm" width="full" />
-      ) : items.length === 0 ? (
-        <p className="text-xs text-text-muted text-center py-4">
-          No directives yet. AILA will run on its own. Add a directive
-          above to steer the next turn.
-        </p>
-      ) : (
-        <div className="space-y-3">
-          {projectScoped.length > 0 && (
-            <DirectiveGroup
-              label="Project-wide"
-              badge="P"
-              items={projectScoped}
-              onDelete={(id) => deleteMut.mutate(id)}
-              compact={compact}
-            />
-          )}
-          {investigationScoped.length > 0 && (
-            <DirectiveGroup
-              label="This investigation"
-              badge="I"
-              items={investigationScoped}
-              onDelete={(id) => deleteMut.mutate(id)}
-              compact={compact}
-            />
-          )}
-        </div>
-      )}
-      </>
-      )}
-    </AilaCard>
+    </form>
+    
+    {directivesQ.isLoading ? (
+      <LoadingSkeleton size="sm" width="full" />
+    ) : items.length === 0 ? (
+      <p className="text-xs text-text-muted text-center py-4">
+        No directives yet. AILA will run on its own. Add a directive
+        above to steer the next turn.
+      </p>
+    ) : (
+      <div className="space-y-3">
+        {projectScoped.length > 0 && (
+          <DirectiveGroup
+            label="Project-wide"
+            badge="P"
+            items={projectScoped}
+            onDelete={(id) => deleteMut.mutate(id)}
+            compact={compact}
+          />
+        )}
+        {investigationScoped.length > 0 && (
+          <DirectiveGroup
+            label="This investigation"
+            badge="I"
+            items={investigationScoped}
+            onDelete={(id) => deleteMut.mutate(id)}
+            compact={compact}
+          />
+        )}
+      </div>
+    )}
+    </>
+    )}</AilaCard>
   );
 }
 

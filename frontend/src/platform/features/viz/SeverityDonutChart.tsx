@@ -56,14 +56,12 @@ export function SeverityDonutChart({ className, exportRef }: SeverityDonutChartP
 
   if (isLoading) {
     return (
-      <AilaCard className={className}>
-        <div className="p-4 flex flex-col gap-2">
-          <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-            Severity Distribution
-          </p>
-          <LoadingSkeleton size="xl" width="full" />
-        </div>
-      </AilaCard>
+      <AilaCard className={className} techBorder glow><div className="p-4 flex flex-col gap-2">
+        <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
+          Severity Distribution
+        </p>
+        <LoadingSkeleton size="xl" width="full" />
+      </div></AilaCard>
     );
   }
 
@@ -84,56 +82,54 @@ export function SeverityDonutChart({ className, exportRef }: SeverityDonutChartP
   const total = slices.reduce((sum, s) => sum + s.value, 0);
 
   return (
-    <AilaCard className={className}>
-      <div ref={chartRef} className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-            Severity Distribution
-          </p>
-          <ChartExportButton chartRef={chartRef} filename="severity-distribution" />
-        </div>
-
-        {slices.length === 0 ? (
-          <div className="h-48 flex items-center justify-center">
-            <p className="font-mono text-xs text-muted-foreground">
-              No findings data yet.
-            </p>
-          </div>
-        ) : (
-          <>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={slices}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius="40%"
-                    outerRadius="70%"
-                    strokeWidth={0}
-                  >
-                    {slices.map((slice) => (
-                      <Cell key={slice.name} fill={slice.fill} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  <Legend
-                    wrapperStyle={{
-                      fontFamily: "var(--font-mono, monospace)",
-                      fontSize: 11,
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <p className="font-mono text-xs text-muted-foreground text-center mt-1">
-              {total} total findings
-            </p>
-          </>
-        )}
+    <AilaCard className={className} techBorder glow><div ref={chartRef} className="p-4">
+      <div className="flex items-center justify-between mb-3">
+        <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
+          Severity Distribution
+        </p>
+        <ChartExportButton chartRef={chartRef} filename="severity-distribution" />
       </div>
-    </AilaCard>
+    
+      {slices.length === 0 ? (
+        <div className="h-48 flex items-center justify-center">
+          <p className="font-mono text-xs text-muted-foreground">
+            No findings data yet.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={slices}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius="40%"
+                  outerRadius="70%"
+                  strokeWidth={0}
+                >
+                  {slices.map((slice) => (
+                    <Cell key={slice.name} fill={slice.fill} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Legend
+                  wrapperStyle={{
+                    fontFamily: "var(--font-mono, monospace)",
+                    fontSize: 11,
+                  }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <p className="font-mono text-xs text-muted-foreground text-center mt-1">
+            {total} total findings
+          </p>
+        </>
+      )}
+    </div></AilaCard>
   );
 }

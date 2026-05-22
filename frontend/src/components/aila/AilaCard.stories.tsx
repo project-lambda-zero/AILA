@@ -98,13 +98,11 @@ export const StaggeredGrid: Story = {
         { title: "High", value: "38", severity: "high" as const, delay: 0.1 },
         { title: "Medium", value: "91", severity: "medium" as const, delay: 0.15 },
       ].map((item) => (
-        <AilaCard key={item.title} variant="elevated" padding="md" animate delay={item.delay}>
-          <p className="text-text-muted font-mono text-xs uppercase tracking-wider">{item.title}</p>
-          <p className="text-text font-mono text-2xl font-bold mt-1">{item.value}</p>
-          <div className="mt-2">
-            <AilaBadge severity={item.severity} size="sm">{item.severity.toUpperCase()}</AilaBadge>
-          </div>
-        </AilaCard>
+        <AilaCard key={item.title} variant="elevated" padding="md" animate delay={item.delay} techBorder glow><p className="text-text-muted font-mono text-xs uppercase tracking-wider">{item.title}</p>
+        <p className="text-text font-mono text-2xl font-bold mt-1">{item.value}</p>
+        <div className="mt-2">
+          <AilaBadge severity={item.severity} size="sm">{item.severity.toUpperCase()}</AilaBadge>
+        </div></AilaCard>
       ))}
     </div>
   ),
@@ -121,15 +119,9 @@ export const AllVariants: Story = {
   name: "All Variants",
   render: () => (
     <div className="flex flex-col gap-4">
-      <AilaCard variant="default" padding="md">
-        <p className="text-text font-sans text-sm">default — static border</p>
-      </AilaCard>
-      <AilaCard variant="elevated" padding="md">
-        <p className="text-text font-sans text-sm">elevated — elevated bg</p>
-      </AilaCard>
-      <AilaCard variant="interactive" padding="md">
-        <p className="text-text font-sans text-sm">interactive — hover for amber glow</p>
-      </AilaCard>
+      <AilaCard variant="default" padding="md" techBorder glow><p className="text-text font-sans text-sm">default — static border</p></AilaCard>
+      <AilaCard variant="elevated" padding="md" techBorder glow><p className="text-text font-sans text-sm">elevated — elevated bg</p></AilaCard>
+      <AilaCard variant="interactive" padding="md" techBorder glow><p className="text-text font-sans text-sm">interactive — hover for amber glow</p></AilaCard>
     </div>
   ),
 }
@@ -139,9 +131,7 @@ export const AllPaddings: Story = {
   render: () => (
     <div className="flex flex-col gap-4">
       {(["none", "sm", "md", "lg"] as const).map((padding) => (
-        <AilaCard key={padding} variant="default" padding={padding}>
-          <p className="text-text font-sans text-sm">padding=&quot;{padding}&quot;</p>
-        </AilaCard>
+        <AilaCard key={padding} variant="default" padding={padding} techBorder glow><p className="text-text font-sans text-sm">padding=&quot;{padding}&quot;</p></AilaCard>
       ))}
     </div>
   ),
@@ -150,24 +140,22 @@ export const AllPaddings: Story = {
 export const WithContent: Story = {
   name: "With Rich Content",
   render: () => (
-    <AilaCard variant="interactive" padding="lg">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-2">
-          <h3 className="text-text font-sans text-base font-semibold">CVE-2024-1234</h3>
-          <p className="text-text-muted font-sans text-sm">
-            Remote code execution vulnerability in OpenSSL affecting versions prior to 3.2.1
-          </p>
-        </div>
-        <AilaBadge severity="critical" size="md">
-          CRITICAL
-        </AilaBadge>
+    <AilaCard variant="interactive" padding="lg" techBorder glow><div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col gap-2">
+        <h3 className="text-text font-sans text-base font-semibold">CVE-2024-1234</h3>
+        <p className="text-text-muted font-sans text-sm">
+          Remote code execution vulnerability in OpenSSL affecting versions prior to 3.2.1
+        </p>
       </div>
-      <div className="mt-4 flex gap-2">
-        <AilaBadge severity="neutral" size="sm">CVSS 9.8</AilaBadge>
-        <AilaBadge severity="neutral" size="sm">KEV</AilaBadge>
-        <AilaBadge severity="neutral" size="sm">EPSS 0.94</AilaBadge>
-      </div>
-    </AilaCard>
+      <AilaBadge severity="critical" size="md">
+        CRITICAL
+      </AilaBadge>
+    </div>
+    <div className="mt-4 flex gap-2">
+      <AilaBadge severity="neutral" size="sm">CVSS 9.8</AilaBadge>
+      <AilaBadge severity="neutral" size="sm">KEV</AilaBadge>
+      <AilaBadge severity="neutral" size="sm">EPSS 0.94</AilaBadge>
+    </div></AilaCard>
   ),
 }
 
@@ -176,42 +164,34 @@ export const WithSecurityIcons: Story = {
   render: () => (
     <div className="flex flex-col gap-4">
       {/* regular weight = inactive/monitoring state, fill = active/selected per D-08 */}
-      <AilaCard variant="elevated" padding="md">
-        <div className="flex items-center gap-3">
-          <Shield size={20} className="text-text-muted" weight="regular" />
-          <div>
-            <p className="font-mono text-text text-sm font-medium">Security Monitoring</p>
-            <p className="font-mono text-text-muted text-xs">Regular weight — inactive state</p>
-          </div>
+      <AilaCard variant="elevated" padding="md" techBorder glow><div className="flex items-center gap-3">
+        <Shield size={20} className="text-text-muted" weight="regular" />
+        <div>
+          <p className="font-mono text-text text-sm font-medium">Security Monitoring</p>
+          <p className="font-mono text-text-muted text-xs">Regular weight — inactive state</p>
         </div>
-      </AilaCard>
-      <AilaCard variant="interactive" padding="md">
-        <div className="flex items-center gap-3">
-          <Shield size={20} className="text-accent" weight="fill" />
-          <div>
-            <p className="font-mono text-text text-sm font-medium">Shield Active</p>
-            <p className="font-mono text-text-muted text-xs">Fill weight — active/selected state (D-08)</p>
-          </div>
+      </div></AilaCard>
+      <AilaCard variant="interactive" padding="md" techBorder glow><div className="flex items-center gap-3">
+        <Shield size={20} className="text-accent" weight="fill" />
+        <div>
+          <p className="font-mono text-text text-sm font-medium">Shield Active</p>
+          <p className="font-mono text-text-muted text-xs">Fill weight — active/selected state (D-08)</p>
         </div>
-      </AilaCard>
-      <AilaCard variant="elevated" padding="md">
-        <div className="flex items-center gap-3">
-          <Lock size={20} className="text-mint" weight="fill" />
-          <div>
-            <p className="font-mono text-text text-sm font-medium">System Locked</p>
-            <p className="font-mono text-text-muted text-xs">Mint (#97dbbe) for healthy/secured state (D-04b)</p>
-          </div>
+      </div></AilaCard>
+      <AilaCard variant="elevated" padding="md" techBorder glow><div className="flex items-center gap-3">
+        <Lock size={20} className="text-mint" weight="fill" />
+        <div>
+          <p className="font-mono text-text text-sm font-medium">System Locked</p>
+          <p className="font-mono text-text-muted text-xs">Mint (#97dbbe) for healthy/secured state (D-04b)</p>
         </div>
-      </AilaCard>
-      <AilaCard variant="elevated" padding="md">
-        <div className="flex items-center gap-3">
-          <Scan size={20} className="text-lavender" weight="duotone" />
-          <div>
-            <p className="font-mono text-text text-sm font-medium">Scan In Progress</p>
-            <p className="font-mono text-text-muted text-xs">Lavender (#af87d7) for interactive state (D-04b)</p>
-          </div>
+      </div></AilaCard>
+      <AilaCard variant="elevated" padding="md" techBorder glow><div className="flex items-center gap-3">
+        <Scan size={20} className="text-lavender" weight="duotone" />
+        <div>
+          <p className="font-mono text-text text-sm font-medium">Scan In Progress</p>
+          <p className="font-mono text-text-muted text-xs">Lavender (#af87d7) for interactive state (D-04b)</p>
         </div>
-      </AilaCard>
+      </div></AilaCard>
     </div>
   ),
   parameters: {
@@ -234,13 +214,11 @@ export const CardGrid: Story = {
         { title: "High", value: "38", severity: "high" as const },
         { title: "Medium", value: "91", severity: "medium" as const },
       ].map((item) => (
-        <AilaCard key={item.title} variant="elevated" padding="md">
-          <p className="text-text-muted font-mono text-xs uppercase tracking-wider">{item.title}</p>
-          <p className="text-text font-mono text-2xl font-bold mt-1">{item.value}</p>
-          <div className="mt-2">
-            <AilaBadge severity={item.severity} size="sm">{item.severity.toUpperCase()}</AilaBadge>
-          </div>
-        </AilaCard>
+        <AilaCard key={item.title} variant="elevated" padding="md" techBorder glow><p className="text-text-muted font-mono text-xs uppercase tracking-wider">{item.title}</p>
+        <p className="text-text font-mono text-2xl font-bold mt-1">{item.value}</p>
+        <div className="mt-2">
+          <AilaBadge severity={item.severity} size="sm">{item.severity.toUpperCase()}</AilaBadge>
+        </div></AilaCard>
       ))}
     </div>
   ),

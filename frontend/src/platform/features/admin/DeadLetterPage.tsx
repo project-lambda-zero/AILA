@@ -271,43 +271,37 @@ export function DeadLetterPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Dead-Lettered Tasks
-          </p>
-          <p className="font-mono text-2xl font-semibold text-critical mt-1">
-            {entriesQuery.isLoading ? "—" : entries.length}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            {trackFilter ? `Track: ${trackFilter}` : "All tracks"}
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Distinct Tracks
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {entriesQuery.isLoading ? "—" : tracks.length}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            With at least one dead-lettered task
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Track Filter
-          </p>
-          <input
-            className="mt-2 w-full h-8 rounded-[2px] border border-border bg-base px-2.5 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors"
-            type="text"
-            value={trackFilter}
-            onChange={(e) => setTrackFilter(e.target.value)}
-            placeholder="vulnerability"
-          />
-          <p className="font-mono text-xs text-text-muted mt-1">
-            Empty = scan all tracks
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Dead-Lettered Tasks
+        </p>
+        <p className="font-mono text-2xl font-semibold text-critical mt-1">
+          {entriesQuery.isLoading ? "—" : entries.length}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          {trackFilter ? `Track: ${trackFilter}` : "All tracks"}
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Distinct Tracks
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {entriesQuery.isLoading ? "—" : tracks.length}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          With at least one dead-lettered task
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Track Filter
+        </p>
+        <input
+          className="mt-2 w-full h-8 rounded-[2px] border border-border bg-base px-2.5 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors"
+          type="text"
+          value={trackFilter}
+          onChange={(e) => setTrackFilter(e.target.value)}
+          placeholder="vulnerability"
+        />
+        <p className="font-mono text-xs text-text-muted mt-1">
+          Empty = scan all tracks
+        </p></AilaCard>
       </div>
 
       {/* Error banner */}
@@ -319,9 +313,7 @@ export function DeadLetterPage() {
 
       {/* Loading */}
       {entriesQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {/* Empty */}

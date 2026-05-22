@@ -76,7 +76,7 @@ async def run_vr_investigate(
     track="vr",
     module_id="vr",
     max_tries=2,
-    timeout_s=1800.0,  # 30 min — covers a clone + index + poll cycle
+    timeout_s=15600.0,  # 4h 20m — covers clone (10m) + 4h index poll + slack
 )
 async def run_target_analysis(
     ctx: TaskContext,

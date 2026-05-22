@@ -145,151 +145,141 @@ export function RadarInspectPanel({ node, open, onClose }: RadarInspectPanelProp
           <div>
             <SectionHeading>Risk Summary</SectionHeading>
             {hasSeverityCounts ? (
-              <AilaCard>
-                <div className="p-3">
-                  {hasSeverityData ? (
-                    <>
-                      <div className="h-40">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={severitySlices}
-                              dataKey="value"
-                              nameKey="name"
-                              cx="50%"
-                              cy="50%"
-                              outerRadius="70%"
-                              strokeWidth={0}
-                            >
-                              {severitySlices.map((slice) => (
-                                <Cell key={slice.name} fill={slice.fill} />
-                              ))}
-                            </Pie>
-                            <Tooltip contentStyle={TOOLTIP_STYLE} />
-                          </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-                      <div className="flex justify-center gap-3 mt-2 font-mono text-[10px]">
-                        <span style={{ color: "var(--color-critical)" }}>
-                          C:{node.severity_counts!.critical}
-                        </span>
-                        <span style={{ color: "var(--color-high)" }}>
-                          H:{node.severity_counts!.high}
-                        </span>
-                        <span style={{ color: "var(--color-medium)" }}>
-                          M:{node.severity_counts!.medium}
-                        </span>
-                        <span style={{ color: "var(--color-low)" }}>
-                          L:{node.severity_counts!.low}
-                        </span>
-                        <span className="text-muted-foreground">
-                          Total:{totalFindings}
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <p className="font-mono text-xs text-muted-foreground text-center py-4">
-                      No vulnerabilities detected.
-                    </p>
-                  )}
-                </div>
-              </AilaCard>
-            ) : (
-              <AilaCard>
-                <div className="p-3">
-                  <p className="font-mono text-xs text-muted-foreground">
-                    No vulnerability scan data yet. Run a vulnerability scan to populate severity data.
+              <AilaCard  techBorder glow><div className="p-3">
+                {hasSeverityData ? (
+                  <>
+                    <div className="h-40">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={severitySlices}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            outerRadius="70%"
+                            strokeWidth={0}
+                          >
+                            {severitySlices.map((slice) => (
+                              <Cell key={slice.name} fill={slice.fill} />
+                            ))}
+                          </Pie>
+                          <Tooltip contentStyle={TOOLTIP_STYLE} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="flex justify-center gap-3 mt-2 font-mono text-[10px]">
+                      <span style={{ color: "var(--color-critical)" }}>
+                        C:{node.severity_counts!.critical}
+                      </span>
+                      <span style={{ color: "var(--color-high)" }}>
+                        H:{node.severity_counts!.high}
+                      </span>
+                      <span style={{ color: "var(--color-medium)" }}>
+                        M:{node.severity_counts!.medium}
+                      </span>
+                      <span style={{ color: "var(--color-low)" }}>
+                        L:{node.severity_counts!.low}
+                      </span>
+                      <span className="text-muted-foreground">
+                        Total:{totalFindings}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <p className="font-mono text-xs text-muted-foreground text-center py-4">
+                    No vulnerabilities detected.
                   </p>
-                </div>
-              </AilaCard>
+                )}
+              </div></AilaCard>
+            ) : (
+              <AilaCard  techBorder glow><div className="p-3">
+                <p className="font-mono text-xs text-muted-foreground">
+                  No vulnerability scan data yet. Run a vulnerability scan to populate severity data.
+                </p>
+              </div></AilaCard>
             )}
           </div>
 
           {/* Running Services */}
           <div>
             <SectionHeading>Running Services ({node.services.length})</SectionHeading>
-            <AilaCard>
-              <div className="p-3">
-                {node.services.length > 0 ? (
-                  <div className="flex flex-col gap-1">
-                    {node.services.slice(0, 10).map((svc, i) => (
-                      <div key={i} className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-xs truncate flex-1">{svc.service_name}</span>
-                        <span className="font-mono text-[10px] text-muted-foreground shrink-0">
-                          {svc.state}/{svc.sub_state}
-                        </span>
-                      </div>
-                    ))}
-                    {node.services.length > 10 && (
-                      <p className="font-mono text-[10px] text-muted-foreground mt-1">
-                        and {node.services.length - 10} more...
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="font-mono text-xs text-muted-foreground">
-                    No service data collected.
-                  </p>
-                )}
-              </div>
-            </AilaCard>
+            <AilaCard  techBorder glow><div className="p-3">
+              {node.services.length > 0 ? (
+                <div className="flex flex-col gap-1">
+                  {node.services.slice(0, 10).map((svc, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-xs truncate flex-1">{svc.service_name}</span>
+                      <span className="font-mono text-[10px] text-muted-foreground shrink-0">
+                        {svc.state}/{svc.sub_state}
+                      </span>
+                    </div>
+                  ))}
+                  {node.services.length > 10 && (
+                    <p className="font-mono text-[10px] text-muted-foreground mt-1">
+                      and {node.services.length - 10} more...
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="font-mono text-xs text-muted-foreground">
+                  No service data collected.
+                </p>
+              )}
+            </div></AilaCard>
           </div>
 
           {/* Open Ports */}
           <div>
             <SectionHeading>Open Ports ({node.ports.length})</SectionHeading>
-            <AilaCard>
-              <div className="p-3">
-                {node.ports.length > 0 ? (
-                  <div className="flex flex-col gap-1">
-                    {node.ports.slice(0, 10).map((port, i) => (
-                      <div key={i} className="flex items-center gap-3">
-                        <span className="font-mono text-xs font-medium w-16 shrink-0">
-                          {port.port}/{port.protocol}
-                        </span>
-                        <span className="font-mono text-[10px] text-muted-foreground truncate">
-                          {port.process_name ?? "—"} ({port.local_address})
-                        </span>
-                      </div>
-                    ))}
-                    {node.ports.length > 10 && (
-                      <p className="font-mono text-[10px] text-muted-foreground mt-1">
-                        and {node.ports.length - 10} more...
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="font-mono text-xs text-muted-foreground">
-                    No port data collected.
-                  </p>
-                )}
-              </div>
-            </AilaCard>
+            <AilaCard  techBorder glow><div className="p-3">
+              {node.ports.length > 0 ? (
+                <div className="flex flex-col gap-1">
+                  {node.ports.slice(0, 10).map((port, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <span className="font-mono text-xs font-medium w-16 shrink-0">
+                        {port.port}/{port.protocol}
+                      </span>
+                      <span className="font-mono text-[10px] text-muted-foreground truncate">
+                        {port.process_name ?? "—"} ({port.local_address})
+                      </span>
+                    </div>
+                  ))}
+                  {node.ports.length > 10 && (
+                    <p className="font-mono text-[10px] text-muted-foreground mt-1">
+                      and {node.ports.length - 10} more...
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="font-mono text-xs text-muted-foreground">
+                  No port data collected.
+                </p>
+              )}
+            </div></AilaCard>
           </div>
 
           {/* Network Metadata */}
           <div>
             <SectionHeading>Network Metadata</SectionHeading>
-            <AilaCard>
-              <div className="p-3 flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-[10px] text-muted-foreground uppercase">Subnet</span>
-                  <span className="font-mono text-xs">{node.subnet ?? "unresolved"}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-[10px] text-muted-foreground uppercase">Groups</span>
-                  <span className="font-mono text-xs">
-                    {node.group_tags.length > 0 ? node.group_tags.join(", ") : "none"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-[10px] text-muted-foreground uppercase">Last collected</span>
-                  <span className="font-mono text-xs">
-                    {formatRelativeTime(node.last_collected)}
-                  </span>
-                </div>
+            <AilaCard  techBorder glow><div className="p-3 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] text-muted-foreground uppercase">Subnet</span>
+                <span className="font-mono text-xs">{node.subnet ?? "unresolved"}</span>
               </div>
-            </AilaCard>
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] text-muted-foreground uppercase">Groups</span>
+                <span className="font-mono text-xs">
+                  {node.group_tags.length > 0 ? node.group_tags.join(", ") : "none"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] text-muted-foreground uppercase">Last collected</span>
+                <span className="font-mono text-xs">
+                  {formatRelativeTime(node.last_collected)}
+                </span>
+              </div>
+            </div></AilaCard>
           </div>
 
           {/* Phase 176d: system info (gateway / external IP / neofetch-like) */}
@@ -326,53 +316,51 @@ function SystemInfoSection({
   return (
     <div>
       <SectionHeading>System Info</SectionHeading>
-      <AilaCard>
-        <div className="p-3 flex flex-col gap-2">
-          {hasNetwork && (
-            <>
-              {metadata.gateway_ip && (
-                <InfoRow
-                  label="Gateway"
-                  value={
-                    metadata.gateway_interface
-                      ? `${metadata.gateway_ip} via ${metadata.gateway_interface}`
-                      : metadata.gateway_ip
-                  }
-                />
-              )}
-              {metadata.external_ip && (
-                <InfoRow label="External IP" value={metadata.external_ip} />
-              )}
-            </>
-          )}
-          {metadata.os_pretty_name && (
-            <InfoRow label="OS" value={metadata.os_pretty_name} />
-          )}
-          {metadata.kernel && <InfoRow label="Kernel" value={metadata.kernel} />}
-          {metadata.cpu_cores != null && (
-            <InfoRow label="CPU cores" value={String(metadata.cpu_cores)} />
-          )}
-          {metadata.memory_mb != null && (
-            <InfoRow label="Memory" value={`${metadata.memory_mb} MB`} />
-          )}
-          {metadata.disk_gb != null && (
-            <InfoRow label="Disk (/)" value={`${metadata.disk_gb} GB`} />
-          )}
-          {metadata.uptime_seconds != null && (
-            <InfoRow
-              label="Uptime"
-              value={formatUptime(metadata.uptime_seconds)}
-            />
-          )}
-          {metadata.is_stale && (
-            <div className="mt-1">
-              <AilaBadge severity="medium" size="sm">
-                stale — last scan did not refresh this data
-              </AilaBadge>
-            </div>
-          )}
-        </div>
-      </AilaCard>
+      <AilaCard  techBorder glow><div className="p-3 flex flex-col gap-2">
+        {hasNetwork && (
+          <>
+            {metadata.gateway_ip && (
+              <InfoRow
+                label="Gateway"
+                value={
+                  metadata.gateway_interface
+                    ? `${metadata.gateway_ip} via ${metadata.gateway_interface}`
+                    : metadata.gateway_ip
+                }
+              />
+            )}
+            {metadata.external_ip && (
+              <InfoRow label="External IP" value={metadata.external_ip} />
+            )}
+          </>
+        )}
+        {metadata.os_pretty_name && (
+          <InfoRow label="OS" value={metadata.os_pretty_name} />
+        )}
+        {metadata.kernel && <InfoRow label="Kernel" value={metadata.kernel} />}
+        {metadata.cpu_cores != null && (
+          <InfoRow label="CPU cores" value={String(metadata.cpu_cores)} />
+        )}
+        {metadata.memory_mb != null && (
+          <InfoRow label="Memory" value={`${metadata.memory_mb} MB`} />
+        )}
+        {metadata.disk_gb != null && (
+          <InfoRow label="Disk (/)" value={`${metadata.disk_gb} GB`} />
+        )}
+        {metadata.uptime_seconds != null && (
+          <InfoRow
+            label="Uptime"
+            value={formatUptime(metadata.uptime_seconds)}
+          />
+        )}
+        {metadata.is_stale && (
+          <div className="mt-1">
+            <AilaBadge severity="medium" size="sm">
+              stale — last scan did not refresh this data
+            </AilaBadge>
+          </div>
+        )}
+      </div></AilaCard>
     </div>
   );
 }

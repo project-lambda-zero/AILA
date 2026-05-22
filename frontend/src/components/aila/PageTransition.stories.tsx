@@ -26,11 +26,9 @@ export const Static: Story = {
   args: {
     motionKey: "static-page",
     children: (
-      <AilaCard variant="default" padding="lg">
-        <p className="font-mono text-text text-sm">
-          PageTransition wrapper — this content fades + slides in when motionKey changes.
-        </p>
-      </AilaCard>
+      <AilaCard variant="default" padding="lg" techBorder glow><p className="font-mono text-text text-sm">
+        PageTransition wrapper — this content fades + slides in when motionKey changes.
+      </p></AilaCard>
     ),
   },
   name: "Static (No Transition)",
@@ -62,19 +60,15 @@ function SwappableDemo() {
       <div className="relative min-h-32">
         <PageTransition motionKey={page}>
           {page === "a" ? (
-            <AilaCard variant="elevated" padding="lg">
-              <h2 className="font-mono text-text font-bold text-sm uppercase tracking-wider">Page A</h2>
-              <p className="font-mono text-text-muted text-xs mt-2">
-                Vulnerability Overview — 247 total findings across 4 systems.
-              </p>
-            </AilaCard>
+            <AilaCard variant="elevated" padding="lg" techBorder glow><h2 className="font-mono text-text font-bold text-sm uppercase tracking-wider">Page A</h2>
+            <p className="font-mono text-text-muted text-xs mt-2">
+              Vulnerability Overview — 247 total findings across 4 systems.
+            </p></AilaCard>
           ) : (
-            <AilaCard variant="elevated" padding="lg">
-              <h2 className="font-mono text-text font-bold text-sm uppercase tracking-wider">Page B</h2>
-              <p className="font-mono text-text-muted text-xs mt-2">
-                System Detail — arch-vm — 45 active vulnerabilities, 12 critical.
-              </p>
-            </AilaCard>
+            <AilaCard variant="elevated" padding="lg" techBorder glow><h2 className="font-mono text-text font-bold text-sm uppercase tracking-wider">Page B</h2>
+            <p className="font-mono text-text-muted text-xs mt-2">
+              System Detail — arch-vm — 45 active vulnerabilities, 12 critical.
+            </p></AilaCard>
           )}
         </PageTransition>
       </div>
@@ -111,11 +105,9 @@ export const WithReducedMotion: Story = {
         The component still renders children — animation is gracefully disabled.
       </p>
       <PageTransition motionKey="reduced-motion-demo">
-        <AilaCard variant="default" padding="md">
-          <p className="font-mono text-text text-sm">
-            Content renders normally — motion removed for accessibility.
-          </p>
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><p className="font-mono text-text text-sm">
+          Content renders normally — motion removed for accessibility.
+        </p></AilaCard>
       </PageTransition>
     </div>
   ),

@@ -119,455 +119,445 @@ export function InvestigationsListPage() {
       </div>
 
       {showForm && (
-        <AilaCard>
-          <h2 className="text-sm font-semibold text-foreground mb-2">
-            Start a new investigation
-          </h2>
-          <p className="text-xs text-text-muted mb-3">
-            Pick a target you already onboarded under Workspaces → Targets.
-            Workflow VR_INVESTIGATE_V1 fires immediately on create.
-          </p>
-          <div className="space-y-2">
-            <input
-              type="text"
-              value={formTitle}
-              onChange={(e) => setFormTitle(e.target.value)}
-              placeholder="Title (e.g. 'Audit V8 InferMaps for missing alias check')"
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-            />
-            <textarea
-              value={formQuestion}
-              onChange={(e) => setFormQuestion(e.target.value)}
-              placeholder="Initial question — what are you asking the engine to investigate?"
-              rows={2}
-              className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-            />
-            {(() => {
-              const targets = targetsResult?.data ?? [];
-              const workspaces = workspacesResult?.data ?? [];
-              const byWs = new Map<string, typeof targets>();
-              for (const t of targets) {
-                const arr = byWs.get(t.workspace_id) ?? [];
-                arr.push(t);
-                byWs.set(t.workspace_id, arr);
-              }
-              const wsName = (id: string) =>
-                workspaces.find((w) => w.id === id)?.name ?? "(unknown workspace)";
-              const orderedWsIds = Array.from(byWs.keys()).sort(
-                (a, b) => wsName(a).localeCompare(wsName(b)),
-              );
-              if (targetsResult === undefined) {
-                return (
-                  <div className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-default text-text-muted">
-                    Loading targets…
-                  </div>
-                );
-              }
-              if (targets.length === 0) {
-                return (
-                  <div className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-danger text-text-danger">
-                    No targets exist yet. Create one under Workspaces → Targets
-                    before starting an investigation.
-                  </div>
-                );
-              }
+        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+          Start a new investigation
+        </h2>
+        <p className="text-xs text-text-muted mb-3">
+          Pick a target you already onboarded under Workspaces → Targets.
+          Workflow VR_INVESTIGATE_V1 fires immediately on create.
+        </p>
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={formTitle}
+            onChange={(e) => setFormTitle(e.target.value)}
+            placeholder="Title (e.g. 'Audit V8 InferMaps for missing alias check')"
+            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+          />
+          <textarea
+            value={formQuestion}
+            onChange={(e) => setFormQuestion(e.target.value)}
+            placeholder="Initial question — what are you asking the engine to investigate?"
+            rows={2}
+            className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+          />
+          {(() => {
+            const targets = targetsResult?.data ?? [];
+            const workspaces = workspacesResult?.data ?? [];
+            const byWs = new Map<string, typeof targets>();
+            for (const t of targets) {
+              const arr = byWs.get(t.workspace_id) ?? [];
+              arr.push(t);
+              byWs.set(t.workspace_id, arr);
+            }
+            const wsName = (id: string) =>
+              workspaces.find((w) => w.id === id)?.name ?? "(unknown workspace)";
+            const orderedWsIds = Array.from(byWs.keys()).sort(
+              (a, b) => wsName(a).localeCompare(wsName(b)),
+            );
+            if (targetsResult === undefined) {
               return (
-                <select
-                  value={formTargetId}
-                  onChange={(e) => setFormTargetId(e.target.value)}
-                  className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-                >
-                  <option value="">— Pick a target —</option>
-                  {orderedWsIds.map((wsId) => (
-                    <optgroup key={wsId} label={wsName(wsId)}>
-                      {(byWs.get(wsId) ?? [])
-                        .slice()
-                        .sort((a, b) => a.display_name.localeCompare(b.display_name))
-                        .map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.display_name} · {t.kind} ·{" "}
-                            {t.primary_language ?? "—"} · {t.analysis_state}
-                          </option>
-                        ))}
-                    </optgroup>
-                  ))}
-                </select>
+                <div className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-default text-text-muted">
+                  Loading targets…
+                </div>
               );
-            })()}
-            <div className="flex gap-2 items-center">
+            }
+            if (targets.length === 0) {
+              return (
+                <div className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-danger text-text-danger">
+                  No targets exist yet. Create one under Workspaces → Targets
+                  before starting an investigation.
+                </div>
+              );
+            }
+            return (
               <select
-                value={formKind}
-                onChange={(e) => setFormKind(e.target.value as InvestigationKind)}
-                className="px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
+                value={formTargetId}
+                onChange={(e) => setFormTargetId(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
               >
-                <option value="discovery">discovery</option>
-                <option value="variant_hunt">variant_hunt</option>
-                <option value="triage">triage</option>
-                <option value="n_day">n_day</option>
-                <option value="audit">audit</option>
+                <option value="">— Pick a target —</option>
+                {orderedWsIds.map((wsId) => (
+                  <optgroup key={wsId} label={wsName(wsId)}>
+                    {(byWs.get(wsId) ?? [])
+                      .slice()
+                      .sort((a, b) => a.display_name.localeCompare(b.display_name))
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.display_name} · {t.kind} ·{" "}
+                          {t.primary_language ?? "—"} · {t.analysis_state}
+                        </option>
+                      ))}
+                  </optgroup>
+                ))}
               </select>
-              <div className="flex items-center gap-1">
-                <span className="text-sm text-text-muted">budget $</span>
-                <input
-                  type="number"
-                  step="1"
-                  min="0"
-                  value={formBudget}
-                  onChange={(e) => setFormBudget(e.target.value)}
-                  className="w-20 px-2 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
-                />
-              </div>
-              <button
-                type="button"
-                disabled={
-                  !formTitle.trim() ||
-                  !formQuestion.trim() ||
-                  !formTargetId.trim() ||
-                  createMut.isPending
-                }
-                onClick={() => {
-                  const budget = parseFloat(formBudget);
-                  createMut.mutate(
-                    {
-                      title: formTitle.trim(),
-                      initial_question: formQuestion.trim(),
-                      target_id: formTargetId.trim(),
-                      kind: formKind,
-                      cost_budget_usd: Number.isFinite(budget) ? budget : 50,
-                    },
-                    {
-                      onSuccess: (result) => {
-                        setShowForm(false);
-                        setFormTitle("");
-                        setFormQuestion("");
-                        setFormTargetId("");
-                        setFormKind("discovery");
-                        setFormBudget("50");
-                        navigate(`/vr/investigations/${result.data.id}`);
-                      },
-                    },
-                  );
-                }}
-                className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
-              >
-                {createMut.isPending ? "Creating…" : "Start investigation"}
-              </button>
+            );
+          })()}
+          <div className="flex gap-2 items-center">
+            <select
+              value={formKind}
+              onChange={(e) => setFormKind(e.target.value as InvestigationKind)}
+              className="px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
+            >
+              <option value="discovery">discovery</option>
+              <option value="variant_hunt">variant_hunt</option>
+              <option value="triage">triage</option>
+              <option value="n_day">n_day</option>
+              <option value="audit">audit</option>
+            </select>
+            <div className="flex items-center gap-1">
+              <span className="text-sm text-text-muted">budget $</span>
+              <input
+                type="number"
+                step="1"
+                min="0"
+                value={formBudget}
+                onChange={(e) => setFormBudget(e.target.value)}
+                className="w-20 px-2 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
+              />
             </div>
+            <button
+              type="button"
+              disabled={
+                !formTitle.trim() ||
+                !formQuestion.trim() ||
+                !formTargetId.trim() ||
+                createMut.isPending
+              }
+              onClick={() => {
+                const budget = parseFloat(formBudget);
+                createMut.mutate(
+                  {
+                    title: formTitle.trim(),
+                    initial_question: formQuestion.trim(),
+                    target_id: formTargetId.trim(),
+                    kind: formKind,
+                    cost_budget_usd: Number.isFinite(budget) ? budget : 50,
+                  },
+                  {
+                    onSuccess: (result) => {
+                      setShowForm(false);
+                      setFormTitle("");
+                      setFormQuestion("");
+                      setFormTargetId("");
+                      setFormKind("discovery");
+                      setFormBudget("50");
+                      navigate(`/vr/investigations/${result.data.id}`);
+                    },
+                  },
+                );
+              }}
+              className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+            >
+              {createMut.isPending ? "Creating…" : "Start investigation"}
+            </button>
           </div>
-        </AilaCard>
+        </div></AilaCard>
       )}
 
       {/* Filter bar — always visible above results */}
-      <AilaCard>
-        <div className="flex items-center gap-2 flex-wrap min-w-0">
+      <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap min-w-0">
+        <input
+          type="search"
+          value={searchQ}
+          onChange={(e) => {
+            setSearchQ(e.target.value);
+            resetToFirstPage();
+          }}
+          placeholder="Search title (server-side ILIKE)…"
+          className="flex-1 min-w-[180px] px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.target.value);
+            resetToFirstPage();
+          }}
+          className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
+        >
+          <option value="">all status</option>
+          <option value="created">created</option>
+          <option value="running">running</option>
+          <option value="paused">paused</option>
+          <option value="completed">completed</option>
+          <option value="failed">failed</option>
+        </select>
+        <select
+          value={kindFilter}
+          onChange={(e) => {
+            setKindFilter(e.target.value);
+            resetToFirstPage();
+          }}
+          className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
+        >
+          <option value="">all kind</option>
+          <option value="discovery">discovery</option>
+          <option value="variant_hunt">variant_hunt</option>
+          <option value="triage">triage</option>
+          <option value="n_day">n_day</option>
+          <option value="audit">audit</option>
+        </select>
+        <label className="flex items-center gap-1 text-xs text-text-muted">
           <input
-            type="search"
-            value={searchQ}
-            onChange={(e) => {
-              setSearchQ(e.target.value);
-              resetToFirstPage();
-            }}
-            placeholder="Search title (server-side ILIKE)…"
-            className="flex-1 min-w-[180px] px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+            type="checkbox"
+            checked={findingsOnly}
+            onChange={(e) => setFindingsOnly(e.target.checked)}
           />
-          <select
-            value={statusFilter}
-            onChange={(e) => {
-              setStatusFilter(e.target.value);
-              resetToFirstPage();
-            }}
-            className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
-          >
-            <option value="">all status</option>
-            <option value="created">created</option>
-            <option value="running">running</option>
-            <option value="paused">paused</option>
-            <option value="completed">completed</option>
-            <option value="failed">failed</option>
-          </select>
-          <select
-            value={kindFilter}
-            onChange={(e) => {
-              setKindFilter(e.target.value);
-              resetToFirstPage();
-            }}
-            className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
-          >
-            <option value="">all kind</option>
-            <option value="discovery">discovery</option>
-            <option value="variant_hunt">variant_hunt</option>
-            <option value="triage">triage</option>
-            <option value="n_day">n_day</option>
-            <option value="audit">audit</option>
-          </select>
-          <label className="flex items-center gap-1 text-xs text-text-muted">
-            <input
-              type="checkbox"
-              checked={findingsOnly}
-              onChange={(e) => setFindingsOnly(e.target.checked)}
-            />
-            findings only
-          </label>
-          <select
-            value={verifierFilter}
-            onChange={(e) => {
-              setVerifierFilter(e.target.value);
-              resetToFirstPage();
-            }}
-            className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
-            title="Filter by verifier verdict"
-          >
-            <option value="">all verifier</option>
-            <option value="confirmed">verifier: confirmed</option>
-            <option value="refuted">verifier: refuted</option>
-            <option value="inconclusive">verifier: inconclusive</option>
-          </select>
+          findings only
+        </label>
+        <select
+          value={verifierFilter}
+          onChange={(e) => {
+            setVerifierFilter(e.target.value);
+            resetToFirstPage();
+          }}
+          className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
+          title="Filter by verifier verdict"
+        >
+          <option value="">all verifier</option>
+          <option value="confirmed">verifier: confirmed</option>
+          <option value="refuted">verifier: refuted</option>
+          <option value="inconclusive">verifier: inconclusive</option>
+        </select>
+        <button
+          type="button"
+          onClick={() => {
+            setFavoritesOnly((v) => !v);
+            resetToFirstPage();
+          }}
+          className={
+            "px-2 py-1.5 text-xs rounded-md border transition-colors " +
+            (favoritesOnly
+              ? "border-amber-400 bg-amber-400/10 text-amber-300"
+              : "border-border-default text-text-muted hover:text-foreground")
+          }
+          title="Show only favorited investigations"
+        >
+          {favoritesOnly ? "★" : "☆"} favorites
+        </button>
+        <select
+          value={pageSize}
+          onChange={(e) => {
+            setPageSize(parseInt(e.target.value, 10));
+            resetToFirstPage();
+          }}
+          className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
+          title="Page size"
+        >
+          <option value="50">50/page</option>
+          <option value="100">100/page</option>
+          <option value="200">200/page</option>
+          <option value="500">500/page</option>
+        </select>
+        {(searchQ || statusFilter || kindFilter || findingsOnly || favoritesOnly || verifierFilter) && (
           <button
             type="button"
             onClick={() => {
-              setFavoritesOnly((v) => !v);
+              setSearchQ("");
+              setStatusFilter("");
+              setKindFilter("");
+              setFindingsOnly(false);
+              setFavoritesOnly(false);
+              setVerifierFilter("");
               resetToFirstPage();
             }}
-            className={
-              "px-2 py-1.5 text-xs rounded-md border transition-colors " +
-              (favoritesOnly
-                ? "border-amber-400 bg-amber-400/10 text-amber-300"
-                : "border-border-default text-text-muted hover:text-foreground")
-            }
-            title="Show only favorited investigations"
+            className="px-2 py-1.5 text-xs rounded-md border border-border-default text-text-muted hover:text-foreground"
           >
-            {favoritesOnly ? "★" : "☆"} favorites
+            clear
           </button>
-          <select
-            value={pageSize}
-            onChange={(e) => {
-              setPageSize(parseInt(e.target.value, 10));
-              resetToFirstPage();
-            }}
-            className="px-2 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
-            title="Page size"
+        )}
+      </div>
+      <div className="mt-2 flex items-center justify-between text-xs text-text-muted">
+        <span>
+          {investigations.length === investigationsRaw.length
+            ? `Showing ${offset + 1}–${offset + investigations.length} of ${totalRaw}`
+            : `Showing ${investigations.length} of ${investigationsRaw.length} (page) · ${totalRaw} total server-side`}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - pageSize))}
+            className="px-2 py-1 rounded-md border border-border-default disabled:opacity-40 hover:text-foreground"
           >
-            <option value="50">50/page</option>
-            <option value="100">100/page</option>
-            <option value="200">200/page</option>
-            <option value="500">500/page</option>
-          </select>
-          {(searchQ || statusFilter || kindFilter || findingsOnly || favoritesOnly || verifierFilter) && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQ("");
-                setStatusFilter("");
-                setKindFilter("");
-                setFindingsOnly(false);
-                setFavoritesOnly(false);
-                setVerifierFilter("");
-                resetToFirstPage();
-              }}
-              className="px-2 py-1.5 text-xs rounded-md border border-border-default text-text-muted hover:text-foreground"
-            >
-              clear
-            </button>
-          )}
+            ‹ Prev
+          </button>
+          <button
+            type="button"
+            disabled={offset + pageSize >= totalRaw}
+            onClick={() => setOffset(offset + pageSize)}
+            className="px-2 py-1 rounded-md border border-border-default disabled:opacity-40 hover:text-foreground"
+          >
+            Next ›
+          </button>
         </div>
-        <div className="mt-2 flex items-center justify-between text-xs text-text-muted">
-          <span>
-            {investigations.length === investigationsRaw.length
-              ? `Showing ${offset + 1}–${offset + investigations.length} of ${totalRaw}`
-              : `Showing ${investigations.length} of ${investigationsRaw.length} (page) · ${totalRaw} total server-side`}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - pageSize))}
-              className="px-2 py-1 rounded-md border border-border-default disabled:opacity-40 hover:text-foreground"
-            >
-              ‹ Prev
-            </button>
-            <button
-              type="button"
-              disabled={offset + pageSize >= totalRaw}
-              onClick={() => setOffset(offset + pageSize)}
-              className="px-2 py-1 rounded-md border border-border-default disabled:opacity-40 hover:text-foreground"
-            >
-              Next ›
-            </button>
-          </div>
-        </div>
-      </AilaCard>
+      </div></AilaCard>
 
 
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger">
-          <p className="text-sm text-text-danger">Failed to load investigations.</p>
-        </AilaCard>
+        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load investigations.</p></AilaCard>
       )}
 
       {!isLoading && !isError && investigations.length === 0 && (
-        <AilaCard>
-          <div className="text-center py-8">
-            <p className="text-text-muted">No investigations yet.</p>
-            <p className="text-text-muted text-xs mt-2">
-              Click <strong>New Investigation</strong> above to start one.
-              Workflow auto-fires on create.
-            </p>
-          </div>
-        </AilaCard>
+        <AilaCard  techBorder glow><div className="text-center py-8">
+          <p className="text-text-muted">No investigations yet.</p>
+          <p className="text-text-muted text-xs mt-2">
+            Click <strong>New Investigation</strong> above to start one.
+            Workflow auto-fires on create.
+          </p>
+        </div></AilaCard>
       )}
 
       {!isLoading && !isError && investigations.length > 0 && (
-        <AilaCard className="overflow-x-auto p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
-                <th className="px-2 py-2 font-semibold text-center" title="Favorite">★</th>
-                <th className="px-4 py-2 font-semibold">Title / Verdict</th>
-                <th className="px-4 py-2 font-semibold">Kind</th>
-                <th className="px-4 py-2 font-semibold">Status</th>
-                <th className="px-4 py-2 font-semibold">Target</th>
-                <th className="px-4 py-2 font-semibold text-right" title="Findings linked to this investigation">Find</th>
-                <th className="px-4 py-2 font-semibold text-right">Br</th>
-                <th className="px-4 py-2 font-semibold text-right">Msg</th>
-                <th className="px-4 py-2 font-semibold text-right">Out</th>
-                <th className="px-4 py-2 font-semibold text-right">Cost</th>
-                <th className="px-4 py-2 font-semibold">Created</th>
-                <th className="px-2 py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {investigations.map((inv) => (
-                <tr
-                  key={inv.id}
-                  onClick={() => navigate(`/vr/investigations/${inv.id}`)}
-                  className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
+        <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+              <th className="px-2 py-2 font-semibold text-center" title="Favorite">★</th>
+              <th className="px-4 py-2 font-semibold">Title / Verdict</th>
+              <th className="px-4 py-2 font-semibold">Kind</th>
+              <th className="px-4 py-2 font-semibold">Status</th>
+              <th className="px-4 py-2 font-semibold">Target</th>
+              <th className="px-4 py-2 font-semibold text-right" title="Findings linked to this investigation">Find</th>
+              <th className="px-4 py-2 font-semibold text-right">Br</th>
+              <th className="px-4 py-2 font-semibold text-right">Msg</th>
+              <th className="px-4 py-2 font-semibold text-right">Out</th>
+              <th className="px-4 py-2 font-semibold text-right">Cost</th>
+              <th className="px-4 py-2 font-semibold">Created</th>
+              <th className="px-2 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {investigations.map((inv) => (
+              <tr
+                key={inv.id}
+                onClick={() => navigate(`/vr/investigations/${inv.id}`)}
+                className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
+              >
+                <td
+                  className="px-2 py-2 align-top text-center"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    favMut.mutate(inv.id);
+                  }}
                 >
-                  <td
-                    className="px-2 py-2 align-top text-center"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      favMut.mutate(inv.id);
-                    }}
+                  <span
+                    className={
+                      "cursor-pointer text-base " +
+                      (inv.is_favorite
+                        ? "text-amber-400"
+                        : "text-text-muted hover:text-amber-300")
+                    }
+                    title={inv.is_favorite ? "Unfavorite" : "Favorite"}
                   >
-                    <span
-                      className={
-                        "cursor-pointer text-base " +
-                        (inv.is_favorite
-                          ? "text-amber-400"
-                          : "text-text-muted hover:text-amber-300")
-                      }
-                      title={inv.is_favorite ? "Unfavorite" : "Favorite"}
-                    >
-                      {inv.is_favorite ? "★" : "☆"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 align-top min-w-0 max-w-[380px]">
-                    <div className="font-semibold text-foreground break-words">
-                      {inv.title}
+                    {inv.is_favorite ? "★" : "☆"}
+                  </span>
+                </td>
+                <td className="px-4 py-2 align-top min-w-0 max-w-[380px]">
+                  <div className="font-semibold text-foreground break-words">
+                    {inv.title}
+                  </div>
+                  {inv.primary_outcome_kind && (
+                    <div className="mt-1 flex items-center gap-1 flex-wrap">
+                      <AilaBadge
+                        severity={
+                          inv.primary_outcome_kind === "direct_finding"
+                            ? "high"
+                            : inv.primary_outcome_kind === "patch_assessment_report"
+                              ? "info"
+                              : inv.primary_outcome_kind === "variant_hunt_order"
+                                ? "medium"
+                                : "low"
+                        }
+                        size="sm"
+                      >
+                        {inv.primary_outcome_kind}
+                      </AilaBadge>
+                      {inv.primary_outcome_confidence && (
+                        <span className="text-[10px] font-mono text-text-muted">
+                          conf:{inv.primary_outcome_confidence}
+                        </span>
+                      )}
                     </div>
-                    {inv.primary_outcome_kind && (
-                      <div className="mt-1 flex items-center gap-1 flex-wrap">
-                        <AilaBadge
-                          severity={
-                            inv.primary_outcome_kind === "direct_finding"
-                              ? "high"
-                              : inv.primary_outcome_kind === "patch_assessment_report"
-                                ? "info"
-                                : inv.primary_outcome_kind === "variant_hunt_order"
-                                  ? "medium"
-                                  : "low"
-                          }
-                          size="sm"
-                        >
-                          {inv.primary_outcome_kind}
-                        </AilaBadge>
-                        {inv.primary_outcome_confidence && (
-                          <span className="text-[10px] font-mono text-text-muted">
-                            conf:{inv.primary_outcome_confidence}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {inv.primary_outcome_verdict_head && (
-                      <div className="mt-1 text-xs text-text-muted line-clamp-2 break-words">
-                        {inv.primary_outcome_verdict_head}
-                      </div>
-                    )}
-                    {inv.verifier_verdict && (
-                      <div className="mt-1">
-                        <AilaBadge
-                          severity={
-                            inv.verifier_verdict === "refuted"
-                              ? "critical"
-                              : inv.verifier_verdict === "confirmed"
-                                ? "low"
-                                : "medium"
-                          }
-                          size="sm"
-                        >
-                          verifier: {inv.verifier_verdict}
-                          {typeof inv.verifier_confidence === "number"
-                            ? ` (${inv.verifier_confidence.toFixed(2)})`
-                            : ""}
-                        </AilaBadge>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                    {inv.kind}
-                  </td>
-                  <td className="px-4 py-2">
-                    <AilaBadge
-                      severity={statusColor[inv.status] ?? "info"}
-                      size="sm"
-                    >
-                      {inv.pause_reason
-                        ? `${inv.status}:${inv.pause_reason}`
-                        : inv.status}
-                    </AilaBadge>
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                    {targetMap.get(inv.target_id)?.display_name ?? "loading…"}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-right text-foreground">
-                    {inv.linked_finding_ids.length > 0 ? (
-                      <span className="text-emerald-400 font-semibold">
-                        {inv.linked_finding_ids.length}
-                      </span>
-                    ) : (
-                      <span className="text-text-muted">0</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-right text-foreground">
-                    {inv.branch_count}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-right text-foreground">
-                    {inv.message_count}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-right text-foreground">
-                    {inv.outcome_count}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-right text-text-muted">
-                    {fmtUsd(inv.cost_actual_usd)} / {fmtUsd(inv.cost_budget_usd)}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                    {formatDate(inv.created_at)}
-                  </td>
-                  <td className="px-2 py-2 text-right">
-                    <DeleteButton
-                      id={inv.id}
-                      label={`investigation "${inv.title}"`}
-                      mutation={deleteMut}
-                      compact
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </AilaCard>
+                  )}
+                  {inv.primary_outcome_verdict_head && (
+                    <div className="mt-1 text-xs text-text-muted line-clamp-2 break-words">
+                      {inv.primary_outcome_verdict_head}
+                    </div>
+                  )}
+                  {inv.verifier_verdict && (
+                    <div className="mt-1">
+                      <AilaBadge
+                        severity={
+                          inv.verifier_verdict === "refuted"
+                            ? "critical"
+                            : inv.verifier_verdict === "confirmed"
+                              ? "low"
+                              : "medium"
+                        }
+                        size="sm"
+                      >
+                        verifier: {inv.verifier_verdict}
+                        {typeof inv.verifier_confidence === "number"
+                          ? ` (${inv.verifier_confidence.toFixed(2)})`
+                          : ""}
+                      </AilaBadge>
+                    </div>
+                  )}
+                </td>
+                <td className="px-4 py-2 font-mono text-xs text-text-muted">
+                  {inv.kind}
+                </td>
+                <td className="px-4 py-2">
+                  <AilaBadge
+                    severity={statusColor[inv.status] ?? "info"}
+                    size="sm"
+                  >
+                    {inv.pause_reason
+                      ? `${inv.status}:${inv.pause_reason}`
+                      : inv.status}
+                  </AilaBadge>
+                </td>
+                <td className="px-4 py-2 font-mono text-xs text-text-muted">
+                  {targetMap.get(inv.target_id)?.display_name ?? "loading…"}
+                </td>
+                <td className="px-4 py-2 font-mono text-right text-foreground">
+                  {inv.linked_finding_ids.length > 0 ? (
+                    <span className="text-emerald-400 font-semibold">
+                      {inv.linked_finding_ids.length}
+                    </span>
+                  ) : (
+                    <span className="text-text-muted">0</span>
+                  )}
+                </td>
+                <td className="px-4 py-2 font-mono text-right text-foreground">
+                  {inv.branch_count}
+                </td>
+                <td className="px-4 py-2 font-mono text-right text-foreground">
+                  {inv.message_count}
+                </td>
+                <td className="px-4 py-2 font-mono text-right text-foreground">
+                  {inv.outcome_count}
+                </td>
+                <td className="px-4 py-2 font-mono text-right text-text-muted">
+                  {fmtUsd(inv.cost_actual_usd)} / {fmtUsd(inv.cost_budget_usd)}
+                </td>
+                <td className="px-4 py-2 font-mono text-xs text-text-muted">
+                  {formatDate(inv.created_at)}
+                </td>
+                <td className="px-2 py-2 text-right">
+                  <DeleteButton
+                    id={inv.id}
+                    label={`investigation "${inv.title}"`}
+                    mutation={deleteMut}
+                    compact
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table></AilaCard>
       )}
     </div>
   );

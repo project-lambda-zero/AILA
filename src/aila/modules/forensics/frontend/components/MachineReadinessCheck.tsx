@@ -28,7 +28,7 @@ const statusSeverity: Record<string, "low" | "critical" | "high" | "medium" | "i
 export function MachineReadinessCheck({ readinessResult, isLoading, onRetry, onContinue }: Props) {
   if (isLoading) {
     return (
-      <AilaCard>
+      <AilaCard  techBorder glow>
         <div className="space-y-3">
           <h2 className="text-lg font-semibold font-mono text-foreground">Checking Readiness...</h2>
           <LoadingSkeleton size="md" width="full" />
@@ -42,14 +42,14 @@ export function MachineReadinessCheck({ readinessResult, isLoading, onRetry, onC
 
   if (!readinessResult) {
     return (
-      <AilaCard>
+      <AilaCard  techBorder glow>
         <p className="text-sm text-text-muted">No readiness check result available.</p>
       </AilaCard>
     );
   }
 
   return (
-    <AilaCard>
+    <AilaCard  techBorder glow>
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold font-mono text-foreground">Machine Readiness</h2>
@@ -57,9 +57,9 @@ export function MachineReadinessCheck({ readinessResult, isLoading, onRetry, onC
             {readinessResult.ready ? "Ready" : "Not Ready"}
           </AilaBadge>
         </div>
-
+    
         <p className="text-sm text-text-muted">{readinessResult.message}</p>
-
+    
         <div className="border border-border rounded-md bg-surface text-foreground overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-surface-secondary">
@@ -88,7 +88,7 @@ export function MachineReadinessCheck({ readinessResult, isLoading, onRetry, onC
             </tbody>
           </table>
         </div>
-
+    
         <div className="flex justify-end gap-2">
           <button
             type="button"

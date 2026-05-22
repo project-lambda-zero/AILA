@@ -510,7 +510,7 @@ export function ArtifactExplorer({ projectId }: { projectId: string }) {
       </div>
 
       {artifacts.length === 0 ? (
-        <AilaCard>
+        <AilaCard  techBorder glow>
           <p className="text-sm text-text-muted text-center py-4">
             No artifacts {familyFilter ? `in ${familyFilter} family` : "collected yet"}.
           </p>

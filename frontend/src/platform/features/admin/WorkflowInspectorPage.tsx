@@ -242,50 +242,48 @@ function RunDetailPanel({ run }: RunDetailPanelProps) {
   });
 
   return (
-    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-4">
-      {/* Run metadata header */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Run ID
+    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-4" techBorder glow>{/* Run metadata header */}
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Run ID
+        </span>
+        <div className="flex items-center gap-1">
+          <span className="font-mono text-xs text-foreground break-all">
+            {run.run_id}
           </span>
-          <div className="flex items-center gap-1">
-            <span className="font-mono text-xs text-foreground break-all">
-              {run.run_id}
-            </span>
-            <CopyButton text={run.run_id} />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[11px]">
-          <div>
-            <span className="text-muted-foreground">Definition: </span>
-            <span className="text-foreground">{run.definition_id}</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Version: </span>
-            <span className="text-foreground tabular-nums">{run.version}</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">State: </span>
-            <span className={`font-semibold ${stateBadgeClass(run.current_state)}`}>
-              {run.current_state}
-            </span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Updated: </span>
-            <span className="text-foreground">{formatRelativeTime(run.updated_at)}</span>
-          </div>
+          <CopyButton text={run.run_id} />
         </div>
       </div>
-
-      {/* Transition timeline — reused from tasks/ (not duplicated) */}
-      <TransitionTimeline
-        rows={transitions ?? []}
-        isLoading={isLoading}
-        isError={isError}
-      />
-    </AilaCard>
+    
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[11px]">
+        <div>
+          <span className="text-muted-foreground">Definition: </span>
+          <span className="text-foreground">{run.definition_id}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Version: </span>
+          <span className="text-foreground tabular-nums">{run.version}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">State: </span>
+          <span className={`font-semibold ${stateBadgeClass(run.current_state)}`}>
+            {run.current_state}
+          </span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Updated: </span>
+          <span className="text-foreground">{formatRelativeTime(run.updated_at)}</span>
+        </div>
+      </div>
+    </div>
+    
+    {/* Transition timeline — reused from tasks/ (not duplicated) */}
+    <TransitionTimeline
+      rows={transitions ?? []}
+      isLoading={isLoading}
+      isError={isError}
+    /></AilaCard>
   );
 }
 
@@ -464,29 +462,27 @@ export function WorkflowInspectorPage() {
       {/* Two-column split: run table + detail panel */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4 min-h-0 flex-1">
         {/* Left: run table */}
-        <AilaCard variant="default" padding="md" className="overflow-hidden min-w-0">
-          <div className="flex flex-col gap-3 h-full">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="font-mono text-sm font-semibold text-foreground">
-                Runs
-                {allRuns.length > 0 && (
-                  <span className="ml-2 text-muted-foreground font-normal">
-                    ({allRuns.length})
-                  </span>
-                )}
-              </h2>
-            </div>
-            <div className="overflow-auto min-h-0 flex-1">
-              <RunTable
-                runs={allRuns}
-                selectedRunId={selectedRunId}
-                onSelectRun={setSelectedRunId}
-                isLoading={runsLoading}
-                isError={runsError}
-              />
-            </div>
+        <AilaCard variant="default" padding="md" className="overflow-hidden min-w-0" techBorder glow><div className="flex flex-col gap-3 h-full">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="font-mono text-sm font-semibold text-foreground">
+              Runs
+              {allRuns.length > 0 && (
+                <span className="ml-2 text-muted-foreground font-normal">
+                  ({allRuns.length})
+                </span>
+              )}
+            </h2>
           </div>
-        </AilaCard>
+          <div className="overflow-auto min-h-0 flex-1">
+            <RunTable
+              runs={allRuns}
+              selectedRunId={selectedRunId}
+              onSelectRun={setSelectedRunId}
+              isLoading={runsLoading}
+              isError={runsError}
+            />
+          </div>
+        </div></AilaCard>
 
         {/* Right: run detail + transition timeline */}
         <div className="min-w-0">

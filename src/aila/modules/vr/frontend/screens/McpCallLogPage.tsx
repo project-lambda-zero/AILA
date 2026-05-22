@@ -60,80 +60,74 @@ export function McpCallLogPage() {
         </span>
       </div>
 
-      {isLoading && <AilaCard><p className="text-sm text-text-muted">Loading…</p></AilaCard>}
+      {isLoading && <AilaCard  techBorder glow><p className="text-sm text-text-muted">Loading…</p></AilaCard>}
       {isError && (
-        <AilaCard className="border-border-danger">
-          <p className="text-sm text-text-danger">Failed to load call log.</p>
-        </AilaCard>
+        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load call log.</p></AilaCard>
       )}
       {!isLoading && rows.length === 0 && (
-        <AilaCard>
-          <p className="text-sm text-text-muted text-center py-4">
-            No MCP calls have been logged yet. Run an analyze, rank, or upload
-            to populate the log.
-          </p>
-        </AilaCard>
+        <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-4">
+          No MCP calls have been logged yet. Run an analyze, rank, or upload
+          to populate the log.
+        </p></AilaCard>
       )}
 
       {rows.length > 0 && (
-        <AilaCard>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border-default text-left text-text-muted">
-                  <th className="px-2 py-1 font-semibold">When</th>
-                  <th className="px-2 py-1 font-semibold">Server</th>
-                  <th className="px-2 py-1 font-semibold">Action</th>
-                  <th className="px-2 py-1 font-semibold">Status</th>
-                  <th className="px-2 py-1 font-semibold text-right">HTTP</th>
-                  <th className="px-2 py-1 font-semibold text-right">Latency</th>
-                  <th className="px-2 py-1 font-semibold">Error</th>
+        <AilaCard  techBorder glow><div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border-default text-left text-text-muted">
+                <th className="px-2 py-1 font-semibold">When</th>
+                <th className="px-2 py-1 font-semibold">Server</th>
+                <th className="px-2 py-1 font-semibold">Action</th>
+                <th className="px-2 py-1 font-semibold">Status</th>
+                <th className="px-2 py-1 font-semibold text-right">HTTP</th>
+                <th className="px-2 py-1 font-semibold text-right">Latency</th>
+                <th className="px-2 py-1 font-semibold">Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr
+                  key={r.id}
+                  className="border-b border-border-default last:border-b-0"
+                >
+                  <td className="px-2 py-1 font-mono text-text-muted whitespace-nowrap">
+                    {new Date(r.called_at).toLocaleTimeString()}
+                  </td>
+                  <td className="px-2 py-1 font-mono text-foreground">
+                    {r.server_id}
+                  </td>
+                  <td className="px-2 py-1 font-mono text-foreground">
+                    {r.action}
+                  </td>
+                  <td className="px-2 py-1">
+                    <AilaBadge
+                      severity={
+                        r.status === "ready"
+                          ? "low"
+                          : r.status === "error"
+                            ? "critical"
+                            : "medium"
+                      }
+                      size="sm"
+                    >
+                      {r.status}
+                    </AilaBadge>
+                  </td>
+                  <td className="px-2 py-1 font-mono text-right text-foreground">
+                    {r.http_status ?? "—"}
+                  </td>
+                  <td className="px-2 py-1 font-mono text-right text-text-muted">
+                    {r.latency_ms != null ? `${r.latency_ms}ms` : "—"}
+                  </td>
+                  <td className="px-2 py-1 font-mono text-text-danger truncate max-w-[28ch]" title={r.error_excerpt ?? ""}>
+                    {r.error_excerpt ?? ""}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr
-                    key={r.id}
-                    className="border-b border-border-default last:border-b-0"
-                  >
-                    <td className="px-2 py-1 font-mono text-text-muted whitespace-nowrap">
-                      {new Date(r.called_at).toLocaleTimeString()}
-                    </td>
-                    <td className="px-2 py-1 font-mono text-foreground">
-                      {r.server_id}
-                    </td>
-                    <td className="px-2 py-1 font-mono text-foreground">
-                      {r.action}
-                    </td>
-                    <td className="px-2 py-1">
-                      <AilaBadge
-                        severity={
-                          r.status === "ready"
-                            ? "low"
-                            : r.status === "error"
-                              ? "critical"
-                              : "medium"
-                        }
-                        size="sm"
-                      >
-                        {r.status}
-                      </AilaBadge>
-                    </td>
-                    <td className="px-2 py-1 font-mono text-right text-foreground">
-                      {r.http_status ?? "—"}
-                    </td>
-                    <td className="px-2 py-1 font-mono text-right text-text-muted">
-                      {r.latency_ms != null ? `${r.latency_ms}ms` : "—"}
-                    </td>
-                    <td className="px-2 py-1 font-mono text-text-danger truncate max-w-[28ch]" title={r.error_excerpt ?? ""}>
-                      {r.error_excerpt ?? ""}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </AilaCard>
+              ))}
+            </tbody>
+          </table>
+        </div></AilaCard>
       )}
     </div>
   );

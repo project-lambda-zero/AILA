@@ -219,100 +219,92 @@ export function TagVocabularyPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total Keys
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {vocabQuery.isLoading ? "—" : vocabulary.length}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Defaults + custom
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Custom Keys
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {vocabQuery.isLoading ? "—" : userDefinedCount}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Added by admins
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Keys In Use
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {systemsQuery.isLoading || vocabQuery.isLoading ? "—" : inUseCount}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Assigned to ≥1 system
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Total Keys
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {vocabQuery.isLoading ? "—" : vocabulary.length}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Defaults + custom
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Custom Keys
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {vocabQuery.isLoading ? "—" : userDefinedCount}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Added by admins
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Keys In Use
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {systemsQuery.isLoading || vocabQuery.isLoading ? "—" : inUseCount}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Assigned to ≥1 system
+        </p></AilaCard>
       </div>
 
       {/* Add tag key form */}
-      <AilaCard variant="elevated" padding="md">
-        <h2 className="font-mono text-sm font-semibold text-text mb-3">
-          Add Tag Key
-        </h2>
-        <form
-          onSubmit={handleCreate}
-          className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,200px)_1fr_auto] sm:items-end"
-        >
-          <div className="flex flex-col gap-1">
-            <label
-              className="font-mono text-xs text-text-muted"
-              htmlFor="vocab-key"
-            >
-              Tag Key
-            </label>
-            <Input
-              id="vocab-key"
-              value={newKey}
-              onChange={(e) => setNewKey(e.target.value)}
-              placeholder="environment"
-              disabled={createMutation.isPending}
-              className="font-mono text-sm"
-              autoComplete="off"
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label
-              className="font-mono text-xs text-text-muted"
-              htmlFor="vocab-desc"
-            >
-              Description (optional)
-            </label>
-            <Input
-              id="vocab-desc"
-              value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              placeholder="Deployment environment (prod, staging, dev)"
-              disabled={createMutation.isPending}
-              className="font-mono text-sm"
-              autoComplete="off"
-            />
-          </div>
-          <Button
-            type="submit"
-            size="sm"
-            className="gap-1.5 sm:self-end"
-            disabled={createMutation.isPending || !newKey.trim()}
+      <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-sm font-semibold text-text mb-3">
+        Add Tag Key
+      </h2>
+      <form
+        onSubmit={handleCreate}
+        className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,200px)_1fr_auto] sm:items-end"
+      >
+        <div className="flex flex-col gap-1">
+          <label
+            className="font-mono text-xs text-text-muted"
+            htmlFor="vocab-key"
           >
-            <Plus className="h-4 w-4" />
-            {createMutation.isPending ? "Adding…" : "Add Key"}
-          </Button>
-        </form>
-        {createError && (
-          <div className="mt-3 rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-            {createError}
-          </div>
-        )}
-      </AilaCard>
+            Tag Key
+          </label>
+          <Input
+            id="vocab-key"
+            value={newKey}
+            onChange={(e) => setNewKey(e.target.value)}
+            placeholder="environment"
+            disabled={createMutation.isPending}
+            className="font-mono text-sm"
+            autoComplete="off"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label
+            className="font-mono text-xs text-text-muted"
+            htmlFor="vocab-desc"
+          >
+            Description (optional)
+          </label>
+          <Input
+            id="vocab-desc"
+            value={newDescription}
+            onChange={(e) => setNewDescription(e.target.value)}
+            placeholder="Deployment environment (prod, staging, dev)"
+            disabled={createMutation.isPending}
+            className="font-mono text-sm"
+            autoComplete="off"
+          />
+        </div>
+        <Button
+          type="submit"
+          size="sm"
+          className="gap-1.5 sm:self-end"
+          disabled={createMutation.isPending || !newKey.trim()}
+        >
+          <Plus className="h-4 w-4" />
+          {createMutation.isPending ? "Adding…" : "Add Key"}
+        </Button>
+      </form>
+      {createError && (
+        <div className="mt-3 rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+          {createError}
+        </div>
+      )}</AilaCard>
 
       {/* Error banner */}
       {vocabQuery.isError && (
@@ -323,9 +315,7 @@ export function TagVocabularyPage() {
 
       {/* Loading skeleton */}
       {vocabQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={5} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={5} /></AilaCard>
       )}
 
       {/* Empty state */}
@@ -339,102 +329,100 @@ export function TagVocabularyPage() {
 
       {/* Vocabulary table */}
       {!vocabQuery.isLoading && vocabulary.length > 0 && (
-        <AilaCard variant="default" padding="none">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="border-b border-border bg-elevated">
-                <tr>
-                  <th className="px-4 py-2 text-left font-mono text-xs uppercase tracking-wider text-text-muted">
-                    Tag Key
-                  </th>
-                  <th className="px-4 py-2 text-left font-mono text-xs uppercase tracking-wider text-text-muted">
-                    Description
-                  </th>
-                  <th className="px-4 py-2 text-left font-mono text-xs uppercase tracking-wider text-text-muted">
-                    Source
-                  </th>
-                  <th className="px-4 py-2 text-right font-mono text-xs uppercase tracking-wider text-text-muted">
-                    Usage
-                  </th>
-                  <th className="px-4 py-2 text-right font-mono text-xs uppercase tracking-wider text-text-muted">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {vocabulary.map((entry) => {
-                  const usage = usageCounts.get(entry.tag_key) ?? 0;
-                  return (
-                    <tr
-                      key={entry.id}
-                      className="border-b border-border last:border-b-0 hover:bg-elevated/40 transition-colors duration-100"
-                    >
-                      <td className="px-4 py-2 align-top">
-                        <span className="font-mono text-sm font-semibold text-text">
-                          {entry.tag_key}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 align-top">
+        <AilaCard variant="default" padding="none" techBorder glow><div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="border-b border-border bg-elevated">
+              <tr>
+                <th className="px-4 py-2 text-left font-mono text-xs uppercase tracking-wider text-text-muted">
+                  Tag Key
+                </th>
+                <th className="px-4 py-2 text-left font-mono text-xs uppercase tracking-wider text-text-muted">
+                  Description
+                </th>
+                <th className="px-4 py-2 text-left font-mono text-xs uppercase tracking-wider text-text-muted">
+                  Source
+                </th>
+                <th className="px-4 py-2 text-right font-mono text-xs uppercase tracking-wider text-text-muted">
+                  Usage
+                </th>
+                <th className="px-4 py-2 text-right font-mono text-xs uppercase tracking-wider text-text-muted">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {vocabulary.map((entry) => {
+                const usage = usageCounts.get(entry.tag_key) ?? 0;
+                return (
+                  <tr
+                    key={entry.id}
+                    className="border-b border-border last:border-b-0 hover:bg-elevated/40 transition-colors duration-100"
+                  >
+                    <td className="px-4 py-2 align-top">
+                      <span className="font-mono text-sm font-semibold text-text">
+                        {entry.tag_key}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 align-top">
+                      <span className="font-mono text-xs text-text-muted">
+                        {entry.description || "—"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 align-top">
+                      {entry.is_system_default ? (
+                        <AilaBadge severity="neutral" size="sm">
+                          system default
+                        </AilaBadge>
+                      ) : (
+                        <AilaBadge severity="info" size="sm">
+                          custom
+                        </AilaBadge>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 align-top text-right">
+                      {systemsQuery.isLoading ? (
                         <span className="font-mono text-xs text-text-muted">
-                          {entry.description || "—"}
+                          —
                         </span>
-                      </td>
-                      <td className="px-4 py-2 align-top">
-                        {entry.is_system_default ? (
-                          <AilaBadge severity="neutral" size="sm">
-                            system default
-                          </AilaBadge>
-                        ) : (
-                          <AilaBadge severity="info" size="sm">
-                            custom
-                          </AilaBadge>
-                        )}
-                      </td>
-                      <td className="px-4 py-2 align-top text-right">
-                        {systemsQuery.isLoading ? (
-                          <span className="font-mono text-xs text-text-muted">
-                            —
-                          </span>
-                        ) : (
-                          <span
-                            className={`font-mono text-xs ${
-                              usage > 0 ? "text-text" : "text-text-muted"
-                            }`}
-                          >
-                            {usage}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2 align-top text-right">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="text-destructive border-destructive/40 hover:bg-destructive/10 hover:border-destructive disabled:opacity-40 gap-1.5"
-                          disabled={
-                            entry.is_system_default || deleteMutation.isPending
-                          }
-                          onClick={() => setPendingDelete(entry)}
-                          aria-label={`Delete tag key ${entry.tag_key}`}
+                      ) : (
+                        <span
+                          className={`font-mono text-xs ${
+                            usage > 0 ? "text-text" : "text-text-muted"
+                          }`}
                         >
-                          <Trash className="h-3.5 w-3.5" />
-                          Delete
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {totalSystems > sampledSystems && (
-            <p className="px-4 py-2 font-mono text-xs text-text-muted border-t border-border">
-              Usage counts derived from {sampledSystems} of {totalSystems}{" "}
-              systems. Counts may understate global usage when the fleet exceeds
-              the page cap.
-            </p>
-          )}
-        </AilaCard>
+                          {usage}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 align-top text-right">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="text-destructive border-destructive/40 hover:bg-destructive/10 hover:border-destructive disabled:opacity-40 gap-1.5"
+                        disabled={
+                          entry.is_system_default || deleteMutation.isPending
+                        }
+                        onClick={() => setPendingDelete(entry)}
+                        aria-label={`Delete tag key ${entry.tag_key}`}
+                      >
+                        <Trash className="h-3.5 w-3.5" />
+                        Delete
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {totalSystems > sampledSystems && (
+          <p className="px-4 py-2 font-mono text-xs text-text-muted border-t border-border">
+            Usage counts derived from {sampledSystems} of {totalSystems}{" "}
+            systems. Counts may understate global usage when the fleet exceeds
+            the page cap.
+          </p>
+        )}</AilaCard>
       )}
 
       <DeleteVocabDialog

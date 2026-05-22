@@ -130,9 +130,7 @@ export function SystemDetailPage() {
 
       {/* Loading skeleton for entire page while first load */}
       {systemQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {/* Tabbed layout (D-05) */}
@@ -155,155 +153,145 @@ export function SystemDetailPage() {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               {/* Left: connectivity + tags */}
               <div className="flex flex-col gap-4">
-                <AilaCard variant="default" padding="md">
-                  <h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">SSH Connectivity</h3>
-                  {connectivityQuery.isLoading ? (
-                    <LoadingSkeletonGroup lines={2} />
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      <ConnectivityBadge status={connectivityQuery.data?.status ?? null} />
-                      {connectivityQuery.data?.last_checked && (
-                        <p className="font-mono text-xs text-text-muted">
-                          Last checked: {formatRelativeTime(connectivityQuery.data.last_checked)}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </AilaCard>
+                <AilaCard variant="default" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">SSH Connectivity</h3>
+                {connectivityQuery.isLoading ? (
+                  <LoadingSkeletonGroup lines={2} />
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <ConnectivityBadge status={connectivityQuery.data?.status ?? null} />
+                    {connectivityQuery.data?.last_checked && (
+                      <p className="font-mono text-xs text-text-muted">
+                        Last checked: {formatRelativeTime(connectivityQuery.data.last_checked)}
+                      </p>
+                    )}
+                  </div>
+                )}</AilaCard>
 
-                <AilaCard variant="default" padding="md">
-                  <h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Tags</h3>
-                  <p className="font-mono text-xs text-text-muted">
-                    Manage tags in the <button type="button" onClick={() => setTab("tags")} className="text-accent hover:underline">Tags tab</button>.
-                  </p>
-                </AilaCard>
+                <AilaCard variant="default" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Tags</h3>
+                <p className="font-mono text-xs text-text-muted">
+                  Manage tags in the <button type="button" onClick={() => setTab("tags")} className="text-accent hover:underline">Tags tab</button>.
+                </p></AilaCard>
               </div>
 
               {/* Right: metadata + edit form */}
               <div className="flex flex-col gap-4">
-                <AilaCard variant="default" padding="md">
-                  <h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">System Metadata</h3>
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-sm">
-                    <dt className="text-text-muted">Host</dt>
-                    <dd className="text-text">{system.host}:{system.port}</dd>
-                    <dt className="text-text-muted">Username</dt>
-                    <dd className="text-text">{system.username}</dd>
-                    <dt className="text-text-muted">Distro</dt>
-                    <dd className="text-text">{system.distro}</dd>
-                    <dt className="text-text-muted">Scan count</dt>
-                    <dd className="text-text">{system.scan_count}</dd>
-                    <dt className="text-text-muted">Registered</dt>
-                    <dd className="text-text">{formatRelativeTime(system.created_at)}</dd>
-                    <dt className="text-text-muted">Updated</dt>
-                    <dd className="text-text">{formatRelativeTime(system.updated_at)}</dd>
-                  </dl>
-                  {system.description && (
-                    <p className="font-mono text-xs text-text-muted mt-3 border-t border-border pt-3">
-                      {system.description}
-                    </p>
-                  )}
-                </AilaCard>
+                <AilaCard variant="default" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">System Metadata</h3>
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-sm">
+                  <dt className="text-text-muted">Host</dt>
+                  <dd className="text-text">{system.host}:{system.port}</dd>
+                  <dt className="text-text-muted">Username</dt>
+                  <dd className="text-text">{system.username}</dd>
+                  <dt className="text-text-muted">Distro</dt>
+                  <dd className="text-text">{system.distro}</dd>
+                  <dt className="text-text-muted">Scan count</dt>
+                  <dd className="text-text">{system.scan_count}</dd>
+                  <dt className="text-text-muted">Registered</dt>
+                  <dd className="text-text">{formatRelativeTime(system.created_at)}</dd>
+                  <dt className="text-text-muted">Updated</dt>
+                  <dd className="text-text">{formatRelativeTime(system.updated_at)}</dd>
+                </dl>
+                {system.description && (
+                  <p className="font-mono text-xs text-text-muted mt-3 border-t border-border pt-3">
+                    {system.description}
+                  </p>
+                )}</AilaCard>
 
                 {/* Edit form */}
                 {canOperate && (
-                  <AilaCard variant="elevated" padding="md">
-                    <h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Edit System</h3>
-                    <form
-                      className="flex flex-col gap-3"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        if (!editValue) return;
-                        updateSystem.mutate(editValue, {
-                          onSuccess: () => setEditDraft(null),
-                        });
-                      }}
-                    >
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="flex flex-col gap-1">
-                          <label className="font-mono text-xs text-text-muted">Name</label>
-                          <Input
-                            value={editValue?.name ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((cur) => ({ ...(cur ?? normalizeSystemForm(system)), name: e.target.value }))
-                            }
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="font-mono text-xs text-text-muted">Host</label>
-                          <Input
-                            value={editValue?.host ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((cur) => ({ ...(cur ?? normalizeSystemForm(system)), host: e.target.value }))
-                            }
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="font-mono text-xs text-text-muted">Username</label>
-                          <Input
-                            value={editValue?.username ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((cur) => ({ ...(cur ?? normalizeSystemForm(system)), username: e.target.value }))
-                            }
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="font-mono text-xs text-text-muted">Port</label>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={65535}
-                            value={editValue?.port ?? 22}
-                            onChange={(e) =>
-                              setEditDraft((cur) => ({ ...(cur ?? normalizeSystemForm(system)), port: Number(e.target.value) || 22 }))
-                            }
-                          />
-                        </div>
+                  <AilaCard variant="elevated" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Edit System</h3>
+                  <form
+                    className="flex flex-col gap-3"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!editValue) return;
+                      updateSystem.mutate(editValue, {
+                        onSuccess: () => setEditDraft(null),
+                      });
+                    }}
+                  >
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="font-mono text-xs text-text-muted">Name</label>
+                        <Input
+                          value={editValue?.name ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((cur) => ({ ...(cur ?? normalizeSystemForm(system)), name: e.target.value }))
+                          }
+                        />
                       </div>
-                      <div className="flex gap-2">
-                        <Button type="submit" size="sm" disabled={updateSystem.isPending}>
-                          {updateSystem.isPending ? "Saving..." : "Save Changes"}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setEditDraft(normalizeSystemForm(system))}
-                        >
-                          Reset
-                        </Button>
+                      <div className="flex flex-col gap-1">
+                        <label className="font-mono text-xs text-text-muted">Host</label>
+                        <Input
+                          value={editValue?.host ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((cur) => ({ ...(cur ?? normalizeSystemForm(system)), host: e.target.value }))
+                          }
+                        />
                       </div>
-                      {updateSystem.isError && (
-                        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-                          {(updateSystem.error as Error).message}
-                        </div>
-                      )}
-                    </form>
-                  </AilaCard>
+                      <div className="flex flex-col gap-1">
+                        <label className="font-mono text-xs text-text-muted">Username</label>
+                        <Input
+                          value={editValue?.username ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((cur) => ({ ...(cur ?? normalizeSystemForm(system)), username: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="font-mono text-xs text-text-muted">Port</label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={editValue?.port ?? 22}
+                          onChange={(e) =>
+                            setEditDraft((cur) => ({ ...(cur ?? normalizeSystemForm(system)), port: Number(e.target.value) || 22 }))
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="submit" size="sm" disabled={updateSystem.isPending}>
+                        {updateSystem.isPending ? "Saving..." : "Save Changes"}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setEditDraft(normalizeSystemForm(system))}
+                      >
+                        Reset
+                      </Button>
+                    </div>
+                    {updateSystem.isError && (
+                      <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+                        {(updateSystem.error as Error).message}
+                      </div>
+                    )}
+                  </form></AilaCard>
                 )}
 
                 {/* Delete */}
                 {canOperate && (
-                  <AilaCard variant="default" padding="md">
-                    <h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Danger Zone</h3>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      disabled={deleteSystem.isPending}
-                      onClick={() => {
-                        if (!window.confirm(`Delete system ${system.name}? This cannot be undone.`)) return;
-                        deleteSystem.mutate(undefined, {
-                          onSuccess: () => void navigate("/systems"),
-                        });
-                      }}
-                    >
-                      {deleteSystem.isPending ? "Deleting..." : "Delete System"}
-                    </Button>
-                    {deleteSystem.isError && (
-                      <div className="mt-2 rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-                        {(deleteSystem.error as Error).message}
-                      </div>
-                    )}
-                  </AilaCard>
+                  <AilaCard variant="default" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Danger Zone</h3>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={deleteSystem.isPending}
+                    onClick={() => {
+                      if (!window.confirm(`Delete system ${system.name}? This cannot be undone.`)) return;
+                      deleteSystem.mutate(undefined, {
+                        onSuccess: () => void navigate("/systems"),
+                      });
+                    }}
+                  >
+                    {deleteSystem.isPending ? "Deleting..." : "Delete System"}
+                  </Button>
+                  {deleteSystem.isError && (
+                    <div className="mt-2 rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+                      {(deleteSystem.error as Error).message}
+                    </div>
+                  )}</AilaCard>
                 )}
               </div>
             </div>

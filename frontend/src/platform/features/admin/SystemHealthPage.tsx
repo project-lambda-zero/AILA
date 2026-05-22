@@ -214,35 +214,33 @@ interface CheckCardProps {
 
 function CheckCard({ name, check }: CheckCardProps) {
   return (
-    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span
-            className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${checkDotClass(check.status)}`}
-            aria-hidden="true"
-          />
-          <h3 className="font-mono text-sm font-semibold text-text truncate">
-            {formatCheckName(name)}
-          </h3>
-        </div>
-        <AilaBadge severity={checkStatusSeverity(check.status)} size="sm">
-          {check.status.toUpperCase()}
-        </AilaBadge>
+    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-3" techBorder glow><div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2 min-w-0">
+        <span
+          className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${checkDotClass(check.status)}`}
+          aria-hidden="true"
+        />
+        <h3 className="font-mono text-sm font-semibold text-text truncate">
+          {formatCheckName(name)}
+        </h3>
       </div>
-
-      {check.latency_ms != null && (
-        <div className="flex items-center gap-1.5">
-          <span className="font-mono text-xs text-text-muted">Latency:</span>
-          <span className="font-mono text-xs text-text">
-            {check.latency_ms.toFixed(1)} ms
-          </span>
-        </div>
-      )}
-
-      {check.message && (
-        <p className="font-mono text-xs text-text-muted">{check.message}</p>
-      )}
-    </AilaCard>
+      <AilaBadge severity={checkStatusSeverity(check.status)} size="sm">
+        {check.status.toUpperCase()}
+      </AilaBadge>
+    </div>
+    
+    {check.latency_ms != null && (
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-xs text-text-muted">Latency:</span>
+        <span className="font-mono text-xs text-text">
+          {check.latency_ms.toFixed(1)} ms
+        </span>
+      </div>
+    )}
+    
+    {check.message && (
+      <p className="font-mono text-xs text-text-muted">{check.message}</p>
+    )}</AilaCard>
   );
 }
 
@@ -283,101 +281,99 @@ function SubsystemCard({ subsystem }: SubsystemCardProps) {
   })();
 
   return (
-    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span
-            className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${subsystemDotClass(subsystem.status)}`}
-            aria-hidden="true"
-          />
-          <Icon className="h-4 w-4 shrink-0 text-text-muted" />
-          <h3 className="font-mono text-sm font-semibold text-text truncate">
-            {label}
-          </h3>
-        </div>
-        <AilaBadge severity={subsystemSeverity(subsystem.status)} size="sm">
-          {subsystem.status.toUpperCase()}
-        </AilaBadge>
+    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-3" techBorder glow><div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2 min-w-0">
+        <span
+          className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${subsystemDotClass(subsystem.status)}`}
+          aria-hidden="true"
+        />
+        <Icon className="h-4 w-4 shrink-0 text-text-muted" />
+        <h3 className="font-mono text-sm font-semibold text-text truncate">
+          {label}
+        </h3>
       </div>
-
-      {subsystem.latency_ms != null && (
-        <div className="flex items-center gap-1.5">
-          <span className="font-mono text-xs text-text-muted">Latency:</span>
-          <span className="font-mono text-xs text-text">
-            {subsystem.latency_ms.toFixed(1)} ms
-          </span>
-        </div>
-      )}
-
-      {subsystem.message && (
-        <p className="font-mono text-xs text-text-muted">{subsystem.message}</p>
-      )}
-
-      {sshSystems && sshSystems.length > 0 && (
-        <div className="flex flex-col gap-1 border-t border-border pt-2 mt-1">
-          {sshSystems.slice(0, 8).map((s) => (
-            <div
-              key={`${s.system_id}:${s.host}:${s.port}`}
-              className="flex items-center justify-between gap-2"
+      <AilaBadge severity={subsystemSeverity(subsystem.status)} size="sm">
+        {subsystem.status.toUpperCase()}
+      </AilaBadge>
+    </div>
+    
+    {subsystem.latency_ms != null && (
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-xs text-text-muted">Latency:</span>
+        <span className="font-mono text-xs text-text">
+          {subsystem.latency_ms.toFixed(1)} ms
+        </span>
+      </div>
+    )}
+    
+    {subsystem.message && (
+      <p className="font-mono text-xs text-text-muted">{subsystem.message}</p>
+    )}
+    
+    {sshSystems && sshSystems.length > 0 && (
+      <div className="flex flex-col gap-1 border-t border-border pt-2 mt-1">
+        {sshSystems.slice(0, 8).map((s) => (
+          <div
+            key={`${s.system_id}:${s.host}:${s.port}`}
+            className="flex items-center justify-between gap-2"
+          >
+            <span className="font-mono text-[11px] truncate flex-1">
+              {s.system_name}{" "}
+              <span className="text-text-muted">
+                {s.host}:{s.port}
+              </span>
+            </span>
+            <AilaBadge
+              severity={
+                s.status === "reachable"
+                  ? "info"
+                  : s.status === "timed_out"
+                    ? "medium"
+                    : "critical"
+              }
+              size="sm"
             >
-              <span className="font-mono text-[11px] truncate flex-1">
-                {s.system_name}{" "}
-                <span className="text-text-muted">
-                  {s.host}:{s.port}
-                </span>
-              </span>
-              <AilaBadge
-                severity={
-                  s.status === "reachable"
-                    ? "info"
-                    : s.status === "timed_out"
-                      ? "medium"
-                      : "critical"
-                }
-                size="sm"
-              >
-                {s.status}
-              </AilaBadge>
-            </div>
-          ))}
-          {sshSystems.length > 8 && (
-            <p className="font-mono text-[10px] text-text-muted mt-1">
-              and {sshSystems.length - 8} more
-            </p>
-          )}
-        </div>
-      )}
-
-      {moduleEntries && moduleEntries.length > 0 && (
-        <div className="flex flex-col gap-1 border-t border-border pt-2 mt-1">
-          {moduleEntries.map((m) => (
-            <div
-              key={m.module_id}
-              className="flex items-center justify-between gap-2"
+              {s.status}
+            </AilaBadge>
+          </div>
+        ))}
+        {sshSystems.length > 8 && (
+          <p className="font-mono text-[10px] text-text-muted mt-1">
+            and {sshSystems.length - 8} more
+          </p>
+        )}
+      </div>
+    )}
+    
+    {moduleEntries && moduleEntries.length > 0 && (
+      <div className="flex flex-col gap-1 border-t border-border pt-2 mt-1">
+        {moduleEntries.map((m) => (
+          <div
+            key={m.module_id}
+            className="flex items-center justify-between gap-2"
+          >
+            <span className="font-mono text-[11px] text-text truncate flex-1">
+              {m.module_id}
+            </span>
+            <span className="font-mono text-[10px] text-text-muted">
+              {m.activity_count ?? 0} runs
+            </span>
+            <AilaBadge
+              severity={
+                m.status === "healthy"
+                  ? "info"
+                  : m.status === "stale"
+                    ? "medium"
+                    : "critical"
+              }
+              size="sm"
             >
-              <span className="font-mono text-[11px] text-text truncate flex-1">
-                {m.module_id}
-              </span>
-              <span className="font-mono text-[10px] text-text-muted">
-                {m.activity_count ?? 0} runs
-              </span>
-              <AilaBadge
-                severity={
-                  m.status === "healthy"
-                    ? "info"
-                    : m.status === "stale"
-                      ? "medium"
-                      : "critical"
-                }
-                size="sm"
-              >
-                {m.status}
-              </AilaBadge>
-            </div>
-          ))}
-        </div>
-      )}
-    </AilaCard>
+              {m.status}
+            </AilaBadge>
+          </div>
+        ))}
+      </div>
+    )}</AilaCard>
   );
 }
 
@@ -472,9 +468,7 @@ export function SystemHealthPage() {
 
       {/* Loading skeleton */}
       {healthQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={4} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={4} /></AilaCard>
       )}
 
       {/* Overall status banner */}

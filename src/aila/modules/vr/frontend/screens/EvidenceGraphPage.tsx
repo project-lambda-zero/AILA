@@ -121,9 +121,7 @@ export function EvidenceGraphPage() {
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (!inv) {
     return (
-      <AilaCard className="border-border-danger">
-        <p className="text-sm text-text-danger">Investigation not found.</p>
-      </AilaCard>
+      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Investigation not found.</p></AilaCard>
     );
   }
 
@@ -161,94 +159,90 @@ export function EvidenceGraphPage() {
 
         {/* Right rail: selected node detail */}
         <aside className="space-y-2">
-          <AilaCard>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
-              Selection
-            </h3>
-            {selected ? (
-              <div className="text-xs space-y-2">
-                <div className="flex items-center gap-1 flex-wrap">
+          <AilaCard  techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+            Selection
+          </h3>
+          {selected ? (
+            <div className="text-xs space-y-2">
+              <div className="flex items-center gap-1 flex-wrap">
+                <AilaBadge severity="info" size="sm">
+                  {selected.kind}
+                </AilaBadge>
+                {selected.state && (
                   <AilaBadge severity="info" size="sm">
-                    {selected.kind}
+                    {selected.state}
                   </AilaBadge>
-                  {selected.state && (
-                    <AilaBadge severity="info" size="sm">
-                      {selected.state}
-                    </AilaBadge>
-                  )}
-                </div>
-                <p className="font-mono text-foreground break-all">
-                  {selected.label}
-                </p>
-                <p className="text-[10px] text-text-muted font-mono break-all">
-                  id: {selected.id}
-                </p>
-                {selected.meta && (
-                  <pre className="text-[10px] font-mono text-text-muted whitespace-pre-wrap max-h-60 overflow-y-auto">
-                    {JSON.stringify(selected.meta, null, 2)}
-                  </pre>
-                )}
-                {(() => {
-                  const url = openUrlForNode(selected);
-                  if (!url) return null;
-                  return (
-                    <a
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[10px] text-accent hover:underline mt-1 inline-block"
-                    >
-                      open {selected.kind} page in new tab →
-                    </a>
-                  );
-                })()}
-                {selected.kind === "obligation" && (
-                  <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40">
-                    <AilaBadge severity="info" size="sm">operator-only</AilaBadge>
-                    <p className="text-[10px] text-text-muted mt-1">
-                      "Manually close" — backend pending.
-                    </p>
-                  </div>
                 )}
               </div>
-            ) : (
-              <p className="text-xs text-text-muted">
-                Click a node to inspect its payload.
+              <p className="font-mono text-foreground break-all">
+                {selected.label}
               </p>
-            )}
-          </AilaCard>
+              <p className="text-[10px] text-text-muted font-mono break-all">
+                id: {selected.id}
+              </p>
+              {selected.meta && (
+                <pre className="text-[10px] font-mono text-text-muted whitespace-pre-wrap max-h-60 overflow-y-auto">
+                  {JSON.stringify(selected.meta, null, 2)}
+                </pre>
+              )}
+              {(() => {
+                const url = openUrlForNode(selected);
+                if (!url) return null;
+                return (
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-accent hover:underline mt-1 inline-block"
+                  >
+                    open {selected.kind} page in new tab →
+                  </a>
+                );
+              })()}
+              {selected.kind === "obligation" && (
+                <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40">
+                  <AilaBadge severity="info" size="sm">operator-only</AilaBadge>
+                  <p className="text-[10px] text-text-muted mt-1">
+                    "Manually close" — backend pending.
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-text-muted">
+              Click a node to inspect its payload.
+            </p>
+          )}</AilaCard>
 
-          <AilaCard>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
-              Counts
-            </h3>
-            <dl className="text-xs grid grid-cols-2 gap-1 font-mono">
-              <dt className="text-text-muted">hypotheses</dt>
-              <dd className="text-foreground text-right">
-                {nodes.filter((n) => n.kind === "hypothesis").length}
-              </dd>
-              <dt className="text-text-muted">evidence</dt>
-              <dd className="text-foreground text-right">
-                {nodes.filter((n) => n.kind === "evidence").length}
-              </dd>
-              <dt className="text-text-muted">crashes</dt>
-              <dd className="text-foreground text-right">
-                {nodes.filter((n) => n.kind === "crash").length}
-              </dd>
-              <dt className="text-text-muted">exploits</dt>
-              <dd className="text-foreground text-right">
-                {nodes.filter((n) => n.kind === "exploit").length}
-              </dd>
-              <dt className="text-text-muted">advisories</dt>
-              <dd className="text-foreground text-right">
-                {nodes.filter((n) => n.kind === "advisory").length}
-              </dd>
-              <dt className="text-text-muted">obligations</dt>
-              <dd className="text-foreground text-right">
-                {nodes.filter((n) => n.kind === "obligation").length}
-              </dd>
-            </dl>
-          </AilaCard>
+          <AilaCard  techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+            Counts
+          </h3>
+          <dl className="text-xs grid grid-cols-2 gap-1 font-mono">
+            <dt className="text-text-muted">hypotheses</dt>
+            <dd className="text-foreground text-right">
+              {nodes.filter((n) => n.kind === "hypothesis").length}
+            </dd>
+            <dt className="text-text-muted">evidence</dt>
+            <dd className="text-foreground text-right">
+              {nodes.filter((n) => n.kind === "evidence").length}
+            </dd>
+            <dt className="text-text-muted">crashes</dt>
+            <dd className="text-foreground text-right">
+              {nodes.filter((n) => n.kind === "crash").length}
+            </dd>
+            <dt className="text-text-muted">exploits</dt>
+            <dd className="text-foreground text-right">
+              {nodes.filter((n) => n.kind === "exploit").length}
+            </dd>
+            <dt className="text-text-muted">advisories</dt>
+            <dd className="text-foreground text-right">
+              {nodes.filter((n) => n.kind === "advisory").length}
+            </dd>
+            <dt className="text-text-muted">obligations</dt>
+            <dd className="text-foreground text-right">
+              {nodes.filter((n) => n.kind === "obligation").length}
+            </dd>
+          </dl></AilaCard>
         </aside>
       </div>
     </div>
@@ -296,29 +290,27 @@ function ServerSnapshotStatus({
   const { data, isLoading, error } = useEvidenceGraph(investigationId);
   const ready = !!data && !error;
   return (
-    <AilaCard className="border-dashed">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div>
-          <AilaBadge severity={error ? "high" : ready ? "low" : "info"} size="sm">
-            {error
-              ? "server snapshot unavailable — using client layout"
-              : isLoading
-                ? "loading server snapshot…"
-                : "server layout in use"}
-          </AilaBadge>
-          {data && (
-            <span className="text-[10px] text-text-muted ml-2 font-mono">
-              layout={data.data.layout} · {data.data.nodes.length} nodes ·{" "}
-              {data.data.edges.length} edges
-            </span>
-          )}
-        </div>
-        <p className="text-[10px] text-text-muted">
-          Coordinates come from the backend so they stay stable across
-          operators + sessions. The picker below only matters when the
-          backend snapshot isn't available.
-        </p>
+    <AilaCard className="border-dashed" techBorder glow><div className="flex items-center justify-between gap-2 flex-wrap">
+      <div>
+        <AilaBadge severity={error ? "high" : ready ? "low" : "info"} size="sm">
+          {error
+            ? "server snapshot unavailable — using client layout"
+            : isLoading
+              ? "loading server snapshot…"
+              : "server layout in use"}
+        </AilaBadge>
+        {data && (
+          <span className="text-[10px] text-text-muted ml-2 font-mono">
+            layout={data.data.layout} · {data.data.nodes.length} nodes ·{" "}
+            {data.data.edges.length} edges
+          </span>
+        )}
       </div>
-    </AilaCard>
+      <p className="text-[10px] text-text-muted">
+        Coordinates come from the backend so they stay stable across
+        operators + sessions. The picker below only matters when the
+        backend snapshot isn't available.
+      </p>
+    </div></AilaCard>
   );
 }

@@ -272,206 +272,198 @@ export function InvestigationDetailPage() {
       </div>
 
       {/* Workflow stepper */}
-      <AilaCard>
-        <WorkflowStepper
-          flow="investigate"
-          currentState={
-            inv.status === "running"
-              ? "investigation_loop"
-              : inv.status === "completed"
-                ? "investigation_emit"
-                : inv.status === "failed"
-                  ? "investigation_loop"
-                  : "investigation_setup"
-          }
-          failedAt={inv.status === "failed" ? "investigation_loop" : null}
-        />
-      </AilaCard>
+      <AilaCard  techBorder glow><WorkflowStepper
+        flow="investigate"
+        currentState={
+          inv.status === "running"
+            ? "investigation_loop"
+            : inv.status === "completed"
+              ? "investigation_emit"
+              : inv.status === "failed"
+                ? "investigation_loop"
+                : "investigation_setup"
+        }
+        failedAt={inv.status === "failed" ? "investigation_loop" : null}
+      /></AilaCard>
 
       {/* Status + cost ribbon */}
-      <AilaCard>
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2 flex-wrap">
-            <AilaBadge
-              severity={investigationStatusColor[inv.status] ?? "info"}
-              size="sm"
-            >
-              {inv.pause_reason
-                ? `${inv.status}:${inv.pause_reason}`
-                : inv.status}
-            </AilaBadge>
-            <AilaBadge severity="info" size="sm">
-              {inv.strategy_family}
-            </AilaBadge>
-            <AilaBadge severity="info" size="sm">
-              branches: {inv.branch_count}
-            </AilaBadge>
-            <AilaBadge severity="info" size="sm">
-              messages: {inv.message_count}
-            </AilaBadge>
-            <AilaBadge severity="info" size="sm">
-              outcomes: {inv.outcome_count}
-            </AilaBadge>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap min-w-0">
-            {inv.status === "running" && (
-              <button
-                type="button"
-                onClick={() => pauseMut.mutate()}
-                disabled={pauseMut.isPending}
-                className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
-              >
-                {pauseMut.isPending ? "Pausing…" : "Pause"}
-              </button>
-            )}
-            {inv.status === "paused" && (
-              <button
-                type="button"
-                onClick={() => resumeMut.mutate()}
-                disabled={resumeMut.isPending}
-                className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
-              >
-                {resumeMut.isPending ? "Resuming…" : "Resume"}
-              </button>
-            )}
-            {inv.status === "created" && (
-              <button
-                type="button"
-                onClick={() => reenqueueMut.mutate(undefined)}
-                disabled={reenqueueMut.isPending}
-                className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 whitespace-nowrap"
-                title="Start this investigation (enqueue run_vr_investigate task)"
-              >
-                {reenqueueMut.isPending ? "Starting…" : "Start ▶"}
-              </button>
-            )}
-            {(inv.status === "completed" || inv.status === "failed") && (
-              <ReenqueuePicker
-                currentKind={inv.kind}
-                mutation={reenqueueMut}
-              />
-            )}
-          </div>
+      <AilaCard  techBorder glow><div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <AilaBadge
+            severity={investigationStatusColor[inv.status] ?? "info"}
+            size="sm"
+          >
+            {inv.pause_reason
+              ? `${inv.status}:${inv.pause_reason}`
+              : inv.status}
+          </AilaBadge>
+          <AilaBadge severity="info" size="sm">
+            {inv.strategy_family}
+          </AilaBadge>
+          <AilaBadge severity="info" size="sm">
+            branches: {inv.branch_count}
+          </AilaBadge>
+          <AilaBadge severity="info" size="sm">
+            messages: {inv.message_count}
+          </AilaBadge>
+          <AilaBadge severity="info" size="sm">
+            outcomes: {inv.outcome_count}
+          </AilaBadge>
         </div>
-        <dl className="grid grid-cols-4 gap-3 text-sm mt-3 pt-3 border-t border-border-default">
-          <div>
-            <dt className="text-text-muted text-xs">Budget</dt>
-            <dd className="font-mono text-foreground">
-              {fmtUsd(inv.cost_budget_usd)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-text-muted text-xs">Actual</dt>
-            <dd className="font-mono text-foreground">
-              {fmtUsd(inv.cost_actual_usd)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-text-muted text-xs">LLM tokens</dt>
-            <dd className="font-mono text-foreground">
-              {fmtUsd(inv.llm_tokens_cost_usd)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-text-muted text-xs">MCP calls</dt>
-            <dd className="font-mono text-foreground">
-              {fmtUsd(inv.mcp_calls_cost_usd)}
-            </dd>
-          </div>
-        </dl>
-      </AilaCard>
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
+          {inv.status === "running" && (
+            <button
+              type="button"
+              onClick={() => pauseMut.mutate()}
+              disabled={pauseMut.isPending}
+              className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
+            >
+              {pauseMut.isPending ? "Pausing…" : "Pause"}
+            </button>
+          )}
+          {inv.status === "paused" && (
+            <button
+              type="button"
+              onClick={() => resumeMut.mutate()}
+              disabled={resumeMut.isPending}
+              className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+            >
+              {resumeMut.isPending ? "Resuming…" : "Resume"}
+            </button>
+          )}
+          {inv.status === "created" && (
+            <button
+              type="button"
+              onClick={() => reenqueueMut.mutate(undefined)}
+              disabled={reenqueueMut.isPending}
+              className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 whitespace-nowrap"
+              title="Start this investigation (enqueue run_vr_investigate task)"
+            >
+              {reenqueueMut.isPending ? "Starting…" : "Start ▶"}
+            </button>
+          )}
+          {(inv.status === "completed" || inv.status === "failed") && (
+            <ReenqueuePicker
+              currentKind={inv.kind}
+              mutation={reenqueueMut}
+            />
+          )}
+        </div>
+      </div>
+      <dl className="grid grid-cols-4 gap-3 text-sm mt-3 pt-3 border-t border-border-default">
+        <div>
+          <dt className="text-text-muted text-xs">Budget</dt>
+          <dd className="font-mono text-foreground">
+            {fmtUsd(inv.cost_budget_usd)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-text-muted text-xs">Actual</dt>
+          <dd className="font-mono text-foreground">
+            {fmtUsd(inv.cost_actual_usd)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-text-muted text-xs">LLM tokens</dt>
+          <dd className="font-mono text-foreground">
+            {fmtUsd(inv.llm_tokens_cost_usd)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-text-muted text-xs">MCP calls</dt>
+          <dd className="font-mono text-foreground">
+            {fmtUsd(inv.mcp_calls_cost_usd)}
+          </dd>
+        </div>
+      </dl></AilaCard>
 
       {/* Main grid: timeline left, side panels right */}
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4">
         {/* Timeline column */}
         <div className="space-y-3 min-w-0">
           {/* Filter bar */}
-          <AilaCard>
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <span className="text-text-muted">Filter:</span>
+          <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap text-xs">
+            <span className="text-text-muted">Filter:</span>
+            <select
+              value={senderFilter}
+              onChange={(e) => updateParam("sender", e.target.value)}
+              className="px-2 py-1 rounded-md bg-surface border border-border-default font-mono"
+              aria-label="Filter by sender kind"
+            >
+              <option value="">all senders</option>
+              {senderKinds.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <select
+              value={payloadFilter}
+              onChange={(e) => updateParam("kind", e.target.value)}
+              className="px-2 py-1 rounded-md bg-surface border border-border-default font-mono"
+              aria-label="Filter by payload kind"
+            >
+              <option value="">all kinds</option>
+              {payloadKinds.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+            {branches.length > 1 && (
               <select
-                value={senderFilter}
-                onChange={(e) => updateParam("sender", e.target.value)}
+                value={branchFilter}
+                onChange={(e) => updateParam("branch", e.target.value)}
                 className="px-2 py-1 rounded-md bg-surface border border-border-default font-mono"
-                aria-label="Filter by sender kind"
+                aria-label="Filter by branch"
               >
-                <option value="">all senders</option>
-                {senderKinds.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
+                <option value="">all branches</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.persona_voice ?? "branch"}
+                    {b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}
                   </option>
                 ))}
               </select>
-              <select
-                value={payloadFilter}
-                onChange={(e) => updateParam("kind", e.target.value)}
-                className="px-2 py-1 rounded-md bg-surface border border-border-default font-mono"
-                aria-label="Filter by payload kind"
-              >
-                <option value="">all kinds</option>
-                {payloadKinds.map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
-                ))}
-              </select>
-              {branches.length > 1 && (
-                <select
-                  value={branchFilter}
-                  onChange={(e) => updateParam("branch", e.target.value)}
-                  className="px-2 py-1 rounded-md bg-surface border border-border-default font-mono"
-                  aria-label="Filter by branch"
-                >
-                  <option value="">all branches</option>
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.persona_voice ?? "branch"}
-                      {b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <span className="text-text-muted ml-auto">
-                {filtered.length} of {messages.length} turn
-                {messages.length === 1 ? "" : "s"}
-              </span>
-              <label className="flex items-center gap-1 text-text-muted">
-                <input
-                  type="checkbox"
-                  checked={liveTail}
-                  onChange={(e) => setLiveTail(e.target.checked)}
-                  className="w-3 h-3"
-                />
-                live tail
-              </label>
+            )}
+            <span className="text-text-muted ml-auto">
+              {filtered.length} of {messages.length} turn
+              {messages.length === 1 ? "" : "s"}
+            </span>
+            <label className="flex items-center gap-1 text-text-muted">
               <input
-                type="number"
-                placeholder="jump to turn #"
-                min={1}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    const n = Number(e.currentTarget.value);
-                    if (Number.isFinite(n) && n > 0) {
-                      const el = document.getElementById(`turn-${n - 1}`);
-                      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-                    }
-                  }
-                }}
-                className="w-20 px-2 py-0.5 rounded bg-surface border border-border-default font-mono"
-                aria-label="Jump to turn number"
+                type="checkbox"
+                checked={liveTail}
+                onChange={(e) => setLiveTail(e.target.checked)}
+                className="w-3 h-3"
               />
-            </div>
-          </AilaCard>
+              live tail
+            </label>
+            <input
+              type="number"
+              placeholder="jump to turn #"
+              min={1}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const n = Number(e.currentTarget.value);
+                  if (Number.isFinite(n) && n > 0) {
+                    const el = document.getElementById(`turn-${n - 1}`);
+                    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }
+                }
+              }}
+              className="w-20 px-2 py-0.5 rounded bg-surface border border-border-default font-mono"
+              aria-label="Jump to turn number"
+            />
+          </div></AilaCard>
 
           {/* Turn stream */}
           {filtered.length === 0 ? (
-            <AilaCard>
-              <p className="text-sm text-text-muted text-center py-6">
-                {messages.length === 0
-                  ? "No turns yet — engine hasn't started reasoning."
-                  : "Filters hide every turn. Clear filters above to see them."}
-              </p>
-            </AilaCard>
+            <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-6">
+              {messages.length === 0
+                ? "No turns yet — engine hasn't started reasoning."
+                : "Filters hide every turn. Clear filters above to see them."}
+            </p></AilaCard>
           ) : (
             <div className="space-y-2">
               {filtered.map((m, i) => (
@@ -482,65 +474,63 @@ export function InvestigationDetailPage() {
 
           {/* Operator composer (bottom of stream, like a chat input) */}
           {operatorComposerOpen && (
-            <AilaCard>
-              <h2 className="text-sm font-semibold text-foreground mb-2">
-                Inject context for next turn
-              </h2>
-              <p className="text-xs text-text-muted mb-2">
-                The engine sees this verbatim as an operator note on its next
-                turn. Use{" "}
-                <span className="font-mono">steering</span> to redirect,{" "}
-                <span className="font-mono">correction</span> to contradict a
-                hypothesis,{" "}
-                <span className="font-mono">dismissal</span> to drop a thread.
-              </p>
-              <textarea
-                value={messageText}
-                onChange={(e) => setMessageText(e.target.value)}
-                placeholder="e.g. 'try the JSPI base address path' or 'that hypothesis is wrong because…'"
-                rows={3}
-                className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-              />
-              <div className="flex gap-2 items-center mt-2">
-                <select
-                  value={messageIntent}
-                  onChange={(e) =>
-                    setMessageIntent(e.target.value as OperatorIntent | "")
-                  }
-                  className="px-2 py-1.5 text-xs font-mono rounded-md bg-surface border border-border-default"
-                  aria-label="Operator intent"
-                >
-                  <option value="">auto-classify</option>
-                  <option value="steering">steering</option>
-                  <option value="question">question</option>
-                  <option value="correction">correction</option>
-                  <option value="dismissal">dismissal</option>
-                  <option value="outcome_selection">outcome_selection</option>
-                  <option value="branch_command">branch_command</option>
-                </select>
-                <button
-                  type="button"
-                  disabled={!messageText.trim() || sendMut.isPending}
-                  onClick={() => {
-                    sendMut.mutate(
-                      {
-                        text: messageText.trim(),
-                        explicit_intent: messageIntent || undefined,
+            <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+              Inject context for next turn
+            </h2>
+            <p className="text-xs text-text-muted mb-2">
+              The engine sees this verbatim as an operator note on its next
+              turn. Use{" "}
+              <span className="font-mono">steering</span> to redirect,{" "}
+              <span className="font-mono">correction</span> to contradict a
+              hypothesis,{" "}
+              <span className="font-mono">dismissal</span> to drop a thread.
+            </p>
+            <textarea
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+              placeholder="e.g. 'try the JSPI base address path' or 'that hypothesis is wrong because…'"
+              rows={3}
+              className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+            />
+            <div className="flex gap-2 items-center mt-2">
+              <select
+                value={messageIntent}
+                onChange={(e) =>
+                  setMessageIntent(e.target.value as OperatorIntent | "")
+                }
+                className="px-2 py-1.5 text-xs font-mono rounded-md bg-surface border border-border-default"
+                aria-label="Operator intent"
+              >
+                <option value="">auto-classify</option>
+                <option value="steering">steering</option>
+                <option value="question">question</option>
+                <option value="correction">correction</option>
+                <option value="dismissal">dismissal</option>
+                <option value="outcome_selection">outcome_selection</option>
+                <option value="branch_command">branch_command</option>
+              </select>
+              <button
+                type="button"
+                disabled={!messageText.trim() || sendMut.isPending}
+                onClick={() => {
+                  sendMut.mutate(
+                    {
+                      text: messageText.trim(),
+                      explicit_intent: messageIntent || undefined,
+                    },
+                    {
+                      onSuccess: () => {
+                        setMessageText("");
+                        setMessageIntent("");
                       },
-                      {
-                        onSuccess: () => {
-                          setMessageText("");
-                          setMessageIntent("");
-                        },
-                      },
-                    );
-                  }}
-                  className="px-4 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
-                >
-                  {sendMut.isPending ? "Sending…" : "Send"}
-                </button>
-              </div>
-            </AilaCard>
+                    },
+                  );
+                }}
+                className="px-4 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+              >
+                {sendMut.isPending ? "Sending…" : "Send"}
+              </button>
+            </div></AilaCard>
           )}
         </div>
 
@@ -553,203 +543,199 @@ export function InvestigationDetailPage() {
 
 
           {/* Branches summary */}
-          <AilaCard>
-            <h3 className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">
-              Branches ({branches.length})
-            </h3>
-            {branches.length === 0 ? (
-              <p className="text-xs text-text-muted">No forks yet.</p>
-            ) : (
-              <ul className="space-y-1.5">
-                {branches.map((b) => (
-                  <li
-                    key={b.id}
-                    className="text-xs border border-border-default rounded p-1.5"
-                  >
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <AilaBadge
-                        severity={branchStatusColor[b.status] ?? "info"}
-                        size="sm"
-                      >
-                        {b.status}
+          <AilaCard  techBorder glow><h3 className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">
+            Branches ({branches.length})
+          </h3>
+          {branches.length === 0 ? (
+            <p className="text-xs text-text-muted">No forks yet.</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {branches.map((b) => (
+                <li
+                  key={b.id}
+                  className="text-xs border border-border-default rounded p-1.5"
+                >
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <AilaBadge
+                      severity={branchStatusColor[b.status] ?? "info"}
+                      size="sm"
+                    >
+                      {b.status}
+                    </AilaBadge>
+                    {b.persona_voice && (
+                      <AilaBadge severity="info" size="sm">
+                        {b.persona_voice}
                       </AilaBadge>
-                      {b.persona_voice && (
-                        <AilaBadge severity="info" size="sm">
-                          {b.persona_voice}
-                        </AilaBadge>
-                      )}
-                      {b.promoted && (
-                        <AilaBadge severity="low" size="sm">
-                          promoted
-                        </AilaBadge>
-                      )}
-                    </div>
-                    <p className="text-text-muted font-mono mt-1">
-                      turns: {b.turn_count} · {fmtUsd(b.branch_cost_usd)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </AilaCard>
+                    )}
+                    {b.promoted && (
+                      <AilaBadge severity="low" size="sm">
+                        promoted
+                      </AilaBadge>
+                    )}
+                  </div>
+                  <p className="text-text-muted font-mono mt-1">
+                    turns: {b.turn_count} · {fmtUsd(b.branch_cost_usd)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}</AilaCard>
 
           {/* Outcomes summary */}
-          <AilaCard>
-            <h3 className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">
-              Outcomes ({outcomes.length})
-            </h3>
-            {outcomes.length === 0 ? (
-              <p className="text-xs text-text-muted">
-                No outcomes yet — engine hasn't submitted.
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {[...outcomes]
-                  .sort((a, b) => {
-                    // synthesis / primary first
-                    const aPrim = a.id === inv.primary_outcome_id ? -1 : 0;
-                    const bPrim = b.id === inv.primary_outcome_id ? -1 : 0;
-                    if (aPrim !== bPrim) return aPrim - bPrim;
-                    // then newest first
-                    return (b.created_at ?? "").localeCompare(a.created_at ?? "");
-                  })
-                  .map((o) => {
-                    const persona = branches.find((b) => b.id === o.branch_id)?.persona_voice ?? null;
-                    const isPrimary = o.id === inv.primary_outcome_id;
-                    return (
-                      <li
-                        key={o.id}
-                        className={`text-xs border rounded p-2 ${
-                          isPrimary
-                            ? "border-accent-default bg-surface-emphasised"
-                            : "border-border-default"
-                        }`}
-                      >
-                        <div className="flex items-center gap-1 flex-wrap mb-1">
-                          {isPrimary && (
-                            <AilaBadge severity="critical" size="sm">
-                              SYNTHESIS · PRIMARY
-                            </AilaBadge>
-                          )}
-                          {persona && !isPrimary && (
-                            <AilaBadge severity="info" size="sm">
-                              {persona}
-                            </AilaBadge>
-                          )}
-                          <span className="font-mono text-foreground">
-                            {o.outcome_kind}
-                          </span>
+          <AilaCard  techBorder glow><h3 className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">
+            Outcomes ({outcomes.length})
+          </h3>
+          {outcomes.length === 0 ? (
+            <p className="text-xs text-text-muted">
+              No outcomes yet — engine hasn't submitted.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {[...outcomes]
+                .sort((a, b) => {
+                  // synthesis / primary first
+                  const aPrim = a.id === inv.primary_outcome_id ? -1 : 0;
+                  const bPrim = b.id === inv.primary_outcome_id ? -1 : 0;
+                  if (aPrim !== bPrim) return aPrim - bPrim;
+                  // then newest first
+                  return (b.created_at ?? "").localeCompare(a.created_at ?? "");
+                })
+                .map((o) => {
+                  const persona = branches.find((b) => b.id === o.branch_id)?.persona_voice ?? null;
+                  const isPrimary = o.id === inv.primary_outcome_id;
+                  return (
+                    <li
+                      key={o.id}
+                      className={`text-xs border rounded p-2 ${
+                        isPrimary
+                          ? "border-accent-default bg-surface-emphasised"
+                          : "border-border-default"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1 flex-wrap mb-1">
+                        {isPrimary && (
+                          <AilaBadge severity="critical" size="sm">
+                            SYNTHESIS · PRIMARY
+                          </AilaBadge>
+                        )}
+                        {persona && !isPrimary && (
                           <AilaBadge severity="info" size="sm">
-                            conf:{o.confidence}
+                            {persona}
                           </AilaBadge>
-                          <AilaBadge
-                            severity={dispatchColor[o.dispatch_status] ?? "info"}
-                            size="sm"
-                          >
-                            {o.dispatch_status}
-                          </AilaBadge>
-                          {(() => {
-                            const vr = (o.payload as Record<string, unknown> | undefined)
-                              ?.verifier_report as
-                              | { verdict?: string; confidence?: number; summary?: string; counter_evidence?: string }
-                              | undefined;
-                            const sev =
-                              vr?.verdict === "refuted"
-                                ? "critical"
-                                : vr?.verdict === "confirmed"
-                                  ? "low"
-                                  : "medium";
-                            return (
-                              <>
-                                {vr?.verdict && (
-                                  <AilaBadge severity={sev} size="sm" title={vr.summary || vr.verdict}>
-                                    verifier: {vr.verdict}
-                                    {typeof vr.confidence === "number"
-                                      ? ` (${vr.confidence.toFixed(2)})`
-                                      : ""}
-                                  </AilaBadge>
-                                )}
-                                {isPrimary && (
-                                  <button
-                                    type="button"
-                                    disabled={reverifyMut.isPending}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      reverifyMut.mutate(invId);
-                                    }}
-                                    className="px-2 py-0.5 text-[10px] rounded border border-border-default text-text-muted hover:text-foreground hover:border-accent disabled:opacity-50"
-                                    title={
-                                      vr?.verdict
-                                        ? "Clear current verifier_report and re-run the verifier on this finding"
-                                        : "Manually trigger the claim verifier on this finding"
-                                    }
-                                  >
-                                    {reverifyMut.isPending ? "…" : (vr?.verdict ? "↻ re-verify" : "▶ verify")}
-                                  </button>
-                                )}
-                                {o.outcome_kind === "assessment_report" &&
-                                  o.dispatch_status === "skipped" && (
-                                  <button
-                                    type="button"
-                                    disabled={promoteMut.isPending}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const verdict = vr?.verdict;
-                                      const conf =
-                                        typeof vr?.confidence === "number"
-                                          ? vr.confidence.toFixed(2)
-                                          : "?";
-                                      const note =
-                                        verdict === "confirmed"
-                                          ? `operator promote — verifier confirmed conf=${conf}`
-                                          : verdict
-                                            ? `operator promote — verifier ${verdict} conf=${conf}`
-                                            : "operator promote — no verifier verdict";
-                                      promoteMut.mutate({
-                                        outcomeId: o.id,
-                                        reason: note,
-                                      });
-                                    }}
-                                    className={
-                                      vr?.verdict === "confirmed"
-                                        ? "px-2 py-0.5 text-[10px] rounded border border-emerald-500/60 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50"
-                                        : "px-2 py-0.5 text-[10px] rounded border border-border-default text-text-muted hover:text-foreground hover:border-accent disabled:opacity-50"
-                                    }
-                                    title={
-                                      vr?.verdict === "confirmed"
-                                        ? `Verifier CONFIRMED this assessment — promote to direct_finding to create a vr_finding row and (on variant-child investigations) auto-enqueue the PoC writer.`
-                                        : vr?.verdict === "refuted"
-                                          ? `Verifier REFUTED — promoting will still create a finding row, but the PoC writer will skip itself per the verifier-gate.`
-                                          : "Promote this assessment_report to direct_finding (creates vr_finding row + dispatches downstream)."
-                                    }
-                                  >
-                                    {promoteMut.isPending ? "…" : "↗ promote to finding"}
-                                  </button>
-                                )}
-                              </>
-                            );
-                          })()}
-                        </div>
+                        )}
+                        <span className="font-mono text-foreground">
+                          {o.outcome_kind}
+                        </span>
+                        <AilaBadge severity="info" size="sm">
+                          conf:{o.confidence}
+                        </AilaBadge>
+                        <AilaBadge
+                          severity={dispatchColor[o.dispatch_status] ?? "info"}
+                          size="sm"
+                        >
+                          {o.dispatch_status}
+                        </AilaBadge>
                         {(() => {
                           const vr = (o.payload as Record<string, unknown> | undefined)
                             ?.verifier_report as
-                            | { verdict?: string; counter_evidence?: string; summary?: string }
+                            | { verdict?: string; confidence?: number; summary?: string; counter_evidence?: string }
                             | undefined;
-                          if (!vr || vr.verdict !== "refuted" || !vr.counter_evidence) return null;
+                          const sev =
+                            vr?.verdict === "refuted"
+                              ? "critical"
+                              : vr?.verdict === "confirmed"
+                                ? "low"
+                                : "medium";
                           return (
-                            <div className="mt-1 mb-2 text-[11px] border border-red-500/50 bg-red-500/10 rounded p-2 text-red-300">
-                              <div className="font-semibold mb-1">verifier refuted this finding:</div>
-                              <div className="break-words whitespace-pre-wrap">{vr.counter_evidence}</div>
-                            </div>
+                            <>
+                              {vr?.verdict && (
+                                <AilaBadge severity={sev} size="sm" title={vr.summary || vr.verdict}>
+                                  verifier: {vr.verdict}
+                                  {typeof vr.confidence === "number"
+                                    ? ` (${vr.confidence.toFixed(2)})`
+                                    : ""}
+                                </AilaBadge>
+                              )}
+                              {isPrimary && (
+                                <button
+                                  type="button"
+                                  disabled={reverifyMut.isPending}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    reverifyMut.mutate(invId);
+                                  }}
+                                  className="px-2 py-0.5 text-[10px] rounded border border-border-default text-text-muted hover:text-foreground hover:border-accent disabled:opacity-50"
+                                  title={
+                                    vr?.verdict
+                                      ? "Clear current verifier_report and re-run the verifier on this finding"
+                                      : "Manually trigger the claim verifier on this finding"
+                                  }
+                                >
+                                  {reverifyMut.isPending ? "…" : (vr?.verdict ? "↻ re-verify" : "▶ verify")}
+                                </button>
+                              )}
+                              {o.outcome_kind === "assessment_report" &&
+                                o.dispatch_status === "skipped" && (
+                                <button
+                                  type="button"
+                                  disabled={promoteMut.isPending}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const verdict = vr?.verdict;
+                                    const conf =
+                                      typeof vr?.confidence === "number"
+                                        ? vr.confidence.toFixed(2)
+                                        : "?";
+                                    const note =
+                                      verdict === "confirmed"
+                                        ? `operator promote — verifier confirmed conf=${conf}`
+                                        : verdict
+                                          ? `operator promote — verifier ${verdict} conf=${conf}`
+                                          : "operator promote — no verifier verdict";
+                                    promoteMut.mutate({
+                                      outcomeId: o.id,
+                                      reason: note,
+                                    });
+                                  }}
+                                  className={
+                                    vr?.verdict === "confirmed"
+                                      ? "px-2 py-0.5 text-[10px] rounded border border-emerald-500/60 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50"
+                                      : "px-2 py-0.5 text-[10px] rounded border border-border-default text-text-muted hover:text-foreground hover:border-accent disabled:opacity-50"
+                                  }
+                                  title={
+                                    vr?.verdict === "confirmed"
+                                      ? `Verifier CONFIRMED this assessment — promote to direct_finding to create a vr_finding row and (on variant-child investigations) auto-enqueue the PoC writer.`
+                                      : vr?.verdict === "refuted"
+                                        ? `Verifier REFUTED — promoting will still create a finding row, but the PoC writer will skip itself per the verifier-gate.`
+                                        : "Promote this assessment_report to direct_finding (creates vr_finding row + dispatches downstream)."
+                                  }
+                                >
+                                  {promoteMut.isPending ? "…" : "↗ promote to finding"}
+                                </button>
+                              )}
+                            </>
                           );
                         })()}
-                        <PayloadPreview payload={o.payload} />
-                      </li>
-                    );
-                  })}
-              </ul>
-            )}
-          </AilaCard>
+                      </div>
+                      {(() => {
+                        const vr = (o.payload as Record<string, unknown> | undefined)
+                          ?.verifier_report as
+                          | { verdict?: string; counter_evidence?: string; summary?: string }
+                          | undefined;
+                        if (!vr || vr.verdict !== "refuted" || !vr.counter_evidence) return null;
+                        return (
+                          <div className="mt-1 mb-2 text-[11px] border border-red-500/50 bg-red-500/10 rounded p-2 text-red-300">
+                            <div className="font-semibold mb-1">verifier refuted this finding:</div>
+                            <div className="break-words whitespace-pre-wrap">{vr.counter_evidence}</div>
+                          </div>
+                        );
+                      })()}
+                      <PayloadPreview payload={o.payload} />
+                    </li>
+                  );
+                })}
+            </ul>
+          )}</AilaCard>
         </aside>
       </div>
       <SteeringDrawer

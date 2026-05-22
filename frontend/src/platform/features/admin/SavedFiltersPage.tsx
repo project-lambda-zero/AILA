@@ -474,41 +474,35 @@ export function SavedFiltersPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total Filters
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {filtersQuery.isLoading ? "--" : totalFilters}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Visible to current user
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Total Filters
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {filtersQuery.isLoading ? "--" : totalFilters}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Visible to current user
+        </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Pinned
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {filtersQuery.isLoading ? "--" : pinnedFilters}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Surfaced in toolbars
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Pinned
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {filtersQuery.isLoading ? "--" : pinnedFilters}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Surfaced in toolbars
+        </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Team-Shared
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {filtersQuery.isLoading ? "--" : sharedFilters}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Shared across the team
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Team-Shared
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {filtersQuery.isLoading ? "--" : sharedFilters}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Shared across the team
+        </p></AilaCard>
       </div>
 
       {/* Error banner */}
@@ -520,9 +514,7 @@ export function SavedFiltersPage() {
 
       {/* Loading skeleton */}
       {filtersQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {/* Empty state */}
@@ -537,80 +529,78 @@ export function SavedFiltersPage() {
 
       {/* Filters table */}
       {!filtersQuery.isLoading && filters.length > 0 && (
-        <AilaCard variant="default" padding="none">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Name</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Target page</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden md:table-cell">Filter criteria</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden lg:table-cell">Created by</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden xl:table-cell">Updated</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filters.map((filter) => {
-                  const isOwner = currentUserId !== null && filter.user_id === currentUserId;
-                  return (
-                    <tr key={filter.id} className="border-b border-border last:border-0 font-mono text-xs hover:bg-elevated">
-                      <td className="py-2 px-3 text-text font-semibold">
-                        <div className="flex items-center gap-1.5">
-                          <span className="break-all">{filter.name}</span>
-                          {filter.is_pinned && (
-                            <AilaBadge severity="info" size="sm">pinned</AilaBadge>
-                          )}
-                          {filter.shared_with_team && (
-                            <AilaBadge severity="neutral" size="sm">shared</AilaBadge>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-2 px-3 text-text-muted">{filter.entity_type}</td>
-                      <td className="py-2 px-3 text-text-muted hidden md:table-cell max-w-[280px]">
-                        <code className="block truncate bg-base px-2 py-0.5 rounded-[2px]" title={filter.filter_json}>
-                          {filter.filter_json}
-                        </code>
-                      </td>
-                      <td className="py-2 px-3 text-text-muted hidden lg:table-cell">
-                        <span title={filter.user_id}>{shortUserId(filter.user_id)}</span>
-                        {isOwner && (
-                          <AilaBadge severity="info" size="sm" className="ml-1.5">you</AilaBadge>
+        <AilaCard variant="default" padding="none" techBorder glow><div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Name</th>
+                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Target page</th>
+                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden md:table-cell">Filter criteria</th>
+                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden lg:table-cell">Created by</th>
+                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden xl:table-cell">Updated</th>
+                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filters.map((filter) => {
+                const isOwner = currentUserId !== null && filter.user_id === currentUserId;
+                return (
+                  <tr key={filter.id} className="border-b border-border last:border-0 font-mono text-xs hover:bg-elevated">
+                    <td className="py-2 px-3 text-text font-semibold">
+                      <div className="flex items-center gap-1.5">
+                        <span className="break-all">{filter.name}</span>
+                        {filter.is_pinned && (
+                          <AilaBadge severity="info" size="sm">pinned</AilaBadge>
                         )}
-                      </td>
-                      <td className="py-2 px-3 text-text-muted hidden xl:table-cell whitespace-nowrap">
-                        {formatTimestamp(filter.updated_at)}
-                      </td>
-                      <td className="py-2 px-3">
-                        <div className="flex items-center gap-1">
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            disabled={!isOwner}
-                            title={isOwner ? "Edit filter" : "Only the owner can edit this filter"}
-                            onClick={() => setEditing(filter)}
-                          >
-                            <PencilSimple className="h-3 w-3" />
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            className="text-destructive border-destructive/40 hover:bg-destructive/10 hover:border-destructive disabled:text-text-muted disabled:border-border"
-                            disabled={!isOwner}
-                            title={isOwner ? "Delete filter" : "Only the owner can delete this filter"}
-                            onClick={() => setDeleting(filter)}
-                          >
-                            <Trash className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </AilaCard>
+                        {filter.shared_with_team && (
+                          <AilaBadge severity="neutral" size="sm">shared</AilaBadge>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-2 px-3 text-text-muted">{filter.entity_type}</td>
+                    <td className="py-2 px-3 text-text-muted hidden md:table-cell max-w-[280px]">
+                      <code className="block truncate bg-base px-2 py-0.5 rounded-[2px]" title={filter.filter_json}>
+                        {filter.filter_json}
+                      </code>
+                    </td>
+                    <td className="py-2 px-3 text-text-muted hidden lg:table-cell">
+                      <span title={filter.user_id}>{shortUserId(filter.user_id)}</span>
+                      {isOwner && (
+                        <AilaBadge severity="info" size="sm" className="ml-1.5">you</AilaBadge>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-text-muted hidden xl:table-cell whitespace-nowrap">
+                      {formatTimestamp(filter.updated_at)}
+                    </td>
+                    <td className="py-2 px-3">
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          disabled={!isOwner}
+                          title={isOwner ? "Edit filter" : "Only the owner can edit this filter"}
+                          onClick={() => setEditing(filter)}
+                        >
+                          <PencilSimple className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          className="text-destructive border-destructive/40 hover:bg-destructive/10 hover:border-destructive disabled:text-text-muted disabled:border-border"
+                          disabled={!isOwner}
+                          title={isOwner ? "Delete filter" : "Only the owner can delete this filter"}
+                          onClick={() => setDeleting(filter)}
+                        >
+                          <Trash className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div></AilaCard>
       )}
 
       {/* Create dialog */}

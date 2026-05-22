@@ -42,7 +42,7 @@ __all__ = ["TargetAnalysisError", "TargetAnalysisService"]
 _log = logging.getLogger(__name__)
 
 _POLL_INTERVAL_SECONDS = 3.0
-_POLL_TIMEOUT_SECONDS = 1800.0  # 30 minutes hard cap
+_POLL_TIMEOUT_SECONDS = 14400.0  # 4 hours — monorepo-scale ceiling (chromium ~30min, firefox should fit similar; nginx ~30s)
 
 # Kinds that need NO ingestion — descriptor alone drives capability profile.
 _NO_INGEST_KINDS: frozenset[TargetKind] = frozenset({

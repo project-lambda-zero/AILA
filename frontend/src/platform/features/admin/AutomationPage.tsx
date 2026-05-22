@@ -499,39 +499,33 @@ export function AutomationPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total Schedules
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {schedulesQuery.isLoading ? "—" : schedules.length}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Across your team
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Enabled
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {schedulesQuery.isLoading ? "—" : enabledCount}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Currently firing on cron
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Available Actions
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {actionsQuery.isLoading ? "—" : actions.length}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Registered by modules
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Total Schedules
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {schedulesQuery.isLoading ? "—" : schedules.length}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Across your team
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Enabled
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {schedulesQuery.isLoading ? "—" : enabledCount}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Currently firing on cron
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Available Actions
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {actionsQuery.isLoading ? "—" : actions.length}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Registered by modules
+        </p></AilaCard>
       </div>
 
       {schedulesQuery.isError && (
@@ -547,9 +541,7 @@ export function AutomationPage() {
       )}
 
       {schedulesQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {!schedulesQuery.isLoading &&

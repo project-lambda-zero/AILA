@@ -113,161 +113,153 @@ export function ProjectsPage() {
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger">
-          <p className="text-sm text-text-danger">Failed to load VR projects.</p>
-        </AilaCard>
+        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load VR projects.</p></AilaCard>
       )}
 
       {!isLoading && !isError && projects.length === 0 && (
-        <AilaCard>
-          <div className="text-center py-8">
-            <p className="text-text-muted">No VR projects yet.</p>
-            <button
-              type="button"
-              onClick={() => navigate("/vr/projects/new")}
-              className="mt-3 text-sm text-accent hover:underline"
-            >
-              Create your first project
-            </button>
-          </div>
-        </AilaCard>
+        <AilaCard  techBorder glow><div className="text-center py-8">
+          <p className="text-text-muted">No VR projects yet.</p>
+          <button
+            type="button"
+            onClick={() => navigate("/vr/projects/new")}
+            className="mt-3 text-sm text-accent hover:underline"
+          >
+            Create your first project
+          </button>
+        </div></AilaCard>
       )}
 
       {/* Filter bar (§Topic 1 consensus + spec §1.1) — status / target
           class / workstation / free-text search. Persisted in URL via
           useSearchParams so the view deep-links. */}
       {!isLoading && !isError && (
-        <AilaCard>
-          <div className="flex items-center gap-2 flex-wrap text-xs">
-            <input
-              type="text"
-              placeholder="search name / CVE…"
-              value={searchText}
-              onChange={(e) => updateFilter("q", e.target.value)}
-              className="px-2 py-1 rounded bg-surface border border-border-default font-mono w-48"
-            />
-            <select
-              value={statusFilter}
-              onChange={(e) => updateFilter("status", e.target.value)}
-              className="px-2 py-1 rounded bg-surface border border-border-default font-mono"
-              aria-label="Filter by status"
-            >
-              <option value="">all statuses</option>
-              <option value="created">created</option>
-              <option value="analyzing">analyzing</option>
-              <option value="completed">completed</option>
-              <option value="failed">failed</option>
-              <option value="stalled">stalled</option>
-            </select>
-            <select
-              value={sortField}
-              onChange={(e) => updateFilter("sort", e.target.value)}
-              className="px-2 py-1 rounded bg-surface border border-border-default font-mono"
-              aria-label="Sort field"
-            >
-              <option value="updated">sort: last activity</option>
-              <option value="created">sort: created</option>
-              <option value="name">sort: name</option>
-              <option value="findings">sort: findings</option>
-            </select>
-            <span className="text-text-muted ml-auto">
-              {filteredProjects.length} of {projects.length}
-            </span>
-          </div>
-        </AilaCard>
+        <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap text-xs">
+          <input
+            type="text"
+            placeholder="search name / CVE…"
+            value={searchText}
+            onChange={(e) => updateFilter("q", e.target.value)}
+            className="px-2 py-1 rounded bg-surface border border-border-default font-mono w-48"
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => updateFilter("status", e.target.value)}
+            className="px-2 py-1 rounded bg-surface border border-border-default font-mono"
+            aria-label="Filter by status"
+          >
+            <option value="">all statuses</option>
+            <option value="created">created</option>
+            <option value="analyzing">analyzing</option>
+            <option value="completed">completed</option>
+            <option value="failed">failed</option>
+            <option value="stalled">stalled</option>
+          </select>
+          <select
+            value={sortField}
+            onChange={(e) => updateFilter("sort", e.target.value)}
+            className="px-2 py-1 rounded bg-surface border border-border-default font-mono"
+            aria-label="Sort field"
+          >
+            <option value="updated">sort: last activity</option>
+            <option value="created">sort: created</option>
+            <option value="name">sort: name</option>
+            <option value="findings">sort: findings</option>
+          </select>
+          <span className="text-text-muted ml-auto">
+            {filteredProjects.length} of {projects.length}
+          </span>
+        </div></AilaCard>
       )}
 
       {!isLoading && !isError && filteredProjects.length > 0 && (
-        <AilaCard className="overflow-x-auto p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
-                <th className="px-2 py-2 font-semibold" aria-label="Operator"></th>
-                <th className="px-4 py-2 font-semibold">Name</th>
-                <th className="px-4 py-2 font-semibold">CVE</th>
-                <th className="px-4 py-2 font-semibold">Status</th>
-                <th className="px-4 py-2 font-semibold">Target</th>
-                <th className="px-4 py-2 font-semibold">Disclosure</th>
-                <th className="px-4 py-2 font-semibold text-right">Findings</th>
-                <th className="px-4 py-2 font-semibold">Created</th>
-                <th className="px-4 py-2 font-semibold">Last activity</th>
-                <th className="px-2 py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredProjects.map((project) => (
-                <tr
-                  key={project.id}
-                  onClick={() => navigate(`/vr/projects/${project.id}`)}
-                  className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
-                >
-                  <td className="px-2 py-2">
-                    <OperatorAvatar operatorId={project.operator_id} />
-                  </td>
-                  <td className="px-4 py-2 font-mono font-semibold text-foreground">
-                    {project.name}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-text-muted">
-                    {project.cve_id ?? "—"}
-                  </td>
-                  <td className="px-4 py-2">
-                    <SeverityPulse
-                      active={
-                        project.status === "analyzing" ||
-                        project.status === "failed"
-                      }
+        <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+              <th className="px-2 py-2 font-semibold" aria-label="Operator"></th>
+              <th className="px-4 py-2 font-semibold">Name</th>
+              <th className="px-4 py-2 font-semibold">CVE</th>
+              <th className="px-4 py-2 font-semibold">Status</th>
+              <th className="px-4 py-2 font-semibold">Target</th>
+              <th className="px-4 py-2 font-semibold">Disclosure</th>
+              <th className="px-4 py-2 font-semibold text-right">Findings</th>
+              <th className="px-4 py-2 font-semibold">Created</th>
+              <th className="px-4 py-2 font-semibold">Last activity</th>
+              <th className="px-2 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredProjects.map((project) => (
+              <tr
+                key={project.id}
+                onClick={() => navigate(`/vr/projects/${project.id}`)}
+                className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
+              >
+                <td className="px-2 py-2">
+                  <OperatorAvatar operatorId={project.operator_id} />
+                </td>
+                <td className="px-4 py-2 font-mono font-semibold text-foreground">
+                  {project.name}
+                </td>
+                <td className="px-4 py-2 font-mono text-text-muted">
+                  {project.cve_id ?? "—"}
+                </td>
+                <td className="px-4 py-2">
+                  <SeverityPulse
+                    active={
+                      project.status === "analyzing" ||
+                      project.status === "failed"
+                    }
+                  >
+                    <AilaBadge
+                      severity={statusColor[project.status] ?? "info"}
+                      size="sm"
                     >
-                      <AilaBadge
-                        severity={statusColor[project.status] ?? "info"}
-                        size="sm"
-                      >
-                        {project.status}
+                      {project.status}
+                    </AilaBadge>
+                  </SeverityPulse>
+                </td>
+                <td className="px-4 py-2 font-mono text-text-muted">
+                  {project.target_id ? (
+                    <span className="text-foreground">{targetMap.get(project.target_id)?.display_name ?? "loading…"}</span>
+                  ) : "—"}
+                </td>
+                <td className="px-4 py-2 font-mono text-text-muted">
+                  {project.latest_disclosure_status ? (
+                    <span className="flex items-center gap-1">
+                      <AilaBadge severity="info" size="sm">
+                        {project.latest_disclosure_status}
                       </AilaBadge>
-                    </SeverityPulse>
-                  </td>
-                  <td className="px-4 py-2 font-mono text-text-muted">
-                    {project.target_id ? (
-                      <span className="text-foreground">{targetMap.get(project.target_id)?.display_name ?? "loading…"}</span>
-                    ) : "—"}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-text-muted">
-                    {project.latest_disclosure_status ? (
-                      <span className="flex items-center gap-1">
-                        <AilaBadge severity="info" size="sm">
-                          {project.latest_disclosure_status}
-                        </AilaBadge>
-                        {(project.disclosure_submission_count ?? 0) > 1 && (
-                          <span className="text-[10px]">
-                            ×{project.disclosure_submission_count}
-                          </span>
-                        )}
-                      </span>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-right text-foreground">
-                    {project.finding_count}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-text-muted">
-                    {formatDate(project.created_at)}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-text-muted">
-                    {relativeTime(project.created_at)}
-                  </td>
-                  <td className="px-2 py-2 text-right">
-                    <DeleteButton
-                      id={project.id}
-                      label={`project "${project.name}"`}
-                      mutation={deleteMut}
-                      compact
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </AilaCard>
+                      {(project.disclosure_submission_count ?? 0) > 1 && (
+                        <span className="text-[10px]">
+                          ×{project.disclosure_submission_count}
+                        </span>
+                      )}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+                <td className="px-4 py-2 font-mono text-right text-foreground">
+                  {project.finding_count}
+                </td>
+                <td className="px-4 py-2 font-mono text-text-muted">
+                  {formatDate(project.created_at)}
+                </td>
+                <td className="px-4 py-2 font-mono text-text-muted">
+                  {relativeTime(project.created_at)}
+                </td>
+                <td className="px-2 py-2 text-right">
+                  <DeleteButton
+                    id={project.id}
+                    label={`project "${project.name}"`}
+                    mutation={deleteMut}
+                    compact
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table></AilaCard>
       )}
     </div>
   );

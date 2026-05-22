@@ -32,9 +32,7 @@ export function ProjectDetailsPage() {
 
   if (!projectId) {
     return (
-      <AilaCard className="border-border-danger">
-        <p className="text-sm text-text-danger">Invalid project ID.</p>
-      </AilaCard>
+      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Invalid project ID.</p></AilaCard>
     );
   }
 
@@ -42,9 +40,7 @@ export function ProjectDetailsPage() {
 
   if (isError || !project) {
     return (
-      <AilaCard className="border-border-danger">
-        <p className="text-sm text-text-danger">Failed to load project details.</p>
-      </AilaCard>
+      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load project details.</p></AilaCard>
     );
   }
 

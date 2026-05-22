@@ -32,25 +32,23 @@ function ActiveProjectsWidget() {
   const failed = projects.filter((p) => p.status === "failed");
 
   return (
-    <AilaCard className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-          Active Research
-        </h3>
-        <Link
-          to="/vr"
-          className="text-[10px] text-accent hover:underline"
-        >
-          open →
-        </Link>
-      </div>
-      <p className="text-3xl font-bold font-mono text-foreground">
-        {isLoading ? "—" : active.length}
-      </p>
-      <p className="text-xs text-text-muted mt-1">
-        {projects.length} total · {failed.length} failed
-      </p>
-    </AilaCard>
+    <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+        Active Research
+      </h3>
+      <Link
+        to="/vr"
+        className="text-[10px] text-accent hover:underline"
+      >
+        open →
+      </Link>
+    </div>
+    <p className="text-3xl font-bold font-mono text-foreground">
+      {isLoading ? "—" : active.length}
+    </p>
+    <p className="text-xs text-text-muted mt-1">
+      {projects.length} total · {failed.length} failed
+    </p></AilaCard>
   );
 }
 
@@ -65,50 +63,48 @@ function CrashesFoundWidget() {
   const last24h = bucketByDay(crashes, 1)[0]?.count ?? 0;
 
   return (
-    <AilaCard className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-          Crashes Found
-        </h3>
-      </div>
-      <p className="text-3xl font-bold font-mono text-foreground">
-        {isLoading ? "—" : total.toLocaleString()}
-      </p>
-      <p className="text-xs text-text-muted mt-1">
-        +{last24h} in the last 24h
-      </p>
-      <div className="mt-2 -mx-2 -mb-2 flex-1 min-h-[40px]">
-        {trend.length > 0 && (
-          <AilaChart
-            type="bar"
-            data={trend}
-            dataKey="count"
-            xKey="day"
-            size="sm"
-            ariaLabel="Crashes per day (last 7 days)"
-          />
-        )}
-      </div>
+    <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+        Crashes Found
+      </h3>
+    </div>
+    <p className="text-3xl font-bold font-mono text-foreground">
+      {isLoading ? "—" : total.toLocaleString()}
+    </p>
+    <p className="text-xs text-text-muted mt-1">
+      +{last24h} in the last 24h
+    </p>
+    <div className="mt-2 -mx-2 -mb-2 flex-1 min-h-[40px]">
       {trend.length > 0 && (
-        <table className="sr-only">
-          <caption>Crashes per day, last 7 days</caption>
-          <thead>
-            <tr>
-              <th>Day</th>
-              <th>Count</th>
-            </tr>
-          </thead>
-          <tbody>
-            {trend.map((row) => (
-              <tr key={row.day}>
-                <td>{row.day}</td>
-                <td>{row.count}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <AilaChart
+          type="bar"
+          data={trend}
+          dataKey="count"
+          xKey="day"
+          size="sm"
+          ariaLabel="Crashes per day (last 7 days)"
+        />
       )}
-    </AilaCard>
+    </div>
+    {trend.length > 0 && (
+      <table className="sr-only">
+        <caption>Crashes per day, last 7 days</caption>
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Count</th>
+          </tr>
+        </thead>
+        <tbody>
+          {trend.map((row) => (
+            <tr key={row.day}>
+              <td>{row.day}</td>
+              <td>{row.count}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}</AilaCard>
   );
 }
 
@@ -121,35 +117,33 @@ function ExploitableWidget() {
   const medium = security.filter((c) => c.severity === "medium").length;
 
   return (
-    <AilaCard className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-          Exploitable
-        </h3>
-        <Link
-          to="/vr/fuzz/campaigns"
-          className="text-[10px] text-accent hover:underline"
-        >
-          fuzz crashes →
-        </Link>
-      </div>
-      <p className="text-3xl font-bold font-mono text-foreground">
-        {isLoading ? "—" : security.length}
-      </p>
-      <div className="text-xs text-text-muted mt-1 flex flex-wrap gap-1">
-        {critical > 0 && (
-          <span className="text-red-500 font-semibold">
-            {critical} critical
-          </span>
-        )}
-        {high > 0 && <span>{high} high</span>}
-        {medium > 0 && <span>{medium} medium</span>}
-        {security.length === 0 && <span>no exploitable crashes</span>}
-      </div>
-      <div className="mt-2">
-        <CVSSBadge score={critical > 0 ? 9.8 : high > 0 ? 7.5 : 0} />
-      </div>
-    </AilaCard>
+    <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+        Exploitable
+      </h3>
+      <Link
+        to="/vr/fuzz/campaigns"
+        className="text-[10px] text-accent hover:underline"
+      >
+        fuzz crashes →
+      </Link>
+    </div>
+    <p className="text-3xl font-bold font-mono text-foreground">
+      {isLoading ? "—" : security.length}
+    </p>
+    <div className="text-xs text-text-muted mt-1 flex flex-wrap gap-1">
+      {critical > 0 && (
+        <span className="text-red-500 font-semibold">
+          {critical} critical
+        </span>
+      )}
+      {high > 0 && <span>{high} high</span>}
+      {medium > 0 && <span>{medium} medium</span>}
+      {security.length === 0 && <span>no exploitable crashes</span>}
+    </div>
+    <div className="mt-2">
+      <CVSSBadge score={critical > 0 ? 9.8 : high > 0 ? 7.5 : 0} />
+    </div></AilaCard>
   );
 }
 
@@ -176,50 +170,48 @@ function FuzzingCoverageWidget() {
       : 0;
 
   return (
-    <AilaCard className="h-full">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-          Fuzzing Coverage
-        </h3>
-        <Link
-          to="/vr/fuzz/campaigns"
-          className="text-[10px] text-accent hover:underline"
-        >
-          campaigns →
-        </Link>
-      </div>
-      <p className="text-3xl font-bold font-mono text-foreground">
-        {isLoading ? "—" : `${avgCoverage.toFixed(1)}%`}
-      </p>
-      <p className="text-xs text-text-muted mt-1">
-        avg across {running.length} running
-      </p>
-      <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[10px]">
-        {stable > 0 && (
-          <AilaBadge severity="low" size="sm">
-            {stable} stable
-          </AilaBadge>
-        )}
-        {stuck.length > 0 && (
-          <AilaBadge severity="high" size="sm">
-            {stuck.length} stuck
-          </AilaBadge>
-        )}
-        {paused.length > 0 && (
-          <AilaBadge severity="info" size="sm">
-            {paused.length} paused
-          </AilaBadge>
-        )}
-        {failed.length > 0 && (
-          <AilaBadge severity="critical" size="sm">
-            {failed.length} failed
-          </AilaBadge>
-        )}
-      </div>
-      <p className="text-[10px] text-text-muted mt-1">
-        Stuck = no progress in 4h despite high exec/sec.
-      </p>
-    </AilaCard>
+    <AilaCard className="h-full" techBorder glow><div className="flex items-center justify-between mb-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+        Fuzzing Coverage
+      </h3>
+      <Link
+        to="/vr/fuzz/campaigns"
+        className="text-[10px] text-accent hover:underline"
+      >
+        campaigns →
+      </Link>
+    </div>
+    <p className="text-3xl font-bold font-mono text-foreground">
+      {isLoading ? "—" : `${avgCoverage.toFixed(1)}%`}
+    </p>
+    <p className="text-xs text-text-muted mt-1">
+      avg across {running.length} running
+    </p>
+    <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[10px]">
+      {stable > 0 && (
+        <AilaBadge severity="low" size="sm">
+          {stable} stable
+        </AilaBadge>
+      )}
+      {stuck.length > 0 && (
+        <AilaBadge severity="high" size="sm">
+          {stuck.length} stuck
+        </AilaBadge>
+      )}
+      {paused.length > 0 && (
+        <AilaBadge severity="info" size="sm">
+          {paused.length} paused
+        </AilaBadge>
+      )}
+      {failed.length > 0 && (
+        <AilaBadge severity="critical" size="sm">
+          {failed.length} failed
+        </AilaBadge>
+      )}
+    </div>
+    <p className="text-[10px] text-text-muted mt-1">
+      Stuck = no progress in 4h despite high exec/sec.
+    </p></AilaCard>
   );
 }
 
@@ -254,46 +246,44 @@ function PendingFuzzProposalsWidget() {
   const { data, isLoading } = useFuzzProposals({ status: "pending" });
   const proposals = data?.data ?? [];
   return (
-    <AilaCard className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-          Pending Fuzz Proposals
-        </h3>
-        <Link
-          to="/vr/investigations"
-          className="text-[10px] text-accent hover:underline"
-        >
-          review →
-        </Link>
-      </div>
-      <p className="text-3xl font-bold font-mono text-foreground">
-        {isLoading ? "—" : proposals.length}
-      </p>
-      <p className="text-xs text-text-muted mt-1">
-        agent-authored, awaiting operator decision
-      </p>
-      {proposals.length > 0 && (
-        <ul className="mt-2 space-y-1 text-[10px] font-mono max-h-32 overflow-y-auto">
-          {proposals.slice(0, 5).map((p) => (
-            <li
-              key={p.id}
-              className="border border-border-default rounded px-2 py-1 flex items-center justify-between gap-2"
+    <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+        Pending Fuzz Proposals
+      </h3>
+      <Link
+        to="/vr/investigations"
+        className="text-[10px] text-accent hover:underline"
+      >
+        review →
+      </Link>
+    </div>
+    <p className="text-3xl font-bold font-mono text-foreground">
+      {isLoading ? "—" : proposals.length}
+    </p>
+    <p className="text-xs text-text-muted mt-1">
+      agent-authored, awaiting operator decision
+    </p>
+    {proposals.length > 0 && (
+      <ul className="mt-2 space-y-1 text-[10px] font-mono max-h-32 overflow-y-auto">
+        {proposals.slice(0, 5).map((p) => (
+          <li
+            key={p.id}
+            className="border border-border-default rounded px-2 py-1 flex items-center justify-between gap-2"
+          >
+            <span className="text-foreground truncate">{p.profile}</span>
+            <AilaBadge
+              severity={
+                p.confidence === "strong" || p.confidence === "exact"
+                  ? "info" : "medium"
+              }
+              size="sm"
             >
-              <span className="text-foreground truncate">{p.profile}</span>
-              <AilaBadge
-                severity={
-                  p.confidence === "strong" || p.confidence === "exact"
-                    ? "info" : "medium"
-                }
-                size="sm"
-              >
-                {p.confidence}
-              </AilaBadge>
-            </li>
-          ))}
-        </ul>
-      )}
-    </AilaCard>
+              {p.confidence}
+            </AilaBadge>
+          </li>
+        ))}
+      </ul>
+    )}</AilaCard>
   );
 }
 

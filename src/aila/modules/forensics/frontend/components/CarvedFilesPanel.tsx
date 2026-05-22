@@ -146,7 +146,7 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
 
   if (files.length === 0) {
     return (
-      <AilaCard>
+      <AilaCard  techBorder glow>
         <h3 className="text-sm font-semibold text-foreground mb-1">
           Files carved from PCAP
         </h3>

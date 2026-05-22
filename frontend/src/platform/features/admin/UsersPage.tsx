@@ -499,39 +499,33 @@ export function UsersPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total Users
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {usersQuery.isLoading ? "--" : totalUsers}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">All accounts</p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Total Users
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {usersQuery.isLoading ? "--" : totalUsers}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">All accounts</p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Active Users
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {usersQuery.isLoading ? "--" : activeUsers}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Can log in
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Active Users
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {usersQuery.isLoading ? "--" : activeUsers}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Can log in
+        </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Inactive Users
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {usersQuery.isLoading ? "--" : inactiveUsers}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Deactivated
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Inactive Users
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {usersQuery.isLoading ? "--" : inactiveUsers}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Deactivated
+        </p></AilaCard>
       </div>
 
       {/* Error banner */}
@@ -543,9 +537,7 @@ export function UsersPage() {
 
       {/* Loading skeleton */}
       {usersQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {/* Empty state */}

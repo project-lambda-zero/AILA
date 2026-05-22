@@ -130,216 +130,206 @@ export function TargetsPage() {
       </div>
 
       {showForm && workspaces.length > 0 && (
-        <AilaCard>
-          <h2 className="text-sm font-semibold text-foreground mb-2">
-            Create target
-          </h2>
-          <p className="text-xs text-text-muted mb-3">
-            descriptor is kind-specific JSON.
-            <br /><strong>native_binary</strong>: <code>{`{"binary_path": "/path/on/workstation"}`}</code>
-            <br /><strong>source_repo</strong>: <code>{`{"repo_url": "https://github.com/owner/repo", "ref": "main"}`}</code>
-            <br /><strong>kernel_image</strong>: <code>{`{"image_path": "/path/vmlinuz", "kernel_version": "6.10", "arch": "x86_64"}`}</code>
-            <br /><strong>kernel_module</strong>: <code>{`{"ko_path": "/path/buggy.ko", "module_name": "buggy"}`}</code>
-            <br /><strong>hypervisor_image</strong>: <code>{`{"binary_path": "/path/qemu-system-x86_64", "hypervisor_kind": "qemu", "version": "9.1.0"}`}</code>
-            <br /><em>Analysis runs automatically after create. No manual MCP wiring.</em>
-          </p>
-          <div className="space-y-2">
+        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+          Create target
+        </h2>
+        <p className="text-xs text-text-muted mb-3">
+          descriptor is kind-specific JSON.
+          <br /><strong>native_binary</strong>: <code>{`{"binary_path": "/path/on/workstation"}`}</code>
+          <br /><strong>source_repo</strong>: <code>{`{"repo_url": "https://github.com/owner/repo", "ref": "main"}`}</code>
+          <br /><strong>kernel_image</strong>: <code>{`{"image_path": "/path/vmlinuz", "kernel_version": "6.10", "arch": "x86_64"}`}</code>
+          <br /><strong>kernel_module</strong>: <code>{`{"ko_path": "/path/buggy.ko", "module_name": "buggy"}`}</code>
+          <br /><strong>hypervisor_image</strong>: <code>{`{"binary_path": "/path/qemu-system-x86_64", "hypervisor_kind": "qemu", "version": "9.1.0"}`}</code>
+          <br /><em>Analysis runs automatically after create. No manual MCP wiring.</em>
+        </p>
+        <div className="space-y-2">
+          <select
+            value={formWorkspaceId}
+            onChange={(e) => setFormWorkspaceId(e.target.value)}
+            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
+          >
+            <option value="">— select workspace —</option>
+            {workspaces.map((ws) => (
+              <option key={ws.id} value={ws.id}>
+                {ws.name} ({ws.slug})
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={formDisplayName}
+            onChange={(e) => setFormDisplayName(e.target.value)}
+            placeholder="Display name (e.g. 'V8 d8 (chromium 148)')"
+            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+          />
+          <div className="flex gap-2">
             <select
-              value={formWorkspaceId}
-              onChange={(e) => setFormWorkspaceId(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
+              value={formKind}
+              onChange={(e) => {
+                const newKind = e.target.value as TargetKind;
+                setFormKind(newKind);
+                setFormDescriptorJson(DESCRIPTOR_TEMPLATES[newKind]);
+              }}
+              className="px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
             >
-              <option value="">— select workspace —</option>
-              {workspaces.map((ws) => (
-                <option key={ws.id} value={ws.id}>
-                  {ws.name} ({ws.slug})
+              {TARGET_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {k}
                 </option>
               ))}
             </select>
             <input
               type="text"
-              value={formDisplayName}
-              onChange={(e) => setFormDisplayName(e.target.value)}
-              placeholder="Display name (e.g. 'V8 d8 (chromium 148)')"
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+              value={formPrimaryLanguage}
+              onChange={(e) => setFormPrimaryLanguage(e.target.value)}
+              placeholder="primary_language (c / c++ / rust / go / javascript / java / kotlin / python / …)"
+              className="flex-1 px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
             />
-            <div className="flex gap-2">
-              <select
-                value={formKind}
-                onChange={(e) => {
-                  const newKind = e.target.value as TargetKind;
-                  setFormKind(newKind);
-                  setFormDescriptorJson(DESCRIPTOR_TEMPLATES[newKind]);
-                }}
-                className="px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
-              >
-                {TARGET_KINDS.map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="text"
-                value={formPrimaryLanguage}
-                onChange={(e) => setFormPrimaryLanguage(e.target.value)}
-                placeholder="primary_language (c / c++ / rust / go / javascript / java / kotlin / python / …)"
-                className="flex-1 px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-              />
-            </div>
-            <textarea
-              value={formDescriptorJson}
-              onChange={(e) => setFormDescriptorJson(e.target.value)}
-              placeholder='descriptor JSON, e.g. {"binary_path": "/var/lib/aila/uploads/d8"}'
-              rows={3}
-              className="w-full px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-            />
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={
-                  !formWorkspaceId ||
-                  !formDisplayName.trim() ||
-                  createMut.isPending
-                }
-                onClick={() => {
-                  let descriptor: Record<string, unknown> = {};
-                  if (formDescriptorJson.trim()) {
-                    try {
-                      descriptor = JSON.parse(formDescriptorJson);
-                    } catch {
-                      alert("descriptor JSON is invalid — fix or leave empty");
-                      return;
-                    }
-                  }
-                  createMut.mutate(
-                    {
-                      workspace_id: formWorkspaceId,
-                      display_name: formDisplayName.trim(),
-                      kind: formKind,
-                      descriptor,
-                      primary_language: formPrimaryLanguage.trim() || undefined,
-                    },
-                    {
-                      onSuccess: (result) => {
-                        setShowForm(false);
-                        setFormDisplayName("");
-                        setFormPrimaryLanguage("");
-                        navigate(`/vr/targets/${result.data.id}`);
-                      },
-                    },
-                  );
-                }}
-                className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
-              >
-                {createMut.isPending ? "Creating…" : "Create target"}
-              </button>
-            </div>
           </div>
-        </AilaCard>
+          <textarea
+            value={formDescriptorJson}
+            onChange={(e) => setFormDescriptorJson(e.target.value)}
+            placeholder='descriptor JSON, e.g. {"binary_path": "/var/lib/aila/uploads/d8"}'
+            rows={3}
+            className="w-full px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={
+                !formWorkspaceId ||
+                !formDisplayName.trim() ||
+                createMut.isPending
+              }
+              onClick={() => {
+                let descriptor: Record<string, unknown> = {};
+                if (formDescriptorJson.trim()) {
+                  try {
+                    descriptor = JSON.parse(formDescriptorJson);
+                  } catch {
+                    alert("descriptor JSON is invalid — fix or leave empty");
+                    return;
+                  }
+                }
+                createMut.mutate(
+                  {
+                    workspace_id: formWorkspaceId,
+                    display_name: formDisplayName.trim(),
+                    kind: formKind,
+                    descriptor,
+                    primary_language: formPrimaryLanguage.trim() || undefined,
+                  },
+                  {
+                    onSuccess: (result) => {
+                      setShowForm(false);
+                      setFormDisplayName("");
+                      setFormPrimaryLanguage("");
+                      navigate(`/vr/targets/${result.data.id}`);
+                    },
+                  },
+                );
+              }}
+              className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+            >
+              {createMut.isPending ? "Creating…" : "Create target"}
+            </button>
+          </div>
+        </div></AilaCard>
       )}
 
-      <AilaCard>
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-text-muted">Filter workspace:</label>
-          <select
-            value={workspaceFilter}
-            onChange={(e) => setWorkspaceFilter(e.target.value)}
-            className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
-          >
-            <option value="">— all —</option>
-            {workspaces.map((ws) => (
-              <option key={ws.id} value={ws.id}>
-                {ws.name}
-              </option>
-            ))}
-          </select>
-          <span className="text-xs text-text-muted ml-auto">
-            {targets.length} target{targets.length === 1 ? "" : "s"}
-          </span>
-        </div>
-      </AilaCard>
+      <AilaCard  techBorder glow><div className="flex items-center gap-2">
+        <label className="text-sm text-text-muted">Filter workspace:</label>
+        <select
+          value={workspaceFilter}
+          onChange={(e) => setWorkspaceFilter(e.target.value)}
+          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+        >
+          <option value="">— all —</option>
+          {workspaces.map((ws) => (
+            <option key={ws.id} value={ws.id}>
+              {ws.name}
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-text-muted ml-auto">
+          {targets.length} target{targets.length === 1 ? "" : "s"}
+        </span>
+      </div></AilaCard>
 
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger">
-          <p className="text-sm text-text-danger">Failed to load targets.</p>
-        </AilaCard>
+        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load targets.</p></AilaCard>
       )}
 
       {!isLoading && !isError && targets.length === 0 && (
-        <AilaCard>
-          <p className="text-center py-6 text-text-muted">No targets yet.</p>
-        </AilaCard>
+        <AilaCard  techBorder glow><p className="text-center py-6 text-text-muted">No targets yet.</p></AilaCard>
       )}
 
       {!isLoading && !isError && targets.length > 0 && (
-        <AilaCard className="overflow-x-auto p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
-                <th className="px-4 py-2 font-semibold">Name</th>
-                <th className="px-4 py-2 font-semibold">Kind</th>
-                <th className="px-4 py-2 font-semibold">Language</th>
-                <th className="px-4 py-2 font-semibold">Status</th>
-                <th className="px-4 py-2 font-semibold">Analysis</th>
-                <th className="px-4 py-2 font-semibold">Analyzed at</th>
-                <th className="px-4 py-2 font-semibold">Created</th>
-                <th className="px-2 py-2"></th>
+        <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+              <th className="px-4 py-2 font-semibold">Name</th>
+              <th className="px-4 py-2 font-semibold">Kind</th>
+              <th className="px-4 py-2 font-semibold">Language</th>
+              <th className="px-4 py-2 font-semibold">Status</th>
+              <th className="px-4 py-2 font-semibold">Analysis</th>
+              <th className="px-4 py-2 font-semibold">Analyzed at</th>
+              <th className="px-4 py-2 font-semibold">Created</th>
+              <th className="px-2 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {targets.map((t) => (
+              <tr
+                key={t.id}
+                onClick={() => navigate(`/vr/targets/${t.id}`)}
+                className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
+              >
+                <td className="px-4 py-2 font-semibold text-foreground">
+                  {t.display_name}
+                </td>
+                <td className="px-4 py-2 font-mono text-xs text-text-muted">
+                  {t.kind}
+                </td>
+                <td className="px-4 py-2 font-mono text-xs text-text-muted">
+                  {t.primary_language ?? "—"}
+                </td>
+                <td className="px-4 py-2">
+                  <AilaBadge
+                    severity={statusColor[t.status] ?? "info"}
+                    size="sm"
+                  >
+                    {t.status}
+                  </AilaBadge>
+                </td>
+                <td className="px-4 py-2">
+                  <AilaBadge
+                    severity={analysisColor[t.analysis_state] ?? "info"}
+                    size="sm"
+                  >
+                    {analysisLabel(t.analysis_state)}
+                  </AilaBadge>
+                </td>
+                <td className="px-4 py-2 font-mono text-xs text-text-muted">
+                  {formatDate(t.analysis_completed_at)}
+                </td>
+                <td className="px-4 py-2 font-mono text-xs text-text-muted">
+                  {formatDate(t.created_at)}
+                </td>
+                <td className="px-2 py-2 text-right">
+                  <DeleteButton
+                    id={t.id}
+                    label={`target "${t.display_name}"`}
+                    mutation={deleteMut}
+                    compact
+                  />
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {targets.map((t) => (
-                <tr
-                  key={t.id}
-                  onClick={() => navigate(`/vr/targets/${t.id}`)}
-                  className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
-                >
-                  <td className="px-4 py-2 font-semibold text-foreground">
-                    {t.display_name}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                    {t.kind}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                    {t.primary_language ?? "—"}
-                  </td>
-                  <td className="px-4 py-2">
-                    <AilaBadge
-                      severity={statusColor[t.status] ?? "info"}
-                      size="sm"
-                    >
-                      {t.status}
-                    </AilaBadge>
-                  </td>
-                  <td className="px-4 py-2">
-                    <AilaBadge
-                      severity={analysisColor[t.analysis_state] ?? "info"}
-                      size="sm"
-                    >
-                      {analysisLabel(t.analysis_state)}
-                    </AilaBadge>
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                    {formatDate(t.analysis_completed_at)}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                    {formatDate(t.created_at)}
-                  </td>
-                  <td className="px-2 py-2 text-right">
-                    <DeleteButton
-                      id={t.id}
-                      label={`target "${t.display_name}"`}
-                      mutation={deleteMut}
-                      compact
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </AilaCard>
+            ))}
+          </tbody>
+        </table></AilaCard>
       )}
     </div>
   );

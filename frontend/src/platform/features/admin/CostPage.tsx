@@ -206,186 +206,174 @@ export function CostPage() {
 
       {/* Top metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total Cost ({historyMonths}m)
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {historyQuery.isLoading ? "—" : formatUsd(grandTotal, 2)}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Sum of monthly spend
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Total Cost ({historyMonths}m)
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {historyQuery.isLoading ? "—" : formatUsd(grandTotal, 2)}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Sum of monthly spend
+        </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Cost / Scan
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {roiQuery.isLoading ? "—" : formatUsd(costPerRun, 4)}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            {roi ? `${roi.run_count} runs · ${roiMonths}m` : "—"}
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Cost / Scan
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {roiQuery.isLoading ? "—" : formatUsd(costPerRun, 4)}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          {roi ? `${roi.run_count} runs · ${roiMonths}m` : "—"}
+        </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            MoM Trend
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1 flex items-center gap-1.5">
-            {historyQuery.isLoading || trendDelta === null
-              ? "—"
-              : `${trendDelta >= 0 ? "+" : ""}${trendDelta.toFixed(1)}%`}
-            {trendDelta !== null && trendDelta >= 0 && (
-              <TrendUp className="h-5 w-5 text-high" />
-            )}
-            {trendDelta !== null && trendDelta < 0 && (
-              <TrendDown className="h-5 w-5 text-low" />
-            )}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Latest vs previous month
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          MoM Trend
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1 flex items-center gap-1.5">
+          {historyQuery.isLoading || trendDelta === null
+            ? "—"
+            : `${trendDelta >= 0 ? "+" : ""}${trendDelta.toFixed(1)}%`}
+          {trendDelta !== null && trendDelta >= 0 && (
+            <TrendUp className="h-5 w-5 text-high" />
+          )}
+          {trendDelta !== null && trendDelta < 0 && (
+            <TrendDown className="h-5 w-5 text-low" />
+          )}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Latest vs previous month
+        </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            ROI ({roiMonths}m)
-          </p>
-          <p
-            className={`font-mono text-2xl font-semibold mt-1 ${
-              roi && roi.roi_percentage >= 0 ? "text-low" : "text-high"
-            }`}
-          >
-            {roiQuery.isLoading || !roi
-              ? "—"
-              : `${roi.roi_percentage >= 0 ? "+" : ""}${roi.roi_percentage.toFixed(1)}%`}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            vs human-equivalent
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          ROI ({roiMonths}m)
+        </p>
+        <p
+          className={`font-mono text-2xl font-semibold mt-1 ${
+            roi && roi.roi_percentage >= 0 ? "text-low" : "text-high"
+          }`}
+        >
+          {roiQuery.isLoading || !roi
+            ? "—"
+            : `${roi.roi_percentage >= 0 ? "+" : ""}${roi.roi_percentage.toFixed(1)}%`}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          vs human-equivalent
+        </p></AilaCard>
       </div>
 
       {/* History card */}
-      <AilaCard variant="default" padding="md">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <ChartLineUp className="h-4 w-4 text-accent" />
-            <h2 className="font-mono text-sm font-semibold text-text">
-              Cost trend
-            </h2>
-          </div>
-          <div className="flex gap-1">
-            {RANGE_OPTIONS.map((opt) => (
-              <button
-                key={opt.label}
-                type="button"
-                onClick={() => setHistoryMonths(opt.months)}
-                className={`px-2.5 py-1 rounded-[2px] border font-mono text-xs transition-colors ${
-                  historyMonths === opt.months
-                    ? "border-accent text-accent bg-accent/10"
-                    : "border-border text-text-muted hover:border-border-hover"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+      <AilaCard variant="default" padding="md" techBorder glow><div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <ChartLineUp className="h-4 w-4 text-accent" />
+          <h2 className="font-mono text-sm font-semibold text-text">
+            Cost trend
+          </h2>
         </div>
-
-        {historyQuery.isError && (
-          <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-            Failed to load cost history: {(historyQuery.error as Error).message}
-          </div>
+        <div className="flex gap-1">
+          {RANGE_OPTIONS.map((opt) => (
+            <button
+              key={opt.label}
+              type="button"
+              onClick={() => setHistoryMonths(opt.months)}
+              className={`px-2.5 py-1 rounded-[2px] border font-mono text-xs transition-colors ${
+                historyMonths === opt.months
+                  ? "border-accent text-accent bg-accent/10"
+                  : "border-border text-text-muted hover:border-border-hover"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      
+      {historyQuery.isError && (
+        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
+          Failed to load cost history: {(historyQuery.error as Error).message}
+        </div>
+      )}
+      
+      {historyQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
+      
+      {!historyQuery.isLoading &&
+        !historyQuery.isError &&
+        months.length === 0 && (
+          <EmptyState
+            icon={<CurrencyDollar className="h-10 w-10" />}
+            title="No cost data"
+            description="No LLM cost records exist for the selected window. Run a scan to start populating the ledger."
+          />
         )}
-
-        {historyQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
-
-        {!historyQuery.isLoading &&
-          !historyQuery.isError &&
-          months.length === 0 && (
-            <EmptyState
-              icon={<CurrencyDollar className="h-10 w-10" />}
-              title="No cost data"
-              description="No LLM cost records exist for the selected window. Run a scan to start populating the ledger."
-            />
-          )}
-
-        {!historyQuery.isLoading && months.length > 0 && (
-          <MonthlyTrend months={months} />
-        )}
-      </AilaCard>
+      
+      {!historyQuery.isLoading && months.length > 0 && (
+        <MonthlyTrend months={months} />
+      )}</AilaCard>
 
       {/* ROI card */}
-      <AilaCard variant="default" padding="md">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <TrendUp className="h-4 w-4 text-accent" />
-            <h2 className="font-mono text-sm font-semibold text-text">
-              ROI summary
-            </h2>
+      <AilaCard variant="default" padding="md" techBorder glow><div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <TrendUp className="h-4 w-4 text-accent" />
+          <h2 className="font-mono text-sm font-semibold text-text">
+            ROI summary
+          </h2>
+        </div>
+        <div className="flex gap-1">
+          {RANGE_OPTIONS.map((opt) => (
+            <button
+              key={opt.label}
+              type="button"
+              onClick={() => setRoiMonths(opt.months)}
+              className={`px-2.5 py-1 rounded-[2px] border font-mono text-xs transition-colors ${
+                roiMonths === opt.months
+                  ? "border-accent text-accent bg-accent/10"
+                  : "border-border text-text-muted hover:border-border-hover"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      
+      {roiQuery.isError && (
+        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
+          Failed to load ROI: {(roiQuery.error as Error).message}
+        </div>
+      )}
+      
+      {roiQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
+      
+      {!roiQuery.isLoading && !roiQuery.isError && roi && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="flex flex-col gap-0.5">
+            <p className="font-mono text-xs text-text-muted">LLM Spend</p>
+            <p className="font-mono text-lg text-text">
+              {formatUsd(roi.llm_cost_usd, 2)}
+            </p>
           </div>
-          <div className="flex gap-1">
-            {RANGE_OPTIONS.map((opt) => (
-              <button
-                key={opt.label}
-                type="button"
-                onClick={() => setRoiMonths(opt.months)}
-                className={`px-2.5 py-1 rounded-[2px] border font-mono text-xs transition-colors ${
-                  roiMonths === opt.months
-                    ? "border-accent text-accent bg-accent/10"
-                    : "border-border text-text-muted hover:border-border-hover"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
+          <div className="flex flex-col gap-0.5">
+            <p className="font-mono text-xs text-text-muted">
+              Human-Equivalent
+            </p>
+            <p className="font-mono text-lg text-text">
+              {formatUsd(roi.human_equivalent_cost_usd, 2)}
+            </p>
+            <p className="font-mono text-xs text-text-muted">
+              {roi.human_equivalent_hours.toFixed(1)}h
+            </p>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <p className="font-mono text-xs text-text-muted">Run Count</p>
+            <p className="font-mono text-lg text-text">{roi.run_count}</p>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <p className="font-mono text-xs text-text-muted">Period</p>
+            <p className="font-mono text-xs text-text">
+              {roi.period_start} → {roi.period_end}
+            </p>
           </div>
         </div>
-
-        {roiQuery.isError && (
-          <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-            Failed to load ROI: {(roiQuery.error as Error).message}
-          </div>
-        )}
-
-        {roiQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
-
-        {!roiQuery.isLoading && !roiQuery.isError && roi && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="flex flex-col gap-0.5">
-              <p className="font-mono text-xs text-text-muted">LLM Spend</p>
-              <p className="font-mono text-lg text-text">
-                {formatUsd(roi.llm_cost_usd, 2)}
-              </p>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <p className="font-mono text-xs text-text-muted">
-                Human-Equivalent
-              </p>
-              <p className="font-mono text-lg text-text">
-                {formatUsd(roi.human_equivalent_cost_usd, 2)}
-              </p>
-              <p className="font-mono text-xs text-text-muted">
-                {roi.human_equivalent_hours.toFixed(1)}h
-              </p>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <p className="font-mono text-xs text-text-muted">Run Count</p>
-              <p className="font-mono text-lg text-text">{roi.run_count}</p>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <p className="font-mono text-xs text-text-muted">Period</p>
-              <p className="font-mono text-xs text-text">
-                {roi.period_start} → {roi.period_end}
-              </p>
-            </div>
-          </div>
-        )}
-      </AilaCard>
+      )}</AilaCard>
     </div>
   );
 }

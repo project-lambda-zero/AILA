@@ -35,38 +35,36 @@ export function FuzzProposalsPanel({
   const proposals: VRFuzzCampaignProposalSummary[] = data?.data ?? [];
 
   return (
-    <AilaCard>
-      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">
-            Fuzz proposals
-          </h2>
-          <p className="text-[10px] text-text-muted mt-0.5">
-            Agent-authored — operator decides. Accept ships the harness,
-            builds it on the workstation, and launches the fuzzer.
-          </p>
-        </div>
-        <span className="text-[10px] text-text-muted font-mono">
-          {proposals.length} pending
-        </span>
+    <AilaCard  techBorder glow><div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground">
+          Fuzz proposals
+        </h2>
+        <p className="text-[10px] text-text-muted mt-0.5">
+          Agent-authored — operator decides. Accept ships the harness,
+          builds it on the workstation, and launches the fuzzer.
+        </p>
       </div>
-      {isLoading ? (
-        <p className="text-xs text-text-muted">Loading…</p>
-      ) : proposals.length === 0 ? (
-        <EmptyState
-          title="No pending fuzz proposals"
-          description="The reasoning agent emits these when audit narrows to a question it can only settle with runtime evidence."
-        />
-      ) : (
-        <ul className="space-y-3">
-          {proposals.map((p) => (
-            <li key={p.id}>
-              <FuzzProposalCard proposal={p} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </AilaCard>
+      <span className="text-[10px] text-text-muted font-mono">
+        {proposals.length} pending
+      </span>
+    </div>
+    {isLoading ? (
+      <p className="text-xs text-text-muted">Loading…</p>
+    ) : proposals.length === 0 ? (
+      <EmptyState
+        title="No pending fuzz proposals"
+        description="The reasoning agent emits these when audit narrows to a question it can only settle with runtime evidence."
+      />
+    ) : (
+      <ul className="space-y-3">
+        {proposals.map((p) => (
+          <li key={p.id}>
+            <FuzzProposalCard proposal={p} />
+          </li>
+        ))}
+      </ul>
+    )}</AilaCard>
   );
 }
 

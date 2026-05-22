@@ -253,12 +253,10 @@ export function LeadScoreCard({ projectId }: { projectId: string }) {
         </span>
       </div>
       {items.length === 0 ? (
-        <AilaCard>
-          <p className="text-sm text-text-muted text-center py-4">
-            No leads promoted yet. Leads are the investigator&apos;s own
-            conclusions — run an investigation turn to populate this panel.
-          </p>
-        </AilaCard>
+        <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-4">
+          No leads promoted yet. Leads are the investigator&apos;s own
+          conclusions — run an investigation turn to populate this panel.
+        </p></AilaCard>
       ) : (
         <>
           <div className="space-y-1.5">

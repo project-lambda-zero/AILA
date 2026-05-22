@@ -193,11 +193,9 @@ export function BranchTreePage() {
 
   if (!inv) {
     return (
-      <AilaCard className="border-border-danger">
-        <p className="text-sm text-text-danger">
-          Investigation {invId} not found.
-        </p>
-      </AilaCard>
+      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">
+        Investigation {invId} not found.
+      </p></AilaCard>
     );
   }
 
@@ -222,57 +220,51 @@ export function BranchTreePage() {
         </p>
       </div>
 
-      <AilaCard>
-        <div className="flex flex-wrap gap-2">
-          {(
-            ["active", "paused", "merged", "promoted", "abandoned"] as BranchStatus[]
-          ).map((s) => {
-            const n = statusCounts[s] ?? 0;
-            return (
-              <AilaBadge
-                key={s}
-                severity={
-                  s === "active"
-                    ? "low"
-                    : s === "paused"
-                      ? "medium"
-                      : s === "abandoned"
-                        ? "high"
-                        : "info"
-                }
-                size="sm"
-              >
-                {s}:{n}
-              </AilaBadge>
-            );
-          })}
-        </div>
-      </AilaCard>
+      <AilaCard  techBorder glow><div className="flex flex-wrap gap-2">
+        {(
+          ["active", "paused", "merged", "promoted", "abandoned"] as BranchStatus[]
+        ).map((s) => {
+          const n = statusCounts[s] ?? 0;
+          return (
+            <AilaBadge
+              key={s}
+              severity={
+                s === "active"
+                  ? "low"
+                  : s === "paused"
+                    ? "medium"
+                    : s === "abandoned"
+                      ? "high"
+                      : "info"
+              }
+              size="sm"
+            >
+              {s}:{n}
+            </AilaBadge>
+          );
+        })}
+      </div></AilaCard>
 
-      <AilaCard className="p-0 overflow-hidden">
-        <div style={{ width: "100%", height: 600 }}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            fitView
-            nodesDraggable
-            nodesConnectable={false}
-            elementsSelectable
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background gap={20} size={1} color="#1e293b" />
-            <Controls showInteractive={false} />
-          </ReactFlow>
-        </div>
-      </AilaCard>
+      <AilaCard className="p-0 overflow-hidden" techBorder glow><div style={{ width: "100%", height: 600 }}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          fitView
+          nodesDraggable
+          nodesConnectable={false}
+          elementsSelectable
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background gap={20} size={1} color="#1e293b" />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+      </div></AilaCard>
 
       {branches.length === 0 && (
-        <AilaCard>
-          <p className="text-sm text-text-muted text-center py-4">
-            No branches yet. Create the primary branch via the investigation
-            workflow or POST /vr/investigations/{`{id}`}/strategy-branches.
-          </p>
-        </AilaCard>
+        <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-4">
+          No branches yet. Create the primary branch via the investigation
+          workflow or POST /vr/investigations/{`{id}`}/strategy-branches.
+        </p></AilaCard>
       )}
     </div>
   );
