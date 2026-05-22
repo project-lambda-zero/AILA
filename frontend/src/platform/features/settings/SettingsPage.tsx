@@ -56,6 +56,11 @@ type ThemeMeta = {
 };
 
 const THEME_META: Record<Theme, ThemeMeta> = {
+  "midnight-cloud-8": {
+    label: "Midnight Cloud 8",
+    tagline: "Istanbul at dusk. Cream on charcoal, hot-pink halos.",
+    naturalMode: "dark",
+  },
   "frutiger-aero": {
     label: "Frutiger Aero",
     tagline: "Bliss sky + wet glass. 2006 is back.",
