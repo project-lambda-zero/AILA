@@ -4273,6 +4273,214 @@ a:hover {
 
 
 /* =====================================================================
+   MIDNIGHT CLOUD 8 — default theme.
+
+   Source palette: echel0n/midnight-cloud-8-neovim
+   (https://github.com/echel0nn/midnight-cloud-8-neovim).
+
+   Reads as "Istanbul at dusk through a CRT" — warm charcoal base,
+   warm cream foreground (the signature), hot-pink + lavender accents,
+   mint highlights. Distinct from synthwave's pure neon: softer,
+   atmospheric, slightly melancholic.
+
+   Signature elements layered on top of the palette:
+     - Faint horizontal scanlines on body (1px every 3px, opacity 0.04)
+     - Soft pink glow at the bottom of the viewport (the "dusk" cue)
+     - Card top-edge hairline picks up --color-accent (works with the
+       techBorder treatment from the c0f4814 codemod for free)
+     - Buttons: cream-on-charcoal outlined → hot-pink filled on hover
+     - Headings: cream with a barely-there pink text-shadow halo
+   ===================================================================== */
+
+[data-theme="midnight-cloud-8"] {
+  /* Surfaces — warm charcoal lineage. NOT pure black; #121212 reads
+     warm because of the cream text contrast. */
+  --color-base: #121212;
+  --color-surface: #1c1a18;
+  --color-elevated: #26221f;
+  --color-border: #3c3836;
+  --color-border-hover: #ff5f87;
+
+  /* Foreground — the signature warm cream. Reads as parchment over
+     the charcoal, not the neon white most dark themes default to. */
+  --color-text: #ffd7af;
+  --color-text-muted: #af8c6c;
+  --color-text-peach: #f0a8c7;
+
+  /* Accent — hot pink (the source theme's primary). */
+  --color-accent: #ff5f87;
+  --color-accent-muted: #3d1521;
+  --color-accent-deep: #c43b65;
+
+  /* Secondary palette — every colour from the source vim theme. */
+  --color-peach: #f0a8c7;      /* soft pink — types, search */
+  --color-lavender: #af87d7;   /* lilac purple — identifiers */
+  --color-mint: #97dbbe;       /* mint — functions, success */
+
+  /* Severity tokens — mapped to the source palette so they feel
+     native to the theme rather than borrowed from a generic system. */
+  --color-critical: #ff5f87;   /* hot pink — keywords/errors */
+  --color-high: #f0a8c7;       /* soft pink — types */
+  --color-medium: #b092ff;     /* electric lavender — constants */
+  --color-low: #97dbbe;        /* mint — strings */
+  --color-info: #af87d7;       /* lilac — identifiers */
+
+  /* Status — independent of severity. */
+  --status-completed: #97dbbe;
+  --status-running: #b092ff;
+  --status-failed: #ff5f87;
+  --status-queued: #af6767;
+  --status-waiting: #808080;
+  --status-paused: #d7afd7;
+
+  /* Badge text on solid colored backgrounds — charcoal so cream
+     accents never wash out. */
+  --color-badge-text: #121212;
+
+  /* Focus ring — accent at a fixed lightness so it always pops. */
+  --color-focus-ring: #ff5f87;
+  --color-accent-soft: rgba(255, 95, 135, 0.18);
+
+  /* Sidebar uses the elevated charcoal so it sits a hair above the
+     base without competing with the cards. */
+  --sidebar-background: var(--color-elevated);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-accent);
+  --sidebar-primary-foreground: var(--color-badge-text);
+  --sidebar-accent: var(--color-surface);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border);
+  --sidebar-ring: var(--color-focus-ring);
+}
+
+/* Midnight Cloud 8 — atmospheric body: charcoal with subtle horizontal
+   scanlines + a soft pink dusk-glow at the bottom of the viewport. */
+[data-theme="midnight-cloud-8"] body {
+  background: var(--color-base);
+  position: relative;
+}
+[data-theme="midnight-cloud-8"] body::before {
+  /* 1px scanline every 3px — barely visible, sells the CRT vibe
+     without hurting readability. */
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(255, 215, 175, 0.04) 0px,
+    rgba(255, 215, 175, 0.04) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: overlay;
+}
+[data-theme="midnight-cloud-8"] body::after {
+  /* Dusk glow — soft pink wash at the bottom, fading up. */
+  content: "";
+  position: fixed;
+  inset: auto 0 0 0;
+  height: 40vh;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(
+      ellipse 80% 100% at 50% 100%,
+      rgba(255, 95, 135, 0.10) 0%,
+      rgba(240, 168, 199, 0.05) 35%,
+      transparent 70%
+    );
+  opacity: 0.85;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="midnight-cloud-8"] body::before { background-image: none; }
+}
+
+/* Cards — the existing techBorder + glow treatment (from the
+   codemod) already reads --color-accent, so it gets the hot-pink
+   hairline + glow for free. Add a barely-visible 1px inner accent
+   line at the top of every surface for extra signal. */
+[data-theme="midnight-cloud-8"] .bg-surface,
+[data-theme="midnight-cloud-8"] .bg-card,
+[data-theme="midnight-cloud-8"] .bg-elevated {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 215, 175, 0.04),
+    0 1px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* Buttons — cream-on-charcoal outlined, hot-pink filled on hover.
+   Echoes the vim theme's `reverse cterm=reverse` highlight pattern. */
+[data-theme="midnight-cloud-8"] button[type="submit"],
+[data-theme="midnight-cloud-8"] .btn-primary,
+[data-theme="midnight-cloud-8"] button[data-variant="default"],
+[data-theme="midnight-cloud-8"] button.bg-primary {
+  background: transparent !important;
+  color: #ffd7af !important;
+  border: 1px solid #ffd7af !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.02em;
+  transition: all 180ms ease;
+}
+[data-theme="midnight-cloud-8"] button[type="submit"]:hover:not(:disabled),
+[data-theme="midnight-cloud-8"] .btn-primary:hover:not(:disabled),
+[data-theme="midnight-cloud-8"] button[data-variant="default"]:hover:not(:disabled),
+[data-theme="midnight-cloud-8"] button.bg-primary:hover:not(:disabled) {
+  background: #ff5f87 !important;
+  color: #121212 !important;
+  border-color: #ff5f87 !important;
+  box-shadow:
+    0 0 0 1px #ff5f87,
+    0 0 16px rgba(255, 95, 135, 0.35);
+}
+
+/* Headings — cream with a faint pink halo. The halo is the only
+   "neon" cue — kept very subtle so the theme stays atmospheric
+   rather than flashy. */
+[data-theme="midnight-cloud-8"] h1,
+[data-theme="midnight-cloud-8"] h2 {
+  font-family: var(--font-display);
+  color: #ffd7af !important;
+  letter-spacing: -0.005em;
+  text-shadow:
+    0 0 1px rgba(255, 95, 135, 0.45),
+    0 1px 18px rgba(255, 95, 135, 0.12);
+}
+[data-theme="midnight-cloud-8"] h3 {
+  font-family: var(--font-display);
+  color: #f0a8c7 !important;
+  letter-spacing: 0;
+  text-shadow: 0 0 8px rgba(240, 168, 199, 0.18);
+}
+
+/* Links — soft pink, hot pink on hover. Inherits underline from
+   global a rules so nothing else needs to change. */
+[data-theme="midnight-cloud-8"] a:not(.no-theme-link) {
+  color: var(--color-peach);
+  transition: color 120ms ease, text-shadow 120ms ease;
+}
+[data-theme="midnight-cloud-8"] a:not(.no-theme-link):hover {
+  color: var(--color-accent);
+  text-shadow: 0 0 8px rgba(255, 95, 135, 0.55);
+}
+
+/* Login left-panel branding override — pinks against charcoal,
+   keeps the brand identity coherent with the rest of the theme. */
+[data-theme="midnight-cloud-8"] .login-left,
+[data-theme="midnight-cloud-8"] .login-right {
+  background: var(--color-base) !important;
+}
+[data-theme="midnight-cloud-8"] .login-brand__wordmark {
+  color: var(--color-accent);
+  font-family: var(--font-display);
+  text-shadow:
+    0 0 1px rgba(255, 215, 175, 0.4),
+    0 0 20px rgba(255, 95, 135, 0.4);
+}
+
+
+/* =====================================================================
    BASE LAYER (must remain last)
    ===================================================================== */
 
