@@ -120,6 +120,14 @@ export interface AilaBadgeProps
    * set, `severity` is ignored.
    */
   status?: TaskStatus
+  /**
+   * Render a 6px pulse dot inside the badge before the children. Tinted
+   * with `currentColor` so it inherits the severity / status text colour
+   * automatically. Independent of `pulse` (which animates the whole
+   * badge): use `dot` for the pill-with-live-indicator pattern,
+   * `pulse` for the call-attention-now pattern. Both can be set.
+   */
+  dot?: boolean
 }
 
 /**
@@ -142,6 +150,7 @@ function AilaBadge({
   solid,
   pulse = false,
   status,
+  dot = false,
   children,
   ...props
 }: AilaBadgeProps) {
@@ -160,10 +169,17 @@ function AilaBadge({
         }),
         statusClass,
         pulse && "animate-severity-pulse",
+        dot && "gap-1.5",
         className
       )}
       {...props}
     >
+      {dot && (
+        <span
+          aria-hidden
+          className="inline-block size-1.5 rounded-full bg-current animate-pulse"
+        />
+      )}
       {children}
     </span>
   )
