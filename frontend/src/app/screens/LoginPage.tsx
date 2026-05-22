@@ -6,9 +6,10 @@ import { useAuthStore } from "@platform/auth/useAuthStore";
 import { fetchOidcAuthorizeUrl } from "@platform/api/auth";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 
-// Code-split particles to avoid bundling tsparticles on every page
-const LoginParticles = lazy(() =>
-  import("./LoginParticles").then((m) => ({ default: m.LoginParticles })),
+// Code-split terminal background so the ogl bundle isn't pulled into the
+// main chunk for routes that don't need it.
+const LoginFaultyTerminal = lazy(() =>
+  import("./LoginFaultyTerminal").then((m) => ({ default: m.LoginFaultyTerminal })),
 );
 
 /**
@@ -75,7 +76,7 @@ export function LoginPage() {
 
         {!prefersReducedMotion && (
           <Suspense fallback={null}>
-            <LoginParticles />
+            <LoginFaultyTerminal />
           </Suspense>
         )}
 
