@@ -11,6 +11,13 @@ export interface NavContribution {
   order: number;
   description?: string;
   minRole?: AppRole;
+  /**
+   * Optional sidebar icon. Modules can pass any Phosphor icon (or any
+   * React component returning an SVG) to surface an icon next to
+   * their label in the sidebar nav. When omitted, the sidebar
+   * renders the label only — matches the original behaviour.
+   */
+  icon?: ComponentType<{ className?: string; size?: number | string }>;
 }
 
 export interface RouteContribution {

@@ -1,4 +1,5 @@
 import { lazy } from "react";
+import { HandWaving } from "@phosphor-icons/react";
 import type { ModuleFrontendSpec } from "@platform/extension-registry/types";
 
 const HelloWorldPage = lazy(() => import("./HelloWorldPage"));
@@ -13,6 +14,7 @@ export const frontendSpec = {
       to: "/hello_world",
       order: 900,
       description: "Example module",
+      icon: HandWaving,
     },
   ],
   routes: [
