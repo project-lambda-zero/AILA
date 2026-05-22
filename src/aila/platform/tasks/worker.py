@@ -97,10 +97,12 @@ async def reaper(ctx: dict[str, object]) -> None:
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: arq lock reconciliation failed: %s", exc, exc_info=True)
     try:
-        # Cron context: use a 5-minute grace so freshly-claimed tasks
-        # whose first heartbeat is in flight don't get killed. The boot
-        # path keeps the original 30s grace (caller below uses default).
-        await _sweep_orphan_running_tasks(grace_seconds=300)
+        # Cron context: use a 10-minute grace so genuinely long-running
+        # tool calls (audit_mcp cold-path index builds, multi-minute LLM
+        # round-trips) don't get killed before their first heartbeat
+        # lands. Firefox-scale fuzzing_targets cold path on audit_mcp
+        # is ~5 minutes alone. Boot path keeps the 30s default.
+        await _sweep_orphan_running_tasks(grace_seconds=600)
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: orphan running-task sweep failed: %s", exc, exc_info=True)
 
