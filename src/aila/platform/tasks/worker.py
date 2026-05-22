@@ -97,12 +97,18 @@ async def reaper(ctx: dict[str, object]) -> None:
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: arq lock reconciliation failed: %s", exc, exc_info=True)
     try:
-        # Cron context: use a 10-minute grace so genuinely long-running
-        # tool calls (audit_mcp cold-path index builds, multi-minute LLM
-        # round-trips) don't get killed before their first heartbeat
-        # lands. Firefox-scale fuzzing_targets cold path on audit_mcp
-        # is ~5 minutes alone. Boot path keeps the 30s default.
-        await _sweep_orphan_running_tasks(grace_seconds=600)
+        # Cron context: longer grace (10 min) AND skip heartbeat=None tasks.
+        # ARQ doesn't auto-extend the in-progress lock for tasks that don't
+        # call ctx.heartbeat() during a long await — single-shot tool calls
+        # like run_function_ranking (one ~5-min audit_mcp HTTP request) end
+        # up with lock_missing + heartbeat=None mid-flight even though the
+        # worker is still healthily awaiting the response. Killing them
+        # there destroyed the firefox ranking task multiple times today.
+        # Boot path still uses defaults (30s grace, reap_null_heartbeat=True)
+        # because heartbeat=None before boot is unambiguous zombie evidence.
+        await _sweep_orphan_running_tasks(
+            grace_seconds=600, reap_null_heartbeat=False,
+        )
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: orphan running-task sweep failed: %s", exc, exc_info=True)
 
@@ -355,7 +361,10 @@ async def _workflow_cursor_is_resumable(session: Any, task_id: str) -> bool:
     )
 
 
-async def _sweep_orphan_running_tasks(grace_seconds: int = 30) -> None:
+async def _sweep_orphan_running_tasks(
+    grace_seconds: int = 30,
+    reap_null_heartbeat: bool = True,
+) -> None:
     """Reap orphan tasks at startup using the same rules as the cron reaper,
     PLUS a reverse sweep that catches tasks whose ARQ lock was already
     evicted (the lock-iterator sweep misses those because there's no lock
@@ -437,6 +446,18 @@ async def _sweep_orphan_running_tasks(grace_seconds: int = 30) -> None:
                     "lock_missing_or_stale_heartbeat"
                     if lock_exists else "lock_missing"
                 )
+                if not reap_null_heartbeat and hb is None:
+                    # Periodic mode: tasks with heartbeat=None cannot be
+                    # safely judged as zombies. ARQ's lock TTL can expire
+                    # on legitimately long-running tasks that don't call
+                    # ctx.heartbeat() (e.g. single-shot async tool calls
+                    # like run_function_ranking that delegate to a 5-min
+                    # audit_mcp.fuzzing_targets HTTP request). Lock-missing
+                    # in that scenario is normal, not evidence of death.
+                    # Boot-time sweep still catches genuine zombies because
+                    # any heartbeat=None row predating worker boot must be
+                    # orphan by construction.
+                    continue
                 if started is not None and hb is None and started > stale_cutoff:
                     # Task was submitted literally a second ago and hasn't
                     # had time to write its first heartbeat. Don't reap.
