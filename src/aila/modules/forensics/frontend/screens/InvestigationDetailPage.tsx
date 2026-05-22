@@ -266,38 +266,36 @@ function StepCard({ step }: { step: AgentStep }) {
 // ----- Answer candidate card -----
 function AnswerCard({ answer }: { answer: AnswerCandidate }) {
   return (
-    <AilaCard>
-      <div className="space-y-2">
-        <div className="flex items-start justify-between gap-3">
-          <p className="text-sm font-medium text-foreground">{answer.question_text}</p>
-          <AilaBadge
-            severity={CONFIDENCE_SEVERITY[answer.confidence] ?? "info"}
-            size="sm"
-          >
-            {answer.confidence}
-          </AilaBadge>
-        </div>
-        <p className="text-sm text-text-muted">{answer.answer_text}</p>
-        {answer.corroboration.length > 0 && (
-          <div className="flex flex-wrap gap-1 pt-1">
-            <span className="text-xs text-text-muted mr-1">Corroborated by:</span>
-            {answer.corroboration.map((c, i) => (
-              <span
-                key={i}
-                className="px-1.5 py-0.5 text-xs bg-surface-secondary rounded font-mono text-text-muted"
-              >
-                {c}
-              </span>
-            ))}
-          </div>
-        )}
-        {answer.created_at && (
-          <p className="text-xs text-text-muted">
-            {new Date(answer.created_at).toLocaleString()}
-          </p>
-        )}
+    <AilaCard  techBorder glow><div className="space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm font-medium text-foreground">{answer.question_text}</p>
+        <AilaBadge
+          severity={CONFIDENCE_SEVERITY[answer.confidence] ?? "info"}
+          size="sm"
+        >
+          {answer.confidence}
+        </AilaBadge>
       </div>
-    </AilaCard>
+      <p className="text-sm text-text-muted">{answer.answer_text}</p>
+      {answer.corroboration.length > 0 && (
+        <div className="flex flex-wrap gap-1 pt-1">
+          <span className="text-xs text-text-muted mr-1">Corroborated by:</span>
+          {answer.corroboration.map((c, i) => (
+            <span
+              key={i}
+              className="px-1.5 py-0.5 text-xs bg-surface-secondary rounded font-mono text-text-muted"
+            >
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
+      {answer.created_at && (
+        <p className="text-xs text-text-muted">
+          {new Date(answer.created_at).toLocaleString()}
+        </p>
+      )}
+    </div></AilaCard>
   );
 }
 
@@ -418,80 +416,78 @@ function InvestigationControls({
         )}
       </div>
       {tagForm && (
-        <AilaCard className="w-full max-w-md border-border">
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-foreground">
-              Tag as{" "}
-              <span
-                className={
-                  tagForm === "true" ? "text-emerald-400" : "text-amber-400"
-                }
-              >
-                {tagForm === "true" ? "TRUE" : "FALSE"}
-              </span>{" "}
-              finding
-            </p>
-            <p className="text-xs text-text-muted">
-              Saved to the Solid Evidence tab and injected into every future
-              investigation's prompt as a{" "}
-              {tagForm === "true" ? "confirmed fact" : "disproved hypothesis"}.
-            </p>
-            {answerCandidates.length > 1 && (
-              <div className="space-y-1">
-                <label className="text-xs font-mono text-text-muted">
-                  Which answer?
-                </label>
-                <select
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm text-foreground"
-                  value={selectedAnswerId}
-                  onChange={(e) => setSelectedAnswerId(e.target.value)}
-                >
-                  <option value="">(use investigation's final_answer)</option>
-                  {answerCandidates.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      [{a.confidence}] {a.answer_text.slice(0, 80)}
-                      {a.answer_text.length > 80 ? "…" : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+        <AilaCard className="w-full max-w-md border-border" techBorder glow><div className="space-y-2">
+          <p className="text-sm font-medium text-foreground">
+            Tag as{" "}
+            <span
+              className={
+                tagForm === "true" ? "text-emerald-400" : "text-amber-400"
+              }
+            >
+              {tagForm === "true" ? "TRUE" : "FALSE"}
+            </span>{" "}
+            finding
+          </p>
+          <p className="text-xs text-text-muted">
+            Saved to the Solid Evidence tab and injected into every future
+            investigation's prompt as a{" "}
+            {tagForm === "true" ? "confirmed fact" : "disproved hypothesis"}.
+          </p>
+          {answerCandidates.length > 1 && (
             <div className="space-y-1">
               <label className="text-xs font-mono text-text-muted">
-                Notes (optional)
+                Which answer?
               </label>
-              <Textarea
-                rows={2}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Why? Any caveats?"
-                className="text-sm"
-              />
-            </div>
-            <div className="flex gap-2 justify-end pt-1">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setTagForm(null)}
-                disabled={tag.isPending}
+              <select
+                className="w-full bg-surface border border-border rounded px-2 py-1 text-sm text-foreground"
+                value={selectedAnswerId}
+                onChange={(e) => setSelectedAnswerId(e.target.value)}
               >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={submitTag}
-                disabled={tag.isPending}
-                className={
-                  tagForm === "true"
-                    ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                    : "bg-amber-600 hover:bg-amber-700 text-white"
-                }
-              >
-                {tag.isPending ? "Saving…" : "Confirm"}
-              </Button>
+                <option value="">(use investigation's final_answer)</option>
+                {answerCandidates.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    [{a.confidence}] {a.answer_text.slice(0, 80)}
+                    {a.answer_text.length > 80 ? "…" : ""}
+                  </option>
+                ))}
+              </select>
             </div>
+          )}
+          <div className="space-y-1">
+            <label className="text-xs font-mono text-text-muted">
+              Notes (optional)
+            </label>
+            <Textarea
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Why? Any caveats?"
+              className="text-sm"
+            />
           </div>
-        </AilaCard>
+          <div className="flex gap-2 justify-end pt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setTagForm(null)}
+              disabled={tag.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={submitTag}
+              disabled={tag.isPending}
+              className={
+                tagForm === "true"
+                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                  : "bg-amber-600 hover:bg-amber-700 text-white"
+              }
+            >
+              {tag.isPending ? "Saving…" : "Confirm"}
+            </Button>
+          </div>
+        </div></AilaCard>
       )}
     </div>
   );
@@ -527,9 +523,7 @@ export function InvestigationDetailPage() {
 
   if (!projectId || !investigationId) {
     return (
-      <AilaCard className="border-border-danger">
-        <p className="text-sm text-text-danger">Invalid investigation URL.</p>
-      </AilaCard>
+      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Invalid investigation URL.</p></AilaCard>
     );
   }
 
@@ -537,9 +531,7 @@ export function InvestigationDetailPage() {
 
   if (isError || !investigation) {
     return (
-      <AilaCard className="border-border-danger">
-        <p className="text-sm text-text-danger">Failed to load investigation.</p>
-      </AilaCard>
+      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load investigation.</p></AilaCard>
     );
   }
 
@@ -562,32 +554,30 @@ export function InvestigationDetailPage() {
 
       {/* Previous-attempt banner (enriched rerun) */}
       {investigation.parent_investigation_id && (
-        <AilaCard className="border-blue-700/40 bg-blue-950/20">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="space-y-0.5">
-              <p className="text-xs font-mono text-blue-300">
-                ENRICHED RERUN
-              </p>
-              <p className="text-sm text-foreground">
-                This investigation carries findings forward from a prior
-                attempt. Confirmed observables are pre-loaded into the
-                agent's working memory; the prior answer is treated as a
-                hypothesis to verify.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() =>
-                navigate(
-                  `/forensics/projects/${projectId}/investigations/${investigation.parent_investigation_id}`,
-                )
-              }
-              className="text-xs px-2 py-1 rounded border border-blue-600 text-blue-300 hover:bg-blue-700 hover:text-white transition-colors shrink-0"
-            >
-              View parent ({investigation.parent_investigation_id.slice(0, 8)}) →
-            </button>
+        <AilaCard className="border-blue-700/40 bg-blue-950/20" techBorder glow><div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="space-y-0.5">
+            <p className="text-xs font-mono text-blue-300">
+              ENRICHED RERUN
+            </p>
+            <p className="text-sm text-foreground">
+              This investigation carries findings forward from a prior
+              attempt. Confirmed observables are pre-loaded into the
+              agent's working memory; the prior answer is treated as a
+              hypothesis to verify.
+            </p>
           </div>
-        </AilaCard>
+          <button
+            type="button"
+            onClick={() =>
+              navigate(
+                `/forensics/projects/${projectId}/investigations/${investigation.parent_investigation_id}`,
+              )
+            }
+            className="text-xs px-2 py-1 rounded border border-blue-600 text-blue-300 hover:bg-blue-700 hover:text-white transition-colors shrink-0"
+          >
+            View parent ({investigation.parent_investigation_id.slice(0, 8)}) →
+          </button>
+        </div></AilaCard>
       )}
 
       {/* Header */}
@@ -622,14 +612,12 @@ export function InvestigationDetailPage() {
 
       {/* Final answer banner */}
       {investigation.final_answer && (
-        <AilaCard className="border-border-accent bg-accent/5">
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-text-muted uppercase tracking-wide">
-              Final Answer
-            </p>
-            <p className="text-sm text-foreground">{investigation.final_answer}</p>
-          </div>
-        </AilaCard>
+        <AilaCard className="border-border-accent bg-accent/5" techBorder glow><div className="space-y-1">
+          <p className="text-xs font-medium text-text-muted uppercase tracking-wide">
+            Final Answer
+          </p>
+          <p className="text-sm text-foreground">{investigation.final_answer}</p>
+        </div></AilaCard>
       )}
 
       {/* Analyst directives — readable on every turn by AILA */}
@@ -808,11 +796,9 @@ export function InvestigationDetailPage() {
         {activeTab === "steps" && (
           <div className="space-y-3">
             {investigation.steps.length === 0 ? (
-              <AilaCard>
-                <p className="text-sm text-text-muted text-center py-6">
-                  No steps recorded yet.
-                </p>
-              </AilaCard>
+              <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-6">
+                No steps recorded yet.
+              </p></AilaCard>
             ) : (
               investigation.steps
                 .slice()
@@ -826,11 +812,9 @@ export function InvestigationDetailPage() {
           <div className="space-y-3">
             {answersLoading && <LoadingSkeleton size="md" width="full" />}
             {!answersLoading && (answers ?? []).length === 0 && (
-              <AilaCard>
-                <p className="text-sm text-text-muted text-center py-6">
-                  No answer candidates for this investigation yet.
-                </p>
-              </AilaCard>
+              <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-6">
+                No answer candidates for this investigation yet.
+              </p></AilaCard>
             )}
             {(answers ?? []).map((a) => (
               <AnswerCard key={a.id} answer={a} />

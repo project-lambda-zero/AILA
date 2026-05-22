@@ -312,127 +312,125 @@ function FilterForm({
   isFetching,
 }: FilterFormProps) {
   return (
-    <AilaCard variant="elevated" padding="md">
-      <h2 className="font-mono text-sm font-semibold text-text mb-3">
-        Filters
-      </h2>
-      <form
-        className="flex flex-col gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          onApply();
-        }}
-      >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="af-run-id">
-              Run ID
-            </label>
-            <Input
-              id="af-run-id"
-              value={draft.runId}
-              onChange={(e) => onDraftChange({ runId: e.target.value })}
-              placeholder="50b5b278-1b3d-…"
-              className="font-mono text-xs"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="af-stage">
-              Stage
-            </label>
-            <Input
-              id="af-stage"
-              value={draft.stage}
-              onChange={(e) => onDraftChange({ stage: e.target.value })}
-              placeholder="task,report_lookup"
-              className="font-mono text-xs"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="af-action">
-              Action
-            </label>
-            <Input
-              id="af-action"
-              value={draft.action}
-              onChange={(e) => onDraftChange({ action: e.target.value })}
-              placeholder="scan.start"
-              className="font-mono text-xs"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="af-status">
-              Status
-            </label>
-            <Input
-              id="af-status"
-              value={draft.status}
-              onChange={(e) => onDraftChange({ status: e.target.value })}
-              placeholder="completed,failed"
-              className="font-mono text-xs"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="af-user">
-              User ID
-            </label>
-            <Input
-              id="af-user"
-              value={draft.userId}
-              onChange={(e) => onDraftChange({ userId: e.target.value })}
-              placeholder="system"
-              className="font-mono text-xs"
-            />
-          </div>
+    <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-sm font-semibold text-text mb-3">
+      Filters
+    </h2>
+    <form
+      className="flex flex-col gap-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onApply();
+      }}
+    >
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="flex flex-col gap-1">
+          <label className="font-mono text-xs text-text-muted" htmlFor="af-run-id">
+            Run ID
+          </label>
+          <Input
+            id="af-run-id"
+            value={draft.runId}
+            onChange={(e) => onDraftChange({ runId: e.target.value })}
+            placeholder="50b5b278-1b3d-…"
+            className="font-mono text-xs"
+          />
         </div>
-
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="af-since">
-              Since (ISO 8601)
-            </label>
-            <Input
-              id="af-since"
-              type="datetime-local"
-              value={draft.since}
-              onChange={(e) => onDraftChange({ since: e.target.value })}
-              className="font-mono text-xs"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="af-until">
-              Until (ISO 8601)
-            </label>
-            <Input
-              id="af-until"
-              type="datetime-local"
-              value={draft.until}
-              onChange={(e) => onDraftChange({ until: e.target.value })}
-              className="font-mono text-xs"
-            />
-          </div>
+    
+        <div className="flex flex-col gap-1">
+          <label className="font-mono text-xs text-text-muted" htmlFor="af-stage">
+            Stage
+          </label>
+          <Input
+            id="af-stage"
+            value={draft.stage}
+            onChange={(e) => onDraftChange({ stage: e.target.value })}
+            placeholder="task,report_lookup"
+            className="font-mono text-xs"
+          />
         </div>
-
-        <div className="flex gap-2">
-          <Button type="submit" size="sm" disabled={isFetching}>
-            {isFetching ? "Loading…" : "Apply Filters"}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={onClear}
-          >
-            Clear
-          </Button>
+    
+        <div className="flex flex-col gap-1">
+          <label className="font-mono text-xs text-text-muted" htmlFor="af-action">
+            Action
+          </label>
+          <Input
+            id="af-action"
+            value={draft.action}
+            onChange={(e) => onDraftChange({ action: e.target.value })}
+            placeholder="scan.start"
+            className="font-mono text-xs"
+          />
         </div>
-      </form>
-    </AilaCard>
+    
+        <div className="flex flex-col gap-1">
+          <label className="font-mono text-xs text-text-muted" htmlFor="af-status">
+            Status
+          </label>
+          <Input
+            id="af-status"
+            value={draft.status}
+            onChange={(e) => onDraftChange({ status: e.target.value })}
+            placeholder="completed,failed"
+            className="font-mono text-xs"
+          />
+        </div>
+    
+        <div className="flex flex-col gap-1">
+          <label className="font-mono text-xs text-text-muted" htmlFor="af-user">
+            User ID
+          </label>
+          <Input
+            id="af-user"
+            value={draft.userId}
+            onChange={(e) => onDraftChange({ userId: e.target.value })}
+            placeholder="system"
+            className="font-mono text-xs"
+          />
+        </div>
+      </div>
+    
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="flex flex-col gap-1">
+          <label className="font-mono text-xs text-text-muted" htmlFor="af-since">
+            Since (ISO 8601)
+          </label>
+          <Input
+            id="af-since"
+            type="datetime-local"
+            value={draft.since}
+            onChange={(e) => onDraftChange({ since: e.target.value })}
+            className="font-mono text-xs"
+          />
+        </div>
+    
+        <div className="flex flex-col gap-1">
+          <label className="font-mono text-xs text-text-muted" htmlFor="af-until">
+            Until (ISO 8601)
+          </label>
+          <Input
+            id="af-until"
+            type="datetime-local"
+            value={draft.until}
+            onChange={(e) => onDraftChange({ until: e.target.value })}
+            className="font-mono text-xs"
+          />
+        </div>
+      </div>
+    
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" disabled={isFetching}>
+          {isFetching ? "Loading…" : "Apply Filters"}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={onClear}
+        >
+          Clear
+        </Button>
+      </div>
+    </form></AilaCard>
   );
 }
 
@@ -548,41 +546,35 @@ export function AuditLogsPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total Events
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {auditQuery.data?.total ?? "—"}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Matching active filters
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Total Events
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {auditQuery.data?.total ?? "—"}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Matching active filters
+        </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Loaded Events
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {items.length}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            This page (max {SERVER_PAGE_SIZE})
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Loaded Events
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {items.length}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          This page (max {SERVER_PAGE_SIZE})
+        </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Date Range
-          </p>
-          <p className="font-mono text-sm font-semibold text-text mt-1 truncate" title={dateRangeLabel}>
-            {dateRangeLabel}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Active filter range
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Date Range
+        </p>
+        <p className="font-mono text-sm font-semibold text-text mt-1 truncate" title={dateRangeLabel}>
+          {dateRangeLabel}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Active filter range
+        </p></AilaCard>
       </div>
 
       {/* Error banner */}
@@ -595,9 +587,7 @@ export function AuditLogsPage() {
 
       {/* Loading skeleton */}
       {auditQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={8} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={8} /></AilaCard>
       )}
 
       {/* Empty state */}
@@ -652,37 +642,35 @@ export function AuditLogsPage() {
           </p>
 
           {selectedEvent && (
-            <AilaCard variant="elevated" padding="md" className="mt-4 relative">
-              <div className="flex items-start justify-between gap-2 mb-3">
-                <div>
-                  <h3 className="font-mono text-sm font-semibold text-text">
-                    {selectedEvent.stage} · {selectedEvent.action}
-                    <AilaBadge
-                      severity={auditStatusSeverity(selectedEvent.status)}
-                      size="sm"
-                      className="ml-2"
-                    >
-                      {selectedEvent.status}
-                    </AilaBadge>
-                  </h3>
-                  <p className="font-mono text-[10px] text-text-muted mt-1">
-                    {formatTimestamp(selectedEvent.created_at)} · user {selectedEvent.user_id} ·
-                    run {selectedEvent.run_id}
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 w-7 p-0"
-                  onClick={() => setSelectedEvent(null)}
-                  aria-label="Close audit details"
-                >
-                  <XIcon className="h-4 w-4" />
-                </Button>
+            <AilaCard variant="elevated" padding="md" className="mt-4 relative" techBorder glow><div className="flex items-start justify-between gap-2 mb-3">
+              <div>
+                <h3 className="font-mono text-sm font-semibold text-text">
+                  {selectedEvent.stage} · {selectedEvent.action}
+                  <AilaBadge
+                    severity={auditStatusSeverity(selectedEvent.status)}
+                    size="sm"
+                    className="ml-2"
+                  >
+                    {selectedEvent.status}
+                  </AilaBadge>
+                </h3>
+                <p className="font-mono text-[10px] text-text-muted mt-1">
+                  {formatTimestamp(selectedEvent.created_at)} · user {selectedEvent.user_id} ·
+                  run {selectedEvent.run_id}
+                </p>
               </div>
-              <AuditDetailRenderer details={selectedEvent.details} />
-            </AilaCard>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0"
+                onClick={() => setSelectedEvent(null)}
+                aria-label="Close audit details"
+              >
+                <XIcon className="h-4 w-4" />
+              </Button>
+            </div>
+            <AuditDetailRenderer details={selectedEvent.details} /></AilaCard>
           )}
         </div>
       )}

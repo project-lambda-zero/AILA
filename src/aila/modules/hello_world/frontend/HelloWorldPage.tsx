@@ -14,21 +14,19 @@ export default function HelloWorldPage() {
 
   return (
     <PageFrame title="Hello World">
-      <AilaCard>
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-text">Module Status</h2>
-          {isLoading && <p className="text-text-muted">Loading...</p>}
-          {error && <p className="text-critical">Failed to load status</p>}
-          {data && (
-            <div className="flex items-center gap-2">
-              <AilaBadge status="completed">Active</AilaBadge>
-              <span className="text-text-muted">
-                {data.module} reports status: {data.status}
-              </span>
-            </div>
-          )}
-        </div>
-      </AilaCard>
+      <AilaCard  techBorder glow><div className="space-y-4">
+        <h2 className="text-lg font-semibold text-text">Module Status</h2>
+        {isLoading && <p className="text-text-muted">Loading...</p>}
+        {error && <p className="text-critical">Failed to load status</p>}
+        {data && (
+          <div className="flex items-center gap-2">
+            <AilaBadge status="completed">Active</AilaBadge>
+            <span className="text-text-muted">
+              {data.module} reports status: {data.status}
+            </span>
+          </div>
+        )}
+      </div></AilaCard>
     </PageFrame>
   );
 }

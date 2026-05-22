@@ -88,24 +88,22 @@ function relativeTime(isoDate: string): string {
 
 function SessionCardSkeleton() {
   return (
-    <AilaCard variant="default" padding="md">
-      <div
-        className="animate-pulse bg-surface rounded-[var(--radius-md)]"
-        style={{ height: 18, width: "60%", marginBottom: 10 }}
-      />
-      <div
-        className="animate-pulse bg-surface rounded-[var(--radius-md)]"
-        style={{ height: 14, width: "30%", marginBottom: 14 }}
-      />
-      <div
-        className="animate-pulse bg-surface rounded-[var(--radius-md)]"
-        style={{ height: 6, width: "100%", borderRadius: 3, marginBottom: 10 }}
-      />
-      <div
-        className="animate-pulse bg-surface rounded-[var(--radius-md)]"
-        style={{ height: 12, width: "45%" }}
-      />
-    </AilaCard>
+    <AilaCard variant="default" padding="md" techBorder glow><div
+      className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+      style={{ height: 18, width: "60%", marginBottom: 10 }}
+    />
+    <div
+      className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+      style={{ height: 14, width: "30%", marginBottom: 14 }}
+    />
+    <div
+      className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+      style={{ height: 6, width: "100%", borderRadius: 3, marginBottom: 10 }}
+    />
+    <div
+      className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+      style={{ height: 12, width: "45%" }}
+    /></AilaCard>
   );
 }
 
@@ -148,124 +146,122 @@ function SessionCard({
           : "Continue wizard";
 
   return (
-    <AilaCard variant="interactive" padding="none">
-      <button
-        className="block w-full text-left"
-        onClick={handleCardClick}
-        disabled={!firstWizardPath(session.id, firstSectionKey) && !hasResults}
-        type="button"
-        aria-label={`Open ${session.project_name}`}
-      >
-        <div className="flex items-start justify-between gap-3 p-4">
-          <div className="flex flex-col gap-1">
-            <span className="font-sans text-sm font-semibold text-text">{session.project_name}</span>
-            {session.description ? (
-              <p className="text-xs text-text-muted">{session.description}</p>
-            ) : null}
+    <AilaCard variant="interactive" padding="none" techBorder glow><button
+      className="block w-full text-left"
+      onClick={handleCardClick}
+      disabled={!firstWizardPath(session.id, firstSectionKey) && !hasResults}
+      type="button"
+      aria-label={`Open ${session.project_name}`}
+    >
+      <div className="flex items-start justify-between gap-3 p-4">
+        <div className="flex flex-col gap-1">
+          <span className="font-sans text-sm font-semibold text-text">{session.project_name}</span>
+          {session.description ? (
+            <p className="text-xs text-text-muted">{session.description}</p>
+          ) : null}
+        </div>
+        <StatusBadge status={session.status} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 px-4 pb-2 text-xs text-text-muted">
+        <span>{session.requestor_name}</span>
+        {session.business_unit ? (
+          <>
+            <span aria-hidden>·</span>
+            <span>{session.business_unit}</span>
+          </>
+        ) : null}
+        {session.assigned_architect_id && (
+          <>
+            <span aria-hidden>·</span>
+            <span>Architect: {session.assigned_architect_id}</span>
+          </>
+        )}
+        <span aria-hidden>·</span>
+        <span>{relativeTime(session.updated_at)}</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+        <AilaBadge severity={hasReport ? "info" : hasResults ? "medium" : "neutral"} size="sm">
+          {destinationLabel}
+        </AilaBadge>
+        {session.tags.length > 0 ? (
+          <div className="flex gap-1">
+            {session.tags.slice(0, 4).map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center px-2 py-0.5 rounded-[var(--radius-sm)] bg-elevated text-text-muted text-xs"
+              >
+                {tag}
+              </span>
+            ))}
           </div>
-          <StatusBadge status={session.status} />
-        </div>
-        <div className="flex flex-wrap items-center gap-2 px-4 pb-2 text-xs text-text-muted">
-          <span>{session.requestor_name}</span>
-          {session.business_unit ? (
-            <>
-              <span aria-hidden>·</span>
-              <span>{session.business_unit}</span>
-            </>
-          ) : null}
-          {session.assigned_architect_id && (
-            <>
-              <span aria-hidden>·</span>
-              <span>Architect: {session.assigned_architect_id}</span>
-            </>
-          )}
-          <span aria-hidden>·</span>
-          <span>{relativeTime(session.updated_at)}</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
-          <AilaBadge severity={hasReport ? "info" : hasResults ? "medium" : "neutral"} size="sm">
-            {destinationLabel}
-          </AilaBadge>
-          {session.tags.length > 0 ? (
-            <div className="flex gap-1">
-              {session.tags.slice(0, 4).map((tag) => (
-                <span
-                  key={tag}
-                  className="inline-flex items-center px-2 py-0.5 rounded-[var(--radius-sm)] bg-elevated text-text-muted text-xs"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </button>
-
-      {/* Quick action buttons */}
-      <div className="flex flex-wrap gap-2 px-4 pb-3 border-t border-border pt-3">
-        {hasResults && (
-          <Button
-            variant="outline"
-            size="xs"
-            type="button"
-            onClick={() => {
-              const destination = assessmentStatusDestination(session.id, session.status, firstSectionKey);
-              if (destination) {
-                void navigate(destination);
-              }
-            }}
-          >
-            View Results
-          </Button>
-        )}
-        {canReview && (
-          <Button
-            size="xs"
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              void navigate(`/assessments/${encodeURIComponent(session.id)}/review`);
-            }}
-          >
-            Architect Review
-          </Button>
-        )}
-        {hasReport && (
-          <Button
-            variant="outline"
-            size="xs"
-            type="button"
-            onClick={() => void navigate(`/assessments/${encodeURIComponent(session.id)}/report`)}
-          >
-            Report
-          </Button>
-        )}
-        {canSubmitForReview && (
-          <Button
-            size="xs"
-            type="button"
-            disabled={isSubmitting}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSubmitForReview(session.id);
-            }}
-          >
-            Submit for Review
-          </Button>
-        )}
+        ) : null}
+      </div>
+    </button>
+    
+    {/* Quick action buttons */}
+    <div className="flex flex-wrap gap-2 px-4 pb-3 border-t border-border pt-3">
+      {hasResults && (
         <Button
           variant="outline"
           size="xs"
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            void navigate(`/assessments/compare?a=${encodeURIComponent(session.id)}`);
+          onClick={() => {
+            const destination = assessmentStatusDestination(session.id, session.status, firstSectionKey);
+            if (destination) {
+              void navigate(destination);
+            }
           }}
         >
-          Compare
+          View Results
         </Button>
-      </div>
-    </AilaCard>
+      )}
+      {canReview && (
+        <Button
+          size="xs"
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            void navigate(`/assessments/${encodeURIComponent(session.id)}/review`);
+          }}
+        >
+          Architect Review
+        </Button>
+      )}
+      {hasReport && (
+        <Button
+          variant="outline"
+          size="xs"
+          type="button"
+          onClick={() => void navigate(`/assessments/${encodeURIComponent(session.id)}/report`)}
+        >
+          Report
+        </Button>
+      )}
+      {canSubmitForReview && (
+        <Button
+          size="xs"
+          type="button"
+          disabled={isSubmitting}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSubmitForReview(session.id);
+          }}
+        >
+          Submit for Review
+        </Button>
+      )}
+      <Button
+        variant="outline"
+        size="xs"
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          void navigate(`/assessments/compare?a=${encodeURIComponent(session.id)}`);
+        }}
+      >
+        Compare
+      </Button>
+    </div></AilaCard>
   );
 }
 
@@ -483,76 +479,62 @@ export function AssessmentsListPage() {
 
   return (
     <div className="flex flex-col gap-4 p-4">
-      <AilaCard
-        variant="elevated"
-        padding="lg"
-        className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"
-      >
-        <div className="flex flex-col gap-2 flex-1">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">Secure by Design</p>
-          <h1 className="font-display text-2xl text-text">Assessments</h1>
-          <p className="text-sm text-text-muted">
-            Run NFR assessments, review classification outcomes, and move sessions toward architect approval without losing the thread of recent work.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            type="button"
-            onClick={() => void window.location.assign("/assessments/templates")}
-          >
-            Templates
-          </Button>
-          <Button type="button" onClick={() => setShowCreateModal(true)}>
-            New Assessment
-          </Button>
-        </div>
-      </AilaCard>
+      <AilaCard variant="elevated"
+      padding="lg"
+      className="flex flex-col md:flex-row md:items-center md:justify-between gap-4" techBorder glow><div className="flex flex-col gap-2 flex-1">
+        <p className="font-mono text-xs uppercase tracking-wider text-text-muted">Secure by Design</p>
+        <h1 className="font-display text-2xl text-text">Assessments</h1>
+        <p className="text-sm text-text-muted">
+          Run NFR assessments, review classification outcomes, and move sessions toward architect approval without losing the thread of recent work.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          type="button"
+          onClick={() => void window.location.assign("/assessments/templates")}
+        >
+          Templates
+        </Button>
+        <Button type="button" onClick={() => setShowCreateModal(true)}>
+          New Assessment
+        </Button>
+      </div></AilaCard>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs text-text-muted uppercase tracking-wider">Schema</p>
-          <strong className="font-mono text-xl font-bold text-text">v{schemaVersion ?? "—"}</strong>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs text-text-muted uppercase tracking-wider">Sessions</p>
-          <strong className="font-mono text-xl font-bold text-text">{totalSessions}</strong>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs text-text-muted uppercase tracking-wider">Active Work</p>
-          <strong className="font-mono text-xl font-bold text-text">{activeCount}</strong>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs text-text-muted uppercase tracking-wider">Review Queue</p>
-          <strong className="font-mono text-xl font-bold text-text">{reviewCount}</strong>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs text-text-muted uppercase tracking-wider">Schema</p>
+        <strong className="font-mono text-xl font-bold text-text">v{schemaVersion ?? "—"}</strong></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs text-text-muted uppercase tracking-wider">Sessions</p>
+        <strong className="font-mono text-xl font-bold text-text">{totalSessions}</strong></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs text-text-muted uppercase tracking-wider">Active Work</p>
+        <strong className="font-mono text-xl font-bold text-text">{activeCount}</strong></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs text-text-muted uppercase tracking-wider">Review Queue</p>
+        <strong className="font-mono text-xl font-bold text-text">{reviewCount}</strong></AilaCard>
       </div>
 
-      <AilaCard variant="default" padding="md">
-        <div className="flex flex-wrap items-end gap-3">
-          <input
-            className="flex-1 min-w-[12rem] p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
-            type="search"
-            placeholder="Search assessments..."
-            aria-label="Search assessments"
-            value={searchQuery}
-            onChange={handleSearchChange}
-          />
-          <label className="flex flex-col gap-1 text-xs font-medium text-text-muted">
-            Status
-            <select
-              className="p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <option value="all">All statuses</option>
-              {ALL_STATUSES.map((s) => (
-                <option key={s} value={s}>{STATUS_LABELS[s] ?? s}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </AilaCard>
+      <AilaCard variant="default" padding="md" techBorder glow><div className="flex flex-wrap items-end gap-3">
+        <input
+          className="flex-1 min-w-[12rem] p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
+          type="search"
+          placeholder="Search assessments..."
+          aria-label="Search assessments"
+          value={searchQuery}
+          onChange={handleSearchChange}
+        />
+        <label className="flex flex-col gap-1 text-xs font-medium text-text-muted">
+          Status
+          <select
+            className="p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="all">All statuses</option>
+            {ALL_STATUSES.map((s) => (
+              <option key={s} value={s}>{STATUS_LABELS[s] ?? s}</option>
+            ))}
+          </select>
+        </label>
+      </div></AilaCard>
 
       <div className="flex flex-wrap items-end gap-3">
         <input
@@ -589,9 +571,7 @@ export function AssessmentsListPage() {
       )}
 
       {sessionListQuery.isError && (
-        <AilaCard variant="default" padding="md">
-          <p className="text-sm text-critical">Failed to load assessments. Please try again.</p>
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><p className="text-sm text-critical">Failed to load assessments. Please try again.</p></AilaCard>
       )}
 
       {!sessionListQuery.isLoading && !sessionListQuery.isError && sessions.length === 0 && (

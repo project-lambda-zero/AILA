@@ -266,38 +266,30 @@ export function TeamsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Teams
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {teamsQuery.isLoading ? "—" : teams.length}
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Members
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {crossQuery.isLoading ? "—" : totalMembers}
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Systems
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {crossQuery.isLoading ? "—" : totalSystems}
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Workflow runs
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {crossQuery.isLoading ? "—" : totalRuns}
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Teams
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {teamsQuery.isLoading ? "—" : teams.length}
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Members
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {crossQuery.isLoading ? "—" : totalMembers}
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Systems
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {crossQuery.isLoading ? "—" : totalSystems}
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Workflow runs
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {crossQuery.isLoading ? "—" : totalRuns}
+        </p></AilaCard>
       </div>
 
       {teamsQuery.isError && (
@@ -307,9 +299,7 @@ export function TeamsPage() {
       )}
 
       {teamsQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {!teamsQuery.isLoading && !teamsQuery.isError && teams.length === 0 && (

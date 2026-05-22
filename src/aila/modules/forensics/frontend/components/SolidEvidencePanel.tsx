@@ -34,9 +34,7 @@ export function SolidEvidencePanel({ projectId }: Props) {
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (isError) {
     return (
-      <AilaCard className="border-border-danger">
-        <p className="text-sm text-text-danger">Failed to load solid evidence.</p>
-      </AilaCard>
+      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load solid evidence.</p></AilaCard>
     );
   }
 
@@ -44,21 +42,19 @@ export function SolidEvidencePanel({ projectId }: Props) {
 
   if (rows.length === 0) {
     return (
-      <AilaCard>
-        <div className="py-6 text-center space-y-1">
-          <p className="text-sm text-text-muted">
-            No analyst-tagged findings yet.
-          </p>
-          <p className="text-xs text-text-muted">
-            Open a completed investigation and hit{" "}
-            <span className="font-mono text-emerald-400">Tag as TRUE</span> or{" "}
-            <span className="font-mono text-amber-400">Tag as FALSE</span> to
-            promote its answer to solid evidence. Tagged findings are injected
-            into every future investigation's prompt so the agent treats them
-            as ground truth / known dead-ends.
-          </p>
-        </div>
-      </AilaCard>
+      <AilaCard  techBorder glow><div className="py-6 text-center space-y-1">
+        <p className="text-sm text-text-muted">
+          No analyst-tagged findings yet.
+        </p>
+        <p className="text-xs text-text-muted">
+          Open a completed investigation and hit{" "}
+          <span className="font-mono text-emerald-400">Tag as TRUE</span> or{" "}
+          <span className="font-mono text-amber-400">Tag as FALSE</span> to
+          promote its answer to solid evidence. Tagged findings are injected
+          into every future investigation's prompt so the agent treats them
+          as ground truth / known dead-ends.
+        </p>
+      </div></AilaCard>
     );
   }
 

@@ -135,18 +135,14 @@ export function DashboardGrid({
                   )}
 
                   {/* Widget content */}
-                  <AilaCard
-                    padding="none"
-                    className="flex-1 overflow-auto min-h-0"
-                  >
-                    {WidgetComponent ? (
-                      <WidgetComponent />
-                    ) : (
-                      <div className="flex items-center justify-center h-full p-4 text-sm text-muted-foreground">
-                        Widget not available
-                      </div>
-                    )}
-                  </AilaCard>
+                  <AilaCard padding="none"
+                  className="flex-1 overflow-auto min-h-0" techBorder glow>{WidgetComponent ? (
+                    <WidgetComponent />
+                  ) : (
+                    <div className="flex items-center justify-center h-full p-4 text-sm text-muted-foreground">
+                      Widget not available
+                    </div>
+                  )}</AilaCard>
                 </div>
               );
             })}

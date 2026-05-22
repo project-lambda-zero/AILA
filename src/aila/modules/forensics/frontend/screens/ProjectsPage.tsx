@@ -27,46 +27,44 @@ function ProjectCard({
   onDelete: (e: React.MouseEvent) => void;
 }) {
   return (
-    <AilaCard onClick={onClick} className="cursor-pointer hover:ring-1 hover:ring-border-accent transition-shadow relative group">
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold font-mono text-foreground truncate">{project.name}</h3>
-          <div className="flex items-center gap-2">
-            <AilaBadge severity={statusColor[project.status] ?? "info"} size="sm">
-              {project.status}
-            </AilaBadge>
-            <button
-              type="button"
-              onClick={onDelete}
-              title="Delete project"
-              className="p-1 rounded text-text-muted hover:text-text-danger hover:bg-surface-danger/20 transition-colors"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                <path d="M10 11v6M14 11v6" />
-                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-              </svg>
-            </button>
-          </div>
-        </div>
-        {project.description && (
-          <p className="text-sm text-text-muted line-clamp-2">{project.description}</p>
-        )}
-        <div className="flex gap-4 text-xs text-text-muted">
-          <span>{project.evidence_count} evidence</span>
-          <span>{project.artifact_count} artifacts</span>
-          <span>{project.lead_count} leads</span>
-          <span>{project.investigation_count} investigations</span>
-        </div>
-        <div className="flex items-center justify-between text-xs text-text-muted">
-          {project.system_name && <span>Machine: {project.system_name}</span>}
-          {project.created_at && (
-            <span>{new Date(project.created_at).toLocaleDateString()}</span>
-          )}
+    <AilaCard onClick={onClick} className="cursor-pointer hover:ring-1 hover:ring-border-accent transition-shadow relative group" techBorder glow><div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold font-mono text-foreground truncate">{project.name}</h3>
+        <div className="flex items-center gap-2">
+          <AilaBadge severity={statusColor[project.status] ?? "info"} size="sm">
+            {project.status}
+          </AilaBadge>
+          <button
+            type="button"
+            onClick={onDelete}
+            title="Delete project"
+            className="p-1 rounded text-text-muted hover:text-text-danger hover:bg-surface-danger/20 transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              <path d="M10 11v6M14 11v6" />
+              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+            </svg>
+          </button>
         </div>
       </div>
-    </AilaCard>
+      {project.description && (
+        <p className="text-sm text-text-muted line-clamp-2">{project.description}</p>
+      )}
+      <div className="flex gap-4 text-xs text-text-muted">
+        <span>{project.evidence_count} evidence</span>
+        <span>{project.artifact_count} artifacts</span>
+        <span>{project.lead_count} leads</span>
+        <span>{project.investigation_count} investigations</span>
+      </div>
+      <div className="flex items-center justify-between text-xs text-text-muted">
+        {project.system_name && <span>Machine: {project.system_name}</span>}
+        {project.created_at && (
+          <span>{new Date(project.created_at).toLocaleDateString()}</span>
+        )}
+      </div>
+    </div></AilaCard>
   );
 }
 
@@ -159,24 +157,20 @@ export function ProjectsPage() {
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger">
-          <p className="text-sm text-text-danger">Failed to load forensics projects.</p>
-        </AilaCard>
+        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load forensics projects.</p></AilaCard>
       )}
 
       {!isLoading && !isError && projects.length === 0 && (
-        <AilaCard>
-          <div className="text-center py-8">
-            <p className="text-text-muted">No forensics projects yet.</p>
-            <button
-              type="button"
-              onClick={() => navigate("/forensics/projects/new")}
-              className="mt-3 text-sm text-accent hover:underline"
-            >
-              Create your first project
-            </button>
-          </div>
-        </AilaCard>
+        <AilaCard  techBorder glow><div className="text-center py-8">
+          <p className="text-text-muted">No forensics projects yet.</p>
+          <button
+            type="button"
+            onClick={() => navigate("/forensics/projects/new")}
+            className="mt-3 text-sm text-accent hover:underline"
+          >
+            Create your first project
+          </button>
+        </div></AilaCard>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

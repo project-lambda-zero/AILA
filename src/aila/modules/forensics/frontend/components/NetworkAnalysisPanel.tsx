@@ -591,9 +591,7 @@ export function NetworkAnalysisPanel({ projectId }: { projectId: string }) {
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (isError) {
     return (
-      <AilaCard className="border-border-danger">
-        <p className="text-sm text-text-danger">Failed to load network analysis.</p>
-      </AilaCard>
+      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load network analysis.</p></AilaCard>
     );
   }
   if (!analysis) return null;
@@ -613,11 +611,9 @@ export function NetworkAnalysisPanel({ projectId }: { projectId: string }) {
 
   if (!hasAnyData) {
     return (
-      <AilaCard>
-        <p className="text-sm text-text-muted text-center py-8">
-          No network analysis data available. This project may not contain PCAP evidence.
-        </p>
-      </AilaCard>
+      <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-8">
+        No network analysis data available. This project may not contain PCAP evidence.
+      </p></AilaCard>
     );
   }
 

@@ -60,19 +60,17 @@ export function RadarPage() {
   if (isError) {
     return (
       <div className="flex items-center justify-center p-4" style={{ height: "70vh" }}>
-        <AilaCard className="max-w-md w-full">
-          <div className="p-4">
-            <p className="font-mono text-sm text-red-500 font-semibold mb-2">
-              Failed to load network topology
-            </p>
-            <p className="font-mono text-xs text-muted-foreground">
-              {error instanceof Error ? error.message : "Unknown error occurred."}
-            </p>
-            <p className="font-mono text-xs text-muted-foreground mt-2">
-              Ensure you have operator or admin role. The topology endpoint requires operator+ access.
-            </p>
-          </div>
-        </AilaCard>
+        <AilaCard className="max-w-md w-full" techBorder glow><div className="p-4">
+          <p className="font-mono text-sm text-red-500 font-semibold mb-2">
+            Failed to load network topology
+          </p>
+          <p className="font-mono text-xs text-muted-foreground">
+            {error instanceof Error ? error.message : "Unknown error occurred."}
+          </p>
+          <p className="font-mono text-xs text-muted-foreground mt-2">
+            Ensure you have operator or admin role. The topology endpoint requires operator+ access.
+          </p>
+        </div></AilaCard>
       </div>
     );
   }
@@ -81,14 +79,12 @@ export function RadarPage() {
   if (!topology || topology.nodes.length === 0) {
     return (
       <div className="flex items-center justify-center p-4" style={{ height: "70vh" }}>
-        <AilaCard className="max-w-md w-full">
-          <div className="p-4 text-center">
-            <p className="font-mono text-sm font-semibold mb-2">No network data yet</p>
-            <p className="font-mono text-xs text-muted-foreground">
-              No systems have been discovered. Add systems on the Systems page and run a discovery scan.
-            </p>
-          </div>
-        </AilaCard>
+        <AilaCard className="max-w-md w-full" techBorder glow><div className="p-4 text-center">
+          <p className="font-mono text-sm font-semibold mb-2">No network data yet</p>
+          <p className="font-mono text-xs text-muted-foreground">
+            No systems have been discovered. Add systems on the Systems page and run a discovery scan.
+          </p>
+        </div></AilaCard>
       </div>
     );
   }

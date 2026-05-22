@@ -107,66 +107,64 @@ function SessionsSidebar({
         {isCreating ? "Creating…" : "New chat"}
       </Button>
 
-      <AilaCard variant="default" padding="none" className="flex flex-col">
-        <div className="border-b border-border px-3 py-2">
-          <h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted">
-            Conversations
-          </h2>
+      <AilaCard variant="default" padding="none" className="flex flex-col" techBorder glow><div className="border-b border-border px-3 py-2">
+        <h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted">
+          Conversations
+        </h2>
+      </div>
+      {isLoading ? (
+        <div className="p-3">
+          <LoadingSkeletonGroup lines={4} />
         </div>
-        {isLoading ? (
-          <div className="p-3">
-            <LoadingSkeletonGroup lines={4} />
-          </div>
-        ) : sessions.length === 0 ? (
-          <p className="px-3 py-4 font-mono text-xs text-text-muted">
-            No conversations yet. Start a new chat to ask the platform a question.
-          </p>
-        ) : (
-          <ul className="flex flex-col max-h-[60vh] overflow-y-auto">
-            {sessions.map((session) => {
-              const active = session.session_id === selectedId;
-              return (
-                <li key={session.session_id}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={active}
-                    data-testid="chat-session-row"
-                    data-session-id={session.session_id}
-                    onClick={() => onSelect(session.session_id)}
-                    className={`w-full text-left flex flex-col gap-1 border-b border-border px-3 py-2 transition-colors hover:bg-elevated focus:outline focus:outline-2 focus:outline-accent ${
-                      active ? "bg-accent/5" : ""
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-xs font-semibold text-text truncate">
-                        {session.title || "Untitled"}
-                      </span>
-                      <span className="font-mono text-[10px] text-text-muted shrink-0">
-                        {shortTimestamp(session.last_message_at ?? session.created_at)}
-                      </span>
-                    </div>
-                    {session.last_message_preview ? (
-                      <span className="font-mono text-[11px] text-text-muted line-clamp-2">
-                        {session.last_message_preview}
-                      </span>
-                    ) : (
-                      <span className="font-mono text-[11px] text-text-muted italic">
-                        No messages yet
-                      </span>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <AilaBadge severity="neutral" size="sm">
-                        {session.message_count} msg
-                      </AilaBadge>
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </AilaCard>
+      ) : sessions.length === 0 ? (
+        <p className="px-3 py-4 font-mono text-xs text-text-muted">
+          No conversations yet. Start a new chat to ask the platform a question.
+        </p>
+      ) : (
+        <ul className="flex flex-col max-h-[60vh] overflow-y-auto">
+          {sessions.map((session) => {
+            const active = session.session_id === selectedId;
+            return (
+              <li key={session.session_id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  data-testid="chat-session-row"
+                  data-session-id={session.session_id}
+                  onClick={() => onSelect(session.session_id)}
+                  className={`w-full text-left flex flex-col gap-1 border-b border-border px-3 py-2 transition-colors hover:bg-elevated focus:outline focus:outline-2 focus:outline-accent ${
+                    active ? "bg-accent/5" : ""
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs font-semibold text-text truncate">
+                      {session.title || "Untitled"}
+                    </span>
+                    <span className="font-mono text-[10px] text-text-muted shrink-0">
+                      {shortTimestamp(session.last_message_at ?? session.created_at)}
+                    </span>
+                  </div>
+                  {session.last_message_preview ? (
+                    <span className="font-mono text-[11px] text-text-muted line-clamp-2">
+                      {session.last_message_preview}
+                    </span>
+                  ) : (
+                    <span className="font-mono text-[11px] text-text-muted italic">
+                      No messages yet
+                    </span>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <AilaBadge severity="neutral" size="sm">
+                      {session.message_count} msg
+                    </AilaBadge>
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}</AilaCard>
     </aside>
   );
 }
@@ -321,9 +319,7 @@ function ThreadPanel({
   if (messagesQuery.isLoading) {
     return (
       <div className="flex-1 min-w-0">
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       </div>
     );
   }
@@ -331,19 +327,17 @@ function ThreadPanel({
   if (messagesQuery.isError) {
     return (
       <div className="flex-1 min-w-0">
-        <AilaCard variant="default" padding="md">
-          <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-            <div className="flex items-center gap-2 font-semibold">
-              <Warning size={14} weight="bold" />
-              {describeError(messagesQuery.error)}
-            </div>
-            {describeErrorHint(messagesQuery.error) && (
-              <p className="mt-1 text-text-muted">
-                {describeErrorHint(messagesQuery.error)}
-              </p>
-            )}
+        <AilaCard variant="default" padding="md" techBorder glow><div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+          <div className="flex items-center gap-2 font-semibold">
+            <Warning size={14} weight="bold" />
+            {describeError(messagesQuery.error)}
           </div>
-        </AilaCard>
+          {describeErrorHint(messagesQuery.error) && (
+            <p className="mt-1 text-text-muted">
+              {describeErrorHint(messagesQuery.error)}
+            </p>
+          )}
+        </div></AilaCard>
       </div>
     );
   }

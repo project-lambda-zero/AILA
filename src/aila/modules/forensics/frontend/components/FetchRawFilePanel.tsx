@@ -42,55 +42,53 @@ export function FetchRawFilePanel({ projectId, compact = false }: Props) {
   const heading = compact ? "Fetch Raw File" : "Fetch File from Raw Directory";
 
   return (
-    <AilaCard>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-foreground">{heading}</h3>
-        <span className="text-xs text-text-muted">
-          {items.length} file{items.length === 1 ? "" : "s"} catalogued
-        </span>
-      </div>
-
-      <form onSubmit={onSubmit} className="space-y-2">
-        <select
-          value={evidenceId}
-          onChange={(e) => setEvidenceId(e.target.value)}
-          disabled={fetchMut.isPending || items.length === 0}
-          className="w-full text-xs border border-border rounded px-2 py-1 bg-background font-mono"
-        >
-          <option value="">
-            {items.length === 0 ? "— no files catalogued —" : "— pick a file or directory —"}
+    <AilaCard  techBorder glow><div className="flex items-center justify-between mb-3">
+      <h3 className="text-sm font-semibold text-foreground">{heading}</h3>
+      <span className="text-xs text-text-muted">
+        {items.length} file{items.length === 1 ? "" : "s"} catalogued
+      </span>
+    </div>
+    
+    <form onSubmit={onSubmit} className="space-y-2">
+      <select
+        value={evidenceId}
+        onChange={(e) => setEvidenceId(e.target.value)}
+        disabled={fetchMut.isPending || items.length === 0}
+        className="w-full text-xs border border-border rounded px-2 py-1 bg-background font-mono"
+      >
+        <option value="">
+          {items.length === 0 ? "— no files catalogued —" : "— pick a file or directory —"}
+        </option>
+        {items.map((f) => (
+          <option key={f.id} value={f.id}>
+            {f.file_path} [{f.evidence_type}]
+            {f.size_bytes != null ? ` (${f.size_bytes} B)` : ""}
           </option>
-          {items.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.file_path} [{f.evidence_type}]
-              {f.size_bytes != null ? ` (${f.size_bytes} B)` : ""}
-            </option>
-          ))}
-        </select>
-
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[11px] text-text-muted">
-            Directories are zipped on the analyzer and shipped as
-            <code className="font-mono mx-1">&lt;name&gt;.zip</code>.
-            {selected ? ` Selected: ${selected.evidence_type}.` : ""}
-          </p>
-          <Button type="submit" size="sm" disabled={!canSubmit}>
-            {fetchMut.isPending ? "Fetching…" : "Fetch"}
-          </Button>
-        </div>
-      </form>
-
-      {evidenceQ.isError && (
-        <p className="text-xs text-status-critical mt-2">
-          Failed to load evidence list.
+        ))}
+      </select>
+    
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-text-muted">
+          Directories are zipped on the analyzer and shipped as
+          <code className="font-mono mx-1">&lt;name&gt;.zip</code>.
+          {selected ? ` Selected: ${selected.evidence_type}.` : ""}
         </p>
-      )}
-      {!evidenceQ.isLoading && items.length === 0 && (
-        <p className="text-xs text-text-muted mt-2">
-          No files catalogued yet — wait for intake to complete or
-          re-run readiness.
-        </p>
-      )}
-    </AilaCard>
+        <Button type="submit" size="sm" disabled={!canSubmit}>
+          {fetchMut.isPending ? "Fetching…" : "Fetch"}
+        </Button>
+      </div>
+    </form>
+    
+    {evidenceQ.isError && (
+      <p className="text-xs text-status-critical mt-2">
+        Failed to load evidence list.
+      </p>
+    )}
+    {!evidenceQ.isLoading && items.length === 0 && (
+      <p className="text-xs text-text-muted mt-2">
+        No files catalogued yet — wait for intake to complete or
+        re-run readiness.
+      </p>
+    )}</AilaCard>
   );
 }

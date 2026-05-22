@@ -113,65 +113,63 @@ function ScanForm({ queryText, targetsText, onQueryChange, onTargetsChange, onCl
   }
 
   return (
-    <AilaCard variant="elevated" padding="md">
-      <div className="flex items-center gap-2 mb-4">
-        <h2 className="font-mono text-sm font-semibold text-text">Launch a Scan</h2>
-        <HelpTip
-          title="Vulnerability Scan"
-          description="Scans the target system for installed packages with known CVEs using NVD and GHSA advisory databases."
+    <AilaCard variant="elevated" padding="md" techBorder glow><div className="flex items-center gap-2 mb-4">
+      <h2 className="font-mono text-sm font-semibold text-text">Launch a Scan</h2>
+      <HelpTip
+        title="Vulnerability Scan"
+        description="Scans the target system for installed packages with known CVEs using NVD and GHSA advisory databases."
+      />
+    </div>
+    
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <label className="font-mono text-xs text-text-muted" htmlFor="scan-query">
+          Scan query *
+        </label>
+        <Input
+          id="scan-query"
+          value={queryText}
+          onChange={(e) => onQueryChange(e.target.value)}
+          placeholder="give me a full vulnerability scan of arch-vm"
+          required
         />
       </div>
-
-      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <label className="font-mono text-xs text-text-muted" htmlFor="scan-query">
-            Scan query *
-          </label>
-          <Input
-            id="scan-query"
-            value={queryText}
-            onChange={(e) => onQueryChange(e.target.value)}
-            placeholder="give me a full vulnerability scan of arch-vm"
-            required
-          />
+    
+      <div className="flex flex-col gap-1">
+        <label className="font-mono text-xs text-text-muted" htmlFor="scan-targets">
+          Targets
+        </label>
+        <Input
+          id="scan-targets"
+          value={targetsText}
+          onChange={(e) => onTargetsChange(e.target.value)}
+          placeholder="arch-vm, ubuntu-vm"
+        />
+        <p className="font-mono text-xs text-text-muted">
+          Comma-separated hostnames or IPs. Leave blank for agent-resolved targets.
+        </p>
+      </div>
+    
+      {submitScan.isError && (
+        <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+          {(submitScan.error as Error).message}
         </div>
-
-        <div className="flex flex-col gap-1">
-          <label className="font-mono text-xs text-text-muted" htmlFor="scan-targets">
-            Targets
-          </label>
-          <Input
-            id="scan-targets"
-            value={targetsText}
-            onChange={(e) => onTargetsChange(e.target.value)}
-            placeholder="arch-vm, ubuntu-vm"
-          />
-          <p className="font-mono text-xs text-text-muted">
-            Comma-separated hostnames or IPs. Leave blank for agent-resolved targets.
-          </p>
+      )}
+      {submitScan.data && (
+        <div className="rounded-[2px] border border-accent/30 bg-accent/10 px-3 py-2 font-mono text-xs text-accent">
+          Scan submitted — run {submitScan.data.run_id}
         </div>
-
-        {submitScan.isError && (
-          <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-            {(submitScan.error as Error).message}
-          </div>
-        )}
-        {submitScan.data && (
-          <div className="rounded-[2px] border border-accent/30 bg-accent/10 px-3 py-2 font-mono text-xs text-accent">
-            Scan submitted — run {submitScan.data.run_id}
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          <Button type="submit" size="sm" disabled={submitScan.isPending || !queryText.trim()}>
-            {submitScan.isPending ? "Submitting..." : "Submit Scan"}
-          </Button>
-          <Button type="button" size="sm" variant="outline" onClick={onClear}>
-            Clear
-          </Button>
-        </div>
-      </form>
-    </AilaCard>
+      )}
+    
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" disabled={submitScan.isPending || !queryText.trim()}>
+          {submitScan.isPending ? "Submitting..." : "Submit Scan"}
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={onClear}>
+          Clear
+        </Button>
+      </div>
+    </form></AilaCard>
   );
 }
 
@@ -197,17 +195,15 @@ function RunDetailPanel({ runId }: { runId: string }) {
 
   if (!runId) {
     return (
-      <AilaCard variant="default" padding="md">
-        <p className="font-mono text-xs text-text-muted">
-          Select a run row to inspect its live state and progress stream.
-        </p>
-      </AilaCard>
+      <AilaCard variant="default" padding="md" techBorder glow><p className="font-mono text-xs text-text-muted">
+        Select a run row to inspect its live state and progress stream.
+      </p></AilaCard>
     );
   }
 
   const isLoading = taskDetailQuery.isLoading || scanStatusQuery.isLoading;
   if (isLoading) {
-    return <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={5} /></AilaCard>;
+    return <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={5} /></AilaCard>;
   }
 
   const task = taskDetailQuery.data;
@@ -216,113 +212,109 @@ function RunDetailPanel({ runId }: { runId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <AilaCard variant="elevated" padding="md">
-        <h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">
-          Selected Run
-        </h2>
-
-        {task ? (
-          <div className="flex flex-col gap-2">
-            {[
-              { label: "Status", value: <AilaBadge severity={statusSeverity(task.status)} size="sm">{task.status}</AilaBadge> },
-              { label: "Track", value: task.track },
-              { label: "Created", value: formatTimestamp(task.created_at) },
-              { label: "Started", value: formatTimestamp(task.started_at) },
-              { label: "Completed", value: formatTimestamp(task.completed_at) },
-            ].map(({ label, value }) => (
-              <div key={label} className="flex items-start justify-between gap-2 border-b border-border pb-1.5 last:border-0">
-                <span className="font-mono text-xs text-text-muted shrink-0">{label}</span>
-                <span className="font-mono text-xs text-text text-right">{value}</span>
-              </div>
-            ))}
-
-            {task.error && (
-              <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-                {task.error}
-              </div>
-            )}
-
-            <div className="flex flex-wrap gap-2 pt-1">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!canCancel || cancelTask.isPending}
-                onClick={() => cancelTask.mutate()}
-              >
-                {cancelTask.isPending ? "Cancelling..." : "Cancel"}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!canResume || resumeTask.isPending}
-                onClick={() => resumeTask.mutate()}
-              >
-                {resumeTask.isPending ? "Resuming..." : "Resume"}
-              </Button>
-              {scanStatusQuery.data?.status === "done" && (
-                <Link
-                  to={`/vulnerability/reports/${encodeURIComponent(runId)}`}
-                  className="inline-flex h-7 items-center gap-1 rounded-[min(var(--radius-md),12px)] bg-primary px-2.5 text-[0.8rem] font-medium text-primary-foreground transition-all hover:bg-primary/80"
-                >
-                  Open Report
-                </Link>
-              )}
+      <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">
+        Selected Run
+      </h2>
+      
+      {task ? (
+        <div className="flex flex-col gap-2">
+          {[
+            { label: "Status", value: <AilaBadge severity={statusSeverity(task.status)} size="sm">{task.status}</AilaBadge> },
+            { label: "Track", value: task.track },
+            { label: "Created", value: formatTimestamp(task.created_at) },
+            { label: "Started", value: formatTimestamp(task.started_at) },
+            { label: "Completed", value: formatTimestamp(task.completed_at) },
+          ].map(({ label, value }) => (
+            <div key={label} className="flex items-start justify-between gap-2 border-b border-border pb-1.5 last:border-0">
+              <span className="font-mono text-xs text-text-muted shrink-0">{label}</span>
+              <span className="font-mono text-xs text-text text-right">{value}</span>
             </div>
+          ))}
+      
+          {task.error && (
+            <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+              {task.error}
+            </div>
+          )}
+      
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!canCancel || cancelTask.isPending}
+              onClick={() => cancelTask.mutate()}
+            >
+              {cancelTask.isPending ? "Cancelling..." : "Cancel"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!canResume || resumeTask.isPending}
+              onClick={() => resumeTask.mutate()}
+            >
+              {resumeTask.isPending ? "Resuming..." : "Resume"}
+            </Button>
+            {scanStatusQuery.data?.status === "done" && (
+              <Link
+                to={`/vulnerability/reports/${encodeURIComponent(runId)}`}
+                className="inline-flex h-7 items-center gap-1 rounded-[min(var(--radius-md),12px)] bg-primary px-2.5 text-[0.8rem] font-medium text-primary-foreground transition-all hover:bg-primary/80"
+              >
+                Open Report
+              </Link>
+            )}
           </div>
-        ) : (
-          <p className="font-mono text-xs text-text-muted">
-            Run detail not found. The run may have been deleted or never existed.
-          </p>
-        )}
-      </AilaCard>
+        </div>
+      ) : (
+        <p className="font-mono text-xs text-text-muted">
+          Run detail not found. The run may have been deleted or never existed.
+        </p>
+      )}</AilaCard>
 
       {/* Live event stream */}
-      <AilaCard variant="default" padding="md">
-        <h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">
-          Live Progress
-        </h2>
-
-        {scanEvents.status === "connecting" && (
-          <p className="font-mono text-xs text-text-muted">Connecting to stream…</p>
-        )}
-        {scanEvents.status === "unavailable" && (
-          <p className="font-mono text-xs text-text-muted">
-            Redis streaming unavailable. Polling reflects run status.
-          </p>
-        )}
-        {scanEvents.status === "error" && (
-          <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-            {scanEvents.error}
-          </div>
-        )}
-        {liveEvents.length === 0 && scanEvents.status === "closed" && (
-          <p className="font-mono text-xs text-text-muted">
-            Stream closed without delivering progress events.
-          </p>
-        )}
-        {liveEvents.length > 0 && (
-          <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
-            {liveEvents.map((event, index) => (
-              <div
-                key={`${event.timestamp ?? "event"}-${index}`}
-                className="border-l-2 border-accent/40 pl-3 py-0.5"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs font-semibold text-text">
-                    {event.stage ?? "event"}
-                  </span>
-                  <span className="font-mono text-xs text-text-muted">
-                    {typeof event.percent === "number" ? `${event.percent}%` : ""}
-                  </span>
-                </div>
-                <p className="font-mono text-xs text-text-muted mt-0.5">
-                  {event.message ?? "No message."}
-                </p>
+      <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">
+        Live Progress
+      </h2>
+      
+      {scanEvents.status === "connecting" && (
+        <p className="font-mono text-xs text-text-muted">Connecting to stream…</p>
+      )}
+      {scanEvents.status === "unavailable" && (
+        <p className="font-mono text-xs text-text-muted">
+          Redis streaming unavailable. Polling reflects run status.
+        </p>
+      )}
+      {scanEvents.status === "error" && (
+        <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+          {scanEvents.error}
+        </div>
+      )}
+      {liveEvents.length === 0 && scanEvents.status === "closed" && (
+        <p className="font-mono text-xs text-text-muted">
+          Stream closed without delivering progress events.
+        </p>
+      )}
+      {liveEvents.length > 0 && (
+        <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
+          {liveEvents.map((event, index) => (
+            <div
+              key={`${event.timestamp ?? "event"}-${index}`}
+              className="border-l-2 border-accent/40 pl-3 py-0.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-xs font-semibold text-text">
+                  {event.stage ?? "event"}
+                </span>
+                <span className="font-mono text-xs text-text-muted">
+                  {typeof event.percent === "number" ? `${event.percent}%` : ""}
+                </span>
               </div>
-            ))}
-          </div>
-        )}
-      </AilaCard>
+              <p className="font-mono text-xs text-text-muted mt-0.5">
+                {event.message ?? "No message."}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}</AilaCard>
     </div>
   );
 
@@ -381,136 +373,134 @@ export function ScanCenterPage() {
           </div>
 
           {/* Task list */}
-          <AilaCard variant="default" padding="md">
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h2 className="font-mono text-sm font-semibold text-text">Recent Runs</h2>
-                <div className="flex flex-wrap gap-1.5">
-                  {STATUS_FILTERS.map((status) => (
-                    <button
-                      key={status}
-                      type="button"
-                      onClick={() =>
-                        setSearchParams(
-                          updateSearchParams(searchParams, {
-                            status: statusFilter === status ? null : status,
-                          }),
-                        )
-                      }
-                      className="cursor-pointer"
+          <AilaCard variant="default" padding="md" techBorder glow><div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="font-mono text-sm font-semibold text-text">Recent Runs</h2>
+              <div className="flex flex-wrap gap-1.5">
+                {STATUS_FILTERS.map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    onClick={() =>
+                      setSearchParams(
+                        updateSearchParams(searchParams, {
+                          status: statusFilter === status ? null : status,
+                        }),
+                      )
+                    }
+                    className="cursor-pointer"
+                  >
+                    <AilaBadge
+                      severity={statusFilter === status ? statusSeverity(status) : "neutral"}
+                      size="sm"
+                      solid={statusFilter === status}
                     >
-                      <AilaBadge
-                        severity={statusFilter === status ? statusSeverity(status) : "neutral"}
-                        size="sm"
-                        solid={statusFilter === status}
-                      >
-                        {status}
-                      </AilaBadge>
-                    </button>
-                  ))}
-                  {statusFilter && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSearchParams(updateSearchParams(searchParams, { status: null }))
-                      }
-                      className="font-mono text-xs text-text-muted hover:text-text transition-colors"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
+                      {status}
+                    </AilaBadge>
+                  </button>
+                ))}
+                {statusFilter && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSearchParams(updateSearchParams(searchParams, { status: null }))
+                    }
+                    className="font-mono text-xs text-text-muted hover:text-text transition-colors"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
-
-              {tasksQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
-
-              {tasksQuery.isError && (
-                <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-                  {(tasksQuery.error as Error).message}
-                </div>
-              )}
-
-              {!tasksQuery.isLoading && tasks.length === 0 && (
-                <EmptyState
-                  icon={<Play size={32} />}
-                  title="No scans yet"
-                  description="Submit a scan above to start discovering vulnerabilities."
-                  action={{ label: "Submit a Scan", onClick: focusScanForm }}
-                />
-              )}
-
-              {tasks.length > 0 && (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-border">
-                        <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Run ID</th>
-                        <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Status</th>
-                        <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden sm:table-cell">Created</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tasks.map((task) => {
-                        const activate = (event: React.SyntheticEvent) => {
-                          const target = event.target as HTMLElement | null;
-                          const row = event.currentTarget as HTMLElement;
-                          if (target) {
-                            const hit = target.closest(
-                              'button, a, input, select, textarea, [role="button"], .no-row-click',
-                            ) as HTMLElement | null;
-                            if (hit && hit !== row && row.contains(hit)) {
-                              return;
-                            }
-                          }
-                          // D-04 + D-14: navigate to /console/:runId, keep selection param for panel.
-                          navigate(`/console/${encodeURIComponent(task.task_id)}`);
-                          setSearchParams(updateSearchParams(searchParams, { run: task.task_id }));
-                        };
-                        const token = statusToken(task.status);
-                        return (
-                          <tr
-                            key={task.task_id}
-                            role="button"
-                            tabIndex={0}
-                            data-testid="scan-row"
-                            data-task-id={task.task_id}
-                            className={`border-b border-border font-mono text-xs transition-colors cursor-pointer hover:bg-elevated focus:outline focus:outline-2 focus:outline-accent ${
-                              task.task_id === selectedRunId ? "bg-accent/5" : ""
-                            }`}
-                            onClick={activate}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                if (event.key === " ") event.preventDefault();
-                                activate(event);
-                              }
-                            }}
-                          >
-                            <td className="py-2 px-3 text-text-muted">
-                              {task.task_id.slice(0, 8)}…
-                            </td>
-                            <td className="py-2 px-3">
-                              {token ? (
-                                <AilaBadge status={token} size="sm">
-                                  {task.status}
-                                </AilaBadge>
-                              ) : (
-                                <AilaBadge severity={statusSeverity(task.status)} size="sm">
-                                  {task.status}
-                                </AilaBadge>
-                              )}
-                            </td>
-                            <td className="py-2 px-3 text-text-muted hidden sm:table-cell">
-                              {formatTimestamp(task.created_at)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
             </div>
-          </AilaCard>
+          
+            {tasksQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
+          
+            {tasksQuery.isError && (
+              <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+                {(tasksQuery.error as Error).message}
+              </div>
+            )}
+          
+            {!tasksQuery.isLoading && tasks.length === 0 && (
+              <EmptyState
+                icon={<Play size={32} />}
+                title="No scans yet"
+                description="Submit a scan above to start discovering vulnerabilities."
+                action={{ label: "Submit a Scan", onClick: focusScanForm }}
+              />
+            )}
+          
+            {tasks.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Run ID</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Status</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden sm:table-cell">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tasks.map((task) => {
+                      const activate = (event: React.SyntheticEvent) => {
+                        const target = event.target as HTMLElement | null;
+                        const row = event.currentTarget as HTMLElement;
+                        if (target) {
+                          const hit = target.closest(
+                            'button, a, input, select, textarea, [role="button"], .no-row-click',
+                          ) as HTMLElement | null;
+                          if (hit && hit !== row && row.contains(hit)) {
+                            return;
+                          }
+                        }
+                        // D-04 + D-14: navigate to /console/:runId, keep selection param for panel.
+                        navigate(`/console/${encodeURIComponent(task.task_id)}`);
+                        setSearchParams(updateSearchParams(searchParams, { run: task.task_id }));
+                      };
+                      const token = statusToken(task.status);
+                      return (
+                        <tr
+                          key={task.task_id}
+                          role="button"
+                          tabIndex={0}
+                          data-testid="scan-row"
+                          data-task-id={task.task_id}
+                          className={`border-b border-border font-mono text-xs transition-colors cursor-pointer hover:bg-elevated focus:outline focus:outline-2 focus:outline-accent ${
+                            task.task_id === selectedRunId ? "bg-accent/5" : ""
+                          }`}
+                          onClick={activate}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              if (event.key === " ") event.preventDefault();
+                              activate(event);
+                            }
+                          }}
+                        >
+                          <td className="py-2 px-3 text-text-muted">
+                            {task.task_id.slice(0, 8)}…
+                          </td>
+                          <td className="py-2 px-3">
+                            {token ? (
+                              <AilaBadge status={token} size="sm">
+                                {task.status}
+                              </AilaBadge>
+                            ) : (
+                              <AilaBadge severity={statusSeverity(task.status)} size="sm">
+                                {task.status}
+                              </AilaBadge>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-text-muted hidden sm:table-cell">
+                            {formatTimestamp(task.created_at)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div></AilaCard>
         </div>
 
         {/* Right: run detail panel */}

@@ -158,128 +158,126 @@ export function ReadinessStreamPanel({
   const startEvent = events.find((e) => e.stage === "start");
 
   return (
-    <AilaCard>
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3 className="text-sm font-semibold font-mono text-foreground">Machine Readiness Check</h3>
-          {startEvent?.message && (
-            <p className="text-xs text-text-muted mt-0.5">{startEvent.message}</p>
-          )}
-        </div>
-        <div className="flex gap-2">
-          {result && (
-            <button
-              type="button"
-              onClick={reset}
-              className="px-3 py-1.5 text-xs rounded-md border border-border text-text-muted hover:text-foreground"
-            >
-              Reset
-            </button>
-          )}
+    <AilaCard  techBorder glow><div className="flex items-center justify-between mb-4">
+      <div>
+        <h3 className="text-sm font-semibold font-mono text-foreground">Machine Readiness Check</h3>
+        {startEvent?.message && (
+          <p className="text-xs text-text-muted mt-0.5">{startEvent.message}</p>
+        )}
+      </div>
+      <div className="flex gap-2">
+        {result && (
           <button
             type="button"
-            onClick={start}
-            disabled={running}
-            className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            onClick={reset}
+            className="px-3 py-1.5 text-xs rounded-md border border-border text-text-muted hover:text-foreground"
           >
-            {running && <span className="inline-block w-2 h-2 rounded-full bg-white/70 animate-pulse" />}
-            {running ? "Running..." : result ? "Re-run Check" : "Run Check"}
+            Reset
           </button>
-        </div>
+        )}
+        <button
+          type="button"
+          onClick={start}
+          disabled={running}
+          className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+        >
+          {running && <span className="inline-block w-2 h-2 rounded-full bg-white/70 animate-pulse" />}
+          {running ? "Running..." : result ? "Re-run Check" : "Run Check"}
+        </button>
       </div>
-
-      {currentAction && (
-        <div className="mb-3 px-3 py-2 rounded-md bg-surface-secondary border border-border text-xs text-text-muted font-mono flex items-center gap-2">
-          <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-          {currentAction.message}
-        </div>
-      )}
-
-      {toolEvents.length > 0 && (
-        <div className="space-y-1 max-h-96 overflow-y-auto">
-          {toolEvents.map((e, i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between px-3 py-1.5 rounded text-xs font-mono hover:bg-surface-secondary"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <span className={TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}>
-                  {e.status === "installed" ? "✓" : e.status === "missing" ? "✗" : "—"}
-                </span>
-                <span className="text-foreground truncate">{e.tool}</span>
-                {e.version && <span className="text-text-muted shrink-0">{e.version}</span>}
-                {e.install_method && e.install_method !== "pre_installed" && (
-                  <span className="text-accent shrink-0 text-[10px]">[{e.install_method}]</span>
-                )}
-              </div>
-              {e.required && e.status === "missing" && (
-                <span className="text-red-400 shrink-0 ml-2">REQUIRED</span>
+    </div>
+    
+    {currentAction && (
+      <div className="mb-3 px-3 py-2 rounded-md bg-surface-secondary border border-border text-xs text-text-muted font-mono flex items-center gap-2">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+        {currentAction.message}
+      </div>
+    )}
+    
+    {toolEvents.length > 0 && (
+      <div className="space-y-1 max-h-96 overflow-y-auto">
+        {toolEvents.map((e, i) => (
+          <div
+            key={i}
+            className="flex items-center justify-between px-3 py-1.5 rounded text-xs font-mono hover:bg-surface-secondary"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}>
+                {e.status === "installed" ? "✓" : e.status === "missing" ? "✗" : "—"}
+              </span>
+              <span className="text-foreground truncate">{e.tool}</span>
+              {e.version && <span className="text-text-muted shrink-0">{e.version}</span>}
+              {e.install_method && e.install_method !== "pre_installed" && (
+                <span className="text-accent shrink-0 text-[10px]">[{e.install_method}]</span>
               )}
             </div>
-          ))}
-        </div>
-      )}
-
-      {events.length > 0 && (
-        <details className="mt-4">
-          <summary className="text-xs font-mono text-text-muted cursor-pointer select-none hover:text-foreground">
-            xray log ({events.length} events) — expand for full stream
-          </summary>
-          <div className="mt-2 max-h-96 overflow-y-auto rounded border border-border bg-black/40">
-            {events.map((e, i) => {
-              const stage = e.stage ?? "event";
-              const color =
-                stage.includes("failed")
-                  ? "text-red-400"
-                  : stage === "tool_done" && e.status === "installed"
-                  ? "text-green-400"
-                  : stage === "install_verified"
-                  ? "text-green-400"
-                  : stage === "installing" || stage === "install_exec"
-                  ? "text-amber-400"
-                  : stage === "checking"
-                  ? "text-blue-400"
-                  : stage === "heartbeat"
-                  ? "text-text-muted/60"
-                  : "text-text-muted";
-              return (
-                <div key={i} className="px-2 py-1 text-[10px] font-mono border-b border-border/40 last:border-b-0">
-                  <span className={`${color} font-semibold`}>[{stage}]</span>
-                  {e.tool && <span className="text-foreground ml-2">{e.tool}</span>}
-                  {e.message && <span className="text-text-muted ml-2">— {e.message}</span>}
-                  {e.command && (
-                    <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all">$ {e.command}</div>
-                  )}
-                  {e.error && (
-                    <div className="text-red-300/80 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
-                  )}
-                  {e.output_tail && (
-                    <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.output_tail}</div>
-                  )}
-                </div>
-              );
-            })}
+            {e.required && e.status === "missing" && (
+              <span className="text-red-400 shrink-0 ml-2">REQUIRED</span>
+            )}
           </div>
-        </details>
-      )}
-
-      {result && (
-        <div
-          className={`mt-4 px-4 py-3 rounded-md border text-sm font-medium ${
-            result.ready
-              ? "border-green-800 bg-green-950/30 text-green-400"
-              : "border-red-800 bg-red-950/30 text-red-400"
-          }`}
-        >
-          {result.ready ? "✓ Machine is ready" : "✗ Some required tools are missing"}
+        ))}
+      </div>
+    )}
+    
+    {events.length > 0 && (
+      <details className="mt-4">
+        <summary className="text-xs font-mono text-text-muted cursor-pointer select-none hover:text-foreground">
+          xray log ({events.length} events) — expand for full stream
+        </summary>
+        <div className="mt-2 max-h-96 overflow-y-auto rounded border border-border bg-black/40">
+          {events.map((e, i) => {
+            const stage = e.stage ?? "event";
+            const color =
+              stage.includes("failed")
+                ? "text-red-400"
+                : stage === "tool_done" && e.status === "installed"
+                ? "text-green-400"
+                : stage === "install_verified"
+                ? "text-green-400"
+                : stage === "installing" || stage === "install_exec"
+                ? "text-amber-400"
+                : stage === "checking"
+                ? "text-blue-400"
+                : stage === "heartbeat"
+                ? "text-text-muted/60"
+                : "text-text-muted";
+            return (
+              <div key={i} className="px-2 py-1 text-[10px] font-mono border-b border-border/40 last:border-b-0">
+                <span className={`${color} font-semibold`}>[{stage}]</span>
+                {e.tool && <span className="text-foreground ml-2">{e.tool}</span>}
+                {e.message && <span className="text-text-muted ml-2">— {e.message}</span>}
+                {e.command && (
+                  <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all">$ {e.command}</div>
+                )}
+                {e.error && (
+                  <div className="text-red-300/80 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
+                )}
+                {e.output_tail && (
+                  <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.output_tail}</div>
+                )}
+              </div>
+            );
+          })}
         </div>
-      )}
-
-      {!running && events.length === 0 && (
-        <p className="text-sm text-text-muted text-center py-6">
-          Run a readiness check to verify forensic tools on the analyzer machine.
-        </p>
-      )}
-    </AilaCard>
+      </details>
+    )}
+    
+    {result && (
+      <div
+        className={`mt-4 px-4 py-3 rounded-md border text-sm font-medium ${
+          result.ready
+            ? "border-green-800 bg-green-950/30 text-green-400"
+            : "border-red-800 bg-red-950/30 text-red-400"
+        }`}
+      >
+        {result.ready ? "✓ Machine is ready" : "✗ Some required tools are missing"}
+      </div>
+    )}
+    
+    {!running && events.length === 0 && (
+      <p className="text-sm text-text-muted text-center py-6">
+        Run a readiness check to verify forensic tools on the analyzer machine.
+      </p>
+    )}</AilaCard>
   );
 }

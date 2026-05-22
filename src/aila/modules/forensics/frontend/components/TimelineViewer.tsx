@@ -152,7 +152,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
 
   if (isError) {
     return (
-      <AilaCard className="border-border-danger">
+      <AilaCard className="border-border-danger" techBorder glow>
         <p className="text-sm text-text-danger">Failed to load timeline.</p>
       </AilaCard>
     );
@@ -235,7 +235,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
           </h3>
         </div>
         {filteredEntries.length === 0 ? (
-          <AilaCard>
+          <AilaCard  techBorder glow>
             <p className="text-sm text-text-muted text-center py-4">
               No event-time entries at <code>{confidence}</code> confidence.
               Try lowering the bar or check the Occurrences table below.
@@ -350,7 +350,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
           </h3>
         </div>
         {filteredOcc.length === 0 ? (
-          <AilaCard>
+          <AilaCard  techBorder glow>
             <p className="text-sm text-text-muted text-center py-4">
               No untimed findings at <code>{confidence}</code> confidence.
             </p>

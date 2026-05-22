@@ -136,7 +136,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
 
   if (isError) {
     return (
-      <AilaCard className="border-border-danger">
+      <AilaCard className="border-border-danger" techBorder glow>
         <p className="text-sm text-text-danger">Failed to load evidence.</p>
       </AilaCard>
     );
@@ -144,7 +144,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
 
   if (items.length === 0) {
     return (
-      <AilaCard>
+      <AilaCard  techBorder glow>
         <p className="text-sm text-text-muted text-center py-4">
           No evidence files discovered yet. Run analysis to scan the evidence directory.
         </p>
@@ -204,7 +204,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
 
       {/* Table */}
       {sorted.length === 0 ? (
-        <AilaCard>
+        <AilaCard  techBorder glow>
           <p className="text-sm text-text-muted text-center py-4">
             No evidence matches the current filter.
           </p>

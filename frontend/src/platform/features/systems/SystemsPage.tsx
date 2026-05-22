@@ -176,23 +176,17 @@ export function SystemsPage() {
 
       {/* Metric cards (D-02) */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">Registered Systems</p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {systemsQuery.data?.total ?? "—"}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">Total in fleet</p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">Visible Systems</p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">{filteredSystems.length}</p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">Matching active filters</p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">Unreachable</p>
-          <p className="font-mono text-2xl font-semibold text-critical mt-1">{unreachableCount}</p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">SSH connectivity offline</p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">Registered Systems</p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {systemsQuery.data?.total ?? "—"}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">Total in fleet</p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">Visible Systems</p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">{filteredSystems.length}</p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">Matching active filters</p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">Unreachable</p>
+        <p className="font-mono text-2xl font-semibold text-critical mt-1">{unreachableCount}</p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">SSH connectivity offline</p></AilaCard>
       </div>
 
       {/* Error banner (D-15) */}
@@ -204,143 +198,141 @@ export function SystemsPage() {
 
       {/* Register System form */}
       {showCreateForm && (
-        <AilaCard variant="elevated" padding="md">
-          <h2 className="font-mono text-sm font-semibold text-text mb-4">Register a New System</h2>
-          <form
-            className="flex flex-col gap-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              createSystem.mutate(draftSystem, {
-                onSuccess: () => {
-                  setDraftSystem(DEFAULT_SYSTEM_FORM);
-                  setShowCreateForm(false);
-                },
-              });
-            }}
-          >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="flex flex-col gap-1">
-                <label className="font-mono text-xs text-text-muted" htmlFor="sys-name">Name</label>
-                <Input
-                  id="sys-name"
-                  value={draftSystem.name}
-                  onChange={(e) => setDraftSystem((d) => ({ ...d, name: e.target.value }))}
-                  placeholder="arch-vm"
-                  required
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="font-mono text-xs text-text-muted" htmlFor="sys-host">Host</label>
-                <Input
-                  id="sys-host"
-                  value={draftSystem.host}
-                  onChange={(e) => setDraftSystem((d) => ({ ...d, host: e.target.value }))}
-                  placeholder="192.168.56.129"
-                  required
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="font-mono text-xs text-text-muted" htmlFor="sys-user">Username</label>
-                <Input
-                  id="sys-user"
-                  value={draftSystem.username}
-                  onChange={(e) => setDraftSystem((d) => ({ ...d, username: e.target.value }))}
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="font-mono text-xs text-text-muted" htmlFor="sys-port">Port</label>
-                <Input
-                  id="sys-port"
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={draftSystem.port}
-                  onChange={(e) => setDraftSystem((d) => ({ ...d, port: Number(e.target.value) || 22 }))}
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="font-mono text-xs text-text-muted" htmlFor="sys-distro">Distro</label>
-                <Input
-                  id="sys-distro"
-                  value={draftSystem.distro}
-                  onChange={(e) => setDraftSystem((d) => ({ ...d, distro: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            <h3 className="font-mono text-xs font-semibold text-text-muted mt-2 border-t border-border pt-3">SSH Credentials</h3>
+        <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-sm font-semibold text-text mb-4">Register a New System</h2>
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            createSystem.mutate(draftSystem, {
+              onSuccess: () => {
+                setDraftSystem(DEFAULT_SYSTEM_FORM);
+                setShowCreateForm(false);
+              },
+            });
+          }}
+        >
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="sys-privkey">Private Key (PEM)</label>
-              <textarea
-                id="sys-privkey"
-                className="rounded-[2px] border border-border bg-base font-mono text-xs text-text px-2.5 py-1.5 outline-none focus:border-border-hover transition-colors duration-100 resize-none"
-                rows={4}
-                value={draftSystem.private_key ?? ""}
-                onChange={(e) => setDraftSystem((d) => ({ ...d, private_key: e.target.value || null }))}
-                placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\nPaste your private key here...\n-----END OPENSSH PRIVATE KEY-----"}
-                spellCheck={false}
+              <label className="font-mono text-xs text-text-muted" htmlFor="sys-name">Name</label>
+              <Input
+                id="sys-name"
+                value={draftSystem.name}
+                onChange={(e) => setDraftSystem((d) => ({ ...d, name: e.target.value }))}
+                placeholder="arch-vm"
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="font-mono text-xs text-text-muted" htmlFor="sys-host">Host</label>
+              <Input
+                id="sys-host"
+                value={draftSystem.host}
+                onChange={(e) => setDraftSystem((d) => ({ ...d, host: e.target.value }))}
+                placeholder="192.168.56.129"
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="font-mono text-xs text-text-muted" htmlFor="sys-user">Username</label>
+              <Input
+                id="sys-user"
+                value={draftSystem.username}
+                onChange={(e) => setDraftSystem((d) => ({ ...d, username: e.target.value }))}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="font-mono text-xs text-text-muted" htmlFor="sys-port">Port</label>
+              <Input
+                id="sys-port"
+                type="number"
+                min={1}
+                max={65535}
+                value={draftSystem.port}
+                onChange={(e) => setDraftSystem((d) => ({ ...d, port: Number(e.target.value) || 22 }))}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="font-mono text-xs text-text-muted" htmlFor="sys-distro">Distro</label>
+              <Input
+                id="sys-distro"
+                value={draftSystem.distro}
+                onChange={(e) => setDraftSystem((d) => ({ ...d, distro: e.target.value }))}
+              />
+            </div>
+          </div>
+        
+          <h3 className="font-mono text-xs font-semibold text-text-muted mt-2 border-t border-border pt-3">SSH Credentials</h3>
+          <div className="flex flex-col gap-1">
+            <label className="font-mono text-xs text-text-muted" htmlFor="sys-privkey">Private Key (PEM)</label>
+            <textarea
+              id="sys-privkey"
+              className="rounded-[2px] border border-border bg-base font-mono text-xs text-text px-2.5 py-1.5 outline-none focus:border-border-hover transition-colors duration-100 resize-none"
+              rows={4}
+              value={draftSystem.private_key ?? ""}
+              onChange={(e) => setDraftSystem((d) => ({ ...d, private_key: e.target.value || null }))}
+              placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\nPaste your private key here...\n-----END OPENSSH PRIVATE KEY-----"}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1">
+              <label className="font-mono text-xs text-text-muted" htmlFor="sys-passphrase">Key Passphrase</label>
+              <Input
+                id="sys-passphrase"
+                type="password"
+                value={draftSystem.private_key_passphrase ?? ""}
+                onChange={(e) => setDraftSystem((d) => ({ ...d, private_key_passphrase: e.target.value || null }))}
+                placeholder="Passphrase (if key is encrypted)"
                 autoComplete="off"
               />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="flex flex-col gap-1">
-                <label className="font-mono text-xs text-text-muted" htmlFor="sys-passphrase">Key Passphrase</label>
-                <Input
-                  id="sys-passphrase"
-                  type="password"
-                  value={draftSystem.private_key_passphrase ?? ""}
-                  onChange={(e) => setDraftSystem((d) => ({ ...d, private_key_passphrase: e.target.value || null }))}
-                  placeholder="Passphrase (if key is encrypted)"
-                  autoComplete="off"
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="font-mono text-xs text-text-muted" htmlFor="sys-password">SSH Password</label>
-                <Input
-                  id="sys-password"
-                  type="password"
-                  value={draftSystem.password ?? ""}
-                  onChange={(e) => setDraftSystem((d) => ({ ...d, password: e.target.value || null }))}
-                  placeholder="Password (alternative to key)"
-                  autoComplete="off"
-                />
-              </div>
-            </div>
-
             <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="sys-desc">Description</label>
-              <textarea
-                id="sys-desc"
-                className="rounded-[2px] border border-border bg-base font-mono text-sm text-text px-2.5 py-1.5 outline-none focus:border-border-hover transition-colors duration-100 resize-none"
-                rows={2}
-                value={draftSystem.description}
-                onChange={(e) => setDraftSystem((d) => ({ ...d, description: e.target.value }))}
-                placeholder="Internet-facing Arch Linux host in prod"
+              <label className="font-mono text-xs text-text-muted" htmlFor="sys-password">SSH Password</label>
+              <Input
+                id="sys-password"
+                type="password"
+                value={draftSystem.password ?? ""}
+                onChange={(e) => setDraftSystem((d) => ({ ...d, password: e.target.value || null }))}
+                placeholder="Password (alternative to key)"
+                autoComplete="off"
               />
             </div>
-            <div className="flex gap-2">
-              <Button type="submit" size="sm" disabled={createSystem.isPending}>
-                {createSystem.isPending ? "Registering..." : "Create System"}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setDraftSystem(DEFAULT_SYSTEM_FORM);
-                  setShowCreateForm(false);
-                }}
-              >
-                Cancel
-              </Button>
+          </div>
+        
+          <div className="flex flex-col gap-1">
+            <label className="font-mono text-xs text-text-muted" htmlFor="sys-desc">Description</label>
+            <textarea
+              id="sys-desc"
+              className="rounded-[2px] border border-border bg-base font-mono text-sm text-text px-2.5 py-1.5 outline-none focus:border-border-hover transition-colors duration-100 resize-none"
+              rows={2}
+              value={draftSystem.description}
+              onChange={(e) => setDraftSystem((d) => ({ ...d, description: e.target.value }))}
+              placeholder="Internet-facing Arch Linux host in prod"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" disabled={createSystem.isPending}>
+              {createSystem.isPending ? "Registering..." : "Create System"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setDraftSystem(DEFAULT_SYSTEM_FORM);
+                setShowCreateForm(false);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+          {createSystem.isError && (
+            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+              {(createSystem.error as Error).message}
             </div>
-            {createSystem.isError && (
-              <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-                {(createSystem.error as Error).message}
-              </div>
-            )}
-          </form>
-        </AilaCard>
+          )}
+        </form></AilaCard>
       )}
 
       {/* Tag filter bar */}
@@ -376,9 +368,7 @@ export function SystemsPage() {
 
       {/* Loading skeleton (D-13) */}
       {systemsQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={8} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={8} /></AilaCard>
       )}
 
       {/* Empty state — no systems at all (D-14) */}

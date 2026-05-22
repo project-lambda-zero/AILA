@@ -22,7 +22,7 @@ export function VIATable({ projectId }: { projectId: string }) {
 
   if (items.length === 0) {
     return (
-      <AilaCard>
+      <AilaCard  techBorder glow>
         <p className="text-sm text-text-muted text-center py-8">
           No Very Important Artifacts identified yet.
         </p>

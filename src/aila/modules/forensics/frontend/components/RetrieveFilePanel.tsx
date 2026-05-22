@@ -53,65 +53,63 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
   const heading = compact ? "Retrieve File" : "Retrieve File from Image";
 
   return (
-    <AilaCard>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-foreground">{heading}</h3>
-        <span className="text-xs text-text-muted">
-          {diskImages.length} disk image{diskImages.length === 1 ? "" : "s"}
-        </span>
-      </div>
-
-      <form onSubmit={onSubmit} className="space-y-2">
-        <Input
-          type="text"
-          value={virtualPath}
-          onChange={(e) => setVirtualPath(e.target.value)}
-          placeholder="Full in-image path (file or directory)"
+    <AilaCard  techBorder glow><div className="flex items-center justify-between mb-3">
+      <h3 className="text-sm font-semibold text-foreground">{heading}</h3>
+      <span className="text-xs text-text-muted">
+        {diskImages.length} disk image{diskImages.length === 1 ? "" : "s"}
+      </span>
+    </div>
+    
+    <form onSubmit={onSubmit} className="space-y-2">
+      <Input
+        type="text"
+        value={virtualPath}
+        onChange={(e) => setVirtualPath(e.target.value)}
+        placeholder="Full in-image path (file or directory)"
+        disabled={retrieveMut.isPending}
+        className="text-sm font-mono"
+        spellCheck={false}
+        autoComplete="off"
+      />
+    
+      {diskImages.length > 1 && (
+        <select
+          value={evidenceId}
+          onChange={(e) => setEvidenceId(e.target.value)}
           disabled={retrieveMut.isPending}
-          className="text-sm font-mono"
-          spellCheck={false}
-          autoComplete="off"
-        />
-
-        {diskImages.length > 1 && (
-          <select
-            value={evidenceId}
-            onChange={(e) => setEvidenceId(e.target.value)}
-            disabled={retrieveMut.isPending}
-            className="w-full text-xs border border-border rounded px-2 py-1 bg-background"
-          >
-            <option value="">— pick a disk image —</option>
-            {diskImages.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.file_path}
-              </option>
-            ))}
-          </select>
-        )}
-
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[11px] text-text-muted">
-            Paste the full in-image path — file or directory. Directories
-            are zipped on the analyzer and shipped as
-            <code className="font-mono mx-1">&lt;name&gt;.zip</code>.
-            Windows and POSIX path styles are both accepted.
-          </p>
-          <Button type="submit" size="sm" disabled={!canSubmit}>
-            {retrieveMut.isPending ? "Retrieving…" : "Retrieve"}
-          </Button>
-        </div>
-      </form>
-
-      {evidenceQ.isError && (
-        <p className="text-xs text-status-critical mt-2">
-          Failed to load evidence list.
-        </p>
+          className="w-full text-xs border border-border rounded px-2 py-1 bg-background"
+        >
+          <option value="">— pick a disk image —</option>
+          {diskImages.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.file_path}
+            </option>
+          ))}
+        </select>
       )}
-      {!evidenceQ.isLoading && diskImages.length === 0 && (
-        <p className="text-xs text-text-muted mt-2">
-          No disk images on this project — run intake first.
+    
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-text-muted">
+          Paste the full in-image path — file or directory. Directories
+          are zipped on the analyzer and shipped as
+          <code className="font-mono mx-1">&lt;name&gt;.zip</code>.
+          Windows and POSIX path styles are both accepted.
         </p>
-      )}
-    </AilaCard>
+        <Button type="submit" size="sm" disabled={!canSubmit}>
+          {retrieveMut.isPending ? "Retrieving…" : "Retrieve"}
+        </Button>
+      </div>
+    </form>
+    
+    {evidenceQ.isError && (
+      <p className="text-xs text-status-critical mt-2">
+        Failed to load evidence list.
+      </p>
+    )}
+    {!evidenceQ.isLoading && diskImages.length === 0 && (
+      <p className="text-xs text-text-muted mt-2">
+        No disk images on this project — run intake first.
+      </p>
+    )}</AilaCard>
   );
 }

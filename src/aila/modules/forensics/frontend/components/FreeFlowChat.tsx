@@ -34,38 +34,36 @@ export function FreeFlowChat({ projectId }: { projectId: string }) {
     <div className="space-y-4">
       <h3 className="text-sm font-semibold text-foreground">Free-Flow Investigator</h3>
 
-      <AilaCard>
-        <div className="space-y-3">
-          <textarea
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Ask a question about the evidence..."
-            rows={3}
-            className="w-full px-3 py-2 text-sm rounded-md border border-border bg-surface text-foreground resize-none"
-          />
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-text-muted">Max attempts:</label>
-              <input
-                type="number"
-                min={1}
-                max={50}
-                value={maxAttempts}
-                onChange={(e) => setMaxAttempts(Number(e.target.value))}
-                className="w-16 px-2 py-1 text-xs rounded border border-border bg-surface text-foreground"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={!question.trim() || startInvestigation.isPending}
-              className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
-            >
-              {startInvestigation.isPending ? "Starting..." : "Investigate"}
-            </button>
+      <AilaCard  techBorder glow><div className="space-y-3">
+        <textarea
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="Ask a question about the evidence..."
+          rows={3}
+          className="w-full px-3 py-2 text-sm rounded-md border border-border bg-surface text-foreground resize-none"
+        />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-text-muted">Max attempts:</label>
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={maxAttempts}
+              onChange={(e) => setMaxAttempts(Number(e.target.value))}
+              className="w-16 px-2 py-1 text-xs rounded border border-border bg-surface text-foreground"
+            />
           </div>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!question.trim() || startInvestigation.isPending}
+            className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+          >
+            {startInvestigation.isPending ? "Starting..." : "Investigate"}
+          </button>
         </div>
-      </AilaCard>
+      </div></AilaCard>
 
       <div className="space-y-2">
         <h4 className="text-xs font-medium text-text-muted uppercase tracking-wide">

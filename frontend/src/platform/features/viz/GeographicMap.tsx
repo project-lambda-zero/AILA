@@ -106,14 +106,12 @@ export function GeographicMap({ className }: GeographicMapProps) {
 
   if (isLoading) {
     return (
-      <AilaCard className={className}>
-        <div className="p-4 flex flex-col gap-2">
-          <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-            System Geographic Map
-          </p>
-          <LoadingSkeleton size="xl" width="full" />
-        </div>
-      </AilaCard>
+      <AilaCard className={className} techBorder glow><div className="p-4 flex flex-col gap-2">
+        <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
+          System Geographic Map
+        </p>
+        <LoadingSkeleton size="xl" width="full" />
+      </div></AilaCard>
     );
   }
 
@@ -134,64 +132,62 @@ export function GeographicMap({ className }: GeographicMapProps) {
   }
 
   return (
-    <AilaCard className={className}>
-      <div className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-            System Geographic Map
+    <AilaCard className={className} techBorder glow><div className="p-4">
+      <div className="flex items-center justify-between mb-3">
+        <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
+          System Geographic Map
+        </p>
+      </div>
+    
+      {geoNodes.length === 0 ? (
+        <div className="py-6 text-center">
+          <p className="font-mono text-xs text-muted-foreground">
+            No geographic data available.
+          </p>
+          <p className="font-mono text-[10px] text-muted-foreground/70 mt-1">
+            Add lat/lng tags to systems using format: lat:52.5200 lng:13.4050
           </p>
         </div>
-
-        {geoNodes.length === 0 ? (
-          <div className="py-6 text-center">
-            <p className="font-mono text-xs text-muted-foreground">
-              No geographic data available.
-            </p>
-            <p className="font-mono text-[10px] text-muted-foreground/70 mt-1">
-              Add lat/lng tags to systems using format: lat:52.5200 lng:13.4050
-            </p>
-          </div>
-        ) : (
-          <MapContainer
-            center={[20, 0]}
-            zoom={2}
-            className="h-[400px] w-full rounded"
-            scrollWheelZoom={false}
-          >
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-            {geoNodes.map((item) => (
-              <CircleMarker
-                key={item.node.id}
-                center={[item.lat, item.lng]}
-                radius={8}
-                pathOptions={{
-                  fillColor: item.color,
-                  fillOpacity: 0.8,
-                  color: item.color,
-                  weight: 2,
-                }}
-              >
-                <Popup>
-                  <strong>{item.node.name}</strong>
-                  <br />
-                  {item.node.host}
-                  <br />
-                  {item.node.distro}
-                  {item.node.is_stale && (
-                    <>
-                      <br />
-                      <span style={{ color: "#9ca3af", fontSize: "10px" }}>[stale]</span>
-                    </>
-                  )}
-                </Popup>
-              </CircleMarker>
-            ))}
-          </MapContainer>
-        )}
-      </div>
-    </AilaCard>
+      ) : (
+        <MapContainer
+          center={[20, 0]}
+          zoom={2}
+          className="h-[400px] w-full rounded"
+          scrollWheelZoom={false}
+        >
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          {geoNodes.map((item) => (
+            <CircleMarker
+              key={item.node.id}
+              center={[item.lat, item.lng]}
+              radius={8}
+              pathOptions={{
+                fillColor: item.color,
+                fillOpacity: 0.8,
+                color: item.color,
+                weight: 2,
+              }}
+            >
+              <Popup>
+                <strong>{item.node.name}</strong>
+                <br />
+                {item.node.host}
+                <br />
+                {item.node.distro}
+                {item.node.is_stale && (
+                  <>
+                    <br />
+                    <span style={{ color: "#9ca3af", fontSize: "10px" }}>[stale]</span>
+                  </>
+                )}
+              </Popup>
+            </CircleMarker>
+          ))}
+        </MapContainer>
+      )}
+    </div></AilaCard>
   );
 }

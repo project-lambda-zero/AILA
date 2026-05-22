@@ -267,53 +267,51 @@ interface DetailPanelProps {
 
 function DetailPanel({ entry, onClose }: DetailPanelProps) {
   return (
-    <AilaCard variant="elevated" padding="md" className="relative">
-      <div className="flex items-start justify-between gap-2 mb-3">
-        <div>
-          <h3 className="font-mono text-sm font-semibold text-text">
-            {entry.model}
-            <span className="text-text-muted"> · {entry.task_type || "—"}</span>
-          </h3>
-          <p className="font-mono text-[10px] text-text-muted mt-1">
-            {formatTimestamp(entry.timestamp)} · {formatCost(entry.cost_usd)} ·{" "}
-            {entry.input_tokens + entry.output_tokens} tokens ·{" "}
-            {formatDuration(entry.duration_ms)}
-          </p>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-7 w-7 p-0"
-          onClick={onClose}
-          aria-label="Close detail panel"
+    <AilaCard variant="elevated" padding="md" className="relative" techBorder glow><div className="flex items-start justify-between gap-2 mb-3">
+      <div>
+        <h3 className="font-mono text-sm font-semibold text-text">
+          {entry.model}
+          <span className="text-text-muted"> · {entry.task_type || "—"}</span>
+        </h3>
+        <p className="font-mono text-[10px] text-text-muted mt-1">
+          {formatTimestamp(entry.timestamp)} · {formatCost(entry.cost_usd)} ·{" "}
+          {entry.input_tokens + entry.output_tokens} tokens ·{" "}
+          {formatDuration(entry.duration_ms)}
+        </p>
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="h-7 w-7 p-0"
+        onClick={onClose}
+        aria-label="Close detail panel"
+      >
+        <XIcon className="h-4 w-4" />
+      </Button>
+    </div>
+    <div className="flex flex-col gap-3">
+      <div>
+        <p className="font-mono text-[10px] uppercase tracking-wider text-text-muted mb-1">
+          Prompt Preview
+        </p>
+        <pre
+          className="font-mono text-xs text-text whitespace-pre-wrap break-all bg-surface border border-border rounded-[4px] p-2 max-h-[240px] overflow-auto"
         >
-          <XIcon className="h-4 w-4" />
-        </Button>
+          {entry.prompt_preview ?? "(not captured)"}
+        </pre>
       </div>
-      <div className="flex flex-col gap-3">
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-wider text-text-muted mb-1">
-            Prompt Preview
-          </p>
-          <pre
-            className="font-mono text-xs text-text whitespace-pre-wrap break-all bg-surface border border-border rounded-[4px] p-2 max-h-[240px] overflow-auto"
-          >
-            {entry.prompt_preview ?? "(not captured)"}
-          </pre>
-        </div>
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-wider text-text-muted mb-1">
-            Response Preview
-          </p>
-          <pre
-            className="font-mono text-xs text-text whitespace-pre-wrap break-all bg-surface border border-border rounded-[4px] p-2 max-h-[240px] overflow-auto"
-          >
-            {entry.response_preview ?? "(not captured)"}
-          </pre>
-        </div>
+      <div>
+        <p className="font-mono text-[10px] uppercase tracking-wider text-text-muted mb-1">
+          Response Preview
+        </p>
+        <pre
+          className="font-mono text-xs text-text whitespace-pre-wrap break-all bg-surface border border-border rounded-[4px] p-2 max-h-[240px] overflow-auto"
+        >
+          {entry.response_preview ?? "(not captured)"}
+        </pre>
       </div>
-    </AilaCard>
+    </div></AilaCard>
   );
 }
 
@@ -371,17 +369,15 @@ export function LLMLogPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <AilaCard variant="elevated" padding="md">
-            <p className="font-mono text-[10px] uppercase tracking-wider text-text-muted flex items-center gap-1">
-              <Coins className="h-3 w-3" /> Total Cost
-            </p>
-            <p className="font-mono text-lg font-semibold text-text tabular-nums">
-              {formatCost(totalCost)}
-            </p>
-            <p className="font-mono text-[10px] text-text-muted">
-              {total} call{total === 1 ? "" : "s"} matching filters
-            </p>
-          </AilaCard>
+          <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-[10px] uppercase tracking-wider text-text-muted flex items-center gap-1">
+            <Coins className="h-3 w-3" /> Total Cost
+          </p>
+          <p className="font-mono text-lg font-semibold text-text tabular-nums">
+            {formatCost(totalCost)}
+          </p>
+          <p className="font-mono text-[10px] text-text-muted">
+            {total} call{total === 1 ? "" : "s"} matching filters
+          </p></AilaCard>
         </div>
       </div>
 
@@ -398,9 +394,7 @@ export function LLMLogPage() {
       )}
 
       {logQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={8} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={8} /></AilaCard>
       )}
 
       {!logQuery.isLoading && !logQuery.isError && items.length === 0 && (

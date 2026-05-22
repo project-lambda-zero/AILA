@@ -248,19 +248,15 @@ function ToolDetailPanel({ toolKey, canInvoke }: ToolDetailPanelProps) {
 
   if (detailQuery.isLoading) {
     return (
-      <AilaCard variant="elevated" padding="md" className="h-full">
-        <LoadingSkeletonGroup lines={8} />
-      </AilaCard>
+      <AilaCard variant="elevated" padding="md" className="h-full" techBorder glow><LoadingSkeletonGroup lines={8} /></AilaCard>
     );
   }
 
   if (detailQuery.isError) {
     return (
-      <AilaCard variant="elevated" padding="md">
-        <p className="font-mono text-xs text-destructive">
-          Failed to load tool detail: {(detailQuery.error as Error).message}
-        </p>
-      </AilaCard>
+      <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs text-destructive">
+        Failed to load tool detail: {(detailQuery.error as Error).message}
+      </p></AilaCard>
     );
   }
 
@@ -273,118 +269,110 @@ function ToolDetailPanel({ toolKey, canInvoke }: ToolDetailPanelProps) {
   return (
     <div className="flex flex-col gap-4">
       {/* Tool header */}
-      <AilaCard variant="elevated" padding="md">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex flex-col gap-1 min-w-0">
-            <h2 className="font-mono text-base font-semibold text-foreground">
-              {detail.name}
-            </h2>
-            <p className="font-mono text-[10px] text-muted-foreground break-all">
-              {detail.tool_key}
-            </p>
-            <p className="font-mono text-xs text-muted-foreground mt-1">
-              {detail.description}
-            </p>
-          </div>
-          <div className="flex flex-col items-end gap-1 shrink-0">
-            <AilaBadge severity="neutral" size="sm">
-              {moduleLabel(detail.module_id)}
-            </AilaBadge>
-            <span className="font-mono text-[10px] text-muted-foreground">
-              → {detail.output_type}
-            </span>
-          </div>
+      <AilaCard variant="elevated" padding="md" techBorder glow><div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1 min-w-0">
+          <h2 className="font-mono text-base font-semibold text-foreground">
+            {detail.name}
+          </h2>
+          <p className="font-mono text-[10px] text-muted-foreground break-all">
+            {detail.tool_key}
+          </p>
+          <p className="font-mono text-xs text-muted-foreground mt-1">
+            {detail.description}
+          </p>
         </div>
-      </AilaCard>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <AilaBadge severity="neutral" size="sm">
+            {moduleLabel(detail.module_id)}
+          </AilaBadge>
+          <span className="font-mono text-[10px] text-muted-foreground">
+            → {detail.output_type}
+          </span>
+        </div>
+      </div></AilaCard>
 
       {/* Invoke form */}
-      <AilaCard variant="elevated" padding="md">
-        <h3 className="font-mono text-sm font-semibold text-foreground mb-3">
-          Inputs
-        </h3>
-
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          {hasInputs ? (
-            Object.entries(schema.properties).map(([fieldName, fieldSchema]) => (
-              <SchemaField
-                key={fieldName}
-                name={fieldName}
-                schema={fieldSchema}
-                required={schema.required?.includes(fieldName) ?? false}
-                value={formValues[fieldName]}
-                onChange={updateFormValue}
-              />
-            ))
+      <AilaCard variant="elevated" padding="md" techBorder glow><h3 className="font-mono text-sm font-semibold text-foreground mb-3">
+        Inputs
+      </h3>
+      
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        {hasInputs ? (
+          Object.entries(schema.properties).map(([fieldName, fieldSchema]) => (
+            <SchemaField
+              key={fieldName}
+              name={fieldName}
+              schema={fieldSchema}
+              required={schema.required?.includes(fieldName) ?? false}
+              value={formValues[fieldName]}
+              onChange={updateFormValue}
+            />
+          ))
+        ) : (
+          <p className="font-mono text-xs text-muted-foreground">
+            This tool takes no inputs.
+          </p>
+        )}
+      
+        <div className="flex items-center gap-3 pt-2">
+          {canInvoke ? (
+            <Button type="submit" size="sm" disabled={isInvoking}>
+              <Wrench className="h-3.5 w-3.5 mr-1.5" />
+              {isInvoking ? "Invoking…" : "Invoke"}
+            </Button>
           ) : (
-            <p className="font-mono text-xs text-muted-foreground">
-              This tool takes no inputs.
-            </p>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger>
+                  <Button type="button" size="sm" disabled className="gap-1.5 opacity-60">
+                    <Lock className="h-3.5 w-3.5" />
+                    Invoke
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <span className="font-mono text-xs">Operator role required</span>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
-
-          <div className="flex items-center gap-3 pt-2">
-            {canInvoke ? (
-              <Button type="submit" size="sm" disabled={isInvoking}>
-                <Wrench className="h-3.5 w-3.5 mr-1.5" />
-                {isInvoking ? "Invoking…" : "Invoke"}
-              </Button>
-            ) : (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger>
-                    <Button type="button" size="sm" disabled className="gap-1.5 opacity-60">
-                      <Lock className="h-3.5 w-3.5" />
-                      Invoke
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <span className="font-mono text-xs">Operator role required</span>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
-
-            {invokeResult !== null && (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setInvokeResult(null);
-                  invokeMutation.reset();
-                }}
-              >
-                Clear result
-              </Button>
-            )}
-          </div>
-        </form>
-      </AilaCard>
+      
+          {invokeResult !== null && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setInvokeResult(null);
+                invokeMutation.reset();
+              }}
+            >
+              Clear result
+            </Button>
+          )}
+        </div>
+      </form></AilaCard>
 
       {/* Result pane */}
       {invokeResult !== null && (
-        <AilaCard
-          variant="elevated"
-          padding="md"
-          className={
-            invokeResult.error
-              ? "border-destructive/40 bg-destructive/5"
-              : "border-border"
-          }
-        >
-          <h3 className="font-mono text-sm font-semibold text-foreground mb-2">
-            {invokeResult.error ? "Invocation Error" : "Result"}
-          </h3>
-
-          {invokeResult.error ? (
-            <p className="font-mono text-xs text-destructive break-words">
-              {invokeResult.error}
-            </p>
-          ) : (
-            <pre className="font-mono text-xs text-foreground whitespace-pre-wrap break-words bg-surface rounded-[4px] border border-border p-3 overflow-auto max-h-[400px]">
-              {JSON.stringify(invokeResult.result, null, 2)}
-            </pre>
-          )}
-        </AilaCard>
+        <AilaCard variant="elevated"
+        padding="md"
+        className={
+          invokeResult.error
+            ? "border-destructive/40 bg-destructive/5"
+            : "border-border"
+        } techBorder glow><h3 className="font-mono text-sm font-semibold text-foreground mb-2">
+          {invokeResult.error ? "Invocation Error" : "Result"}
+        </h3>
+        
+        {invokeResult.error ? (
+          <p className="font-mono text-xs text-destructive break-words">
+            {invokeResult.error}
+          </p>
+        ) : (
+          <pre className="font-mono text-xs text-foreground whitespace-pre-wrap break-words bg-surface rounded-[4px] border border-border p-3 overflow-auto max-h-[400px]">
+            {JSON.stringify(invokeResult.result, null, 2)}
+          </pre>
+        )}</AilaCard>
       )}
     </div>
   );
@@ -428,16 +416,14 @@ export function ToolsConsolePage() {
       {/* Two-column split */}
       <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 min-h-0 flex-1">
         {/* Left: tool list */}
-        <AilaCard variant="default" padding="md" className="overflow-hidden">
-          <ToolListPanel
-            tools={tools}
-            selectedKey={selectedToolKey}
-            onSelect={handleSelectTool}
-            isLoading={toolsQuery.isLoading}
-            isError={toolsQuery.isError}
-            onRefresh={() => void toolsQuery.refetch()}
-          />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" className="overflow-hidden" techBorder glow><ToolListPanel
+          tools={tools}
+          selectedKey={selectedToolKey}
+          onSelect={handleSelectTool}
+          isLoading={toolsQuery.isLoading}
+          isError={toolsQuery.isError}
+          onRefresh={() => void toolsQuery.refetch()}
+        /></AilaCard>
 
         {/* Right: tool detail */}
         <div className="min-w-0">

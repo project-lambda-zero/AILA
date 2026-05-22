@@ -72,43 +72,39 @@ export function WidgetPickerDialog({
                   {widgets.map((widget) => {
                     const isActive = activeWidgetIds.includes(widget.id);
                     return (
-                      <AilaCard
-                        key={widget.id}
-                        variant={isActive ? "default" : "interactive"}
-                        padding="sm"
-                        className={isActive ? "opacity-50 cursor-not-allowed" : ""}
-                        onClick={isActive ? undefined : () => handleAdd(widget.id)}
-                        role={isActive ? undefined : "button"}
-                        tabIndex={isActive ? -1 : 0}
-                        onKeyDown={
-                          isActive
-                            ? undefined
-                            : (e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  handleAdd(widget.id);
-                                }
+                      <AilaCard key={widget.id}
+                      variant={isActive ? "default" : "interactive"}
+                      padding="sm"
+                      className={isActive ? "opacity-50 cursor-not-allowed" : ""}
+                      onClick={isActive ? undefined : () => handleAdd(widget.id)}
+                      role={isActive ? undefined : "button"}
+                      tabIndex={isActive ? -1 : 0}
+                      onKeyDown={
+                        isActive
+                          ? undefined
+                          : (e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                handleAdd(widget.id);
                               }
-                        }
-                        aria-disabled={isActive}
-                        aria-label={isActive ? `${widget.name} — already added` : `Add ${widget.name}`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-foreground truncate">
-                              {widget.name}
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                              {widget.description}
-                            </p>
-                          </div>
-                          {isActive && (
-                            <span className="shrink-0 text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5 mt-0.5">
-                              Added
-                            </span>
-                          )}
+                            }
+                      }
+                      aria-disabled={isActive}
+                      aria-label={isActive ? `${widget.name} — already added` : `Add ${widget.name}`} techBorder glow><div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground truncate">
+                            {widget.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                            {widget.description}
+                          </p>
                         </div>
-                      </AilaCard>
+                        {isActive && (
+                          <span className="shrink-0 text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5 mt-0.5">
+                            Added
+                          </span>
+                        )}
+                      </div></AilaCard>
                     );
                   })}
                 </div>

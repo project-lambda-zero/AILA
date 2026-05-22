@@ -153,54 +153,46 @@ export function ExecutivePage() {
 
       {/* Top-level posture cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total Findings
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {healthQuery.isLoading ? "—" : (health?.total_findings ?? 0)}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Active across the fleet
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Affected Systems
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {healthQuery.isLoading ? "—" : (health?.systems_with_findings ?? 0)}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            With at least one finding
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Immediate Risk
-          </p>
-          <p className="font-mono text-2xl font-semibold text-critical mt-1">
-            {healthQuery.isLoading
-              ? "—"
-              : (health?.severity_breakdown.Immediate ?? 0)}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Requires action now
-          </p>
-        </AilaCard>
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Last Scan
-          </p>
-          <p className="font-mono text-sm text-text mt-1">
-            {healthQuery.isLoading
-              ? "—"
-              : formatTimestamp(health?.last_scanned_at)}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Across all findings
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Total Findings
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {healthQuery.isLoading ? "—" : (health?.total_findings ?? 0)}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Active across the fleet
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Affected Systems
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {healthQuery.isLoading ? "—" : (health?.systems_with_findings ?? 0)}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          With at least one finding
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Immediate Risk
+        </p>
+        <p className="font-mono text-2xl font-semibold text-critical mt-1">
+          {healthQuery.isLoading
+            ? "—"
+            : (health?.severity_breakdown.Immediate ?? 0)}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Requires action now
+        </p></AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Last Scan
+        </p>
+        <p className="font-mono text-sm text-text mt-1">
+          {healthQuery.isLoading
+            ? "—"
+            : formatTimestamp(health?.last_scanned_at)}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Across all findings
+        </p></AilaCard>
       </div>
 
       {/* Health error */}
@@ -211,116 +203,110 @@ export function ExecutivePage() {
       )}
 
       {/* Severity breakdown */}
-      <AilaCard variant="default" padding="md">
-        <h2 className="font-mono text-sm font-semibold text-text mb-3">
-          Risk posture
-        </h2>
-        {healthQuery.isLoading && <LoadingSkeletonGroup lines={2} />}
-        {!healthQuery.isLoading &&
-          !healthQuery.isError &&
-          health &&
-          health.total_findings === 0 && (
-            <EmptyState
-              icon={<Briefcase className="h-10 w-10" />}
-              title="No active findings"
-              description="No findings to summarise. Run a scan against your fleet to populate the executive view."
-            />
-          )}
-        {!healthQuery.isLoading && health && health.total_findings > 0 && (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {breakdown.map((row) => (
-              <div
-                key={row.key}
-                className="flex flex-col gap-1 rounded-[4px] border border-border bg-base px-4 py-3"
-              >
-                <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-                  {row.label}
-                </p>
-                <p className={`font-mono text-3xl font-semibold ${row.color}`}>
-                  {row.count}
-                </p>
-                <AilaBadge severity="neutral" size="sm">
-                  {((row.count / health.total_findings) * 100).toFixed(1)}%
-                </AilaBadge>
-              </div>
-            ))}
-          </div>
+      <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-sm font-semibold text-text mb-3">
+        Risk posture
+      </h2>
+      {healthQuery.isLoading && <LoadingSkeletonGroup lines={2} />}
+      {!healthQuery.isLoading &&
+        !healthQuery.isError &&
+        health &&
+        health.total_findings === 0 && (
+          <EmptyState
+            icon={<Briefcase className="h-10 w-10" />}
+            title="No active findings"
+            description="No findings to summarise. Run a scan against your fleet to populate the executive view."
+          />
         )}
-      </AilaCard>
+      {!healthQuery.isLoading && health && health.total_findings > 0 && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {breakdown.map((row) => (
+            <div
+              key={row.key}
+              className="flex flex-col gap-1 rounded-[4px] border border-border bg-base px-4 py-3"
+            >
+              <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+                {row.label}
+              </p>
+              <p className={`font-mono text-3xl font-semibold ${row.color}`}>
+                {row.count}
+              </p>
+              <AilaBadge severity="neutral" size="sm">
+                {((row.count / health.total_findings) * 100).toFixed(1)}%
+              </AilaBadge>
+            </div>
+          ))}
+        </div>
+      )}</AilaCard>
 
       {/* Downloads */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <AilaCard variant="default" padding="md">
-          <div className="flex items-center gap-2 mb-3">
-            <FilePdf className="h-4 w-4 text-accent" />
-            <h2 className="font-mono text-sm font-semibold text-text">
-              Risk summary PDF
-            </h2>
+        <AilaCard variant="default" padding="md" techBorder glow><div className="flex items-center gap-2 mb-3">
+          <FilePdf className="h-4 w-4 text-accent" />
+          <h2 className="font-mono text-sm font-semibold text-text">
+            Risk summary PDF
+          </h2>
+        </div>
+        <p className="font-mono text-xs text-text-muted mb-4">
+          Stream a fleet-wide executive risk summary as PDF. Includes severity
+          cards, top-25 findings, and posture commentary.
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          className="gap-1.5"
+          disabled={pdfBusy}
+          onClick={handleDownloadPdf}
+        >
+          <FileArrowDown className="h-4 w-4" />
+          {pdfBusy ? "Generating…" : "Download PDF"}
+        </Button>
+        {pdfError && (
+          <p className="font-mono text-xs text-destructive mt-2">{pdfError}</p>
+        )}</AilaCard>
+
+        <AilaCard variant="default" padding="md" techBorder glow><div className="flex items-center gap-2 mb-3">
+          <FileArrowDown className="h-4 w-4 text-accent" />
+          <h2 className="font-mono text-sm font-semibold text-text">
+            System evidence package
+          </h2>
+        </div>
+        <p className="font-mono text-xs text-text-muted mb-4">
+          ZIP archive of findings, compliance tags, and scan metadata for a
+          specific system. Useful for audit handoff.
+        </p>
+        <form
+          className="flex flex-col gap-2 sm:flex-row sm:items-end"
+          onSubmit={handleDownloadEvidence}
+        >
+          <div className="flex flex-col gap-1 flex-1">
+            <label
+              className="font-mono text-xs text-text-muted"
+              htmlFor="ev-system-id"
+            >
+              System ID
+            </label>
+            <Input
+              id="ev-system-id"
+              value={systemId}
+              onChange={(e) => setSystemId(e.target.value)}
+              placeholder="42"
+              className="font-mono text-sm"
+              inputMode="numeric"
+            />
           </div>
-          <p className="font-mono text-xs text-text-muted mb-4">
-            Stream a fleet-wide executive risk summary as PDF. Includes severity
-            cards, top-25 findings, and posture commentary.
-          </p>
           <Button
-            type="button"
+            type="submit"
             size="sm"
             className="gap-1.5"
-            disabled={pdfBusy}
-            onClick={handleDownloadPdf}
+            disabled={zipBusy}
           >
             <FileArrowDown className="h-4 w-4" />
-            {pdfBusy ? "Generating…" : "Download PDF"}
+            {zipBusy ? "Building…" : "Download ZIP"}
           </Button>
-          {pdfError && (
-            <p className="font-mono text-xs text-destructive mt-2">{pdfError}</p>
-          )}
-        </AilaCard>
-
-        <AilaCard variant="default" padding="md">
-          <div className="flex items-center gap-2 mb-3">
-            <FileArrowDown className="h-4 w-4 text-accent" />
-            <h2 className="font-mono text-sm font-semibold text-text">
-              System evidence package
-            </h2>
-          </div>
-          <p className="font-mono text-xs text-text-muted mb-4">
-            ZIP archive of findings, compliance tags, and scan metadata for a
-            specific system. Useful for audit handoff.
-          </p>
-          <form
-            className="flex flex-col gap-2 sm:flex-row sm:items-end"
-            onSubmit={handleDownloadEvidence}
-          >
-            <div className="flex flex-col gap-1 flex-1">
-              <label
-                className="font-mono text-xs text-text-muted"
-                htmlFor="ev-system-id"
-              >
-                System ID
-              </label>
-              <Input
-                id="ev-system-id"
-                value={systemId}
-                onChange={(e) => setSystemId(e.target.value)}
-                placeholder="42"
-                className="font-mono text-sm"
-                inputMode="numeric"
-              />
-            </div>
-            <Button
-              type="submit"
-              size="sm"
-              className="gap-1.5"
-              disabled={zipBusy}
-            >
-              <FileArrowDown className="h-4 w-4" />
-              {zipBusy ? "Building…" : "Download ZIP"}
-            </Button>
-          </form>
-          {zipError && (
-            <p className="font-mono text-xs text-destructive mt-2">{zipError}</p>
-          )}
-        </AilaCard>
+        </form>
+        {zipError && (
+          <p className="font-mono text-xs text-destructive mt-2">{zipError}</p>
+        )}</AilaCard>
       </div>
     </div>
   );

@@ -312,53 +312,51 @@ function FullAnalysisButton({ projectId }: { projectId: string }) {
   }
 
   return (
-    <AilaCard>
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Pre-populate artifacts</h3>
-          <p className="text-xs text-text-muted mt-0.5">
-            Runs intake → collection → deep_analysis so the freeflow agent can answer questions
-            instantly from cached evidence instead of re-scanning.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={handleClick}
-          disabled={trigger.isPending || status === "streaming"}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-        >
-          {status === "streaming" ? "Running..." : trigger.isPending ? "Queueing..." : "Run Full Analysis"}
-        </button>
+    <AilaCard  techBorder glow><div className="flex items-center justify-between">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">Pre-populate artifacts</h3>
+        <p className="text-xs text-text-muted mt-0.5">
+          Runs intake → collection → deep_analysis so the freeflow agent can answer questions
+          instantly from cached evidence instead of re-scanning.
+        </p>
       </div>
-      {taskId && (
-        <div className="mt-3 space-y-1">
-          <div className="flex items-center gap-2 text-[10px] text-text-muted font-mono">
-            <span className={`inline-block w-1.5 h-1.5 rounded-full ${
-              status === "streaming" ? "bg-amber-400 animate-pulse"
-              : status === "done" ? "bg-green-400"
-              : status === "error" ? "bg-red-400" : "bg-surface-secondary"
-            }`} />
-            <span>task:{taskId.slice(0, 8)} · {status} · {events.length} event(s)</span>
-          </div>
-          <div className="max-h-64 overflow-y-auto rounded border border-border bg-black/30 p-2 font-mono text-[10px] space-y-0.5">
-            {events.length === 0 && <p className="text-text-muted italic">Waiting for first event…</p>}
-            {events.map((ev, i) => {
-              const stage = ev.stage ?? "event";
-              const color = stage.includes("failed") || stage.includes("crashed") ? "text-red-400"
-                : stage.includes("done") || stage.includes("succeeded") ? "text-green-400"
-                : stage.includes("start") || stage.includes("begin") ? "text-amber-400"
-                : "text-accent";
-              return (
-                <div key={i}>
-                  <span className={color}>[{stage}]</span>
-                  <span className="text-text-muted ml-2">{ev.message ?? ""}</span>
-                </div>
-              );
-            })}
-          </div>
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={trigger.isPending || status === "streaming"}
+        className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+      >
+        {status === "streaming" ? "Running..." : trigger.isPending ? "Queueing..." : "Run Full Analysis"}
+      </button>
+    </div>
+    {taskId && (
+      <div className="mt-3 space-y-1">
+        <div className="flex items-center gap-2 text-[10px] text-text-muted font-mono">
+          <span className={`inline-block w-1.5 h-1.5 rounded-full ${
+            status === "streaming" ? "bg-amber-400 animate-pulse"
+            : status === "done" ? "bg-green-400"
+            : status === "error" ? "bg-red-400" : "bg-surface-secondary"
+          }`} />
+          <span>task:{taskId.slice(0, 8)} · {status} · {events.length} event(s)</span>
         </div>
-      )}
-    </AilaCard>
+        <div className="max-h-64 overflow-y-auto rounded border border-border bg-black/30 p-2 font-mono text-[10px] space-y-0.5">
+          {events.length === 0 && <p className="text-text-muted italic">Waiting for first event…</p>}
+          {events.map((ev, i) => {
+            const stage = ev.stage ?? "event";
+            const color = stage.includes("failed") || stage.includes("crashed") ? "text-red-400"
+              : stage.includes("done") || stage.includes("succeeded") ? "text-green-400"
+              : stage.includes("start") || stage.includes("begin") ? "text-amber-400"
+              : "text-accent";
+            return (
+              <div key={i}>
+                <span className={color}>[{stage}]</span>
+                <span className="text-text-muted ml-2">{ev.message ?? ""}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    )}</AilaCard>
   );
 }
 
@@ -438,21 +436,19 @@ function StartInvestigationForm({ projectId }: { projectId: string }) {
 // ----- Investigations tab -----
 function RawDirectoryNotice() {
   return (
-    <AilaCard>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Raw Directory — intake only</h3>
-          <p className="text-xs text-text-muted mt-0.5">
-            This project treats the evidence directory as a real filesystem on the analyzer.
-            The pre/full-analysis pipeline (disk, memory, network, log lanes) is skipped —
-            ask questions directly and the investigator will read files off the analyzer.
-          </p>
-        </div>
-        <span className="shrink-0 px-2 py-0.5 text-[11px] rounded border border-border text-text-muted">
-          raw_directory
-        </span>
+    <AilaCard  techBorder glow><div className="flex items-start justify-between gap-3">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">Raw Directory — intake only</h3>
+        <p className="text-xs text-text-muted mt-0.5">
+          This project treats the evidence directory as a real filesystem on the analyzer.
+          The pre/full-analysis pipeline (disk, memory, network, log lanes) is skipped —
+          ask questions directly and the investigator will read files off the analyzer.
+        </p>
       </div>
-    </AilaCard>
+      <span className="shrink-0 px-2 py-0.5 text-[11px] rounded border border-border text-text-muted">
+        raw_directory
+      </span>
+    </div></AilaCard>
   );
 }
 
@@ -481,17 +477,13 @@ function InvestigationsTab({
       {isLoading && <LoadingSkeleton size="md" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger">
-          <p className="text-sm text-text-danger">Failed to load investigations.</p>
-        </AilaCard>
+        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load investigations.</p></AilaCard>
       )}
 
       {!isLoading && !isError && (investigations ?? []).length === 0 && (
-        <AilaCard>
-          <p className="text-sm text-text-muted text-center py-6">
-            No investigations yet. Start one above.
-          </p>
-        </AilaCard>
+        <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-6">
+          No investigations yet. Start one above.
+        </p></AilaCard>
       )}
 
       <div className="space-y-2">
@@ -528,127 +520,125 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-4">
-      <AilaCard>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-sm font-semibold font-mono text-foreground">Machine Readiness Check</h3>
-            {startEvent && (
-              <p className="text-xs text-text-muted mt-0.5">{startEvent.message}</p>
-            )}
-          </div>
-          <div className="flex gap-2">
-            {result && (
-              <button
-                type="button"
-                onClick={reset}
-                className="px-3 py-1.5 text-xs rounded-md border border-border text-text-muted hover:text-foreground"
-              >
-                Reset
-              </button>
-            )}
+      <AilaCard  techBorder glow><div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-semibold font-mono text-foreground">Machine Readiness Check</h3>
+          {startEvent && (
+            <p className="text-xs text-text-muted mt-0.5">{startEvent.message}</p>
+          )}
+        </div>
+        <div className="flex gap-2">
+          {result && (
             <button
               type="button"
-              onClick={start}
-              disabled={running}
-              className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              onClick={reset}
+              className="px-3 py-1.5 text-xs rounded-md border border-border text-text-muted hover:text-foreground"
             >
-              {running && <span className="inline-block w-2 h-2 rounded-full bg-white/70 animate-pulse" />}
-              {running ? "Running..." : result ? "Re-run Check" : "Run Check"}
+              Reset
             </button>
-          </div>
+          )}
+          <button
+            type="button"
+            onClick={start}
+            disabled={running}
+            className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {running && <span className="inline-block w-2 h-2 rounded-full bg-white/70 animate-pulse" />}
+            {running ? "Running..." : result ? "Re-run Check" : "Run Check"}
+          </button>
         </div>
-
-        {/* Current action */}
-        {currentAction && (
-          <div className="mb-3 px-3 py-2 rounded-md bg-surface-secondary border border-border text-xs text-text-muted font-mono flex items-center gap-2">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-            {currentAction.message}
-          </div>
-        )}
-
-        {/* Tool results */}
-        {toolEvents.length > 0 && (
-          <div className="space-y-1 max-h-96 overflow-y-auto">
-            {toolEvents.map((e, i) => (
-              <div
-                key={i}
-                className="flex items-center justify-between px-3 py-1.5 rounded text-xs font-mono hover:bg-surface-secondary"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className={TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}>
-                    {e.status === "installed" ? "✓" : e.status === "missing" ? "✗" : "—"}
-                  </span>
-                  <span className="text-foreground truncate">{e.tool}</span>
-                  {e.version && (
-                    <span className="text-text-muted shrink-0">{e.version}</span>
-                  )}
-                  {e.install_method && e.install_method !== "pre_installed" && (
-                    <span className="text-accent shrink-0 text-[10px]">[{e.install_method}]</span>
-                  )}
-                </div>
-                {e.required && e.status === "missing" && (
-                  <span className="text-red-400 shrink-0 ml-2">REQUIRED</span>
+      </div>
+      
+      {/* Current action */}
+      {currentAction && (
+        <div className="mb-3 px-3 py-2 rounded-md bg-surface-secondary border border-border text-xs text-text-muted font-mono flex items-center gap-2">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+          {currentAction.message}
+        </div>
+      )}
+      
+      {/* Tool results */}
+      {toolEvents.length > 0 && (
+        <div className="space-y-1 max-h-96 overflow-y-auto">
+          {toolEvents.map((e, i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between px-3 py-1.5 rounded text-xs font-mono hover:bg-surface-secondary"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}>
+                  {e.status === "installed" ? "✓" : e.status === "missing" ? "✗" : "—"}
+                </span>
+                <span className="text-foreground truncate">{e.tool}</span>
+                {e.version && (
+                  <span className="text-text-muted shrink-0">{e.version}</span>
+                )}
+                {e.install_method && e.install_method !== "pre_installed" && (
+                  <span className="text-accent shrink-0 text-[10px]">[{e.install_method}]</span>
                 )}
               </div>
-            ))}
-          </div>
-        )}
-
-        {/* Full event log (xray) — shows every streamed event so debugging isn't a black box */}
-        {events.length > 0 && (
-          <details className="mt-4">
-            <summary className="text-xs font-mono text-text-muted cursor-pointer select-none hover:text-foreground">
-              xray log ({events.length} events) — expand for full stream
-            </summary>
-            <div className="mt-2 max-h-96 overflow-y-auto rounded border border-border bg-black/40">
-              {events.map((e, i) => {
-                const stage = e.stage ?? "event";
-                const color =
-                  stage.includes("failed") ? "text-red-400" :
-                  stage === "tool_done" && e.status === "installed" ? "text-green-400" :
-                  stage === "install_verified" ? "text-green-400" :
-                  stage === "installing" || stage === "install_exec" ? "text-amber-400" :
-                  stage === "checking" ? "text-blue-400" :
-                  stage === "heartbeat" ? "text-text-muted/60" :
-                  "text-text-muted";
-                return (
-                  <div key={i} className="px-2 py-1 text-[10px] font-mono border-b border-border/40 last:border-b-0">
-                    <span className={`${color} font-semibold`}>[{stage}]</span>
-                    {e.tool && <span className="text-foreground ml-2">{e.tool}</span>}
-                    {e.message && <span className="text-text-muted ml-2">— {e.message}</span>}
-                    {e.command && (
-                      <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all">$ {e.command}</div>
-                    )}
-                    {e.error && (
-                      <div className="text-red-300/80 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
-                    )}
-                    {e.output_tail && (
-                      <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.output_tail}</div>
-                    )}
-                  </div>
-                );
-              })}
+              {e.required && e.status === "missing" && (
+                <span className="text-red-400 shrink-0 ml-2">REQUIRED</span>
+              )}
             </div>
-          </details>
-        )}
-
-        {/* Summary */}
-        {result && (
-          <div className={`mt-4 px-4 py-3 rounded-md border text-sm font-medium ${
-            result.ready
-              ? "border-green-800 bg-green-950/30 text-green-400"
-              : "border-red-800 bg-red-950/30 text-red-400"
-          }`}>
-            {result.ready ? "✓ Machine is ready" : "✗ Some required tools are missing"}
+          ))}
+        </div>
+      )}
+      
+      {/* Full event log (xray) — shows every streamed event so debugging isn't a black box */}
+      {events.length > 0 && (
+        <details className="mt-4">
+          <summary className="text-xs font-mono text-text-muted cursor-pointer select-none hover:text-foreground">
+            xray log ({events.length} events) — expand for full stream
+          </summary>
+          <div className="mt-2 max-h-96 overflow-y-auto rounded border border-border bg-black/40">
+            {events.map((e, i) => {
+              const stage = e.stage ?? "event";
+              const color =
+                stage.includes("failed") ? "text-red-400" :
+                stage === "tool_done" && e.status === "installed" ? "text-green-400" :
+                stage === "install_verified" ? "text-green-400" :
+                stage === "installing" || stage === "install_exec" ? "text-amber-400" :
+                stage === "checking" ? "text-blue-400" :
+                stage === "heartbeat" ? "text-text-muted/60" :
+                "text-text-muted";
+              return (
+                <div key={i} className="px-2 py-1 text-[10px] font-mono border-b border-border/40 last:border-b-0">
+                  <span className={`${color} font-semibold`}>[{stage}]</span>
+                  {e.tool && <span className="text-foreground ml-2">{e.tool}</span>}
+                  {e.message && <span className="text-text-muted ml-2">— {e.message}</span>}
+                  {e.command && (
+                    <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all">$ {e.command}</div>
+                  )}
+                  {e.error && (
+                    <div className="text-red-300/80 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
+                  )}
+                  {e.output_tail && (
+                    <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.output_tail}</div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        )}
-
-        {!running && events.length === 0 && (
-          <p className="text-sm text-text-muted text-center py-6">
-            Run a readiness check to verify forensic tools on the analyzer machine.
-          </p>
-        )}
-      </AilaCard>
+        </details>
+      )}
+      
+      {/* Summary */}
+      {result && (
+        <div className={`mt-4 px-4 py-3 rounded-md border text-sm font-medium ${
+          result.ready
+            ? "border-green-800 bg-green-950/30 text-green-400"
+            : "border-red-800 bg-red-950/30 text-red-400"
+        }`}>
+          {result.ready ? "✓ Machine is ready" : "✗ Some required tools are missing"}
+        </div>
+      )}
+      
+      {!running && events.length === 0 && (
+        <p className="text-sm text-text-muted text-center py-6">
+          Run a readiness check to verify forensic tools on the analyzer machine.
+        </p>
+      )}</AilaCard>
 
       {/* Legacy result view if needed */}
       {result && (
@@ -672,9 +662,7 @@ export function ProjectDashboardPage() {
 
   if (!projectId) {
     return (
-      <AilaCard className="border-border-danger">
-        <p className="text-sm text-text-danger">Invalid project ID.</p>
-      </AilaCard>
+      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Invalid project ID.</p></AilaCard>
     );
   }
 
@@ -682,9 +670,7 @@ export function ProjectDashboardPage() {
 
   if (isError || !project) {
     return (
-      <AilaCard className="border-border-danger">
-        <p className="text-sm text-text-danger">Failed to load project.</p>
-      </AilaCard>
+      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load project.</p></AilaCard>
     );
   }
 

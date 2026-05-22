@@ -266,9 +266,7 @@ export function FindingsPanel({ projectId }: { projectId: string }) {
   if (isLoading) return <LoadingSkeleton size="md" width="full" />;
   if (isError) {
     return (
-      <AilaCard className="border-border-danger">
-        <p className="text-sm text-text-danger">Failed to load findings.</p>
-      </AilaCard>
+      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load findings.</p></AilaCard>
     );
   }
 
@@ -294,61 +292,59 @@ export function FindingsPanel({ projectId }: { projectId: string }) {
   };
 
   return (
-    <AilaCard>
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-foreground">Auto-findings</h3>
-          <p className="text-xs text-text-muted mt-0.5">
-            Rows the collector heuristics flagged as suspicious (LOLBAS, AppData/Temp execution,
-            double-extension…). Click a row to see the exact command parameters, or mark as false
-            positive to hide it and teach future runs it's benign.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs text-text-muted font-mono">
-            {findings.length}
-          </span>
-          {findings.length > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={toggleAll}
-                className="text-[10px] font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
-              >
-                {expandAll ? "collapse all" : "expand all"}
-              </button>
-              <button
-                type="button"
-                onClick={() => downloadFindings(findings, projectId)}
-                className="text-[10px] font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
-                title="Download all findings as JSON"
-              >
-                download json
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {findings.length === 0 ? (
-        <p className="text-sm text-text-muted italic py-6 text-center">
-          No suspicious findings yet. Run Full Analysis to populate — the heuristics will tag any
-          LOLBAS, AppData/Temp execution, or double-extension patterns automatically.
+    <AilaCard  techBorder glow><div className="flex items-start justify-between gap-3 mb-3">
+      <div className="min-w-0">
+        <h3 className="text-sm font-semibold text-foreground">Auto-findings</h3>
+        <p className="text-xs text-text-muted mt-0.5">
+          Rows the collector heuristics flagged as suspicious (LOLBAS, AppData/Temp execution,
+          double-extension…). Click a row to see the exact command parameters, or mark as false
+          positive to hide it and teach future runs it's benign.
         </p>
-      ) : (
-        <ol className="space-y-1.5">
-          {findings.map((f, i) => (
-            <FindingRow
-              key={f.fingerprint ?? i}
-              f={f}
-              index={i}
-              expanded={expanded.has(i)}
-              onToggle={() => toggle(i)}
-              projectId={projectId}
-            />
-          ))}
-        </ol>
-      )}
-    </AilaCard>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <span className="text-xs text-text-muted font-mono">
+          {findings.length}
+        </span>
+        {findings.length > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="text-[10px] font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
+            >
+              {expandAll ? "collapse all" : "expand all"}
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadFindings(findings, projectId)}
+              className="text-[10px] font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
+              title="Download all findings as JSON"
+            >
+              download json
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+    
+    {findings.length === 0 ? (
+      <p className="text-sm text-text-muted italic py-6 text-center">
+        No suspicious findings yet. Run Full Analysis to populate — the heuristics will tag any
+        LOLBAS, AppData/Temp execution, or double-extension patterns automatically.
+      </p>
+    ) : (
+      <ol className="space-y-1.5">
+        {findings.map((f, i) => (
+          <FindingRow
+            key={f.fingerprint ?? i}
+            f={f}
+            index={i}
+            expanded={expanded.has(i)}
+            onToggle={() => toggle(i)}
+            projectId={projectId}
+          />
+        ))}
+      </ol>
+    )}</AilaCard>
   );
 }

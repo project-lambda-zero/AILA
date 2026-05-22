@@ -48,7 +48,7 @@ export function RegistryViewer({ projectId }: { projectId: string }) {
 
   if (isError) {
     return (
-      <AilaCard className="border-border-danger">
+      <AilaCard className="border-border-danger" techBorder glow>
         <p className="text-sm text-text-danger">Failed to load registry analysis.</p>
       </AilaCard>
     );
@@ -75,7 +75,7 @@ export function RegistryViewer({ projectId }: { projectId: string }) {
 
   if (totalItems === 0) {
     return (
-      <AilaCard>
+      <AilaCard  techBorder glow>
         <p className="text-sm text-text-muted text-center py-8">
           No registry data available. This project may not contain a Windows disk image.
         </p>

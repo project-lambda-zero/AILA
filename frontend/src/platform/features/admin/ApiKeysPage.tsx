@@ -539,39 +539,33 @@ export function ApiKeysPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total Keys
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {keysQuery.isLoading ? "—" : totalKeys}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">All time</p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Total Keys
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {keysQuery.isLoading ? "—" : totalKeys}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">All time</p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Active Keys
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {keysQuery.isLoading ? "—" : activeKeys}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Not revoked
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Active Keys
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {keysQuery.isLoading ? "—" : activeKeys}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Not revoked
+        </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Revoked Keys
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {keysQuery.isLoading ? "—" : revokedKeys}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Invalidated
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Revoked Keys
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {keysQuery.isLoading ? "—" : revokedKeys}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Invalidated
+        </p></AilaCard>
       </div>
 
       {/* Error banner */}
@@ -583,9 +577,7 @@ export function ApiKeysPage() {
 
       {/* Loading skeleton */}
       {keysQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {/* Empty state */}

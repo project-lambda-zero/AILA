@@ -177,16 +177,14 @@ export function NdayPage() {
         </Link>
       </div>
 
-      <AilaCard className="border-dashed">
-        <AilaBadge severity="info" size="sm">
-          synthesised view
-        </AilaBadge>
-        <p className="text-[10px] text-text-muted mt-1">
-          Per §1.11: each stage state is inferred from project + finding data.
-          Real stage tracking (rewind / per-stage operator notes / BinDiff
-          score / commit hash) is backend pending.
-        </p>
-      </AilaCard>
+      <AilaCard className="border-dashed" techBorder glow><AilaBadge severity="info" size="sm">
+        synthesised view
+      </AilaBadge>
+      <p className="text-[10px] text-text-muted mt-1">
+        Per §1.11: each stage state is inferred from project + finding data.
+        Real stage tracking (rewind / per-stage operator notes / BinDiff
+        score / commit hash) is backend pending.
+      </p></AilaCard>
 
       <NdayStageView stages={stages} />
     </div>

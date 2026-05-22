@@ -278,29 +278,27 @@ function NamespaceGroup({
   );
 
   return (
-    <AilaCard variant="elevated" padding="md">
-      <div className="flex items-center gap-2 mb-3">
-        <h2 className="font-mono text-sm font-semibold text-text capitalize">
-          {namespace}
-        </h2>
-        <AilaBadge severity="neutral" size="sm">
-          {entries.length} {entries.length === 1 ? "entry" : "entries"}
-        </AilaBadge>
-      </div>
-
-      <AilaTable
-        data={entries}
-        columns={columns}
-        pageSize={50}
-        enableSorting
-        enableFiltering={false}
-        className="border-0"
-      >
-        <AilaTable.Header />
-        <AilaTable.Body emptyState="No entries in this namespace." />
-        <AilaTable.Pagination pageSizeOptions={[25, 50]} />
-      </AilaTable>
-    </AilaCard>
+    <AilaCard variant="elevated" padding="md" techBorder glow><div className="flex items-center gap-2 mb-3">
+      <h2 className="font-mono text-sm font-semibold text-text capitalize">
+        {namespace}
+      </h2>
+      <AilaBadge severity="neutral" size="sm">
+        {entries.length} {entries.length === 1 ? "entry" : "entries"}
+      </AilaBadge>
+    </div>
+    
+    <AilaTable
+      data={entries}
+      columns={columns}
+      pageSize={50}
+      enableSorting
+      enableFiltering={false}
+      className="border-0"
+    >
+      <AilaTable.Header />
+      <AilaTable.Body emptyState="No entries in this namespace." />
+      <AilaTable.Pagination pageSizeOptions={[25, 50]} />
+    </AilaTable></AilaCard>
   );
 }
 
@@ -375,29 +373,25 @@ export function PlatformConfigPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total Entries
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {configQuery.data?.total ?? "—"}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            All namespaces
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Total Entries
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {configQuery.data?.total ?? "—"}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          All namespaces
+        </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Namespaces
-          </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {configQuery.isLoading ? "—" : namespaceCount}
-          </p>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Module groups
-          </p>
-        </AilaCard>
+        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Namespaces
+        </p>
+        <p className="font-mono text-2xl font-semibold text-text mt-1">
+          {configQuery.isLoading ? "—" : namespaceCount}
+        </p>
+        <p className="font-mono text-xs text-text-muted mt-0.5">
+          Module groups
+        </p></AilaCard>
       </div>
 
       {/* Error banner */}
@@ -409,9 +403,7 @@ export function PlatformConfigPage() {
 
       {/* Loading skeleton */}
       {configQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {/* Empty state */}

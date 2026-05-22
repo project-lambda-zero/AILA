@@ -347,6 +347,39 @@ class ReportWriter:
         out.append(f"Final confidence: {facts.get('confidence') or 'unknown'}")
         out.append("")
 
+        # Multi-persona deliberation panel verdicts. These are the
+        # AUTHORITATIVE inputs for your audit_summary + findings —
+        # the panel already did the analysis; your job is to TRANSLATE
+        # it into an operator-readable audit narrative, not to redo
+        # the technical analysis.
+        panel_verdicts = facts.get("panel_verdicts") or []
+        if len(panel_verdicts) >= 2:
+            out.append("# Deliberation panel verdicts (your authoritative input)")
+            out.append("")
+            out.append(
+                f"This investigation was reasoned by {len(panel_verdicts)} "
+                f"persona branches in parallel. Their individual verdicts:"
+            )
+            out.append("")
+            for v in panel_verdicts:
+                persona = (v.get("persona_voice") or "?").upper()
+                kind = v.get("outcome_kind") or "?"
+                conf = v.get("confidence") or "?"
+                ans = (v.get("answer") or "").strip()
+                out.append(f"## {persona} — {kind} (confidence: {conf})")
+                out.append(ans or "(no answer body)")
+                out.append("")
+            out.append(
+                "Your `audit_summary` MUST consolidate these verdicts into "
+                "ONE plain-English paragraph the audit committee can read. "
+                "If the personas converged on the same conclusion, say so "
+                "explicitly ('the audit panel converged on X'). If they "
+                "split, name the disagreement in operator terms, not "
+                "code-symbol jargon. Do NOT echo the persona prose verbatim "
+                "— translate it."
+            )
+            out.append("")
+
         meta = facts.get("audit_metadata") or {}
         if meta.get("commit_hash"):
             out.append("# Audit pinning")

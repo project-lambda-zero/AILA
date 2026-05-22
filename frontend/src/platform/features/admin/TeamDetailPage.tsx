@@ -552,9 +552,7 @@ export function TeamDetailPage() {
       </div>
 
       {detailQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
+        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {detailQuery.isError && (
@@ -589,30 +587,24 @@ export function TeamDetailPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <AilaCard variant="elevated" padding="md">
-              <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-                Members
-              </p>
-              <p className="font-mono text-2xl font-semibold text-text mt-1">
-                {members.length}
-              </p>
-            </AilaCard>
-            <AilaCard variant="elevated" padding="md">
-              <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-                Created
-              </p>
-              <p className="font-mono text-sm text-text mt-1">
-                {formatTimestamp(detail.team.created_at)}
-              </p>
-            </AilaCard>
-            <AilaCard variant="elevated" padding="md">
-              <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-                Updated
-              </p>
-              <p className="font-mono text-sm text-text mt-1">
-                {formatTimestamp(detail.team.updated_at)}
-              </p>
-            </AilaCard>
+            <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+              Members
+            </p>
+            <p className="font-mono text-2xl font-semibold text-text mt-1">
+              {members.length}
+            </p></AilaCard>
+            <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+              Created
+            </p>
+            <p className="font-mono text-sm text-text mt-1">
+              {formatTimestamp(detail.team.created_at)}
+            </p></AilaCard>
+            <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+              Updated
+            </p>
+            <p className="font-mono text-sm text-text mt-1">
+              {formatTimestamp(detail.team.updated_at)}
+            </p></AilaCard>
           </div>
 
           <div className="flex items-center justify-between">

@@ -83,12 +83,10 @@ export function WriteUpViewer({ projectId }: { projectId: string }) {
 
   if (!writeups || writeups.length === 0) {
     return (
-      <AilaCard>
-        <p className="text-sm text-text-muted text-center py-8">
-          No write-ups generated yet. Complete an investigation to generate a
-          professional report.
-        </p>
-      </AilaCard>
+      <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-8">
+        No write-ups generated yet. Complete an investigation to generate a
+        professional report.
+      </p></AilaCard>
     );
   }
 
@@ -128,11 +126,9 @@ export function WriteUpViewer({ projectId }: { projectId: string }) {
       </div>
 
       {items.length === 0 ? (
-        <AilaCard>
-          <p className="text-xs text-text-muted text-center py-6">
-            No write-ups match the current filter.
-          </p>
-        </AilaCard>
+        <AilaCard  techBorder glow><p className="text-xs text-text-muted text-center py-6">
+          No write-ups match the current filter.
+        </p></AilaCard>
       ) : (
         <div className="space-y-3">
           {items.map((w) => {
@@ -198,165 +194,163 @@ function WriteUpCard({
   }, [writeup.content_markdown]);
 
   return (
-    <AilaCard>
-      <div className="space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <button
-              type="button"
-              onClick={onToggle}
-              className="group flex items-start gap-2 text-left w-full"
-              aria-expanded={open}
+    <AilaCard  techBorder glow><div className="space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="group flex items-start gap-2 text-left w-full"
+            aria-expanded={open}
+          >
+            <span
+              className={`mt-1 text-text-muted transition-transform ${
+                open ? "rotate-90" : ""
+              }`}
+              aria-hidden
             >
-              <span
-                className={`mt-1 text-text-muted transition-transform ${
-                  open ? "rotate-90" : ""
-                }`}
-                aria-hidden
-              >
-                ▶
-              </span>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-semibold text-foreground group-hover:underline decoration-dotted underline-offset-2">
-                  {writeup.title}
-                </h3>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1">
-                  {investigation ? (
-                    <span className="inline-flex items-center gap-1.5 text-[11px] text-text-muted">
-                      <AilaBadge severity="info" size="sm">
-                        I
-                      </AilaBadge>
-                      <span className="truncate" title={investigation.question}>
-                        {truncate(investigation.question, 90)}
-                      </span>
-                      <span className="font-mono opacity-70">
-                        {investigation.id.slice(0, 8)}
-                      </span>
+              ▶
+            </span>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-semibold text-foreground group-hover:underline decoration-dotted underline-offset-2">
+                {writeup.title}
+              </h3>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1">
+                {investigation ? (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-text-muted">
+                    <AilaBadge severity="info" size="sm">
+                      I
+                    </AilaBadge>
+                    <span className="truncate" title={investigation.question}>
+                      {truncate(investigation.question, 90)}
                     </span>
-                  ) : writeup.investigation_id ? (
-                    <span className="inline-flex items-center gap-1 text-[11px] text-text-muted">
-                      <AilaBadge severity="info" size="sm">
-                        I
-                      </AilaBadge>
-                      <span className="font-mono">
-                        {writeup.investigation_id.slice(0, 8)}
-                      </span>
-                      <span className="italic opacity-70">
-                        (investigation not on record)
-                      </span>
+                    <span className="font-mono opacity-70">
+                      {investigation.id.slice(0, 8)}
                     </span>
-                  ) : (
-                    <span className="text-[11px] text-text-muted italic">
-                      Project-wide write-up (no single investigation)
+                  </span>
+                ) : writeup.investigation_id ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] text-text-muted">
+                    <AilaBadge severity="info" size="sm">
+                      I
+                    </AilaBadge>
+                    <span className="font-mono">
+                      {writeup.investigation_id.slice(0, 8)}
                     </span>
-                  )}
-                  {writeup.created_at && (
-                    <span className="text-[11px] text-text-muted">
-                      {stamp(writeup.created_at)}
+                    <span className="italic opacity-70">
+                      (investigation not on record)
                     </span>
-                  )}
-                  {writeup.artifacts_referenced.length > 0 && (
-                    <span className="text-[11px] text-text-muted">
-                      {writeup.artifacts_referenced.length} artifact ref
-                      {writeup.artifacts_referenced.length === 1 ? "" : "s"}
-                    </span>
-                  )}
-                </div>
-                {!open && preview && (
-                  <p className="text-xs text-text-muted mt-1.5 line-clamp-2">
-                    {preview}
-                  </p>
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-text-muted italic">
+                    Project-wide write-up (no single investigation)
+                  </span>
+                )}
+                {writeup.created_at && (
+                  <span className="text-[11px] text-text-muted">
+                    {stamp(writeup.created_at)}
+                  </span>
+                )}
+                {writeup.artifacts_referenced.length > 0 && (
+                  <span className="text-[11px] text-text-muted">
+                    {writeup.artifacts_referenced.length} artifact ref
+                    {writeup.artifacts_referenced.length === 1 ? "" : "s"}
+                  </span>
                 )}
               </div>
-            </button>
-          </div>
-          <div className="flex shrink-0 items-center gap-2 relative">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={onDownload}
-              disabled={downloading}
-            >
-              {downloading ? "…" : ".md"}
-            </Button>
-            {confirmDelete ? (
-              <div className="flex items-center gap-1">
-                <span className="text-[11px] text-text-muted">Delete?</span>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setConfirmDelete(false)}
-                  disabled={deleting}
-                >
-                  No
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    setConfirmDelete(false);
-                    onDelete();
-                  }}
-                  disabled={deleting}
-                  className="bg-red-600 hover:bg-red-500 text-white"
-                >
-                  {deleting ? "…" : "Yes"}
-                </Button>
-              </div>
-            ) : (
+              {!open && preview && (
+                <p className="text-xs text-text-muted mt-1.5 line-clamp-2">
+                  {preview}
+                </p>
+              )}
+            </div>
+          </button>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 relative">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onDownload}
+            disabled={downloading}
+          >
+            {downloading ? "…" : ".md"}
+          </Button>
+          {confirmDelete ? (
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] text-text-muted">Delete?</span>
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => setConfirmDelete(true)}
+                onClick={() => setConfirmDelete(false)}
                 disabled={deleting}
-                title={`Delete "${writeup.title}"`}
-                aria-label="Delete write-up"
               >
-                {deleting ? "…" : "✕"}
+                No
               </Button>
-            )}
-          </div>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setConfirmDelete(false);
+                  onDelete();
+                }}
+                disabled={deleting}
+                className="bg-red-600 hover:bg-red-500 text-white"
+              >
+                {deleting ? "…" : "Yes"}
+              </Button>
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setConfirmDelete(true)}
+              disabled={deleting}
+              title={`Delete "${writeup.title}"`}
+              aria-label="Delete write-up"
+            >
+              {deleting ? "…" : "✕"}
+            </Button>
+          )}
         </div>
-
-        {open && (
-          <div className="space-y-3 pl-5 border-l-2 border-border/60">
-            {writeup.methodology && (
-              <div className="rounded-md bg-surface-secondary px-3 py-2">
-                <h4 className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1">
-                  Methodology
-                </h4>
-                <p className="text-xs text-foreground whitespace-pre-wrap">
-                  {writeup.methodology}
-                </p>
-              </div>
-            )}
-
-            <div
-              className="prose prose-sm max-w-none text-sm text-foreground writeup-md [&_h1]:text-foreground [&_h2]:text-foreground [&_h3]:text-foreground [&_h4]:text-foreground [&_strong]:text-foreground [&_code]:text-foreground [&_a]:text-accent"
-              dangerouslySetInnerHTML={{
-                __html: renderMarkdown(writeup.content_markdown || ""),
-              }}
-            />
-
-            {writeup.artifacts_referenced.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1 pt-2 border-t border-border/60">
-                <span className="text-[11px] text-text-muted mr-1">
-                  Referenced artifacts:
-                </span>
-                {writeup.artifacts_referenced.map((id) => (
-                  <span
-                    key={id}
-                    className="px-1.5 py-0.5 text-[11px] bg-surface-secondary rounded font-mono text-text-muted"
-                    title={id}
-                  >
-                    {id.slice(0, 8)}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
-    </AilaCard>
+    
+      {open && (
+        <div className="space-y-3 pl-5 border-l-2 border-border/60">
+          {writeup.methodology && (
+            <div className="rounded-md bg-surface-secondary px-3 py-2">
+              <h4 className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1">
+                Methodology
+              </h4>
+              <p className="text-xs text-foreground whitespace-pre-wrap">
+                {writeup.methodology}
+              </p>
+            </div>
+          )}
+    
+          <div
+            className="prose prose-sm max-w-none text-sm text-foreground writeup-md [&_h1]:text-foreground [&_h2]:text-foreground [&_h3]:text-foreground [&_h4]:text-foreground [&_strong]:text-foreground [&_code]:text-foreground [&_a]:text-accent"
+            dangerouslySetInnerHTML={{
+              __html: renderMarkdown(writeup.content_markdown || ""),
+            }}
+          />
+    
+          {writeup.artifacts_referenced.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1 pt-2 border-t border-border/60">
+              <span className="text-[11px] text-text-muted mr-1">
+                Referenced artifacts:
+              </span>
+              {writeup.artifacts_referenced.map((id) => (
+                <span
+                  key={id}
+                  className="px-1.5 py-0.5 text-[11px] bg-surface-secondary rounded font-mono text-text-muted"
+                  title={id}
+                >
+                  {id.slice(0, 8)}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div></AilaCard>
   );
 }
 

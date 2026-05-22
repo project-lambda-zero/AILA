@@ -152,302 +152,296 @@ export function NewProjectWizard() {
 
       {/* Step 1 — Target intake */}
       {step === 1 && (
-        <AilaCard>
-          <h2 className="text-sm font-semibold text-foreground mb-2">
-            Step 1 — Target intake
-          </h2>
-          <div className="space-y-3 text-sm">
-            <Field label="Workspace">
-              <select
-                value={workspaceId}
-                onChange={(e) => setWorkspaceId(e.target.value)}
-                className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border-default"
-              >
-                <option value="">— Pick a workspace —</option>
-                {workspaces.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name} ({w.theme})
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="Input source">
-              <div className="flex gap-1 flex-wrap">
-                {INPUT_SOURCES.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setInputSource(s)}
-                    className={
-                      "px-2 py-1 text-xs font-mono rounded border " +
-                      (inputSource === s
-                        ? "bg-accent text-white border-accent"
-                        : "bg-surface text-foreground border-border-default hover:bg-surface-hover")
-                    }
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </Field>
-
-            <Field label="Target class">
-              <select
-                value={targetClass}
-                onChange={(e) => setTargetClass(e.target.value as TargetClass)}
-                className="px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
-              >
-                {TARGET_CLASSES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <label className="flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                checked={sourceAvailable}
-                onChange={(e) => setSourceAvailable(e.target.checked)}
-              />
-              <span>Source code available (enables source-aware analysis)</span>
-            </label>
-
-            {/* Source-specific fields */}
-            {inputSource === "git_repo" && (
-              <>
-                <Field label="Repo URL">
-                  <input
-                    type="text"
-                    value={repoUrl}
-                    onChange={(e) => setRepoUrl(e.target.value)}
-                    placeholder="https://github.com/owner/repo"
-                    className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
-                  />
-                </Field>
-                <div className="grid grid-cols-2 gap-2">
-                  <Field label="Vulnerable ref (optional)">
-                    <input
-                      type="text"
-                      value={vulnerableRef}
-                      onChange={(e) => setVulnerableRef(e.target.value)}
-                      placeholder="commit / tag / branch"
-                      className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
-                    />
-                  </Field>
-                  <Field label="Patched ref (optional)">
-                    <input
-                      type="text"
-                      value={patchedRef}
-                      onChange={(e) => setPatchedRef(e.target.value)}
-                      placeholder="commit / tag / branch"
-                      className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
-                    />
-                  </Field>
-                </div>
-              </>
-            )}
-
-            {inputSource === "http_url" && (
-              <Field label="Download URL">
+        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+          Step 1 — Target intake
+        </h2>
+        <div className="space-y-3 text-sm">
+          <Field label="Workspace">
+            <select
+              value={workspaceId}
+              onChange={(e) => setWorkspaceId(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border-default"
+            >
+              <option value="">— Pick a workspace —</option>
+              {workspaces.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name} ({w.theme})
+                </option>
+              ))}
+            </select>
+          </Field>
+        
+          <Field label="Input source">
+            <div className="flex gap-1 flex-wrap">
+              {INPUT_SOURCES.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setInputSource(s)}
+                  className={
+                    "px-2 py-1 text-xs font-mono rounded border " +
+                    (inputSource === s
+                      ? "bg-accent text-white border-accent"
+                      : "bg-surface text-foreground border-border-default hover:bg-surface-hover")
+                  }
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </Field>
+        
+          <Field label="Target class">
+            <select
+              value={targetClass}
+              onChange={(e) => setTargetClass(e.target.value as TargetClass)}
+              className="px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+            >
+              {TARGET_CLASSES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </Field>
+        
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={sourceAvailable}
+              onChange={(e) => setSourceAvailable(e.target.checked)}
+            />
+            <span>Source code available (enables source-aware analysis)</span>
+          </label>
+        
+          {/* Source-specific fields */}
+          {inputSource === "git_repo" && (
+            <>
+              <Field label="Repo URL">
                 <input
                   type="text"
-                  value={downloadUrl}
-                  onChange={(e) => setDownloadUrl(e.target.value)}
-                  placeholder="https://…/firmware.bin"
+                  value={repoUrl}
+                  onChange={(e) => setRepoUrl(e.target.value)}
+                  placeholder="https://github.com/owner/repo"
                   className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
                 />
               </Field>
-            )}
-
-            {inputSource === "upload" && (
-              <Field label="Upload artifact">
-                <UploadDropzone
-                  onFile={(file) => setUploadFilename(file.name)}
-                  hint={
-                    uploadFilename
-                      ? `picked: ${uploadFilename}`
-                      : "drop a .elf / .exe / .apk / .ipa / .so / .o"
-                  }
-                />
-                <p className="text-[10px] text-text-muted mt-1">
-                  The file streams to the IDA MCP after the project
-                  is created (the upload happens during step 3 submit).
-                  Drop again to replace.
-                </p>
-              </Field>
-            )}
-          </div>
-          <div className="flex justify-between mt-4">
-            <span />
-            <button
-              type="button"
-              disabled={!step1Ready}
-              onClick={() => setStep(2)}
-              className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
-            >
-              Continue →
-            </button>
-          </div>
-        </AilaCard>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Vulnerable ref (optional)">
+                  <input
+                    type="text"
+                    value={vulnerableRef}
+                    onChange={(e) => setVulnerableRef(e.target.value)}
+                    placeholder="commit / tag / branch"
+                    className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+                  />
+                </Field>
+                <Field label="Patched ref (optional)">
+                  <input
+                    type="text"
+                    value={patchedRef}
+                    onChange={(e) => setPatchedRef(e.target.value)}
+                    placeholder="commit / tag / branch"
+                    className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+                  />
+                </Field>
+              </div>
+            </>
+          )}
+        
+          {inputSource === "http_url" && (
+            <Field label="Download URL">
+              <input
+                type="text"
+                value={downloadUrl}
+                onChange={(e) => setDownloadUrl(e.target.value)}
+                placeholder="https://…/firmware.bin"
+                className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+              />
+            </Field>
+          )}
+        
+          {inputSource === "upload" && (
+            <Field label="Upload artifact">
+              <UploadDropzone
+                onFile={(file) => setUploadFilename(file.name)}
+                hint={
+                  uploadFilename
+                    ? `picked: ${uploadFilename}`
+                    : "drop a .elf / .exe / .apk / .ipa / .so / .o"
+                }
+              />
+              <p className="text-[10px] text-text-muted mt-1">
+                The file streams to the IDA MCP after the project
+                is created (the upload happens during step 3 submit).
+                Drop again to replace.
+              </p>
+            </Field>
+          )}
+        </div>
+        <div className="flex justify-between mt-4">
+          <span />
+          <button
+            type="button"
+            disabled={!step1Ready}
+            onClick={() => setStep(2)}
+            className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
+          >
+            Continue →
+          </button>
+        </div></AilaCard>
       )}
 
       {/* Step 2 — Workstation */}
       {step === 2 && (
-        <AilaCard>
-          <h2 className="text-sm font-semibold text-foreground mb-2">
-            Step 2 — Workstation selection
-          </h2>
-          <p className="text-xs text-text-muted mb-3">
-            The research workstation runs the analysis pipeline (IDA / fuzzers
-            / PoC execution). Pick the host with the right tools + GPU + OS.
-          </p>
-          {systemList.length === 0 ? (
-            <div className="border border-dashed border-border-danger rounded p-3 bg-surface/40">
-              <p className="text-xs text-text-danger">
-                No systems registered. Register a workstation under{" "}
-                <strong>Systems</strong> first.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {systemList.map((s) => (
-                <label
-                  key={s.id}
-                  className={
-                    "block border rounded p-3 cursor-pointer transition-colors " +
-                    (systemId === s.id
-                      ? "border-accent bg-surface"
-                      : "border-border-default hover:bg-surface-hover")
-                  }
-                >
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="radio"
-                      name="system"
-                      checked={systemId === s.id}
-                      onChange={() => setSystemId(s.id)}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-mono text-foreground truncate">
-                        {s.name}
-                      </div>
-                      <div className="text-xs text-text-muted font-mono">
-                        {s.username}@{s.host}:{s.port}
-                      </div>
-                    </div>
-                    <AilaBadge severity="info" size="sm">
-                      system #{s.id}
-                    </AilaBadge>
-                    <WorkstationCompatibilityBadge
-                      system={s}
-                      kind={targetClass}
-                    />
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
-          <div className="flex justify-between mt-4">
-            <button
-              type="button"
-              onClick={() => setStep(1)}
-              className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border-default hover:bg-surface-hover"
-            >
-              ← Back
-            </button>
-            <button
-              type="button"
-              disabled={!step2Ready}
-              onClick={() => setStep(3)}
-              className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
-            >
-              Continue →
-            </button>
+        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+          Step 2 — Workstation selection
+        </h2>
+        <p className="text-xs text-text-muted mb-3">
+          The research workstation runs the analysis pipeline (IDA / fuzzers
+          / PoC execution). Pick the host with the right tools + GPU + OS.
+        </p>
+        {systemList.length === 0 ? (
+          <div className="border border-dashed border-border-danger rounded p-3 bg-surface/40">
+            <p className="text-xs text-text-danger">
+              No systems registered. Register a workstation under{" "}
+              <strong>Systems</strong> first.
+            </p>
           </div>
-        </AilaCard>
+        ) : (
+          <div className="space-y-2">
+            {systemList.map((s) => (
+              <label
+                key={s.id}
+                className={
+                  "block border rounded p-3 cursor-pointer transition-colors " +
+                  (systemId === s.id
+                    ? "border-accent bg-surface"
+                    : "border-border-default hover:bg-surface-hover")
+                }
+              >
+                <div className="flex items-center gap-3">
+                  <input
+                    type="radio"
+                    name="system"
+                    checked={systemId === s.id}
+                    onChange={() => setSystemId(s.id)}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-mono text-foreground truncate">
+                      {s.name}
+                    </div>
+                    <div className="text-xs text-text-muted font-mono">
+                      {s.username}@{s.host}:{s.port}
+                    </div>
+                  </div>
+                  <AilaBadge severity="info" size="sm">
+                    system #{s.id}
+                  </AilaBadge>
+                  <WorkstationCompatibilityBadge
+                    system={s}
+                    kind={targetClass}
+                  />
+                </div>
+              </label>
+            ))}
+          </div>
+        )}
+        <div className="flex justify-between mt-4">
+          <button
+            type="button"
+            onClick={() => setStep(1)}
+            className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border-default hover:bg-surface-hover"
+          >
+            ← Back
+          </button>
+          <button
+            type="button"
+            disabled={!step2Ready}
+            onClick={() => setStep(3)}
+            className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
+          >
+            Continue →
+          </button>
+        </div></AilaCard>
       )}
 
       {/* Step 3 — Scope + authorisation */}
       {step === 3 && (
-        <AilaCard>
-          <h2 className="text-sm font-semibold text-foreground mb-2">
-            Step 3 — Scope + authorisation
-          </h2>
-          <div className="space-y-3 text-sm">
-            <Field label="Project name">
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. 'CVE-2024-12345 — libpng analysis'"
-                className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border-default"
-              />
-            </Field>
-
-            <Field label="CVE ID (optional)">
-              <input
-                type="text"
-                value={cveId}
-                onChange={(e) => setCveId(e.target.value)}
-                placeholder="CVE-YYYY-NNNNN"
-                className="w-64 px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
-              />
-            </Field>
-
-            <Field label="Scope / context notes">
-              <textarea
-                value={contextNotes}
-                onChange={(e) => setContextNotes(e.target.value)}
-                rows={4}
-                placeholder="What's in scope, what isn't. Customer-supplied context. Anything the agent should know up front."
-                className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
-              />
-            </Field>
-
-            <label className="flex items-start gap-2 text-xs border border-border-default rounded p-3 bg-surface/40">
-              <input
-                type="checkbox"
-                checked={authorised}
-                onChange={(e) => setAuthorised(e.target.checked)}
-                className="mt-0.5"
-              />
-              <span>
-                <strong className="text-foreground">
-                  I confirm this engagement is in scope
-                </strong>{" "}
-                per signed authorisation. The project cannot be created
-                without this (§1.2 / docs/vr/02_IDA_HEADLESS_MCP.md §6).
-              </span>
-            </label>
+        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+          Step 3 — Scope + authorisation
+        </h2>
+        <div className="space-y-3 text-sm">
+          <Field label="Project name">
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. 'CVE-2024-12345 — libpng analysis'"
+              className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border-default"
+            />
+          </Field>
+        
+          <Field label="CVE ID (optional)">
+            <input
+              type="text"
+              value={cveId}
+              onChange={(e) => setCveId(e.target.value)}
+              placeholder="CVE-YYYY-NNNNN"
+              className="w-64 px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+            />
+          </Field>
+        
+          <Field label="Scope / context notes">
+            <textarea
+              value={contextNotes}
+              onChange={(e) => setContextNotes(e.target.value)}
+              rows={4}
+              placeholder="What's in scope, what isn't. Customer-supplied context. Anything the agent should know up front."
+              className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+            />
+          </Field>
+        
+          <label className="flex items-start gap-2 text-xs border border-border-default rounded p-3 bg-surface/40">
+            <input
+              type="checkbox"
+              checked={authorised}
+              onChange={(e) => setAuthorised(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <strong className="text-foreground">
+                I confirm this engagement is in scope
+              </strong>{" "}
+              per signed authorisation. The project cannot be created
+              without this (§1.2 / docs/vr/02_IDA_HEADLESS_MCP.md §6).
+            </span>
+          </label>
+        </div>
+        
+        {createMut.isError && (
+          <div className="mt-3 border border-border-danger rounded p-2 bg-surface/40 text-xs text-text-danger">
+            {(createMut.error as Error)?.message ?? "Create failed."}
           </div>
-
-          {createMut.isError && (
-            <div className="mt-3 border border-border-danger rounded p-2 bg-surface/40 text-xs text-text-danger">
-              {(createMut.error as Error)?.message ?? "Create failed."}
-            </div>
-          )}
-
-          <div className="flex justify-between mt-4">
-            <button
-              type="button"
-              onClick={() => setStep(2)}
-              className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border-default hover:bg-surface-hover"
-            >
-              ← Back
-            </button>
-            <button
-              type="button"
-              disabled={!step3Ready || createMut.isPending}
-              onClick={submit}
-              className="px-4 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
-            >
-              {createMut.isPending ? "Starting…" : "Start research"}
-            </button>
-          </div>
-        </AilaCard>
+        )}
+        
+        <div className="flex justify-between mt-4">
+          <button
+            type="button"
+            onClick={() => setStep(2)}
+            className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border-default hover:bg-surface-hover"
+          >
+            ← Back
+          </button>
+          <button
+            type="button"
+            disabled={!step3Ready || createMut.isPending}
+            onClick={submit}
+            className="px-4 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
+          >
+            {createMut.isPending ? "Starting…" : "Start research"}
+          </button>
+        </div></AilaCard>
       )}
     </div>
   );
