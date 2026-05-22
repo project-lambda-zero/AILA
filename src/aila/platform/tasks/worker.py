@@ -97,7 +97,10 @@ async def reaper(ctx: dict[str, object]) -> None:
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: arq lock reconciliation failed: %s", exc, exc_info=True)
     try:
-        await _sweep_orphan_running_tasks()
+        # Cron context: use a 5-minute grace so freshly-claimed tasks
+        # whose first heartbeat is in flight don't get killed. The boot
+        # path keeps the original 30s grace (caller below uses default).
+        await _sweep_orphan_running_tasks(grace_seconds=300)
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: orphan running-task sweep failed: %s", exc, exc_info=True)
 
@@ -350,7 +353,7 @@ async def _workflow_cursor_is_resumable(session: Any, task_id: str) -> bool:
     )
 
 
-async def _sweep_orphan_running_tasks() -> None:
+async def _sweep_orphan_running_tasks(grace_seconds: int = 30) -> None:
     """Reap orphan tasks at startup using the same rules as the cron reaper,
     PLUS a reverse sweep that catches tasks whose ARQ lock was already
     evicted (the lock-iterator sweep misses those because there's no lock
@@ -378,7 +381,7 @@ async def _sweep_orphan_running_tasks() -> None:
     from sqlmodel import select as _select
 
     client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
-    boot_time = datetime.now(tz=UTC)
+    now = datetime.now(tz=UTC)
     try:
         async with async_session_scope() as session:
             running = (await session.exec(
@@ -387,11 +390,16 @@ async def _sweep_orphan_running_tasks() -> None:
             if not running:
                 return
             reaped = 0
-            # Healthy workers write a heartbeat every few seconds. On boot,
-            # any task whose heartbeat is older than (boot_time - 30s) could
-            # not possibly have been updated by a running worker, so it must
-            # be orphaned — even if a stale ARQ lock still exists in Redis.
-            stale_cutoff = boot_time - timedelta(seconds=30)
+            # Healthy workers write a heartbeat every few seconds. Any task
+            # whose heartbeat is older than (now - grace_seconds) is
+            # considered orphan-evidence. ``grace_seconds`` is 30s at boot
+            # (no live worker can have touched anything older than itself,
+            # narrow window OK) and longer (300s) when called periodically
+            # from the cron — a freshly-claimed task may sit at
+            # status=RUNNING with heartbeat=NULL for several seconds before
+            # the worker's first heartbeat lands, and a 30s window risks
+            # killing it before it gets a chance to write one.
+            stale_cutoff = now - timedelta(seconds=grace_seconds)
             for rec in running:
                 hb = rec.heartbeat_at
                 if hb is not None and hb.tzinfo is None:
@@ -432,12 +440,13 @@ async def _sweep_orphan_running_tasks() -> None:
                     # had time to write its first heartbeat. Don't reap.
                     continue
                 rec.status = TaskStatus.FAILED
-                rec.completed_at = boot_time
+                rec.completed_at = now
                 rec.error = (
-                    f"Reaped at worker startup ({reason}) — task cannot have a "
-                    f"live owner because this worker process booted at "
-                    f"{boot_time.isoformat()} and the task's last heartbeat "
-                    f"({hb.isoformat() if hb else 'never'}) predates that."
+                    f"Reaped by sweep ({reason}) at {now.isoformat()} — "
+                    f"task heartbeat ({hb.isoformat() if hb else 'never'}) "
+                    f"and started_at ({started.isoformat() if started else 'never'}) "
+                    f"both predate stale_cutoff ({stale_cutoff.isoformat()}, "
+                    f"grace={grace_seconds}s)."
                 )
                 session.add(rec)
                 reaped += 1
