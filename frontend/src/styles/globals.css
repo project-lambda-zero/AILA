@@ -3666,8 +3666,8 @@ a:hover {
   --radius-md: 18px;
   --radius-lg: 26px;
 
-  --font-display: "Bungee", "Audiowide", "Monoton", sans-serif;
-  --font-sans: "Bungee", "Poppins", "Trebuchet MS", "Comic Sans MS", sans-serif;
+  --font-display: "Pacifico", "Comic Sans MS", cursive;
+  --font-sans: "Quicksand", system-ui, sans-serif;
 
   --background: #e8f7ff;
   --foreground: #1e1240;
@@ -3929,10 +3929,8 @@ a:hover {
   --radius-md: 1px;
   --radius-lg: 2px;
 
-  --font-display: "UnifrakturMaguntia", "IM Fell English SC",
-    "Special Elite", "Cormorant Garamond", serif;
-  --font-sans: "Special Elite", "IM Fell English SC",
-    "Cormorant Garamond", Georgia, serif;
+  --font-display: "UnifrakturMaguntia", "Times New Roman", serif;
+  --font-sans: "Crimson Text", "Times New Roman", serif;
 
   --background: #07040a;
   --foreground: #eae2d5;
