@@ -46,73 +46,90 @@ __all__ = [
 ]
 
 
-# Path / filename patterns that indicate a "function" is not real audit
-# code — bundler output, vendored deps, generated tables, test
-# payloads. complexity_hotspots and fuzzing_targets correctly report
-# these as kind=function (they ARE syntactically functions) but the
-# agent has no business reading them: they're either codegen artifacts
-# (Emscripten C->JS fallbacks shipped as one IIFE wrapping an entire
-# codec at cyc=6000+), regression-test payloads, or generated lookup
-# tables. Without this filter the firefox hotspot list put OpenJPEG
-# (cyc=6969) and JBig2 (cyc=2043) bundled fallbacks at ranks 1 and 5,
-# the agent treated them as functions to audit, and burned hours in
-# read_function loops because the names aren't actually callable.
-_NOISE_DIR_SEGMENTS: frozenset[str] = frozenset({
+# Classify each hotspot/target entry into one of the categories below
+# instead of silently dropping noise. Each category controls how the
+# entry surfaces to the agent:
+#
+#   real            → audit-worthy implementation code; render normally
+#   compiled_bundle → Emscripten / asm.js IIFE wrapping a whole codec.
+#                     audit the UPSTREAM C source as a separate target.
+#   vendored_library→ shipped third_party/vendor copy. audit the upstream
+#                     as a separate target if you care about it.
+#   test_payload    → regression test / benchmark / wpt suite. drop.
+#   generated_code  → lex/yacc/protobuf/generated lookup table. read the
+#                     GENERATOR instead.
+#
+# Without this classification the agent saw firefox's OpenJPEG IIFE
+# (cyc=6969) ranked #1 in complexity_hotspots, called read_function
+# on it, looped on "Function OpenJPEG not indexed" because the name is
+# a namespace identifier inside a single ~7000-line wrapper. The fix
+# is NOT to hide that signal — high complexity in a vendored codec is
+# real information — but to TAG it so the agent's next move is "register
+# uclouvain/openjpeg as its own target" rather than "read this function".
+_DROP_CATEGORIES: frozenset[str] = frozenset({"test_payload", "generated_code"})
+
+_VENDORED_DIR_SEGMENTS: frozenset[str] = frozenset({
     "third_party", "third-party", "vendor", "extern", "external",
-    "node_modules", "dist", "build", "out", "target",
-    "tests", "test", "jit-test", "non262", "regress", "wpt",
-    "web-platform-tests", "testing", "benchmarks",
+    "node_modules",
 })
 
-_NOISE_FILENAME_PATTERNS: tuple[str, ...] = (
-    "_nowasm_fallback.js",  # Emscripten asm.js fallback bundles
+_TEST_DIR_SEGMENTS: frozenset[str] = frozenset({
+    "tests", "test", "jit-test", "non262", "regress", "wpt",
+    "web-platform-tests", "testing", "benchmarks", "fixtures",
+    "__tests__", "spec", "specs",
+})
+
+_BUILD_DIR_SEGMENTS: frozenset[str] = frozenset({
+    "dist", "build", "out", "target",
+})
+
+_GENERATED_FILENAME_SUFFIXES: tuple[str, ...] = (
     ".min.js", ".min.css",
     "-bundle.js", "-bundle.min.js",
-    ".generated.", ".gen.",
-    "_pb.py", "_pb2.py",   # protobuf generated
-    ".pb.cc", ".pb.h",
-    "lex.yy.c", "y.tab.c", # lex/yacc generated
-    "_find_header.c",       # aiohttp generated lookup
+    ".generated.js", ".generated.ts", ".generated.py",
+    ".gen.js", ".gen.ts", ".gen.go",
+    "_pb.py", "_pb2.py",
+    ".pb.cc", ".pb.h", ".pb.go",
+    "lex.yy.c", "y.tab.c", "y.tab.h",
+    "_find_header.c",  # aiohttp generated lookup table
+)
+
+_COMPILED_BUNDLE_SUFFIXES: tuple[str, ...] = (
+    "_nowasm_fallback.js",  # Emscripten asm.js fallback
+    "_emscripten.js",
+    "_asm.js",
 )
 
 
-def _is_noise_function(entry: dict[str, Any]) -> bool:
-    """Return True when ``entry`` looks like build/test/vendored
-    artifact rather than audit-worthy implementation code.
+def _classify_hotspot(entry: dict[str, Any]) -> tuple[str, str]:
+    """Return ``(category, hint)`` for a hotspot/fuzzing_target entry.
 
-    Hard signals:
-      - file_path contains any segment in _NOISE_DIR_SEGMENTS
-      - filename matches any _NOISE_FILENAME_PATTERNS suffix/substring
-      - function has one param named 'moduleArg' (Emscripten IIFE)
-      - function body spans >2000 lines starting at line 2
-        (single-IIFE bundle wrapping an entire compiled module)
+    Categories drive how the entry renders in the prompt. ``hint`` is
+    a short action string shown next to vendored/bundle entries so
+    the agent knows the right next move (it's NOT to call read_function
+    on a 7000-line Emscripten IIFE).
     """
     if not isinstance(entry, dict):
-        return True  # skip junk entries
-    loc = entry.get("location") or {}
-    if not isinstance(loc, dict):
-        loc = {}
+        return "real", ""
+    loc = entry.get("location") if isinstance(entry.get("location"), dict) else {}
     file_path = (
         loc.get("file_path")
         or entry.get("file")
         or entry.get("path")
         or ""
     )
-    if file_path:
-        # Normalise separators for cross-platform matching.
-        normalised = file_path.replace("\\", "/").lower()
-        for seg in _NOISE_DIR_SEGMENTS:
-            # Match `/<seg>/` to avoid partial-name false positives
-            # (e.g. don't flag a file named "vendor.c" but DO flag
-            # `/vendor/foo.c`).
-            if f"/{seg}/" in normalised:
-                return True
-        for pat in _NOISE_FILENAME_PATTERNS:
-            if normalised.endswith(pat) or pat in normalised.rsplit("/", 1)[-1]:
-                return True
+    normalised = file_path.replace("\\", "/").lower()
+    filename = normalised.rsplit("/", 1)[-1] if normalised else ""
 
-    # Emscripten IIFE signature: single `moduleArg` param + body
-    # starting at line ~2 with thousands of lines.
+    # Compiled-bundle check first — most actionable, most distinctive.
+    if any(filename.endswith(suf) for suf in _COMPILED_BUNDLE_SUFFIXES):
+        return (
+            "compiled_bundle",
+            "Emscripten/asm.js bundle. Find upstream C source and "
+            "register it as a separate VR target — do NOT read_function this IIFE.",
+        )
+    # Emscripten IIFE signature (single moduleArg param) without the
+    # filename giveaway — covers renamed bundles.
     params = entry.get("parameters") or []
     if (
         isinstance(params, list)
@@ -120,26 +137,86 @@ def _is_noise_function(entry: dict[str, Any]) -> bool:
         and isinstance(params[0], dict)
         and params[0].get("name") == "moduleArg"
     ):
-        return True
+        return (
+            "compiled_bundle",
+            "Emscripten IIFE wrapping compiled code (single moduleArg param). "
+            "Find upstream source — do NOT read_function this.",
+        )
 
+    if normalised:
+        for seg in _VENDORED_DIR_SEGMENTS:
+            if f"/{seg}/" in normalised:
+                return (
+                    "vendored_library",
+                    f"Vendored copy under /{seg}/. If audit-relevant, "
+                    "register the upstream repo as its own VR target.",
+                )
+        for seg in _TEST_DIR_SEGMENTS:
+            if f"/{seg}/" in normalised:
+                return "test_payload", ""
+        for seg in _BUILD_DIR_SEGMENTS:
+            if f"/{seg}/" in normalised:
+                return (
+                    "compiled_bundle",
+                    f"Build output under /{seg}/. Audit the source that "
+                    "generated it, not the artifact.",
+                )
+        for suf in _GENERATED_FILENAME_SUFFIXES:
+            if filename.endswith(suf) or suf in filename:
+                return (
+                    "generated_code",
+                    "Auto-generated. Read the generator/schema, not this file.",
+                )
+
+    # Single-IIFE bundle heuristic: function spans >2000 lines starting
+    # within the first 5 lines of the file → almost certainly codegen.
     start = loc.get("start_line")
     end = loc.get("end_line")
     if (
         isinstance(start, int) and isinstance(end, int)
         and start <= 5 and (end - start) > 2000
     ):
-        # Function spans >2000 lines from near top of file —
-        # almost certainly an IIFE bundle, not hand-written code.
-        return True
+        return (
+            "compiled_bundle",
+            f"Single function spans {end - start} lines from top of file — "
+            "likely codegen. Find upstream source.",
+        )
 
-    return False
+    return "real", ""
 
 
-def _filter_noise(entries: list[Any]) -> tuple[list[Any], int]:
-    """Return (kept, dropped_count) for a list of hotspot/target entries."""
-    kept = [e for e in entries if not _is_noise_function(e)]
-    return kept, len(entries) - len(kept)
+def _split_by_category(
+    entries: list[Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """Return ``(real, attention_required, dropped_count)``.
 
+    ``real`` and ``attention_required`` entries each get an injected
+    ``_classification`` field carrying the ``(category, hint)`` pair so
+    the renderer can format them differently. ``attention_required``
+    holds compiled_bundle + vendored_library — kept in the response but
+    rendered with category tag + drill-in hint so the agent knows the
+    right next move. Test payloads and generated code are silently
+    dropped (returned in ``dropped_count`` so the prompt can say
+    "dropped N noise entries" without naming them).
+    """
+    real: list[dict[str, Any]] = []
+    attention: list[dict[str, Any]] = []
+    dropped = 0
+    for e in entries:
+        if not isinstance(e, dict):
+            dropped += 1
+            continue
+        category, hint = _classify_hotspot(e)
+        if category in _DROP_CATEGORIES:
+            dropped += 1
+            continue
+        enriched = dict(e)
+        enriched["_classification"] = {"category": category, "hint": hint}
+        if category == "real":
+            real.append(enriched)
+        else:
+            attention.append(enriched)
+    return real, attention, dropped
 
 # Observable cap for read_function output. Bumped progressively after
 # observing the agent loop on functions that exceeded the cap:
@@ -176,19 +253,25 @@ def _list_or_empty(raw: dict[str, Any], *keys: str) -> list[Any]:
 def adapt_fuzzing_targets(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
-    """Map ``fuzzing_targets`` to TEXT payload with ranked function list."""
+    """Map ``fuzzing_targets`` to TEXT payload with ranked function list.
+
+    Entries are classified into ``real`` (audit-worthy implementation) vs
+    ``attention_required`` (compiled bundles + vendored libraries kept
+    visible with explicit category tag + drill-in hint). Test payloads +
+    generated code are silently dropped.
+    """
     raw_targets = _list_or_empty(raw, "targets", "results")
-    targets, dropped = _filter_noise(raw_targets)
-    summary_lines: list[str] = []
-    for entry in targets[:MAX_LIST_PREVIEW]:
-        if not isinstance(entry, dict):
-            continue
-        name = (
+    real, attention, dropped = _split_by_category(raw_targets)
+
+    def _name(entry: dict[str, Any]) -> str:
+        return (
             entry.get("function_name")
             or entry.get("name")
             or entry.get("symbol")
             or "<unnamed>"
         )
+
+    def _suffix(entry: dict[str, Any]) -> str:
         bits: list[str] = []
         for k in ("risk_score", "score", "priority"):
             if entry.get(k) is not None:
@@ -198,35 +281,64 @@ def adapt_fuzzing_targets(
             bits.append(f"blast={entry['blast_radius']}")
         if entry.get("complexity") is not None:
             bits.append(f"complexity={entry['complexity']}")
-        suffix = f" ({', '.join(bits)})" if bits else ""
-        summary_lines.append(f"  - {name}{suffix}")
-    if len(targets) > MAX_LIST_PREVIEW:
-        summary_lines.append(f"  ... and {len(targets) - MAX_LIST_PREVIEW} more")
+        return f" ({', '.join(bits)})" if bits else ""
 
-    drop_note = (
-        f" — dropped {dropped} bundler/test/vendored entries"
-        if dropped else ""
-    )
-    obs_value = (
-        f"audit-mcp fuzzing_targets ({len(targets)} candidates{drop_note}):\n"
-        + ("\n".join(summary_lines) if summary_lines else "  (none)")
-    )
+    real_lines: list[str] = []
+    for entry in real[:MAX_LIST_PREVIEW]:
+        real_lines.append(f"  - {_name(entry)}{_suffix(entry)}")
+    if len(real) > MAX_LIST_PREVIEW:
+        real_lines.append(f"  ... and {len(real) - MAX_LIST_PREVIEW} more")
+
+    attention_lines: list[str] = []
+    for entry in attention[:10]:  # cap subsystem listing at 10
+        cls = entry.get("_classification") or {}
+        cat = cls.get("category", "?")
+        hint = cls.get("hint", "")
+        loc = entry.get("location") or {}
+        fp = (loc.get("file_path") or "").replace("\\", "/")
+        fp_short = "/".join(fp.split("/")[-3:]) if fp else ""
+        attention_lines.append(
+            f"  - [{cat}] {_name(entry)}{_suffix(entry)} @ .../{fp_short}"
+        )
+        if hint:
+            attention_lines.append(f"      → {hint}")
+    if len(attention) > 10:
+        attention_lines.append(f"  ... and {len(attention) - 10} more")
+
+    drop_note = f" — dropped {dropped} test/generated entries" if dropped else ""
+
+    sections: list[str] = [
+        f"audit-mcp fuzzing_targets: {len(real)} real candidate(s), "
+        f"{len(attention)} subsystem/vendored entry(ies){drop_note}",
+        "",
+        "REAL FUNCTIONS (audit these):",
+        *(real_lines or ["  (none)"]),
+    ]
+    if attention_lines:
+        sections.extend([
+            "",
+            "SUBSYSTEMS / VENDORED (do NOT read_function these — see hint):",
+            *attention_lines,
+        ])
+    obs_value = "\n".join(sections)
 
     payload: dict[str, Any] = {
         "text": (
-            f"audit-mcp fuzzing_targets returned {len(targets)} candidates "
-            f"(graph-aware ranking{drop_note})"
+            f"audit-mcp fuzzing_targets returned {len(real)} real + "
+            f"{len(attention)} subsystem candidates{drop_note}"
         ),
         "tool": f"{ctx.mcp_server_id}.{ctx.tool_name}",
-        "targets": targets,
-        "total": len(targets),
+        "targets": real,
+        "subsystem_entries": attention,
+        "total": len(real) + len(attention),
+        "dropped_noise": dropped,
         "source_provenance": provenance_stamp(ctx),
     }
     return AdapterResult(
         payload_kind=PayloadKind.TEXT,
         payload=payload,
         observables_delta={obs_key_for(ctx): obs_value},
-        summary=f"{len(targets)} ranked fuzzing target candidates",
+        summary=f"{len(real)} real + {len(attention)} subsystem candidates",
     )
 
 
@@ -269,48 +381,91 @@ def adapt_attack_surface(
 def adapt_complexity_hotspots(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
-    """Map ``complexity_hotspots`` to TEXT payload (top complex functions)."""
+    """Map ``complexity_hotspots`` to TEXT payload (top complex functions).
+
+    Categorized the same way as ``adapt_fuzzing_targets``: real audit
+    candidates render in the main list; compiled bundles + vendored
+    libraries render in a SEPARATE 'do not read_function this' section
+    with explicit category tag + drill-in hint; test payloads + generated
+    code are dropped.
+    """
     raw_hotspots = _list_or_empty(raw, "hotspots", "functions", "results")
-    hotspots, dropped = _filter_noise(raw_hotspots)
-    bullets: list[str] = []
-    for h in hotspots[:MAX_LIST_PREVIEW]:
-        if not isinstance(h, dict):
-            continue
-        name = h.get("function_name") or h.get("name") or h.get("symbol") or "<?>"
+    real, attention, dropped = _split_by_category(raw_hotspots)
+
+    def _name(h: dict[str, Any]) -> str:
+        return h.get("function_name") or h.get("name") or h.get("symbol") or "<?>"
+
+    def _loc(h: dict[str, Any]) -> str:
+        loc = h.get("location") or {}
+        path = (
+            loc.get("file_path") or h.get("file") or h.get("path") or ""
+        ).replace("\\", "/")
+        line = loc.get("start_line") or h.get("line")
+        if path and line:
+            return f" @ .../{'/'.join(path.split('/')[-3:])}:{line}"
+        if path:
+            return f" @ .../{'/'.join(path.split('/')[-3:])}"
+        return ""
+
+    def _suffix(h: dict[str, Any]) -> str:
         cyc = h.get("cyclomatic") or h.get("cyclomatic_complexity")
         cog = h.get("cognitive") or h.get("cognitive_complexity")
-        path = h.get("file") or h.get("path") or ""
-        line = h.get("line")
-        loc_str = f" @ {path}:{line}" if path and line else (f" @ {path}" if path else "")
         bits: list[str] = []
         if cyc is not None:
             bits.append(f"cyc={cyc}")
         if cog is not None:
             bits.append(f"cog={cog}")
-        suffix = f" ({', '.join(bits)})" if bits else ""
-        bullets.append(f"  - {name}{loc_str}{suffix}")
-    if len(hotspots) > MAX_LIST_PREVIEW:
-        bullets.append(f"  ... and {len(hotspots) - MAX_LIST_PREVIEW} more")
-    drop_note = (
-        f" — dropped {dropped} bundler/test/vendored entries"
-        if dropped else ""
-    )
-    obs_value = (
-        f"complexity_hotspots: {len(hotspots)} function(s){drop_note}\n"
-        + ("\n".join(bullets) if bullets else "  (none)")
-    )
+        return f" ({', '.join(bits)})" if bits else ""
+
+    real_lines: list[str] = []
+    for h in real[:MAX_LIST_PREVIEW]:
+        real_lines.append(f"  - {_name(h)}{_loc(h)}{_suffix(h)}")
+    if len(real) > MAX_LIST_PREVIEW:
+        real_lines.append(f"  ... and {len(real) - MAX_LIST_PREVIEW} more")
+
+    attention_lines: list[str] = []
+    for h in attention[:10]:
+        cls = h.get("_classification") or {}
+        attention_lines.append(
+            f"  - [{cls.get('category', '?')}] {_name(h)}{_loc(h)}{_suffix(h)}"
+        )
+        hint = cls.get("hint")
+        if hint:
+            attention_lines.append(f"      → {hint}")
+    if len(attention) > 10:
+        attention_lines.append(f"  ... and {len(attention) - 10} more")
+
+    drop_note = f" — dropped {dropped} test/generated entries" if dropped else ""
+
+    sections: list[str] = [
+        f"complexity_hotspots: {len(real)} real function(s), "
+        f"{len(attention)} subsystem/vendored entry(ies){drop_note}",
+        "",
+        "REAL FUNCTIONS:",
+        *(real_lines or ["  (none)"]),
+    ]
+    if attention_lines:
+        sections.extend([
+            "",
+            "SUBSYSTEMS / VENDORED (do NOT read_function these — see hint):",
+            *attention_lines,
+        ])
+    obs_value = "\n".join(sections)
+
     payload: dict[str, Any] = {
         "text": obs_value,
         "tool": f"{ctx.mcp_server_id}.{ctx.tool_name}",
-        "hotspots": hotspots,
-        "total": len(hotspots),
+        "hotspots": real,
+        "subsystem_entries": attention,
+        "total": len(real) + len(attention),
+        "dropped_noise": dropped,
         "source_provenance": provenance_stamp(ctx),
     }
     return AdapterResult(
         payload_kind=PayloadKind.TEXT,
         payload=payload,
         observables_delta={obs_key_for(ctx): obs_value},
-        summary=f"{len(hotspots)} complexity hotspots",
+        summary=f"{len(real)} real hotspots + {len(attention)} subsystem entries",
     )
 
 
