@@ -71,10 +71,11 @@ function fmtUsd(n: number): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// InvestigationRow — single-line compact row, ~48-56px tall.
-// All meta inline; no metric stacks; no cost bars; no multiline
-// verdict heads. Designed so the operator scans 20-30 rows above the
-// fold on a 1440x900 viewport without scrolling.
+// InvestigationRow — Precision & Density `<tr>` row.
+//
+// Renders inside `<InvestigationTable>` below. Each cell carries one
+// scannable field. Severity edge is a 3px left border on the first cell.
+// Hover highlights the whole row; delete affordance fades in on hover.
 // ─────────────────────────────────────────────────────────────────────
 function InvestigationRow({
   inv,
@@ -114,81 +115,84 @@ function InvestigationRow({
     ? Math.min(1, inv.cost_actual_usd / inv.cost_budget_usd)
     : 0;
 
-  return (
-    <div className="group relative rounded-md border border-border bg-surface pl-3 pr-2 py-2 transition-all hover:border-accent/40 hover:bg-surface/70">
-      {/* Severity edge */}
-      <span
-        aria-hidden
-        className="absolute inset-y-1.5 left-0 w-[2px] rounded-r"
-        style={{ background: edgeColor[sev] }}
-      />
+  const cellCls = "px-3 py-2 align-middle";
+  const cellNumCls = "px-3 py-2 align-middle text-right tabular-nums";
 
-      {/* ── Line 1: favorite · title · trailing actions ─────────────── */}
-      <div className="flex items-center gap-2">
+  return (
+    <tr
+      onClick={onOpen}
+      className="group border-b border-border-subtle cursor-pointer hover:bg-surface/60 transition-colors"
+    >
+      {/* Severity edge cell — 3px coloured stripe, no padding */}
+      <td className="w-[3px] p-0" style={{ background: edgeColor[sev] }} />
+
+      {/* Favorite */}
+      <td className={cellCls + " w-6"}>
         <button
           type="button"
-          onClick={onToggleFavorite}
-          className="flex-shrink-0 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFavorite();
+          }}
+          className="flex transition-colors"
           style={{ color: inv.is_favorite ? "#fbbf24" : "var(--color-text-muted)" }}
           title={inv.is_favorite ? "Unfavorite" : "Favorite"}
           aria-label={inv.is_favorite ? "Unfavorite" : "Favorite"}
         >
           <Star className="h-4 w-4" weight={inv.is_favorite ? "fill" : "regular"} />
         </button>
-        <button
-          type="button"
-          onClick={onOpen}
-          className="min-w-0 flex-1 text-left focus:outline-none truncate text-sm font-medium text-foreground"
-          title={inv.title}
-        >
-          {inv.title}
-        </button>
-        <div className="flex-shrink-0 flex items-center gap-1">
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-            <DeleteButton
-              id={inv.id}
-              label={`investigation "${inv.title}"`}
-              mutation={deleteMut}
-              compact
-            />
-          </div>
-          <button
-            type="button"
-            onClick={onOpen}
-            aria-label="Open investigation"
-            className="inline-flex items-center text-text-muted group-hover:text-accent group-hover:translate-x-0.5 transition-all px-1"
-          >
-            <ArrowRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
+      </td>
 
-      {/* ── Line 2: status pulse + kind + verifier + outcome + meta ── */}
-      <div className="mt-1 ml-6 flex items-center gap-2 flex-wrap text-[11px] font-mono text-text-muted">
+      {/* Status pulse + badge */}
+      <td className={cellCls + " w-[130px]"}>
         <SeverityPulse active={isLive || isFailed}>
           <AilaBadge severity={sev} size="sm">
-            {inv.pause_reason
-              ? `${inv.status}:${inv.pause_reason}`
-              : inv.status}
+            {inv.pause_reason ? `${inv.status}:${inv.pause_reason}` : inv.status}
           </AilaBadge>
         </SeverityPulse>
+      </td>
+
+      {/* Title + verdict-head excerpt */}
+      <td className={cellCls + " min-w-0"}>
+        <div className="text-[13px] font-medium text-foreground truncate" title={inv.title}>
+          {inv.title}
+        </div>
+        {inv.primary_outcome_verdict_head && (
+          <div className="mt-0.5 text-[11px] text-text-muted truncate" title={inv.primary_outcome_verdict_head}>
+            {inv.primary_outcome_verdict_head}
+          </div>
+        )}
+      </td>
+
+      {/* Kind */}
+      <td className={cellCls + " w-[110px]"}>
         <span
-          className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] tracking-wider uppercase"
+          className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono tracking-wider uppercase text-text-muted"
           style={{
             border: "1px solid color-mix(in srgb, var(--color-text-muted) 25%, transparent)",
           }}
         >
           {inv.kind}
         </span>
-        {verifierTone && (
+      </td>
+
+      {/* Verifier */}
+      <td className={cellCls + " w-[140px]"}>
+        {verifierTone ? (
           <AilaBadge severity={verifierTone} size="sm">
             {inv.verifier_verdict}
             {typeof inv.verifier_confidence === "number"
               ? ` ${inv.verifier_confidence.toFixed(2)}`
               : ""}
           </AilaBadge>
+        ) : (
+          <span className="text-[11px] font-mono text-text-muted/40">—</span>
         )}
-        {inv.primary_outcome_kind && (
+      </td>
+
+      {/* Outcome */}
+      <td className={cellCls + " w-[170px]"}>
+        {inv.primary_outcome_kind ? (
           <AilaBadge
             severity={
               inv.primary_outcome_kind === "direct_finding"
@@ -206,55 +210,132 @@ function InvestigationRow({
               ? ` · ${inv.primary_outcome_confidence}`
               : ""}
           </AilaBadge>
+        ) : (
+          <span className="text-[11px] font-mono text-text-muted/40">—</span>
         )}
-        <span className="text-text-muted/40">·</span>
-        <span className="truncate max-w-[260px]">
-          <span className="text-text-muted/50">→ </span>
-          <span className="text-foreground/80">{targetName}</span>
+      </td>
+
+      {/* Target */}
+      <td className={cellCls + " max-w-[200px]"}>
+        <span className="text-[12px] font-mono text-foreground/80 truncate block" title={targetName}>
+          {targetName}
         </span>
-        {inv.primary_outcome_verdict_head && (
-          <>
-            <span className="text-text-muted/40">·</span>
-            <span className="truncate max-w-[420px] text-text-muted/80">
-              {inv.primary_outcome_verdict_head}
-            </span>
-          </>
-        )}
-        {/* Spacer + right-aligned metric block */}
-        <span className="flex-1" />
-        <span
-          className="tabular-nums"
-          title={`${inv.linked_finding_ids.length} findings`}
-          style={{
-            color: inv.linked_finding_ids.length > 0 ? "#97dbbe" : undefined,
-          }}
-        >
-          <span className="text-text-muted/60">f</span>{inv.linked_finding_ids.length}
-        </span>
-        <span className="tabular-nums" title={`${inv.branch_count} branches`}>
-          <span className="text-text-muted/60">b</span>{inv.branch_count}
-        </span>
-        <span className="tabular-nums" title={`${inv.message_count} messages`}>
-          <span className="text-text-muted/60">m</span>{inv.message_count}
-        </span>
-        <span
-          className="tabular-nums"
-          title={`cost ${fmtUsd(inv.cost_actual_usd)} of ${fmtUsd(inv.cost_budget_usd)} budget (${Math.round(costRatio * 100)}%)`}
-          style={{
-            color:
-              costRatio > 0.9
-                ? "var(--color-accent)"
-                : costRatio > 0.6
-                  ? "#f0a8c7"
-                  : undefined,
-          }}
-        >
-          {fmtUsd(inv.cost_actual_usd)}
-        </span>
-        <span className="tabular-nums text-text-muted/70" title={inv.created_at ?? ""}>
-          {relativeTime(inv.created_at)}
-        </span>
-      </div>
+      </td>
+
+      {/* F (findings) */}
+      <td
+        className={cellNumCls + " w-12 text-[13px] font-mono"}
+        style={{
+          color: inv.linked_finding_ids.length > 0 ? "#97dbbe" : "var(--color-text-muted)",
+          fontWeight: inv.linked_finding_ids.length > 0 ? 600 : 400,
+        }}
+        title={`${inv.linked_finding_ids.length} findings`}
+      >
+        {inv.linked_finding_ids.length}
+      </td>
+
+      {/* B (branches) */}
+      <td className={cellNumCls + " w-10 text-[13px] font-mono text-foreground"} title={`${inv.branch_count} branches`}>
+        {inv.branch_count}
+      </td>
+
+      {/* M (messages) */}
+      <td className={cellNumCls + " w-12 text-[13px] font-mono text-foreground"} title={`${inv.message_count} messages`}>
+        {inv.message_count}
+      </td>
+
+      {/* Cost */}
+      <td
+        className={cellNumCls + " w-20 text-[12px] font-mono"}
+        style={{
+          color:
+            costRatio > 0.9
+              ? "var(--color-accent)"
+              : costRatio > 0.6
+                ? "#f0a8c7"
+                : "var(--color-text-muted)",
+        }}
+        title={`${fmtUsd(inv.cost_actual_usd)} / ${fmtUsd(inv.cost_budget_usd)} (${Math.round(costRatio * 100)}%)`}
+      >
+        {fmtUsd(inv.cost_actual_usd)}
+      </td>
+
+      {/* Activity */}
+      <td className={cellCls + " w-20 text-[11px] font-mono text-text-muted whitespace-nowrap"} title={inv.created_at ?? ""}>
+        {relativeTime(inv.created_at)}
+      </td>
+
+      {/* Actions */}
+      <td className={cellCls + " w-16"}>
+        <div className="flex items-center justify-end gap-1">
+          <div
+            className="opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <DeleteButton
+              id={inv.id}
+              label={`investigation "${inv.title}"`}
+              mutation={deleteMut}
+              compact
+            />
+          </div>
+          <ArrowRight
+            className="h-3.5 w-3.5 text-text-muted/50 group-hover:text-accent group-hover:translate-x-0.5 transition-all"
+            aria-hidden
+          />
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// InvestigationTable — the `<table>` wrapper around the rows.
+// Sticky `<thead>`, mono uppercase header cells, no outer padding.
+// ─────────────────────────────────────────────────────────────────────
+function InvestigationTable({ children }: { children: React.ReactNode }) {
+  const head =
+    "px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-text-muted text-left sticky top-0 bg-base/95 backdrop-blur-sm border-b border-border";
+  const headRight = head + " text-right";
+  return (
+    <div className="rounded-md border border-border bg-surface overflow-hidden">
+      <table className="w-full border-collapse text-[13px]">
+        <colgroup>
+          <col style={{ width: 3 }} />
+          <col style={{ width: 28 }} />
+          <col style={{ width: 130 }} />
+          <col />
+          <col style={{ width: 110 }} />
+          <col style={{ width: 140 }} />
+          <col style={{ width: 170 }} />
+          <col style={{ width: 200 }} />
+          <col style={{ width: 48 }} />
+          <col style={{ width: 40 }} />
+          <col style={{ width: 48 }} />
+          <col style={{ width: 80 }} />
+          <col style={{ width: 80 }} />
+          <col style={{ width: 64 }} />
+        </colgroup>
+        <thead>
+          <tr>
+            <th className="p-0" aria-hidden />
+            <th className={head} aria-label="Favorite">★</th>
+            <th className={head}>Status</th>
+            <th className={head}>Title</th>
+            <th className={head}>Kind</th>
+            <th className={head}>Verifier</th>
+            <th className={head}>Outcome</th>
+            <th className={head}>Target</th>
+            <th className={headRight} title="Findings">F</th>
+            <th className={headRight} title="Branches">B</th>
+            <th className={headRight} title="Messages">M</th>
+            <th className={headRight}>Cost</th>
+            <th className={head}>Activity</th>
+            <th className={head} aria-hidden />
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
     </div>
   );
 }
@@ -710,9 +791,9 @@ export function InvestigationsListPage() {
         </div>
       )}
 
-      {/* Row list — full-width rows, vertical stack */}
+      {/* Precision & Density table — sticky header + aligned rows */}
       {!isLoading && !isError && investigations.length > 0 && (
-        <div className="flex flex-col gap-2">
+        <InvestigationTable>
           {investigations.map((inv) => (
             <InvestigationRow
               key={inv.id}
@@ -723,7 +804,7 @@ export function InvestigationsListPage() {
               deleteMut={deleteMut}
             />
           ))}
-        </div>
+        </InvestigationTable>
       )}
 
       {/* Pagination */}
