@@ -157,6 +157,7 @@ class HonestVulnResearcher:
         system_prompt = _load_prompt(inv.strategy_family, branch.persona_voice)
         tool_specs = await _fetch_tool_specs(
             target_kind=(target_snapshot or {}).get("kind"),
+            primary_language=(target_snapshot or {}).get("primary_language"),
         )
         user_prompt = self._build_user_prompt(
             inv=inv,
@@ -521,6 +522,7 @@ class HonestVulnResearcher:
             this_persona=branch.persona_voice,
         )
         target_kind = (target_snapshot or {}).get("kind")
+        primary_language = (target_snapshot or {}).get("primary_language")
 
         return (
             f"# Investigation\n\n"
@@ -541,7 +543,7 @@ class HonestVulnResearcher:
             f"{operator_section}"
             f"{prior_submissions_section}"
             f"{sibling_section}"
-            f"{_render_available_tools_section(target_kind, tool_specs)}"
+            f"{_render_available_tools_section(target_kind, tool_specs, primary_language)}"
             f"# Instruction\n\n"
             f"Produce the next reasoning turn as a JSON object per the "
             f"system prompt schema."
@@ -1046,6 +1048,7 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
 
 async def _fetch_tool_specs(
     target_kind: str | None = None,
+    primary_language: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Fetch JSON-Schema-derived tool specs from the MCP bridges.
 
@@ -1054,13 +1057,31 @@ async def _fetch_tool_specs(
     the agent isn't allowed to call. This helper itself does no
     caching; the bridges back each call with a class-level cache so
     the second invocation is a dict lookup, not an HTTP round-trip.
+
+    When ``primary_language`` indicates a language with known
+    static-call-graph blind spots (cpp, java, kotlin, csharp, swift,
+    objc, scala — see ``LANGUAGE_UNRELIABLE_TOOLS``), the
+    corresponding tools (e.g. ``dead_code``, ``unreachable_from_
+    entrypoints``) are dropped from the returned spec list. They lie
+    systematically on those languages — every virtual override,
+    template instantiation, and callback registration looks "dead" in
+    the trailmark graph even though the runtime calls them via
+    vtable / monomorphization / dynamic dispatch.
     """
+    from aila.modules.vr.agents.mcp_adapters.known_tools import (  # noqa: PLC0415
+        tools_for_language,
+    )
+
     applicable = _applicable_servers_for_kind(target_kind)
     out: dict[str, list[dict[str, Any]]] = {}
     if "audit_mcp" in applicable:
-        out["audit_mcp"] = await AuditMcpBridgeTool().list_tool_specs()
+        specs = await AuditMcpBridgeTool().list_tool_specs()
+        allowed = tools_for_language("audit_mcp", primary_language)
+        out["audit_mcp"] = [s for s in specs if s.get("name", "") in allowed]
     if "ida_headless" in applicable:
-        out["ida_headless"] = await IDABridgeTool().list_tool_specs()
+        specs = await IDABridgeTool().list_tool_specs()
+        allowed = tools_for_language("ida_headless", primary_language)
+        out["ida_headless"] = [s for s in specs if s.get("name", "") in allowed]
     return out
 
 
@@ -1087,6 +1108,7 @@ def _format_param(param: dict[str, Any]) -> str:
 def _render_available_tools_section(
     target_kind: str | None = None,
     tool_specs: dict[str, list[dict[str, Any]]] | None = None,
+    primary_language: str | None = None,
 ) -> str:
     """Render the catalog of MCP tools the engine may invoke this turn.
 
@@ -1142,9 +1164,14 @@ def _render_available_tools_section(
             parts.append("\n")
         else:
             # Catalog fetch failed — fall back to a name-only listing
-            # using the static KNOWN_TOOLS registry. Agent will still
+            # using the static KNOWN_TOOLS registry filtered by
+            # primary_language (drops tools known-broken on this
+            # target's language, e.g. dead_code on C++). Agent will
             # know which tools exist; it just won't see signatures.
-            tool_names = sorted(KNOWN_TOOLS[server])
+            from aila.modules.vr.agents.mcp_adapters.known_tools import (  # noqa: PLC0415
+                tools_for_language,
+            )
+            tool_names = sorted(tools_for_language(server, primary_language))
             parts.append(
                 f"\n## {server} ({len(tool_names)} tools — "
                 f"schema unavailable)\n\n",
