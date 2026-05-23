@@ -11,6 +11,7 @@ import { ObligationChecklist } from "../components/ObligationChecklist";
 import { SyntaxHighlighter } from "../components/SyntaxHighlighter";
 import { useVRFinding } from "../queries";
 import type { DisclosureStatus } from "../types";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 const disclosureColor: Record<
   DisclosureStatus,
@@ -51,6 +52,12 @@ export function FindingDetailPage() {
   }>();
   const navigate = useNavigate();
   const { data: finding, isLoading, isError } = useVRFinding(projectId, findingId);
+
+  useUpdatePageHeader({
+    title: finding?.vulnerable_function || (finding ? '(unknown function)' : undefined),
+    subtitle: undefined,
+    status: null,
+  });
 
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (isError || !finding) {
@@ -93,16 +100,6 @@ export function FindingDetailPage() {
     <div className="space-y-3">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl font-bold font-mono text-foreground truncate">
-            {f.vulnerable_function || "(unknown function)"}
-          </h1>
-          <p className="text-xs text-text-muted mt-1 font-mono">
-            <Link to={`/vr/projects/${projectId}`} className="hover:underline">
-              ← back to project
-            </Link>
-          </p>
-        </div>
         <div className="flex items-center gap-2 flex-wrap">
           <AilaBadge severity={disclosureColor[f.disclosure_status]} size="sm">
             {f.disclosure_status}

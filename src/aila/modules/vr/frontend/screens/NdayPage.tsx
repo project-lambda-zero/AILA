@@ -10,6 +10,7 @@ import {
   useVRFindings,
   useVRProject,
 } from "../queries";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 /** N-day Task View (08_FRONTEND_UX.md §1.11).
  *
@@ -33,6 +34,12 @@ export function NdayPage() {
   const { data: findingsResult } = useVRFindings(projectId);
   const targetName = useTargetName(project?.target_id);
   const patchedName = useTargetName(project?.patched_target_id);
+
+  useUpdatePageHeader({
+    title: 'N-day reproduction',
+    subtitle: project ? (project.cve_id ? `${project.name} · ${project.cve_id}` : project.name) : undefined,
+    status: null,
+  });
 
   if (isLoading || !project) return <LoadingSkeleton size="lg" width="full" />;
 
@@ -148,27 +155,6 @@ export function NdayPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl font-bold font-mono text-foreground truncate">
-            N-day reproduction
-          </h1>
-          <p className="text-xs text-text-muted mt-1 font-mono">
-            {project.name}
-            {project.cve_id && (
-              <>
-                {" · "}
-                <a
-                  href={`https://nvd.nist.gov/vuln/detail/${encodeURIComponent(project.cve_id)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-accent hover:underline"
-                >
-                  {project.cve_id}
-                </a>
-              </>
-            )}
-          </p>
-        </div>
         <Link
           to={`/vr/projects/${projectId}`}
           className="text-xs px-3 py-1.5 rounded bg-surface border border-border-default hover:bg-surface-hover"

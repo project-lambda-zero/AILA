@@ -39,6 +39,7 @@ import type {
   OutcomeDispatchStatus,
   VRMessageSummary,
 } from "../types";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 const investigationStatusColor: Record<
   InvestigationStatus,
@@ -146,6 +147,12 @@ export function InvestigationDetailPage() {
   const promoteMut = usePromoteOutcomeToFinding(invId);
 
   const [messageText, setMessageText] = useState("");
+
+  useUpdatePageHeader({
+    title: inv?.title,
+    subtitle: inv ? `${inv.kind} · target: ${targetName}` : undefined,
+    status: inv?.status === 'running' ? 'live' : inv?.status === 'paused' ? 'paused' : inv?.status === 'failed' ? 'error' : 'ready',
+  });
   const [messageIntent, setMessageIntent] = useState<OperatorIntent | "">("");
   const [steeringOpen, setSteeringOpen] = useState(false);
   useVRKeyboardShortcuts({ onOpenSteering: () => setSteeringOpen(true) });
@@ -232,14 +239,6 @@ export function InvestigationDetailPage() {
     <div className="space-y-4 max-w-full min-w-0 overflow-x-hidden break-words">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl font-bold font-mono text-foreground truncate">
-            {inv.title}
-          </h1>
-          <p className="text-sm text-text-muted mt-1 font-mono">
-            {inv.kind} · target: {targetName}
-          </p>
-        </div>
         <div className="flex items-center gap-2">
           <LiveDot status={liveStatus} />
           <Link

@@ -20,6 +20,7 @@ import type {
   DisclosureSubmissionStatus,
   VRDisclosureSubmissionSummary,
 } from "../types";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 const NEXT_STATES: Record<
   DisclosureSubmissionStatus,
@@ -47,6 +48,12 @@ export function DisclosureDetailPage() {
   const deleteMut = useDeleteDisclosure();
   const navigate = useNavigate();
 
+  useUpdatePageHeader({
+    title: sub?.track_info?.display_name ?? sub?.track_id,
+    subtitle: sub ? `status: ${sub.status}` : undefined,
+    status: null,
+  });
+
   if (isLoading || !sub) return <LoadingSkeleton size="lg" width="full" />;
 
   const transitions = NEXT_STATES[sub.status] ?? [];
@@ -54,14 +61,6 @@ export function DisclosureDetailPage() {
   return (
     <div className="space-y-4">
       <div className="sticky top-0 z-10 bg-base/95 backdrop-blur-sm border-b border-border-default -mx-4 px-4 py-2 flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold font-mono text-foreground">
-            {sub.track_info?.display_name ?? sub.track_id}
-          </h1>
-          <p className="text-sm text-text-muted mt-1 font-mono">
-            status: {sub.status}
-          </p>
-        </div>
         <DeleteButton
           id={sid}
           label={`disclosure to ${sub.track_id}`}

@@ -6,6 +6,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { HexView } from "../components/HexView";
 import { useFuzzCrash } from "../queries";
 import type { CrashTriageVerdict } from "../types";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 const VERDICT_COLOR: Record<
   CrashTriageVerdict,
@@ -74,23 +75,16 @@ export function FuzzCrashDetailPage() {
   const cid = crashId ?? "";
   const { data: crash, isLoading } = useFuzzCrash(cid);
 
+  useUpdatePageHeader({
+    title: crash?.crash_type ?? (crash ? 'Crash' : undefined),
+    subtitle: crash ? `stack ${crash.stack_hash.slice(0, 12)}…` : undefined,
+    status: null,
+  });
+
   if (isLoading || !crash) return <LoadingSkeleton size="lg" width="full" />;
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          {crash.crash_type ?? "Crash"}{" "}
-          <span className="text-text-muted text-sm">
-            (stack {crash.stack_hash.slice(0, 12)}…)
-          </span>
-        </h1>
-        <p className="text-sm text-text-muted mt-1">
-          <Link to={`/vr/fuzz/campaigns/${crash.campaign_id}`} className="hover:underline">
-            in fuzz campaign →
-          </Link>
-        </p>
-      </div>
 
       <div className="flex gap-2 flex-wrap">
         <AilaBadge severity={VERDICT_COLOR[crash.triage_verdict]} size="sm">
