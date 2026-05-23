@@ -372,10 +372,8 @@
   --radius-lg: 14px;
 
   /* Fonts — Aero-era specifier: Segoe UI / Calibri / Corbel stack */
-  --font-display: "Segoe UI", "Calibri", "Corbel", "Candara",
-    "Lucida Grande", "Trebuchet MS", system-ui, sans-serif;
-  --font-sans: "Segoe UI", "Calibri", "Corbel", "Lucida Grande",
-    "Trebuchet MS", system-ui, sans-serif;
+  --font-display: "DM Serif Display", "Segoe UI", "Calibri", serif;
+  --font-sans: "Quicksand", "Segoe UI", "Calibri", system-ui, sans-serif;
 
   /* shadcn/ui */
   --background: #b8dff0;
@@ -2228,10 +2226,8 @@ a:hover {
   --radius-md: 0px;
   --radius-lg: 0px;
 
-  --font-display: "Michroma", "Eurostile", "Bank Gothic", "Zrnic",
-    "Arial Narrow", sans-serif;
-  --font-sans: "Michroma", "Eurostile", "Bank Gothic", "Lucida Console",
-    system-ui, sans-serif;
+  --font-display: "Press Start 2P", "Courier New", monospace;
+  --font-sans: "VT323", "Courier New", monospace;
 
   --background: #c7c6c1;
   --foreground: #1a1a1a;
@@ -2512,8 +2508,8 @@ a:hover {
   --radius-md: 2px;
   --radius-lg: 3px;
 
-  --font-display: "Iceberg", "Bungee", "Michroma", "Eurostile", sans-serif;
-  --font-sans: "B612 Mono", "Share Tech Mono", ui-monospace, monospace;
+  --font-display: "Michroma", "Eurostile", "Geist", sans-serif;
+  --font-sans: "Geist", system-ui, sans-serif;
 
   --background: #000000;
   --foreground: #e0f2ff;
