@@ -48,7 +48,7 @@ COMMAND="${1:-start}"
 : "${IDA_HEADLESS_DIR:=../ida-headless-mcp-exp}"
 : "${AILA_START_FRONTEND:=1}"
 : "${AILA_START_AUDIT_MCP:=1}"
-: "${AUDIT_MCP_WORKERS:=4}"
+: "${AUDIT_MCP_WORKERS:=1}"
 : "${AILA_START_IDA_HEADLESS:=1}"
 
 RUN_DIR=".run"
