@@ -10,6 +10,7 @@
 #
 # Services started:
 #   audit-mcp            HTTP on  ${AUDIT_MCP_PORT:-18822}  (toggle: AILA_START_AUDIT_MCP=0)
+#   ida-headless         HTTP on  ${IDA_HEADLESS_PORT:-18821}  (toggle: AILA_START_IDA_HEADLESS=0)
 #   AILA backend         uvicorn on ${BACKEND_PORT:-8000}
 #   AILA workers         one per queue in $WORKERS
 #   AILA frontend        Vite on ${FRONTEND_PORT:-3000}     (toggle: AILA_START_FRONTEND=0)
@@ -24,10 +25,13 @@
 #   BACKEND_PORT          default 8000
 #   FRONTEND_PORT         default 3000
 #   AUDIT_MCP_PORT        default 18822
+#   IDA_HEADLESS_PORT     default 18821
 #   WORKERS               default "default vr vulnerability forensics sbd_nfr"
 #   AUDIT_MCP_DIR         default ../audit-mcp (relative to repo root)
+#   IDA_HEADLESS_DIR      default ../ida-headless-mcp-exp (relative to repo root)
 #   AILA_START_FRONTEND   1/0 (default 1)
 #   AILA_START_AUDIT_MCP  1/0 (default 1)
+#   AILA_START_IDA_HEADLESS  1/0 (default 1)
 
 set -e
 cd "$(dirname "$0")"
@@ -38,10 +42,13 @@ COMMAND="${1:-start}"
 : "${BACKEND_PORT:=8000}"
 : "${FRONTEND_PORT:=3000}"
 : "${AUDIT_MCP_PORT:=18822}"
+: "${IDA_HEADLESS_PORT:=18821}"
 : "${WORKERS:=default vr vulnerability forensics sbd_nfr}"
 : "${AUDIT_MCP_DIR:=../audit-mcp}"
+: "${IDA_HEADLESS_DIR:=../ida-headless-mcp-exp}"
 : "${AILA_START_FRONTEND:=1}"
 : "${AILA_START_AUDIT_MCP:=1}"
+: "${AILA_START_IDA_HEADLESS:=1}"
 
 RUN_DIR=".run"
 mkdir -p "$RUN_DIR" 2>/dev/null || true
@@ -211,6 +218,7 @@ kill_aila_processes() {
   # FALLBACK 2: anything still holding our ports.
   kill_port_owner "${BACKEND_PORT:-8000}"
   kill_port_owner "${AUDIT_MCP_PORT:-18822}"
+  kill_port_owner "${IDA_HEADLESS_PORT:-18821}"
   # Frontend: vite spawns under node.exe.
   kill_matching "node.exe" "vite|aila/shell"
   echo "[aila] Stopped."
@@ -300,6 +308,7 @@ show_status() {
   probe "backend  http://127.0.0.1:${BACKEND_PORT}/health" "http://127.0.0.1:${BACKEND_PORT}/health"
   probe "backend  http://127.0.0.1:${BACKEND_PORT}/vr/projects (auth)" "http://127.0.0.1:${BACKEND_PORT}/vr/projects"
   probe "audit-mcp http://127.0.0.1:${AUDIT_MCP_PORT}/tools" "http://127.0.0.1:${AUDIT_MCP_PORT}/tools"
+  probe "ida-headless http://127.0.0.1:${IDA_HEADLESS_PORT}/tools" "http://127.0.0.1:${IDA_HEADLESS_PORT}/tools"
   probe "frontend http://127.0.0.1:${FRONTEND_PORT}/" "http://127.0.0.1:${FRONTEND_PORT}/"
 }
 
@@ -331,6 +340,40 @@ elif [[ "$AILA_START_AUDIT_MCP" == "1" ]]; then
   echo "[aila]   WARNING: AUDIT_MCP_DIR not found: $AUDIT_MCP_DIR (skipping audit-mcp)"
 else
   echo "[aila]   audit-mcp disabled (AILA_START_AUDIT_MCP=0)"
+fi
+
+# ── ida-headless-mcp (in its own repo) ──────────────────────────────────────
+# Same launcher pattern as audit-mcp: detached background python via the
+# spawn helper. Uses `ida_headless_mcp.server:main_http` (mirrors every
+# MCP tool as a POST endpoint, no stdio plumbing — what the VR
+# IDABridgeTool talks to). Without this MCP up, every `_rank_binary` /
+# `_gather_binary_signals` / `assess_exploitability` call from the VR
+# engine returns "Unreachable" and stalls binary-target investigations
+# (source_repo targets like firefox are unaffected; CVE-derived
+# native_binary targets aren't).
+if [[ "$AILA_START_IDA_HEADLESS" == "1" && -d "$IDA_HEADLESS_DIR" ]]; then
+  echo "[aila] Starting ida-headless-mcp..."
+  # The pip-installed `ida-headless-http` console script (defined in
+  # the package's pyproject.toml as ida_headless_mcp.server:main_http)
+  # bypasses the `python -c '...'` quoting hell of spawn(). We call
+  # PowerShell Start-Process on the .exe directly so the spawn helper
+  # (which hardcodes `python` as the binary) doesn't apply.
+  IDA_HEADLESS_EXE="${IDA_HEADLESS_EXE:-ida-headless-http}"
+  IDA_HEADLESS_PID=$(IDA_HEADLESS_HTTP_PORT="$IDA_HEADLESS_PORT" \
+    IDA_HEADLESS_HTTP_HOST="127.0.0.1" \
+    "$PS" -NoProfile -Command \
+      "(Start-Process '${IDA_HEADLESS_EXE}' -WindowStyle Hidden -PassThru).Id" \
+    2>/dev/null | tr -d '\r\n ')
+  if [[ -n "$IDA_HEADLESS_PID" ]]; then
+    record_pid "ida-headless" "$IDA_HEADLESS_PID"
+    echo "[aila]   ida-headless started (PID $IDA_HEADLESS_PID)"
+  else
+    echo "[aila]   WARNING: ida-headless launch failed — is ida-headless-http on PATH?"
+  fi
+elif [[ "$AILA_START_IDA_HEADLESS" == "1" ]]; then
+  echo "[aila]   WARNING: IDA_HEADLESS_DIR not found: $IDA_HEADLESS_DIR (skipping ida-headless)"
+else
+  echo "[aila]   ida-headless disabled (AILA_START_IDA_HEADLESS=0)"
 fi
 
 # ── Backend ─────────────────────────────────────────────────────────────────
