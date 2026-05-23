@@ -44,6 +44,34 @@ import { ChatPage } from "@platform/features/chat/ChatPage";
 import { SettingsPage } from "@platform/features/settings/SettingsPage";
 import { RadarPage } from "@platform/features/radar/RadarPage";
 import { VizPage } from "@platform/features/viz/VizPage";
+import {
+  House,
+  HardDrives,
+  Broadcast,
+  ChartLine,
+  Terminal,
+  ListChecks,
+  ChatCircleText,
+  BookOpen,
+  Users as UsersIcon,
+  Key,
+  ClipboardText,
+  Wrench,
+  GitBranch,
+  Robot,
+  GearSix,
+  Tag,
+  Heartbeat,
+  UsersThree,
+  BookmarkSimple,
+  Queue,
+  Skull,
+  Calendar,
+  CurrencyDollar,
+  Briefcase,
+  Monitor,
+  Warning,
+} from "@phosphor-icons/react";
 
 // C2: CrashNow is a DEV-only test crash component. In production builds we
 // never reference the module so Vite tree-shakes it out of the bundle.
@@ -58,12 +86,14 @@ const moduleSpecs = loadModuleFrontendSpecs();
 function RoutedPage({
   page: Page,
   title,
+  icon,
 }: {
   page: ComponentType;
   title: string;
+  icon?: ReactElement;
 }) {
   return (
-    <PageFrame title={title}>
+    <PageFrame title={title} icon={icon}>
       <Suspense
         fallback={(
           <AppStateScreen
@@ -100,14 +130,57 @@ function withFeatureBoundary(element: ReactElement): ReactElement {
   return <AppErrorBoundary>{element}</AppErrorBoundary>;
 }
 
+/**
+ * Title-keyed icon map for platform-owned routes. Modules supply their
+ * own icons via `RouteContribution.icon` (or inherit from the module's
+ * first nav contribution); this map only covers the in-platform routes
+ * registered statically below.
+ */
+const PLATFORM_PAGE_ICONS: Record<string, ReactElement> = {
+  Overview: <House />,
+  Systems: <HardDrives />,
+  "System Detail": <HardDrives />,
+  "Network Radar": <Broadcast />,
+  "Data Visualization": <ChartLine />,
+  Console: <Terminal />,
+  Tasks: <ListChecks />,
+  "Task Detail": <ListChecks />,
+  Chat: <ChatCircleText />,
+  Docs: <BookOpen />,
+  Settings: <GearSix />,
+  Sessions: <Monitor />,
+  Users: <UsersIcon />,
+  "API Keys": <Key />,
+  "Audit Logs": <ClipboardText />,
+  "Tools Console": <Wrench />,
+  "Workflow Inspector": <GitBranch />,
+  "LLM Log": <Robot />,
+  "Platform Config": <GearSix />,
+  "Tag Vocabulary": <Tag />,
+  "System Health": <Heartbeat />,
+  "OIDC Providers": <Key />,
+  Teams: <UsersThree />,
+  "Team Detail": <UsersThree />,
+  "Saved Filters": <BookmarkSimple />,
+  "Task Queue": <Queue />,
+  "Dead Letter Queue": <Skull />,
+  "Automation Schedules": <Robot />,
+  "Scheduled Reports": <Calendar />,
+  "Cost Intelligence": <CurrencyDollar />,
+  "Executive Dashboard": <Briefcase />,
+  "Not Found": <Warning />,
+};
+
 function protectPage(
   title: string,
   Page: ComponentType,
   requiredRole?: AppRole,
+  icon?: ReactElement,
 ) {
+  const resolvedIcon = icon ?? PLATFORM_PAGE_ICONS[title];
   return withFeatureBoundary(
     <ProtectedRoute requiredRole={requiredRole}>
-      <RoutedPage page={Page} title={title} />
+      <RoutedPage page={Page} title={title} icon={resolvedIcon} />
     </ProtectedRoute>,
   );
 }
@@ -117,15 +190,23 @@ function normalizeModulePath(pathname: string): string {
 }
 
 function buildModuleRouteObjects(specs: ModuleFrontendSpec[]): RouteObject[] {
-  return specs.flatMap((spec) =>
-    (spec.routes ?? []).map((route) => ({
-      id: route.id,
-      path: normalizeModulePath(route.path),
-      // Each contributed module route also gets its own feature-level boundary.
-      element: protectPage(route.title, route.page, route.minRole),
-      handle: route.breadcrumb ? { breadcrumb: route.breadcrumb } : undefined,
-    })),
-  );
+  return specs.flatMap((spec) => {
+    // Inherit the module's primary nav icon when an individual route
+    // didn't supply its own — keeps all `/vr/*` detail pages on the
+    // Briefcase icon, all `/forensics/*` on Detective, etc.
+    const fallbackIcon = spec.nav?.find((n) => n.icon)?.icon ?? undefined;
+    return (spec.routes ?? []).map((route) => {
+      const IconComponent = route.icon ?? fallbackIcon;
+      const icon = IconComponent ? <IconComponent /> : undefined;
+      return {
+        id: route.id,
+        path: normalizeModulePath(route.path),
+        // Each contributed module route also gets its own feature-level boundary.
+        element: protectPage(route.title, route.page, route.minRole, icon),
+        handle: route.breadcrumb ? { breadcrumb: route.breadcrumb } : undefined,
+      };
+    });
+  });
 }
 
 // Test-only crash route (preflight FE-H / D-23). Gated behind Vite DEV so

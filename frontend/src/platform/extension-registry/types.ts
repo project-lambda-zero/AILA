@@ -37,6 +37,14 @@ export interface RouteContribution {
    * registered routes into the only source of truth for crumbs.
    */
   breadcrumb?: string;
+  /**
+   * Optional sidebar-style icon rendered in the PageShell header for
+   * pages contributed by this route. Same Phosphor `ComponentType`
+   * shape as `NavContribution.icon`. When omitted, the module's first
+   * nav contribution icon is used as a fallback (so e.g. all `vr.*`
+   * routes share the Briefcase icon unless they override).
+   */
+  icon?: ComponentType<{ className?: string; size?: number | string }>;
 }
 
 export interface PanelContribution {
