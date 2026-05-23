@@ -176,18 +176,36 @@ class ToolExecutor:
                     f"identifiers that look like function calls (e.g. ngx_http_v2_write_*) "
                     f"are often macros that read_function can't see."
                 )
-            # Repeat-failure circuit breaker. Without this, an agent
-            # that hallucinates a function name (e.g. ngx_http_proxy_set_body
-            # for the proxy_set_body DIRECTIVE) will reissue the exact same
-            # failing read_function call 100+ times across turns because
-            # observables only store the latest result per key and the
-            # agent has no per-turn memory of prior failures. Count
-            # identical failed calls by branch, and after 3 force a
-            # pivot via prominent prompt-style hint in the error.
+            # Repeat-failure circuit breaker. Two complementary triggers:
+            #
+            # (1) Args-identical: same (server, tool, args) call has
+            #     already failed N times on this branch. Catches the
+            #     classic "ngx_http_proxy_set_body doesn't exist, retry
+            #     forever" pattern where the agent reissues the exact
+            #     same call without varying anything.
+            #
+            # (2) Error-class match: same (server, tool) call failed
+            #     with the SAME ERROR PREFIX N times on this branch
+            #     regardless of args. Catches the "fuzzing_targets
+            #     keeps getting unknown-kwarg 'threshold' / 'cutoff' /
+            #     'min_score'" pattern where the agent varies the bad
+            #     arg name but never realizes the param doesn't exist
+            #     at all. Without this, breaker #1 never fires because
+            #     each new bogus kwarg looks like a fresh call.
+            #
+            # Either trigger >= 2 (i.e. this is the 3rd offence) forces
+            # the breaker hint. Error-class match takes priority when
+            # both fire because its message is more actionable for the
+            # contract-violation case.
             repeat_count = await self._count_prior_failures(
                 branch_id, server_id, tool_name, args,
             )
-            if repeat_count >= 2:
+            error_class_count = await self._count_prior_error_class(
+                branch_id, server_id, tool_name, raw_err,
+            )
+            triggered_by_class = error_class_count >= 2
+            triggered_by_args = repeat_count >= 2
+            if triggered_by_class or triggered_by_args:
                 ident = (
                     args.get("name") or args.get("function")
                     or args.get("pattern") or "<args>"
@@ -205,21 +223,42 @@ class ToolExecutor:
                         f"  - audit_mcp.search_constants(name={ident!r})  # if checking for a constant",
                         "  - try a shorter / broader pattern",
                     ])
-                err += (
-                    f"\n\n*** REPEAT-FAILURE CIRCUIT BREAKER ***\n"
-                    f"You have already issued THIS EXACT CALL "
-                    f"{repeat_count + 1} times in this branch — all failed with the "
-                    f"same error. STOP. The identifier {ident!r} does not exist "
-                    f"in the form you expect. Possible reasons:\n"
-                    f"  (a) it's a directive name, not a function (directives are\n"
-                    f"      registered in a static array, not exported as a function\n"
-                    f"      with that exact name);\n"
-                    f"  (b) it's a macro / typedef / constant, not a function;\n"
-                    f"  (c) it never existed and a sibling persona hallucinated it.\n\n"
-                    f"PIVOT — your next tool call MUST NOT be the same call again."
-                    + ("\nTry one of:\n" + "\n".join(alternatives) if alternatives else "")
-                    + "\nOR submit a finding noting 'identifier not present in tree'."
-                )
+
+                if triggered_by_class:
+                    # Contract-violation path: the error itself names
+                    # the wrong kwarg / missing arg. The bridge
+                    # validator (audit_mcp_bridge._validate_kwargs)
+                    # already injected a 'did you mean' hint into the
+                    # raw error — reinforce the STOP signal at the
+                    # breaker level so the agent realizes it's looping.
+                    err += (
+                        f"\n\n*** REPEAT-FAILURE CIRCUIT BREAKER (error-class match) ***\n"
+                        f"You have called {server_id}.{tool_name} {error_class_count + 1} times "
+                        f"in this branch and EACH attempt failed with the same error class. "
+                        f"Varying the arg VALUE will not help — the arg NAME or shape is "
+                        f"wrong. Re-read the tool signature in the # Available tools section "
+                        f"of the prompt above. The valid parameter list is named in the error.\n\n"
+                        f"PIVOT — do NOT call {server_id}.{tool_name} again until you have "
+                        f"a different param NAME, or call a different tool entirely."
+                        + ("\nTry one of:\n" + "\n".join(alternatives) if alternatives else "")
+                        + "\nOR submit a finding noting the obstacle."
+                    )
+                else:
+                    err += (
+                        f"\n\n*** REPEAT-FAILURE CIRCUIT BREAKER ***\n"
+                        f"You have already issued THIS EXACT CALL "
+                        f"{repeat_count + 1} times in this branch — all failed with the "
+                        f"same error. STOP. The identifier {ident!r} does not exist "
+                        f"in the form you expect. Possible reasons:\n"
+                        f"  (a) it's a directive name, not a function (directives are\n"
+                        f"      registered in a static array, not exported as a function\n"
+                        f"      with that exact name);\n"
+                        f"  (b) it's a macro / typedef / constant, not a function;\n"
+                        f"  (c) it never existed and a sibling persona hallucinated it.\n\n"
+                        f"PIVOT — your next tool call MUST NOT be the same call again."
+                        + ("\nTry one of:\n" + "\n".join(alternatives) if alternatives else "")
+                        + "\nOR submit a finding noting 'identifier not present in tree'."
+                    )
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
             )
@@ -349,6 +388,83 @@ class ToolExecutor:
             except (ValueError, TypeError):
                 continue
         return count
+
+    async def _count_prior_error_class(
+        self,
+        branch_id: str,
+        server_id: str,
+        tool_name: str,
+        raw_err: Any,
+    ) -> int:
+        """Count prior error-messages on this branch with the same
+        ``server_id.tool_name`` whose ``raw_err`` shares the same
+        contract-violation class as the current error, regardless of
+        args.
+
+        Error-class matching is intentionally narrow — only fires when
+        ``raw_err`` looks like a bridge-validator or upstream
+        contract-violation message (unknown kwarg, missing required
+        kwarg, unexpected keyword argument, signature mismatch). For
+        those classes, varying the arg VALUE never helps — the agent
+        is calling the tool with the wrong arg NAME or shape and
+        needs to pivot, not retry. For other error classes (function
+        not indexed, file not found, timeout, etc.) varying args can
+        legitimately help, so this helper returns 0 and falls back to
+        the strict args-identical counter.
+        """
+        if not isinstance(raw_err, str):
+            return 0
+        class_key = self._classify_contract_error(raw_err)
+        if class_key is None:
+            return 0
+
+        prefix = f"{server_id}.{tool_name} returned error"
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(VRInvestigationMessageRecord)
+                .where(VRInvestigationMessageRecord.branch_id == branch_id)
+                .where(VRInvestigationMessageRecord.payload_kind == PayloadKind.TEXT.value)
+                .order_by(VRInvestigationMessageRecord.created_at.desc())
+                .limit(50)
+            )).all()
+        count = 0
+        for r in rows:
+            try:
+                payload = json.loads(r.payload_json or "{}")
+            except (ValueError, TypeError):
+                continue
+            if not payload.get("is_error"):
+                continue
+            text = str(payload.get("text") or "")
+            if not text.startswith(prefix):
+                continue
+            if self._classify_contract_error(text) == class_key:
+                count += 1
+        return count
+
+    @staticmethod
+    def _classify_contract_error(text: str) -> str | None:
+        """Return a coarse class key for contract-violation errors, or
+        None when ``text`` doesn't look like one.
+
+        Classes:
+          - "unknown_kwarg"  — bridge validator OR upstream Python
+                              TypeError about an unexpected keyword
+          - "missing_kwarg"  — required kwarg not provided
+          - "type_mismatch"  — wrong type passed
+        """
+        low = text.lower()
+        if (
+            "unknown kwarg" in low
+            or "unexpected keyword argument" in low
+            or "got an unexpected keyword" in low
+        ):
+            return "unknown_kwarg"
+        if "missing required" in low or "missing 1 required" in low:
+            return "missing_kwarg"
+        if "type mismatch" in low or "argument of type" in low:
+            return "type_mismatch"
+        return None
 
     async def _messages_before(
         self, *, uow_branch_id: str, before_id: str,
