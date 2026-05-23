@@ -16,6 +16,7 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { SeverityPulse } from "@/components/aila/SeverityPulse";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { KpiTile } from "@/components/aila/KpiTile";
 
 import { DeleteButton } from "../components/DeleteButton";
 import { useDeleteProject } from "../mutations";
@@ -54,85 +55,6 @@ function formatDate(value?: string | null): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// KPI tile — single metric with optional severity-tinted accent stripe.
-// ─────────────────────────────────────────────────────────────────────
-function KpiTile({
-  label,
-  value,
-  hint,
-  icon,
-  tone = "neutral",
-}: {
-  label: string;
-  value: string | number;
-  hint?: string;
-  icon: React.ReactNode;
-  tone?: "neutral" | "accent" | "warn" | "ok" | "crit";
-}) {
-  const toneStyles: Record<typeof tone, { bar: string; iconBg: string; iconText: string }> = {
-    neutral: {
-      bar: "linear-gradient(180deg, color-mix(in srgb, var(--color-text-muted) 50%, transparent), transparent)",
-      iconBg: "color-mix(in srgb, var(--color-text-muted) 8%, transparent)",
-      iconText: "var(--color-text-muted)",
-    },
-    accent: {
-      bar: "linear-gradient(180deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 0%, transparent))",
-      iconBg: "color-mix(in srgb, var(--color-accent) 12%, transparent)",
-      iconText: "var(--color-accent)",
-    },
-    warn: {
-      bar: "linear-gradient(180deg, #f0a8c7, color-mix(in srgb, #f0a8c7 0%, transparent))",
-      iconBg: "color-mix(in srgb, #f0a8c7 14%, transparent)",
-      iconText: "#f0a8c7",
-    },
-    ok: {
-      bar: "linear-gradient(180deg, #97dbbe, color-mix(in srgb, #97dbbe 0%, transparent))",
-      iconBg: "color-mix(in srgb, #97dbbe 14%, transparent)",
-      iconText: "#97dbbe",
-    },
-    crit: {
-      bar: "linear-gradient(180deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 0%, transparent))",
-      iconBg: "color-mix(in srgb, var(--color-accent) 18%, transparent)",
-      iconText: "var(--color-accent)",
-    },
-  };
-  const s = toneStyles[tone];
-  return (
-    <div
-      className="relative overflow-hidden rounded-md border border-border bg-surface px-5 py-4"
-      style={{
-        boxShadow: "inset 0 1px 0 0 color-mix(in srgb, var(--color-text) 6%, transparent)",
-      }}
-    >
-      {/* Left accent stripe — 3px tall vertical bar */}
-      <span
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 w-[3px]"
-        style={{ background: s.bar }}
-      />
-      <div className="flex items-start gap-3">
-        <div
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded"
-          style={{ background: s.iconBg, color: s.iconText }}
-        >
-          <span className="[&_svg]:h-5 [&_svg]:w-5">{icon}</span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-mono uppercase tracking-[0.14em] text-text-muted">
-            {label}
-          </p>
-          <p className="mt-0.5 font-display text-3xl font-semibold text-foreground leading-none">
-            {value}
-          </p>
-          {hint && (
-            <p className="mt-1.5 text-[11px] font-mono text-text-muted truncate">{hint}</p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────
 // Project card — replaces the table row. Visual hierarchy emphasises
