@@ -1,6 +1,7 @@
 import * as React from "react"
 import type { ReactNode } from "react"
 
+import { PageHeaderProvider, usePageHeaderOverrides } from "@/components/aila/PageHeaderContext"
 import { cn } from "@/lib/utils"
 
 /**
@@ -71,7 +72,7 @@ const STATUS_COLOR: Record<NonNullable<PageShellProps["status"]>, string> = {
   error: "bg-status-failed",
 }
 
-export function PageShell({
+function PageShellInner({
   title,
   subtitle,
   icon,
@@ -83,6 +84,20 @@ export function PageShell({
   className,
   contentClassName,
 }: PageShellProps) {
+  // Pull overrides set by the currently-mounted page via useUpdatePageHeader.
+  // Explicit `null` clears the corresponding field; `undefined` falls through
+  // to the static prop value supplied by PageFrame / router.tsx.
+  const ov = usePageHeaderOverrides()
+  const resolve = <T,>(override: T | null | undefined, fallback: T | undefined): T | undefined => {
+    if (override === null) return undefined
+    if (override !== undefined) return override
+    return fallback
+  }
+  title = resolve(ov.title, title) ?? title
+  subtitle = resolve(ov.subtitle, subtitle)
+  icon = resolve(ov.icon, icon)
+  status = resolve(ov.status, status)
+  actions = resolve(ov.actions, actions)
   // L-shaped 16x16 corner brackets in accent colour at 50% opacity.
   // Same shape as AilaCard.cornerAccents but rendered at page scope.
   const cornerColor = "color-mix(in srgb, var(--color-accent) 50%, transparent)"
@@ -181,5 +196,13 @@ export function PageShell({
       </header>
       <main className={cn("p-6", contentClassName)}>{children}</main>
     </div>
+  )
+}
+
+export function PageShell(props: PageShellProps) {
+  return (
+    <PageHeaderProvider>
+      <PageShellInner {...props} />
+    </PageHeaderProvider>
   )
 }
