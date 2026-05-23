@@ -46,6 +46,101 @@ __all__ = [
 ]
 
 
+# Path / filename patterns that indicate a "function" is not real audit
+# code — bundler output, vendored deps, generated tables, test
+# payloads. complexity_hotspots and fuzzing_targets correctly report
+# these as kind=function (they ARE syntactically functions) but the
+# agent has no business reading them: they're either codegen artifacts
+# (Emscripten C->JS fallbacks shipped as one IIFE wrapping an entire
+# codec at cyc=6000+), regression-test payloads, or generated lookup
+# tables. Without this filter the firefox hotspot list put OpenJPEG
+# (cyc=6969) and JBig2 (cyc=2043) bundled fallbacks at ranks 1 and 5,
+# the agent treated them as functions to audit, and burned hours in
+# read_function loops because the names aren't actually callable.
+_NOISE_DIR_SEGMENTS: frozenset[str] = frozenset({
+    "third_party", "third-party", "vendor", "extern", "external",
+    "node_modules", "dist", "build", "out", "target",
+    "tests", "test", "jit-test", "non262", "regress", "wpt",
+    "web-platform-tests", "testing", "benchmarks",
+})
+
+_NOISE_FILENAME_PATTERNS: tuple[str, ...] = (
+    "_nowasm_fallback.js",  # Emscripten asm.js fallback bundles
+    ".min.js", ".min.css",
+    "-bundle.js", "-bundle.min.js",
+    ".generated.", ".gen.",
+    "_pb.py", "_pb2.py",   # protobuf generated
+    ".pb.cc", ".pb.h",
+    "lex.yy.c", "y.tab.c", # lex/yacc generated
+    "_find_header.c",       # aiohttp generated lookup
+)
+
+
+def _is_noise_function(entry: dict[str, Any]) -> bool:
+    """Return True when ``entry`` looks like build/test/vendored
+    artifact rather than audit-worthy implementation code.
+
+    Hard signals:
+      - file_path contains any segment in _NOISE_DIR_SEGMENTS
+      - filename matches any _NOISE_FILENAME_PATTERNS suffix/substring
+      - function has one param named 'moduleArg' (Emscripten IIFE)
+      - function body spans >2000 lines starting at line 2
+        (single-IIFE bundle wrapping an entire compiled module)
+    """
+    if not isinstance(entry, dict):
+        return True  # skip junk entries
+    loc = entry.get("location") or {}
+    if not isinstance(loc, dict):
+        loc = {}
+    file_path = (
+        loc.get("file_path")
+        or entry.get("file")
+        or entry.get("path")
+        or ""
+    )
+    if file_path:
+        # Normalise separators for cross-platform matching.
+        normalised = file_path.replace("\\", "/").lower()
+        for seg in _NOISE_DIR_SEGMENTS:
+            # Match `/<seg>/` to avoid partial-name false positives
+            # (e.g. don't flag a file named "vendor.c" but DO flag
+            # `/vendor/foo.c`).
+            if f"/{seg}/" in normalised:
+                return True
+        for pat in _NOISE_FILENAME_PATTERNS:
+            if normalised.endswith(pat) or pat in normalised.rsplit("/", 1)[-1]:
+                return True
+
+    # Emscripten IIFE signature: single `moduleArg` param + body
+    # starting at line ~2 with thousands of lines.
+    params = entry.get("parameters") or []
+    if (
+        isinstance(params, list)
+        and len(params) == 1
+        and isinstance(params[0], dict)
+        and params[0].get("name") == "moduleArg"
+    ):
+        return True
+
+    start = loc.get("start_line")
+    end = loc.get("end_line")
+    if (
+        isinstance(start, int) and isinstance(end, int)
+        and start <= 5 and (end - start) > 2000
+    ):
+        # Function spans >2000 lines from near top of file —
+        # almost certainly an IIFE bundle, not hand-written code.
+        return True
+
+    return False
+
+
+def _filter_noise(entries: list[Any]) -> tuple[list[Any], int]:
+    """Return (kept, dropped_count) for a list of hotspot/target entries."""
+    kept = [e for e in entries if not _is_noise_function(e)]
+    return kept, len(entries) - len(kept)
+
+
 # Observable cap for read_function output. Bumped progressively after
 # observing the agent loop on functions that exceeded the cap:
 #   3000  → ngx_http_script_regex_start_code (154 lines, 3669 chars)
@@ -82,7 +177,8 @@ def adapt_fuzzing_targets(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
     """Map ``fuzzing_targets`` to TEXT payload with ranked function list."""
-    targets = _list_or_empty(raw, "targets", "results")
+    raw_targets = _list_or_empty(raw, "targets", "results")
+    targets, dropped = _filter_noise(raw_targets)
     summary_lines: list[str] = []
     for entry in targets[:MAX_LIST_PREVIEW]:
         if not isinstance(entry, dict):
@@ -107,15 +203,19 @@ def adapt_fuzzing_targets(
     if len(targets) > MAX_LIST_PREVIEW:
         summary_lines.append(f"  ... and {len(targets) - MAX_LIST_PREVIEW} more")
 
+    drop_note = (
+        f" — dropped {dropped} bundler/test/vendored entries"
+        if dropped else ""
+    )
     obs_value = (
-        f"audit-mcp fuzzing_targets ({len(targets)} candidates):\n"
+        f"audit-mcp fuzzing_targets ({len(targets)} candidates{drop_note}):\n"
         + ("\n".join(summary_lines) if summary_lines else "  (none)")
     )
 
     payload: dict[str, Any] = {
         "text": (
             f"audit-mcp fuzzing_targets returned {len(targets)} candidates "
-            f"(graph-aware ranking)"
+            f"(graph-aware ranking{drop_note})"
         ),
         "tool": f"{ctx.mcp_server_id}.{ctx.tool_name}",
         "targets": targets,
@@ -170,7 +270,8 @@ def adapt_complexity_hotspots(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
     """Map ``complexity_hotspots`` to TEXT payload (top complex functions)."""
-    hotspots = _list_or_empty(raw, "hotspots", "functions", "results")
+    raw_hotspots = _list_or_empty(raw, "hotspots", "functions", "results")
+    hotspots, dropped = _filter_noise(raw_hotspots)
     bullets: list[str] = []
     for h in hotspots[:MAX_LIST_PREVIEW]:
         if not isinstance(h, dict):
@@ -190,8 +291,12 @@ def adapt_complexity_hotspots(
         bullets.append(f"  - {name}{loc_str}{suffix}")
     if len(hotspots) > MAX_LIST_PREVIEW:
         bullets.append(f"  ... and {len(hotspots) - MAX_LIST_PREVIEW} more")
+    drop_note = (
+        f" — dropped {dropped} bundler/test/vendored entries"
+        if dropped else ""
+    )
     obs_value = (
-        f"complexity_hotspots: {len(hotspots)} function(s)\n"
+        f"complexity_hotspots: {len(hotspots)} function(s){drop_note}\n"
         + ("\n".join(bullets) if bullets else "  (none)")
     )
     payload: dict[str, Any] = {
