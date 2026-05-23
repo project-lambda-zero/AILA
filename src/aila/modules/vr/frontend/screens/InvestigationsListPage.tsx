@@ -177,17 +177,39 @@ function InvestigationRow({
       </td>
 
       {/* Verifier */}
-      <td className={cellCls + " w-[140px]"}>
+      <td className={cellCls + " w-[120px]"}>
         {verifierTone ? (
           <AilaBadge severity={verifierTone} size="sm">
             {inv.verifier_verdict}
-            {typeof inv.verifier_confidence === "number"
-              ? ` ${inv.verifier_confidence.toFixed(2)}`
-              : ""}
           </AilaBadge>
         ) : (
           <span className="text-[11px] font-mono text-text-muted/40">—</span>
         )}
+      </td>
+
+      {/* Conf (verifier confidence — primary scannable signal) */}
+      <td
+        className={cellNumCls + " w-14 text-[13px] font-mono"}
+        style={{
+          color:
+            typeof inv.verifier_confidence !== "number"
+              ? "var(--color-text-muted)"
+              : inv.verifier_confidence >= 0.85
+                ? "#97dbbe"
+                : inv.verifier_confidence >= 0.5
+                  ? "#f0a8c7"
+                  : "var(--color-accent)",
+          fontWeight: typeof inv.verifier_confidence === "number" ? 600 : 400,
+        }}
+        title={
+          typeof inv.verifier_confidence === "number"
+            ? `verifier confidence: ${inv.verifier_confidence.toFixed(2)}`
+            : "no verifier verdict yet"
+        }
+      >
+        {typeof inv.verifier_confidence === "number"
+          ? inv.verifier_confidence.toFixed(2)
+          : "—"}
       </td>
 
       {/* Outcome */}
@@ -306,7 +328,8 @@ function InvestigationTable({ children }: { children: React.ReactNode }) {
           <col style={{ width: 130 }} />
           <col />
           <col style={{ width: 110 }} />
-          <col style={{ width: 140 }} />
+          <col style={{ width: 120 }} />
+          <col style={{ width: 56 }} />
           <col style={{ width: 170 }} />
           <col style={{ width: 200 }} />
           <col style={{ width: 48 }} />
@@ -324,6 +347,7 @@ function InvestigationTable({ children }: { children: React.ReactNode }) {
             <th className={head}>Title</th>
             <th className={head}>Kind</th>
             <th className={head}>Verifier</th>
+            <th className={headRight} title="Verifier confidence (0.00 – 1.00)">Conf</th>
             <th className={head}>Outcome</th>
             <th className={head}>Target</th>
             <th className={headRight} title="Findings">F</th>
