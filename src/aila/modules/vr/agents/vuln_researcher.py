@@ -738,23 +738,24 @@ def _mcp_family_rule_for_kind(
     """Emit a one-line rule telling the agent which MCP server to use.
 
     Picks the right family based on target kind + the handles that
-    actually exist. This is what stops the agent from calling
-    ``ida_headless.list_binaries`` when the target is a source repo
-    that's already been indexed by audit-mcp.
+    actually exist. This is what stops the agent from drifting to the
+    wrong tool family. By construction we ONLY mention the applicable
+    server — never name the one we want the agent to avoid, because
+    LLMs latch on to negated mentions ("Do NOT call ida_headless"
+    keeps ida_headless in their attention budget).
     """
     k = (kind or "").lower()
     if k == "source_repo":
         idx = handles.get("audit_mcp_index_id")
         if idx:
             return (
-                f"RULE: this is a source repo. Use **audit_mcp** tools "
-                f"with `index_id=\"{idx}\"`. Do NOT call ida_headless — "
-                f"the target was never opened in IDA."
+                f"RULE: source repo. Use **audit_mcp** tools with "
+                f"`index_id=\"{idx}\"`."
             )
         return (
-            "RULE: this is a source repo. Use **audit_mcp** tools. "
-            "Do NOT call ida_headless. If you need an index_id, the "
-            "target's ingestion may not be complete (analysis_state)."
+            "RULE: source repo. Use **audit_mcp** tools. If you need an "
+            "index_id, the target's ingestion may not be complete "
+            "(check analysis_state)."
         )
     if k in {
         "native_binary", "apk", "ipa", "jar", "dotnet_assembly",
@@ -763,13 +764,10 @@ def _mcp_family_rule_for_kind(
         bid = handles.get("binary_id")
         if bid:
             return (
-                f"RULE: this is a binary target. Use **ida_headless** "
-                f"tools with `binary_id=\"{bid}\"`. Do NOT call audit_mcp."
+                f"RULE: binary target. Use **ida_headless** tools with "
+                f"`binary_id=\"{bid}\"`."
             )
-        return (
-            "RULE: this is a binary target. Use **ida_headless** "
-            "tools. Do NOT call audit_mcp."
-        )
+        return "RULE: binary target. Use **ida_headless** tools."
     return ""
 
 

@@ -90,8 +90,8 @@ class ToolExecutor:
         parsed = _parse_command(command_raw)
         if parsed is None:
             err = (
-                f"Malformed tool_run command — expected JSON with "
-                f"'tool' (e.g. 'ida_headless.decompile') and 'args' dict. "
+                "Malformed tool_run command — expected JSON with "
+                "'tool' (e.g. 'server.tool_name') and 'args' dict. "
                 f"Got: {command_raw[:200]!r}"
             )
             msg_id = await self._write_error_message(
@@ -106,9 +106,8 @@ class ToolExecutor:
         server_id, _, tool_name = tool_id.partition(".")
         if not tool_name:
             err = (
-                f"tool_run command 'tool' field must be '<server>.<tool>' "
-                f"(e.g. 'ida_headless.decompile'). Got: {tool_id!r}. "
-                f"Registered tools: {', '.join(registered_tools())}"
+                "tool_run command 'tool' field must be '<server>.<tool>' "
+                f"(see the # Available tools section). Got: {tool_id!r}."
             )
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
@@ -121,8 +120,9 @@ class ToolExecutor:
         adapter = get_adapter(server_id, tool_name)
         if adapter is None:
             err = (
-                f"No adapter registered for {server_id}.{tool_name}. "
-                f"Registered tools: {', '.join(registered_tools())}"
+                f"No tool '{server_id}.{tool_name}' is available for this "
+                f"target. Re-read the # Available tools section in the "
+                f"prompt — only tools listed there will execute."
             )
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
