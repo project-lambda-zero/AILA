@@ -1,11 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* Per-theme distinctive fonts. One Google Fonts URL → 19 families,
-   all with display=swap so first paint isn't blocked. Each theme's
-   --font-display / --font-sans / --font-mono is overridden inside its
-   [data-theme] block below. */
-@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=Cascadia+Code:ital,wght@0,200..700;1,200..700&family=DM+Serif+Display&family=Quicksand:wght@300..700&family=VT323&family=Michroma&family=Rajdhani:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Lora:ital,wght@0,400..700;1,400..700&family=Black+Ops+One&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&family=Pacifico&family=UnifrakturMaguntia&family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400;1,600;1,700&family=IBM+Plex+Mono:ital,wght@0,100..700;1,100..700&family=Share+Tech+Mono&family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&family=Orbitron:wght@400..900&family=Press+Start+2P&display=swap");
+/* Per-theme distinctive fonts. All families loaded via the
+   <link rel="stylesheet"> in frontend/index.html so they're
+   available before first paint. Each theme overrides
+   --font-display / --font-sans / --font-mono in its [data-theme]
+   block below. */
 
 /* Dark variant — targets .dark class on <html> */
 @custom-variant dark (&:where(.dark, .dark *));
