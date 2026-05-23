@@ -20,6 +20,7 @@ import {
   useSystemMap,
 } from "../queries";
 import type { CampaignStatus, CrashTriageVerdict } from "../types";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 const STATUS_COLOR: Record<
   CampaignStatus,
@@ -85,6 +86,12 @@ export function FuzzCampaignDetailPage() {
 
   const { data: campaign, isLoading } = useFuzzCampaign(cid);
   const { data: crashesData } = useFuzzCrashes({ campaignId: cid });
+
+  useUpdatePageHeader({
+    title: campaign?.name,
+    subtitle: campaign ? `${campaign.engine_id} · ${campaign.strategy_id}` : undefined,
+    status: campaign?.status === 'running' ? 'live' : campaign?.status === 'paused' ? 'paused' : campaign?.status === 'failed' ? 'error' : 'ready',
+  });
   const crashes = crashesData?.data ?? [];
   const patchMut = usePatchFuzzCampaign(cid);
   const launchMut = useLaunchFuzzCampaign(cid);
@@ -120,14 +127,6 @@ export function FuzzCampaignDetailPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold font-mono text-foreground">
-            {campaign.name}
-          </h1>
-          <p className="text-sm text-text-muted mt-1 font-mono">
-            {campaign.engine_id} · {campaign.strategy_id}
-          </p>
-        </div>
         <DeleteButton
           id={cid}
           label={`fuzz campaign "${campaign.name}"`}

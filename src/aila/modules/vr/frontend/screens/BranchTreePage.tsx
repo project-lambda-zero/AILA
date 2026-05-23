@@ -20,6 +20,7 @@ import {
   useInvestigationBranches,
 } from "../queries";
 import type { BranchStatus, VRBranchSummary } from "../types";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 // Colour-code branches by status. Aligns with the AilaBadge palette so
 // the tree + list views look consistent.
@@ -179,6 +180,12 @@ export function BranchTreePage() {
     useInvestigationBranches(invId);
   const branches = branchesData?.data ?? [];
 
+  useUpdatePageHeader({
+    title: inv ? `Branch tree: ${inv.title}` : undefined,
+    subtitle: branches.length ? `${branches.length} branch${branches.length === 1 ? '' : 'es'} across ${new Set(branches.map((b) => b.strategy_family ?? '__no_strategy__')).size} strategy famil${new Set(branches.map((b) => b.strategy_family ?? '__no_strategy__')).size === 1 ? 'y' : 'ies'}` : undefined,
+    status: null,
+  });
+
   const { nodes, edges } = useMemo(() => {
     const clustered = clusterBranches(branches);
     return {
@@ -210,15 +217,6 @@ export function BranchTreePage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          Branch tree: {inv.title}
-        </h1>
-        <p className="text-sm text-text-muted mt-1 font-mono">
-          {branches.length} branch{branches.length === 1 ? "" : "es"} across{" "}
-          {strategyCount} strategy famil{strategyCount === 1 ? "y" : "ies"}
-        </p>
-      </div>
 
       <AilaCard  techBorder glow><div className="flex flex-wrap gap-2">
         {(

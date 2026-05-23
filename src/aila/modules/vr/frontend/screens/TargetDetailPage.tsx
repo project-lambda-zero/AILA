@@ -29,6 +29,7 @@ import type {
   TargetKind,
   TargetStatus,
 } from "../types";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 const statusColor: Record<
   TargetStatus,
@@ -456,6 +457,12 @@ export function TargetDetailPage() {
     workspacesResult?.data.find((w) => w.id === target?.workspace_id)?.name ??
     null;
 
+  useUpdatePageHeader({
+    title: target?.display_name,
+    subtitle: target ? (workspaceName ? `${workspaceName} · ${target.kind.replace(/_/g, ' ')}` : target.kind.replace(/_/g, ' ')) : undefined,
+    status: null,
+  });
+
   const analyzeMut = useAnalyzeTarget(tid);
   const rankMut = useRankTarget(tid);
   const uploadMut = useUploadTargetArtifact(tid);
@@ -491,21 +498,6 @@ export function TargetDetailPage() {
     <div className="space-y-4">
       {/* Header — humans, not IDs */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold font-mono text-foreground">
-            {target.display_name}
-          </h1>
-          <p className="text-sm text-text-muted mt-1">
-            {workspaceName ? (
-              <span>
-                {workspaceName} <span className="text-text-muted">·</span>{" "}
-                {target.kind.replace(/_/g, " ")}
-              </span>
-            ) : (
-              <span>{target.kind.replace(/_/g, " ")}</span>
-            )}
-          </p>
-        </div>
         <DeleteButton
           id={target.id}
           label={`target "${target.display_name}"`}

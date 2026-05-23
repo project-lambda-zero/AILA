@@ -13,6 +13,7 @@ import type {
   PatternScope,
   PatternStatus,
 } from "../types";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 const SCOPE_PROMOTION_ORDER: PatternScope[] = [
   "local",
@@ -39,6 +40,12 @@ export function PatternDetailPage() {
   const [editMode, setEditMode] = useState(false);
   const [body, setBody] = useState("");
   const [summary, setSummary] = useState("");
+
+  useUpdatePageHeader({
+    title: pattern?.summary,
+    subtitle: pattern?.kind,
+    status: null,
+  });
   const [confidence, setConfidence] = useState<PatternConfidence>("medium");
 
   if (isLoading || !pattern) {
@@ -50,14 +57,6 @@ export function PatternDetailPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold font-mono text-foreground">
-            {pattern.summary}
-          </h1>
-          <p className="text-sm text-text-muted mt-1 font-mono">
-            {pattern.kind}
-          </p>
-        </div>
         <DeleteButton
           id={pid}
           label={`pattern "${pattern.summary.slice(0, 40)}"`}

@@ -23,6 +23,7 @@ import type {
   VRFinding,
   VRProjectStatus,
 } from "../types";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 type TabId = "overview" | "findings" | "agent" | "advisory";
 
@@ -546,6 +547,12 @@ function AdvisoryTab({
 export function ProjectDetailPage() {
   const { projectId = "" } = useParams<{ projectId: string }>();
   const { data: project, isLoading, isError } = useVRProject(projectId);
+
+  useUpdatePageHeader({
+    title: project?.name,
+    subtitle: project?.cve_id ?? undefined,
+    status: null,
+  });
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const headerTargetName = useTargetName(project?.target_id);
   const deleteMut = useDeleteProject();
@@ -563,37 +570,6 @@ export function ProjectDetailPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3 justify-between">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-xl font-bold font-mono text-foreground">
-            {project.name}
-          </h1>
-          {project.cve_id && (
-            <a
-              href={nvdHref(project.cve_id)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-mono text-sm text-accent hover:underline"
-            >
-              {project.cve_id}
-            </a>
-          )}
-          <AilaBadge severity={projectStatusColor[project.status] ?? "info"} size="sm">
-            {project.status}
-          </AilaBadge>
-          {project.target_id && (
-            <AilaBadge severity="info" size="sm">
-              target: {headerTargetName}
-            </AilaBadge>
-          )}
-          {project.cve_id && (
-            <Link
-              to={`/vr/projects/${projectId}/ndays/${encodeURIComponent(project.cve_id)}`}
-              className="text-xs px-2 py-0.5 font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
-            >
-              N-day view →
-            </Link>
-          )}
-        </div>
         <DeleteButton
           id={project.id}
           label={`project "${project.name}"`}
