@@ -2750,7 +2750,25 @@ def create_vr_router() -> APIRouter:
                 p.investigation_id = None
                 uow.session.add(p)
 
-            # Hard-delete child rows in FK-safe order.
+            # Hard-delete child rows in FK-safe order. Branches have
+            # self-FKs (parent_branch_id, merged_into_branch_id) that
+            # cause the per-row DELETE to fail with FK violation when
+            # PostgreSQL processes the batch in arbitrary order. Null
+            # those out FIRST in a separate flush so the subsequent
+            # branch DELETEs succeed regardless of ordering.
+            branch_rows = (await uow.session.exec(
+                select(VRInvestigationBranchRecord).where(
+                    VRInvestigationBranchRecord.investigation_id == investigation_id,
+                ),
+            )).all()
+            for b in branch_rows:
+                if b.parent_branch_id is not None:
+                    b.parent_branch_id = None
+                if b.merged_into_branch_id is not None:
+                    b.merged_into_branch_id = None
+                uow.session.add(b)
+            await uow.session.flush()
+
             for model in (
                 VRInvestigationMessageRecord,
                 VRInvestigationOutcomeRecord,
