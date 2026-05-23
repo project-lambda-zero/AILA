@@ -50,6 +50,118 @@ _log = logging.getLogger(__name__)
 _POLL_INTERVAL_SECONDS = 3.0
 _POLL_TIMEOUT_SECONDS = 14400.0  # 4 hours — monorepo-scale ceiling (chromium ~30min, firefox should fit similar; nginx ~30s)
 
+
+
+# File extension → language identifier used in capability_profile +
+# tool-filter (must match the keys in mcp_adapters.known_tools.
+# LANGUAGE_UNRELIABLE_TOOLS for the suppression logic to fire).
+_EXT_TO_LANGUAGE: dict[str, str] = {
+    # C / C++
+    ".c": "c", ".h": "c",
+    ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".c++": "cpp",
+    ".hpp": "cpp", ".hxx": "cpp", ".hh": "cpp", ".h++": "cpp",
+    ".inl": "cpp", ".ipp": "cpp", ".tcc": "cpp",
+    # JS / TS
+    ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript", ".tsx": "typescript",
+    # Other heavy hitters
+    ".py": "python",
+    ".rs": "rust",
+    ".go": "go",
+    ".java": "java",
+    ".kt": "kotlin", ".kts": "kotlin",
+    ".swift": "swift",
+    ".m": "objective-c", ".mm": "objective-c",
+    ".cs": "csharp",
+    ".scala": "scala",
+    ".rb": "ruby",
+    ".php": "php",
+    ".pl": "perl",
+    ".lua": "lua",
+    ".dart": "dart",
+    ".ex": "elixir", ".exs": "elixir",
+    ".erl": "erlang",
+    ".hs": "haskell",
+    ".ml": "ocaml",
+    ".zig": "zig",
+    ".v": "v",
+    ".nim": "nim",
+    ".cr": "crystal",
+}
+
+# Directories to skip when sampling — build artifacts, vendored deps,
+# minified bundles, and test fixtures distort language counts in ways
+# that don't reflect what an operator is actually trying to audit.
+_SKIP_DIR_NAMES: frozenset[str] = frozenset({
+    ".git", ".hg", ".svn",
+    "node_modules", "vendor", "third_party", "third-party", "extern",
+    "build", "dist", "out", "target", "bin", "obj",
+    ".cache", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".venv", "venv", "env",
+    ".idea", ".vscode",
+})
+
+
+def _detect_primary_language_from_path(
+    repo_path: str,
+) -> tuple[str | None, list[str]]:
+    """Walk ``repo_path`` and rank source languages by total byte size.
+
+    Returns ``(primary, secondaries)`` where ``primary`` is the
+    language with the largest source-code footprint (None if no source
+    files found) and ``secondaries`` is the remaining languages in
+    descending byte order.
+
+    We weight by BYTES, not file count: 100k tiny test fixtures shouldn't
+    outvote 10k heavy implementation files. Skips known build / vendored
+    / cache directories — auditing a tree shouldn't be skewed by the
+    minified jquery shipped under third_party/.
+
+    Returns (None, []) when the path doesn't exist or AILA can't read
+    it (remote MCP setup). Caller should fall back to whatever signal
+    is available in that case.
+    """
+    import os  # noqa: PLC0415
+
+    if not repo_path or not os.path.isdir(repo_path):
+        return None, []
+
+    bytes_per_lang: dict[str, int] = {}
+    try:
+        for root, dirs, files in os.walk(repo_path):
+            # Mutate dirs in-place to prune the traversal.
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIR_NAMES and not d.startswith(".")]
+            for name in files:
+                # Lowercased extension, including the dot.
+                ext = os.path.splitext(name)[1].lower()
+                lang = _EXT_TO_LANGUAGE.get(ext)
+                if lang is None:
+                    continue
+                try:
+                    size = os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    continue
+                bytes_per_lang[lang] = bytes_per_lang.get(lang, 0) + size
+    except OSError as exc:
+        _log.warning(
+            "language detection: walk failed for %s: %s — falling back",
+            repo_path, exc,
+        )
+        return None, []
+
+    if not bytes_per_lang:
+        return None, []
+
+    ranked = sorted(bytes_per_lang.items(), key=lambda kv: kv[1], reverse=True)
+    primary = ranked[0][0]
+    secondaries = [lang for lang, _ in ranked[1:]]
+    _log.info(
+        "language detection: %s primary=%s (%.1f MiB) secondaries=%s",
+        repo_path, primary, ranked[0][1] / (1024 * 1024),
+        [(lang, f"{bytes_ // (1024 * 1024)}MiB") for lang, bytes_ in ranked[1:6]],
+    )
+    return primary, secondaries
 # Kinds that need NO ingestion — descriptor alone drives capability profile.
 _NO_INGEST_KINDS: frozenset[TargetKind] = frozenset({
     TargetKind.CVE,
@@ -106,8 +218,9 @@ class TargetAnalysisService:
 
                 handles: dict[str, Any]
                 language: str | None
+                secondaries: list[str]
                 if kind == TargetKind.SOURCE_REPO:
-                    handles, language = await self._ingest_source_repo(descriptor)
+                    handles, language, secondaries = await self._ingest_source_repo(descriptor)
                 elif kind in {
                     TargetKind.NATIVE_BINARY,
                     TargetKind.KERNEL_IMAGE,
@@ -121,6 +234,7 @@ class TargetAnalysisService:
                     handles, language = await self._ingest_binary(
                         kind, descriptor, current_handles,
                     )
+                    secondaries = []
                 else:
                     raise TargetAnalysisError(
                         f"target kind {kind.value!r} has no ingestion path",
@@ -130,13 +244,14 @@ class TargetAnalysisService:
                 # the stage to DONE — no crash window between writing
                 # handles and recording success.
                 extras: dict[str, Any] = {"mcp_handles_json": json.dumps(handles)}
-                if language:
-                    # primary_language is set only when unset on the row;
-                    # let the tracker's save layer handle the existing-
-                    # value preserve by passing only when populated.
-                    record = await self._load(target_id)
-                    if not record.primary_language:
-                        extras["primary_language"] = language
+                record = await self._load(target_id)
+                if language and not record.primary_language:
+                    extras["primary_language"] = language
+                if secondaries:
+                    # Always overwrite secondaries when we have fresh data —
+                    # the byte-counter is authoritative and may have shifted
+                    # since last analysis (repo grew, new languages added).
+                    extras["secondary_languages_json"] = json.dumps(secondaries)
                 tracker.record_output(**extras)
         except StageAlreadyDoneError:
             _log.info("vr.target_analysis: target %s already ingested — skip", target_id)
@@ -149,7 +264,7 @@ class TargetAnalysisService:
 
     async def _ingest_source_repo(
         self, descriptor: dict[str, Any],
-    ) -> tuple[dict[str, Any], str | None]:
+    ) -> tuple[dict[str, Any], str | None, list[str]]:
         repo_url = descriptor.get("repo_url")
         if not repo_url:
             raise TargetAnalysisError(
@@ -199,23 +314,52 @@ class TargetAnalysisService:
 
         await self._poll_audit_mcp(index_id)
 
+        # Language detection — prefer byte-weighted ranking against the
+        # actual repo bytes over audit_mcp.detect_languages because the
+        # MCP tool returns trailmark's "languages present" list with no
+        # weighting. ``languages[0]`` is whatever happens to come first
+        # in trailmark's iteration order, which on firefox is 'python'
+        # (~30 MiB of mach/taskcluster scripts) instead of 'cpp' (~3 GiB
+        # of Gecko/SpiderMonkey/etc.). That misclassification poisons
+        # capability_profile + suppresses C++-applicable tools across
+        # the entire investigation loop — agent then concludes "no C++
+        # code here" and gives up.
+        #
+        # Byte-weighted ranking against the local mcp_path is reliable
+        # when AILA + the MCP workstation share a filesystem (single-host
+        # dev setup, current deployment). When AILA can't read the path
+        # (future remote MCP), the byte-counter returns (None, []) and
+        # we fall back to detect_languages even though it lies, because
+        # any signal beats no signal.
         language = None
-        try:
-            langs = await self._audit_mcp.forward(
-                action="detect_languages", path=mcp_path,
-            )
-            if isinstance(langs, dict):
-                primary = (
-                    langs.get("primary_language")
-                    or (langs.get("languages") or [None])[0]
+        secondaries: list[str] = []
+        byte_primary, byte_secondaries = _detect_primary_language_from_path(mcp_path)
+        if byte_primary:
+            language = byte_primary
+            secondaries = byte_secondaries
+        else:
+            try:
+                langs = await self._audit_mcp.forward(
+                    action="detect_languages", path=mcp_path,
                 )
-                if isinstance(primary, str):
-                    language = primary
-        except (OSError, RuntimeError, TimeoutError) as exc:
-            _log.warning(
-                "audit_mcp.detect_languages failed for %s: %s — leaving language unset",
-                index_id, exc,
-            )
+                if isinstance(langs, dict):
+                    primary = (
+                        langs.get("primary_language")
+                        or (langs.get("languages") or [None])[0]
+                    )
+                    if isinstance(primary, str):
+                        language = primary
+                    other = langs.get("languages") or []
+                    secondaries = [
+                        s for s in other
+                        if isinstance(s, str) and s != language
+                    ]
+            except (OSError, RuntimeError, TimeoutError) as exc:
+                _log.warning(
+                    "audit_mcp.detect_languages failed for %s: %s — "
+                    "leaving language unset (byte-counter also unavailable)",
+                    index_id, exc,
+                )
 
         # mcp_path is the path on the MCP workstation, not on AILA.
         # Never assume AILA can read it.
@@ -225,7 +369,7 @@ class TargetAnalysisService:
             "ref": ref,
             "mcp_path": mcp_path,
         }
-        return handles, language
+        return handles, language, secondaries
 
     async def _ingest_binary(
         self,
