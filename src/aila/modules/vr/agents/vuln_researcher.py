@@ -1139,14 +1139,11 @@ def _render_available_tools_section(
         )
     for server in sorted(KNOWN_TOOLS):
         if server not in applicable:
-            parts.append(
-                f"\n## {server} (NOT APPLICABLE for target kind "
-                f"`{target_kind}`)\n\n",
-            )
-            parts.append(
-                f"- skipped: {server} operates on a different target "
-                f"family. Do not invoke its tools.\n",
-            )
+            # Silently skip — listing "NOT APPLICABLE: ida_headless"
+            # for a source_repo target just gives the agent a hook to
+            # think about IDA tools it shouldn't be considering at all.
+            # Operator was rightly furious when source-repo prompts
+            # surfaced ida_headless as a sibling section.
             continue
 
         live_specs = specs_by_server.get(server) or []
