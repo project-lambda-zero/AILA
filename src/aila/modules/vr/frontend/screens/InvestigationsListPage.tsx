@@ -71,11 +71,12 @@ function fmtUsd(n: number): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// InvestigationCard — replaces the 12-column table row. Headline is the
-// title + verifier verdict; engagement metrics (branches / messages /
-// findings / cost) sit in a metric strip; status pulse anchors top-left.
+// InvestigationRow — single-line compact row, ~48-56px tall.
+// All meta inline; no metric stacks; no cost bars; no multiline
+// verdict heads. Designed so the operator scans 20-30 rows above the
+// fold on a 1440x900 viewport without scrolling.
 // ─────────────────────────────────────────────────────────────────────
-function InvestigationCard({
+function InvestigationRow({
   inv,
   targetName,
   onOpen,
@@ -92,7 +93,7 @@ function InvestigationCard({
   const isLive = inv.status === "running";
   const isFailed = inv.status === "failed";
 
-  const verifierTone: "low" | "medium" | "high" | "critical" | "info" | null =
+  const verifierTone: "low" | "medium" | "high" | "critical" | null =
     inv.verifier_verdict === "confirmed"
       ? "low"
       : inv.verifier_verdict === "refuted"
@@ -101,7 +102,7 @@ function InvestigationCard({
           ? "medium"
           : null;
 
-  const topEdgeColor: Record<typeof sev, string> = {
+  const edgeColor: Record<typeof sev, string> = {
     info: "var(--color-text-muted)",
     low: "#97dbbe",
     medium: "#f0a8c7",
@@ -112,100 +113,82 @@ function InvestigationCard({
   const costRatio = inv.cost_budget_usd > 0
     ? Math.min(1, inv.cost_actual_usd / inv.cost_budget_usd)
     : 0;
-  const costBarColor =
-    costRatio > 0.9 ? "var(--color-accent)" : costRatio > 0.6 ? "#f0a8c7" : "#97dbbe";
 
   return (
-    <div
-      className="group relative flex flex-col rounded-md border border-border bg-surface overflow-hidden transition-all duration-200 hover:border-accent/40 hover:-translate-y-0.5"
-      style={{
-        boxShadow:
-          "inset 0 1px 0 0 color-mix(in srgb, var(--color-text) 5%, transparent)",
-      }}
-    >
-      {/* Status-tinted top edge */}
+    <div className="group relative rounded-md border border-border bg-surface pl-3 pr-2 py-2 transition-all hover:border-accent/40 hover:bg-surface/70">
+      {/* Severity edge */}
       <span
         aria-hidden
-        className="absolute inset-x-0 top-0 h-[2px]"
-        style={{
-          background: `linear-gradient(90deg, transparent, ${topEdgeColor[sev]}, transparent)`,
-        }}
-      />
-      {/* Hover glow */}
-      <span
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-        style={{
-          background:
-            "radial-gradient(80% 60% at 50% 0%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 70%)",
-        }}
+        className="absolute inset-y-1.5 left-0 w-[2px] rounded-r"
+        style={{ background: edgeColor[sev] }}
       />
 
-      {/* Header — favorite + status pulse + kind chip */}
-      <div className="relative flex items-start justify-between gap-2 px-5 pt-4 pb-2">
-        <div className="flex items-center gap-2 min-w-0">
+      {/* ── Line 1: favorite · title · trailing actions ─────────────── */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onToggleFavorite}
+          className="flex-shrink-0 transition-colors"
+          style={{ color: inv.is_favorite ? "#fbbf24" : "var(--color-text-muted)" }}
+          title={inv.is_favorite ? "Unfavorite" : "Favorite"}
+          aria-label={inv.is_favorite ? "Unfavorite" : "Favorite"}
+        >
+          <Star className="h-4 w-4" weight={inv.is_favorite ? "fill" : "regular"} />
+        </button>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="min-w-0 flex-1 text-left focus:outline-none truncate text-sm font-medium text-foreground"
+          title={inv.title}
+        >
+          {inv.title}
+        </button>
+        <div className="flex-shrink-0 flex items-center gap-1">
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+            <DeleteButton
+              id={inv.id}
+              label={`investigation "${inv.title}"`}
+              mutation={deleteMut}
+              compact
+            />
+          </div>
           <button
             type="button"
-            onClick={onToggleFavorite}
-            className="flex-shrink-0 text-base leading-none transition-colors"
-            style={{ color: inv.is_favorite ? "#fbbf24" : "var(--color-text-muted)" }}
-            title={inv.is_favorite ? "Unfavorite" : "Favorite"}
-            aria-label={inv.is_favorite ? "Unfavorite" : "Favorite"}
+            onClick={onOpen}
+            aria-label="Open investigation"
+            className="inline-flex items-center text-text-muted group-hover:text-accent group-hover:translate-x-0.5 transition-all px-1"
           >
-            <Star
-              className="h-4 w-4"
-              weight={inv.is_favorite ? "fill" : "regular"}
-            />
+            <ArrowRight className="h-4 w-4" />
           </button>
-          <SeverityPulse active={isLive || isFailed}>
-            <AilaBadge severity={sev} size="sm">
-              {inv.pause_reason
-                ? `${inv.status}:${inv.pause_reason}`
-                : inv.status}
-            </AilaBadge>
-          </SeverityPulse>
-          <span
-            className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono tracking-wider uppercase text-text-muted"
-            style={{
-              border: "1px solid color-mix(in srgb, var(--color-text-muted) 25%, transparent)",
-              background: "color-mix(in srgb, var(--color-text-muted) 5%, transparent)",
-            }}
-          >
-            {inv.kind}
-          </span>
         </div>
+      </div>
+
+      {/* ── Line 2: status pulse + kind + verifier + outcome + meta ── */}
+      <div className="mt-1 ml-6 flex items-center gap-2 flex-wrap text-[11px] font-mono text-text-muted">
+        <SeverityPulse active={isLive || isFailed}>
+          <AilaBadge severity={sev} size="sm">
+            {inv.pause_reason
+              ? `${inv.status}:${inv.pause_reason}`
+              : inv.status}
+          </AilaBadge>
+        </SeverityPulse>
+        <span
+          className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] tracking-wider uppercase"
+          style={{
+            border: "1px solid color-mix(in srgb, var(--color-text-muted) 25%, transparent)",
+          }}
+        >
+          {inv.kind}
+        </span>
         {verifierTone && (
           <AilaBadge severity={verifierTone} size="sm">
-            verifier · {inv.verifier_verdict}
+            {inv.verifier_verdict}
             {typeof inv.verifier_confidence === "number"
               ? ` ${inv.verifier_confidence.toFixed(2)}`
               : ""}
           </AilaBadge>
         )}
-      </div>
-
-      {/* Body — title + verdict head + target */}
-      <button
-        type="button"
-        onClick={onOpen}
-        className="relative px-5 pb-3 text-left focus:outline-none"
-      >
-        <h3 className="font-display text-base font-semibold text-foreground leading-snug line-clamp-2">
-          {inv.title}
-        </h3>
-        {inv.primary_outcome_verdict_head && (
-          <p className="mt-1 text-xs text-text-muted line-clamp-2 leading-relaxed">
-            {inv.primary_outcome_verdict_head}
-          </p>
-        )}
-        <p className="mt-2 text-[11px] font-mono text-text-muted truncate">
-          → {targetName}
-        </p>
-      </button>
-
-      {/* Outcome pill (if any) */}
-      {inv.primary_outcome_kind && (
-        <div className="relative px-5 pb-3">
+        {inv.primary_outcome_kind && (
           <AilaBadge
             severity={
               inv.primary_outcome_kind === "direct_finding"
@@ -223,101 +206,65 @@ function InvestigationCard({
               ? ` · ${inv.primary_outcome_confidence}`
               : ""}
           </AilaBadge>
-        </div>
-      )}
-
-      {/* Metric strip */}
-      <div
-        className="relative grid grid-cols-4 gap-px mt-auto border-t border-border bg-border"
-      >
-        <div className="bg-surface px-3 py-2.5">
-          <p className="text-[9px] font-mono uppercase tracking-[0.14em] text-text-muted">
-            find
-          </p>
-          <p
-            className="mt-0.5 font-display text-lg font-semibold leading-none"
-            style={{
-              color:
-                inv.linked_finding_ids.length > 0
-                  ? "#97dbbe"
-                  : "var(--color-text-muted)",
-            }}
-          >
-            {inv.linked_finding_ids.length}
-          </p>
-        </div>
-        <div className="bg-surface px-3 py-2.5">
-          <p className="text-[9px] font-mono uppercase tracking-[0.14em] text-text-muted">
-            br
-          </p>
-          <p className="mt-0.5 font-display text-lg font-semibold text-foreground leading-none">
-            {inv.branch_count}
-          </p>
-        </div>
-        <div className="bg-surface px-3 py-2.5">
-          <p className="text-[9px] font-mono uppercase tracking-[0.14em] text-text-muted">
-            msg
-          </p>
-          <p className="mt-0.5 font-display text-lg font-semibold text-foreground leading-none">
-            {inv.message_count}
-          </p>
-        </div>
-        <div className="bg-surface px-3 py-2.5">
-          <p className="text-[9px] font-mono uppercase tracking-[0.14em] text-text-muted">
-            out
-          </p>
-          <p className="mt-0.5 font-display text-lg font-semibold text-foreground leading-none">
-            {inv.outcome_count}
-          </p>
-        </div>
-      </div>
-
-      {/* Cost bar */}
-      <div className="relative h-1 bg-border">
-        <div
-          className="h-full transition-all"
+        )}
+        <span className="text-text-muted/40">·</span>
+        <span className="truncate max-w-[260px]">
+          <span className="text-text-muted/50">→ </span>
+          <span className="text-foreground/80">{targetName}</span>
+        </span>
+        {inv.primary_outcome_verdict_head && (
+          <>
+            <span className="text-text-muted/40">·</span>
+            <span className="truncate max-w-[420px] text-text-muted/80">
+              {inv.primary_outcome_verdict_head}
+            </span>
+          </>
+        )}
+        {/* Spacer + right-aligned metric block */}
+        <span className="flex-1" />
+        <span
+          className="tabular-nums"
+          title={`${inv.linked_finding_ids.length} findings`}
           style={{
-            width: `${costRatio * 100}%`,
-            background: costBarColor,
+            color: inv.linked_finding_ids.length > 0 ? "#97dbbe" : undefined,
           }}
-        />
-      </div>
-
-      {/* Footer — cost text + activity + open arrow + delete on hover */}
-      <div className="relative flex items-center justify-between gap-2 px-5 py-2.5 bg-base/40">
-        <div className="min-w-0 flex-1 text-[10px] font-mono text-text-muted truncate">
-          {fmtUsd(inv.cost_actual_usd)} / {fmtUsd(inv.cost_budget_usd)}
-          <span className="mx-1.5 text-text-muted/40">·</span>
+        >
+          <span className="text-text-muted/60">f</span>{inv.linked_finding_ids.length}
+        </span>
+        <span className="tabular-nums" title={`${inv.branch_count} branches`}>
+          <span className="text-text-muted/60">b</span>{inv.branch_count}
+        </span>
+        <span className="tabular-nums" title={`${inv.message_count} messages`}>
+          <span className="text-text-muted/60">m</span>{inv.message_count}
+        </span>
+        <span
+          className="tabular-nums"
+          title={`cost ${fmtUsd(inv.cost_actual_usd)} of ${fmtUsd(inv.cost_budget_usd)} budget (${Math.round(costRatio * 100)}%)`}
+          style={{
+            color:
+              costRatio > 0.9
+                ? "var(--color-accent)"
+                : costRatio > 0.6
+                  ? "#f0a8c7"
+                  : undefined,
+          }}
+        >
+          {fmtUsd(inv.cost_actual_usd)}
+        </span>
+        <span className="tabular-nums text-text-muted/70" title={inv.created_at ?? ""}>
           {relativeTime(inv.created_at)}
-        </div>
-        <div className="flex items-center gap-1">
-          <div
-            className="opacity-0 group-hover:opacity-100 transition-opacity"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <DeleteButton
-              id={inv.id}
-              label={`investigation "${inv.title}"`}
-              mutation={deleteMut}
-              compact
-            />
-          </div>
-          <button
-            type="button"
-            onClick={onOpen}
-            aria-label="Open investigation"
-            className="inline-flex items-center text-text-muted group-hover:text-accent group-hover:translate-x-0.5 transition-all"
-          >
-            <ArrowRight className="h-4 w-4" />
-          </button>
-        </div>
+        </span>
       </div>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// InvestigationsListPage — new design: KPI hero + filter rail + card grid.
+// InvestigationsListPage — KPI hero + filter bar + vertical row list.
+// Rows over tiles because each investigation carries ~10 fields of
+// meta the operator wants to scan; cramming that into a 380px tile
+// requires line-clamping that hides exactly the information the page
+// exists to surface.
 // ─────────────────────────────────────────────────────────────────────
 export function InvestigationsListPage() {
   const navigate = useNavigate();
@@ -386,7 +333,6 @@ export function InvestigationsListPage() {
     favoritesOnly ||
     !!verifierFilter;
 
-  // KPIs computed from the current page slice (server total used where meaningful).
   const kpis = useMemo(() => {
     const running = investigationsRaw.filter((i) => i.status === "running").length;
     const withFindings = investigationsRaw.filter(
@@ -403,7 +349,7 @@ export function InvestigationsListPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* ── KPI hero strip ───────────────────────────────────────────── */}
+      {/* KPI hero */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiTile
           label="Total"
@@ -434,12 +380,16 @@ export function InvestigationsListPage() {
           label="Verifier verdicts"
           value={`${kpis.confirmed}/${kpis.refuted}`}
           hint="confirmed / refuted"
-          icon={kpis.refuted > kpis.confirmed ? <ShieldWarning weight="duotone" /> : <ShieldCheck weight="duotone" />}
+          icon={
+            kpis.refuted > kpis.confirmed
+              ? <ShieldWarning weight="duotone" />
+              : <ShieldCheck weight="duotone" />
+          }
           tone={kpis.refuted > kpis.confirmed ? "warn" : "ok"}
         />
       </div>
 
-      {/* ── Action bar ──────────────────────────────────────────────── */}
+      {/* Action bar */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[220px] max-w-md">
           <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted pointer-events-none" />
@@ -551,7 +501,7 @@ export function InvestigationsListPage() {
         <button
           type="button"
           onClick={() => setShowForm((v) => !v)}
-          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-md text-base transition-all hover:-translate-y-px"
+          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-md transition-all hover:-translate-y-px"
           style={{
             background: showForm
               ? "color-mix(in srgb, var(--color-text-muted) 30%, transparent)"
@@ -567,7 +517,7 @@ export function InvestigationsListPage() {
         </button>
       </div>
 
-      {/* ── Create form (collapsed by default) ──────────────────────── */}
+      {/* Create form */}
       {showForm && (
         <AilaCard padding="md" techBorder glow>
           <div className="flex items-center gap-2 mb-3">
@@ -699,9 +649,10 @@ export function InvestigationsListPage() {
                     },
                   );
                 }}
-                className="ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-md text-base transition-all hover:-translate-y-px disabled:opacity-50 disabled:hover:translate-y-0"
+                className="ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-md transition-all hover:-translate-y-px disabled:opacity-50 disabled:hover:translate-y-0"
                 style={{
                   background: "var(--color-accent)",
+                  color: "var(--color-base)",
                   boxShadow: "0 0 16px color-mix(in srgb, var(--color-accent) 28%, transparent)",
                 }}
               >
@@ -712,7 +663,7 @@ export function InvestigationsListPage() {
         </AilaCard>
       )}
 
-      {/* ── Loading / error / empty ─────────────────────────────────── */}
+      {/* Loading / error / empty */}
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
@@ -746,9 +697,10 @@ export function InvestigationsListPage() {
           <button
             type="button"
             onClick={() => (hasActiveFilters ? clearAllFilters() : setShowForm(true))}
-            className="mt-5 inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-md text-base transition-all hover:-translate-y-px"
+            className="mt-5 inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-md transition-all hover:-translate-y-px"
             style={{
               background: "var(--color-accent)",
+              color: "var(--color-base)",
               boxShadow: "0 0 16px color-mix(in srgb, var(--color-accent) 28%, transparent)",
             }}
           >
@@ -758,11 +710,11 @@ export function InvestigationsListPage() {
         </div>
       )}
 
-      {/* ── Card grid ───────────────────────────────────────────────── */}
+      {/* Row list — full-width rows, vertical stack */}
       {!isLoading && !isError && investigations.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+        <div className="flex flex-col gap-2">
           {investigations.map((inv) => (
-            <InvestigationCard
+            <InvestigationRow
               key={inv.id}
               inv={inv}
               targetName={targetMap.get(inv.target_id)?.display_name ?? "loading…"}
@@ -774,7 +726,7 @@ export function InvestigationsListPage() {
         </div>
       )}
 
-      {/* ── Pagination ──────────────────────────────────────────────── */}
+      {/* Pagination */}
       {!isLoading && !isError && totalRaw > pageSize && (
         <div className="flex items-center justify-between gap-4 px-4 py-3 rounded-md border border-border bg-surface text-xs font-mono text-text-muted">
           <span>
