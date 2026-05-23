@@ -130,14 +130,6 @@ export function NewProjectWizard() {
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold font-mono text-foreground">
-            New Project
-          </h1>
-          <p className="text-xs text-text-muted mt-1">
-            3 steps. Nothing is persisted until you submit at step 3.
-          </p>
-        </div>
         <button
           type="button"
           onClick={() => navigate("/vr")}

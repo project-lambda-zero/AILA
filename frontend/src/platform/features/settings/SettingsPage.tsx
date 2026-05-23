@@ -796,14 +796,6 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-bold font-mono tracking-tight text-foreground">
-          Settings
-        </h1>
-        <p className="text-text-muted text-sm mt-1">
-          Manage your profile, sessions, and appearance.
-        </p>
-      </div>
 
       {/* Profile */}
       <Section icon={<User size={18} />} title="Profile">

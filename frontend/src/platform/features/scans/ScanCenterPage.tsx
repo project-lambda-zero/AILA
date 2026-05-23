@@ -344,12 +344,6 @@ export function ScanCenterPage() {
   return (
     <div className="flex flex-col gap-4 p-3 sm:p-4 lg:p-6">
       {/* Page header */}
-      <div className="flex flex-col gap-1">
-        <h1 className="font-mono text-xl font-semibold text-text">Scan Center</h1>
-        <p className="font-mono text-sm text-text-muted">
-          Launch vulnerability scans, monitor run state, and follow live progress.
-        </p>
-      </div>
 
       {/* Main split layout */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">

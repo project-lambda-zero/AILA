@@ -100,15 +100,6 @@ export function InvestigationsListPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold font-mono text-foreground">
-            Investigations
-          </h1>
-          <p className="text-sm text-text-muted mt-1">
-            Hypothesis-driven investigations across targets. Each runs a
-            HonestVulnResearcher loop with tool dispatch + outcome routing.
-          </p>
-        </div>
         <button
           type="button"
           onClick={() => setShowForm((v) => !v)}

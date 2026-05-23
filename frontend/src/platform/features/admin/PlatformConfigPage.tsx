@@ -360,16 +360,6 @@ export function PlatformConfigPage() {
   return (
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       {/* Page header */}
-      <div>
-        <h1 className="font-mono text-xl font-semibold text-text flex items-center gap-2">
-          <GearSix className="h-5 w-5 text-accent" />
-          Platform Config
-        </h1>
-        <p className="font-mono text-sm text-text-muted mt-0.5">
-          View and edit module configuration entries. Values are validated
-          against their declared type before saving.
-        </p>
-      </div>
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

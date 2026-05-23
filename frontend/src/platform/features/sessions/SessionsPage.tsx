@@ -178,14 +178,6 @@ export function SessionsPage() {
   return (
     <div className="space-y-6">
       {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-bold font-mono tracking-tight text-foreground">
-          Active Sessions
-        </h1>
-        <p className="text-text-muted text-sm mt-1">
-          Manage your active login sessions. Revoke any session you don&apos;t recognise.
-        </p>
-      </div>
 
       {/* Error state */}
       {sessionsQuery.isError && (

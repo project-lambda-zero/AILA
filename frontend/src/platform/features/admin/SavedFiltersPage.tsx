@@ -455,16 +455,6 @@ export function SavedFiltersPage() {
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       {/* Page header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-mono text-xl font-semibold text-text flex items-center gap-2">
-            <BookmarkSimple className="h-5 w-5 text-accent" />
-            Saved Filters
-          </h1>
-          <p className="font-mono text-sm text-text-muted mt-0.5">
-            Reusable filter configurations. Owner-scoped writes; team-shared filters
-            are visible to everyone.
-          </p>
-        </div>
 
         <Button size="sm" className="gap-1.5" onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" />

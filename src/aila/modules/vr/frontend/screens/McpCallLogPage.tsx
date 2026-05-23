@@ -23,15 +23,6 @@ export function McpCallLogPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          MCP Call Log
-        </h1>
-        <p className="text-sm text-text-muted mt-1">
-          Live audit trail of every call AILA forwards to an MCP server.
-          Refreshes every 3 seconds.
-        </p>
-      </div>
 
       <div className="flex flex-wrap gap-2 items-center">
         <label className="text-xs text-text-muted">Server:</label>

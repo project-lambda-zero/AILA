@@ -43,15 +43,6 @@ export function FuzzCampaignsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          Fuzz campaigns
-        </h1>
-        <p className="text-sm text-text-muted mt-1">
-          Long-running fuzz workloads on dedicated workstations. Auto-dedup
-          crashes by stack hash + auto-triage by crash_type pattern.
-        </p>
-      </div>
 
       <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
         <label className="text-sm text-text-muted">Workspace:</label>

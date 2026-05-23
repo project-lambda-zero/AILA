@@ -127,14 +127,6 @@ export function EvidenceGraphPage() {
 
   return (
     <div className="space-y-3">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground truncate">
-          Evidence graph
-        </h1>
-        <p className="text-xs text-text-muted mt-1 font-mono">
-          {inv.title}
-        </p>
-      </div>
 
       <ServerSnapshotStatus investigationId={investigationId} />
 

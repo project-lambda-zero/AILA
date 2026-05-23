@@ -139,12 +139,6 @@ export function ProjectsPage() {
       )}
 
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold font-mono text-foreground">Forensics Projects</h1>
-          <p className="text-sm text-text-muted mt-1">
-            Manage forensic investigation projects on remote analyzer machines.
-          </p>
-        </div>
         <button
           type="button"
           onClick={() => navigate("/forensics/projects/new")}

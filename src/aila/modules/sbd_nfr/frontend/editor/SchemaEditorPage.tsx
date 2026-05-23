@@ -70,12 +70,6 @@ export function SchemaEditorPage() {
       <AilaCard variant="elevated" padding="lg" className="bg-elevated border-border" techBorder glow><div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
         <div className="space-y-3">
           <p className="font-mono text-xs uppercase tracking-[0.3em] text-text-muted">Blueprint Schema Studio</p>
-          <div className="space-y-1">
-            <h1 className="font-mono text-2xl font-semibold text-text">Schema Editor</h1>
-            <p className="max-w-3xl text-sm leading-6 text-text-muted">
-              Build the assessment blueprint visually: reorder sections, edit question logic, preview conditional branches, and keep mappings readable for the team using the questionnaire.
-            </p>
-          </div>
           <div className="flex flex-wrap items-center gap-2">
             {version !== undefined && <AilaBadge severity="medium" size="sm">Schema v{version}</AilaBadge>}
             {versionQuery.data?.published_at === null && <AilaBadge severity="high" size="sm">Draft</AilaBadge>}

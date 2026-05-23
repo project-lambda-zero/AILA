@@ -141,15 +141,6 @@ export function ExecutivePage() {
 
   return (
     <div className="flex flex-col gap-6 p-4 lg:p-6">
-      <div>
-        <h1 className="font-mono text-xl font-semibold text-text flex items-center gap-2">
-          <Briefcase className="h-5 w-5 text-accent" />
-          Executive Dashboard
-        </h1>
-        <p className="font-mono text-sm text-text-muted mt-0.5">
-          Fleet-wide risk posture and downloadable artifacts for stakeholders.
-        </p>
-      </div>
 
       {/* Top-level posture cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

@@ -438,15 +438,6 @@ export function WorkflowInspectorPage() {
   return (
     <div className="flex flex-col gap-6 p-4 lg:p-6 h-full">
       {/* Page header */}
-      <div className="flex flex-col gap-1">
-        <h1 className="font-mono text-xl font-semibold text-foreground flex items-center gap-2">
-          <GitBranch className="h-5 w-5 text-accent" />
-          Workflow Inspector
-        </h1>
-        <p className="font-mono text-sm text-muted-foreground">
-          Live browser for DurableStateMachine runs and transition history.
-        </p>
-      </div>
 
       {/* Filter bar */}
       <FilterBar

@@ -481,15 +481,6 @@ export function UsersPage() {
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       {/* Page header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-mono text-xl font-semibold text-text flex items-center gap-2">
-            <Users className="h-5 w-5 text-accent" />
-            Users
-          </h1>
-          <p className="font-mono text-sm text-text-muted mt-0.5">
-            Manage platform user accounts. Admin-invite only registration.
-          </p>
-        </div>
 
         <InviteUserDialog
           onInvite={(req) => createMutation.mutateAsync(req)}

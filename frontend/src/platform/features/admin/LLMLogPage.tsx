@@ -358,16 +358,6 @@ export function LLMLogPage() {
   return (
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-mono text-xl font-semibold text-text flex items-center gap-2">
-            <Robot className="h-5 w-5 text-accent" />
-            LLM Interaction Log
-          </h1>
-          <p className="font-mono text-sm text-text-muted mt-0.5">
-            Per-call record of every LLM request. Admin-only. Previews are
-            truncated on write -- full payloads are never stored here.
-          </p>
-        </div>
         <div className="flex items-center gap-3">
           <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-[10px] uppercase tracking-wider text-text-muted flex items-center gap-1">
             <Coins className="h-3 w-3" /> Total Cost
