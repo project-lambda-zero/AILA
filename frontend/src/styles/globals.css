@@ -3430,9 +3430,8 @@ a:hover {
   --radius-md: 2px;
   --radius-lg: 3px;
 
-  --font-display: "Bank Gothic Medium", "Michroma", "Eurostile",
-    "Impact", sans-serif;
-  --font-sans: "DM Mono", "B612 Mono", "Share Tech Mono", ui-monospace, monospace;
+  --font-display: "Black Ops One", "Impact", sans-serif;
+  --font-sans: "Roboto Mono", "Consolas", monospace;
 
   --background: #0f1012;
   --foreground: #e7e8ec;
