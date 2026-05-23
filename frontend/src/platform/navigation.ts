@@ -420,7 +420,10 @@ export function getSidebarSections(moduleSpecs: ModuleFrontendSpec[]): SidebarSe
       // SidebarItem.icon so module-contributed nav rows render the
       // module's chosen icon. Before this change, only platformSidebarItems
       // got icons; spec.nav items always rendered iconless.
-      icon: item.icon ?? undefined,
+      // Cast is safe — NavContribution.icon is typed as a generic
+      // ComponentType, SidebarItem.icon expects Phosphor's Icon (a
+      // narrower ForwardRef type). Every Phosphor icon satisfies both.
+      icon: (item.icon ?? undefined) as Icon | undefined,
     }))
     .sort((a, b) => a.order - b.order);
 
@@ -449,7 +452,7 @@ export function getSidebarSections(moduleSpecs: ModuleFrontendSpec[]): SidebarSe
         .map((item) => ({
           ...item,
           section: "modules" as NavSection,
-          icon: item.icon ?? undefined,
+          icon: (item.icon ?? undefined) as Icon | undefined,
         }))
         .sort((a, b) => a.order - b.order);
       if (specItems.length > 0) {
@@ -486,9 +489,15 @@ export function getSidebarSections(moduleSpecs: ModuleFrontendSpec[]): SidebarSe
  * New AppSidebar uses getSidebarSections instead.
  */
 export function buildSidebarEntries(moduleSpecs: ModuleFrontendSpec[]): SidebarEntry[] {
-  const sortedItems = [
+  const navAsSidebarItems: SidebarItem[] = moduleSpecs
+    .flatMap((spec) => spec.nav ?? [])
+    .map((item) => ({
+      ...item,
+      icon: (item.icon ?? undefined) as Icon | undefined,
+    }));
+  const sortedItems: SidebarItem[] = [
     ...platformSidebarItems.filter((item) => item.section !== "hidden"),
-    ...moduleSpecs.flatMap((spec) => spec.nav ?? []),
+    ...navAsSidebarItems,
   ]
     .filter((item) => item.slot === "sidebar.main")
     .sort((left, right) => left.order - right.order);
