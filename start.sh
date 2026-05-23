@@ -332,11 +332,17 @@ mkdir -p "$RUN_DIR"
 # ── audit-mcp (in its own repo) ─────────────────────────────────────────────
 if [[ "$AILA_START_AUDIT_MCP" == "1" && -d "$AUDIT_MCP_DIR" ]]; then
   echo "[aila] Starting audit-mcp (workers=${AUDIT_MCP_WORKERS})..."
+  # NOTE: PowerShell Start-Process does NOT inherit bash env vars on
+  # Windows. AUDIT_MCP_WORKERS MUST be passed as a CLI flag here, not
+  # exported — the AUDIT_MCP_WORKERS= prefix in front of spawn won't
+  # reach the spawned python process. The --workers flag wins over
+  # the env-var path in audit_mcp's argparse.
   (
     cd "$AUDIT_MCP_DIR" && \
-    AUDIT_MCP_WORKERS="$AUDIT_MCP_WORKERS" \
     spawn "audit-mcp" \
-      -m audit_mcp --mode http --port "$AUDIT_MCP_PORT" --host 127.0.0.1
+      -m audit_mcp --mode http \
+      --port "$AUDIT_MCP_PORT" --host 127.0.0.1 \
+      --workers "$AUDIT_MCP_WORKERS"
   )
 elif [[ "$AILA_START_AUDIT_MCP" == "1" ]]; then
   echo "[aila]   WARNING: AUDIT_MCP_DIR not found: $AUDIT_MCP_DIR (skipping audit-mcp)"
