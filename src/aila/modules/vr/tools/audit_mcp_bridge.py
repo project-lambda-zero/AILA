@@ -134,21 +134,41 @@ class AuditMcpBridgeTool(Tool):
     # audit-mcp normalized every "name of an entity" parameter to plain
     # ``name`` (read_function / extract_class / taint_paths_to /
     # functions_that_raise / children_of all migrated from typed names
-    # like ``function_name``). Per-tool overrides are no longer needed.
-    # We only translate the limit / threshold family (uniform across
-    # every tool that accepts them) plus a backstop mapping every
-    # legacy typed-name variant to plain ``name`` so older prompts /
-    # cached LLM outputs keep working against the normalized surface.
+    # Per-action synonym overrides. Different audit_mcp tools use
+    # different canonical names for the same concept — most painfully:
     #
-    # Operator-supplied canonical names always win.
+    #   complexity_hotspots accepts:  threshold  (NOT min_complexity)
+    #   fuzzing_targets     accepts:  min_complexity  (NOT threshold)
+    #
+    # A GLOBAL map "min_complexity → threshold" rewrote correct
+    # fuzzing_targets calls into broken ones, validator rejected them,
+    # agent looped forever (investigation 60158a00 et al). Synonyms
+    # MUST be per-action.
+    _PER_ACTION_SYNONYMS: dict[str, dict[str, str]] = {
+        "fuzzing_targets": {
+            "threshold": "min_complexity",
+            "complexity_threshold": "min_complexity",
+            "min_score": "min_complexity",
+            "score_threshold": "min_complexity",
+            "min_cyc": "min_complexity",
+            "cutoff": "min_complexity",
+        },
+        "complexity_hotspots": {
+            "min_complexity": "threshold",
+            "complexity_threshold": "threshold",
+            "min_cyc": "threshold",
+            "cutoff": "threshold",
+        },
+    }
+
+    # Global synonyms that ARE safe across every tool — these don't
+    # collide with any per-action canonical name.
     _KW_SYNONYMS: dict[str, str] = {
         "top_n": "limit",
         "top_k": "limit",
         "n": "limit",
         "count": "limit",
         "max_results": "limit",
-        "complexity_threshold": "threshold",
-        "min_complexity": "threshold",
         "function_name": "name",
         "class_name": "name",
         "sink_name": "name",
@@ -169,13 +189,20 @@ class AuditMcpBridgeTool(Tool):
         Returns ``(normalized, notes)`` — ``notes`` is a list of
         human-readable strings (one per rename) the caller logs so
         the operator sees when the LLM is mis-naming params.
+
+        Resolution order per kwarg:
+          1. Per-action override (``_PER_ACTION_SYNONYMS[action]``).
+             Wins because audit_mcp's param names collide across tools.
+          2. Global synonym table (``_KW_SYNONYMS``).
+          3. Pass-through.
         """
         if not kwargs:
             return {}, []
+        per_action = cls._PER_ACTION_SYNONYMS.get(action, {})
         out: dict[str, Any] = {}
         notes: list[str] = []
         for key, value in kwargs.items():
-            canonical = cls._KW_SYNONYMS.get(key)
+            canonical = per_action.get(key) or cls._KW_SYNONYMS.get(key)
             if canonical is None or canonical == key:
                 out[key] = value
                 continue
