@@ -28,6 +28,7 @@ import {
 import type { InvestigationSummary, MachineReadinessResult, ProjectKind } from "../types";
 import { buildApiUrl } from "@platform/api/http";
 import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 type TabId =
   | "investigations"
@@ -658,6 +659,12 @@ export function ProjectDashboardPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const { data: project, isLoading, isError } = useForensicsProject(projectId ?? "");
+
+  useUpdatePageHeader({
+    title: project?.name,
+    subtitle: project?.status,
+    status: project?.status === 'active' ? 'live' : project?.status === 'archived' ? 'paused' : null,
+  });
   const [activeTab, setActiveTab] = useState<TabId>("investigations");
 
   if (!projectId) {
@@ -679,14 +686,6 @@ export function ProjectDashboardPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1 min-w-0">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold font-mono text-foreground truncate">
-              {project.name}
-            </h1>
-            <AilaBadge severity={STATUS_SEVERITY[project.status] ?? "info"} size="sm">
-              {project.status}
-            </AilaBadge>
-          </div>
           <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-text-muted">
             <span>Machine: {project.system_name ?? "Unknown"}</span>
             <span className="font-mono">{project.evidence_directory}</span>

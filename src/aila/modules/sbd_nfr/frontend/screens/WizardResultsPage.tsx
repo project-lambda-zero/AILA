@@ -1,3 +1,4 @@
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 import { useState } from "react";
 
 import { Link, useNavigate, useParams } from "react-router";
@@ -177,6 +178,12 @@ export function WizardResultsPage() {
   const submitForReview = useSubmitForReview();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  useUpdatePageHeader({
+    title: sessionQuery.data?.session ? `${sessionQuery.data.session.project_name} — Results` : undefined,
+    subtitle: resolutionQuery.data ? `Resolved ${formatDate(resolutionQuery.data.resolved_at)}` : undefined,
+    status: null,
+  });
+
   if (sessionQuery.isLoading || resolutionQuery.isLoading || schemaQuery.isLoading) {
     return <ResultsSkeleton />;
   }
@@ -240,12 +247,7 @@ export function WizardResultsPage() {
 
       {/* Header */}
       <header className="mb-8">
-        <h1 className="font-display text-2xl font-bold text-text mb-2">
-          {session.project_name} — Results
-        </h1>
-        <div className="font-mono text-xs text-text-muted mb-4">
-          <span>Resolved {formatDate(resolution.resolved_at)}</span>
-        </div>
+        {/* Title rendered by PageShell — kept this header wrapper for action-row layout below */}
         <div className="flex flex-wrap gap-2">
           {["approved", "report_generated"].includes(session.status) && (
             <Link

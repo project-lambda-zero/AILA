@@ -6,6 +6,7 @@ import { AilaBadge } from "@/components/aila";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { downloadArtifact, useReportHash, useSessionActivity, useWizardResolution, useWizardSessionDetail } from "../queries";
 import type { ActivityResponse } from "../types";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Confidence tier helpers
@@ -153,6 +154,14 @@ export function ReportPreviewPage() {
   const hashQuery = useReportHash(sessionId ?? "");
   const [downloading, setDownloading] = React.useState(false);
 
+  useUpdatePageHeader({
+    title: sessionQuery.data?.session?.project_name,
+    subtitle: sessionQuery.data?.session
+      ? `${sessionQuery.data.session.requestor_name}${sessionQuery.data.session.business_unit ? ` · ${sessionQuery.data.session.business_unit}` : ''}`
+      : undefined,
+    status: null,
+  });
+
   if (sessionQuery.isLoading || resolutionQuery.isLoading) {
     return (
       <div className="report-preview">
@@ -206,14 +215,6 @@ export function ReportPreviewPage() {
     <div className="report-preview">
       {/* Header */}
       <div className="report-preview__header">
-        <div className="report-preview__title-section">
-          <h1 className="report-preview__title">{session.project_name}</h1>
-          <p className="report-preview__meta">
-            {session.requestor_name}
-            {session.business_unit ? ` · ${session.business_unit}` : ""}
-            {resolution?.resolved_at ? ` · Resolved ${formatDate(resolution.resolved_at)}` : ""}
-          </p>
-        </div>
         <div className="report-preview__header-actions">
           <Link className={buttonVariants({ variant: "outline", size: "sm" })} to={`/assessments/${session.id}/review`}>
             Architect Review

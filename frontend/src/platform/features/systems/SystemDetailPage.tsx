@@ -1,3 +1,4 @@
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
@@ -77,6 +78,12 @@ export function SystemDetailPage() {
 
   const system = systemQuery.data;
 
+  useUpdatePageHeader({
+    title: system?.name,
+    subtitle: undefined,
+    status: null,
+  });
+
   const editValue = useMemo(
     () => editDraft ?? (system ? normalizeSystemForm(system) : null),
     [editDraft, system],
@@ -114,18 +121,11 @@ export function SystemDetailPage() {
 
   return (
     <div className="flex flex-col gap-6 p-4 lg:p-6">
-      {/* Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Link to="/systems">
-            <Button variant="outline" size="sm">← Systems</Button>
-          </Link>
-          {systemQuery.isLoading ? (
-            <div className="h-5 w-40 skeleton-aila rounded-[2px]" />
-          ) : (
-            <h1 className="font-mono text-xl font-semibold text-text">{system?.name}</h1>
-          )}
-        </div>
+      {/* Header — back-button only; title is rendered by PageShell */}
+      <div className="flex items-center gap-3">
+        <Link to="/systems">
+          <Button variant="outline" size="sm">← Systems</Button>
+        </Link>
       </div>
 
       {/* Loading skeleton for entire page while first load */}

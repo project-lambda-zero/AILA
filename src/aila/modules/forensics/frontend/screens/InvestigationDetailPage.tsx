@@ -16,6 +16,7 @@ import {
 } from "../mutations";
 import { useInvestigationAnswers, useInvestigationDetail, useInvestigationEventFeed } from "../queries";
 import type { AgentStep, AnswerCandidate, TagVerdict } from "../types";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 type TabId = "steps" | "answers" | "live";
 
@@ -500,6 +501,8 @@ export function InvestigationDetailPage() {
     investigationId: string;
   }>();
   const navigate = useNavigate();
+
+  // hook moved below the useInvestigationDetail destructure so `investigation` is in scope
   // Default to "live" when the investigation is still running so the user sees
   // progress immediately instead of landing on an empty "Steps" tab.
   const [activeTab, setActiveTab] = useState<TabId>("live");
@@ -509,6 +512,12 @@ export function InvestigationDetailPage() {
     isLoading,
     isError,
   } = useInvestigationDetail(projectId ?? "", investigationId ?? "");
+
+  useUpdatePageHeader({
+    title: investigation ? `Investigation ${investigationId?.slice(0, 8) ?? ''}` : 'Investigation',
+    subtitle: investigation?.status ?? undefined,
+    status: investigation?.status === 'running' ? 'live' : investigation?.status === 'failed' ? 'error' : investigation?.status === 'completed' ? 'ready' : null,
+  });
 
   const {
     data: answers,
@@ -583,12 +592,6 @@ export function InvestigationDetailPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-1 flex-1 min-w-[16rem]">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-xl font-bold font-mono text-foreground">Investigation</h1>
-            <AilaBadge severity={STATUS_SEVERITY[investigation.status] ?? "info"} size="sm">
-              {investigation.status}
-            </AilaBadge>
-          </div>
           <p className="text-sm text-text-muted font-mono">{investigation.question}</p>
           <div className="flex gap-4 text-xs text-text-muted">
             <span>
