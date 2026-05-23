@@ -2739,8 +2739,8 @@ a:hover {
   --radius-md: 0;
   --radius-lg: 0;
 
-  --font-display: "Rubik Mono One", "Bungee", "Michroma", "Eurostile", sans-serif;
-  --font-sans: "Rajdhani", "Share Tech Mono", ui-sans-serif, sans-serif;
+  --font-display: "Orbitron", "Michroma", system-ui, sans-serif;
+  --font-sans: "Rajdhani", system-ui, sans-serif;
 
   --background: #05070a;
   --foreground: #e6eef8;
@@ -2983,9 +2983,9 @@ a:hover {
   --radius-md: 0;
   --radius-lg: 0;
 
-  --font-display: "VT323", "Share Tech Mono", "Courier New", monospace;
-  --font-sans: "Share Tech Mono", "VT323", ui-monospace, monospace;
-  --font-mono: "Share Tech Mono", "VT323", ui-monospace, monospace;
+  --font-display: "VT323", "Courier New", monospace;
+  --font-sans: "VT323", "Courier New", monospace;
+  --font-mono: "VT323", "Courier New", monospace;
 
   --background: #000000;
   --foreground: #bfffd9;
@@ -3218,9 +3218,8 @@ a:hover {
   --radius-md: 5px;
   --radius-lg: 7px;
 
-  --font-display: "Marcellus SC", "IM Fell English SC",
-    "Cormorant Garamond", "Playfair Display", Georgia, serif;
-  --font-sans: "Cormorant Garamond", "Libre Baskerville", Georgia, serif;
+  --font-display: "Playfair Display", "Georgia", serif;
+  --font-sans: "Lora", "Georgia", serif;
 
   --background: #e9f3f5;
   --foreground: #2a3b40;
