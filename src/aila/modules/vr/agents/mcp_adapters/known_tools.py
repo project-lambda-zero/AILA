@@ -19,7 +19,13 @@ a tool_run command.
 """
 from __future__ import annotations
 
-__all__ = ["IDA_HEADLESS_TOOLS", "AUDIT_MCP_TOOLS", "KNOWN_TOOLS"]
+__all__ = [
+    "AUDIT_MCP_TOOLS",
+    "IDA_HEADLESS_TOOLS",
+    "KNOWN_TOOLS",
+    "LANGUAGE_UNRELIABLE_TOOLS",
+    "tools_for_language",
+]
 
 
 IDA_HEADLESS_TOOLS: frozenset[str] = frozenset({
@@ -194,3 +200,73 @@ KNOWN_TOOLS: dict[str, frozenset[str]] = {
     "ida_headless": IDA_HEADLESS_TOOLS,
     "audit_mcp": AUDIT_MCP_TOOLS,
 }
+
+
+# Tools whose contract assumes a textually-explicit static call graph
+# and therefore lie systematically on languages with heavy implicit
+# dispatch (virtual methods via vtable, template instantiation, RAII
+# destructors, static initializers, callbacks/function pointers,
+# operator overloads, etc.). For these languages the audit-mcp
+# call-graph builder sees only direct-name calls and reports huge
+# fractions of the codebase as "dead" or "unreachable" when in fact
+# the runtime reaches them through indirect dispatch.
+#
+# Symptom in production (firefox, primary_language=cpp):
+#   dead_code      → ~70%+ of functions flagged, virtually all false
+#   unreachable_*  → same problem; entrypoint BFS can't cross vtables
+#
+# Languages listed here disable the tools entirely for that target so
+# the agent neither sees them in the prompt nor wastes reasoning
+# budget chasing the false signal.
+_DYNAMIC_DISPATCH_HEAVY_LANGUAGES: frozenset[str] = frozenset({
+    # vtable-by-default OO languages: every method call is a virtual
+    # dispatch unless the method is final/static. Static call graphs
+    # see at most ~10–20% of real edges.
+    "cpp", "c++", "cxx",
+    "java",
+    "kotlin",
+    "csharp", "c#", "cs",
+    "swift",  # class methods virtual by default; structs are static
+    "objective-c", "objc", "objectivec",
+    "scala",
+    # NOT included: rust (static dispatch + monomorphization by default —
+    # cargo's own dead_code lint works reliably), go (interfaces are
+    # vtable-dispatched but concrete-type calls dominate), c (only direct
+    # calls and function pointers — the latter is a small minority).
+})
+
+_CALL_GRAPH_FRAGILE_TOOLS: frozenset[str] = frozenset({
+    "dead_code",
+    "unreachable_from_entrypoints",
+})
+
+LANGUAGE_UNRELIABLE_TOOLS: dict[str, frozenset[str]] = {
+    # primary_language (normalized lowercase) → audit_mcp tool names
+    # we MUST suppress because their result is systematically wrong
+    # for that language. Keys are matched against the normalized
+    # lowercase form of ``VRTargetRecord.primary_language``.
+    lang: _CALL_GRAPH_FRAGILE_TOOLS
+    for lang in _DYNAMIC_DISPATCH_HEAVY_LANGUAGES
+}
+
+
+def tools_for_language(
+    server_id: str,
+    primary_language: str | None,
+) -> frozenset[str]:
+    """Return the subset of ``KNOWN_TOOLS[server_id]`` that produces
+    reliable output for a target whose ``primary_language`` is given.
+
+    When ``primary_language`` is None / empty / unknown, returns the
+    full set — we prefer to expose a tool that might be noisy over
+    hiding a tool the agent needs. Only languages with a known
+    incompatibility entry get filtered.
+    """
+    base = KNOWN_TOOLS.get(server_id, frozenset())
+    if not primary_language:
+        return base
+    lang = primary_language.strip().lower()
+    suppress = LANGUAGE_UNRELIABLE_TOOLS.get(lang, frozenset())
+    if not suppress:
+        return base
+    return frozenset(t for t in base if t not in suppress)
