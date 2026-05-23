@@ -86,7 +86,7 @@ _log = logging.getLogger(__name__)
 _DEFAULT_TIMEOUTS: dict[StageName, float] = {
     StageName.INGESTION: 14400.0,
     StageName.CAPABILITY_PROFILE: 1800.0,
-    StageName.FUNCTION_RANKING: 1800.0,
+    StageName.FUNCTION_RANKING: 1800.0,  # 30 min  covers cold-CSR firefox-scale rank + retry slack
 }
 
 

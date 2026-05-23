@@ -19,6 +19,7 @@ The dispatcher persists the result into
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Protocol
@@ -177,6 +178,31 @@ class FunctionRankingDispatcher:
         resp = await self._audit_mcp.forward(
             action="fuzzing_targets", index_id=index_id, limit=self._top_k,
         )
+
+        # Async pattern — audit-mcp returns 'pending' + task_id for heavy
+        # work (firefox-scale GPU CSR build + ranking). Poll until ready
+        # or until we've burned the per-stage timeout (StageTracker
+        # default 30 min for FUNCTION_RANKING — see services/stage_
+        # tracker.py). The poll cadence matches audit_mcp's own polling
+        # window so we don't hammer it.
+        poll_attempts = 0
+        while resp.get("status") == "pending":
+            task_id = resp.get("task_id") or resp.get("id")
+            if not task_id:
+                # 'pending' without a task_id is a contract violation
+                # we can't recover from — fail loud rather than spin.
+                raise FunctionRankerError(
+                    f"audit-mcp fuzzing_targets returned pending with no task_id: {resp!r}",
+                )
+            poll_attempts += 1
+            if poll_attempts > 180:  # ~15 min at 5 s cadence
+                raise FunctionRankerError(
+                    f"audit-mcp fuzzing_targets still pending after {poll_attempts} polls "
+                    f"(~{poll_attempts * 5}s) for target {target_id}",
+                )
+            await asyncio.sleep(5)
+            resp = await self._audit_mcp.forward(action="poll_task", task_id=task_id)
+
         if resp.get("status") not in {"ready", None}:
             err = resp.get("error") or f"audit-mcp returned status={resp.get('status')!r}"
             raise FunctionRankerError(f"audit-mcp fuzzing_targets failed: {err}")
