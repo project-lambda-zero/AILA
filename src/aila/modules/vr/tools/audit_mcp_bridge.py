@@ -9,10 +9,13 @@ This bridge is the only place where the VR module touches the
 audit-mcp HTTP surface. Use it for source-code targets the same way
 ``IDABridgeTool`` is used for binary targets.
 
-Timeout: ``AUDIT_MCP_TIMEOUT`` env var, default 120 s (covers indexing
-plus heavy graph queries like ``dead_code`` and ``scan_and_correlate``
-which the server runs async — the bridge returns a task_id and the
-caller polls with ``action='poll_task'``).
+Timeout: ``AUDIT_MCP_TIMEOUT`` env var, default 900 s (15 min — covers
+monorepo-scale ``fuzzing_targets`` on a fresh index that needs GPU CSR
+build + ranking, e.g. firefox cold 294 s on RTX 3080). Heavy graph
+queries (``dead_code``, ``scan_and_correlate``) that the server runs
+truly-async return ``status='pending'`` + a ``task_id``; callers poll
+with ``action='poll_task'`` until ``status='ready'`` — see
+``FunctionRankingDispatcher._rank_source`` for the poll pattern.
 """
 from __future__ import annotations
 
@@ -107,7 +110,7 @@ class AuditMcpBridgeTool(Tool):
         # restart.
         self._fixed_base_url = base_url.rstrip("/") if base_url else None
         self._timeout = timeout or float(
-            os.environ.get("AUDIT_MCP_TIMEOUT", "120"),
+            os.environ.get("AUDIT_MCP_TIMEOUT", "900"),
         )
 
     async def _resolve_base_url(self) -> str:
