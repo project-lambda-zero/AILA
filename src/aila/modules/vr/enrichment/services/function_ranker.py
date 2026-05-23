@@ -26,11 +26,17 @@ from typing import Any, Protocol
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.target import TargetKind
+from aila.modules.vr.contracts.target_stages import StageName
 from aila.modules.vr.db_models import VRTargetRecord
 from aila.modules.vr.enrichment.contracts import (
     FunctionRanking,
     RankedFunction,
     RankingSource,
+)
+from aila.modules.vr.services.stage_tracker import (
+    StageAlreadyDoneError,
+    StageInFlightError,
+    StageTracker,
 )
 from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
@@ -94,56 +100,71 @@ class FunctionRankingDispatcher:
         self._top_k = top_k
         self._deep_assess_top_n = deep_assess_top_n
 
-    async def rank(self, target_id: str) -> FunctionRanking:
+    async def _load(self, target_id):
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _select(VRTargetRecord).where(VRTargetRecord.id == target_id)
+            )).first()
+            if row is None:
+                raise FunctionRankerError(f"target {target_id} not found")
+            return row
+
+    async def rank(self, target_id: str) -> FunctionRanking | None:
         """Dispatch ranking for one target. Returns the produced report.
 
         Reads MCP handles from the target's private
         ``_mcp_handles_json`` column (populated by TargetAnalysisService).
-        Sets ``analysis_state='ingesting'`` at entry; transitions to
-        ``ready`` on success or ``failed`` if the MCP call errored.
-        Raises ``FunctionRankerError`` on fatal failure (target not
-        found, handles missing, MCP unreachable).
+        Uses StageTracker (stage = FUNCTION_RANKING) so:
+          - Re-running a target that already has a ranking is a no-op.
+          - Concurrent rank invocations on the same row refuse the
+            second one (StageInFlightError).
+          - On exception the stage flips FAILED with the message; the
+            operator can resume via POST /vr/targets/:id/resume-analysis.
+        Returns None when skipped (already DONE or in flight).
         """
-        target_row = await self._load_and_mark_running(target_id)
-        handles = json.loads(target_row.mcp_handles_json or "{}")
-
         try:
-            if target_row.kind == TargetKind.SOURCE_REPO.value:
-                ranking = await self._rank_source(target_id, handles)
-            elif target_row.kind in {
-                TargetKind.NATIVE_BINARY.value,
-                TargetKind.APK.value,
-                TargetKind.IPA.value,
-                TargetKind.JAR.value,
-                TargetKind.DOTNET_ASSEMBLY.value,
-                TargetKind.KERNEL_IMAGE.value,
-                TargetKind.KERNEL_MODULE.value,
-                TargetKind.HYPERVISOR_IMAGE.value,
-            }:
-                ranking = await self._rank_binary(target_id, handles)
-            else:
-                await self._mark_failed(
-                    target_id,
-                    f"unsupported target kind for ranking: {target_row.kind}",
-                )
-                raise FunctionRankerError(
-                    f"target_id={target_id} kind={target_row.kind!r} "
-                    "is not rankable (only SOURCE_REPO + binary kinds supported)",
-                )
-        except FunctionRankerError:
-            raise
-        except (OSError, TimeoutError, RuntimeError) as exc:
-            await self._mark_failed(target_id, f"dispatcher raised: {exc}")
-            raise FunctionRankerError(
-                f"ranking dispatch failed for target_id={target_id}: {exc}",
-            ) from exc
+            async with StageTracker(target_id, StageName.FUNCTION_RANKING) as tracker:
+                target_row = await self._load(target_id)
+                handles = json.loads(target_row.mcp_handles_json or "{}")
 
-        await self._persist(target_id, ranking)
-        _log.info(
-            "function_ranker COMPLETE target_id=%s source=%s top_k=%d total_candidates=%d",
-            target_id, ranking.source.value, len(ranking.top_k), ranking.total_candidates,
-        )
-        return ranking
+                if target_row.kind == TargetKind.SOURCE_REPO.value:
+                    ranking = await self._rank_source(target_id, handles)
+                elif target_row.kind in {
+                    TargetKind.NATIVE_BINARY.value,
+                    TargetKind.APK.value,
+                    TargetKind.IPA.value,
+                    TargetKind.JAR.value,
+                    TargetKind.DOTNET_ASSEMBLY.value,
+                    TargetKind.KERNEL_IMAGE.value,
+                    TargetKind.KERNEL_MODULE.value,
+                    TargetKind.HYPERVISOR_IMAGE.value,
+                }:
+                    ranking = await self._rank_binary(target_id, handles)
+                else:
+                    raise FunctionRankerError(
+                        f"target_id={target_id} kind={target_row.kind!r} "
+                        "is not rankable (only SOURCE_REPO + binary kinds supported)",
+                    )
+
+                # Persist into capability_profile.function_ranking — same
+                # commit as the stage's DONE transition (no crash window
+                # between persisting work + recording state).
+                existing = json.loads(target_row.capability_profile_json or "{}")
+                existing["function_ranking"] = ranking.model_dump(mode="json")
+                tracker.record_output(capability_profile_json=json.dumps(existing))
+
+                _log.info(
+                    "function_ranker COMPLETE target_id=%s source=%s top_k=%d total_candidates=%d",
+                    target_id, ranking.source.value,
+                    len(ranking.top_k), ranking.total_candidates,
+                )
+                return ranking
+        except StageAlreadyDoneError:
+            _log.info("function_ranker: target %s already ranked — skip", target_id)
+            return None
+        except StageInFlightError:
+            _log.info("function_ranker: target %s ranking in flight — skip", target_id)
+            return None
 
     async def _rank_source(self, target_id: str, handles: dict[str, Any]) -> FunctionRanking:
         index_id = handles.get("audit_mcp_index_id")
@@ -250,60 +271,6 @@ class FunctionRankingDispatcher:
             top_k=top_k,
             notes=f"deep assess_exploitability ran on top {len(deep_verdicts)}/{len(deep_addresses)} candidates",
         )
-
-    async def _load_and_mark_running(self, target_id: str) -> VRTargetRecord:
-        async with UnitOfWork() as uow:
-            row = (
-                await uow.session.exec(
-                    _select(VRTargetRecord).where(VRTargetRecord.id == target_id)
-                )
-            ).first()
-            if row is None:
-                raise FunctionRankerError(f"target {target_id} not found")
-            row.analysis_state = "ingesting"
-            row.updated_at = utc_now()
-            uow.session.add(row)
-            await uow.commit()
-            await uow.session.refresh(row)
-            return row
-
-    async def _mark_failed(self, target_id: str, message: str) -> None:
-        async with UnitOfWork() as uow:
-            row = (
-                await uow.session.exec(
-                    _select(VRTargetRecord).where(VRTargetRecord.id == target_id)
-                )
-            ).first()
-            if row is None:
-                return
-            capability = json.loads(row.capability_profile_json or "{}")
-            errors = capability.setdefault("enrichment_errors", [])
-            errors.append({"step": "function_ranker", "message": message})
-            row.capability_profile_json = json.dumps(capability)
-            row.analysis_state = "failed"
-            row.updated_at = utc_now()
-            uow.session.add(row)
-            await uow.commit()
-
-    async def _persist(self, target_id: str, ranking: FunctionRanking) -> None:
-        async with UnitOfWork() as uow:
-            row = (
-                await uow.session.exec(
-                    _select(VRTargetRecord).where(VRTargetRecord.id == target_id)
-                )
-            ).first()
-            if row is None:
-                raise FunctionRankerError(
-                    f"target {target_id} disappeared during ranking",
-                )
-            capability = json.loads(row.capability_profile_json or "{}")
-            capability["function_ranking"] = ranking.model_dump(mode="json")
-            row.capability_profile_json = json.dumps(capability)
-            row.analysis_state = "ready"
-            row.analysis_completed_at = utc_now()
-            row.updated_at = utc_now()
-            uow.session.add(row)
-            await uow.commit()
 
 
 def _normalize_audit_mcp_entries(
