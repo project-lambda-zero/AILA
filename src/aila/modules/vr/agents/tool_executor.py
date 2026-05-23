@@ -29,7 +29,6 @@ from sqlmodel import select as _select
 from aila.modules.vr.agents.mcp_adapters import (
     AdapterContext,
     get_adapter,
-    registered_tools,
 )
 from aila.modules.vr.contracts import PayloadKind, SenderKind
 from aila.modules.vr.db_models import (
@@ -277,6 +276,31 @@ class ToolExecutor:
         )
         adapter_result = adapter(raw, ctx)
 
+        # Survey-streak pivot hint. The agent on variant_hunt /
+        # discovery investigations tends to keep calling survey tools
+        # (attack_surface, complexity_hotspots, fuzzing_targets,
+        # search_functions) for 5-10 turns while debating in
+        # "adversarial deliberation" reasoning blocks, and only reads
+        # actual source bodies once near the end. Investigation
+        # 417b469f: 13 turns / 13 minutes / 11 survey calls / 1
+        # read_function. Operator-visible problem ("why don't they read
+        # the actual source code?").
+        #
+        # When the current call AND the prior 2 successful calls on
+        # this branch are all in the SURVEY set, append a one-line
+        # pivot directive to this result so the agent's next turn
+        # treats source-reading as the obvious next move. Idempotent —
+        # the hint just appends to the rendered text payload; the
+        # underlying observables/data are unchanged.
+        pivot_hint = await self._survey_streak_hint(
+            branch_id, server_id, tool_name,
+        )
+        if pivot_hint and isinstance(adapter_result.payload, dict):
+            existing = adapter_result.payload.get("text") or ""
+            adapter_result.payload["text"] = (
+                existing.rstrip() + "\n\n" + pivot_hint
+            )
+
         msg_id = await self._write_result_message(
             investigation_id, branch_id,
             payload_kind=adapter_result.payload_kind,
@@ -441,6 +465,88 @@ class ToolExecutor:
             if self._classify_contract_error(text) == class_key:
                 count += 1
         return count
+
+    # Tools that present aggregated/ranked metadata over a codebase
+    # without revealing function bodies. Calling these repeatedly
+    # without a follow-up read_function / read_class / taint_paths_to
+    # means the agent is debating which lead to pursue instead of
+    # actually looking at code.
+    _SURVEY_TOOLS: frozenset[tuple[str, str]] = frozenset({
+        ("audit_mcp", "attack_surface"),
+        ("audit_mcp", "complexity_hotspots"),
+        ("audit_mcp", "fuzzing_targets"),
+        ("audit_mcp", "summary"),
+        ("audit_mcp", "preanalysis"),
+        ("audit_mcp", "list_indexes"),
+        ("audit_mcp", "memory_usage"),
+        ("audit_mcp", "cache_stats"),
+        ("ida_headless", "binary_survey"),
+        ("ida_headless", "binary_metadata"),
+        ("ida_headless", "list_functions"),
+        ("ida_headless", "imports"),
+        ("ida_headless", "exports"),
+        ("ida_headless", "segments"),
+    })
+
+    async def _survey_streak_hint(
+        self,
+        branch_id: str,
+        server_id: str,
+        tool_name: str,
+    ) -> str | None:
+        """Return a pivot directive when the current call AND the prior
+        two successful tool_calls on this branch are all SURVEY tools.
+
+        Returns None unless the streak fires — non-survey calls reset
+        the counter immediately. The hint is intentionally short and
+        actionable so it lands at the top of the agent's next-turn
+        attention without crowding out the actual tool output.
+        """
+        if (server_id, tool_name) not in self._SURVEY_TOOLS:
+            return None
+        # Walk back the last 4 tool_call payloads on this branch and
+        # count consecutive surveys (excluding the current one — it's
+        # already counted as #3 if the prior 2 match).
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(VRInvestigationMessageRecord)
+                .where(VRInvestigationMessageRecord.branch_id == branch_id)
+                .where(VRInvestigationMessageRecord.payload_kind == PayloadKind.TOOL_CALL.value)
+                .order_by(VRInvestigationMessageRecord.created_at.desc())
+                .limit(4)
+            )).all()
+        prior_surveys = 0
+        for r in rows:
+            try:
+                payload = json.loads(r.payload_json or "{}")
+                cmd = json.loads(payload.get("command") or "{}")
+            except (ValueError, TypeError):
+                break
+            tool_id = (cmd.get("tool") or "").partition(".")
+            key = (tool_id[0], tool_id[2])
+            if key in self._SURVEY_TOOLS:
+                prior_surveys += 1
+            else:
+                break  # non-survey call → streak broken
+        # Current call + prior_surveys gives the streak length. Fire
+        # when total >= 3 (current call is #3, two priors were also
+        # surveys).
+        total = prior_surveys + 1
+        if total < 3:
+            return None
+        return (
+            f"*** PIVOT REQUIRED: {total} CONSECUTIVE SURVEY CALLS ***\n"
+            f"You have called {total} survey tools in a row on this "
+            f"branch without reading any source code. STOP SURVEYING. "
+            f"You already have enough ranking data. Your next tool_run "
+            f"MUST be one of:\n"
+            f"  - audit_mcp.read_function(name=<top candidate>, file_path=<path>) — read the actual body\n"
+            f"  - audit_mcp.taint_paths_to(name=<sink>) — trace user input to the candidate\n"
+            f"  - audit_mcp.callers_of(name=<candidate>) — who reaches this function\n"
+            f"  - audit_mcp.entrypoint_paths_to(name=<candidate>) — what untrusted-input entrypoints reach it\n"
+            f"  - OR submit a finding/AssessmentReport if no candidate is concrete enough to read\n"
+            f"Adversarial deliberation is consuming turns without acquiring evidence. Read source NOW."
+        )
 
     @staticmethod
     def _classify_contract_error(text: str) -> str | None:
