@@ -152,7 +152,7 @@ function InvestigationRow({
         </SeverityPulse>
       </td>
 
-      {/* Title + verdict-head excerpt */}
+      {/* Title + verdict-head excerpt + chip strip (strategy/auto-pilot/etc) */}
       <td className={cellCls + " min-w-0"}>
         <div className="text-[13px] font-medium text-foreground truncate" title={inv.title}>
           {inv.title}
@@ -160,6 +160,76 @@ function InvestigationRow({
         {inv.primary_outcome_verdict_head && (
           <div className="mt-0.5 text-[11px] text-text-muted truncate" title={inv.primary_outcome_verdict_head}>
             {inv.primary_outcome_verdict_head}
+          </div>
+        )}
+        {(inv.strategy_family ||
+          inv.auto_pilot ||
+          inv.parent_investigation_id ||
+          inv.pause_reason ||
+          inv.linked_campaign_ids.length > 0) && (
+          <div className="mt-1 flex items-center gap-1 flex-wrap">
+            {inv.strategy_family && inv.strategy_family !== "default" && (
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono tracking-wider uppercase text-text-muted"
+                style={{
+                  border: "1px solid color-mix(in srgb, var(--color-text-muted) 20%, transparent)",
+                  background: "color-mix(in srgb, var(--color-text-muted) 4%, transparent)",
+                }}
+                title={`strategy family: ${inv.strategy_family}`}
+              >
+                {inv.strategy_family.replace(/_/g, "-")}
+              </span>
+            )}
+            {inv.auto_pilot && (
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono tracking-wider uppercase"
+                style={{
+                  border: "1px solid color-mix(in srgb, var(--color-accent) 40%, transparent)",
+                  background: "color-mix(in srgb, var(--color-accent) 10%, transparent)",
+                  color: "var(--color-accent)",
+                }}
+                title="auto-pilot: agent runs without operator confirmation"
+              >
+                ⚡ auto-pilot
+              </span>
+            )}
+            {inv.parent_investigation_id && (
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono tracking-wider uppercase text-text-muted"
+                style={{
+                  border: "1px solid color-mix(in srgb, var(--color-text-muted) 20%, transparent)",
+                  background: "color-mix(in srgb, var(--color-text-muted) 4%, transparent)",
+                }}
+                title={`child of investigation ${inv.parent_investigation_id.slice(0, 8)}…`}
+              >
+                ↳ child
+              </span>
+            )}
+            {inv.linked_campaign_ids.length > 0 && (
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono tracking-wider uppercase text-text-muted"
+                style={{
+                  border: "1px solid color-mix(in srgb, var(--color-text-muted) 20%, transparent)",
+                  background: "color-mix(in srgb, var(--color-text-muted) 4%, transparent)",
+                }}
+                title={`${inv.linked_campaign_ids.length} linked fuzz campaign${inv.linked_campaign_ids.length === 1 ? "" : "s"}`}
+              >
+                ⚙ {inv.linked_campaign_ids.length}c
+              </span>
+            )}
+            {inv.pause_reason && (
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono tracking-wider uppercase"
+                style={{
+                  border: "1px solid color-mix(in srgb, #f0a8c7 35%, transparent)",
+                  background: "color-mix(in srgb, #f0a8c7 10%, transparent)",
+                  color: "#f0a8c7",
+                }}
+                title={`paused: ${inv.pause_reason}`}
+              >
+                ⏸ {inv.pause_reason.replace(/_/g, " ")}
+              </span>
+            )}
           </div>
         )}
       </td>
