@@ -574,6 +574,17 @@ body {
   min-height: 100vh;
 }
 
+/* Base typography — pull --font-display for headings, --font-mono for code-shaped
+   elements. Each theme overrides these tokens (see per-theme blocks below) so
+   midnight-cloud-8 reaches Bricolage Grotesque, vendetta reaches UnifrakturMaguntia,
+   y2k-fever reaches Pacifico, etc. without per-element overrides. */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+}
+code, kbd, samp, pre, .font-mono {
+  font-family: var(--font-mono);
+}
+
 /* -------- SYNTHWAVE body: retro sun + grid floor + scanlines -------- */
 
 [data-theme="synthwave"] body {
