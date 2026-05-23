@@ -215,6 +215,21 @@ class AuditMcpBridgeTool(Tool):
         normalized_kwargs, kw_notes = self._normalize_kwargs(action, kwargs)
         for note in kw_notes:
             logging.getLogger(__name__).info("audit_mcp_bridge %s", note)
+
+        # Local kwarg validation against the live JSON Schema. Catches
+        # LLM-hallucinated args (e.g. fuzzing_targets(threshold=0.5) — no
+        # such param) and returns a structured "did you mean" error
+        # before the HTTP round-trip. Without this, audit-mcp's bare
+        # TypeError reply is too generic for the agent to recover from
+        # and we see retry storms of the same invalid call (8x in one
+        # investigation, all 'unexpected keyword argument threshold').
+        # Skipped for poll_task / unknown actions where the cache is
+        # empty or the action isn't in the schema catalog (those
+        # forward straight through and audit-mcp adjudicates).
+        validation_error = await self._validate_kwargs(action, normalized_kwargs)
+        if validation_error is not None:
+            return validation_error
+
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
         from aila.modules.vr.services.mcp_call_logger import record_call  # noqa: PLC0415
@@ -308,6 +323,91 @@ class AuditMcpBridgeTool(Tool):
             return []
         self.__class__._SPEC_CACHE = [_compact_spec(t) for t in raw]
         return self.__class__._SPEC_CACHE
+
+    async def _validate_kwargs(
+        self,
+        action: str,
+        kwargs: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Validate ``kwargs`` against the live JSON Schema for ``action``.
+
+        Returns None when the call is valid (or when validation must be
+        skipped — empty catalog, unknown action). Returns a structured
+        error dict suitable for direct return from ``forward()`` when
+        the call would fail at audit-mcp anyway. The error message
+        names the offending kwarg + the closest valid kwarg name via
+        ``difflib.get_close_matches`` so the agent's next turn can
+        self-correct without burning a retry.
+
+        Skipped for actions whose schema is missing or empty — those
+        are either bridge-internal pseudo-actions (``poll_task`` when
+        the catalog hasn't loaded it) or genuinely unknown tools that
+        the upstream server is best placed to reject.
+        """
+        import difflib  # noqa: PLC0415
+
+        specs = await self.list_tool_specs()
+        if not specs:
+            return None
+        match = next((s for s in specs if s.get("name") == action), None)
+        if match is None:
+            # Action not in catalog → upstream decides (typo, new tool,
+            # poll_task internal action, etc.). Log a single info line
+            # so unknown-action call patterns surface in worker logs
+            # without blocking the call.
+            logging.getLogger(__name__).info(
+                "audit_mcp_bridge: action %r not in /tools catalog (%d known) — forwarding anyway",
+                action, len(specs),
+            )
+            return None
+
+        known_param_names = {p["name"] for p in (match.get("params") or [])}
+        required = set(match.get("required") or [])
+
+        # Unknown kwargs first — they're the loud LLM-hallucination case.
+        unknown = [k for k in kwargs if k not in known_param_names]
+        if unknown:
+            suggestions = {}
+            for bad in unknown:
+                close = difflib.get_close_matches(
+                    bad, sorted(known_param_names), n=1, cutoff=0.5,
+                )
+                if close:
+                    suggestions[bad] = close[0]
+            valid_list = sorted(known_param_names)
+            hint_parts = [
+                f"'{bad}' (did you mean '{suggestions[bad]}'?)"
+                if bad in suggestions else f"'{bad}'"
+                for bad in unknown
+            ]
+            error_msg = (
+                f"audit_mcp.{action} rejected: unknown kwarg(s) "
+                f"{', '.join(hint_parts)}. "
+                f"Valid params: {valid_list}. "
+                f"Required: {sorted(required)}."
+            )
+            logging.getLogger(__name__).warning(
+                "audit_mcp_bridge: blocked %s call with unknown kwargs %s "
+                "(suggestions: %s)", action, unknown, suggestions,
+            )
+            return {"status": "error", "error": error_msg}
+
+        # Missing required kwargs — fail loud rather than letting
+        # audit-mcp return a less actionable error.
+        missing = sorted(required - set(kwargs))
+        if missing:
+            valid_list = sorted(known_param_names)
+            error_msg = (
+                f"audit_mcp.{action} rejected: missing required kwarg(s) "
+                f"{missing}. Valid params: {valid_list}."
+            )
+            logging.getLogger(__name__).warning(
+                "audit_mcp_bridge: blocked %s call missing required %s",
+                action, missing,
+            )
+            return {"status": "error", "error": error_msg}
+
+        return None
 
     async def health(self) -> dict:
         """Quick reachability check for machine readiness verification."""
