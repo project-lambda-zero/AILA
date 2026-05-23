@@ -113,6 +113,26 @@ class AuditMcpBridgeTool(Tool):
             os.environ.get("AUDIT_MCP_TIMEOUT", "900"),
         )
 
+    # ── Per-index pre-warm registry ──────────────────────────────────
+    #
+    # When audit_mcp runs with AUDIT_MCP_WORKERS>1, each worker holds
+    # its own TypeResolver + semble + engine caches. A single request
+    # warms only ONE worker; the other N-1 stay cold and pay ~30s on
+    # their first hit. Result: investigation experiences ~30s lag
+    # spread across the first wave of agent tool calls.
+    #
+    # On the first call to a new index_id we fire 16 parallel cheap
+    # requests (summary + semble noop). Round-robin distribution
+    # gives each of the 4 workers ~4 calls — statistically certain to
+    # warm them all. Subsequent calls go through unchanged.
+    #
+    # Class-level set + per-index asyncio.Lock so 3 branches firing
+    # the first call in parallel don't trigger 3 separate fan-outs.
+    _warmed_indexes: set[str] = set()
+    _warm_locks: dict[str, Any] = {}  # lazy asyncio.Lock per index_id
+    _PREWARM_FANOUT: int = 16
+    _PREWARM_TIMEOUT_S: float = 90.0
+
     async def _resolve_base_url(self) -> str:
         if self._fixed_base_url is not None:
             return self._fixed_base_url
@@ -257,6 +277,17 @@ class AuditMcpBridgeTool(Tool):
         if validation_error is not None:
             return validation_error
 
+        # Pre-warm fan-out: when this is the FIRST call seen for the
+        # index_id in this process, fire 16 parallel cheap requests to
+        # ensure every audit_mcp worker (AUDIT_MCP_WORKERS=4 by default)
+        # has the engine + TypeResolver + semble index loaded in RAM
+        # before the real call dispatches. Without this, the agent's
+        # first 4 tool calls each pay a separate ~30s cold-build cost
+        # on different workers (round-robin distribution).
+        index_id = normalized_kwargs.get("index_id")
+        if isinstance(index_id, str) and index_id:
+            await self._ensure_prewarmed(index_id)
+
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
         from aila.modules.vr.services.mcp_call_logger import record_call  # noqa: PLC0415
@@ -350,6 +381,85 @@ class AuditMcpBridgeTool(Tool):
             return []
         self.__class__._SPEC_CACHE = [_compact_spec(t) for t in raw]
         return self.__class__._SPEC_CACHE
+
+    async def _ensure_prewarmed(self, index_id: str) -> None:
+        """Fire 16 parallel lightweight calls to warm all workers for
+        ``index_id``, exactly once per process per index. Subsequent
+        calls are no-ops.
+
+        Each call hits ``/tools/summary`` (loads engine + preanalysis
+        into the worker's RAM) followed by ``/tools/semble_stats``
+        (triggers lazy semble build per worker). Round-robin from
+        uvicorn distributes the 16 calls across the worker pool — with
+        AUDIT_MCP_WORKERS=4 that's ~4 calls per worker, statistically
+        certain to hit every worker at least once.
+
+        Errors are swallowed by design: warming is best-effort. If
+        audit-mcp is down or the index is broken, the real call that
+        follows will surface a proper error. Total wall time is the
+        slowest single warming call — for firefox cold that's ~30 s.
+        """
+        import asyncio  # noqa: PLC0415
+
+        if index_id in self.__class__._warmed_indexes:
+            return
+
+        lock = self.__class__._warm_locks.get(index_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self.__class__._warm_locks[index_id] = lock
+
+        async with lock:
+            if index_id in self.__class__._warmed_indexes:
+                return  # another caller raced through while we waited
+
+            base = await self._resolve_base_url()
+            log = logging.getLogger(__name__)
+            log.info(
+                "audit_mcp_bridge: pre-warming index %s across workers "
+                "(fan-out=%d, timeout=%.0fs)",
+                index_id, self.__class__._PREWARM_FANOUT,
+                self.__class__._PREWARM_TIMEOUT_S,
+            )
+
+            async def _one(client: httpx.AsyncClient, tool: str) -> None:
+                try:
+                    await client.post(
+                        f"{base}/tools/{tool}",
+                        json={"index_id": index_id},
+                    )
+                except (httpx.ConnectError, httpx.TimeoutException,
+                        httpx.ReadError):
+                    pass  # best-effort
+
+            # Half summary calls (warm engine), half semble_stats
+            # (warm semble). Fired concurrently — they round-robin
+            # across workers via uvicorn's socket sharing.
+            timeout = httpx.Timeout(
+                self.__class__._PREWARM_TIMEOUT_S,
+                connect=10.0,
+            )
+            t0 = asyncio.get_event_loop().time()
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    fanout = self.__class__._PREWARM_FANOUT
+                    tasks = []
+                    for i in range(fanout):
+                        tool = "summary" if i < fanout // 2 else "semble_stats"
+                        tasks.append(_one(client, tool))
+                    await asyncio.gather(*tasks, return_exceptions=True)
+            except (httpx.ConnectError, RuntimeError) as exc:
+                log.warning(
+                    "audit_mcp_bridge: pre-warm for %s failed: %s "
+                    "(proceeding; real call will surface errors)",
+                    index_id, exc,
+                )
+            elapsed = asyncio.get_event_loop().time() - t0
+            log.info(
+                "audit_mcp_bridge: pre-warm of %s complete in %.1fs",
+                index_id, elapsed,
+            )
+            self.__class__._warmed_indexes.add(index_id)
 
     async def _validate_kwargs(
         self,
