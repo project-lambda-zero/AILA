@@ -345,36 +345,84 @@ def adapt_fuzzing_targets(
 def adapt_attack_surface(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
-    """Map ``attack_surface`` to TEXT payload (entry-point catalog)."""
-    surfaces = _list_or_empty(raw, "surfaces", "entries", "results")
-    bullets: list[str] = []
-    for s in surfaces[:MAX_LIST_PREVIEW]:
-        if not isinstance(s, dict):
-            continue
-        name = s.get("name") or s.get("symbol") or s.get("route") or "<?>"
-        kind = s.get("kind") or s.get("surface_kind") or "entry"
-        loc = s.get("file") or s.get("path") or ""
-        line = s.get("line")
-        loc_str = f" @ {loc}:{line}" if loc and line else (f" @ {loc}" if loc else "")
-        bullets.append(f"  - [{kind}] {name}{loc_str}")
-    if len(surfaces) > MAX_LIST_PREVIEW:
-        bullets.append(f"  ... and {len(surfaces) - MAX_LIST_PREVIEW} more")
-    obs_value = (
-        f"attack_surface: {len(surfaces)} entry point(s)\n"
-        + ("\n".join(bullets) if bullets else "  (none)")
+    """Map ``attack_surface`` to TEXT payload (entry-point catalog).
+
+    audit_mcp returns the list under the key ``entrypoints`` with
+    fields ``{node_id, kind, trust_level, asset_value, description}``
+    — NOT the ``surfaces|entries|results`` + ``name|symbol|route``
+    shape the adapter previously assumed. As a result every call to
+    attack_surface rendered as "0 entry points" even though firefox
+    has 5,195 of them and openjpeg has 37.
+
+    Output groups entries by ``kind`` (api / user_input / third_party
+    / etc.) so the agent gets a digestible by-kind breakdown rather
+    than 5,000 raw lines, and includes the trust_level + asset_value
+    next to each entry so the agent can prioritize.
+    """
+    from collections import Counter  # noqa: PLC0415
+
+    # Accept both the canonical 'entrypoints' key (current audit_mcp)
+    # and the legacy 'surfaces|entries|results' keys (older servers,
+    # cached fixtures, possible future renames).
+    entries = _list_or_empty(
+        raw, "entrypoints", "surfaces", "entries", "results",
     )
+    entries = [e for e in entries if isinstance(e, dict)]
+
+    by_kind: dict[str, list[dict[str, Any]]] = {}
+    for e in entries:
+        by_kind.setdefault(e.get("kind") or "unknown", []).append(e)
+
+    # Render: kind summary first, then a sample of entries per kind so
+    # the agent sees diversity without paying for 5,000 bullets.
+    PER_KIND_PREVIEW = 8
+    sections: list[str] = [
+        f"attack_surface: {len(entries)} entry point(s) across "
+        f"{len(by_kind)} kind(s) — "
+        + ", ".join(f"{k}:{len(v)}" for k, v in sorted(by_kind.items(), key=lambda kv: -len(kv[1])))
+    ]
+    for kind, kentries in sorted(by_kind.items(), key=lambda kv: -len(kv[1])):
+        sections.append("")
+        sections.append(f"## {kind} ({len(kentries)})")
+        # Asset/trust distribution at the per-kind level
+        trust = Counter(e.get("trust_level") or "?" for e in kentries)
+        asset = Counter(e.get("asset_value") or "?" for e in kentries)
+        sections.append(
+            f"  trust: {dict(trust.most_common())}  asset: {dict(asset.most_common())}"
+        )
+        for e in kentries[:PER_KIND_PREVIEW]:
+            node_id = e.get("node_id") or e.get("name") or e.get("symbol") or "<?>"
+            desc = (e.get("description") or "").strip()
+            tl = e.get("trust_level") or ""
+            av = e.get("asset_value") or ""
+            tags = " ".join(f"[{t}]" for t in (tl, av) if t)
+            line = f"  - {node_id}"
+            if tags:
+                line += f" {tags}"
+            if desc:
+                line += f" — {desc[:120]}"
+            sections.append(line)
+        if len(kentries) > PER_KIND_PREVIEW:
+            sections.append(f"  ... and {len(kentries) - PER_KIND_PREVIEW} more {kind} entries")
+
+    obs_value = "\n".join(sections)
+
     payload: dict[str, Any] = {
         "text": obs_value,
         "tool": f"{ctx.mcp_server_id}.{ctx.tool_name}",
-        "surfaces": surfaces,
-        "total": len(surfaces),
+        "entrypoints": entries,
+        "by_kind": {k: len(v) for k, v in by_kind.items()},
+        "total": len(entries),
         "source_provenance": provenance_stamp(ctx),
     }
     return AdapterResult(
         payload_kind=PayloadKind.TEXT,
         payload=payload,
         observables_delta={obs_key_for(ctx): obs_value},
-        summary=f"{len(surfaces)} attack surface entries",
+        summary=(
+            f"{len(entries)} attack-surface entrypoints "
+            f"({len(by_kind)} kinds)"
+        ),
     )
 
 
