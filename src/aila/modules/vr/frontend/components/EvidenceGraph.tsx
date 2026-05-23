@@ -21,9 +21,11 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
  *  on the edges layer — same gotcha as Recharts, per CLAUDE.md
  *  mistake #4).
  *
- *  v0.5 backend gap: the platform doesn't expose a project-evidence-
- *  graph endpoint yet. Callers pass `nodes` + `edges` directly so this
- *  component is shippable now and the endpoint can backfill later. */
+ *  Server-side layout is now authoritative: callers can pass
+ *  `serverPositions` (from `useEvidenceGraph` → `EvidenceGraphSnapshot`)
+ *  and the component will honour the server-computed x/y. The
+ *  client-side concentric layout below kicks in only when the snapshot
+ *  is unavailable (e.g. ephemeral cards built from local data). */
 
 export type GraphNodeKind =
   | "hypothesis"

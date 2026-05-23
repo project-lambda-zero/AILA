@@ -132,10 +132,14 @@ export function FuzzCrashDetailPage() {
         </div>
       </dl></AilaCard>
 
-      {/* Triage chain — narrative of turns that touched this crash.
-          Per 08_FRONTEND_UX.md §1.6 / §2.4. The reasoning engine writes
-          turn→crash references on each triage step; this section walks
-          them in order. Backend reference table is pending. */}
+      {/* Triage chain — narrative of triage events that touched this crash.
+          Per 08_FRONTEND_UX.md §1.6 / §2.4. Real per-turn reasoning rows
+          (decompile_function / data_flow_trace / hypothesis_create /
+          exploitability_assess) still require a crash → reasoning-turn join
+          table — backend pending. What we DO render today is the
+          triage_chain on the crash row itself: every verdict change with
+          actor, timestamp, reason, and free-form notes (migration 053 +
+          POST /vr/fuzz/crashes/:id/triage). */}
       <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
         Triage chain
       </h2>
@@ -156,31 +160,66 @@ export function FuzzCrashDetailPage() {
             </span>
           </div>
         </li>
-        {crash.triage_verdict !== "untriaged" && (
-          <li className="border border-border-default rounded px-3 py-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <AilaBadge severity="info" size="sm">
-                step 2
-              </AilaBadge>
-              <span className="font-mono text-foreground">
-                crash_triage
-              </span>
-              <span className="text-text-muted">
-                verdict: <strong>{crash.triage_verdict}</strong>
-              </span>
-              {crash.triage_reason && (
-                <span className="text-text-muted">
-                  — {crash.triage_reason}
+        {(crash.triage_chain ?? []).map((entry, i) => {
+          const e = entry as {
+            verdict?: string;
+            actor?: string;
+            ts?: string;
+            reason?: string;
+            notes?: string;
+          };
+          const sev = e.verdict === "security_relevant"
+            ? "critical"
+            : e.verdict === "likely_harmless"
+              ? "low"
+              : e.verdict === "duplicate"
+                ? "info"
+                : e.verdict === "needs_manual_review"
+                  ? "medium"
+                  : "info";
+          return (
+            <li
+              key={`triage-${i}`}
+              className="border border-border-default rounded px-3 py-2"
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                <AilaBadge severity={sev} size="sm">
+                  step {2 + i}
+                </AilaBadge>
+                <span className="font-mono text-foreground">
+                  crash_triage
                 </span>
+                {e.verdict && (
+                  <span className="text-text-muted">
+                    verdict: <strong>{e.verdict}</strong>
+                  </span>
+                )}
+                {e.actor && (
+                  <span className="text-text-muted">
+                    by <span className="font-mono">{e.actor}</span>
+                  </span>
+                )}
+                {e.ts && (
+                  <span className="text-text-muted">
+                    {new Date(e.ts).toLocaleString()}
+                  </span>
+                )}
+              </div>
+              {(e.reason || e.notes) && (
+                <div className="mt-1 text-text-muted leading-relaxed">
+                  {e.reason && <span>{e.reason}</span>}
+                  {e.reason && e.notes && <span> · </span>}
+                  {e.notes && <span className="italic">{e.notes}</span>}
+                </div>
               )}
-            </div>
-          </li>
-        )}
+            </li>
+          );
+        })}
         {crash.promoted_to_finding_id && (
           <li className="border border-border-default rounded px-3 py-2">
             <div className="flex items-center gap-2 flex-wrap">
               <AilaBadge severity="low" size="sm">
-                step 3
+                step {2 + (crash.triage_chain?.length ?? 0)}
               </AilaBadge>
               <span className="font-mono text-foreground">
                 promote_to_finding
@@ -192,17 +231,11 @@ export function FuzzCrashDetailPage() {
           </li>
         )}
       </ol>
-      <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40">
-        <AilaBadge severity="info" size="sm">
-          backend pending
-        </AilaBadge>
-        <p className="text-[10px] text-text-muted mt-1">
-          Spec §2.4 calls for per-turn reasoning rows (decompile_function,
-          data_flow_trace, hypothesis_create, exploitability_assess) with
-          jump-to-turn links. Wiring requires a crash → reasoning-turn
-          join table.
-        </p>
-      </div></AilaCard>
+      <p className="mt-2 text-[10px] text-text-muted">
+        Per-turn reasoning rows (decompile_function / data_flow_trace /
+        hypothesis_create / exploitability_assess from §2.4) still
+        require a crash → reasoning-turn join table — backend pending.
+      </p></AilaCard>
 
       {/* LLM one-line summary (§1.6) — derived from the structured
           report; placeholder when not present. */}

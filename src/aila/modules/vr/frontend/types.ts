@@ -625,6 +625,18 @@ export interface VRFuzzCrashSummary {
   discovered_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  // Migration 053 fields — backend ships them, frontend now exposes:
+  reproducer_head_hex?: string | null;            // first N bytes of reproducer as hex
+  reproducer_head_truncated_size?: number | null; // total reproducer size when head is truncated
+  llm_summary?: string | null;                    // one-line LLM-written crash summary
+  triage_chain?: Array<{
+    verdict?: string;
+    actor?: string;
+    ts?: string;
+    reason?: string;
+    notes?: string;
+    [k: string]: unknown;
+  }>;
 }
 
 // ─── MCP server registry projection (operator-visible) ─────────────────
