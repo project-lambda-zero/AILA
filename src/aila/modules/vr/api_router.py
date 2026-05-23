@@ -407,6 +407,15 @@ def _target_summary(record: Any) -> VRTargetSummary:
     if not isinstance(uploaded_filename, str):
         uploaded_filename = None
 
+    # Project per-stage analysis status (migration 060) so UI shows
+    # a stage breakdown alongside the rolled-up analysis_state.
+    stages_payload: dict[str, Any] | None = None
+    try:
+        if record.analysis_stages_json and record.analysis_stages_json != "{}":
+            stages_payload = _json.loads(record.analysis_stages_json)
+    except (ValueError, TypeError):
+        stages_payload = None
+
     return VRTargetSummary(
         id=record.id,
         workspace_id=record.workspace_id,
@@ -427,6 +436,7 @@ def _target_summary(record: Any) -> VRTargetSummary:
             record.analysis_completed_at.isoformat()
             if record.analysis_completed_at else None
         ),
+        analysis_stages=stages_payload,
         tags=tags,
         created_at=record.created_at.isoformat() if record.created_at else None,
         updated_at=record.updated_at.isoformat() if record.updated_at else None,
@@ -1887,6 +1897,80 @@ def create_vr_router() -> APIRouter:
         )
         return DataEnvelope(data={"task_id": handle.task_id, "target_id": target_id})
 
+    @router.post(
+        "/targets/{target_id}/resume-analysis",
+        response_model=DataEnvelope[dict],
+        status_code=status.HTTP_202_ACCEPTED,
+        summary=(
+            "Resume target analysis from the last completed stage. "
+            "Resets any FAILED stages back to PENDING and re-enqueues "
+            "the full ingest → profile → ranking pipeline. Stages "
+            "already DONE are skipped (idempotent — StageTracker)."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def resume_target_analysis(
+        request: Request,
+        target_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        import json as _json
+
+        from aila.api.deps import get_task_queue
+        from aila.modules.vr.contracts.target_stages import StageState
+        from aila.modules.vr.services.stage_tracker import (
+            parse_stages,
+            save_target_stages,
+        )
+
+        from .db_models import VRTargetRecord
+        from .workflow.task import run_target_analysis
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target {target_id} not found.",
+                )
+
+        # Reset FAILED stages to PENDING so the next analyze run picks
+        # them up. DONE stages stay DONE (idempotent skip in tracker).
+        # RUNNING stages stay RUNNING — the reaper will fail them on
+        # timeout if they're actually dead.
+        stages = parse_stages(row.analysis_stages_json)
+        reset_count = 0
+        for stage_name, status_obj in stages.all_stages():
+            if status_obj.state == StageState.FAILED:
+                status_obj.state = StageState.PENDING
+                status_obj.error = None
+                status_obj.started_at = None
+                status_obj.completed_at = None
+                # Keep attempts counter — operator visibility into retry depth.
+                stages.set(stage_name, status_obj)
+                reset_count += 1
+        await save_target_stages(target_id, stages)
+
+        task_queue = get_task_queue("vr", request)
+        handle = await task_queue.submit(
+            track="vr",
+            fn=run_target_analysis,
+            kwargs={"target_id": target_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
+        return DataEnvelope(data={
+            "task_id": handle.task_id,
+            "target_id": target_id,
+            "stages_reset": reset_count,
+            "stages": _json.loads(stages.model_dump_json()),
+        })
 
     @router.post(
         "/targets/{target_id}/upload",

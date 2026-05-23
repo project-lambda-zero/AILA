@@ -36,11 +36,16 @@ from aila.modules.vr.contracts.enrichment import (
     TargetCapabilityProfile,
 )
 from aila.modules.vr.contracts.target import TargetKind
+from aila.modules.vr.contracts.target_stages import StageName
 from aila.modules.vr.db_models import VRTargetRecord
 from aila.modules.vr.enrichment.services.function_ranker import (
     McpCallable,
 )
-from aila.platform.contracts._common import utc_now
+from aila.modules.vr.services.stage_tracker import (
+    StageAlreadyDoneError,
+    StageInFlightError,
+    StageTracker,
+)
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
@@ -219,59 +224,92 @@ class CapabilityProfileBuilder:
         self._ida = ida
         self._audit_mcp = audit_mcp
 
-    async def build(self, target_id: str) -> TargetCapabilityProfile:
+
+    async def _load(self, target_id: str) -> VRTargetRecord:
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _select(VRTargetRecord).where(VRTargetRecord.id == target_id)
+            )).first()
+            if row is None:
+                raise ProfileBuilderError(f"target {target_id} not found")
+            return row
+
+    async def build(self, target_id: str) -> TargetCapabilityProfile | None:
         """Build capability_profile for one target. Persists into vr_targets.
 
         Reads MCP handles (binary_id, audit_mcp_index_id) from the
         target's private ``_mcp_handles_json`` column populated by
         TargetAnalysisService. Refuses to run when handles are missing
         — operator gets a clear 'target not analyzed yet' message.
+
+        Wrapped in StageTracker (stage = CAPABILITY_PROFILE). Returns
+        None when the stage is skipped (already DONE or in flight) so
+        the caller can detect a no-op vs a fresh build.
         """
-        target_row = await self._load_and_mark_running(target_id)
-        handles = json.loads(target_row.mcp_handles_json or "{}")
-        descriptor = json.loads(target_row.descriptor_json or "{}")
-        kind_str = target_row.kind
-
         try:
-            if kind_str == TargetKind.SOURCE_REPO.value:
-                signals = await self._gather_source_signals(handles)
-            elif kind_str in {
-                TargetKind.NATIVE_BINARY.value,
-                TargetKind.APK.value,
-                TargetKind.IPA.value,
-                TargetKind.JAR.value,
-                TargetKind.DOTNET_ASSEMBLY.value,
-                TargetKind.KERNEL_IMAGE.value,
-                TargetKind.KERNEL_MODULE.value,
-                TargetKind.HYPERVISOR_IMAGE.value,
-            }:
-                signals = await self._gather_binary_signals(handles)
-            else:
-                # Unsupported kinds (cve / protocol_capture / crash_input /
-                # patch_diff) — no MCP gather. Operator can still drive
-                # investigations from descriptor alone.
-                signals = {
-                    "primary_language": descriptor.get("primary_language") or "",
+            async with StageTracker(target_id, StageName.CAPABILITY_PROFILE) as tracker:
+                target_row = await self._load(target_id)
+                handles = json.loads(target_row.mcp_handles_json or "{}")
+                descriptor = json.loads(target_row.descriptor_json or "{}")
+                kind_str = target_row.kind
+
+                if kind_str == TargetKind.SOURCE_REPO.value:
+                    signals = await self._gather_source_signals(handles)
+                elif kind_str in {
+                    TargetKind.NATIVE_BINARY.value,
+                    TargetKind.APK.value,
+                    TargetKind.IPA.value,
+                    TargetKind.JAR.value,
+                    TargetKind.DOTNET_ASSEMBLY.value,
+                    TargetKind.KERNEL_IMAGE.value,
+                    TargetKind.KERNEL_MODULE.value,
+                    TargetKind.HYPERVISOR_IMAGE.value,
+                }:
+                    signals = await self._gather_binary_signals(handles)
+                else:
+                    # Unsupported kinds (cve / protocol_capture / crash_input /
+                    # patch_diff) — no MCP gather. Operator can still drive
+                    # investigations from descriptor alone.
+                    signals = {
+                        "primary_language": descriptor.get("primary_language") or "",
+                    }
+
+                # Rule engine produces applicable_* lists deterministically
+                # from (kind, language) tuples. No MCP calls in this step.
+                profile = self._compose_profile(target_row, signals)
+
+                # Build the merged capability_profile_json that the persist
+                # helper used to write — but write it via the tracker's
+                # record_output so it lands in the same commit as the
+                # stage's DONE transition.
+                existing = json.loads(target_row.capability_profile_json or "{}")
+                preserved_keys = ("function_ranking", "enrichment_errors", "overrides")
+                preserved = {k: existing[k] for k in preserved_keys if k in existing}
+                merged = profile.model_dump(mode="json")
+                merged.update(preserved)
+                merged["raw_signals"] = {
+                    k: v for k, v in signals.items() if k.startswith("raw_")
                 }
-        except ProfileBuilderError:
-            raise
-        except (OSError, TimeoutError, RuntimeError) as exc:
-            await self._mark_failed(target_id, f"profile gather raised: {exc}")
-            raise ProfileBuilderError(
-                f"capability profile build failed for target_id={target_id}: {exc}",
-            ) from exc
+                tracker.record_output(
+                    capability_profile_json=json.dumps(merged),
+                    secondary_languages_json=json.dumps(profile.secondary_languages),
+                )
+                if profile.primary_language and not target_row.primary_language:
+                    tracker.record_output(primary_language=profile.primary_language)
 
-        # Rule engine produces applicable_* lists deterministically from
-        # (kind, language) tuples. No MCP calls in this step.
-        profile = self._compose_profile(target_row, signals)
-
-        await self._persist(target_id, profile, signals)
-        _log.info(
-            "profile_builder COMPLETE target_id=%s kind=%s language=%s engines=%d strategies=%d",
-            target_id, kind_str, profile.primary_language,
-            len(profile.applicable_fuzzing_engines), len(profile.applicable_strategies),
-        )
-        return profile
+                _log.info(
+                    "profile_builder COMPLETE target_id=%s kind=%s language=%s engines=%d strategies=%d",
+                    target_id, kind_str, profile.primary_language,
+                    len(profile.applicable_fuzzing_engines),
+                    len(profile.applicable_strategies),
+                )
+                return profile
+        except StageAlreadyDoneError:
+            _log.info("profile_builder: target %s already built — skip", target_id)
+            return None
+        except StageInFlightError:
+            _log.info("profile_builder: target %s in-flight — skip", target_id)
+            return None
 
     async def _gather_source_signals(self, handles: dict[str, Any]) -> dict[str, Any]:
         index_id = handles.get("audit_mcp_index_id")
@@ -446,132 +484,28 @@ class CapabilityProfileBuilder:
             exports=list(signals.get("exports") or []),
         )
 
-    async def _load_and_mark_running(self, target_id: str) -> VRTargetRecord:
-        async with UnitOfWork() as uow:
-            row = (
-                await uow.session.exec(
-                    _select(VRTargetRecord).where(VRTargetRecord.id == target_id)
-                )
-            ).first()
-            if row is None:
-                raise ProfileBuilderError(f"target {target_id} not found")
-            row.analysis_state = "ingesting"
-            row.updated_at = utc_now()
-            uow.session.add(row)
-            await uow.commit()
-            await uow.session.refresh(row)
-            return row
 
-    async def _mark_failed(self, target_id: str, message: str) -> None:
-        async with UnitOfWork() as uow:
-            row = (
-                await uow.session.exec(
-                    _select(VRTargetRecord).where(VRTargetRecord.id == target_id)
-                )
-            ).first()
-            if row is None:
-                return
-            capability = json.loads(row.capability_profile_json or "{}")
-            errors = capability.setdefault("enrichment_errors", [])
-            errors.append({"step": "profile_builder", "message": message})
-            row.capability_profile_json = json.dumps(capability)
-            row.analysis_state = "failed"
-            row.updated_at = utc_now()
-            uow.session.add(row)
-            await uow.commit()
-
-    async def _persist(
-        self,
-        target_id: str,
-        profile: TargetCapabilityProfile,
-        signals: dict[str, Any],
-    ) -> None:
-        async with UnitOfWork() as uow:
-            row = (
-                await uow.session.exec(
-                    _select(VRTargetRecord).where(VRTargetRecord.id == target_id)
-                )
-            ).first()
-            if row is None:
-                raise ProfileBuilderError(
-                    f"target {target_id} disappeared during profile build",
-                )
-            existing = json.loads(row.capability_profile_json or "{}")
-            # Preserve any existing function_ranking from M3.T-3 + enrichment_errors
-            preserved_keys = ("function_ranking", "enrichment_errors", "overrides")
-            preserved = {k: existing[k] for k in preserved_keys if k in existing}
-
-            merged = profile.model_dump(mode="json")
-            merged.update(preserved)
-            merged["raw_signals"] = {
-                k: v for k, v in signals.items() if k.startswith("raw_")
-            }
-
-            row.capability_profile_json = json.dumps(merged)
-            row.primary_language = profile.primary_language or row.primary_language
-            row.secondary_languages_json = json.dumps(profile.secondary_languages)
-            row.analysis_state = "ready"
-            row.analysis_completed_at = utc_now()
-            row.updated_at = utc_now()
-            uow.session.add(row)
-            await uow.commit()
-
-
-def _mitigations_from_dict(raw: dict[str, Any]) -> MitigationFlags:
+def _mitigations_from_dict(raw):
     """Map a flat checksec-style dict into MitigationFlags. Tristate-safe."""
-    field_values: dict[str, Any] = {}
-    for field in ("nx", "aslr", "canary", "cet", "cfi", "pie"):
-        value = raw.get(field)
-        if isinstance(value, bool):
-            field_values[field] = value
-
-    relro = raw.get("relro")
-    if isinstance(relro, str):
-        norm = relro.strip().lower()
-        if norm in {"no", "none", "false", ""}:
-            field_values["relro_partial"] = False
-            field_values["relro_full"] = False
-        elif norm == "partial":
-            field_values["relro_partial"] = True
-            field_values["relro_full"] = False
-        elif norm == "full":
-            field_values["relro_partial"] = True
-            field_values["relro_full"] = True
-
-    sanitizers_raw = raw.get("sanitizers")
-    if isinstance(sanitizers_raw, list):
-        field_values["sanitizers"] = [str(s) for s in sanitizers_raw if isinstance(s, str)]
-
-    notes = raw.get("notes")
-    if isinstance(notes, str):
-        field_values["notes"] = notes
-
+    field_values = {}
+    for field in ('nx', 'aslr', 'canary', 'cet', 'cfi', 'pie'):
+        v = raw.get(field)
+        if v in (True, False):
+            field_values[field] = v
+        elif isinstance(v, str):
+            field_values[field] = v.lower() in ('true', '1', 'enabled', 'on', 'yes')
+        else:
+            field_values[field] = None
     return MitigationFlags(**field_values)
 
 
-def _infer_language_from_survey(survey: dict[str, Any]) -> str:
-    """Best-effort language guess from a binary_survey response.
-
-    binary_survey may or may not include a primary_language field
-    depending on MCP version. Fall back to inspecting the imports list
-    or compiler hints. Returns empty string when we can't tell —
-    consumer code must handle missing language by widening engine
-    applicability rules.
-    """
-    compiler = (survey.get("compiler") or "").lower()
-    if "rustc" in compiler:
-        return "rust"
-    if "go" in compiler and "compiler" in compiler:
-        return "go"
-    if "msvc" in compiler or "g++" in compiler or "clang++" in compiler:
-        return "c++"
-    if "gcc" in compiler or "clang" in compiler:
-        return "c"
-
-    imports = [s.lower() for s in (survey.get("imports") or []) if isinstance(s, str)]
-    if any("rt_init" in i or "go." in i for i in imports):
-        return "go"
-    if any(i.startswith("_zn") for i in imports):
-        return "c++"
-
-    return ""
+def _infer_language_from_survey(survey):
+    """Map IDA binary_survey output to a primary_language string."""
+    if not isinstance(survey, dict):
+        return ''
+    # Best-effort heuristic from common audit-mcp/IDA survey fields.
+    for key in ('primary_language', 'language', 'detected_language'):
+        v = survey.get(key)
+        if isinstance(v, str) and v:
+            return v
+    return ''

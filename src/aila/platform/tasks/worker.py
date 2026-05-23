@@ -111,6 +111,24 @@ async def reaper(ctx: dict[str, object]) -> None:
         )
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: orphan running-task sweep failed: %s", exc, exc_info=True)
+    try:
+        # VR target-analysis per-stage reaper (migration 060). Flips
+        # any RUNNING analysis stage that's exceeded its per-stage
+        # timeout (4h for ingestion, 30min for capability_profile +
+        # function_ranking) to FAILED:timeout so the operator can
+        # resume via POST /vr/targets/:id/resume-analysis. Without
+        # this, a crashed mid-stage worker leaves the target stuck
+        # in 'ingesting' forever — exactly the firefox case that
+        # motivated migration 060.
+        from aila.modules.vr.services.stage_tracker import reap_stuck_stages
+        reaped_stages = await reap_stuck_stages()
+        if reaped_stages:
+            _log.warning(
+                "reaper.vr_stages: reaped %d stuck target-analysis stage(s)",
+                reaped_stages,
+            )
+    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+        _log.warning("reaper: vr stage reaper failed: %s", exc, exc_info=True)
 
 
 async def _reconcile_orphan_arq_locks() -> None:

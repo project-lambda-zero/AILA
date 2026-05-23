@@ -61,6 +61,17 @@ class VRTargetRecord(TeamScopedMixin, SQLModel, table=True):
         default="{}",
         sa_column=Column("_mcp_handles_json", Text, nullable=False, server_default="{}"),
     )
+    # Per-stage analysis status (migration 060). Replaces the single
+    # `analysis_state` enum (kept as a roll-up). One JSON object with
+    # three keys (ingestion / capability_profile / function_ranking)
+    # each carrying state + timestamps + attempts + error message.
+    # Mutations go through aila.modules.vr.services.stage_tracker
+    # which handles idempotency, RUNNING-timeout detection, and
+    # serialized commits. See contracts/target_stages.py.
+    analysis_stages_json: str = Field(
+        default="{}",
+        sa_column=Column("analysis_stages_json", Text, nullable=False, server_default="{}"),
+    )
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
     updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 

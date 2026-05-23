@@ -30,8 +30,14 @@ from typing import Any
 
 from sqlmodel import select as _select
 
-from aila.modules.vr.contracts.target import AnalysisState, TargetKind
+from aila.modules.vr.contracts.target import TargetKind
+from aila.modules.vr.contracts.target_stages import StageName
 from aila.modules.vr.db_models import VRTargetRecord
+from aila.modules.vr.services.stage_tracker import (
+    StageAlreadyDoneError,
+    StageInFlightError,
+    StageTracker,
+)
 from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
 from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.contracts._common import utc_now
@@ -68,52 +74,76 @@ class TargetAnalysisService:
         self._audit_mcp = audit_mcp or AuditMcpBridgeTool()
 
     async def analyze(self, target_id: str) -> None:
-        """Run the full ingestion lifecycle for one target.
+        """Run the ingestion stage for one target.
 
-        Idempotent for READY rows. Transitions PENDING / FAILED rows
-        through INGESTING → READY (or → FAILED with a clear message).
+        Uses StageTracker so:
+          - Re-running an already-ingested target is a no-op (idempotent).
+          - Concurrent invocations on the same row refuse the second
+            one (StageInFlightError) rather than racing.
+          - On any uncaught exception the stage is marked FAILED with
+            the error message; the operator can resume via
+            POST /vr/targets/:id/resume-analysis.
+          - The 4-hour timeout (matching _POLL_TIMEOUT_SECONDS) is set
+            on the tracker so the periodic reaper doesn't pre-empt a
+            legitimately long monorepo ingest.
         """
-        await self._mark_ingesting(target_id)
         try:
-            target = await self._load(target_id)
-            kind = TargetKind(target.kind)
-            descriptor = json.loads(target.descriptor_json or "{}")
-            current_handles = json.loads(target.mcp_handles_json or "{}")
+            async with StageTracker(
+                target_id,
+                StageName.INGESTION,
+                stage_timeout_s=_POLL_TIMEOUT_SECONDS,
+            ) as tracker:
+                target = await self._load(target_id)
+                kind = TargetKind(target.kind)
+                descriptor = json.loads(target.descriptor_json or "{}")
+                current_handles = json.loads(target.mcp_handles_json or "{}")
 
-            if kind in _NO_INGEST_KINDS:
-                # Nothing to ingest; just mark ready so dispatchers proceed.
-                await self._mark_ready(target_id, handles={}, language=None)
-                return
+                if kind in _NO_INGEST_KINDS:
+                    # Nothing to ingest — stage just records "done"
+                    # with empty handles; downstream stages can run.
+                    tracker.record_output(mcp_handles_json=json.dumps({}))
+                    return
 
-            handles: dict[str, Any]
-            language: str | None
-            if kind == TargetKind.SOURCE_REPO:
-                handles, language = await self._ingest_source_repo(descriptor)
-            elif kind in {
-                TargetKind.NATIVE_BINARY,
-                TargetKind.KERNEL_IMAGE,
-                TargetKind.KERNEL_MODULE,
-                TargetKind.HYPERVISOR_IMAGE,
-                TargetKind.APK,
-                TargetKind.IPA,
-                TargetKind.JAR,
-                TargetKind.DOTNET_ASSEMBLY,
-            }:
-                handles, language = await self._ingest_binary(
-                    kind, descriptor, current_handles,
-                )
-            else:
-                raise TargetAnalysisError(
-                    f"target kind {kind.value!r} has no ingestion path",
-                )
+                handles: dict[str, Any]
+                language: str | None
+                if kind == TargetKind.SOURCE_REPO:
+                    handles, language = await self._ingest_source_repo(descriptor)
+                elif kind in {
+                    TargetKind.NATIVE_BINARY,
+                    TargetKind.KERNEL_IMAGE,
+                    TargetKind.KERNEL_MODULE,
+                    TargetKind.HYPERVISOR_IMAGE,
+                    TargetKind.APK,
+                    TargetKind.IPA,
+                    TargetKind.JAR,
+                    TargetKind.DOTNET_ASSEMBLY,
+                }:
+                    handles, language = await self._ingest_binary(
+                        kind, descriptor, current_handles,
+                    )
+                else:
+                    raise TargetAnalysisError(
+                        f"target kind {kind.value!r} has no ingestion path",
+                    )
 
-            await self._mark_ready(target_id, handles=handles, language=language)
-        except TargetAnalysisError as exc:
-            await self._mark_failed(target_id, str(exc))
-            raise
-        except (OSError, RuntimeError, TimeoutError) as exc:
-            await self._mark_failed(target_id, f"{type(exc).__name__}: {exc}")
-            raise
+                # Persist the work-product in the SAME commit that flips
+                # the stage to DONE — no crash window between writing
+                # handles and recording success.
+                extras: dict[str, Any] = {"mcp_handles_json": json.dumps(handles)}
+                if language:
+                    # primary_language is set only when unset on the row;
+                    # let the tracker's save layer handle the existing-
+                    # value preserve by passing only when populated.
+                    record = await self._load(target_id)
+                    if not record.primary_language:
+                        extras["primary_language"] = language
+                tracker.record_output(**extras)
+        except StageAlreadyDoneError:
+            _log.info("vr.target_analysis: target %s already ingested — skip", target_id)
+            return
+        except StageInFlightError:
+            _log.info("vr.target_analysis: target %s ingestion in flight — skip", target_id)
+            return
 
     # ─── per-kind ingestion ─────────────────────────────────────────────
 
@@ -330,56 +360,3 @@ class TargetAnalysisService:
                 raise TargetAnalysisError(f"target {target_id} not found")
             return row
 
-    async def _mark_ingesting(self, target_id: str) -> None:
-        async with UnitOfWork() as uow:
-            row = (await uow.session.exec(
-                _select(VRTargetRecord).where(VRTargetRecord.id == target_id),
-            )).first()
-            if row is None:
-                raise TargetAnalysisError(f"target {target_id} not found")
-            now = utc_now()
-            row.analysis_state = AnalysisState.INGESTING.value
-            row.analysis_state_message = None
-            row.analysis_started_at = now
-            row.updated_at = now
-            uow.session.add(row)
-            await uow.session.commit()
-
-    async def _mark_ready(
-        self,
-        target_id: str,
-        *,
-        handles: dict[str, Any],
-        language: str | None,
-    ) -> None:
-        async with UnitOfWork() as uow:
-            row = (await uow.session.exec(
-                _select(VRTargetRecord).where(VRTargetRecord.id == target_id),
-            )).first()
-            if row is None:
-                raise TargetAnalysisError(f"target {target_id} not found")
-            now = utc_now()
-            row.analysis_state = AnalysisState.READY.value
-            row.analysis_state_message = None
-            row.analysis_completed_at = now
-            row.mcp_handles_json = json.dumps(handles)
-            if language and not row.primary_language:
-                row.primary_language = language
-            row.updated_at = now
-            uow.session.add(row)
-            await uow.session.commit()
-
-    async def _mark_failed(self, target_id: str, message: str) -> None:
-        async with UnitOfWork() as uow:
-            row = (await uow.session.exec(
-                _select(VRTargetRecord).where(VRTargetRecord.id == target_id),
-            )).first()
-            if row is None:
-                return  # row vanished mid-flight; nothing to do
-            now = utc_now()
-            row.analysis_state = AnalysisState.FAILED.value
-            row.analysis_state_message = message
-            row.analysis_completed_at = now
-            row.updated_at = now
-            uow.session.add(row)
-            await uow.session.commit()

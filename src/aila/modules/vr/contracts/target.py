@@ -151,6 +151,16 @@ class VRTargetSummary(BaseModel):
     analysis_state_message: str | None = None
     analysis_started_at: str | None = None
     analysis_completed_at: str | None = None
+    analysis_stages: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Per-stage analysis status — ingestion / capability_profile / "
+            "function_ranking. Each stage carries its own state (pending / "
+            "running / done / failed), started_at, completed_at, attempts, "
+            "and error message. UI uses this to show progress + offer "
+            "stage-level resume. Migration 060 + StageTracker."
+        ),
+    )
     tags: list[TargetTag] = Field(default_factory=list)
     created_at: str | None = None
     updated_at: str | None = None
