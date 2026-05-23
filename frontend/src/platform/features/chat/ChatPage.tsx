@@ -456,35 +456,24 @@ export function ChatPage() {
 
   return (
     <div className="flex flex-col gap-4 p-3 sm:p-4 lg:p-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="font-mono text-xl font-semibold text-text">Chat</h1>
-        <p className="font-mono text-sm text-text-muted">
-          Natural-language Q&amp;A with the AILA platform.{" "}
-          {sessionParam && (
-            <span className="text-text-muted">
-              Session: <code className="text-text">{sessionParam.slice(0, 8)}…</code>
+      {sessionsQuery.isError && (
+        <div
+          className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive"
+          data-testid="chat-sessions-error"
+        >
+          {describeError(sessionsQuery.error)}
+          {describeErrorHint(sessionsQuery.error) && (
+            <span className="ml-2 text-text-muted">
+              {describeErrorHint(sessionsQuery.error)}
             </span>
           )}
+        </div>
+      )}
+      {sessionParam && (
+        <p className="font-mono text-[10px] text-text-muted">
+          Started {formatTimestamp(sessions.find((s) => s.session_id === sessionParam)?.created_at)}
         </p>
-        {sessionsQuery.isError && (
-          <div
-            className="mt-2 rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive"
-            data-testid="chat-sessions-error"
-          >
-            {describeError(sessionsQuery.error)}
-            {describeErrorHint(sessionsQuery.error) && (
-              <span className="ml-2 text-text-muted">
-                {describeErrorHint(sessionsQuery.error)}
-              </span>
-            )}
-          </div>
-        )}
-        {sessionParam && (
-          <p className="font-mono text-[10px] text-text-muted">
-            Started {formatTimestamp(sessions.find((s) => s.session_id === sessionParam)?.created_at)}
-          </p>
-        )}
-      </div>
+      )}
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch min-h-[60vh]">
         <SessionsSidebar

@@ -40,11 +40,6 @@ export function SbdNfrWorkspacePage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-3">
             <p className="font-mono text-xs uppercase tracking-[0.3em] text-amber-500/70">Secure by Design NFR</p>
-            <h1 className="text-3xl font-semibold tracking-tight text-amber-100">Assessment workflow and interactive schema editor</h1>
-            <p className="max-w-3xl text-sm leading-6 text-amber-100/70">
-              Run NFR assessments, review classification results, and maintain the live questionnaire schema.
-              This module is now centered on the session workflow under <code>/assessments</code>; the old document workbook flow is gone.
-            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Link className={buttonVariants({ variant: "default" })} to="/assessments">

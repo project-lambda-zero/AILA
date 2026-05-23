@@ -109,15 +109,6 @@ export function TargetsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold font-mono text-foreground">
-            Targets
-          </h1>
-          <p className="text-sm text-text-muted mt-1">
-            Persistent target identities (D-50). Each lives in a workspace
-            and carries a capability_profile populated by M3.T enrichment.
-          </p>
-        </div>
         <button
           type="button"
           onClick={() => setShowForm((v) => !v)}

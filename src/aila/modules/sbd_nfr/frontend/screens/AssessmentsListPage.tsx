@@ -483,7 +483,6 @@ export function AssessmentsListPage() {
       padding="lg"
       className="flex flex-col md:flex-row md:items-center md:justify-between gap-4" techBorder glow><div className="flex flex-col gap-2 flex-1">
         <p className="font-mono text-xs uppercase tracking-wider text-text-muted">Secure by Design</p>
-        <h1 className="font-display text-2xl text-text">Assessments</h1>
         <p className="text-sm text-text-muted">
           Run NFR assessments, review classification outcomes, and move sessions toward architect approval without losing the thread of recent work.
         </p>
