@@ -33,16 +33,6 @@ export function McpServersPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          MCP Servers
-        </h1>
-        <p className="text-sm text-text-muted mt-1">
-          AILA delegates all cloning, indexing, disassembly, and analysis to
-          these MCP servers. Configure them per workstation. Health auto-refreshes
-          every 5 seconds.
-        </p>
-      </div>
 
       {servers.map((s) => (
         <ServerCard key={s.id} server={s} />

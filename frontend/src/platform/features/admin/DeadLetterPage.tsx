@@ -258,15 +258,6 @@ export function DeadLetterPage() {
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       {/* Header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-mono text-xl font-semibold text-text flex items-center gap-2">
-            <Skull className="h-5 w-5 text-critical" />
-            Dead Letter Queue
-          </h1>
-          <p className="font-mono text-sm text-text-muted mt-0.5">
-            Tasks that exhausted retries. Inspect, fix the root cause, then requeue.
-          </p>
-        </div>
       </div>
 
       {/* Metric cards */}

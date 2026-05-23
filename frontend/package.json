@@ -31,8 +31,6 @@
     "@tailwindcss/vite": "catalog:vite",
     "@tanstack/react-query": "catalog:query",
     "@tanstack/react-table": "catalog:query",
-    "@tsparticles/react": "catalog:particles",
-    "@tsparticles/slim": "catalog:particles",
     "@xyflow/react": "catalog:flow",
     "class-variance-authority": "catalog:ui",
     "clsx": "catalog:ui",

@@ -482,15 +482,6 @@ export function AutomationPage() {
   return (
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-mono text-xl font-semibold text-text flex items-center gap-2">
-            <Robot className="h-5 w-5 text-accent" />
-            Automation Schedules
-          </h1>
-          <p className="font-mono text-sm text-text-muted mt-0.5">
-            Cron-driven actions registered by platform modules.
-          </p>
-        </div>
         <CreateScheduleDialog
           actions={actions}
           onCreate={(req) => createMutation.mutateAsync(req)}

@@ -71,11 +71,6 @@ catalogs:
   maps:
     leaflet: 1.9.4
     react-leaflet: 5.0.0
-
-  particles:
-    "@tsparticles/react": 3.0.0
-    "@tsparticles/slim": 3.9.1
-
   data:
     papaparse: 5.5.3
     html2canvas: 1.4.1

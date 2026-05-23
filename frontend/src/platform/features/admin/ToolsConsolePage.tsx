@@ -403,15 +403,6 @@ export function ToolsConsolePage() {
   return (
     <div className="flex flex-col gap-6 p-4 lg:p-6 h-full">
       {/* Page header */}
-      <div className="flex flex-col gap-1">
-        <h1 className="font-mono text-xl font-semibold text-foreground flex items-center gap-2">
-          <Wrench className="h-5 w-5 text-accent" />
-          Tools Console
-        </h1>
-        <p className="font-mono text-sm text-muted-foreground">
-          Live invocation of registered platform tools. Invoke requires operator role.
-        </p>
-      </div>
 
       {/* Two-column split */}
       <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 min-h-0 flex-1">

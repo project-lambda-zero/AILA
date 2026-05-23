@@ -93,14 +93,6 @@ export function ProjectsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold font-mono text-foreground">
-            Vulnerability Research
-          </h1>
-          <p className="text-sm text-text-muted mt-1">
-            Manage n-day reproduction and disclosure projects.
-          </p>
-        </div>
         <button
           type="button"
           onClick={() => navigate("/vr/projects/new")}

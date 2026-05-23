@@ -45,17 +45,6 @@ export function AuditLogPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          Audit log
-        </h1>
-        <p className="text-sm text-text-muted mt-1">
-          Per §6.2: every state-changing action on a VR engagement —
-          operator pauses / resumes / context injections + delegated MCP
-          calls. Reading the per-investigation timeline plus this log
-          gives a complete who-did-what-when picture.
-        </p>
-      </div>
 
       <AilaCard className="border-dashed" techBorder glow><AilaBadge severity="info" size="sm">
         backend pending

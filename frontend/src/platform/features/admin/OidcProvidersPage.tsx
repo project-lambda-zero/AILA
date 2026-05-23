@@ -679,16 +679,6 @@ export function OidcProvidersPage() {
   return (
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-mono text-xl font-semibold text-text flex items-center gap-2">
-            <Key className="h-5 w-5 text-accent" />
-            OIDC Providers
-          </h1>
-          <p className="font-mono text-sm text-text-muted mt-0.5">
-            Microsoft Azure AD, Google, and generic OIDC providers. Client secrets are
-            stored encrypted and never returned.
-          </p>
-        </div>
         <CreateProviderDialog
           onCreate={(req) => createMutation.mutateAsync(req)}
           isPending={createMutation.isPending}

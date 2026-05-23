@@ -234,12 +234,6 @@ export function TasksPage() {
   return (
     <div className="flex flex-col gap-4 p-3 sm:p-4 lg:p-6">
       {/* Page header */}
-      <div className="flex flex-col gap-1">
-        <h1 className="font-mono text-xl font-semibold text-text">Tasks</h1>
-        <p className="font-mono text-sm text-text-muted">
-          Monitor running, queued, and completed scan tasks.
-        </p>
-      </div>
 
       {/* Filters */}
       <AilaCard variant="default" padding="md" techBorder glow><div className="flex flex-wrap items-center gap-3">

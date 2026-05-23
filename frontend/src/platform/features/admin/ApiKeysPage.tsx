@@ -521,15 +521,6 @@ export function ApiKeysPage() {
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       {/* Page header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-mono text-xl font-semibold text-text flex items-center gap-2">
-            <Key className="h-5 w-5 text-accent" />
-            API Keys
-          </h1>
-          <p className="font-mono text-sm text-text-muted mt-0.5">
-            Manage platform API keys. Raw keys are shown only at creation time.
-          </p>
-        </div>
 
         <CreateKeyDialog
           onCreate={(req) => createMutation.mutateAsync(req)}

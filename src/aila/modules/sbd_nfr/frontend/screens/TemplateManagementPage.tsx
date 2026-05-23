@@ -174,12 +174,6 @@ export function TemplateManagementPage() {
     <div className="template-page">
       {/* Header */}
       <div className="template-page__header">
-        <div>
-          <h1 className="template-page__title">Assessment Templates</h1>
-          <p className="template-page__subtitle">
-            Reusable starting points cloned from approved assessments.
-          </p>
-        </div>
         <div className="template-page__header-actions">
           <Link className={buttonVariants({ variant: "outline" })} to="/assessments">
             All Assessments

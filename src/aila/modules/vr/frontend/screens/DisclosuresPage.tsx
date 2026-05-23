@@ -48,15 +48,6 @@ export function DisclosuresPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">
-          Disclosure submissions
-        </h1>
-        <p className="text-sm text-text-muted mt-1">
-          Multi-track disclosure lifecycle (GA-31). One finding can be routed
-          to multiple tracks in parallel; each tracks its own state.
-        </p>
-      </div>
 
       <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
         <label className="text-sm text-text-muted">Track:</label>

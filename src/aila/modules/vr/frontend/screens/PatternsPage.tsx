@@ -60,14 +60,6 @@ export function PatternsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold font-mono text-foreground">Patterns</h1>
-        <p className="text-sm text-text-muted mt-1">
-          Knowledge Transfer catalog (GA-41). Auto-extracted patterns enter
-          status:draft scope:local; operator reviews + promotes to wider scope
-          via the detail page.
-        </p>
-      </div>
 
       <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
         <label className="text-sm text-text-muted">Workspace:</label>

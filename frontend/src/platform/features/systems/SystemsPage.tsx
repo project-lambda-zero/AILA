@@ -128,12 +128,6 @@ export function SystemsPage() {
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       {/* Page header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-mono text-xl font-semibold text-text">Systems</h1>
-          <p className="font-mono text-sm text-text-muted mt-0.5">
-            Manage and inspect SSH-reachable fleet targets.
-          </p>
-        </div>
         <div className="flex gap-2">
           {canOperate ? (
             <>
