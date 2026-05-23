@@ -48,6 +48,7 @@ COMMAND="${1:-start}"
 : "${IDA_HEADLESS_DIR:=../ida-headless-mcp-exp}"
 : "${AILA_START_FRONTEND:=1}"
 : "${AILA_START_AUDIT_MCP:=1}"
+: "${AUDIT_MCP_WORKERS:=4}"
 : "${AILA_START_IDA_HEADLESS:=1}"
 
 RUN_DIR=".run"
@@ -330,9 +331,10 @@ mkdir -p "$RUN_DIR"
 
 # ── audit-mcp (in its own repo) ─────────────────────────────────────────────
 if [[ "$AILA_START_AUDIT_MCP" == "1" && -d "$AUDIT_MCP_DIR" ]]; then
-  echo "[aila] Starting audit-mcp..."
+  echo "[aila] Starting audit-mcp (workers=${AUDIT_MCP_WORKERS})..."
   (
     cd "$AUDIT_MCP_DIR" && \
+    AUDIT_MCP_WORKERS="$AUDIT_MCP_WORKERS" \
     spawn "audit-mcp" \
       -m audit_mcp --mode http --port "$AUDIT_MCP_PORT" --host 127.0.0.1
   )
