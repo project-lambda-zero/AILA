@@ -12,6 +12,7 @@ import { TimelineViewer } from "../components/TimelineViewer";
 import { VIATable } from "../components/VIATable";
 import { WriteUpViewer } from "../components/WriteUpViewer";
 import { useForensicsProject } from "../queries";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 type TabId = "network" | "registry" | "timeline" | "via" | "questions" | "writeups";
 
@@ -28,6 +29,12 @@ export function ProjectDetailsPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const { data: project, isLoading, isError } = useForensicsProject(projectId ?? "");
+
+  useUpdatePageHeader({
+    title: project ? `${project.name} — Details` : undefined,
+    subtitle: undefined,
+    status: null,
+  });
   const [activeTab, setActiveTab] = useState<TabId>("network");
 
   if (!projectId) {
@@ -47,14 +54,6 @@ export function ProjectDetailsPage() {
   return (
     <div className="space-y-4 bg-surface text-foreground p-4 rounded-[var(--radius-md)] border border-border">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold font-mono text-card-foreground">
-            {project.name} — Details
-          </h1>
-          <p className="text-sm text-text-muted mt-1">
-            Detailed analysis results and investigation outputs.
-          </p>
-        </div>
         <button
           type="button"
           onClick={() => navigate(`/forensics/projects/${projectId}`)}

@@ -11,6 +11,7 @@ import {
   useWizardSessionDetail,
 } from "../queries";
 import { WizardSubtaskPanel } from "../wizard/WizardSubtaskPanel";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -179,6 +180,14 @@ export function ArchitectReviewPage() {
   const submitForReview = useSubmitForReview();
   const approveSession = useApproveSession();
 
+  useUpdatePageHeader({
+    title: sessionQuery.data?.session?.project_name,
+    subtitle: sessionQuery.data?.session
+      ? `${sessionQuery.data.session.requestor_name}${sessionQuery.data.session.business_unit ? ` · ${sessionQuery.data.session.business_unit}` : ''}`
+      : undefined,
+    status: null,
+  });
+
   const [actionError, setActionError] = useState<string | null>(null);
 
   if (sessionQuery.isLoading) return <ReviewSkeleton />;
@@ -230,15 +239,6 @@ export function ArchitectReviewPage() {
       {/* Header */}
       <div className="architect-review__header">
         <div className="architect-review__title-row">
-          <div>
-            <h1 className="architect-review__title">{session.project_name}</h1>
-            <p className="architect-review__meta">
-              {session.requestor_name}
-              {session.business_unit ? ` · ${session.business_unit}` : ""}
-              {" · "}
-              {formatDate(session.updated_at)}
-            </p>
-          </div>
           <div className="architect-review__header-badges">
             <AilaBadge severity={statusSeverity(status)}>
               {STATUS_LABELS[status] ?? status}

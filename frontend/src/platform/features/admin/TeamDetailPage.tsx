@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { authorizedRequestJson } from "@platform/api/http";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -485,6 +486,12 @@ export function TeamDetailPage() {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["platform", "admin-teams"] });
+
+  useUpdatePageHeader({
+    title: detail?.team?.name,
+    subtitle: detail?.team?.description || undefined,
+    status: null,
+  });
     },
   });
 
@@ -564,14 +571,6 @@ export function TeamDetailPage() {
       {detail && (
         <>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h1 className="font-mono text-xl font-semibold text-text">
-                {detail.team.name}
-              </h1>
-              <p className="font-mono text-sm text-text-muted mt-0.5">
-                {detail.team.description || "No description"}
-              </p>
-            </div>
             <div className="flex gap-2">
               <RenameTeamDialog
                 team={detail.team}
