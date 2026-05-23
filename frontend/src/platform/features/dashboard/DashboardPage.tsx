@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import { SquaresFour } from "@phosphor-icons/react";
 
 import { Button } from "@/components/ui/button";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { initModuleWidgets, getWidgetById } from "./widgetRegistry";
@@ -114,29 +115,31 @@ export function DashboardPage() {
 
   const currentLayout = localLayout ?? serverLayout;
 
+  // Hoist the page-level actions (Add Widget when editing + EditModeToggle)
+  // into the PageShell sticky header via useUpdatePageHeader, so the
+  // controls sit alongside the page title in the global cyber-tech bar.
+  useUpdatePageHeader({
+    actions: (
+      <>
+        {editMode && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPickerOpen(true)}
+          >
+            <Plus className="h-4 w-4 mr-1" />
+            Add Widget
+          </Button>
+        )}
+        <EditModeToggle
+          editMode={editMode}
+          onToggle={() => setEditMode((prev) => !prev)}
+        />
+      </>
+    ),
+  });
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold text-foreground">Dashboard</h1>
-        <div className="flex items-center gap-2">
-          {editMode && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPickerOpen(true)}
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              Add Widget
-            </Button>
-          )}
-          <EditModeToggle
-            editMode={editMode}
-            onToggle={() => setEditMode((prev) => !prev)}
-          />
-        </div>
-      </div>
-
       {/* Loading state */}
       {isLoading && (
         <div className="p-4">
