@@ -107,6 +107,7 @@ export function AppSidebar({ moduleSpecs }: AppSidebarProps) {
                             <SidebarMenu>
                               {subgroup.items.map((item) => {
                                 const isActive = item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to);
+                                const Icon = item.icon;
                                 return (
                                   <SidebarMenuItem key={item.id}>
                                     <SidebarMenuButton
@@ -114,9 +115,10 @@ export function AppSidebar({ moduleSpecs }: AppSidebarProps) {
                                       isActive={isActive}
                                       render={<Link to={item.to} />}
                                     >
-                                    <span>{item.label}</span>
-                                  </SidebarMenuButton>
-                                </SidebarMenuItem>
+                                      {Icon && <Icon size={20} weight="regular" />}
+                                      <span>{item.label}</span>
+                                    </SidebarMenuButton>
+                                  </SidebarMenuItem>
                                 );
                               })}
                             </SidebarMenu>
