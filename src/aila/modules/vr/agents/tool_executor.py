@@ -310,12 +310,13 @@ class ToolExecutor:
                 "_directive.pivot": pivot_hint,
             }
         else:
-            # Non-survey call: clear any prior pivot directive so it
-            # doesn't keep showing up after the agent has already
-            # complied. Merging None into observables doesn't delete,
-            # so we mark with explicit empty string; render_case_model
-            # skips empty values.
-            if (server_id, tool_name) not in self._SURVEY_TOOLS:
+            # Clear the pivot directive ONLY when the agent satisfied
+            # it by calling an actual read/trace tool. Surveys obviously
+            # don't satisfy a pivot, but neither does search_functions
+            # / search_macros / semantic_search — those find candidates
+            # without reading any source body. The directive stays put
+            # until the agent commits to a real read.
+            if (server_id, tool_name) in self._READ_TOOLS:
                 adapter_result.observables_delta = {
                     **(adapter_result.observables_delta or {}),
                     "_directive.pivot": "",
@@ -508,6 +509,30 @@ class ToolExecutor:
         ("ida_headless", "segments"),
     })
 
+    # Tools whose call genuinely satisfies a "READ SOURCE / TRACE FLOW"
+    # pivot directive. Only these clear `_directive.pivot`. Without this
+    # gate, any non-survey call (e.g. semantic_search, search_macros,
+    # search_functions) would silently drop the pivot even though no
+    # function body was actually read.
+    _READ_TOOLS: frozenset[tuple[str, str]] = frozenset({
+        ("audit_mcp", "read_function"),
+        ("audit_mcp", "extract_class"),
+        ("audit_mcp", "taint_paths_to"),
+        ("audit_mcp", "callers_of"),
+        ("audit_mcp", "callees_of"),
+        ("audit_mcp", "entrypoint_paths_to"),
+        ("audit_mcp", "paths_between"),
+        ("audit_mcp", "def_use"),
+        ("audit_mcp", "find_related"),
+        ("ida_headless", "decompile"),
+        ("ida_headless", "disassemble_function"),
+        ("ida_headless", "pseudocode_slice_view"),
+        ("ida_headless", "interprocedural_taint"),
+        ("ida_headless", "trace_dataflow"),
+        ("ida_headless", "xrefs_to"),
+        ("ida_headless", "xrefs_from"),
+    })
+
     async def _survey_streak_hint(
         self,
         branch_id: str,
@@ -615,6 +640,14 @@ class ToolExecutor:
             )).all()
         return [(r.payload_kind, r.payload_json or "") for r in rows]
 
+    # Cap on case_state.observables size. Each tool call typically
+    # adds 1-2 keys; an investigation that runs for 200+ turns can
+    # accumulate thousands of stale observable entries and balloon
+    # the case_state_json blob into megabytes. 200 is enough for
+    # ~100 turns of context with ~2 keys/turn and keeps the column
+    # bounded. `_directive.*` keys are kept regardless of count.
+    _MAX_OBSERVABLES: int = 200
+
     async def _merge_observables(
         self,
         branch_id: str,
@@ -642,6 +675,22 @@ class ToolExecutor:
             if not isinstance(observables, dict):
                 observables = {}
             observables.update({str(k): v for k, v in delta.items()})
+            # Bound the dict size. Eviction strategy: keep ALL
+            # `_directive.*` keys (steering must survive), drop the
+            # OLDEST non-directive keys by dict insertion order
+            # (Python 3.7+ guarantees insertion order in dicts).
+            if len(observables) > self._MAX_OBSERVABLES:
+                directives = {
+                    k: v for k, v in observables.items()
+                    if str(k).startswith("_directive.")
+                }
+                non_directives = [
+                    (k, v) for k, v in observables.items()
+                    if not str(k).startswith("_directive.")
+                ]
+                keep_n = max(0, self._MAX_OBSERVABLES - len(directives))
+                kept = dict(non_directives[-keep_n:])
+                observables = {**kept, **directives}
             case_state["observables"] = observables
             branch.case_state_json = json.dumps(case_state)
             branch.updated_at = utc_now()

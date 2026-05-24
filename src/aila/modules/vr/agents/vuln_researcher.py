@@ -512,6 +512,7 @@ class HonestVulnResearcher:
         operator_section = _render_operator_messages_section(
             pending_operator_messages or [],
         )
+        directive_section = _render_active_directives_section(case_state)
         cve_intel_section = _render_cve_intel_section(cve_intel or [])
         target_section = _render_target_snapshot_section(target_snapshot or {})
         prior_submissions_section = _render_prior_submissions_section(
@@ -523,9 +524,9 @@ class HonestVulnResearcher:
         )
         target_kind = (target_snapshot or {}).get("kind")
         primary_language = (target_snapshot or {}).get("primary_language")
-
         return (
             f"{operator_section}"
+            f"{directive_section}"
             f"# Investigation\n\n"
             f"Title: {inv.title}\n"
             f"Kind: {inv.kind}\n"
@@ -549,28 +550,35 @@ class HonestVulnResearcher:
             f"system prompt schema."
         )
 
+    # How many turns an operator message remains "active" in the prompt.
+    # After (turn - delivered_at_turn) > _OPERATOR_MESSAGE_TTL_TURNS the
+    # message is filtered out — the operator's steering had a chance to
+    # reach the agent across N turns; after that it's noise. Without
+    # this, a single message could ride along for hundreds of turns
+    # alongside contradictory later steering.
+    _OPERATOR_MESSAGE_TTL_TURNS: int = 8
+
     async def _consume_pending_operator_messages(
         self,
         turn_number: int,
     ) -> list[dict[str, Any]]:
         """Load recent operator messages for this investigation.
 
-        Behavior (post-fix): EVERY branch sees EVERY operator message
-        posted to the investigation, and messages stay visible across
-        turns. Without this, the previous one-shot per-branch delivery
-        meant:
-          - a steering message posted to the primary branch never
-            reached the sibling personas at all (the WHERE clause was
-            branch_id == self.branch_id);
-          - the message was consumed (stamped at_turn) on its first
-            read so by turn N+1 the agent had forgotten it — agents
-            drifted back to the rejected behavior within 1-2 turns.
+        Returns newest-first so the agent reads the most recent
+        steering directive first.
 
-        New rule: render the most recent 10 operator messages for the
-        investigation on every turn. First-seen turn is stamped on
-        each row (still useful for the UI's "delivered at turn N"
-        badge) but stamping doesn't gate visibility — the agent always
-        sees the recent steering window.
+        Filters out:
+          - empty text bodies
+          - case-insensitive whitespace-normalised duplicate texts
+          - messages whose wall-clock age exceeds the TTL window
+          - messages addressed to a non-primary sibling branch (so
+            "talk to Maddie specifically" doesn't leak to Halvar /
+            Renzo). Primary-branch addressing is treated as broadcast.
+
+        `at_turn` is still stamped on first read (the UI's "delivered
+        at turn N" badge), but ages are computed from wall-clock so
+        the value is consistent across siblings that read the same
+        row at different turn numbers.
         """
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
@@ -580,20 +588,59 @@ class HonestVulnResearcher:
                     VRInvestigationMessageRecord.sender_kind == SenderKind.OPERATOR.value,
                 )
                 .order_by(VRInvestigationMessageRecord.created_at.desc())
-                .limit(10)
+                .limit(20)
             )).all()
 
             if not rows:
                 return []
 
+            # Resolve primary branch id once for the visibility filter.
+            primary_id = (await uow.session.exec(
+                _select(VRInvestigationBranchRecord.id)
+                .where(
+                    VRInvestigationBranchRecord.investigation_id == self.investigation_id,
+                    VRInvestigationBranchRecord.parent_branch_id.is_(None),
+                )
+                .limit(1)
+            )).first()
+
             messages: list[dict[str, Any]] = []
+            seen_texts: set[str] = set()
             stamped = False
+            now = utc_now()
+            ttl_seconds = self._OPERATOR_MESSAGE_TTL_TURNS * 240
             for row in rows:
                 try:
                     payload = json.loads(row.payload_json or "{}")
                 except json.JSONDecodeError:
                     payload = {}
                 text = str(payload.get("text", "")).strip()
+                if not text:
+                    continue
+                # Branch-addressed visibility: messages addressed to
+                # a specific sibling (not this branch, not the primary)
+                # are suppressed for everyone else. Primary-branch
+                # addressing acts as broadcast.
+                if (
+                    row.branch_id
+                    and row.branch_id != self.branch_id
+                    and row.branch_id != primary_id
+                ):
+                    continue
+                # Stamp first-seen turn for UI badge.
+                if row.at_turn is None:
+                    row.at_turn = turn_number
+                    uow.session.add(row)
+                    stamped = True
+                # Wall-clock age — branch-independent.
+                age_seconds = (now - row.created_at).total_seconds()
+                if age_seconds > ttl_seconds:
+                    continue
+                # De-dup case-insensitive + whitespace-normalised.
+                norm = " ".join(text.split()).lower()
+                if norm in seen_texts:
+                    continue
+                seen_texts.add(norm)
                 messages.append({
                     "id": row.id,
                     "text": text,
@@ -601,20 +648,11 @@ class HonestVulnResearcher:
                     "sender_id": row.sender_id,
                     "delivered_at_turn": row.at_turn,
                     "branch_addressed": row.branch_id,
+                    "age_seconds": int(age_seconds),
                 })
-                # Stamp first-seen turn for the UI badge (don't gate
-                # future visibility — agents still see this message on
-                # subsequent turns).
-                if row.at_turn is None:
-                    row.at_turn = turn_number
-                    uow.session.add(row)
-                    stamped = True
             if stamped:
                 await uow.commit()
-            # Order chronologically for the prompt (oldest first) so the
-            # agent reads the steering in posting order.
-            messages.reverse()
-            return messages
+            return messages[:10]
 
 
 def _render_target_snapshot_section(snapshot: dict[str, Any]) -> str:
@@ -1032,6 +1070,40 @@ def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:
         lines.append(f"- [intent: {intent}] {text}")
     lines.append("")
     lines.append("*** END OPERATOR STEERING ***")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def _render_active_directives_section(case_state: ReasoningCaseState) -> str:
+    """Render any ``_directive.*`` observables as a top-level prompt
+    section. Surfaces at PROMPT POSITION 2 (right under operator
+    steering, above # Investigation). Lifting these OUT of case_model
+    means the agent doesn't have to wade through target snapshot + CVE
+    intel + observables to find them — they're attention-anchored at
+    the top.
+
+    Source of truth: ``case_state.observables`` keys starting with
+    ``_directive.``. Empty-string values are skipped (the clear path
+    set by tool_executor when the agent satisfies the directive).
+    Multiple directives can co-exist (e.g. ``_directive.pivot``,
+    ``_directive.cost_cap``); each renders as its own labelled block.
+    """
+    directives = {
+        k: v for k, v in case_state.observables.items()
+        if k.startswith("_directive.") and isinstance(v, str) and v.strip()
+    }
+    if not directives:
+        return ""
+    lines: list[str] = [
+        "# *** ACTIVE DIRECTIVES (MANDATORY — act on these THIS TURN) ***",
+        "",
+    ]
+    for key, value in directives.items():
+        label = key[len("_directive."):]
+        lines.append(f"## directive: {label}")
+        lines.append(value.rstrip())
+        lines.append("")
+    lines.append("*** END DIRECTIVES ***")
     lines.append("")
     return "\n".join(lines) + "\n"
 
