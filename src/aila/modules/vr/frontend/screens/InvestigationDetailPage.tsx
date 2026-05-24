@@ -159,14 +159,42 @@ export function InvestigationDetailPage() {
   const [liveTail, setLiveTail] = useState(true);
 
 
-  // Live-tail: auto-scroll the newest turn into view when liveTail is on.
-  // We watch the message count rather than ids so we don't re-fire on
-  // every refetch.
+  // ── Default-land at the latest turn ──────────────────────────────
+  //
+  // When the page first loads with a populated investigation, scroll
+  // straight to the newest turn. Operator opening a 1000-turn
+  // investigation expects to see "current state", not message #1.
+  // Fires exactly once per mount via initialScrolledRef — subsequent
+  // streaming updates go through the live-tail effect below.
+  const initialScrolledRef = useRef(false);
+  useEffect(() => {
+    if (initialScrolledRef.current) return;
+    const list = messagesResult?.data ?? [];
+    if (list.length === 0) return;  // wait for data
+    initialScrolledRef.current = true;
+    // Defer past the current commit so the turn elements exist.
+    requestAnimationFrame(() => {
+      const id = `turn-${list.length - 1}`;
+      const el = document.getElementById(id);
+      if (el) {
+        // No smooth — instant jump so operator's eye doesn't track
+        // the scroll from #0 → #N (jarring on long investigations).
+        el.scrollIntoView({ behavior: "auto", block: "end" });
+      }
+    });
+  }, [messagesResult?.data?.length]);
+
+  // Live-tail: auto-scroll the newest turn into view when liveTail is on
+  // AND new messages arrive AFTER the initial landing. We watch the
+  // message count rather than ids so we don't re-fire on every refetch.
   const lastSeenCount = useRef(0);
   useEffect(() => {
     if (!liveTail) return;
     const list = messagesResult?.data ?? [];
-    if (list.length > lastSeenCount.current) {
+    if (list.length > lastSeenCount.current && lastSeenCount.current > 0) {
+      // Skip the initial 0 → N transition (handled by initial-scroll
+      // effect above with instant scroll). Only smooth-scroll on
+      // genuine streaming growth.
       const id = `turn-${list.length - 1}`;
       requestAnimationFrame(() => {
         const el = document.getElementById(id);
