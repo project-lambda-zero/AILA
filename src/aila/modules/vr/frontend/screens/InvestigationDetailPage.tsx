@@ -507,8 +507,12 @@ export function InvestigationDetailPage() {
           while the side rail content is reference material, not co-equal
           with the live reasoning stream. */}
       <div className="grid grid-cols-1 gap-4">
-        {/* Timeline column */}
-        <div className="space-y-3 min-w-0">
+        {/* Timeline column — order-2 so it renders BELOW the aside.
+            Default scroll-to-bottom lands operator at the latest turn
+            (page bottom = last turn in timeline). To see hypotheses /
+            branches / outcomes / fuzz proposals, operator scrolls up
+            past the timeline to the aside section. */}
+        <div className="space-y-3 min-w-0 order-2">
           {/* Filter bar */}
           <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap text-xs">
             <span className="text-text-muted">Filter:</span>
@@ -662,8 +666,11 @@ export function InvestigationDetailPage() {
           )}
         </div>
 
-        {/* Side rail */}
-        <aside className="space-y-3 min-w-0">
+        {/* Side rail — order-1 so it renders ABOVE the timeline.
+            Operator default-scrolls to page bottom (latest turn in
+            timeline below); to see hypotheses / branches / outcomes,
+            scroll up past the timeline to here. */}
+        <aside className="space-y-3 min-w-0 order-1">
           {/* Hypothesis projection (08_FRONTEND_UX.md §2.3) */}
           <HypothesisDetailRail investigationId={invId} />
           {/* Fuzz proposals queue (operator-in-the-loop) */}
