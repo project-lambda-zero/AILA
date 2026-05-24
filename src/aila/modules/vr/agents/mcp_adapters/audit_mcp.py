@@ -1082,32 +1082,75 @@ def adapt_read_lines(
 ) -> AdapterResult:
     """Map read_lines (bridge-side virtual) to DECOMPILED_FUNCTION shape.
 
-    The bridge already returned raw['content'] as the verbatim file slice.
-    We render it as a normal source-body observable so the agent treats
-    it the same as a read_function result.
+    Loudly surfaces three conditions that mislead agents:
+      (1) Requested range extended PAST end-of-file → agent gets nearly
+          empty body and interprets it as truncation; without this banner
+          they re-request the same range forever (observed live on
+          WasmGcObject.cpp line 606-800: file ends at 606, agent looped).
+      (2) Got significantly fewer lines than requested (file shorter).
+      (3) Always-visible file-length header so the agent knows the file
+          extent before assuming more content exists below.
     """
     file_path = str(raw.get("file_path") or ctx.args.get("file_path") or "?")
-    start = raw.get("start_line") or ctx.args.get("start") or "?"
-    end = raw.get("end_line") or ctx.args.get("end") or "?"
-    total = raw.get("total_lines_in_file") or "?"
+    requested_start = ctx.args.get("start")
+    requested_end = ctx.args.get("end")
+    start = raw.get("start_line") or requested_start or "?"
+    end = raw.get("end_line") or requested_end or "?"
+    total = raw.get("total_lines_in_file")
     body = str(raw.get("content") or "")
     line_count = body.count("\n") + (1 if body else 0)
+
+    # Build loud header for EOF / short-read conditions.
+    warnings: list[str] = []
+    try:
+        req_start_int = int(requested_start) if requested_start is not None else None
+        req_end_int = int(requested_end) if requested_end is not None else None
+    except (TypeError, ValueError):
+        req_start_int = req_end_int = None
+    if isinstance(total, int) and req_end_int is not None and req_end_int > total:
+        warnings.append(
+            f"!! REQUESTED RANGE EXCEEDS FILE LENGTH !! "
+            f"You asked for lines {req_start_int}-{req_end_int} but "
+            f"{file_path} has only {total} lines. Returned only the "
+            f"in-bounds portion ({line_count} line{'s' if line_count != 1 else ''}). "
+            f"The content you expected past line {total} DOES NOT EXIST in "
+            f"this file. STOP re-requesting the same range. If you're "
+            f"looking for a symbol that should be here, switch to "
+            f"semantic_search(query=\"<symbol_name>\") — it will find the "
+            f"file that actually contains it."
+        )
+    elif isinstance(total, int) and isinstance(end, int) and end < total - 50:
+        warnings.append(
+            f"[file extent: {total} lines total; you've read up to line "
+            f"{end}. {total - end} more lines available below.]"
+        )
+    elif isinstance(total, int):
+        warnings.append(f"[file extent: {total} lines total]")
+
+    header = ""
+    if warnings:
+        header = "\n".join(warnings) + "\n\n"
+
     payload: dict[str, Any] = {
         "function_name": f"{file_path}:{start}-{end}",
         "address": f"{file_path}:{start}",
-        "pseudocode": body,
+        "pseudocode": header + body,
         "line_count": line_count,
+        "total_lines_in_file": total,
         "language": "",
         "source_provenance": provenance_stamp(ctx),
     }
-    obs_value = body[:_MAX_OBS_READ_FUNCTION]
-    if len(body) > _MAX_OBS_READ_FUNCTION:
-        obs_value += f"\n\n[truncated — full {line_count} lines in message {ctx.call_id}]"
+    obs_body = (header + body)[:_MAX_OBS_READ_FUNCTION]
+    if len(header) + len(body) > _MAX_OBS_READ_FUNCTION:
+        obs_body += f"\n\n[truncated — full {line_count} lines in message {ctx.call_id}]"
+    summary = f"read_lines {file_path}:{start}-{end} ({line_count} lines / {total} total)"
+    if isinstance(total, int) and req_end_int and req_end_int > total:
+        summary += "  ⚠ PAST EOF"
     return AdapterResult(
         payload_kind=PayloadKind.DECOMPILED_FUNCTION,
         payload=payload,
         observables_delta={
-            obs_key_for(ctx, f"slice.{file_path}:{start}-{end}"): obs_value,
+            obs_key_for(ctx, f"slice.{file_path}:{start}-{end}"): obs_body,
         },
-        summary=f"read_lines {file_path}:{start}-{end} ({line_count} lines / {total} total)",
+        summary=summary,
     )
