@@ -3093,8 +3093,32 @@ def create_vr_router() -> APIRouter:
             inv.pause_reason = None
             inv.updated_at = utc_now()
             uow.session.add(inv)
+
+            # Cancel any stale run_vr_investigate TaskRecord still in
+            # queued/running/waiting for THIS investigation. Without
+            # this, TaskQueue.submit() (SEC-07 dedup, queue.py L128)
+            # returns the existing handle when input_hash matches —
+            # and the matching hash is exactly (fn=run_vr_investigate,
+            # kwargs={investigation_id: <id>}). When a previous worker
+            # crashed leaving its TaskRecord in 'running' without a
+            # live arq job, every re-enqueue silently no-op'd. Operator
+            # sees status=created, clicks 'Start', nothing happens.
+            from aila.platform.tasks.models import TaskRecord, TaskStatus  # noqa: PLC0415
+
+            stale_q = select(TaskRecord).where(
+                TaskRecord.fn_path.like("%run_vr_investigate%"),
+                TaskRecord.status.in_(["queued", "running", "waiting"]),
+                TaskRecord.kwargs_json.like(f'%"{investigation_id}"%'),
+            )
+            stale_rows = (await uow.session.exec(stale_q)).all()
+            for row in stale_rows:
+                row.status = TaskStatus.CANCELLED.value
+                uow.session.add(row)
             await uow.session.commit()
             await uow.session.refresh(inv)
+        # (committed before submit so the next submit() sees a clean
+        # dedup table — same UoW would race with the dedup_session
+        # opened inside TaskQueue.submit.)
 
         task_queue = get_task_queue("vr", request)
         await task_queue.submit(
