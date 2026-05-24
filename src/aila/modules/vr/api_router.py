@@ -1958,17 +1958,14 @@ def create_vr_router() -> APIRouter:
         import json as _json
 
         from aila.api.deps import get_task_queue
-        from aila.modules.vr.contracts.target_stages import StageName, StageState
+        from aila.modules.vr.contracts.target_stages import StageState
         from aila.modules.vr.services.stage_tracker import (
             parse_stages,
             save_target_stages,
         )
 
+        from ._task_queue import enqueue_downstream_target_stages
         from .db_models import VRTargetRecord
-        from .enrichment.workers import (
-            run_capability_profile_build,
-            run_function_ranking,
-        )
         from .workflow.task import run_target_analysis
 
         async with UnitOfWork() as uow:
@@ -2002,33 +1999,35 @@ def create_vr_router() -> APIRouter:
         await save_target_stages(target_id, stages)
 
         # Fan out per non-DONE stage. CAPABILITY_PROFILE + FUNCTION_RANKING
-        # both depend on INGESTION (need handles/index_id); if ingestion
-        # is not yet DONE we enqueue only ingestion and let it complete —
-        # operator re-hits this endpoint after ingestion finishes to fire
-        # the downstream pair. When ingestion is already DONE we enqueue
-        # the two downstream stages in parallel (independent of each other).
+        # both depend on INGESTION (need handles/index_id). If ingestion is
+        # not yet DONE we enqueue ingestion alone; the worker's
+        # run_target_analysis auto-chains the downstream pair when it
+        # finishes (see _task_queue.enqueue_downstream_target_stages, also
+        # invoked from the end of that task). When ingestion is already
+        # DONE we skip straight to fanning out the downstream pair from
+        # here so the operator gets immediate progress without waiting
+        # for an ingestion no-op cycle.
         task_queue = get_task_queue("vr", request)
         enqueued: list[dict[str, str]] = []
         ingestion_state = stages.ingestion.state
-
-        async def _enqueue(stage_label: str, fn: object) -> None:
+        if ingestion_state != StageState.DONE:
             handle = await task_queue.submit(
                 track="vr",
-                fn=fn,
+                fn=run_target_analysis,
                 kwargs={"target_id": target_id},
                 user_id=auth.user_id,
                 group_id=auth.role,
                 team_id=auth.team_id,
             )
-            enqueued.append({"stage": stage_label, "task_id": handle.task_id})
-
-        if ingestion_state != StageState.DONE:
-            await _enqueue("ingestion", run_target_analysis)
+            enqueued.append({"stage": "ingestion", "task_id": handle.task_id})
         else:
-            if stages.capability_profile.state != StageState.DONE:
-                await _enqueue(StageName.CAPABILITY_PROFILE.value, run_capability_profile_build)
-            if stages.function_ranking.state != StageState.DONE:
-                await _enqueue(StageName.FUNCTION_RANKING.value, run_function_ranking)
+            enqueued.extend(await enqueue_downstream_target_stages(
+                target_id,
+                task_queue,
+                user_id=auth.user_id,
+                group_id=auth.role,
+                team_id=auth.team_id,
+            ))
 
         # Back-compat: keep ``task_id`` at the top of the payload pointing
         # at the first enqueued task so existing UI/CLI that reads it

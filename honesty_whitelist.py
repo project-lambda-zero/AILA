@@ -76,6 +76,7 @@ HONESTY_WHITELIST = [
     # path. Inline `# noqa: PLC0415` is required to silence ruff.
     ("vr/_task_queue.py", "default_task_queue", "noqa"),
     ("vr/_task_queue.py", "enqueue_vr_nday", "noqa"),
+    ("vr/_task_queue.py", "enqueue_downstream_target_stages", "noqa"),
     ("vr/workflow/states/investigation_emit.py", "_run_pattern_extraction", "noqa"),
     ("vr/workflow/task.py", "run_target_analysis", "noqa"),
     ("vr/workflow/task.py", "run_fuzz_campaign_launch", "noqa"),

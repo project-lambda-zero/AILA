@@ -89,13 +89,32 @@ async def run_target_analysis(
     polls until ready, stores backend handles + auto-detected language
     on the row, and transitions analysis_state through INGESTING → READY
     (or → FAILED with operator-visible message).
+
+    Auto-chains the post-ingestion enrichment stages
+    (capability_profile + function_ranking) when ingestion completes —
+    previously the operator had to re-hit ``/resume-analysis`` for
+    each downstream stage to start. See ``_task_queue.enqueue_downstream_target_stages``.
     """
-    del ctx
     from aila.modules.vr.services import TargetAnalysisService  # noqa: PLC0415  (lazy: avoids cycle)
+
+    from .._task_queue import (  # noqa: PLC0415
+        default_task_queue,
+        enqueue_downstream_target_stages,
+    )
 
     svc = TargetAnalysisService()
     await svc.analyze(target_id)
-    return {"target_id": target_id, "status": "ok"}
+
+    # Fan out enrichment stages now that ingestion is DONE (or was
+    # already DONE — the helper is idempotent and a no-op if ingestion
+    # is somehow still pending).
+    enqueued = await enqueue_downstream_target_stages(
+        target_id,
+        default_task_queue(),
+        user_id=ctx.user_id,
+        team_id=ctx.team_id,
+    )
+    return {"target_id": target_id, "status": "ok", "enqueued": enqueued}
 
 
 @platform_task(
