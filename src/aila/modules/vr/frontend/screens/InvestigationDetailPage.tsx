@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
@@ -867,49 +868,54 @@ export function InvestigationDetailPage() {
         status={inv.status}
       />
 
-      {/* Floating turn-position indicator — top-right, sticky to viewport.
-          Surfaces "Turn N / M" while scrolling through long investigations. */}
-      {messages.length > 0 && visibleTurn !== null && !scrollNearBottom && (
-        <div
-          className="fixed top-20 right-6 z-40 pointer-events-none select-none
-                     px-2.5 py-1 rounded-md
-                     bg-surface/95 border border-border-default
-                     font-mono text-[11px] text-text-muted
-                     shadow-lg backdrop-blur-sm"
-          aria-live="polite"
-        >
-          turn {visibleTurn + 1} / {filtered.length}
-        </div>
-      )}
-
-      {/* Floating "Jump to latest" button — bottom-right, only when scrolled
-          up from the bottom AND there is at least one turn. Smooth-scrolls
-          to the last turn. Hidden when already near the bottom (avoids
-          covering the operator composer). */}
-      {messages.length > 1 && !scrollNearBottom && (
-        <button
-          type="button"
-          onClick={jumpToLatest}
-          className="fixed bottom-6 right-6 z-40
-                     px-3 py-2 rounded-full
-                     bg-accent text-accent-fg
-                     border border-accent-strong
-                     shadow-lg
-                     hover:scale-105 active:scale-95
-                     transition-transform
-                     flex items-center gap-1.5
-                     text-xs font-semibold"
-          aria-label="Jump to latest turn"
-          title="Jump to latest turn (also: Shift+G)"
-        >
-          <span aria-hidden>↓</span>
-          <span>jump to latest</span>
-          {visibleTurn !== null && (
-            <span className="opacity-70 font-mono">
-              ({filtered.length - visibleTurn - 1})
-            </span>
+      {/* Floating turn-position indicator + jump-to-latest button.
+          PORTAL'd to document.body because the app shell has a parent
+          element with `transform`/`filter`/`perspective` set (page
+          chrome animations) which creates a containing block for
+          `position: fixed` per the CSS spec — the pills then anchor
+          to that parent's transformed rect instead of the viewport,
+          landing way off-screen at (304, 5544). Portal escapes that. */}
+      {createPortal(
+        <>
+          {messages.length > 0 && visibleTurn !== null && !scrollNearBottom && (
+            <div
+              className="fixed top-20 right-6 z-[60] pointer-events-none select-none
+                         px-2.5 py-1 rounded-md
+                         bg-surface/95 border border-border-default
+                         font-mono text-[11px] text-text-muted
+                         shadow-lg backdrop-blur-sm"
+              aria-live="polite"
+            >
+              turn {visibleTurn + 1} / {filtered.length}
+            </div>
           )}
-        </button>
+          {messages.length > 1 && !scrollNearBottom && (
+            <button
+              type="button"
+              onClick={jumpToLatest}
+              className="fixed bottom-6 right-6 z-[60]
+                         px-3 py-2 rounded-full
+                         bg-accent text-accent-fg
+                         border border-accent-strong
+                         shadow-lg
+                         hover:scale-105 active:scale-95
+                         transition-transform
+                         flex items-center gap-1.5
+                         text-xs font-semibold"
+              aria-label="Jump to latest turn"
+              title="Jump to latest turn (also: Shift+G)"
+            >
+              <span aria-hidden>↓</span>
+              <span>jump to latest</span>
+              {visibleTurn !== null && (
+                <span className="opacity-70 font-mono">
+                  ({filtered.length - visibleTurn - 1})
+                </span>
+              )}
+            </button>
+          )}
+        </>,
+        document.body,
       )}
     </div>
   );
