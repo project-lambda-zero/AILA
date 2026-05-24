@@ -267,8 +267,17 @@ async def _already_posted(
     investigation_id: str, auto_steering_key: str,
 ) -> bool:
     """De-dupe: skip when an auto-steering with the same key already
-    exists for this investigation. Each rule passes a stable key
-    derived from (rule_id, target_file, target_symbol, ...)."""
+    exists for this investigation AND has not yet been acknowledged.
+
+    Once the agent ACKs a steering (sets the message's id in any
+    branch's ``_acked_operator_messages`` observable), the condition
+    is considered addressed. If the same condition recurs later, the
+    steering can re-post. Without this, an agent that ignored the
+    first auto-steering blocked every future steering on the same
+    condition forever.
+    """
+    from aila.modules.vr.db_models import VRInvestigationBranchRecord  # noqa: PLC0415
+
     async with UnitOfWork() as uow:
         rows = (await uow.session.exec(
             _select(VRInvestigationMessageRecord)
@@ -278,14 +287,40 @@ async def _already_posted(
             .order_by(VRInvestigationMessageRecord.created_at.desc())
             .limit(40)
         )).all()
-    for row in rows:
-        try:
-            payload = json.loads(row.payload_json or "{}")
-        except (ValueError, TypeError):
-            continue
-        if payload.get("auto_steering_key") == auto_steering_key:
-            return True
-    return False
+        matching_ids: list[str] = []
+        for row in rows:
+            try:
+                payload = json.loads(row.payload_json or "{}")
+            except (ValueError, TypeError):
+                continue
+            if payload.get("auto_steering_key") == auto_steering_key:
+                matching_ids.append(row.id)
+        if not matching_ids:
+            return False
+        # Collect ACK ids across every branch's case_state.
+        branches = (await uow.session.exec(
+            _select(VRInvestigationBranchRecord).where(
+                VRInvestigationBranchRecord.investigation_id == investigation_id,
+            )
+        )).all()
+        all_acks: set[str] = set()
+        for b in branches:
+            try:
+                cs = json.loads(b.case_state_json or "{}")
+                acked_raw = (cs.get("observables") or {}).get("_acked_operator_messages")
+                if isinstance(acked_raw, str):
+                    all_acks.update(x.strip() for x in acked_raw.split(",") if x.strip())
+                elif isinstance(acked_raw, list):
+                    all_acks.update(str(x).strip() for x in acked_raw if x)
+            except (json.JSONDecodeError, AttributeError):
+                continue
+        # If any matching steering is still un-ack'd, block re-post
+        # (agent hasn't yet acted on the existing one). When ALL
+        # matching steerings are ack'd, allow re-post — the agent
+        # has formally acknowledged the prior corrections and the
+        # condition is recurring fresh.
+        unacked = [m for m in matching_ids if m not in all_acks]
+        return len(unacked) > 0
 
 
 async def _post(
