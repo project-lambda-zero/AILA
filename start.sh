@@ -54,10 +54,26 @@ COMMAND="${1:-start}"
 RUN_DIR=".run"
 mkdir -p "$RUN_DIR" 2>/dev/null || true
 RUN_DIR_ABS="$PWD/$RUN_DIR"
-# On Git Bash, convert /c/... to C:/... so PowerShell Start-Process accepts it.
+# On Git Bash, convert /c/... to C:/... so PowerShell + cmd accept it.
+# On WSL bash, do the same via wslpath — /mnt/c/... is not a path
+# Windows cmd.exe can open for stdout redirection, which silently kills
+# every spawned worker the moment cmd tries to apply "> path 2>&1".
 if command -v cygpath >/dev/null 2>&1; then
   RUN_DIR_ABS=$(cygpath -m "$RUN_DIR_ABS" 2>/dev/null || echo "$RUN_DIR_ABS")
+elif command -v wslpath >/dev/null 2>&1; then
+  RUN_DIR_ABS=$(wslpath -m "$RUN_DIR_ABS" 2>/dev/null || echo "$RUN_DIR_ABS")
 fi
+# Last-ditch fallback: some WSL distros lack wslpath. Convert
+# /mnt/X/... to X:/... by hand. Idempotent — no-op when RUN_DIR_ABS
+# is already a Windows path.
+case "$RUN_DIR_ABS" in
+  /mnt/?/*)
+    _drive="${RUN_DIR_ABS:5:1}"
+    _rest="${RUN_DIR_ABS:6}"
+    RUN_DIR_ABS="${_drive^^}:${_rest}"
+    unset _drive _rest
+    ;;
+esac
 
 # ── PowerShell + taskkill detection ─────────────────────────────────────────
 PS=""
@@ -234,36 +250,61 @@ kill_aila_processes() {
 # the spawned PID and records it under .run/<slug>.pid so ``stop`` can
 # tree-kill it reliably without having to grep cmdlines. Inherits the
 # CALLER's cwd — caller must ``cd`` into the right repo before invoking.
+#
+# stdout + stderr are merged into ${RUN_DIR_ABS}/<slug>.log via a `cmd /c`
+# wrapper (Start-Process cannot redirect both streams to the SAME file —
+# PowerShell rejects it as "duplicate path"). Previous session's log is
+# rotated to .prev so each restart starts clean while one history step
+# remains debuggable. The returned PID is cmd.exe; the python child is
+# the sole descendant so ``taskkill /PID <cmd_pid> /T /F`` in
+# kill_tracked_pids takes both down together — identical lifecycle to
+# the prior direct-spawn path.
 spawn() {
   local label="$1"; shift
-  local ps_args=""
+  local cmd_args=""
   for arg in "$@"; do
-    [[ -n "$ps_args" ]] && ps_args+=","
-    ps_args+="'${arg}'"
+    [[ -n "$cmd_args" ]] && cmd_args+=" "
+    # Quote args containing whitespace; pass-through anything else.
+    # None of the current callers pass args with embedded `"` so naive
+    # quoting is sufficient. If a future caller needs to, switch to a
+    # proper escape pass.
+    if [[ "$arg" =~ [[:space:]] ]]; then
+      cmd_args+="\"${arg}\""
+    else
+      cmd_args+="${arg}"
+    fi
   done
   local slug log_path
   slug=$(slugify "$label")
   log_path="${RUN_DIR_ABS}/${slug}.log"
+  # Rotate one generation so a fresh restart doesn't lose the prior
+  # session's tail (often where the crash that triggered the restart
+  # lives). Keep only one .prev — unbounded rotation accumulates trash.
+  [[ -f "$log_path" ]] && mv -f "$log_path" "${log_path}.prev" 2>/dev/null
   local pidv
   pidv=$("$PS" -NoProfile -Command \
-    "(Start-Process python -ArgumentList $ps_args -WindowStyle Hidden -PassThru).Id" \
+    "(Start-Process cmd -ArgumentList '/c','python ${cmd_args} > \"${log_path}\" 2>&1' -WindowStyle Hidden -PassThru).Id" \
     2>/dev/null | tr -d '\r\n ')
   record_pid "$label" "$pidv"
-  echo "[aila]   $label started (PID $pidv)"
+  echo "[aila]   $label started (PID $pidv, log $log_path)"
 }
 
 # pnpm dev needs cmd as shell host. Start-Process cmd /c "..." returns the
 # cmd.exe PID; the actual node/pnpm runs as its child. taskkill /T /F on the
-# cmd PID kills the whole tree.
+# cmd PID kills the whole tree. Same log-redirect pattern as spawn().
 spawn_shell() {
   local label="$1"; shift
   local cmdline="$*"
+  local slug log_path
+  slug=$(slugify "$label")
+  log_path="${RUN_DIR_ABS}/${slug}.log"
+  [[ -f "$log_path" ]] && mv -f "$log_path" "${log_path}.prev" 2>/dev/null
   local pidv
   pidv=$("$PS" -NoProfile -Command \
-    "(Start-Process cmd -ArgumentList '/c','$cmdline' -WindowStyle Hidden -PassThru).Id" \
+    "(Start-Process cmd -ArgumentList '/c','${cmdline} > \"${log_path}\" 2>&1' -WindowStyle Hidden -PassThru).Id" \
     2>/dev/null | tr -d '\r\n ')
   record_pid "$label" "$pidv"
-  echo "[aila]   $label started (PID $pidv)"
+  echo "[aila]   $label started (PID $pidv, log $log_path)"
 }
 
 probe() {
