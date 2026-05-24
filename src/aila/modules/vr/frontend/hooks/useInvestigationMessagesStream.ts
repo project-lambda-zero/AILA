@@ -1,10 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { useQueryClient } from "@tanstack/react-query";
 
 import { buildApiUrl } from "@platform/api/http";
 import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
 
+import { type LiveStatus } from "../components/LiveDot";
 import type { Envelope, VRMessageSummary } from "../types";
 
 /** SSE live tail for investigation messages.
@@ -27,11 +28,16 @@ import type { Envelope, VRMessageSummary } from "../types";
 export function useInvestigationMessagesStream(
   investigationId: string,
   branchId?: string,
-): void {
+): { status: LiveStatus } {
   const qc = useQueryClient();
+  const [status, setStatus] = useState<LiveStatus>("reconnecting");
 
   useEffect(() => {
-    if (!investigationId) return;
+    if (!investigationId) {
+      setStatus("disconnected");
+      return;
+    }
+    setStatus("reconnecting");
     const ac = new AbortController();
 
     void (async () => {
@@ -62,9 +68,14 @@ export function useInvestigationMessagesStream(
           signal: ac.signal,
         });
       } catch {
+        if (!ac.signal.aborted) setStatus("disconnected");
         return;
       }
-      if (!response.ok || !response.body) return;
+      if (!response.ok || !response.body) {
+        if (!ac.signal.aborted) setStatus("disconnected");
+        return;
+      }
+      setStatus("connected");
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -148,6 +159,8 @@ export function useInvestigationMessagesStream(
         }
       } catch {
         // aborted or network error
+      } finally {
+        if (!ac.signal.aborted) setStatus("disconnected");
       }
     })();
 
@@ -155,4 +168,6 @@ export function useInvestigationMessagesStream(
       ac.abort();
     };
   }, [investigationId, branchId, qc]);
+
+  return { status };
 }

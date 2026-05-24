@@ -9,7 +9,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { DeleteButton } from "../components/DeleteButton";
 import { ExportReportButton } from "../components/ExportReportButton";
 import { ReenqueuePicker } from "../components/ReenqueuePicker";
-import { LiveDot, type LiveStatus } from "../components/LiveDot";
+import { LiveDot } from "../components/LiveDot";
 import { SteeringDrawer } from "../components/SteeringDrawer";
 import { TurnCard } from "../components/TurnCard";
 import { WorkflowStepper } from "../components/WorkflowStepper";
@@ -136,7 +136,7 @@ export function InvestigationDetailPage() {
   const { data: inv, isLoading } = useInvestigation(invId);
   const { data: branchesResult } = useInvestigationBranches(invId);
   const { data: messagesResult } = useInvestigationMessages(invId);
-  useInvestigationMessagesStream(invId);
+  const { status: liveStatus } = useInvestigationMessagesStream(invId);
   const { data: outcomesResult } = useInvestigationOutcomes(invId);
   const targetName = useTargetName(inv?.target_id);
 
@@ -348,15 +348,11 @@ export function InvestigationDetailPage() {
     setSearchParams(next, { replace: true });
   }
 
-  // Live-tail status. The SSE hook doesn't expose its readyState yet —
-  // best-effort: green when investigation is running, amber when paused,
-  // muted when terminal.
-  const liveStatus: LiveStatus =
-    inv.status === "running"
-      ? "connected"
-      : inv.status === "paused"
-        ? "reconnecting"
-        : "disconnected";
+  // LiveDot now reflects the real SSE fetch lifecycle reported by
+  // useInvestigationMessagesStream (reconnecting → connected on first
+  // bytes; disconnected when the stream ends or errors). No more
+  // inferring from inv.status — that was misleading for `created` /
+  // `completed` investigations where no stream is active.
 
   const operatorComposerOpen =
     inv.status === "running" || inv.status === "paused" || inv.status === "created";
