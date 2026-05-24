@@ -223,8 +223,31 @@ class CyberReasoningEngine:
         )
 
     def render_case_model(self, case_state: ReasoningCaseState) -> str:
-        """Render a compact textual case model for the next turn prompt."""
+        """Render a compact textual case model for the next turn prompt.
+
+        Observables whose key starts with ``_directive.`` are pulled out
+        and rendered as a TOP-OF-MODEL DIRECTIVES block so the agent
+        sees mandatory pivots / steering before anything else. Without
+        this, pivot hints written by tool_executor (e.g. survey-streak
+        pivots, empty-result pivots) landed in the observables dict but
+        got buried among 40+ other observable key/value pairs and the
+        agent ignored them. Empty-string directives are skipped (the
+        clear path).
+        """
         parts: list[str] = []
+        directives = {
+            k: v for k, v in case_state.observables.items()
+            if k.startswith("_directive.") and isinstance(v, str) and v.strip()
+        }
+        if directives:
+            parts.append("*** ACTIVE DIRECTIVES (read FIRST, act on these) ***")
+            for key, value in directives.items():
+                # Strip the _directive. prefix in the rendered label
+                label = key[len("_directive."):]
+                parts.append(f"[{label}]")
+                parts.append(value.rstrip())
+            parts.append("*** END DIRECTIVES ***")
+            parts.append("")
         if self._has_contract(case_state.contract):
             parts.append("Contract:")
             parts.append(f"  answer_type   = {case_state.contract.answer_type}")
@@ -235,9 +258,15 @@ class CyberReasoningEngine:
         else:
             parts.append("Contract: (not parsed yet — derive it this turn)")
 
-        if case_state.observables:
+        # Filter directives out of the regular observables block (they
+        # already appeared at the top under ACTIVE DIRECTIVES).
+        regular_obs = {
+            k: v for k, v in case_state.observables.items()
+            if not k.startswith("_directive.")
+        }
+        if regular_obs:
             parts.append("Observables:")
-            for key, value in list(case_state.observables.items())[:40]:
+            for key, value in list(regular_obs.items())[:40]:
                 parts.append(f"  - {key} = {value}")
         else:
             parts.append("Observables: (none yet)")

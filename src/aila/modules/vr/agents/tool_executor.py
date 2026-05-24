@@ -281,25 +281,45 @@ class ToolExecutor:
         # (attack_surface, complexity_hotspots, fuzzing_targets,
         # search_functions) for 5-10 turns while debating in
         # "adversarial deliberation" reasoning blocks, and only reads
-        # actual source bodies once near the end. Investigation
-        # 417b469f: 13 turns / 13 minutes / 11 survey calls / 1
-        # read_function. Operator-visible problem ("why don't they read
-        # the actual source code?").
+        # actual source bodies once near the end.
         #
-        # When the current call AND the prior 2 successful calls on
-        # this branch are all in the SURVEY set, append a one-line
-        # pivot directive to this result so the agent's next turn
-        # treats source-reading as the obvious next move. Idempotent —
-        # the hint just appends to the rendered text payload; the
-        # underlying observables/data are unchanged.
+        # The hint is appended to BOTH:
+        #   (a) the rendered text payload — so it shows up in the UI
+        #       timeline next to the tool result, and
+        #   (b) the observables_delta under the reserved key
+        #       `_directive.pivot` — so the next turn's
+        #       render_case_model() surfaces it in the agent's prompt.
+        # Without (b) the directive was written to a DB message but
+        # never made it into the agent's next-turn context: case_state
+        # only renders observables, not prior tool result text.
         pivot_hint = await self._survey_streak_hint(
             branch_id, server_id, tool_name,
         )
-        if pivot_hint and isinstance(adapter_result.payload, dict):
-            existing = adapter_result.payload.get("text") or ""
-            adapter_result.payload["text"] = (
-                existing.rstrip() + "\n\n" + pivot_hint
-            )
+        if pivot_hint:
+            if isinstance(adapter_result.payload, dict):
+                existing = adapter_result.payload.get("text") or ""
+                adapter_result.payload["text"] = (
+                    existing.rstrip() + "\n\n" + pivot_hint
+                )
+            # Reserved directive observable. Overwrites prior pivot on
+            # every fire so the agent only sees the most recent one;
+            # cleared when the agent finally makes a non-survey call
+            # (see _clear_directive_on_pivot_success below).
+            adapter_result.observables_delta = {
+                **(adapter_result.observables_delta or {}),
+                "_directive.pivot": pivot_hint,
+            }
+        else:
+            # Non-survey call: clear any prior pivot directive so it
+            # doesn't keep showing up after the agent has already
+            # complied. Merging None into observables doesn't delete,
+            # so we mark with explicit empty string; render_case_model
+            # skips empty values.
+            if (server_id, tool_name) not in self._SURVEY_TOOLS:
+                adapter_result.observables_delta = {
+                    **(adapter_result.observables_delta or {}),
+                    "_directive.pivot": "",
+                }
 
         msg_id = await self._write_result_message(
             investigation_id, branch_id,
