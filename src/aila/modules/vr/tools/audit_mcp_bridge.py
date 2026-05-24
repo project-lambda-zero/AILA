@@ -240,9 +240,20 @@ class AuditMcpBridgeTool(Tool):
         if not kwargs:
             return {}, []
         per_action = cls._PER_ACTION_SYNONYMS.get(action, {})
+        # Any name on the right-hand side of per_action is the canonical
+        # name for this action — protect it from the global map. Without
+        # this, a tool whose canonical is `top_k` (semantic_search,
+        # find_related) gets its CORRECT `top_k` arg rewritten to `limit`
+        # by _KW_SYNONYMS, breaking the call.
+        per_action_canonicals = set(per_action.values())
         out: dict[str, Any] = {}
         notes: list[str] = []
         for key, value in kwargs.items():
+            if key in per_action_canonicals:
+                # Already canonical for this action — pass through, ignore
+                # any global rewrite that might point elsewhere.
+                out[key] = value
+                continue
             canonical = per_action.get(key) or cls._KW_SYNONYMS.get(key)
             if canonical is None or canonical == key:
                 out[key] = value
