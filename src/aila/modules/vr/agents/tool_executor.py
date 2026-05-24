@@ -330,6 +330,34 @@ class ToolExecutor:
         )
         await self._merge_observables(branch_id, adapter_result.observables_delta)
 
+        # Auto-steering: examine raw tool result for known dead-end
+        # patterns (read_lines past EOF, read_function indexer fault).
+        # If a rule fires, post an operator-kind message to the
+        # investigation just like the human operator would — same DB
+        # write, same prompt position on next turn, same ACK contract.
+        # Best-effort; failures here NEVER abort the tool result path.
+        from aila.modules.vr.agents.auto_steering import (  # noqa: PLC0415
+            maybe_post_auto_steering,
+        )
+        bridge_base_url = "http://127.0.0.1:18822"
+        try:
+            posted_id = await maybe_post_auto_steering(
+                investigation_id=investigation_id,
+                branch_id=branch_id,
+                server_id=server_id,
+                tool_name=tool_name,
+                args=args,
+                raw_result=raw if isinstance(raw, dict) else {},
+                bridge_base_url=bridge_base_url,
+            )
+            if posted_id:
+                _log.info(
+                    "auto_steering POSTED inv=%s branch=%s tool=%s msg=%s",
+                    investigation_id, branch_id, tool_name, posted_id,
+                )
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("auto_steering failed (best-effort): %s", exc)
+
         _log.info(
             "tool_executor OK server=%s tool=%s args=%s summary=%s",
             server_id, tool_name, list(args.keys()), adapter_result.summary,
