@@ -213,7 +213,24 @@ class CyberReasoningEngine:
                 merged_live.append(new_h)
 
         observables = dict(case_state.observables)
-        observables.update({k: v for k, v in decision.observables.items() if str(k).strip()})
+        # Cap agent-self-set observables to keep case_state bounded.
+        # Agents pad with scratchpad keys (sibling_X_status, mandatory_next,
+        # pattern_matching_accusation_Y) that crowd out tool readings.
+        # Limit: 10 new keys per turn, and never let the agent overwrite
+        # a tool-namespaced key (audit_mcp:*, ida_headless:*, _directive.*).
+        TOOL_PREFIXES = ("audit_mcp:", "audit_mcp.", "ida_headless:", "ida_headless.", "_directive.")
+        accepted = 0
+        for k, v in decision.observables.items():
+            key = str(k).strip()
+            if not key:
+                continue
+            if any(key.startswith(p) for p in TOOL_PREFIXES):
+                # Don't let the agent overwrite or shadow tool/directive keys.
+                continue
+            if accepted >= 10:
+                break
+            observables[key] = v
+            accepted += 1
 
         return ReasoningCaseState(
             contract=contract,
@@ -244,17 +261,38 @@ class CyberReasoningEngine:
         else:
             parts.append("Contract: (not parsed yet — derive it this turn)")
 
-        # Filter directives out — they're rendered at the top of the
-        # prompt by _render_active_directives_section, not here.
-        regular_obs = {
-            k: v for k, v in case_state.observables.items()
-            if not k.startswith("_directive.")
-        }
-        if regular_obs:
-            parts.append("Observables:")
-            for key, value in list(regular_obs.items())[:40]:
+        # Partition observables so tool-generated readings (read_function
+        # bodies, taint_paths_to results, callers_of edges, semantic
+        # search hits) always survive prompt rendering. Without this,
+        # agents bloat their own case_state with self-invented scratchpad
+        # keys (sibling_*, mandatory_*, turns_without_*) and the 40-line
+        # display cap evicts the actual source bodies, so the agent
+        # re-calls read_function on names it already read.
+        #
+        # Tool keys are prefix-anchored: ``audit_mcp:*`` / ``audit_mcp.*``
+        # / ``ida_headless:*`` / ``ida_headless.*``. ``_directive.*`` is
+        # already lifted to its own top-of-prompt section so we drop them.
+        # Everything else is "agent-set scratchpad" — useful in moderation,
+        # hard-capped here too.
+        tool_prefixes = ("audit_mcp:", "audit_mcp.", "ida_headless:", "ida_headless.")
+        tool_obs: list[tuple[str, Any]] = []
+        agent_obs: list[tuple[str, Any]] = []
+        for k, v in case_state.observables.items():
+            if k.startswith("_directive."):
+                continue
+            if any(k.startswith(p) for p in tool_prefixes):
+                tool_obs.append((k, v))
+            else:
+                agent_obs.append((k, v))
+        if tool_obs:
+            parts.append("Observables — tool readings (cached source / graph data — DO NOT re-fetch if listed here):")
+            for key, value in tool_obs[-80:]:
                 parts.append(f"  - {key} = {value}")
-        else:
+        if agent_obs:
+            parts.append("Observables — agent scratchpad (most recent 15):")
+            for key, value in agent_obs[-15:]:
+                parts.append(f"  - {key} = {value}")
+        if not tool_obs and not agent_obs:
             parts.append("Observables: (none yet)")
 
         if case_state.hypotheses:
