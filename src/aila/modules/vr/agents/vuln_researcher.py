@@ -185,7 +185,7 @@ class HonestVulnResearcher:
         from aila.platform.llm.idempotency_cache import (  # noqa: PLC0415
             make_request_key, lookup_cached_response, store_response,
         )
-        from aila.modules.vr.contracts import (  # noqa: PLC0415
+        from aila.platform.contracts.reasoning import (  # noqa: PLC0415
             ReasoningTurnDecision,
         )
         import hashlib as _hashlib  # noqa: PLC0415
