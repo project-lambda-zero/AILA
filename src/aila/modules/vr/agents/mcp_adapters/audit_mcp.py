@@ -234,7 +234,7 @@ def _split_by_category(
 # observables. Future fix: stream a structured summary (signature
 # + N anchor lines around each search_source hit) for functions
 # that overflow this cap.
-_MAX_OBS_READ_FUNCTION = 50000
+_MAX_OBS_READ_FUNCTION = 100000000
 
 
 def _list_or_empty(raw: dict[str, Any], *keys: str) -> list[Any]:
@@ -794,14 +794,48 @@ def adapt_read_function(
         "language": language,
         "source_provenance": provenance_stamp(ctx),
     }
-    obs_value = body[:_MAX_OBS_READ_FUNCTION]
-    if len(body) > _MAX_OBS_READ_FUNCTION:
-        obs_value += f"\n\n[truncated — full {line_count} lines in message {ctx.call_id}]"
+
+    if len(body) <= _MAX_OBS_READ_FUNCTION:
+        obs_value = body
+        truncation_suffix = ""
+    else:
+        # Find the last newline within the cap so we cut on a line
+        # boundary, not mid-statement.
+        cut = body.rfind("\n", 0, _MAX_OBS_READ_FUNCTION)
+        if cut < 0:
+            cut = _MAX_OBS_READ_FUNCTION
+        kept = body[:cut]
+        kept_lines = kept.count("\n") + (1 if kept else 0)
+        # Compute the file line where truncation happened so the agent
+        # can read past it directly.
+        try:
+            visible_start = int(line) if line is not None else 1
+        except (TypeError, ValueError):
+            visible_start = 1
+        visible_end = visible_start + kept_lines - 1
+        next_start = visible_end + 1
+        end_line_total = int(raw.get("end_line") or (visible_start + line_count - 1))
+        # Loud banner at TOP so even if downstream renderers cut
+        # further, the agent sees the truncation marker first.
+        banner = (
+            f"!! FUNCTION BODY TRUNCATED !! "
+            f"{fn_name} is {line_count} lines total "
+            f"({len(body)} chars); only the first {kept_lines} lines "
+            f"({len(kept)} chars) fit in the observable cap. "
+            f"You are seeing file {path}:{visible_start}-{visible_end}. "
+            f"To read the rest, call:\n"
+            f"  audit_mcp.read_lines(index_id=<I>, file_path={path!r}, "
+            f"start={next_start}, end={min(next_start + 500, end_line_total)})\n"
+            f"DO NOT draw conclusions about absence of code in the "
+            f"unseen tail — call read_lines first.\n\n"
+        )
+        obs_value = banner + kept
+        truncation_suffix = "  ⚠ TRUNCATED"
     return AdapterResult(
         payload_kind=PayloadKind.DECOMPILED_FUNCTION,
         payload=payload,
         observables_delta={obs_key_for(ctx, f"source.{fn_name}"): obs_value},
-        summary=f"read_function {fn_name} ({line_count} lines, lang={language or '?'})",
+        summary=f"read_function {fn_name} ({line_count} lines, lang={language or '?'}){truncation_suffix}",
     )
 
 
@@ -811,8 +845,8 @@ def adapt_read_function(
 
 # Per-result observable cap for search_* adapters. 30000 chars covers
 # ~200-400 matches in dense file:line:text format vs ~8 matches when
-# the old generic JSON-dump path capped at MAX_OBS_DUMP_CHARS=2000.
-_MAX_OBS_SEARCH = 30000
+# the old generic JSON-dump path capped at MAX_OBS_DUMP_CHARS=100000000.
+_MAX_OBS_SEARCH = 100000000
 
 
 def _render_matches_dense(raw: dict[str, Any]) -> tuple[str, int]:
@@ -975,7 +1009,7 @@ adapt_search_functions = _adapt_search_functions_specialized
 # chars, so the agent saw quoted/escaped/indented JSON with ~3-4 of
 # 8 results bleeding past the cap. Now: dense block per chunk so the
 # agent gets real readable source.
-_MAX_OBS_CHUNKS = 50000
+_MAX_OBS_CHUNKS = 100000000
 
 
 def _render_chunks_dense(raw: dict[str, Any]) -> tuple[str, int]:

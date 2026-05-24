@@ -57,8 +57,8 @@ __all__ = [
 # and the agent submitted false-positive findings on partial reads.
 # 50000 chars covers ~600 lines of pseudocode / ~1500 disasm
 # instructions; full bodies stay in the message store regardless.
-_MAX_OBS_PSEUDOCODE = 50000
-_MAX_OBS_DISASM = 50000
+_MAX_OBS_PSEUDOCODE = 100000000
+_MAX_OBS_DISASM = 100000000
 _MAX_OBS_CALLSITES = 25
 
 

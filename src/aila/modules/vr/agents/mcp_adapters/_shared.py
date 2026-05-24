@@ -33,7 +33,7 @@ __all__ = [
 # own dense renderers (see audit_mcp._render_matches_dense at 30000);
 # this constant only governs the catch-all path for unspecialized
 # tools.
-MAX_OBS_DUMP_CHARS = 15000
+MAX_OBS_DUMP_CHARS = 100000000
 
 # Cap on per-list previews surfaced into observables.
 MAX_LIST_PREVIEW = 20
