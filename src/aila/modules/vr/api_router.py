@@ -3162,6 +3162,25 @@ def create_vr_router() -> APIRouter:
             for row in stale_rows:
                 row.status = TaskStatus.CANCELLED.value
                 uow.session.add(row)
+            # Also wipe __crashed__ cursors for this investigation so the
+            # workflow engine starts fresh on next dispatch. Without this,
+            # crashed cursors persist forever and re-enqueue fires a new
+            # TaskRecord but the engine refuses to resume cleanly. I had
+            # to manually DELETE 219 such orphan crashed cursors today.
+            from sqlalchemy import text as sa_text  # noqa: PLC0415
+            try:
+                await uow.session.exec(  # type: ignore[call-arg]
+                    sa_text(
+                        "DELETE FROM workflow_state_cursor "
+                        "WHERE current_state = '__crashed__' "
+                        "AND run_id IN (SELECT id FROM taskrecord "
+                        "WHERE kwargs_json LIKE :pat)"
+                    ).bindparams(pat=f'%"{investigation_id}"%')
+                )
+            except Exception as exc:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "re-enqueue: cursor cleanup failed: %s", exc,
+                )
             await uow.session.commit()
             await uow.session.refresh(inv)
         # (committed before submit so the next submit() sees a clean

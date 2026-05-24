@@ -787,6 +787,10 @@ class DurableStateMachine:
 
         error_class = type(exc).__name__
         error_message = safe_exc_message(exc)
+        _log.exception(
+            "workflow handler crash: run_id=%s state=%s error_class=%s message=%r",
+            run_id, state.current, error_class, str(exc),
+        )
 
         if is_failure_handler:
             event = "exited:failed_in_failure_handler"
@@ -886,9 +890,20 @@ class DurableStateMachine:
         the exception's redacted metadata. Used when the engine itself
         detects a fatal condition (e.g., step-limit exceeded) that does
         NOT originate from a handler.
+
+        Also writes the FULL exception (with traceback + str(exc)) to
+        the worker log via _log.exception so the operator can debug.
+        The cursor row only stores the redacted class name per the
+        Phase 178 security policy; the operator-private log gets the
+        real message.
         """
         error_class = type(exc).__name__
         error_message = safe_exc_message(exc)
+        _log.exception(
+            "workflow._force_crashed: run_id=%s failed_state=%s "
+            "error_class=%s message=%r",
+            run_id, state.current, error_class, str(exc),
+        )
         return await cls._commit_transition(
             run_id=run_id,
             definition=definition,
