@@ -2890,6 +2890,139 @@ def create_vr_router() -> APIRouter:
 
         return DataEnvelope(data=_investigation_summary(inv))
 
+    @router.post(
+        "/investigations/{investigation_id}/reset",
+        response_model=DataEnvelope[VRInvestigationSummary],
+        summary=(
+            "Hard-reset an investigation to its initial state. Deletes "
+            "all messages + outcomes + non-root branches, resets the "
+            "root branch(es) to turn 0 with empty case state, flips "
+            "investigation back to CREATED. Operator can then "
+            "re-enqueue to start over with the same target + strategy "
+            "but a fresh reasoning history. DESTRUCTIVE — no soft-undo."
+        ),
+    )
+    @limiter.limit("5/minute")
+    async def reset_investigation(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRInvestigationSummary]:
+        del request
+        from aila.platform.contracts._common import utc_now  # noqa: PLC0415
+
+        from .db_models import (  # noqa: PLC0415
+            VRInvestigationBranchRecord,
+            VRInvestigationMessageRecord,
+            VRInvestigationOutcomeRecord,
+            VRInvestigationRecord,
+        )
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                ),
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            # Refuse to reset a running investigation — operator must
+            # pause first so the engine isn't writing while we wipe.
+            if inv.status == InvestigationStatus.RUNNING.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Cannot reset a RUNNING investigation. Pause it "
+                        "first via POST /pause, then call reset."
+                    ),
+                )
+
+            branches = (await uow.session.exec(
+                select(VRInvestigationBranchRecord).where(
+                    VRInvestigationBranchRecord.investigation_id == investigation_id,
+                ),
+            )).all()
+            branch_ids = [b.id for b in branches]
+
+            # 1) Delete every message on every branch (full reasoning wipe).
+            for bid in branch_ids:
+                msgs = (await uow.session.exec(
+                    select(VRInvestigationMessageRecord).where(
+                        VRInvestigationMessageRecord.branch_id == bid,
+                    ),
+                )).all()
+                for m in msgs:
+                    await uow.session.delete(m)
+
+            # 2) Delete every outcome for this investigation.
+            outcomes = (await uow.session.exec(
+                select(VRInvestigationOutcomeRecord).where(
+                    VRInvestigationOutcomeRecord.investigation_id == investigation_id,
+                ),
+            )).all()
+            for o in outcomes:
+                await uow.session.delete(o)
+
+            # 3) Drop forked branches; reset root branches to turn 0.
+            # A root branch has parent_branch_id IS NULL. Forks (with a
+            # parent) get deleted entirely — operator can re-fork via
+            # the strategy after re-enqueue. Null self-FKs first to
+            # avoid the same FK-violation we fixed in delete (3df57b4).
+            for b in branches:
+                if b.parent_branch_id is not None:
+                    b.parent_branch_id = None
+                if b.merged_into_branch_id is not None:
+                    b.merged_into_branch_id = None
+                uow.session.add(b)
+            await uow.session.flush()
+
+            reset_count = 0
+            for b in branches:
+                # Determine "original root" status BEFORE we nulled the
+                # After we nulled both FKs above, is_root is True for
+                # everything — but we want to KEEP the originally-root
+                # branches and delete the ones that started as forks.
+                # Walk the original list: a branch is "original root"
+                # only if fork_at_turn is None / 0 AND fork_reason is
+                # empty / 'initial'.
+                originally_root = (
+                    b.fork_at_turn is None
+                    or b.fork_at_turn == 0
+                ) and not (b.fork_reason and b.fork_reason not in {"initial", "root"})
+
+                if originally_root:
+                    b.turn_count = 0
+                    b.case_state_json = "{}"
+                    b.branch_cost_usd = 0.0
+                    b.closed_reason = None
+                    b.closed_at = None
+                    b.promoted = False
+                    b.status = "active"
+                    b.updated_at = utc_now()
+                    uow.session.add(b)
+                    reset_count += 1
+                else:
+                    await uow.session.delete(b)
+
+            # 4) Reset investigation row itself.
+            inv.status = InvestigationStatus.CREATED.value
+            inv.pause_reason = None
+            inv.message_count = 0
+            inv.outcome_count = 0
+            inv.updated_at = utc_now()
+            uow.session.add(inv)
+
+            await uow.session.commit()
+            await uow.session.refresh(inv)
+
+        return DataEnvelope(data=_investigation_summary(inv))
+
     class _ReenqueueBody(BaseModel):
         """Optional body for the re-enqueue endpoint.
 
