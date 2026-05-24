@@ -162,26 +162,42 @@ export function InvestigationDetailPage() {
   // ── Default-land at the latest turn ──────────────────────────────
   //
   // When the page first loads with a populated investigation, scroll
-  // straight to the newest turn. Operator opening a 1000-turn
+  // straight to the bottom. Operator opening a 1000-turn
   // investigation expects to see "current state", not message #1.
-  // Fires exactly once per mount via initialScrolledRef — subsequent
-  // streaming updates go through the live-tail effect below.
+  //
+  // Implementation note: we deliberately scroll the WINDOW to
+  // document.scrollHeight instead of doing scrollIntoView on the
+  // last turn element, because at mount time the turn elements may
+  // not be in the DOM yet (React hasn't committed) — element lookup
+  // races and silently fails. Window-scroll has no such race.
+  //
+  // Retried 8 times over ~800ms via rAF so it tolerates: late
+  // React commits, late image / font loads that grow the page
+  // height, and slow streaming SSE that adds turns right after
+  // mount. The retry is cheap (just a few scrollTo calls) and
+  // stops at the first one that lands within 32px of the bottom.
   const initialScrolledRef = useRef(false);
   useEffect(() => {
     if (initialScrolledRef.current) return;
     const list = messagesResult?.data ?? [];
     if (list.length === 0) return;  // wait for data
     initialScrolledRef.current = true;
-    // Defer past the current commit so the turn elements exist.
-    requestAnimationFrame(() => {
-      const id = `turn-${list.length - 1}`;
-      const el = document.getElementById(id);
-      if (el) {
-        // No smooth — instant jump so operator's eye doesn't track
-        // the scroll from #0 → #N (jarring on long investigations).
-        el.scrollIntoView({ behavior: "auto", block: "end" });
+
+    let attempts = 0;
+    const maxAttempts = 8;
+    const tick = () => {
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "auto" });
+      attempts++;
+      const distFromBottom =
+        document.documentElement.scrollHeight -
+        window.scrollY -
+        window.innerHeight;
+      if (distFromBottom > 32 && attempts < maxAttempts) {
+        // Page grew or didn't render yet — try again on next frame.
+        requestAnimationFrame(tick);
       }
-    });
+    };
+    requestAnimationFrame(tick);
   }, [messagesResult?.data?.length]);
 
   // Live-tail: auto-scroll the newest turn into view when liveTail is on
