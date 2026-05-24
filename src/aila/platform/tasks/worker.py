@@ -475,7 +475,7 @@ async def _sweep_orphan_running_tasks(
                             "in-progress key for %s: %s", rec.id, exc,
                         )
                     rec.status = TaskStatus.CANCELLED.value
-                    rec.finished_at = datetime.now(tz=UTC)
+                    rec.completed_at = datetime.now(tz=UTC)
                     session.add(rec)
                     _log.info(
                         "worker.reverse_sweep: task_id=%s SKIPPED — workflow "
