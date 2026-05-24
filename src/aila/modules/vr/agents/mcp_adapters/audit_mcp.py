@@ -884,6 +884,86 @@ adapt_search_types = _adapt_search("search_types")
 adapt_search_functions = _adapt_search("search_functions")
 
 
+def _adapt_search_functions_specialized(
+    raw: dict[str, Any], ctx: AdapterContext,
+) -> AdapterResult:
+    """Override the generic search_* renderer for search_functions.
+
+    Generic _render_matches_dense expects {file_path, line, text} per
+    match, falls through to '?' for missing fields. search_functions
+    returns {name, qualified_name, kind, file_path, line_start,
+    line_end, cyclomatic_complexity} with file_path/line_start often
+    null (trailmark loses source locations). The generic path then
+    produced '?:?:' for every row — useless 'evidence' that agents
+    cited as if it were a file:line reference.
+
+    Render each match as:
+      function_name [kind, complexity=N] @ file_path:line_start-line_end
+      (qualified: qualified_name)
+    Falls back to just the name + flags when location data missing.
+    """
+    matches = raw.get("matches") or raw.get("results") or []
+    if not isinstance(matches, list):
+        return _adapt_search("search_functions")(raw, ctx)
+    lines: list[str] = []
+    no_location = 0
+    for m in matches:
+        if not isinstance(m, dict):
+            lines.append(str(m))
+            continue
+        name = m.get("name") or m.get("qualified_name") or "?"
+        kind = m.get("kind") or "function"
+        cyc = m.get("cyclomatic_complexity")
+        fp = m.get("file_path")
+        ls = m.get("line_start")
+        le = m.get("line_end")
+        qn = m.get("qualified_name")
+        flags = [kind]
+        if isinstance(cyc, (int, float)) and cyc:
+            flags.append(f"cyc={cyc}")
+        flag_str = ", ".join(flags)
+        if fp and ls:
+            loc = f"{fp}:{ls}" + (f"-{le}" if le else "")
+        else:
+            loc = "[no location indexed — use read_lines after locating via semantic_search]"
+            no_location += 1
+        line = f"{name} [{flag_str}] @ {loc}"
+        if qn and qn != name:
+            line += f"  (qualified: {qn})"
+        lines.append(line)
+    body = "\n".join(lines)
+    if no_location:
+        body += (
+            f"\n\n[{no_location}/{len(matches)} matches have no indexed "
+            f"file_path/line — audit_mcp's function indexer lost their "
+            f"locations. Use semantic_search(query=\"<function_name>\") "
+            f"to find the real definition, then read_lines for the body.]"
+        )
+    if len(body) > _MAX_OBS_SEARCH:
+        body = body[:_MAX_OBS_SEARCH] + (
+            f"\n... [truncated — {len(matches)} matches total, full body "
+            f"in message store]"
+        )
+    payload = {
+        "tool": "search_functions",
+        "match_count": len(matches),
+        "matches_text": body,
+        "raw": raw,
+    }
+    return AdapterResult(
+        payload_kind=PayloadKind.TEXT,
+        payload=payload,
+        observables_delta={
+            obs_key_for(ctx, f"search_functions.{ctx.args.get('pattern') or '_'}"): body,
+        },
+        summary=f"search_functions: count={len(matches)}, no_location={no_location}",
+    )
+
+
+# Override the generic adapter with the specialized one.
+adapt_search_functions = _adapt_search_functions_specialized
+
+
 # ----------------------------------------------------------------------
 # semantic_search + find_related — chunk-based dense rendering
 # ----------------------------------------------------------------------
