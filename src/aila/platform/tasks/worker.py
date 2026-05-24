@@ -455,9 +455,28 @@ async def _sweep_orphan_running_tasks(
                 # reap workflow tasks if the cursor itself reached a
                 # terminal reserved state.
                 if await _workflow_cursor_is_resumable(session, rec.id):
+                    # Critical: delete the orphaned `arq:in-progress:<id>`
+                    # key when we SKIP. The key has a 1-hour TTL and ARQ's
+                    # worker counts it against max_jobs — leaving it intact
+                    # throttles the worker by one slot per leaked task until
+                    # TTL expires. After start.sh restart with N active
+                    # branches, the worker can sit at (max_jobs - N) free
+                    # slots for an hour, manifesting as investigations
+                    # "stopping and continuing suddenly" as old slots
+                    # naturally drop off. The TaskRecord stays RUNNING —
+                    # the workflow cursor is responsible for resumption,
+                    # not the in-progress lock.
+                    try:
+                        await client.delete(f"{ARQ_IN_PROGRESS_PREFIX}{rec.id}")
+                    except (OSError, TimeoutError, RuntimeError) as exc:
+                        _log.warning(
+                            "worker.reverse_sweep: failed to delete leaked "
+                            "in-progress key for %s: %s", rec.id, exc,
+                        )
                     _log.info(
                         "worker.reverse_sweep: task_id=%s SKIPPED — workflow "
-                        "cursor is resumable (D-86)", rec.id,
+                        "cursor is resumable (D-86), in-progress lock cleared",
+                        rec.id,
                     )
                     continue
                 reason = (
