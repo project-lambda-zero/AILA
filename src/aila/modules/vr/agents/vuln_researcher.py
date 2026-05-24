@@ -154,6 +154,79 @@ class HonestVulnResearcher:
         prior_outcomes = await self._load_prior_outcomes()
         sibling_context = await self._load_sibling_context()
 
+        # Sibling-consensus rejection pressure. When this branch's live
+        # hypotheses include an id that 2+ siblings have rejected (with
+        # source-citing claims), inject a directive forcing the agent
+        # to either reject it this turn or explain disagreement.
+        # Without this, the dialectic produces local rejection but
+        # never converges across branches: halvar keeps h1 alive
+        # forever even after maddie + renzo reject it with verbatim
+        # source proof (observed live on investigation 8cf6144f).
+        my_live_ids = {h.id for h in case_state.hypotheses if h.id}
+        if my_live_ids and sibling_context:
+            sibling_rejection_count: dict[str, int] = {}
+            sibling_rejection_claims: dict[str, list[str]] = {}
+            for sib in sibling_context:
+                for rej in sib.get("rejected", []):
+                    rid = rej.get("id")
+                    if not rid or rid not in my_live_ids:
+                        continue
+                    sibling_rejection_count[rid] = sibling_rejection_count.get(rid, 0) + 1
+                    sibling_rejection_claims.setdefault(rid, []).append(
+                        f"{sib.get('persona_voice','?')}: {rej.get('claim','')[:120]}"
+                    )
+            consensus_rejections = {
+                rid: claims for rid, claims in sibling_rejection_claims.items()
+                if sibling_rejection_count.get(rid, 0) >= 2
+            }
+            if consensus_rejections:
+                directive_lines = [
+                    "*** SIBLING CONSENSUS REJECTION ***",
+                    f"You have {len(consensus_rejections)} hypothesis(es) still LIVE that ",
+                    "2+ sibling branches have already REJECTED with source-citing evidence:",
+                    "",
+                ]
+                for rid, claims in consensus_rejections.items():
+                    directive_lines.append(f"  hypothesis id={rid}")
+                    for c in claims:
+                        directive_lines.append(f"    - {c}")
+                directive_lines.append("")
+                directive_lines.append(
+                    "This turn you MUST either: (a) include these ids in your "
+                    "decision.rejected[] with your own short concurring claim, "
+                    "OR (b) explain in reasoning why you disagree AND cite the "
+                    "verbatim source contradicting the siblings' refutation. "
+                    "Passive 'keep alive without comment' is a deliberation "
+                    "integrity failure."
+                )
+                # Inject directly into the branch's case_state observable
+                # so render_active_directives_section surfaces at the top
+                # of the next prompt build.
+                from aila.modules.vr.db_models import (  # noqa: PLC0415
+                    VRInvestigationBranchRecord,
+                )
+                async with UnitOfWork() as uow:
+                    branch_row = (await uow.session.exec(
+                        _select(VRInvestigationBranchRecord).where(
+                            VRInvestigationBranchRecord.id == self.branch_id,
+                        )
+                    )).first()
+                    if branch_row is not None:
+                        try:
+                            cs_obj = json.loads(branch_row.case_state_json or "{}")
+                            obs = cs_obj.get("observables") or {}
+                            if not isinstance(obs, dict):
+                                obs = {}
+                            obs["_directive.sibling_consensus_rejection"] = "\n".join(directive_lines)
+                            cs_obj["observables"] = obs
+                            branch_row.case_state_json = json.dumps(cs_obj)
+                            uow.session.add(branch_row)
+                            await uow.commit()
+                            # Reload case_state into local copy so this turn
+                            # also sees the directive.
+                            case_state.observables["_directive.sibling_consensus_rejection"] = "\n".join(directive_lines)
+                        except (json.JSONDecodeError, AttributeError):
+                            pass
         system_prompt = _load_prompt(inv.strategy_family, branch.persona_voice)
         tool_specs = await _fetch_tool_specs(
             target_kind=(target_snapshot or {}).get("kind"),

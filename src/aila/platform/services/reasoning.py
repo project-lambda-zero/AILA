@@ -188,14 +188,23 @@ class CyberReasoningEngine:
         #      append unknown ones
         # Result: nothing the agent ever proposed disappears; the
         # only way to remove a hypothesis is to explicitly reject it.
-        rejected = list(case_state.rejected)
-        seen_rejected = {(item.id, item.claim) for item in rejected}
+        # Rejection dedup by id only (last-claim wins). The previous
+        # (id, claim) tuple dedup let duplicates accumulate whenever
+        # the agent rephrased a rejection's claim text turn-to-turn —
+        # observed live on investigation 8cf6144f: r1, r_gc_layout,
+        # r_obj_moved_missing_from_source all appeared twice in
+        # maddie's rejected list with slightly different wording.
+        rejected_by_id: dict[str, Any] = {}
+        for item in case_state.rejected:
+            if item.id:
+                rejected_by_id[item.id] = item
         for item in decision.rejected:
-            key = (item.id, item.claim)
-            if key in seen_rejected:
-                continue
-            seen_rejected.add(key)
-            rejected.append(item)
+            if item.id:
+                rejected_by_id[item.id] = item
+        # Preserve insertion order (id-less keep their position)
+        rejected = [item for item in case_state.rejected if not item.id]
+        rejected.extend(item for item in decision.rejected if not item.id)
+        rejected.extend(rejected_by_id.values())
         newly_rejected_ids = {item.id for item in decision.rejected if item.id}
 
         merged_live = [
