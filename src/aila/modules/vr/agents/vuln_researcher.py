@@ -423,12 +423,23 @@ class HonestVulnResearcher:
                     for h in (cs.rejected or [])[:5]
                 ]
                 key_obs: dict[str, Any] = {}
+                # Tool-prefix cache observables: surface them all so this
+                # branch sees what siblings already fetched (function bodies
+                # from audit_mcp:read_function.source.*, semantic_search
+                # results, etc.). Each value preview-capped to 600 chars
+                # so the sibling section doesn't dominate the prompt;
+                # full body remains in the SIBLING's own case_state.
+                tool_obs: dict[str, str] = {}
                 for k, v in (cs.observables or {}).items():
-                    if k.startswith("_") or not isinstance(v, (str, int, float, bool)):
+                    if not isinstance(v, (str, int, float, bool)):
                         continue
-                    key_obs[k] = str(v)[:240]
-                    if len(key_obs) >= 8:
-                        break
+                    if k.startswith("audit_mcp:") or k.startswith("audit_mcp.") \
+                            or k.startswith("ida_headless:") or k.startswith("ida_headless."):
+                        tool_obs[k] = str(v)[:600]
+                    elif not k.startswith("_"):
+                        key_obs[k] = str(v)[:240]
+                        if len(key_obs) >= 8:
+                            break
                 out.append({
                     "branch_id": s.id,
                     "persona_voice": s.persona_voice or "(none)",
@@ -436,6 +447,7 @@ class HonestVulnResearcher:
                     "hypotheses": hyps,
                     "rejected": rej,
                     "key_observables": key_obs,
+                    "tool_observables": tool_obs,
                     "terminal_outcome": t_payload,
                 })
             return out
@@ -939,6 +951,14 @@ def _render_sibling_context_section(
         if key_obs:
             lines.append("Key observables:")
             for k, v in key_obs.items():
+                lines.append(f"  - {k}: {v}")
+        tool_obs = s.get("tool_observables") or {}
+        if tool_obs:
+            lines.append(
+                "Tool readings sibling has CACHED (you can SKIP re-fetching "
+                "these — reference the sibling's data instead):"
+            )
+            for k, v in tool_obs.items():
                 lines.append(f"  - {k}: {v}")
         term = s.get("terminal_outcome")
         if term:
