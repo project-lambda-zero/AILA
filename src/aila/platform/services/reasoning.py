@@ -213,12 +213,15 @@ class CyberReasoningEngine:
                 merged_live.append(new_h)
 
         observables = dict(case_state.observables)
-        # Cap agent-self-set observables to keep case_state bounded.
-        # Agents pad with scratchpad keys (sibling_X_status, mandatory_next,
-        # pattern_matching_accusation_Y) that crowd out tool readings.
-        # Limit: 10 new keys per turn, and never let the agent overwrite
-        # a tool-namespaced key (audit_mcp:*, ida_headless:*, _directive.*).
+        # Cap agent-self-set observables to keep case_state bounded:
+        #   (1) max 10 NEW keys per turn (anti-spam)
+        #   (2) block writes to tool / directive namespaces
+        #   (3) max 50 TOTAL agent-set keys across all turns — LRU evict
+        #       oldest by dict-insertion order; tool + directive keys
+        #       are NEVER evicted (they're preserved by the partition
+        #       in render_case_model and live separately from the cap).
         TOOL_PREFIXES = ("audit_mcp:", "audit_mcp.", "ida_headless:", "ida_headless.", "_directive.")
+        MAX_AGENT_KEYS_TOTAL = 50
         accepted = 0
         for k, v in decision.observables.items():
             key = str(k).strip()
@@ -231,6 +234,15 @@ class CyberReasoningEngine:
                 break
             observables[key] = v
             accepted += 1
+        # Enforce total-cap on agent-set keys.
+        agent_keys = [
+            k for k in observables
+            if not any(k.startswith(p) for p in TOOL_PREFIXES)
+        ]
+        if len(agent_keys) > MAX_AGENT_KEYS_TOTAL:
+            evict_n = len(agent_keys) - MAX_AGENT_KEYS_TOTAL
+            for k in agent_keys[:evict_n]:
+                observables.pop(k, None)
 
         return ReasoningCaseState(
             contract=contract,

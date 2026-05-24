@@ -453,10 +453,19 @@ def _investigation_summary(
     primary_outcome_verdict_head: str | None = None,
     verifier_verdict: str | None = None,
     verifier_confidence: float | None = None,
+    live_cost_usd: float | None = None,
 ) -> VRInvestigationSummary:
-    """Project a VRInvestigationRecord row to the public summary."""
+    """Project a VRInvestigationRecord row to the public summary.
+
+    ``live_cost_usd`` overrides the stored ``cost_actual_usd`` when
+    provided. The stored field has had no writers since inception, so
+    every read previously returned $0.00 regardless of actual spend.
+    Callers that aggregate ``LLMCostRecord`` per investigation pass the
+    sum here so the budget gauge reflects reality.
+    """
     import json as _json
 
+    actual_cost = live_cost_usd if live_cost_usd is not None else record.cost_actual_usd
     return VRInvestigationSummary(
         id=record.id,
         title=record.title,
@@ -473,7 +482,7 @@ def _investigation_summary(
         is_favorite=getattr(record, "is_favorite", False),
         strategy_family=record.strategy_family,
         cost_budget_usd=record.cost_budget_usd,
-        cost_actual_usd=record.cost_actual_usd,
+        cost_actual_usd=actual_cost,
         llm_tokens_cost_usd=record.llm_tokens_cost_usd,
         mcp_calls_cost_usd=record.mcp_calls_cost_usd,
         fuzz_infra_cost_usd=record.fuzz_infra_cost_usd,
@@ -493,6 +502,38 @@ def _investigation_summary(
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
+
+
+async def _compute_live_investigation_cost(
+    uow: Any, investigation_id: str,
+) -> float:
+    """Aggregate LLMCostRecord.cost_usd over all task runs for this
+    investigation. Joins via TaskRecord.kwargs_json containing the
+    investigation_id since LLMCostRecord.run_id == TaskRecord.id.
+
+    Returns 0.0 on any error (best-effort — budget gauge degrades to
+    the stored zero rather than crashing the read path).
+    """
+    try:
+        from aila.platform.tasks.models import TaskRecord  # noqa: PLC0415
+        from aila.platform.llm.cost_record import LLMCostRecord  # noqa: PLC0415
+        from sqlalchemy import func as sa_func  # noqa: PLC0415
+
+        # Find all run_ids belonging to this investigation
+        task_ids_q = select(TaskRecord.id).where(
+            TaskRecord.fn_path.like("%run_vr_investigate%"),
+            TaskRecord.kwargs_json.like(f'%"{investigation_id}"%'),
+        )
+        task_ids = [r for r in (await uow.session.exec(task_ids_q)).all()]
+        if not task_ids:
+            return 0.0
+        sum_q = select(sa_func.coalesce(sa_func.sum(LLMCostRecord.cost_usd), 0.0)).where(
+            LLMCostRecord.run_id.in_(task_ids),
+        )
+        total = (await uow.session.exec(sum_q)).one()
+        return float(total)
+    except (AttributeError, ImportError, ValueError):
+        return 0.0
 
 
 def _branch_summary(record: Any) -> VRBranchSummary:
@@ -2460,6 +2501,12 @@ def create_vr_router() -> APIRouter:
                         if isinstance(vc, (int, float)):
                             verifier_confidence = float(vc)
 
+        # Live cost — aggregate LLMCostRecord by run_id matching this
+        # investigation's TaskRecord ids. The stored cost_actual_usd has
+        # no writers so without this override every read returned $0
+        # regardless of actual spend, making the budget gauge decorative.
+        async with UnitOfWork() as uow_cost:
+            live_cost = await _compute_live_investigation_cost(uow_cost, investigation_id)
         return DataEnvelope(data=_investigation_summary(
             inv,
             branch_count=int(branch_count),
@@ -2470,6 +2517,7 @@ def create_vr_router() -> APIRouter:
             primary_outcome_verdict_head=primary_outcome_verdict_head,
             verifier_verdict=verifier_verdict,
             verifier_confidence=verifier_confidence,
+            live_cost_usd=live_cost,
         ))
 
     @router.patch(
