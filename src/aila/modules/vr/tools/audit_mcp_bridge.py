@@ -350,25 +350,42 @@ class AuditMcpBridgeTool(Tool):
         return self.__class__._SPEC_CACHE
 
     async def _ensure_prewarmed(self, index_id: str) -> None:
-        """Fire 16 parallel lightweight calls to warm all workers for
-        ``index_id``, exactly once per process per index. Subsequent
-        calls are no-ops.
+        """Fan out lightweight calls so every audit_mcp worker pre-loads
+        the engine + semble caches for ``index_id``, exactly once per
+        process per index. Subsequent calls are no-ops.
 
-        Each call hits ``/tools/summary`` (loads engine + preanalysis
-        into the worker's RAM) followed by ``/tools/semble_stats``
-        (triggers lazy semble build per worker). Round-robin from
-        uvicorn distributes the 16 calls across the worker pool — with
-        AUDIT_MCP_WORKERS=4 that's ~4 calls per worker, statistically
-        certain to hit every worker at least once.
+        Skipped entirely when ``AUDIT_MCP_WORKERS<=1`` (the Windows
+        reality). With a single worker, 16 parallel calls don't warm
+        anything — they all serialize on the same async loop and just
+        multiply the workload the worker has to chew through before
+        the agent's REAL tool call gets a slot. That happened on
+        investigation 417b469f: 3 branches simultaneously fired
+        attack_surface/summary on firefox; bridge fired 16 pre-warm
+        calls onto a single GIL-bound worker; the worker spent 6+
+        minutes thrashing without ever responding to any tool call.
+
+        Each call hits ``/tools/summary`` (loads engine + preanalysis)
+        and ``/tools/semble_stats`` (triggers lazy semble build).
+        Round-robin from uvicorn distributes the calls across the
+        worker pool when N>1.
 
         Errors are swallowed by design: warming is best-effort. If
         audit-mcp is down or the index is broken, the real call that
-        follows will surface a proper error. Total wall time is the
-        slowest single warming call — for firefox cold that's ~30 s.
+        follows will surface a proper error.
         """
         import asyncio  # noqa: PLC0415
 
         if index_id in self.__class__._warmed_indexes:
+            return
+        # Skip pre-warm on single-worker deployments — see docstring.
+        workers = int(os.environ.get("AUDIT_MCP_WORKERS", "1") or "1")
+        if workers <= 1:
+            self.__class__._warmed_indexes.add(index_id)
+            logging.getLogger(__name__).info(
+                "audit_mcp_bridge: pre-warm skipped for %s "
+                "(AUDIT_MCP_WORKERS=%d, no fan-out needed)",
+                index_id, workers,
+            )
             return
 
         lock = self.__class__._warm_locks.get(index_id)
@@ -382,11 +399,13 @@ class AuditMcpBridgeTool(Tool):
 
             base = await self._resolve_base_url()
             log = logging.getLogger(__name__)
+            # Fan-out sized to 4x worker count so round-robin distribution
+            # statistically hits every worker at least once (not a fixed 16).
+            fanout = max(workers * 4, 4)
             log.info(
-                "audit_mcp_bridge: pre-warming index %s across workers "
+                "audit_mcp_bridge: pre-warming index %s across %d workers "
                 "(fan-out=%d, timeout=%.0fs)",
-                index_id, self.__class__._PREWARM_FANOUT,
-                self.__class__._PREWARM_TIMEOUT_S,
+                index_id, workers, fanout, self.__class__._PREWARM_TIMEOUT_S,
             )
 
             async def _one(client: httpx.AsyncClient, tool: str) -> None:
@@ -399,9 +418,6 @@ class AuditMcpBridgeTool(Tool):
                         httpx.ReadError):
                     pass  # best-effort
 
-            # Half summary calls (warm engine), half semble_stats
-            # (warm semble). Fired concurrently — they round-robin
-            # across workers via uvicorn's socket sharing.
             timeout = httpx.Timeout(
                 self.__class__._PREWARM_TIMEOUT_S,
                 connect=10.0,
@@ -409,7 +425,6 @@ class AuditMcpBridgeTool(Tool):
             t0 = asyncio.get_event_loop().time()
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
-                    fanout = self.__class__._PREWARM_FANOUT
                     tasks = []
                     for i in range(fanout):
                         tool = "summary" if i < fanout // 2 else "semble_stats"
