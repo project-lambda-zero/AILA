@@ -3010,11 +3010,12 @@ def create_vr_router() -> APIRouter:
                 else:
                     await uow.session.delete(b)
 
-            # 4) Reset investigation row itself.
+            # 4) Reset investigation row itself. message_count + outcome_count
+            # are projections derived at summary time (count from the message /
+            # outcome tables), not stored columns — they update implicitly once
+            # the deletes above commit.
             inv.status = InvestigationStatus.CREATED.value
             inv.pause_reason = None
-            inv.message_count = 0
-            inv.outcome_count = 0
             inv.updated_at = utc_now()
             uow.session.add(inv)
 
