@@ -544,6 +544,8 @@ class ToolExecutor:
     # function body was actually read.
     _READ_TOOLS: frozenset[tuple[str, str]] = frozenset({
         ("audit_mcp", "read_function"),
+        ("audit_mcp", "read_lines"),         # bridge-side verbatim slice
+        ("audit_mcp", "semantic_search"),    # returns full code chunks
         ("audit_mcp", "extract_class"),
         ("audit_mcp", "taint_paths_to"),
         ("audit_mcp", "callers_of"),

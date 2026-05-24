@@ -679,13 +679,14 @@ class HonestVulnResearcher:
             f"system prompt schema."
         )
 
-    # How many turns an operator message remains "active" in the prompt.
-    # After (turn - delivered_at_turn) > _OPERATOR_MESSAGE_TTL_TURNS the
-    # message is filtered out — the operator's steering had a chance to
-    # reach the agent across N turns; after that it's noise. Without
-    # this, a single message could ride along for hundreds of turns
-    # alongside contradictory later steering.
-    _OPERATOR_MESSAGE_TTL_TURNS: int = 8
+    # Wall-clock TTL for operator messages. Previously computed as
+    # _OPERATOR_MESSAGE_TTL_TURNS * 240s assuming each turn ≈ 4min —
+    # wrong for variant_hunt runs that span hours of slow Claude
+    # calls. A steering message posted at hour 1 would silently drop
+    # by hour 1.5 even though the agent was only on turn 4. 24h
+    # covers any realistic single-session run; operator can delete
+    # stale messages via UI / DB if needed.
+    _OPERATOR_MESSAGE_TTL_SECONDS: int = 24 * 3600
 
     async def _consume_pending_operator_messages(
         self,
@@ -760,7 +761,7 @@ class HonestVulnResearcher:
             seen_texts: set[str] = set()
             stamped = False
             now = utc_now()
-            ttl_seconds = self._OPERATOR_MESSAGE_TTL_TURNS * 240
+            ttl_seconds = self._OPERATOR_MESSAGE_TTL_SECONDS
             for row in rows:
                 try:
                     payload = json.loads(row.payload_json or "{}")
