@@ -151,130 +151,51 @@ class AuditMcpBridgeTool(Tool):
 
     # ── LLM kwarg synonym map ─────────────────────────────────────────
     #
-    # audit-mcp normalized every "name of an entity" parameter to plain
-    # ``name`` (read_function / extract_class / taint_paths_to /
-    # functions_that_raise / children_of all migrated from typed names
-    # Per-action synonym overrides. Different audit_mcp tools use
-    # different canonical names for the same concept — most painfully:
+    # See ``_kwarg_alias.py`` for the algorithm. We define the families
+    # here (they're catalog-specific) and delegate alias resolution to
+    # the shared module so ``ida_bridge.py`` uses the exact same code.
     #
-    #   complexity_hotspots accepts:  threshold  (NOT min_complexity)
-    #   fuzzing_targets     accepts:  min_complexity  (NOT threshold)
-    #
-    # A GLOBAL map "min_complexity → threshold" rewrote correct
-    # fuzzing_targets calls into broken ones, validator rejected them,
-    # agent looped forever (investigation 60158a00 et al). Synonyms
-    # MUST be per-action.
-    _PER_ACTION_SYNONYMS: dict[str, dict[str, str]] = {
-        "fuzzing_targets": {
-            "threshold": "min_complexity",
-            "complexity_threshold": "min_complexity",
-            "min_score": "min_complexity",
-            "score_threshold": "min_complexity",
-            "min_cyc": "min_complexity",
-            "cutoff": "min_complexity",
+    # Families are intentionally tight — `path` and `file_path` are NOT
+    # the same intent (repo root vs. one file), so they stay separate.
+    # `query` (natural-language) and `pattern` (regex) are also distinct.
+    # `depth` is kept separate from the how_many family because tools
+    # like ``ancestors_of`` and ``paths_between`` take BOTH at once.
+    _KW_FAMILIES: dict[str, set[str]] = {
+        "how_many": {
+            "limit", "top_k", "top_n", "n", "count", "max_results",
+            "k", "max_count", "num", "max_n", "max_items",
         },
-        "complexity_hotspots": {
-            "min_complexity": "threshold",
-            "complexity_threshold": "threshold",
-            "min_cyc": "threshold",
-            "cutoff": "threshold",
+        "depth": {
+            "depth", "max_depth", "max_hops", "traversal_depth",
         },
-        # semble tools use `top_k` as the canonical name — the global
-        # _KW_SYNONYMS map rewrites top_k → limit, which breaks both
-        # directions: limit= is passed through (rejected) and top_k=
-        # gets canonicalized to limit= (also rejected). Per-action
-        # overrides win, so name everything that lands here `top_k`.
-        "semantic_search": {
-            "limit": "top_k",
-            "top_n": "top_k",
-            "n": "top_k",
-            "count": "top_k",
-            "max_results": "top_k",
-            "k": "top_k",
+        "threshold": {
+            "threshold", "min_complexity", "cutoff", "min_cyc",
+            "complexity_threshold", "min_score", "score_threshold",
+            "min_value",
         },
-        "find_related": {
-            "limit": "top_k",
-            "top_n": "top_k",
-            "n": "top_k",
-            "count": "top_k",
-            "max_results": "top_k",
-            "k": "top_k",
+        "name": {
+            "name", "function_name", "class_name", "sink_name",
+            "symbol_name", "fn_name", "fn", "function", "symbol",
+            "exception_name",
         },
     }
 
-    # Global synonyms that ARE safe across every tool — these don't
-    # collide with any per-action canonical name.
-    _KW_SYNONYMS: dict[str, str] = {
-        "top_n": "limit",
-        "top_k": "limit",
-        "n": "limit",
-        "count": "limit",
-        "max_results": "limit",
-        "function_name": "name",
-        "class_name": "name",
-        "sink_name": "name",
-        "exception_name": "name",
-        "symbol_name": "name",
-        "fn_name": "name",
-        "fn": "name",
-        "function": "name",
-        "symbol": "name",
-    }
+    # Manual overrides for renames the family algorithm cannot infer.
+    # Keep small; prefer adding to ``_KW_FAMILIES``.
+    _MANUAL_OVERRIDES: dict[str, dict[str, str]] = {}
+
+    # Auto-built ``{action: {alias: canonical}}`` populated by
+    # ``list_tool_specs()`` after the first /tools fetch.
+    _AUTO_ALIAS_MAP: dict[str, dict[str, str]] = {}
 
     @classmethod
     def _normalize_kwargs(
         cls, action: str, kwargs: dict[str, Any],
     ) -> tuple[dict[str, Any], list[str]]:
-        """Rewrite known-synonym kwargs to their canonical names.
+        """Delegate to the shared resolver against the live alias map."""
+        from aila.modules.vr.tools._kwarg_alias import normalize_kwargs  # noqa: PLC0415
 
-        Returns ``(normalized, notes)`` — ``notes`` is a list of
-        human-readable strings (one per rename) the caller logs so
-        the operator sees when the LLM is mis-naming params.
-
-        Resolution order per kwarg:
-          1. Per-action override (``_PER_ACTION_SYNONYMS[action]``).
-             Wins because audit_mcp's param names collide across tools.
-          2. Global synonym table (``_KW_SYNONYMS``).
-          3. Pass-through.
-        """
-        if not kwargs:
-            return {}, []
-        per_action = cls._PER_ACTION_SYNONYMS.get(action, {})
-        # Any name on the right-hand side of per_action is the canonical
-        # name for this action — protect it from the global map. Without
-        # this, a tool whose canonical is `top_k` (semantic_search,
-        # find_related) gets its CORRECT `top_k` arg rewritten to `limit`
-        # by _KW_SYNONYMS, breaking the call.
-        per_action_canonicals = set(per_action.values())
-        out: dict[str, Any] = {}
-        notes: list[str] = []
-        for key, value in kwargs.items():
-            if key in per_action_canonicals:
-                # Already canonical for this action — pass through, ignore
-                # any global rewrite that might point elsewhere.
-                out[key] = value
-                continue
-            canonical = per_action.get(key) or cls._KW_SYNONYMS.get(key)
-            if canonical is None or canonical == key:
-                out[key] = value
-                continue
-            if canonical in kwargs:
-                notes.append(
-                    f"{action}: dropping kwarg '{key}' (alias for "
-                    f"'{canonical}' which is already set)",
-                )
-                continue
-            if canonical in out:
-                notes.append(
-                    f"{action}: dropping kwarg '{key}' (alias for "
-                    f"'{canonical}', already set by an earlier synonym)",
-                )
-                continue
-            out[canonical] = value
-            notes.append(
-                f"{action}: rewrote kwarg '{key}' -> '{canonical}'",
-            )
-        return out, notes
+        return normalize_kwargs(action, kwargs, cls._AUTO_ALIAS_MAP)
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the audit-mcp HTTP API.
@@ -412,6 +333,20 @@ class AuditMcpBridgeTool(Tool):
             self.__class__._SPEC_CACHE = []
             return []
         self.__class__._SPEC_CACHE = [_compact_spec(t) for t in raw]
+        # Derive the per-action alias map from the live schema. Every
+        # subsequent _normalize_kwargs call resolves through this map.
+        from aila.modules.vr.tools._kwarg_alias import build_alias_map  # noqa: PLC0415
+
+        self.__class__._AUTO_ALIAS_MAP = build_alias_map(
+            self.__class__._SPEC_CACHE,
+            self._KW_FAMILIES,
+            self._MANUAL_OVERRIDES,
+        )
+        logging.getLogger(__name__).info(
+            "audit_mcp_bridge: catalog loaded — %d tools, %d with alias maps",
+            len(self.__class__._SPEC_CACHE),
+            len(self.__class__._AUTO_ALIAS_MAP),
+        )
         return self.__class__._SPEC_CACHE
 
     async def _ensure_prewarmed(self, index_id: str) -> None:

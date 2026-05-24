@@ -114,43 +114,55 @@ class IDABridgeTool(Tool):
             pass
         return "http://127.0.0.1:18821"
 
-    # ── LLM kwarg synonym map (mirrors AuditMcpBridgeTool) ────────────
-    _KW_SYNONYMS: dict[str, str] = {
-        "top_n": "limit",
-        "top_k": "limit",
-        "n": "limit",
-        "count": "limit",
-        "max_results": "limit",
-        "function_name": "address_or_name",
-        "function": "address_or_name",
-        "fn": "address_or_name",
-        "name": "address_or_name",
-        "addr": "address",
-        "ea": "address",
+    # ── LLM kwarg synonym map (data-driven; see _kwarg_alias.py) ──────
+    #
+    # IDA's catalog uses different canonicals than audit_mcp:
+    #   * 28 tools take ``address_or_name`` (decompile, xrefs_to, ...)
+    #     where audit_mcp uses plain ``name``. So the IDA `name` family
+    #     INCLUDES address_or_name as a member; the family algorithm
+    #     picks address_or_name as the canonical for every tool that
+    #     accepts it, and aliases name/function/fn/function_name → it.
+    #   * 8 tools take plain ``address`` (patch_assemble, set_comment).
+    #     A separate `address` family aliases addr/ea → address for
+    #     those. Tools with specialized address params (from_address +
+    #     to_address, sink_address, etc.) accept two family members at
+    #     once, so the algorithm correctly leaves those alone.
+    #   * 7 tools take ``limit`` — same `how_many` shape as audit_mcp.
+    #   * `depth` and `max_depth` co-exist (call_chain takes depth,
+    #     interprocedural_taint takes max_depth) — same `depth` family.
+    _KW_FAMILIES: dict[str, set[str]] = {
+        "how_many": {
+            "limit", "top_k", "top_n", "n", "count", "max_results",
+            "k", "max_count", "num", "max_n", "max_items",
+        },
+        "depth": {
+            "depth", "max_depth", "max_hops", "traversal_depth",
+        },
+        "name": {
+            "address_or_name", "name", "function_name", "class_name",
+            "sink_name", "symbol_name", "fn_name", "fn", "function",
+            "symbol", "target_name",
+        },
+        "address": {
+            "address", "addr", "ea",
+        },
     }
+
+    # Manual overrides — empty by design; everything is data-driven.
+    _MANUAL_OVERRIDES: dict[str, dict[str, str]] = {}
+
+    # Auto-built ``{action: {alias: canonical}}`` populated by
+    # ``list_tool_specs()`` after the first /tools fetch.
+    _AUTO_ALIAS_MAP: dict[str, dict[str, str]] = {}
 
     @classmethod
     def _normalize_kwargs(
         cls, action: str, kwargs: dict[str, Any],
     ) -> tuple[dict[str, Any], list[str]]:
-        if not kwargs:
-            return {}, []
-        out: dict[str, Any] = {}
-        notes: list[str] = []
-        for key, value in kwargs.items():
-            canonical = cls._KW_SYNONYMS.get(key)
-            if canonical is None:
-                out[key] = value
-                continue
-            if canonical in kwargs or canonical in out:
-                notes.append(
-                    f"{action}: dropping kwarg '{key}' (alias for "
-                    f"'{canonical}' already set)",
-                )
-                continue
-            out[canonical] = value
-            notes.append(f"{action}: rewrote kwarg '{key}' -> '{canonical}'")
-        return out, notes
+        """Delegate to the shared resolver against the live alias map."""
+        from aila.modules.vr.tools._kwarg_alias import normalize_kwargs  # noqa: PLC0415
+
+        return normalize_kwargs(action, kwargs, cls._AUTO_ALIAS_MAP)
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the MCP HTTP API.
@@ -252,6 +264,20 @@ class IDABridgeTool(Tool):
             self.__class__._SPEC_CACHE = []
             return []
         self.__class__._SPEC_CACHE = [_compact_spec(t) for t in raw]
+        # Derive the per-action alias map from the live schema. Every
+        # subsequent _normalize_kwargs call resolves through this map.
+        from aila.modules.vr.tools._kwarg_alias import build_alias_map  # noqa: PLC0415
+
+        self.__class__._AUTO_ALIAS_MAP = build_alias_map(
+            self.__class__._SPEC_CACHE,
+            self._KW_FAMILIES,
+            self._MANUAL_OVERRIDES,
+        )
+        logging.getLogger(__name__).info(
+            "ida_bridge: catalog loaded — %d tools, %d with alias maps",
+            len(self.__class__._SPEC_CACHE),
+            len(self.__class__._AUTO_ALIAS_MAP),
+        )
         return self.__class__._SPEC_CACHE
 
     async def _upload_binary(self, file_path: str | None = None, **_extra: Any) -> dict:
