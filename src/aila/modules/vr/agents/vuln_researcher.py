@@ -274,6 +274,10 @@ class HonestVulnResearcher:
             cached_response = await lookup_cached_response(
                 cache_uow.session, request_key,
             )
+        # decision is set in exactly one of two paths: from a valid
+        # cache HIT, or from the upstream LLM call. Any failure to
+        # validate the cache row falls through to the API path.
+        decision: ReasoningTurnDecision | None = None
         if cached_response is not None:
             try:
                 decision = ReasoningTurnDecision.model_validate(cached_response)
@@ -282,21 +286,30 @@ class HonestVulnResearcher:
                     "(skipped duplicate LLM call)",
                     self.investigation_id, self.branch_id, turn_number,
                 )
-            except (ValueError, TypeError):
-                cached_response = None  # malformed cache row; fall through to API
+            except Exception as exc:  # noqa: BLE001 — catch pydantic
+                # ValidationError, KeyError, AttributeError, or any
+                # other cache-shape mismatch. We fall through to the
+                # API path; the bad cache row stays in DB but will be
+                # overwritten by store_response on the next success.
+                _log.warning(
+                    "vuln_researcher: cache validate failed (%s: %s) — calling LLM",
+                    type(exc).__name__, exc,
+                )
+                decision = None
 
-        if cached_response is None:
+        if decision is None:
             try:
                 decision = await self._engine.decide_next_turn(
                     task_type=task_type,
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                 )
-            except Exception as exc:  # noqa: BLE001 — any engine/LLM failure must
-                # surface as VulnResearcherError so the loop catches it, marks
-                # exit_reason='researcher_error:<msg>', and the workflow
-                # finalises with status=FAILED instead of silently completing
-                # the task with no outcome and status=RUNNING.
+            except Exception as exc:  # noqa: BLE001 — any engine/LLM failure
+                # must surface as VulnResearcherError so the loop catches
+                # it, marks exit_reason='researcher_error:<msg>', and
+                # the workflow finalises with status=FAILED instead of
+                # silently completing the task with no outcome and
+                # status=RUNNING.
                 raise VulnResearcherError(
                     f"engine.decide_next_turn failed for investigation_id="
                     f"{self.investigation_id} branch_id={self.branch_id}: "
@@ -315,6 +328,12 @@ class HonestVulnResearcher:
                     turn_number=turn_number,
                     response=decision.model_dump(mode="json"),
                 )
+
+        # decision must be set by now: either the cache HIT branch
+        # assigned it OR the LLM call branch did. The only escape
+        # path is the raise VulnResearcherError above which exits
+        # the function entirely.
+        assert decision is not None, "decision unbound after both paths — logic bug"
 
         new_case_state = self._engine.absorb(case_state, decision)
 
