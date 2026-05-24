@@ -26,6 +26,7 @@ from .audit_mcp import (
     adapt_fuzzing_targets,
     adapt_paths_between,
     adapt_read_function,
+    adapt_read_lines,
     adapt_search_constants,
     adapt_find_related,
     adapt_search_functions,
@@ -120,6 +121,8 @@ _SPECIALIZED: dict[tuple[str, str], AdapterFn] = {
     # cap suitable for the chunk shape these tools return).
     ("audit_mcp", "semantic_search"): adapt_semantic_search,
     ("audit_mcp", "find_related"): adapt_find_related,
+    # Bridge-side virtual tool: raw file slice by line range.
+    ("audit_mcp", "read_lines"): adapt_read_lines,
 }
 
 

@@ -212,6 +212,13 @@ class AuditMcpBridgeTool(Tool):
         """
         if not action:
             return await self._list_tools()
+        # Bridge-side virtual tools — handled locally without HTTP.
+        # `read_lines` resolves index_id -> root_path via list_indexes
+        # and slices the file from disk. Bypasses semble chunking and
+        # all the broken indexers (read_function returning file headers,
+        # search_constants returning 0, etc.).
+        if action == "read_lines":
+            return await self._read_lines_local(kwargs)
         normalized_kwargs, kw_notes = self._normalize_kwargs(action, kwargs)
         for note in kw_notes:
             logging.getLogger(__name__).info("audit_mcp_bridge %s", note)
@@ -416,6 +423,34 @@ class AuditMcpBridgeTool(Tool):
             self.__class__._SPEC_CACHE = []
             return []
         self.__class__._SPEC_CACHE = [_compact_spec(t) for t in raw]
+        # Inject the bridge-side virtual `read_lines` tool. audit_mcp
+        # doesn't ship this; we resolve index_id -> root_path locally
+        # and read the file slice from disk. The agent sees it in the
+        # tool catalog and can call it like any other audit_mcp tool.
+        self.__class__._SPEC_CACHE.append({
+            "name": "read_lines",
+            "description": (
+                "Read a verbatim slice of source from a file in the "
+                "indexed repo. Bypasses every audit_mcp indexer — gives "
+                "you EXACTLY the lines you ask for. Use this when you "
+                "know the file path and the line range you need to "
+                "verify (e.g. after a semantic_search hit gave you the "
+                "neighborhood). Lines are 1-indexed inclusive. Hard "
+                "ceiling 1500 lines per call; default max 500."
+            ),
+            "params": [
+                {"name": "index_id", "type": "string", "required": True},
+                {"name": "file_path", "type": "string", "required": True,
+                 "description": "path relative to repo root (e.g. src/http/v3/ngx_http_v3_filter_module.c)"},
+                {"name": "start", "type": "integer", "required": True,
+                 "description": "1-indexed start line (inclusive)"},
+                {"name": "end", "type": "integer", "required": True,
+                 "description": "1-indexed end line (inclusive)"},
+                {"name": "max_lines", "type": "integer", "required": False,
+                 "description": "cap on returned lines (default 500, max 1500)"},
+            ],
+            "required": ["index_id", "file_path", "start", "end"],
+        })
         # Derive the per-action alias map from the live schema. Every
         # subsequent _normalize_kwargs call resolves through this map.
         from aila.modules.vr.tools._kwarg_alias import build_alias_map  # noqa: PLC0415
@@ -610,6 +645,132 @@ class AuditMcpBridgeTool(Tool):
             return {"status": "error", "error": error_msg}
 
         return None
+
+    # Index root cache. Maps index_id -> absolute root_path on disk.
+    # Populated lazily from list_indexes; refreshed on a miss.
+    _INDEX_ROOTS: dict[str, str] = {}
+
+    async def _refresh_index_roots(self) -> None:
+        """Fetch list_indexes and cache index_id -> root_path mapping."""
+        base = await self._resolve_base_url()
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(f"{base}/tools/list_indexes", json={})
+            data = resp.json()
+        except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
+            logging.getLogger(__name__).warning(
+                "audit_mcp_bridge: list_indexes refresh failed: %s", exc,
+            )
+            return
+        roots: dict[str, str] = {}
+        for idx in (data.get("indexes") or []):
+            if not isinstance(idx, dict):
+                continue
+            iid = idx.get("index_id")
+            rp = idx.get("root_path")
+            if isinstance(iid, str) and isinstance(rp, str) and iid and rp:
+                roots[iid] = rp
+        self.__class__._INDEX_ROOTS = roots
+
+    async def _read_lines_local(self, kwargs: dict[str, Any]) -> dict:
+        """Read lines [start, end] (1-indexed, inclusive) from a file
+        in the indexed repo. Resolves index_id via list_indexes and
+        reads the file directly from disk. Bypasses every audit_mcp
+        indexer.
+
+        Required kwargs: index_id, file_path, start, end.
+        Optional: max_lines (cap, default 500, hard ceiling 1500).
+        """
+        from pathlib import Path  # noqa: PLC0415
+
+        index_id = str(kwargs.get("index_id") or "").strip()
+        file_path = str(kwargs.get("file_path") or "").strip()
+        try:
+            start = int(kwargs.get("start") or 0)
+            end = int(kwargs.get("end") or 0)
+        except (TypeError, ValueError):
+            return {
+                "status": "error",
+                "error": "read_lines: start and end must be integers",
+            }
+        try:
+            max_lines = int(kwargs.get("max_lines") or 500)
+        except (TypeError, ValueError):
+            max_lines = 500
+        max_lines = min(max(1, max_lines), 1500)
+
+        if not index_id or not file_path:
+            return {
+                "status": "error",
+                "error": "read_lines: index_id and file_path are required",
+            }
+        if start < 1 or end < start:
+            return {
+                "status": "error",
+                "error": f"read_lines: invalid range start={start} end={end} "
+                          "(must be 1-indexed, end >= start)",
+            }
+        requested = end - start + 1
+        if requested > max_lines:
+            end = start + max_lines - 1
+
+        if index_id not in self.__class__._INDEX_ROOTS:
+            await self._refresh_index_roots()
+        root = self.__class__._INDEX_ROOTS.get(index_id)
+        if not root:
+            return {
+                "status": "error",
+                "error": (
+                    f"read_lines: unknown index_id={index_id!r}. "
+                    f"Known indexes: {sorted(self.__class__._INDEX_ROOTS)}"
+                ),
+            }
+
+        # Normalize file_path and ensure resolved path stays under root
+        # (prevent ../../ escapes).
+        rel = file_path.lstrip("/\\").replace("\\", "/")
+        abs_path = (Path(root) / rel).resolve()
+        root_resolved = Path(root).resolve()
+        try:
+            abs_path.relative_to(root_resolved)
+        except ValueError:
+            return {
+                "status": "error",
+                "error": f"read_lines: file_path escapes index root: {file_path}",
+            }
+        if not abs_path.is_file():
+            return {
+                "status": "error",
+                "error": (
+                    f"read_lines: file not found: {file_path} "
+                    f"(resolved to {abs_path}). Use semantic_search to "
+                    f"locate the correct path."
+                ),
+            }
+
+        try:
+            with abs_path.open("r", encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+        except OSError as exc:
+            return {"status": "error", "error": f"read_lines: read failed: {exc}"}
+
+        total = len(all_lines)
+        if start > total:
+            return {
+                "status": "error",
+                "error": f"read_lines: start={start} exceeds file length {total}",
+            }
+        actual_end = min(end, total)
+        slice_lines = all_lines[start - 1:actual_end]
+        content = "".join(slice_lines)
+        return {
+            "status": "ready",
+            "file_path": file_path,
+            "start_line": start,
+            "end_line": actual_end,
+            "total_lines_in_file": total,
+            "content": content,
+        }
 
     async def health(self) -> dict:
         """Quick reachability check for machine readiness verification."""

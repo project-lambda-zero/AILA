@@ -400,11 +400,11 @@ typedefs, NOT `audit_mcp.read_function`.** `read_function` errors with
 "Function 'X' not indexed" on type names. If you need the field
 layout of an engine struct (`ngx_http_script_engine_t`,
 `ngx_stream_script_engine_t`, etc.), call
-`audit_mcp.search_types(name="<type>")` to get the typedef. Don't
+`audit_mcp.search_types(pattern="<type>")` to get the typedef. Don't
 waste a turn calling `read_function` on a typedef.
 
 **Pattern 2c (corollary): If `audit_mcp.read_function` returns "not
-indexed", IMMEDIATELY call `audit_mcp.search_macros(name="<X>")`
+indexed", IMMEDIATELY call `audit_mcp.search_macros(pattern="<X>")`
 before giving up or grepping further.** The C codebase uses macros
 that look like function calls — `ngx_http_v2_write_name_entry(dst, ...)`,
 `ngx_http_v2_write_int(dst, ...)`, `ngx_string(s)`, `ngx_array_push(...)`
@@ -424,22 +424,41 @@ truncation. The observable will show prologue + setup; you will
 conclude "the flag isn't set" and the conclusion will be wrong.
 
 When you need to confirm/refute a specific code line inside a
-large function, use ONE of these instead of relying on the
-truncated `read_function` observable:
+large function, the PRIMARY tool is `read_lines`:
 
-  - `audit_mcp.read_function(name=F, line_start=N1, line_end=N2)`
-    — focused range read, returns the requested 50-line slice
-    instead of truncating from the top. Use this when you already
-    know roughly where the assignment should be (e.g. inside the
-    third `if` block).
-  - `audit_mcp.search_constants(name="<literal>")` if the load-
-    bearing line writes a known constant (`= 1`, `= NULL`, a
-    macro name). Returns every assignment of that constant.
-  - `audit_mcp.search_bitfields(name="<field>")` if the line is
-    a bitfield write — AST-aware, won't miss compound assignments.
-  - `audit_mcp.semantic_search(query="<file>:<function> sets
-    <field> = <value>", top_k=5)` — natural-language path to the
-    same line, especially good when you're unsure of the literal.
+  - `audit_mcp.read_lines(index_id=I, file_path=F, start=N1, end=N2)` —
+    **bridge-side virtual tool**. Resolves the index's repo root and
+    reads bytes [N1..N2] of file F directly from disk. Bypasses
+    every audit_mcp indexer (read_function returning file headers,
+    search_constants returning 0, etc.) and gives you EXACTLY the
+    lines you asked for. Use this whenever you have a file path +
+    line range. Hard ceiling 1500 lines per call.
+  - **DO NOT pass `line_start`/`line_end` to `read_function`** —
+    those kwargs don't exist (validator will reject the call).
+    `read_function` ONLY accepts `(index_id, file_path, name)`.
+  - `audit_mcp.semantic_search(query="<file>:<function> <fragment
+    of the line you want>", top_k=5)` — neural search retrieves
+    the chunk containing your target line. Use when you do NOT
+    yet have a precise line range; pair with `read_lines` to
+    verify the surrounding context.
+  - `audit_mcp.find_related(file_path=F, line=N, top_k=5)` — when
+    you have a known line nearby, pull semantically adjacent
+    chunks (different files).
+  - `audit_mcp.search_constants(pattern="<literal>")` and
+    `audit_mcp.search_bitfields(pattern="<field>")` are AVAILABLE
+    but **frequently return zero results on real codebases** even
+    when the literal/bitfield exists. If they 0-match, switch
+    immediately to `read_lines` or `semantic_search` — do not
+    retry with variant patterns.
+
+**Caveat about `read_function`:** the indexer occasionally returns
+the FILE HEADER (license + #include block) instead of the named
+function body. Symptom: `content` starts with `/*` or `Copyright`
+or `#include` and `line` is suspiciously low (single digits) when
+the function is known to be deep in the file. When this happens,
+SWITCH to `semantic_search(query="<function_name> {")` — the chunk
+retriever knows the real location even when the symbol indexer
+doesn't.
 
 Submitting "flag not set" or "missing reset" findings without
 verifying via one of these is a classic false-positive shape that
@@ -452,7 +471,7 @@ point).
 and write of the dangerous state field via the type system, not
 text grep:
 
-  - `audit_mcp.search_bitfields(name="e->is_args")` — finds every
+  - `audit_mcp.search_bitfields(pattern="e->is_args")` — finds every
     write of a bitfield via AST analysis.
   - `audit_mcp.nodes_with_annotation(...)` if the field is
     graph-tagged with a property (taint source, sink, etc).
@@ -470,7 +489,7 @@ shape):
   - `audit_mcp.search_narrowing_casts(...)` — every implicit
     narrowing conversion (uint64 → uint32) that's a precondition
     for integer-truncation bugs.
-  - `audit_mcp.search_constants(name="NULL")` scoped to a function
+  - `audit_mcp.search_constants(pattern="NULL")` scoped to a function
     — every `NULL` argument to identify length-only call sites
     like `ngx_escape_uri(NULL, ...)`.
   - `audit_mcp.find_related(file_path=..., line=N, top_k=10)`

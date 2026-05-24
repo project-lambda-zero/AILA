@@ -990,3 +990,44 @@ def adapt_find_related(
         observables_delta={obs_key_for(ctx, f"seed={seed_fp}:{seed_line}"): body},
         summary=summary,
     )
+
+
+# ----------------------------------------------------------------------
+# read_lines — bridge-side virtual tool, raw file slice
+# ----------------------------------------------------------------------
+
+
+def adapt_read_lines(
+    raw: dict[str, Any], ctx: AdapterContext,
+) -> AdapterResult:
+    """Map read_lines (bridge-side virtual) to DECOMPILED_FUNCTION shape.
+
+    The bridge already returned raw['content'] as the verbatim file slice.
+    We render it as a normal source-body observable so the agent treats
+    it the same as a read_function result.
+    """
+    file_path = str(raw.get("file_path") or ctx.args.get("file_path") or "?")
+    start = raw.get("start_line") or ctx.args.get("start") or "?"
+    end = raw.get("end_line") or ctx.args.get("end") or "?"
+    total = raw.get("total_lines_in_file") or "?"
+    body = str(raw.get("content") or "")
+    line_count = body.count("\n") + (1 if body else 0)
+    payload: dict[str, Any] = {
+        "function_name": f"{file_path}:{start}-{end}",
+        "address": f"{file_path}:{start}",
+        "pseudocode": body,
+        "line_count": line_count,
+        "language": "",
+        "source_provenance": provenance_stamp(ctx),
+    }
+    obs_value = body[:_MAX_OBS_READ_FUNCTION]
+    if len(body) > _MAX_OBS_READ_FUNCTION:
+        obs_value += f"\n\n[truncated — full {line_count} lines in message {ctx.call_id}]"
+    return AdapterResult(
+        payload_kind=PayloadKind.DECOMPILED_FUNCTION,
+        payload=payload,
+        observables_delta={
+            obs_key_for(ctx, f"slice.{file_path}:{start}-{end}"): obs_value,
+        },
+        summary=f"read_lines {file_path}:{start}-{end} ({line_count} lines / {total} total)",
+    )

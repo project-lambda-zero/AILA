@@ -246,31 +246,20 @@ _CALL_GRAPH_FRAGILE_TOOLS: frozenset[str] = frozenset({
     "unreachable_from_entrypoints",
 })
 
-# Tools suppressed regardless of language because their cost/benefit
-# ratio is consistently negative in observed agent runs.
-#
-# search_source: pure regex over raw text. Agents reach for it first
-# (it's the most-named tool in the catalog) and burn entire turns on
-# patterns that return 0 matches, then retry the same regex with
-# minor variations (`strBuf[strBufLen` vs `strBuf\[strBufLen`).
-# Observed in investigation 417b469f-2977-4590-8628-c397b040068a:
-# 41 of 80 tool calls (51%) were search_source; the overwhelming
-# majority returned 0 matches, looking for C++ class members that
-# search_source's text scan never indexes properly. The agent has
-# strictly better tools for every legitimate use case:
-#   intent / "where is X handled"     → semantic_search (neural+BM25)
-#   function / method name lookup     → search_functions
-#   #define / preprocessor constant   → search_macros
-#   integer / string literal value    → search_constants
-#   struct / class / typedef          → search_types
-#   bitfield write site               → search_bitfields
-#   assertion enumeration             → search_assertions
-#   narrowing cast site               → search_narrowing_casts
-#   exact symbol read                 → read_function / extract_class
-#   variant from seed location        → find_related
-# Dropping it forces the agent into one of these structured paths.
+# Tools suppressed regardless of language. search_source stays banned
+# because agents loop on zero-result regex retries; the real path for
+# "read these specific lines" is the bridge-side `read_lines` tool that
+# resolves index_id → root_path via list_indexes and slices the file
+# directly from disk. For "find code that does X" use semantic_search.
 _ALWAYS_SUPPRESS: dict[str, frozenset[str]] = {
     "audit_mcp": frozenset({"search_source"}),
+}
+
+# Bridge-side virtual tools added on top of the live MCP catalog.
+# These must be listed here so tools_for_language doesn't filter them
+# out. The bridge intercepts the action before HTTP dispatch.
+_VIRTUAL_TOOLS: dict[str, frozenset[str]] = {
+    "audit_mcp": frozenset({"read_lines"}),
 }
 
 LANGUAGE_UNRELIABLE_TOOLS: dict[str, frozenset[str]] = {
@@ -298,7 +287,12 @@ def tools_for_language(
     """
     base = KNOWN_TOOLS.get(server_id, frozenset())
     always = _ALWAYS_SUPPRESS.get(server_id, frozenset())
+    virtual = _VIRTUAL_TOOLS.get(server_id, frozenset())
     filtered = frozenset(t for t in base if t not in always)
+    # Union with virtual tools so bridge-side helpers (read_lines)
+    # show up in the agent's allowed set even though they aren't in
+    # the live MCP catalog.
+    filtered = filtered | virtual
     if not primary_language:
         return filtered
     lang = primary_language.strip().lower()
