@@ -110,7 +110,7 @@ class AuditMcpBridgeTool(Tool):
         # restart.
         self._fixed_base_url = base_url.rstrip("/") if base_url else None
         self._timeout = timeout or float(
-            os.environ.get("AUDIT_MCP_TIMEOUT", "900"),
+            os.environ.get("AUDIT_MCP_TIMEOUT", "300"),
         )
 
     # ── Per-index pre-warm registry ──────────────────────────────────

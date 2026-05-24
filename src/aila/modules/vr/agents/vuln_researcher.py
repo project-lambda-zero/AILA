@@ -177,27 +177,71 @@ class HonestVulnResearcher:
         # investigation's strategy_family when no persona is assigned.
         task_type = resolve_task_type(branch.persona_voice) if branch.persona_voice else inv.strategy_family
 
-        try:
-            decision = await self._engine.decide_next_turn(
-                task_type=task_type,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
+        # Idempotency: derive a request_key from (investigation, branch,
+        # turn, prompts) and check the cache before the LLM call. If a
+        # prior attempt completed the LLM call but crashed before the
+        # tool result was durably saved, the retry replays the cached
+        # decision instead of paying for a duplicate Claude call.
+        from aila.platform.llm.idempotency_cache import (  # noqa: PLC0415
+            make_request_key, lookup_cached_response, store_response,
+        )
+        from aila.modules.vr.contracts import (  # noqa: PLC0415
+            ReasoningTurnDecision,
+        )
+        import hashlib as _hashlib  # noqa: PLC0415
+
+        prompt_hash = _hashlib.sha256(
+            (system_prompt + "\x00" + user_prompt).encode()
+        ).hexdigest()
+        request_key = make_request_key(
+            self.investigation_id, self.branch_id, turn_number, prompt_hash,
+        )
+        cached_response: dict[str, Any] | None = None
+        async with UnitOfWork() as cache_uow:
+            cached_response = await lookup_cached_response(
+                cache_uow.session, request_key,
             )
-        except Exception as exc:  # noqa: BLE001 — any engine/LLM failure must
-            # surface as VulnResearcherError so the loop catches it, marks
-            # exit_reason='researcher_error:<msg>', and the workflow
-            # finalises with status=FAILED instead of silently completing
-            # the task with no outcome and status=RUNNING. Previously
-            # only RuntimeError was caught — LLMError (subclass of
-            # Exception) propagated past the loop and the task framework
-            # marked the task 'done' with the investigation orphaned in
-            # RUNNING state forever.
-            raise VulnResearcherError(
-                f"engine.decide_next_turn failed for investigation_id="
-                f"{self.investigation_id} branch_id={self.branch_id}: "
-                f"{type(exc).__name__}: {exc}",
-                retryable=bool(getattr(exc, "retryable", False)),
-            ) from exc
+        if cached_response is not None:
+            try:
+                decision = ReasoningTurnDecision.model_validate(cached_response)
+                _log.info(
+                    "vuln_researcher: idempotency cache HIT inv=%s branch=%s turn=%d "
+                    "(skipped duplicate LLM call)",
+                    self.investigation_id, self.branch_id, turn_number,
+                )
+            except (ValueError, TypeError):
+                cached_response = None  # malformed cache row; fall through to API
+
+        if cached_response is None:
+            try:
+                decision = await self._engine.decide_next_turn(
+                    task_type=task_type,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
+            except Exception as exc:  # noqa: BLE001 — any engine/LLM failure must
+                # surface as VulnResearcherError so the loop catches it, marks
+                # exit_reason='researcher_error:<msg>', and the workflow
+                # finalises with status=FAILED instead of silently completing
+                # the task with no outcome and status=RUNNING.
+                raise VulnResearcherError(
+                    f"engine.decide_next_turn failed for investigation_id="
+                    f"{self.investigation_id} branch_id={self.branch_id}: "
+                    f"{type(exc).__name__}: {exc}",
+                    retryable=bool(getattr(exc, "retryable", False)),
+                ) from exc
+            # Store on success only — failed calls leave no cache entry
+            # so retry will hit the API again (correct behavior for
+            # transient failures).
+            async with UnitOfWork() as store_uow:
+                await store_response(
+                    store_uow.session,
+                    request_key=request_key,
+                    investigation_id=self.investigation_id,
+                    branch_id=self.branch_id,
+                    turn_number=turn_number,
+                    response=decision.model_dump(mode="json"),
+                )
 
         new_case_state = self._engine.absorb(case_state, decision)
 
@@ -616,6 +660,29 @@ class HonestVulnResearcher:
                 .limit(1)
             )).first()
 
+            # ACK filter: drop operator messages whose row id is listed
+            # in this branch's case_state._acked_operator_messages
+            # observable. Agent sets that observable in its decision to
+            # mark steering as understood; without it, every operator
+            # message re-fires on every turn within the wall-clock TTL
+            # even after the agent has already acted on it.
+            acked_ids: set[str] = set()
+            try:
+                branch_row = (await uow.session.exec(
+                    _select(VRInvestigationBranchRecord).where(
+                        VRInvestigationBranchRecord.id == self.branch_id,
+                    )
+                )).first()
+                if branch_row is not None:
+                    cs = json.loads(branch_row.case_state_json or "{}")
+                    acked_raw = (cs.get("observables") or {}).get("_acked_operator_messages")
+                    if isinstance(acked_raw, str) and acked_raw:
+                        acked_ids = {x.strip() for x in acked_raw.split(",") if x.strip()}
+                    elif isinstance(acked_raw, list):
+                        acked_ids = {str(x).strip() for x in acked_raw if x}
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
             messages: list[dict[str, Any]] = []
             seen_texts: set[str] = set()
             stamped = False
@@ -628,6 +695,10 @@ class HonestVulnResearcher:
                     payload = {}
                 text = str(payload.get("text", "")).strip()
                 if not text:
+                    continue
+                # ACK filter — drop message entirely if agent has marked it
+                # via _acked_operator_messages.
+                if row.id in acked_ids:
                     continue
                 # Branch-addressed visibility: messages addressed to
                 # a specific sibling (not this branch, not the primary)
@@ -1083,11 +1154,20 @@ def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:
         "it dictates, and make that your next move. Ignoring a steering",
         "message is a contract violation.",
         "",
+        "ACK CONTRACT: after you actually act on a steering message,",
+        "include its id in your decision's observables under the",
+        "reserved key `_acked_operator_messages` (comma-separated when",
+        "multiple). Acknowledged messages stop appearing on subsequent",
+        "turns. ONLY ACK after acting — premature ACK loses the steering",
+        "forever. Example: observables: {\"_acked_operator_messages\":",
+        "\"<id1>,<id2>\"}",
+        "",
     ]
     for entry in messages:
         intent = entry.get("intent") or "unclassified"
         text = entry.get("text") or ""
-        lines.append(f"- [intent: {intent}] {text}")
+        msg_id = entry.get("id") or "?"
+        lines.append(f"- [id={msg_id} intent={intent}] {text}")
     lines.append("")
     lines.append("*** END OPERATOR STEERING ***")
     lines.append("")
