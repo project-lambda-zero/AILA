@@ -388,7 +388,15 @@ fi
 echo "[aila] Starting backend..."
 cd "$REPO"
 spawn "backend" \
-  -m uvicorn aila.api.app:app --host 0.0.0.0 --port "$BACKEND_PORT"
+  -m uvicorn aila.api.app:app --host 0.0.0.0 --port "$BACKEND_PORT" \
+  --loop asyncio
+# --loop asyncio forces the selector event loop on Windows. The default
+# ProactorEventLoop binds sockets to IOCP; if the python process dies
+# mid-listen (Ctrl-C, taskkill, watchfiles reload child crash), the
+# kernel keeps the socket bound to a phantom PID and 'netstat' shows
+# it owned by a non-existent process. The next backend launch then
+# fails with WSAEADDRINUSE on a port nothing is actually serving.
+# Selector loop releases sockets cleanly on exit.
 # NO --reload on Windows: it spawns child workers that get orphaned on
 # kill, and orphans keep holding the TCP socket via the kernel — new
 # requests hit STALE code while you assume the latest edit is live.
