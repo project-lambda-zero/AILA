@@ -202,9 +202,19 @@ class HonestVulnResearcher:
                 # Inject directly into the branch's case_state observable
                 # so render_active_directives_section surfaces at the top
                 # of the next prompt build.
-                from aila.modules.vr.db_models import (  # noqa: PLC0415
-                    VRInvestigationBranchRecord,
-                )
+                # NOTE: do NOT add `from ... import VRInvestigationBranchRecord`
+                # here. The module-level import at the top of the file
+                # already binds the name. A function-local
+                # `from ... import X` would shadow it for the WHOLE
+                # function — including the unconditional uses ~150 lines
+                # below at the message-write site — and Python's
+                # function-scope rule makes those uses raise
+                # UnboundLocalError on every code path where this `if
+                # consensus_rejections:` block does NOT execute (which is
+                # the normal case for any investigation whose siblings
+                # haven't rejected anything yet, i.e. every freshly-spawned
+                # investigation). This single typo crashed every primary +
+                # sibling task in <3s for two days straight.
                 async with UnitOfWork() as uow:
                     branch_row = (await uow.session.exec(
                         _select(VRInvestigationBranchRecord).where(
