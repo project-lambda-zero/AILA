@@ -182,6 +182,60 @@ export function InvestigationDetailPage() {
     }
     lastSeenCount.current = list.length;
   }, [liveTail, messagesResult?.data]);
+
+  // ── Scroll-to-end UX —————————————————————————————————————————————
+  //
+  // Long investigations (50+ turns) make it painful to scroll to the
+  // newest turn manually. We add:
+  //   - A floating "Jump to latest" button (bottom-right) that appears
+  //     whenever the user has scrolled UP from the bottom of the page.
+  //   - A floating "Turn N / M" position indicator (top-right) that
+  //     reflects the most-recently-visible turn under the viewport.
+  //   - Keyboard shortcuts handled in useVRKeyboardShortcuts (G+G top,
+  //     Shift+G bottom — already wired).
+  //
+  // Operator-reported friction (75af3d8e-...): "I can't roll down to
+  // the end smoothly because of the call history". Auto-scroll
+  // (liveTail) handles the streaming case; this handles the manual
+  // catch-up case after pausing or jumping around.
+  const [scrollNearBottom, setScrollNearBottom] = useState(true);
+  const [visibleTurn, setVisibleTurn] = useState<number | null>(null);
+  useEffect(() => {
+    const onScroll = () => {
+      const distFromBottom =
+        document.documentElement.scrollHeight -
+        window.scrollY -
+        window.innerHeight;
+      setScrollNearBottom(distFromBottom < 240);
+      // Pick the visible turn by walking back from the latest until we
+      // find one whose top is above the viewport bottom.
+      const cards = document.querySelectorAll<HTMLElement>('[id^="turn-"]');
+      const viewportMid = window.scrollY + window.innerHeight / 2;
+      let bestIdx: number | null = null;
+      for (let i = cards.length - 1; i >= 0; i--) {
+        const r = cards[i].getBoundingClientRect();
+        const top = r.top + window.scrollY;
+        if (top <= viewportMid) {
+          bestIdx = i;
+          break;
+        }
+      }
+      setVisibleTurn(bestIdx);
+    };
+    onScroll();  // initial
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [messagesResult?.data?.length]);
+
+  const jumpToLatest = () => {
+    const cards = document.querySelectorAll<HTMLElement>('[id^="turn-"]');
+    const last = cards[cards.length - 1];
+    if (last) {
+      last.scrollIntoView({ behavior: "smooth", block: "end" });
+    } else {
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+    }
+  };
   // All hooks before any early return — keep React's hook ordering stable.
   const branches = branchesResult?.data ?? [];
   const messages = messagesResult?.data ?? [];
@@ -743,6 +797,51 @@ export function InvestigationDetailPage() {
         investigationId={invId}
         status={inv.status}
       />
+
+      {/* Floating turn-position indicator — top-right, sticky to viewport.
+          Surfaces "Turn N / M" while scrolling through long investigations. */}
+      {messages.length > 0 && visibleTurn !== null && !scrollNearBottom && (
+        <div
+          className="fixed top-20 right-6 z-40 pointer-events-none select-none
+                     px-2.5 py-1 rounded-md
+                     bg-surface/95 border border-border-default
+                     font-mono text-[11px] text-text-muted
+                     shadow-lg backdrop-blur-sm"
+          aria-live="polite"
+        >
+          turn {visibleTurn + 1} / {filtered.length}
+        </div>
+      )}
+
+      {/* Floating "Jump to latest" button — bottom-right, only when scrolled
+          up from the bottom AND there is at least one turn. Smooth-scrolls
+          to the last turn. Hidden when already near the bottom (avoids
+          covering the operator composer). */}
+      {messages.length > 1 && !scrollNearBottom && (
+        <button
+          type="button"
+          onClick={jumpToLatest}
+          className="fixed bottom-6 right-6 z-40
+                     px-3 py-2 rounded-full
+                     bg-accent text-accent-fg
+                     border border-accent-strong
+                     shadow-lg
+                     hover:scale-105 active:scale-95
+                     transition-transform
+                     flex items-center gap-1.5
+                     text-xs font-semibold"
+          aria-label="Jump to latest turn"
+          title="Jump to latest turn (also: Shift+G)"
+        >
+          <span aria-hidden>↓</span>
+          <span>jump to latest</span>
+          {visibleTurn !== null && (
+            <span className="opacity-70 font-mono">
+              ({filtered.length - visibleTurn - 1})
+            </span>
+          )}
+        </button>
+      )}
     </div>
   );
 }
