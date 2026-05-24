@@ -179,6 +179,27 @@ class AuditMcpBridgeTool(Tool):
             "min_cyc": "threshold",
             "cutoff": "threshold",
         },
+        # semble tools use `top_k` as the canonical name — the global
+        # _KW_SYNONYMS map rewrites top_k → limit, which breaks both
+        # directions: limit= is passed through (rejected) and top_k=
+        # gets canonicalized to limit= (also rejected). Per-action
+        # overrides win, so name everything that lands here `top_k`.
+        "semantic_search": {
+            "limit": "top_k",
+            "top_n": "top_k",
+            "n": "top_k",
+            "count": "top_k",
+            "max_results": "top_k",
+            "k": "top_k",
+        },
+        "find_related": {
+            "limit": "top_k",
+            "top_n": "top_k",
+            "n": "top_k",
+            "count": "top_k",
+            "max_results": "top_k",
+            "k": "top_k",
+        },
     }
 
     # Global synonyms that ARE safe across every tool — these don't

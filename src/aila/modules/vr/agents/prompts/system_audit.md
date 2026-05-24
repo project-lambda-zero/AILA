@@ -104,6 +104,12 @@ Decision table — pick by the question you're actually asking:
   expansion from a known location) → `find_related(file_path=...,
   line=N, top_k=5)`. Returns chunks whose embeddings are nearest to
   the seed.
+
+**Param name for semble tools is `top_k`, not `limit`.** Most other
+audit-mcp tools (`search_source`, `fuzzing_targets`, `list_functions`,
+`complexity_hotspots`, ...) take `limit=N`. `semantic_search` and
+`find_related` take `top_k=N`. Mixing them gets rejected with
+"unknown kwarg(s) 'limit'".
 - **"Where is symbol X defined?"** (you KNOW the exact name) →
   `definitions_of` or `read_function` with the exact name. NOT
   `search_source`.
