@@ -1,6 +1,23 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Module frontends live OUTSIDE frontend/src/ (under
+   src/aila/modules/<name>/frontend/) and are reached via pnpm
+   workspace symlinks in node_modules/@aila/*. Tailwind v4's default
+   content scan starts at the directory containing this CSS file
+   (frontend/src/) and ignores node_modules entirely, so module-side
+   classes had NO CSS rules generated — e.g. fixed/bottom-6/right-6/
+   z-[60] on the InvestigationDetailPage floating pills computed to
+   position:fixed with no inset rules, anchoring at flow position
+   instead of the viewport. Explicit @source paths fix that.
+
+   Add a line per module here when you ship a new one. */
+@source "../../../src/aila/modules/vr/frontend/**/*.{ts,tsx}";
+@source "../../../src/aila/modules/vulnerability/frontend/**/*.{ts,tsx}";
+@source "../../../src/aila/modules/forensics/frontend/**/*.{ts,tsx}";
+@source "../../../src/aila/modules/sbd_nfr/frontend/**/*.{ts,tsx}";
+@source "../../../src/aila/modules/hello_world/frontend/**/*.{ts,tsx}";
+
 /* Per-theme distinctive fonts. All families loaded via the
    <link rel="stylesheet"> in frontend/index.html so they're
    available before first paint. Each theme overrides
