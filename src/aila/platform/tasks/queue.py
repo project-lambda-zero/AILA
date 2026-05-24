@@ -189,6 +189,13 @@ class TaskQueue:
         if not depends_on:
             if redis_url is None:
                 raise ValueError("Redis URL is not configured — check AILA_PLATFORM_REDIS_URL")
+            # Per-investigation backpressure: when this submission is for
+            # an investigation that already has N >= cap tasks in flight,
+            # defer the new task so other investigations (or other modules)
+            # get worker slots. Without this, one investigation spawning
+            # branches and re-enqueuing rapidly can monopolise max_jobs
+            # and starve every other investigation in the queue.
+            defer_seconds = await self._compute_investigation_defer(kwargs)
             enqueued = await self._arq_enqueue_async(
                 track=track,
                 task_id=task_id,
@@ -197,6 +204,7 @@ class TaskQueue:
                 kwargs=kwargs,
                 user_id=user_id,
                 redis_url=redis_url,
+                defer_seconds=defer_seconds,
             )
             if not enqueued:
                 # Roll back the DB record so a failed enqueue does not leave
@@ -213,6 +221,40 @@ class TaskQueue:
                 )
 
         return TaskHandle(task_id=task_id)
+
+    # Per-investigation in-flight cap. Tasks beyond this count for the
+    # same investigation_id get deferred so other investigations don't
+    # starve. Value is intentionally small: each branch turn is a
+    # separate task and a 3-branch investigation routinely has 3 in
+    # flight; allowing 6 covers normal fan-out without monopolising.
+    INVESTIGATION_INFLIGHT_CAP: int = 6
+    INVESTIGATION_DEFER_STEP_S: float = 30.0
+
+    async def _compute_investigation_defer(
+        self, kwargs: dict[str, object],
+    ) -> float:
+        """Return seconds to defer this submission based on in-flight
+        task count for the same investigation. Returns 0 when the
+        submission is not investigation-scoped or under the cap.
+        """
+        from sqlmodel import func  # noqa: PLC0415
+
+        inv_id = kwargs.get("investigation_id") if isinstance(kwargs, dict) else None
+        if not isinstance(inv_id, str) or not inv_id:
+            return 0.0
+        try:
+            async with async_session_scope() as session:
+                count = (await session.exec(
+                    select(func.count(TaskRecord.id)).where(
+                        TaskRecord.status.in_(["queued", "running", "waiting"]),  # type: ignore[union-attr]
+                        TaskRecord.kwargs_json.like(f'%"{inv_id}"%'),
+                    )
+                )).one()
+        except Exception as exc:  # noqa: BLE001 — best-effort fairness
+            _log.debug("investigation defer count failed: %s", exc)
+            return 0.0
+        excess = max(0, int(count) - self.INVESTIGATION_INFLIGHT_CAP)
+        return excess * self.INVESTIGATION_DEFER_STEP_S
 
     # ---- admin management methods ----------------------------------------
 
@@ -435,14 +477,20 @@ class TaskQueue:
         kwargs: dict[str, object],
         user_id: str,
         redis_url: str,
+        defer_seconds: float = 0.0,
     ) -> bool:
         """Async variant of _arq_enqueue for callers in an async context.
 
         Use this when calling from ``async def`` code. The sync ``_arq_enqueue``
         raises if called from an async context — use this method instead.
         Returns True on success, False if Redis is unreachable.
+
+        ``defer_seconds`` > 0 schedules the job to be picked up that many
+        seconds in the future. Used by the per-investigation backpressure
+        gate to avoid one investigation monopolising the worker pool.
         """
         from arq.connections import RedisSettings, create_pool
+        from datetime import timedelta  # noqa: PLC0415
 
         pool = None
         try:
@@ -450,11 +498,16 @@ class TaskQueue:
             pool = await create_pool(settings)
             queue_key = ARQ_QUEUE_KEY_TEMPLATE.format(track=track)
             arq_fn_name = fn_path.rsplit(".", 1)[-1]
+            enqueue_kwargs: dict = {
+                "_queue_name": queue_key,
+                "_job_id": task_id,
+                **kwargs,
+            }
+            if defer_seconds > 0:
+                enqueue_kwargs["_defer_by"] = timedelta(seconds=defer_seconds)
             await pool.enqueue_job(
                 arq_fn_name,
-                _queue_name=queue_key,
-                _job_id=task_id,
-                **kwargs,
+                **enqueue_kwargs,
             )
             _ = fn_module, user_id  # retained in signature for callers
             return True
