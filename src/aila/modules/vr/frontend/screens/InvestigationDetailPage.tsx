@@ -500,8 +500,13 @@ export function InvestigationDetailPage() {
         </div>
       </dl></AilaCard>
 
-      {/* Main grid: timeline left, side panels right */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4">
+      {/* Main column — single-column timeline. Hypothesis rail + branches
+          + outcomes panels stack BELOW the timeline at the page bottom.
+          Operator pushback: "WHO SAID TWO COLUMNS SHOULD BE THERE" —
+          two-column compressed the timeline width on every screen size
+          while the side rail content is reference material, not co-equal
+          with the live reasoning stream. */}
+      <div className="grid grid-cols-1 gap-4">
         {/* Timeline column */}
         <div className="space-y-3 min-w-0">
           {/* Filter bar */}
@@ -868,53 +873,30 @@ export function InvestigationDetailPage() {
         status={inv.status}
       />
 
-      {/* Floating turn-position indicator + jump-to-latest button.
-          PORTAL'd to document.body because the app shell has a parent
-          element with `transform`/`filter`/`perspective` set (page
-          chrome animations) which creates a containing block for
-          `position: fixed` per the CSS spec — the pills then anchor
-          to that parent's transformed rect instead of the viewport,
-          landing way off-screen at (304, 5544). Portal escapes that. */}
-      {createPortal(
-        <>
-          {messages.length > 0 && visibleTurn !== null && !scrollNearBottom && (
-            <div
-              className="fixed top-20 right-6 z-[60] pointer-events-none select-none
-                         px-2.5 py-1 rounded-md
-                         bg-surface/95 border border-border-default
-                         font-mono text-[11px] text-text-muted
-                         shadow-lg backdrop-blur-sm"
-              aria-live="polite"
-            >
-              turn {visibleTurn + 1} / {filtered.length}
-            </div>
-          )}
-          {messages.length > 1 && !scrollNearBottom && (
-            <button
-              type="button"
-              onClick={jumpToLatest}
-              className="fixed bottom-6 right-6 z-[60]
-                         px-3 py-2 rounded-full
-                         bg-accent text-accent-fg
-                         border border-accent-strong
-                         shadow-lg
-                         hover:scale-105 active:scale-95
-                         transition-transform
-                         flex items-center gap-1.5
-                         text-xs font-semibold"
-              aria-label="Jump to latest turn"
-              title="Jump to latest turn (also: Shift+G)"
-            >
-              <span aria-hidden>↓</span>
-              <span>jump to latest</span>
-              {visibleTurn !== null && (
-                <span className="opacity-70 font-mono">
-                  ({filtered.length - visibleTurn - 1})
-                </span>
-              )}
-            </button>
-          )}
-        </>,
+      {/* Simple scroll-to-top + scroll-to-bottom buttons, fixed bottom-right.
+          PORTAL'd to document.body because an ancestor sets transform/filter
+          which would otherwise capture position:fixed elements (CSS spec). */}
+      {messages.length > 1 && createPortal(
+        <div className="fixed bottom-6 right-6 z-[60] flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            className="w-10 h-10 rounded-full bg-surface/95 border border-border-default text-foreground shadow-lg hover:bg-surface hover:border-accent transition-colors flex items-center justify-center text-base"
+            aria-label="Scroll to top"
+            title="Scroll to top"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            onClick={() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" })}
+            className="w-10 h-10 rounded-full bg-surface/95 border border-border-default text-foreground shadow-lg hover:bg-surface hover:border-accent transition-colors flex items-center justify-center text-base"
+            aria-label="Scroll to bottom"
+            title="Scroll to bottom"
+          >
+            ↓
+          </button>
+        </div>,
         document.body,
       )}
     </div>
