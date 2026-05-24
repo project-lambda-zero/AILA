@@ -21,6 +21,7 @@ import {
   useDeleteInvestigation,
   usePauseInvestigation,
   useReenqueueInvestigation,
+  useResetInvestigation,
   useResumeInvestigation,
   useReverifyInvestigation,
   usePromoteOutcomeToFinding,
@@ -140,6 +141,7 @@ export function InvestigationDetailPage() {
   const targetName = useTargetName(inv?.target_id);
 
   const pauseMut = usePauseInvestigation(invId);
+  const resetMut = useResetInvestigation(invId);
   const resumeMut = useResumeInvestigation(invId);
   const reenqueueMut = useReenqueueInvestigation(invId);
   const sendMut = useSendOperatorMessage(invId);
@@ -385,6 +387,30 @@ export function InvestigationDetailPage() {
             Steering ⚙
           </button>
           <ExportReportButton invId={invId} title={inv.title} />
+          <button
+            type="button"
+            onClick={() => {
+              const confirmed = window.confirm(
+                `Reset "${inv.title}" to its initial state?\n\n` +
+                `Deletes ALL messages (${inv.message_count}) + ALL outcomes ` +
+                `(${inv.outcome_count}) + forked branches. Root branches reset ` +
+                `to turn 0 with empty case state. Investigation flips back to ` +
+                `CREATED so you can re-enqueue with a fresh history.\n\n` +
+                `THIS CANNOT BE UNDONE.`,
+              );
+              if (!confirmed) return;
+              resetMut.mutate();
+            }}
+            disabled={resetMut.isPending || inv.status === "running"}
+            className="text-xs px-3 py-1.5 rounded-md border border-orange-500/60 text-orange-300 hover:border-orange-400 hover:bg-orange-500/10 disabled:opacity-50"
+            title={
+              inv.status === "running"
+                ? "Pause the investigation first, then reset."
+                : "Wipe history + reset to start. Re-enqueue afterwards to run again."
+            }
+          >
+            {resetMut.isPending ? "Resetting…" : "↺ Reset to start"}
+          </button>
           <DeleteButton
             id={invId}
             label={`investigation "${inv.title}"`}

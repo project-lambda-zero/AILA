@@ -118,6 +118,30 @@ export function useResumeInvestigation(investigationId: string) {
   });
 }
 
+export function useResetInvestigation(investigationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<VRInvestigationSummary>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/reset`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      // Wipe every cache touching this investigation — messages,
+      // branches, outcomes — so the page re-fetches the empty state.
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "messages", investigationId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "branches", investigationId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "outcomes", investigationId] });
+      toast.success("Investigation reset to start — re-enqueue to run again");
+    },
+    onError: (err: Error) => {
+      toast.error(`Reset failed: ${err.message}`);
+    },
+  });
+}
+
 export type InvestigationKindOverride =
   | "discovery"
   | "variant_hunt"
