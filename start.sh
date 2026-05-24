@@ -138,10 +138,15 @@ record_pid() {
   local label="$1"
   local pidv="$2"
   [[ -z "$pidv" || "$pidv" == "0" ]] && return 0
-  mkdir -p "$RUN_DIR"
+  # Use the ABSOLUTE run-dir path so subshells that `cd` elsewhere
+  # (audit-mcp launches in its own repo dir) still write the pidfile
+  # into AILA's .run/ rather than the subshell's cwd. Without this,
+  # audit-mcp.pid silently landed in ../audit-mcp/.run/ and start.sh
+  # status / restart-audit-mcp could not find it.
+  mkdir -p "$RUN_DIR_ABS"
   local slug
   slug=$(slugify "$label")
-  echo "$pidv" >> "$RUN_DIR/${slug}.pid"
+  echo "$pidv" >> "$RUN_DIR_ABS/${slug}.pid"
 }
 
 # Walk every .run/*.pid, tree-kill each PID it contains, then delete the
