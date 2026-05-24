@@ -246,6 +246,33 @@ _CALL_GRAPH_FRAGILE_TOOLS: frozenset[str] = frozenset({
     "unreachable_from_entrypoints",
 })
 
+# Tools suppressed regardless of language because their cost/benefit
+# ratio is consistently negative in observed agent runs.
+#
+# search_source: pure regex over raw text. Agents reach for it first
+# (it's the most-named tool in the catalog) and burn entire turns on
+# patterns that return 0 matches, then retry the same regex with
+# minor variations (`strBuf[strBufLen` vs `strBuf\[strBufLen`).
+# Observed in investigation 417b469f-2977-4590-8628-c397b040068a:
+# 41 of 80 tool calls (51%) were search_source; the overwhelming
+# majority returned 0 matches, looking for C++ class members that
+# search_source's text scan never indexes properly. The agent has
+# strictly better tools for every legitimate use case:
+#   intent / "where is X handled"     → semantic_search (neural+BM25)
+#   function / method name lookup     → search_functions
+#   #define / preprocessor constant   → search_macros
+#   integer / string literal value    → search_constants
+#   struct / class / typedef          → search_types
+#   bitfield write site               → search_bitfields
+#   assertion enumeration             → search_assertions
+#   narrowing cast site               → search_narrowing_casts
+#   exact symbol read                 → read_function / extract_class
+#   variant from seed location        → find_related
+# Dropping it forces the agent into one of these structured paths.
+_ALWAYS_SUPPRESS: dict[str, frozenset[str]] = {
+    "audit_mcp": frozenset({"search_source"}),
+}
+
 LANGUAGE_UNRELIABLE_TOOLS: dict[str, frozenset[str]] = {
     # primary_language (normalized lowercase) → audit_mcp tool names
     # we MUST suppress because their result is systematically wrong
@@ -263,16 +290,19 @@ def tools_for_language(
     """Return the subset of ``KNOWN_TOOLS[server_id]`` that produces
     reliable output for a target whose ``primary_language`` is given.
 
-    When ``primary_language`` is None / empty / unknown, returns the
-    full set — we prefer to expose a tool that might be noisy over
-    hiding a tool the agent needs. Only languages with a known
-    incompatibility entry get filtered.
+    Always-suppress tools (``_ALWAYS_SUPPRESS``) are dropped regardless
+    of language. Language-specific suppressions stack on top.
+
+    When ``primary_language`` is None / empty / unknown, only the
+    always-suppress set applies.
     """
     base = KNOWN_TOOLS.get(server_id, frozenset())
+    always = _ALWAYS_SUPPRESS.get(server_id, frozenset())
+    filtered = frozenset(t for t in base if t not in always)
     if not primary_language:
-        return base
+        return filtered
     lang = primary_language.strip().lower()
     suppress = LANGUAGE_UNRELIABLE_TOOLS.get(lang, frozenset())
     if not suppress:
-        return base
-    return frozenset(t for t in base if t not in suppress)
+        return filtered
+    return frozenset(t for t in filtered if t not in suppress)

@@ -525,6 +525,7 @@ class HonestVulnResearcher:
         primary_language = (target_snapshot or {}).get("primary_language")
 
         return (
+            f"{operator_section}"
             f"# Investigation\n\n"
             f"Title: {inv.title}\n"
             f"Kind: {inv.kind}\n"
@@ -540,7 +541,6 @@ class HonestVulnResearcher:
             f"# Current case state\n\n"
             f"{case_model}\n"
             f"\n"
-            f"{operator_section}"
             f"{prior_submissions_section}"
             f"{sibling_section}"
             f"{_render_available_tools_section(target_kind, tool_specs, primary_language)}"
@@ -1008,18 +1008,31 @@ def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
 def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:
     """Render pending operator messages as a markdown block for the prompt.
 
-    Returns "" when no messages — caller concatenates unconditionally.
-    Each message is shown with its intent classification (defaults to
-    'unclassified' when the message_classifier hasn't tagged it yet).
+    Empty when no messages — caller concatenates unconditionally.
+    Framing is intentionally LOUD because this block ends up at the TOP
+    of the user prompt and overrides everything below it. Operator
+    steering is a hard override, not advisory; the agent treating it as
+    a suggestion is the bug the loud framing exists to prevent.
     """
     if not messages:
         return ""
-    lines: list[str] = ["# Operator messages (new — consider before acting)\n"]
+    lines: list[str] = [
+        "# *** OPERATOR STEERING — MANDATORY OVERRIDE ***",
+        "",
+        "The human operator sent these messages. They override the",
+        "default strategy, override your current hypothesis, and override",
+        "any prior tool-selection plan. Read each one, decide what action",
+        "it dictates, and make that your next move. Ignoring a steering",
+        "message is a contract violation.",
+        "",
+    ]
     for entry in messages:
         intent = entry.get("intent") or "unclassified"
         text = entry.get("text") or ""
         lines.append(f"- [intent: {intent}] {text}")
-    lines.append("")  # trailing blank for spacing before next section
+    lines.append("")
+    lines.append("*** END OPERATOR STEERING ***")
+    lines.append("")
     return "\n".join(lines) + "\n"
 
 
