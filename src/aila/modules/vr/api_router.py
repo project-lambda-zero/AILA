@@ -2969,11 +2969,18 @@ def create_vr_router() -> APIRouter:
             for o in outcomes:
                 await uow.session.delete(o)
 
-            # 3) Drop forked branches; reset root branches to turn 0.
-            # A root branch has parent_branch_id IS NULL. Forks (with a
-            # parent) get deleted entirely — operator can re-fork via
-            # the strategy after re-enqueue. Null self-FKs first to
-            # avoid the same FK-violation we fixed in delete (3df57b4).
+            # 3) Drop forked branches; reset root branches to turn 0. A root
+            # branch is one whose parent_branch_id was NULL in the original
+            # data — that's the only invariant. `fork_reason` is free-form
+            # ('primary', 'auto_deliberation:maddie', etc.) and unsafe to
+            # match by string. Capture root-ness BEFORE we null self-FKs.
+            root_branch_ids = {b.id for b in branches if b.parent_branch_id is None}
+
+            # Null self-FKs on every branch first (forks point at root via
+            # parent_branch_id; merged_into_branch_id may also be set).
+            # PostgreSQL processes bulk delete rows in arbitrary order so
+            # any unbroken self-FK can trip a ForeignKeyViolation. Same
+            # pattern as the delete fix in 3df57b4.
             for b in branches:
                 if b.parent_branch_id is not None:
                     b.parent_branch_id = None
@@ -2984,23 +2991,13 @@ def create_vr_router() -> APIRouter:
 
             reset_count = 0
             for b in branches:
-                # Determine "original root" status BEFORE we nulled the
-                # After we nulled both FKs above, is_root is True for
-                # everything — but we want to KEEP the originally-root
-                # branches and delete the ones that started as forks.
-                # Walk the original list: a branch is "original root"
-                # only if fork_at_turn is None / 0 AND fork_reason is
-                # empty / 'initial'.
-                originally_root = (
-                    b.fork_at_turn is None
-                    or b.fork_at_turn == 0
-                ) and not (b.fork_reason and b.fork_reason not in {"initial", "root"})
-
-                if originally_root:
+                if b.id in root_branch_ids:
                     b.turn_count = 0
                     b.case_state_json = "{}"
                     b.branch_cost_usd = 0.0
-                    b.closed_reason = None
+                    # closed_reason is NOT NULL with server_default="";
+                    # passing None tripped NotNullViolationError in PG.
+                    b.closed_reason = ""
                     b.closed_at = None
                     b.promoted = False
                     b.status = "active"
@@ -3193,7 +3190,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
         branch_id: str | None = Query(default=None),
         offset: int = Query(default=0, ge=0),
-        limit: int = Query(default=100, ge=1, le=500),
+        limit: int = Query(default=500, ge=1, le=5000),
     ) -> DataEnvelope[list[VRMessageSummary]]:
         del request
         inv = await _load_investigation(investigation_id, auth)
