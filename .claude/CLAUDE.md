@@ -248,6 +248,8 @@ Multi-step behavior uses staged workflows with named states, not nested conditio
 
 14. **Hand-editing `pnpm-lock.yaml`** -- Always re-run `pnpm install` to regenerate. The lockfile format is structured but not designed for manual edits.
 
+15. **Tailwind classes in module frontends have no CSS rules** -- Tailwind v4 scans content starting from the directory containing `frontend/src/styles/globals.css`. Module frontends live OUTSIDE `frontend/src/` (under `src/aila/modules/<name>/frontend/`), reached only via pnpm symlinks in `node_modules/@aila/*` which Tailwind ignores by default. A class added in a module-side file gets NO CSS rule generated unless that same class is also used somewhere inside `frontend/src/`. Symptom: `position: fixed` with `bottom-6 right-6` renders at flow position because the inset rules don't exist. Fix: add `@source "../../../src/aila/modules/<name>/frontend/**/*.{ts,tsx}";` to `frontend/src/styles/globals.css` for every module. Already wired for vr, vulnerability, forensics, sbd_nfr, hello_world.
+
 ## Verification Checklist
 
 Before yielding any change:

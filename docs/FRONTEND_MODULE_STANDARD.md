@@ -497,6 +497,26 @@ Key utility classes available to all modules:
 | `.empty-state` | Empty/no-data state |
 | `.text-muted`, `.text-link` | Typographic utilities |
 
+### Tailwind v4 Content Scan
+
+Tailwind v4 generates CSS rules ONLY for classes it finds during its content scan. The scan starts at the directory containing the entry CSS file (`frontend/src/styles/globals.css` → scans `frontend/src/` and below) and ignores `node_modules/` by default.
+
+**Module frontends live OUTSIDE `frontend/src/`** — they're at `src/aila/modules/<name>/frontend/` and reached via pnpm workspace symlinks in `node_modules/@aila/<name>-frontend/`. Tailwind does NOT scan them by default.
+
+If you forget the `@source` directive: any class you add in a module-side file that isn't ALSO used somewhere inside `frontend/src/` will have NO CSS rule generated. The element gets `class="bottom-6 right-6"` but no `bottom: 1.5rem` rule exists, so it falls back to flow position. Common symptom: `position: fixed` elements anchor to the wrong place.
+
+**Fix when shipping a new module's frontend**:
+
+Add one line per module to `frontend/src/styles/globals.css` (right after the `@import "tailwindcss";` block):
+
+```css
+@source "../../../src/aila/modules/<your_module>/frontend/**/*.{ts,tsx}";
+```
+
+Already wired for: `vr`, `vulnerability`, `forensics`, `sbd_nfr`, `hello_world`. If you copy `_template/` to start a new module, add the line at the same time.
+
+Verify by curl on the running dev server: `curl http://localhost:3000/src/styles/globals.css | grep "\.your-new-class"` — if the rule exists, Tailwind is scanning correctly.
+
 ## Anti-Patterns
 
 - module-owned full app layouts
