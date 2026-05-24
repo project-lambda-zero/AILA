@@ -27,7 +27,9 @@ from .audit_mcp import (
     adapt_paths_between,
     adapt_read_function,
     adapt_search_constants,
+    adapt_find_related,
     adapt_search_functions,
+    adapt_semantic_search,
     adapt_search_macros,
     adapt_search_source,
     adapt_search_types,
@@ -111,6 +113,13 @@ _SPECIALIZED: dict[tuple[str, str], AdapterFn] = {
     ("audit_mcp", "search_constants"): adapt_search_constants,
     ("audit_mcp", "search_types"): adapt_search_types,
     ("audit_mcp", "search_functions"): adapt_search_functions,
+    # audit_mcp — semantic_search + find_related (chunk-based dense
+    # rendering; old generic path json-dumped + truncated at 15KB so the
+    # agent saw escaped quotes around partial content fields. Now full
+    # `content` fields surface as readable source blocks under a 50KB
+    # cap suitable for the chunk shape these tools return).
+    ("audit_mcp", "semantic_search"): adapt_semantic_search,
+    ("audit_mcp", "find_related"): adapt_find_related,
 }
 
 

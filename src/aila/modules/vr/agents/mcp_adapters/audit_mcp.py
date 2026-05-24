@@ -768,12 +768,15 @@ def adapt_read_function(
         or ctx.args.get("symbol")
         or "<unknown>",
     )
-    # audit-mcp's read_function returns ``body`` as a list of source
-    # lines (and ``start_line``/``end_line`` as int positions). Earlier
-    # MCP versions and IDA's decompile return a flat ``source``/``text``
-    # string. Accept both — when ``body`` is a list, join with newlines
-    # so the agent sees real source instead of the Python list repr.
-    raw_body = raw.get("source") or raw.get("body") or raw.get("text") or ""
+    # audit-mcp's read_function returns the actual function body in
+    # `content`. The `source` field is the PROVIDER TAG (e.g. "semble",
+    # "trailmark") — a literal string identifying which backend served
+    # the read. Earlier adapter code read `source` first, took the
+    # literal "semble" string, and stored THAT as the function body.
+    # Every read_function observable for months was just the string
+    # "semble". Agents re-read the same function 15+ times trying to
+    # see the body. Order: content -> body -> text. NEVER source.
+    raw_body = raw.get("content") or raw.get("body") or raw.get("text") or ""
     if isinstance(raw_body, list):
         body = "\n".join(str(line) for line in raw_body)
     else:
@@ -879,3 +882,111 @@ adapt_search_macros = _adapt_search("search_macros")
 adapt_search_constants = _adapt_search("search_constants")
 adapt_search_types = _adapt_search("search_types")
 adapt_search_functions = _adapt_search("search_functions")
+
+
+# ----------------------------------------------------------------------
+# semantic_search + find_related — chunk-based dense rendering
+# ----------------------------------------------------------------------
+#
+# These return `results[]` where each entry is a code CHUNK with full
+# function body (or function span) in a `content` field — different
+# shape from search_*'s match snippets. The old path (generic adapter)
+# json.dumps(indent=2)'d the whole response and truncated at 15000
+# chars, so the agent saw quoted/escaped/indented JSON with ~3-4 of
+# 8 results bleeding past the cap. Now: dense block per chunk so the
+# agent gets real readable source.
+_MAX_OBS_CHUNKS = 50000
+
+
+def _render_chunks_dense(raw: dict[str, Any]) -> tuple[str, int]:
+    """Render semantic_search / find_related results as dense source blocks.
+
+    Each chunk renders as:
+        === <file>:<start_line>-<end_line> [<lang>] score=<s> ===
+        <content>
+
+    Returns ``(rendered, count)``. Output is capped at _MAX_OBS_CHUNKS;
+    chunks beyond the cap are dropped with a trailing marker.
+    """
+    results = raw.get("results") or raw.get("matches") or raw.get("hits") or []
+    if not isinstance(results, list):
+        return bounded_dump(raw, max_chars=_MAX_OBS_CHUNKS), 0
+    blocks: list[str] = []
+    total_chars = 0
+    dropped = 0
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        fp = r.get("file_path") or r.get("file") or r.get("path") or "?"
+        s_line = r.get("start_line") or r.get("line") or "?"
+        e_line = r.get("end_line") or "?"
+        lang = r.get("language") or "?"
+        score = r.get("score")
+        content = r.get("content") or r.get("body") or r.get("text") or ""
+        if isinstance(content, list):
+            content = "\n".join(str(x) for x in content)
+        content = str(content).rstrip()
+        score_tag = f"score={score:.3f} " if isinstance(score, (int, float)) else ""
+        header = f"=== {fp}:{s_line}-{e_line} [{lang}] {score_tag}===\n"
+        block = header + content + "\n"
+        if total_chars + len(block) > _MAX_OBS_CHUNKS:
+            dropped += 1
+            continue
+        blocks.append(block)
+        total_chars += len(block)
+    body = "\n".join(blocks)
+    if dropped:
+        body += (
+            f"\n... [truncated — {dropped} of {len(results)} chunks omitted "
+            f"past {_MAX_OBS_CHUNKS}-char cap; narrow query or filter_paths "
+            f"to surface more]"
+        )
+    return body, len(results)
+
+
+def adapt_semantic_search(
+    raw: dict[str, Any], ctx: AdapterContext,
+) -> AdapterResult:
+    """Map semantic_search to TEXT with dense per-chunk rendering."""
+    body, count = _render_chunks_dense(raw)
+    query = str(ctx.args.get("query") or "")[:200]
+    summary = f"semantic_search: count={count}, query={query[:80]!r}"
+    payload = {
+        "tool": "semantic_search",
+        "match_count": count,
+        "query": query,
+        "chunks_text": body,
+        "raw": raw,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    return AdapterResult(
+        payload_kind=PayloadKind.TEXT,
+        payload=payload,
+        observables_delta={obs_key_for(ctx, f"query={query[:60]}"): body},
+        summary=summary,
+    )
+
+
+def adapt_find_related(
+    raw: dict[str, Any], ctx: AdapterContext,
+) -> AdapterResult:
+    """Map find_related to TEXT with dense per-chunk rendering."""
+    body, count = _render_chunks_dense(raw)
+    seed = raw.get("seed") or {}
+    seed_fp = seed.get("file_path") or ctx.args.get("file_path") or "?"
+    seed_line = seed.get("start_line") or ctx.args.get("line") or "?"
+    summary = f"find_related: count={count}, seed={seed_fp}:{seed_line}"
+    payload = {
+        "tool": "find_related",
+        "match_count": count,
+        "seed": {"file_path": seed_fp, "line": seed_line},
+        "chunks_text": body,
+        "raw": raw,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    return AdapterResult(
+        payload_kind=PayloadKind.TEXT,
+        payload=payload,
+        observables_delta={obs_key_for(ctx, f"seed={seed_fp}:{seed_line}"): body},
+        summary=summary,
+    )
