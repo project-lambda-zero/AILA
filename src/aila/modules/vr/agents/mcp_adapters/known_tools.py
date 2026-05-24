@@ -157,7 +157,13 @@ AUDIT_MCP_TOOLS: frozenset[str] = frozenset({
     "fuzzing_targets",
     "fuzz_generators",
     "attack_surface_diff",
-    # Search
+    # Semble — hybrid semantic + BM25 chunk retrieval (PREFERRED over
+    # search_source for natural-language / intent queries; falls back
+    # to literal search_* when you need exact regex / symbol matching)
+    "semantic_search",
+    "find_related",
+    "semble_stats",
+    # Search — literal / symbol / regex
     "search_functions",
     "search_constants",
     "search_types",

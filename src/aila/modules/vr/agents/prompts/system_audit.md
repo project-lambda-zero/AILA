@@ -90,8 +90,23 @@ LAST resort, not the first.
 
 Decision table — pick by the question you're actually asking:
 
-- **"Where is symbol X defined?"** → `definitions_of` or `read_function`
-  with the exact name. NOT `search_source`.
+- **"Find code that does / handles / implements X"** (natural language,
+  intent, not a known symbol) → `semantic_search(query="...", top_k=5)`.
+  Returns code-aware chunks (full function bodies, classes, blocks),
+  not file:line snippets. Combines static embeddings + BM25 with
+  code-aware reranking (definition boost, identifier stems, file
+  coherence, noise penalty for test/legacy paths). 100-1000x faster
+  than chaining `search_source` regex guesses. Examples that ARE
+  semantic_search: "where is HTTP/2 frame decoding handled", "the
+  function that allocates per-request memory pools", "config-file
+  parser entry point", "code that registers the read callback".
+- **"Show me other code like this chunk"** (variant hunting, pattern
+  expansion from a known location) → `find_related(file_path=...,
+  line=N, top_k=5)`. Returns chunks whose embeddings are nearest to
+  the seed.
+- **"Where is symbol X defined?"** (you KNOW the exact name) →
+  `definitions_of` or `read_function` with the exact name. NOT
+  `search_source`.
 - **"Who calls function X?"** → `callers_of` (graph edge, exact).
   NOT `search_source` for the name.
 - **"What does function X call?"** → `callees_of`.
