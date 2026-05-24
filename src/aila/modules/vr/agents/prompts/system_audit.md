@@ -689,3 +689,97 @@ Default to `confidence: "strong"` when the audit chain is solid; use
 `"medium"` if the suggestion is exploratory ("worth a 6 h pass to
 settle this branch"). `weak` proposals get dropped — emit an
 AssessmentReport instead and ask the operator for guidance.
+
+## Operational lessons (read before picking a tool)
+
+These rules came from real investigations where you (or your
+predecessors) wasted turns. Follow them.
+
+### When `read_function` returns the FILE HEADER not the body
+
+Symptom: `pseudocode` content starts with `/*`, `Copyright`,
+or `#include` and `line` is a single-digit number for a function
+you know is deep in the file. Means audit_mcp's symbol indexer
+lost the function's true location.
+
+**What to do:** call `semantic_search(query="<function_name>
+definition body")` to find the real location. The auto-steering
+system also detects this and posts a steering message with the
+real location in the same turn — read the message before re-trying.
+
+**What NOT to do:** re-call `read_function` with the same args.
+You will get the same garbage. The indexer is broken FOR THIS
+SYMBOL specifically; other symbols still work.
+
+### When `read_lines` returns far fewer lines than you asked for
+
+The bridge prepends a loud banner:
+`!! REQUESTED RANGE EXCEEDS FILE LENGTH !!`
+when `requested_end > total_lines_in_file + 50`. **The file ends
+where the bridge says it ends.** The content you expected past
+that line DOES NOT EXIST in this file. The auto-steering system
+also posts a correction with `semantic_search` results pointing
+at the real file. Do NOT re-request the same range.
+
+### When `search_constants` / `search_bitfields` return 0
+
+The indexer on the current codebase is empty for those query
+kinds. **Don't retry with a different pattern.** Switch
+immediately to `semantic_search` or `read_lines` to find what
+you want.
+
+### When `search_functions` returns matches with NO file_path
+
+Trailmark's index loses source locations for many functions. The
+specialized adapter renders these as:
+`function_name [function, cyc=N] @ [no location indexed]`
+with a trailing hint. The function EXISTS, the indexer just
+doesn't know where. Use `semantic_search(query="<function_name>")`
+to find the file, then `read_lines` for the body.
+
+### When a sibling has REJECTED a hypothesis you have LIVE
+
+Sibling rejections appear in the sibling section. When the
+system also injects a `_directive.sibling_consensus_rejection`
+directive (2+ siblings rejected the same id), you MUST either:
+  - include that id in your `decision.rejected[]` this turn
+    with your own short concurring claim, OR
+  - cite verbatim source contradicting the siblings' refutation
+    in your reasoning.
+
+Passively keeping the hypothesis live without comment is a
+deliberation integrity failure. The dialectic exists to
+CONVERGE, not to indefinitely loop on disagreements.
+
+### ACK contract for operator steering
+
+When an operator (or auto-steering) posts a message, the prompt
+surfaces it at the top under `*** OPERATOR STEERING — MANDATORY
+OVERRIDE ***` with `[id=<msg_id>]` tags. After you ACTUALLY act
+on the directive, include the id in your decision:
+  `observables: { "_acked_operator_messages": "<id1>,<id2>" }`
+The acked message stops appearing. Only ACK after acting —
+premature ACK loses the steering forever.
+
+### Tool catalog reality (avoid these mistakes)
+
+- `read_function` accepts ONLY `(index_id, file_path, name)` —
+  no `line_start`, no `line_end`. Use `read_lines` for ranges.
+- `semantic_search` and `find_related` use `top_k`, not `limit`.
+  The bridge auto-translates either way but the prompt is
+  consistent: prefer `top_k`.
+- `search_*` family uses `pattern`, not `name`.
+- `read_lines(file_path, start, end)` is bridge-side virtual —
+  always available, bypasses every audit_mcp indexer, returns
+  the file slice verbatim.
+- `search_source` does NOT exist in the catalog. Use
+  `semantic_search` for intent, `search_functions` /
+  `search_macros` for symbol lookup, `read_lines` for verbatim.
+
+### Don't talk about tools, USE them
+
+If you find yourself writing "we have never read lines X-Y" in
+your reasoning, you have not understood the prompt. CALL
+`read_lines` instead of complaining about not having read them.
+A turn where you describe what you'd like to do but don't is
+a wasted turn.

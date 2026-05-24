@@ -260,3 +260,143 @@ Before yielding any change:
 - [ ] `pnpm --filter @aila/shell run build` -- exits 0 (if frontend changed)
 - [ ] Tests covering the changed behavior pass
 - [ ] No stale imports, no dead code introduced
+
+## Bridge + workflow gotchas (session learnings, 2026-05-24)
+
+A long debugging session on investigation `8cf6144f` (WebAssembly RCE
+variant hunt) exposed a stack of bugs that were silently breaking
+investigations. These rules are the operational lessons:
+
+### MCP adapter rules
+
+1. **audit_mcp `read_function` returns `content`, NOT `source`.** The
+   `source` field is the literal provider tag (e.g. `"semble"`,
+   `"trailmark"`). For months the adapter read `source` first and
+   stored the literal string `"semble"` as the function body. Always
+   `raw.get("content") or raw.get("body") or raw.get("text")` —
+   NEVER `source`. See `audit_mcp.py:adapt_read_function`.
+
+2. **`search_functions` returns `file_path: null` for ~half the
+   indexed functions** (trailmark loses locations). The generic
+   `_render_matches_dense` produces literal `?:?:` rows from these.
+   Use the specialized `adapt_search_functions` that renders the
+   actual fields (name, kind, cyclomatic_complexity).
+
+3. **`search_constants`, `search_bitfields` return 0 results for
+   patterns that exist in source.** Trailmark's index doesn't track
+   them on this codebase. Tell the agent in the prompt — don't
+   recommend these as the primary path.
+
+4. **`semantic_search` and `find_related` return code CHUNKS** with
+   `{file_path, start_line, end_line, content}` per result. They have
+   their own adapters; do NOT fall through to generic JSON dump.
+
+5. **`read_lines` is a bridge-side virtual tool** — no upstream MCP
+   endpoint. Bridge resolves `index_id → root_path` via
+   `/tools/list_indexes` then reads the file slice from disk. Use
+   this when the agent has a precise `(file_path, start, end)` and
+   needs verbatim source bypassing all indexers.
+
+6. **No per-tool-call truncation.** All `_MAX_OBS_*` caps are set to
+   100MB. Per-value caps were causing silent body truncation; the
+   policy now is full content stored, render layer decides display.
+
+### Workflow / cursor mechanism
+
+1. **`__crashed__` cursors persist forever** unless explicitly
+   cleared. The `/re-enqueue` handler now wipes them for the target
+   investigation. Standalone reaper for orphans across the whole
+   table not yet shipped — operator can `DELETE FROM
+   workflow_state_cursor WHERE current_state = '__crashed__' AND NOT
+   EXISTS (SELECT 1 FROM taskrecord t WHERE t.id = run_id AND
+   t.status IN ('queued','running','waiting'))` to bulk-clean.
+
+2. **`safe_exc_message()` redacts to class name** per Phase 178
+   security policy. The cursor row stores ONLY `"UnboundLocalError"`
+   etc. — no message, no traceback. The engine's crash paths
+   (`_force_crashed`, handler-raised) now also `_log.exception(...)`
+   so the operator-private worker log gets the full traceback.
+
+3. **Three sources of truth for "is this task active":**
+   `TaskRecord.status` (DB), `workflow_state_cursor.current_state`,
+   `arq:in-progress:<id>` (Redis). They CAN desync. The D-86 SKIP
+   path now coordinates all three. New drift paths are landmines —
+   inspect all three before claiming a task is running/stuck.
+
+4. **Worker D-86 SKIP `rec.completed_at` not `rec.finished_at`** —
+   TaskRecord has no `finished_at` column. Typoing it raises
+   `AttributeError` inside the reaper loop, which is caught silently
+   higher up, leaving the cursor in an inconsistent state.
+
+### Agent-loop structural rules
+
+1. **Sibling rejections don't auto-propagate.** Each branch's
+   case_state is private. Halvar will keep h1 live forever even
+   after Maddie + Renzo reject it. The `_render_sibling_consensus`
+   directive at `vuln_researcher.py` injects an explicit
+   `_directive.sibling_consensus_rejection` observable when 2+
+   siblings reject an id this branch still has live.
+
+2. **Operator messages need ACK.** The agent emits
+   `observables: { "_acked_operator_messages": "<id1>,<id2>" }` to
+   stop a steering message from re-appearing. Without ACK,
+   operator messages re-fire on every turn within the wall-clock
+   TTL (24h).
+
+3. **Idempotency: every LLM call is request-keyed**. Cache table
+   `llm_idempotency_cache` (migration 061) stores responses by
+   sha256(investigation_id, branch_id, turn_number, prompt_hash).
+   Retries replay the cached decision instead of re-paying for
+   Claude. Caller-supplied keys live in `vuln_researcher.run_turn`.
+
+4. **Agent self-bloats observables.** They invent scratchpad keys
+   like `sibling_renzo_h7`, `mandatory_next`, `critic_open_question`.
+   `absorb()` caps agent-set obs at 10/turn + 50 total; tool-prefix
+   keys (audit_mcp:*, ida_headless:*, _directive.*) are never
+   evicted. `render_case_model` partitions tool readings (shown
+   unlimited, capped at 80 display) from agent scratchpad (capped
+   at 15 display).
+
+### Operations
+
+1. **`start.sh` has per-service restart**: `restart-backend`,
+   `restart-frontend`, `restart-workers`, `restart-worker <queue>`,
+   `restart-audit-mcp`. Use these instead of full `restart` to
+   avoid losing firefox semble cache (~9s reload from pickle).
+
+2. **`record_pid` uses `RUN_DIR_ABS`** (absolute) so subshells
+   that `cd` elsewhere (audit-mcp launches in its own repo) still
+   write the pidfile into AILA's `.run/`.
+
+3. **Windows uvicorn must run with `--loop asyncio`** (selector
+   event loop). The default Proactor loop leaks IOCP socket handles
+   on abnormal exit — port appears owned by a phantom PID forever.
+   `start.sh` backend launch enforces `--loop asyncio`.
+
+4. **PowerShell `Start-Process` discards bash env vars on
+   Windows.** Pass `--workers N` as CLI flag, NOT
+   `AUDIT_MCP_WORKERS=N` env prefix.
+
+### Auto-steering pattern
+
+`tool_executor` calls `maybe_post_auto_steering(...)` after every
+tool dispatch. When a result matches a known dead-end pattern
+(`read_lines` past EOF, `read_function` returning file header from
+indexer fault), the system POSTS an operator message to the
+investigation with the corrective info — identical DB write to the
+UI's chat composer. Lands at PROMPT POSITION 2 on every branch's
+next turn under `*** OPERATOR STEERING — MANDATORY OVERRIDE ***`.
+De-dupes by `(rule, target_file, target_symbol)` key; allows
+re-post once all prior matching steerings are ACKed (so a recurring
+condition can re-fire after the agent ignores the first one). To
+add a new rule: write `_detect_X` + `_derive_X_correction` in
+`auto_steering.py` and branch in `maybe_post_auto_steering`.
+
+### Cost tracking known-broken
+
+`VRInvestigationRecord.cost_actual_usd` shows $0 forever. The
+aggregator in `api_router._compute_live_investigation_cost` joins
+`LLMCostRecord.run_id == TaskRecord.id` — but `run_id` is actually
+the workflow `RunRecord.id` (DurableStateMachine run instance),
+not the ARQ TaskRecord id. The correct join needs an extra hop
+through `workflow_run_records`. Not yet fixed.
