@@ -288,7 +288,90 @@ class AuditMcpBridgeTool(Tool):
                 err = payload.get("error")
                 if isinstance(err, str):
                     ctx["error_excerpt"] = err[:400]
+                    # Auto-fallback: when read_function reports "not
+                    # indexed", fan a search_functions(pattern=name)
+                    # call and append the top matches to the error
+                    # string. Turns a dead-end error into actionable
+                    # next step. Agents repeatedly tried ensureStrBuf
+                    # (hallucinated name) on Firefox; the real index
+                    # had appendStrBuf, emitStrBuf, etc. Without
+                    # suggestions, the agent looped on the same bad
+                    # name across 4+ turns.
+                    if (
+                        action == "read_function"
+                        and "not indexed" in err.lower()
+                        and isinstance(normalized_kwargs.get("name"), str)
+                    ):
+                        suggestions = await self._suggest_function_names(
+                            base=base,
+                            index_id=normalized_kwargs.get("index_id") or "",
+                            name=str(normalized_kwargs["name"]),
+                        )
+                        if suggestions:
+                            payload["error"] = (
+                                f"{err}\n\nNEAREST INDEXED FUNCTION NAMES "
+                                f"(use one of these with read_function, OR "
+                                f"if none matches, the symbol genuinely "
+                                f"does NOT exist in this codebase — STOP "
+                                f"trying this name and pivot to "
+                                f"semantic_search):\n"
+                                + "\n".join(f"  - {s}" for s in suggestions)
+                            )
             return payload
+
+    async def _suggest_function_names(
+        self, base: str, index_id: str, name: str,
+    ) -> list[str]:
+        """Return up to 5 indexed function names nearest to ``name``.
+
+        Fires search_functions with a permissive prefix pattern (just
+        the first 4-6 chars of the queried name) so the agent sees
+        candidates even when its hallucinated name shares only a stem
+        with anything real. Best-effort: empty list on any error
+        means the caller emits the original error unchanged.
+        """
+        if not index_id or not name:
+            return []
+        # Take the longest unambiguous prefix — drop trailing CamelCase
+        # tail. ``ensureStrBuf`` becomes ``ensureStrB`` then ``ensureS``
+        # and finally ``ensure`` so search_functions finds appendStrBuf,
+        # emitStrBuf, etc. via the StrBuf stem.
+        candidates: list[str] = []
+        seen: set[str] = set()
+        probes = [name, name[:6], name[:4]]
+        # Add CamelCase-stem variants: 'ensureStrBuf' -> 'StrBuf'
+        import re  # noqa: PLC0415
+        camel_parts = re.findall(r"[A-Z][a-z]+", name)
+        probes.extend(camel_parts[-2:])
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                for pattern in probes:
+                    if not pattern or len(pattern) < 3:
+                        continue
+                    try:
+                        resp = await client.post(
+                            f"{base}/tools/search_functions",
+                            json={"index_id": index_id, "pattern": pattern, "limit": 8},
+                        )
+                        body = resp.json()
+                    except (httpx.ConnectError, httpx.TimeoutException, ValueError):
+                        continue
+                    matches = body.get("matches") or body.get("results") or []
+                    for m in matches:
+                        if not isinstance(m, dict):
+                            continue
+                        n = m.get("name") or m.get("qualified_name")
+                        if not n or n in seen:
+                            continue
+                        seen.add(n)
+                        candidates.append(n)
+                        if len(candidates) >= 5:
+                            return candidates
+                    if len(candidates) >= 5:
+                        return candidates
+        except (httpx.ConnectError, RuntimeError):
+            return candidates
+        return candidates
 
     # ── Schema-driven tool catalog ────────────────────────────────────
     #
