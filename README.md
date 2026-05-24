@@ -76,6 +76,102 @@ and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.
 
 For deeper detail see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## VR Engine and MCP Architecture
+
+The vulnerability research module (`vr`) drives a multi-MCP backend with
+graph-aware code intelligence, semantic search, and binary analysis. Three
+MCP servers run alongside AILA, exposed over HTTP and orchestrated by the
+platform's task queue.
+
+```
+  +-------------------------------------------------------------+
+  |                  AILA backend (Python + ARQ)                |
+  |  agent loop -> tool_executor -> bridge tools -> MCP servers |
+  +----+--------------------+--------------------+--------------+
+       |                    |                    |
+  +----v-----+      +-------v--------+    +------v---------+
+  | audit-   |      | ida-headless-  |    | semble         |
+  | mcp      |      | mcp            |    | (embedded in   |
+  | 18822    |      | 18821          |    |  audit-mcp)    |
+  +----------+      +----------------+    +----------------+
+  trailmark        Hex-Rays + miasm     Model2Vec + BM25
+  graph engine     binary engine        chunk retrieval
+  + GPU CSR        + 81 tools
+  + 58 tools
+```
+
+### audit-mcp -- source-code intelligence
+
+- **Tool surface:** 58 tools over HTTP (`/tools` for catalog, `/tools/<name>` for invocation)
+- **Graph engine:** trailmark builds a call graph + symbol table on `index_codebase`. Per-index cached on disk via `DurableIndexStore`, recovered automatically on restart.
+- **GPU acceleration:** `from_trailmark()` constructs a GPU CSR adjacency matrix when CUDA is present; powers `attack_surface`, `fuzzing_targets`, `unreachable_from_entrypoints` on monorepo-scale graphs.
+- **Semantic search via semble:**
+  - Hybrid Model2Vec (potion-code-16M) embeddings + BM25 + RRF + code-aware reranker
+  - Per-index lazy build in a **separate Python process** so the parent's GIL stays free during cold builds
+  - Pickled to `~/.audit-mcp/semble-cache/<index_id>.pkl` after first build -- subsequent restarts load in ~9s instead of rebuilding
+  - Tools: `semantic_search(query, top_k, alpha, rerank, filter_*)`, `find_related(file, line, top_k)`, `semble_stats(index_id)`
+- **Read-function fast path:** `read_function` queries the semble chunk index first (matches by name + definition pattern); falls back to a process-cached `TypeResolver` instead of rebuilding it per call (was the source of 15-minute hangs on firefox-scale).
+- **Multi-worker support:** `AUDIT_MCP_WORKERS` env / `--workers` CLI flag. Each worker holds its own engine + semble + TypeResolver caches; AILA's bridge pre-warms all workers on the first call to a new `index_id` (Linux/macOS only -- Windows uvicorn multi-worker is broken).
+
+### ida-headless-mcp -- binary intelligence
+
+- **Tool surface:** 81 tools over HTTP (`/tools` catalog)
+- **Engines:** Hex-Rays decompiler + miasm IR for control-flow obfuscation, CFF deflattening, symbolic execution, CAPA behavioral rule scanning
+- **Mutations:** Renames, comments, prototypes, and assembly patches are queued through `ida_headless/poll_mutation` so concurrent operator + agent edits don't race
+- **Specialised tools:** GPU-backed call graph traversal, opaque-predicate proving via SMT, structural binary diffing, exploitability assessment (`assess_exploitability`, `prove_overflow`, `prove_bounds_sufficient`)
+
+### Agent loop and reliability
+
+The VR module runs adversarial 3-persona deliberation (researcher / critic / synthesizer) over the MCP tool surface. Each tool call goes through `AuditMcpBridgeTool` (or its IDA equivalent) which provides:
+
+- **Schema-driven kwarg validation** -- catches LLM-hallucinated parameters (e.g. `fuzzing_targets(threshold=...)`) before the HTTP round-trip and returns a structured "did you mean" error so the next turn self-corrects
+- **Per-action kwarg synonyms** -- transparently rewrites common aliases (`top_n` -> `limit`, `cutoff` -> `min_complexity`, etc.) per tool's actual signature
+- **Circuit breaker** -- counts repeated failures by both `(server, tool, args)` AND `(server, tool, error_class)` so the agent can't burn turns varying the value of a bad kwarg name; injects a hard pivot directive after 3 consecutive failures
+- **Survey-streak pivot** -- after 3 consecutive survey-tool calls (`attack_surface`, `complexity_hotspots`, `fuzzing_targets`, ...) without a source read, forces the agent into `read_function` / `taint_paths_to` / `callers_of` or a finding submission
+- **Language-aware tool suppression** -- hides `dead_code` and `unreachable_from_entrypoints` from agents running against C++/Java/Kotlin/C#/Swift/Objective-C/Scala targets (static call graphs are blind to vtable + template dispatch on those languages)
+- **Pending/poll pattern** -- heavy operations like `fuzzing_targets` on firefox return `status=pending + task_id`; the bridge polls `poll_task` for up to ~15 min so AILA's 900s HTTP timeout doesn't kill long graph queries
+- **Lazy pre-warm fan-out** -- first call to a new `index_id` fires 16 parallel `summary` + `semble_stats` requests so every uvicorn worker warms its caches before the agent's real query lands
+
+### Per-stage target analysis (durable)
+
+Target ingestion is split into three independently-tracked stages with per-stage status, attempts counter, and reaper:
+
+- `INGESTION` -- audit_mcp `index_codebase` clone + parse (timeout 14400s)
+- `CAPABILITY_PROFILE` -- D-51 capability rule evaluation (timeout 1800s)
+- `FUNCTION_RANKING` -- `fuzzing_targets` ranking with GPU CSR (timeout 1800s)
+
+Operator can resume a stuck target via `POST /vr/targets/{id}/resume-analysis`; the endpoint fans out per non-DONE stage. Reaper runs every minute via ARQ cron, flips RUNNING stages past their timeout to FAILED with `"reaper: RUNNING for Xs > Ys timeout"`.
+
+### Statistics (current deployment)
+
+| Measurement | Value |
+|---|---|
+| audit-mcp tools available | **58** (incl. 3 semble tools, 8 graph tools, 7 specialised search, 5 deep-audit, etc.) |
+| ida-headless-mcp tools | **81** |
+| Trailmark graph -- nginx | ~10k functions, ~100k call edges |
+| Trailmark graph -- firefox | **742,335 functions, 5M+ call edges** |
+| Semble index -- nginx | 16 MB pickle, ~250ms cold build |
+| Semble index -- openjpeg | 26 MB pickle, ~3s cold build |
+| Semble index -- firefox | **3.4 GB pickle, ~85 min cold build, ~9s warm restore** |
+| Semble chunks -- firefox | 700k+ across 17 languages (cpp 234k, c 221k, js 425k, rust 165k, ...) |
+| Read-function on firefox | 15+ min hang **->** ~30s first call + cached, <100ms subsequent |
+| Semantic search latency | ~250ms (nginx) / ~5ms in-process, ~200ms via MCP HTTP |
+| Cold start (3 indexes recovered) | ~30s including all semble pickle loads |
+
+### Bug-fix scorecard (recent)
+
+| Issue | Fix |
+|---|---|
+| firefox `read_function` 15-min hang | TypeResolver cached on `IndexEntry`; reused across calls (`audit-mcp d091d94`) |
+| audit-mcp full-server hang during semble build | Cold builds moved to a separate Python process (`audit-mcp 13dc2d6`) |
+| `attack_surface` returning 0 entries on every call | Adapter was looking up wrong response key (`surfaces` vs actual `entrypoints`); fixed (`AILA ec1b4f3`) |
+| `fuzzing_targets(threshold=...)` infinite loop | Per-action kwarg synonyms (was: global map rewrote correct `min_complexity` -> broken `threshold`) (`AILA ef1ca59`) |
+| Agent surveying 10+ turns without reading source | Survey-streak pivot circuit breaker (`AILA b8aa54f`) |
+| firefox classified as `python` (trailmark iteration order) | Byte-weighted language detection by walking `mcp_path` ourselves (`AILA c29d82b`) |
+| Module-side Tailwind classes had no CSS | Explicit `@source` directives in `globals.css` for every module path (`AILA 02ef955`) |
+
+For day-to-day MCP operations and the full VR agent design see [docs/vr/](docs/vr/).
+
 ## Quick Start
 
 **Prerequisites**
