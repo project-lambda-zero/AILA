@@ -13,6 +13,7 @@ from aila.storage.registry import ConfigRegistry
 __all__ = [
     "default_task_queue",
     "enqueue_vr_nday",
+    "enqueue_downstream_target_stages",
 ]
 
 
@@ -67,3 +68,67 @@ async def enqueue_vr_nday(
         group_id="vr_dispatcher",
         team_id=team_id,
     )
+
+
+async def enqueue_downstream_target_stages(
+    target_id: str,
+    task_queue: Any,
+    *,
+    user_id: str = "system",
+    group_id: str = "system",
+    team_id: str | None = None,
+) -> list[dict[str, str]]:
+    """Fan out the post-ingestion enrichment stages for a target.
+
+    Reads the target's ``analysis_stages_json`` and enqueues
+    ``run_capability_profile_build`` and ``run_function_ranking`` for
+    any stage that is not already DONE. Both depend on INGESTION; if
+    ingestion is not yet DONE this is a no-op (the worker running
+    ``run_target_analysis`` calls this helper at task-end after
+    ingestion has flipped to DONE).
+
+    Idempotent. Safe to call from:
+      - inside ``run_target_analysis`` (auto-chain after ingestion).
+      - the operator-facing ``POST /vr/targets/:id/resume-analysis``
+        endpoint (which used to inline this fan-out logic).
+
+    StageTracker handles the "stage already DONE" / "stage RUNNING
+    within timeout" cases by raising StageAlreadyDoneError /
+    StageInFlightError inside each task; the task body catches those
+    and returns cleanly, so a stale duplicate enqueue is wasteful but
+    not corrupting.
+    """
+    from aila.modules.vr.contracts.target_stages import StageName, StageState  # noqa: PLC0415
+    from aila.modules.vr.services.stage_tracker import load_target_stages  # noqa: PLC0415
+
+    from .enrichment.workers import (  # noqa: PLC0415
+        run_capability_profile_build,
+        run_function_ranking,
+    )
+
+    stages = await load_target_stages(target_id)
+    if stages.ingestion.state != StageState.DONE:
+        # Ingestion not finished yet — caller is responsible for
+        # enqueuing ingestion itself. Downstream stages depend on the
+        # mcp handles produced by ingestion.
+        return []
+
+    enqueued: list[dict[str, str]] = []
+
+    async def _enqueue(stage_label: str, fn: object) -> None:
+        handle = await task_queue.submit(
+            track="vr",
+            fn=fn,
+            kwargs={"target_id": target_id},
+            user_id=user_id,
+            group_id=group_id,
+            team_id=team_id,
+        )
+        enqueued.append({"stage": stage_label, "task_id": handle.task_id})
+
+    if stages.capability_profile.state != StageState.DONE:
+        await _enqueue(StageName.CAPABILITY_PROFILE.value, run_capability_profile_build)
+    if stages.function_ranking.state != StageState.DONE:
+        await _enqueue(StageName.FUNCTION_RANKING.value, run_function_ranking)
+
+    return enqueued
