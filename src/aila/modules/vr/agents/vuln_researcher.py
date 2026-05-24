@@ -552,7 +552,7 @@ class HonestVulnResearcher:
                         continue
                     if k.startswith("audit_mcp:") or k.startswith("audit_mcp.") \
                             or k.startswith("ida_headless:") or k.startswith("ida_headless."):
-                        tool_obs[k] = str(v)[:600]
+                        tool_obs[k] = str(v)[:5000]
                     elif not k.startswith("_"):
                         key_obs[k] = str(v)[:240]
                         if len(key_obs) >= 8:
