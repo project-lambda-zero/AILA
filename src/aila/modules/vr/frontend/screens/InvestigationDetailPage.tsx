@@ -200,15 +200,29 @@ export function InvestigationDetailPage() {
   // catch-up case after pausing or jumping around.
   const [scrollNearBottom, setScrollNearBottom] = useState(true);
   const [visibleTurn, setVisibleTurn] = useState<number | null>(null);
+  // Refs hold the "last committed" state so the scroll handler can
+  // skip setState calls when nothing actually changed. Without these,
+  // every scroll event (or every refetch tick from
+  // useInvestigationMessagesStream) re-fired setState on equal
+  // values — React 18's Object.is short-circuit catches that on most
+  // primitives, but the combination with an effect that re-runs on
+  // messages-length changes hit "Maximum update depth exceeded" once
+  // the page had 1000+ turns and streaming was active.
+  const scrollNearBottomRef = useRef(true);
+  const visibleTurnRef = useRef<number | null>(null);
   useEffect(() => {
     const onScroll = () => {
       const distFromBottom =
         document.documentElement.scrollHeight -
         window.scrollY -
         window.innerHeight;
-      setScrollNearBottom(distFromBottom < 240);
+      const nearBottom = distFromBottom < 240;
+      if (nearBottom !== scrollNearBottomRef.current) {
+        scrollNearBottomRef.current = nearBottom;
+        setScrollNearBottom(nearBottom);
+      }
       // Pick the visible turn by walking back from the latest until we
-      // find one whose top is above the viewport bottom.
+      // find one whose top is above viewport-mid.
       const cards = document.querySelectorAll<HTMLElement>('[id^="turn-"]');
       const viewportMid = window.scrollY + window.innerHeight / 2;
       let bestIdx: number | null = null;
@@ -220,12 +234,23 @@ export function InvestigationDetailPage() {
           break;
         }
       }
-      setVisibleTurn(bestIdx);
+      if (bestIdx !== visibleTurnRef.current) {
+        visibleTurnRef.current = bestIdx;
+        setVisibleTurn(bestIdx);
+      }
     };
-    onScroll();  // initial
+    // Defer initial computation past the current commit so we don't
+    // setState synchronously inside the effect body (the symptom path
+    // that React reports as "Maximum update depth exceeded").
+    const raf = requestAnimationFrame(onScroll);
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [messagesResult?.data?.length]);
+    window.addEventListener("resize", onScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, []);  // empty deps — handler reads live DOM state, no stale-closure risk
 
   const jumpToLatest = () => {
     const cards = document.querySelectorAll<HTMLElement>('[id^="turn-"]');
