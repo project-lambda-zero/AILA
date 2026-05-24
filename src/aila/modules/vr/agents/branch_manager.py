@@ -109,7 +109,7 @@ class BranchManager:
                 persona_voice=persona_voice,
                 fork_reason=fork_reason,
                 fork_at_turn=at_turn,
-                case_state_json=parent.case_state_json or "{}",
+                case_state_json=_strip_directives_from_state(parent.case_state_json or "{}"),
                 turn_count=0,
                 branch_cost_usd=0.0,
             )
@@ -364,7 +364,7 @@ class BranchManager:
                         f"cannot spawn from parent {parent_branch_id} in "
                         f"status {parent.status!r} — must be ACTIVE",
                     )
-                inherited_case_state = parent.case_state_json or "{}"
+                inherited_case_state = _strip_directives_from_state(parent.case_state_json or "{}")
                 parent_at_turn = parent.turn_count
 
             child = VRInvestigationBranchRecord(
@@ -433,6 +433,29 @@ class BranchManager:
                 f"{self.investigation_id}",
             )
         return branch
+
+def _strip_directives_from_state(raw_json: str) -> str:
+    """Strip ``_directive.*`` observables from a case_state JSON blob.
+
+    Used at fork time: children should start with a clean directive
+    slate, not inherit the parent's pivot/steering. Otherwise spawning
+    3 sibling personas at the moment the parent's pivot directive is
+    active causes all 3 children to render '*** PIVOT REQUIRED ***' on
+    their turn 0, before they've made any tool calls of their own.
+    """
+    if not raw_json:
+        return raw_json
+    try:
+        data = json.loads(raw_json)
+    except (ValueError, TypeError):
+        return raw_json
+    obs = data.get("observables")
+    if not isinstance(obs, dict):
+        return raw_json
+    data["observables"] = {
+        k: v for k, v in obs.items() if not str(k).startswith("_directive.")
+    }
+    return json.dumps(data)
 
 
 def _decode(raw_json: str | None) -> ReasoningCaseState:

@@ -85,8 +85,10 @@ For `submit`:
 
 audit-mcp is a graph-aware code intelligence server, not a grep. The
 tool list in "## Available tools" is large because each tool answers
-a SPECIFIC question. Use the right one — `search_source` is the
-LAST resort, not the first.
+a SPECIFIC question. There is no `search_source` tool — text-content
+grep was dropped because agents reached for it first and burned turns
+on patterns that returned 0 matches. Every text-search use case has a
+better-fit tool in the catalog (see the decision table below).
 
 Decision table — pick by the question you're actually asking:
 
@@ -95,8 +97,7 @@ Decision table — pick by the question you're actually asking:
   Returns code-aware chunks (full function bodies, classes, blocks),
   not file:line snippets. Combines static embeddings + BM25 with
   code-aware reranking (definition boost, identifier stems, file
-  coherence, noise penalty for test/legacy paths). 100-1000x faster
-  than chaining `search_source` regex guesses. Examples that ARE
+  coherence, noise penalty for test/legacy paths). Examples that ARE
   semantic_search: "where is HTTP/2 frame decoding handled", "the
   function that allocates per-request memory pools", "config-file
   parser entry point", "code that registers the read callback".
@@ -106,15 +107,14 @@ Decision table — pick by the question you're actually asking:
   the seed.
 
 **Param name for semble tools is `top_k`, not `limit`.** Most other
-audit-mcp tools (`search_source`, `fuzzing_targets`, `list_functions`,
+audit-mcp tools (`fuzzing_targets`, `list_functions`,
 `complexity_hotspots`, ...) take `limit=N`. `semantic_search` and
 `find_related` take `top_k=N`. Mixing them gets rejected with
 "unknown kwarg(s) 'limit'".
+
 - **"Where is symbol X defined?"** (you KNOW the exact name) →
-  `definitions_of` or `read_function` with the exact name. NOT
-  `search_source`.
+  `definitions_of` or `read_function` with the exact name.
 - **"Who calls function X?"** → `callers_of` (graph edge, exact).
-  NOT `search_source` for the name.
 - **"What does function X call?"** → `callees_of`.
 - **"Where does tainted data flow to/from X?"** → `taint_paths_to`,
   `def_use`, `taint_sources`. Real interprocedural taint, not
@@ -122,23 +122,25 @@ audit-mcp tools (`search_source`, `fuzzing_targets`, `list_functions`,
 - **"What's the attack surface?"** → `attack_surface`,
   `complexity_hotspots`, `entrypoints`. Ranked, not raw.
 - **"What type is variable V?"** → `type_of`, `ancestors_of`,
-  `children_of`. Uses the type resolver.
-- **"Are there crypto / dangerous-sink / format-string patterns?"** →
+  `members_of`. Type system, not declaration grep.
+- **"What capabilities does the binary have?"** → `capa_scan`,
   specialized scanners (`crypto_constants`, `dangerous_sinks`,
   `format_strings`, `unsafe_casts`).
 - **"What capabilities does this binary use?"** → IDA `capa_scan`.
 - **"What's the cyclomatic complexity / hotspot ranking?"** →
   `complexity_hotspots`.
-- **"I literally need to grep a string that isn't a symbol"** (a
-  magic constant, a log message, a config key) → THEN
-  `search_source`. Even then prefer `search_macros` /
-  `search_constants` when the target is a `#define` / `enum`.
-
-Repeated `search_source(pattern=X)` calls are a code smell. The
-observable from the first call is in your case_state — read it
-before asking again. If grep didn't answer the question, the
-answer probably needs a graph edge (callers_of / taint_paths_to)
-or a structural query (type_resolver), not a different regex.
+- **"I need to find every site of a specific code PATTERN"**
+  (a `#define`, an `enum` literal, a struct field, an assertion,
+  a narrowing cast, a bitfield write) → pick the structured tool
+  that matches: `search_macros` (for `#define`), `search_constants`
+  (for enum/integer/string literals), `search_types` (for typedefs
+  and structs), `search_assertions`, `search_bitfields`,
+  `search_narrowing_casts`. These are AST-aware and won't drown
+  in false positives the way a plain text scan would.
+- **"I need to find functions by name pattern"** →
+  `search_functions(pattern="...")`. Operates over the function
+  index — finds member functions, free functions, templates;
+  use when you don't know the exact name but know a substring.
 
 Symbol-graph tools are CHEAP and EXACT. Use them.
 
@@ -376,7 +378,9 @@ opcode pairs are almost always emitted together by an
 `add_*_code(sc)` compile helper that calls `add_code` against
 `sc->lengths` and `sc->values` in sequence. Search for the value-pass
 opcode name and look at the surrounding helper:
-  - `audit_mcp.search_source(pattern="<value_opcode_name>", limit=50)`
+  - `audit_mcp.search_functions(pattern="<value_opcode_name>", limit=50)`
+    finds every function that REFERENCES the opcode name (function-
+    index lookup, more reliable than text grep).
   - If the only hit beyond the function body is inside an `add_*_code`
     helper, READ that helper — the line above the value-pass
     assignment usually sets `mark_*_code` / `start_*_len_code` /
@@ -388,7 +392,7 @@ Submitting a "no length-pass counterpart exists → length-vs-value
 asymmetry → heap overflow" finding without doing this check is a
 classic false-positive shape. The mirror is usually named
 `mark_*_code` (one-shot state setter), `start_*_len_code` (counterpart
-to `start_*_code`), or `setup_*_len_code`. Always grep before
+to `start_*_code`), or `setup_*_len_code`. Always verify before
 claiming absence.
 
 **Pattern 2b (corollary): Use `audit_mcp.search_types` for structs and
@@ -406,53 +410,76 @@ that look like function calls — `ngx_http_v2_write_name_entry(dst, ...)`,
 `ngx_http_v2_write_int(dst, ...)`, `ngx_string(s)`, `ngx_array_push(...)`
 etc. — and audit-mcp's function indexer only sees real function
 definitions, not `#define` macros. `search_macros` returns the macro
-body. Skipping this and burning turns on `search_source` greps for
-`#define <name>` is the most common waste pattern in C-source audits.
+body. Skipping this and hunting `#define <name>` with other tools is
+the most common waste pattern in C-source audits.
 
-**Pattern 2d (corollary): When you need to check a SPECIFIC PATTERN
-inside a function (a flag assignment, a guard branch, a missing
-reset), ALWAYS reach for `search_source` BEFORE `read_function`.**
-The observable that survives across turns from `read_function` is
-capped at ~50000 characters (~600 lines). Functions like
-`ngx_http_proxy_merge_loc_conf` (513 lines), `ngx_http_request_t`
-handlers, and any merge_loc_conf in a large module overflow that
-cap — and the load-bearing line you care about (e.g.
-`sc.complete_lengths = 1;` at line 4067) is almost always in the
-middle or end of the function body, past the truncation. The
-observable will show you the prologue + setup, you will conclude
-"the flag isn't set", and the conclusion will be wrong. Specific-
-pattern checks belong to `search_source`:
+**Pattern 2d (corollary): Specific-pattern checks inside huge
+functions.** `read_function` truncates the body at ~50000 chars
+(~600 lines). Functions like `ngx_http_proxy_merge_loc_conf` (513
+lines), `ngx_http_request_t` handlers, and any `merge_loc_conf` in
+a large module overflow that cap — and the load-bearing line you
+care about (e.g. `sc.complete_lengths = 1;` at line 4067) is almost
+always in the middle or end of the function body, past the
+truncation. The observable will show prologue + setup; you will
+conclude "the flag isn't set" and the conclusion will be wrong.
 
-  - "Does this block set sc.complete_lengths?" →
-    `search_source(pattern="complete_lengths = 1", limit=50)` then
-    visually filter to hits inside the file/line range you care about
-  - "Is there a per-iteration `is_args = 0` reset in F?" →
-    `search_source(pattern="is_args = 0", limit=20)` scoped to F's file
-  - "Does the emission loop call ngx_escape_uri?" →
-    `search_source(pattern="ngx_escape_uri", limit=30)` scoped to the
-    module
+When you need to confirm/refute a specific code line inside a
+large function, use ONE of these instead of relying on the
+truncated `read_function` observable:
 
-Only use `read_function` when you genuinely need the FULL body for
-control-flow tracing — and even then, follow up with `search_source`
-for any specific-line claim you intend to submit as evidence. This
-rule has killed at least two confirmed false-positive findings
-(investigations 179f6db0 + 9f2c0b39, both claiming "missing
-sc.complete_lengths" in code that had it on a line past the
-truncation point).
+  - `audit_mcp.read_function(name=F, line_start=N1, line_end=N2)`
+    — focused range read, returns the requested 50-line slice
+    instead of truncating from the top. Use this when you already
+    know roughly where the assignment should be (e.g. inside the
+    third `if` block).
+  - `audit_mcp.search_constants(name="<literal>")` if the load-
+    bearing line writes a known constant (`= 1`, `= NULL`, a
+    macro name). Returns every assignment of that constant.
+  - `audit_mcp.search_bitfields(name="<field>")` if the line is
+    a bitfield write — AST-aware, won't miss compound assignments.
+  - `audit_mcp.semantic_search(query="<file>:<function> sets
+    <field> = <value>", top_k=5)` — natural-language path to the
+    same line, especially good when you're unsure of the literal.
 
-**Pattern 3: State-carrying field consumers.** Find every read and
-every write of the dangerous state field (e.g. `e->is_args`,
-`e->quote`) via `audit_mcp.search_source(pattern="e->is_args")` or
-`audit_mcp.nodes_with_annotation` if the field is graph-tagged.
+Submitting "flag not set" or "missing reset" findings without
+verifying via one of these is a classic false-positive shape that
+has killed at least two confirmed findings (investigations
+179f6db0 + 9f2c0b39, both claiming "missing sc.complete_lengths"
+in code that had it on a line past the read_function truncation
+point).
+
+**Pattern 3: State-carrying field consumers.** Find every read
+and write of the dangerous state field via the type system, not
+text grep:
+
+  - `audit_mcp.search_bitfields(name="e->is_args")` — finds every
+    write of a bitfield via AST analysis.
+  - `audit_mcp.nodes_with_annotation(...)` if the field is
+    graph-tagged with a property (taint source, sink, etc).
+  - `audit_mcp.semantic_search(query="<field> assignment", top_k=10)`
+    when the field isn't a bitfield. Returns code chunks whose
+    embedding matches "assigns to <field>".
+
 Every producer + every consumer is a candidate; predicate
 asymmetries between any producer/consumer pair is a real variant.
 
-**Pattern 4: Bad-pattern grep.** Use `audit_mcp.search_source` for
-the literal bad pattern itself — not the function name, the CODE
-PATTERN. Examples:
-  - `e->buf.len +=` — every site that grows the output buffer
-  - `cap[2*n+1] - cap[2*n]` — every raw capture-length computation
-  - `ngx_escape_uri\(NULL` — every length-only escape probe
+**Pattern 4: Bad-pattern enumeration.** Find every site that
+uses a known bad CODE PATTERN (not a function name, a code
+shape):
+
+  - `audit_mcp.search_narrowing_casts(...)` — every implicit
+    narrowing conversion (uint64 → uint32) that's a precondition
+    for integer-truncation bugs.
+  - `audit_mcp.search_constants(name="NULL")` scoped to a function
+    — every `NULL` argument to identify length-only call sites
+    like `ngx_escape_uri(NULL, ...)`.
+  - `audit_mcp.find_related(file_path=..., line=N, top_k=10)`
+    starting from one known instance of the pattern — returns
+    other code chunks whose embeddings are nearest. Excellent
+    for "every site that grows the output buffer like this".
+  - `audit_mcp.semantic_search(query="<intent of the bad pattern>",
+    top_k=20)` for natural-language framing.
+
 Each hit is a candidate to verify against the symmetric pair.
 
 **Pattern 5: Taint paths to dangerous sinks.** Use

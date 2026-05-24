@@ -225,29 +225,15 @@ class CyberReasoningEngine:
     def render_case_model(self, case_state: ReasoningCaseState) -> str:
         """Render a compact textual case model for the next turn prompt.
 
-        Observables whose key starts with ``_directive.`` are pulled out
-        and rendered as a TOP-OF-MODEL DIRECTIVES block so the agent
-        sees mandatory pivots / steering before anything else. Without
-        this, pivot hints written by tool_executor (e.g. survey-streak
-        pivots, empty-result pivots) landed in the observables dict but
-        got buried among 40+ other observable key/value pairs and the
-        agent ignored them. Empty-string directives are skipped (the
-        clear path).
+        ``_directive.*`` observables are intentionally NOT rendered here.
+        The top-level prompt section ``_render_active_directives_section``
+        (in vuln_researcher) lifts those to PROMPT POSITION 2 so the
+        agent sees them before any framing. Rendering them here too
+        would duplicate the block lower in the prompt, splitting the
+        agent's attention. They're still filtered out of the regular
+        observables block below so they don't appear under that label.
         """
         parts: list[str] = []
-        directives = {
-            k: v for k, v in case_state.observables.items()
-            if k.startswith("_directive.") and isinstance(v, str) and v.strip()
-        }
-        if directives:
-            parts.append("*** ACTIVE DIRECTIVES (read FIRST, act on these) ***")
-            for key, value in directives.items():
-                # Strip the _directive. prefix in the rendered label
-                label = key[len("_directive."):]
-                parts.append(f"[{label}]")
-                parts.append(value.rstrip())
-            parts.append("*** END DIRECTIVES ***")
-            parts.append("")
         if self._has_contract(case_state.contract):
             parts.append("Contract:")
             parts.append(f"  answer_type   = {case_state.contract.answer_type}")
@@ -258,8 +244,8 @@ class CyberReasoningEngine:
         else:
             parts.append("Contract: (not parsed yet — derive it this turn)")
 
-        # Filter directives out of the regular observables block (they
-        # already appeared at the top under ACTIVE DIRECTIVES).
+        # Filter directives out — they're rendered at the top of the
+        # prompt by _render_active_directives_section, not here.
         regular_obs = {
             k: v for k, v in case_state.observables.items()
             if not k.startswith("_directive.")
