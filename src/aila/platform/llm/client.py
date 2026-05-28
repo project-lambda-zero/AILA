@@ -194,9 +194,33 @@ class LLMResponse:
     pipeline_metadata: dict[str, Any] | None = None
 
 
-# Maximum retry attempts for transient errors (on top of SDK built-in retries)
-_MAX_RETRIES = 3
-_RETRY_BASE_DELAY = 1.0  # seconds
+# Maximum retry attempts for transient errors (on top of SDK built-in retries).
+# Raised from 3→8 (2026-05-28) after operator reported investigations dying
+# on brief consecutive LLM failures. With the prior 3-retry / unbounded-
+# exponential default the total tolerated outage was only ~7 seconds
+# (1+2+4); a single provider hiccup longer than that propagated as
+# researcher_error_retryable through investigation_loop → investigation_emit
+# and the run was either re-enqueued (expensive) or finalised FAILED
+# (depending on max_turns budget).
+#
+# New schedule with default _MAX_RETRIES=8 and capped 30s backoff:
+#   attempt 0:  1s    attempt 4: 16s
+#   attempt 1:  2s    attempt 5: 30s (capped)
+#   attempt 2:  4s    attempt 6: 30s
+#   attempt 3:  8s    attempt 7: 30s
+# Total tolerated outage = 121s before the loop gives up. Long enough to
+# absorb routine provider hiccups (OmniRoute restarts, rate-limit cooloffs)
+# without losing in-flight investigations.
+#
+# Both knobs are env-configurable so operators can tune per host:
+#   AILA_LLM_MAX_RETRIES        — attempts cap (default 8)
+#   AILA_LLM_RETRY_BASE_DELAY_S — first-attempt backoff seconds (default 1.0)
+#   AILA_LLM_RETRY_MAX_DELAY_S  — per-attempt backoff cap seconds (default 30)
+import os as _retry_os
+
+_MAX_RETRIES = max(1, int(_retry_os.environ.get("AILA_LLM_MAX_RETRIES", "8")))
+_RETRY_BASE_DELAY = max(0.1, float(_retry_os.environ.get("AILA_LLM_RETRY_BASE_DELAY_S", "1.0")))
+_RETRY_MAX_DELAY = max(_RETRY_BASE_DELAY, float(_retry_os.environ.get("AILA_LLM_RETRY_MAX_DELAY_S", "30.0")))
 
 
 class AilaLLMClient:
@@ -697,7 +721,7 @@ class AilaLLMClient:
                 return _enrich_response(response, ctx)
             except (APIConnectionError, APITimeoutError, RateLimitError) as exc:
                 last_error = exc
-                delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
                 logger.warning(
                     "LLM transient error (attempt %d/%d): %s -- retrying in %.1fs",
                     attempt + 1,
@@ -709,7 +733,7 @@ class AilaLLMClient:
             except LLMError as exc:
                 if exc.retryable:
                     last_error = exc
-                    delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                    delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
                     logger.warning(
                         "LLM retryable error (attempt %d/%d): %s -- retrying in %.1fs",
                         attempt + 1,
