@@ -400,3 +400,34 @@ aggregator in `api_router._compute_live_investigation_cost` joins
 the workflow `RunRecord.id` (DurableStateMachine run instance),
 not the ARQ TaskRecord id. The correct join needs an extra hop
 through `workflow_run_records`. Not yet fixed.
+
+### audit-mcp async-first runtime (commit 16cb963 in audit-mcp repo, 2026-05-28)
+
+Concurrency issue: identical sibling-branch tool calls used to
+serialize on the GIL inside the anyio worker-thread pool. 3 branches
+asking the same `semantic_search('foo')` paid 3× the cost. Long
+`index_codebase` runs starved every other tool by holding pool
+slots. Semble cold-build hangs were unbounded.
+
+Resolved by `audit_mcp/async_runtime.py` (new) + `audit_mcp/http_api.py`
+rewrite. Operator-facing knobs:
+
+|Env var|Default|Effect|
+|---|---|---|
+|`AUDIT_MCP_THREAD_POOL_LIMIT`|`64`|anyio worker-thread pool size (was 40). Bump if you see "all threads busy" without dedup help.|
+|`AUDIT_MCP_TOOL_CAP_<TOOLNAME>`|see `DEFAULT_TOOL_CAPS`|Per-tool concurrency cap. e.g. `AUDIT_MCP_TOOL_CAP_SEMANTIC_SEARCH=8` doubles the default. Tool name is uppercased.|
+|`AUDIT_MCP_TIMEOUT_<TOOLNAME>`|see `DEFAULT_TOOL_TIMEOUTS_S`|Per-tool wall-clock timeout. e.g. `AUDIT_MCP_TIMEOUT_DEEP_AUDIT=1200`.|
+|`AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S`|`7200` (2h)|Bounded `subprocess.communicate(timeout=...)` for the semble cold-build child. Was unbounded; a stuck child would hold `semble_status='building'` forever.|
+
+Diagnostics: `GET http://127.0.0.1:18822/runtime` returns live
+`{dedup: {inflight, hits, misses}, semaphores: {<tool>: {cap,
+available}}, thread_pool_limit}`. When agents report "audit_mcp slow"
+check this endpoint first — `available: 0` on a tool = that tool is
+the bottleneck; bump its cap via env. High `misses` with low `hits` =
+sibling branches aren't asking the same questions, which is fine; high
+`hits` = dedup is doing real work.
+
+Backward compat: every existing tool keeps its current sync signature.
+The HTTP layer wraps them. Stdio transport (`audit_mcp/server.py`) is
+unchanged. Async tools (`tool.is_async == True`) now WORK — previously
+the HTTP transport refused them at startup with a hard `RuntimeError`.
