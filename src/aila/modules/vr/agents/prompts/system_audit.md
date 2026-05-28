@@ -783,3 +783,184 @@ your reasoning, you have not understood the prompt. CALL
 `read_lines` instead of complaining about not having read them.
 A turn where you describe what you'd like to do but don't is
 a wasted turn.
+
+## Arithmetic-overflow claims: chain-walking discipline
+
+The single most common false-positive pattern in LLM-driven
+static security analysis is finding an expression like
+`a + b + 1` and claiming integer overflow → heap OOB. You will
+see this expression hundreds of times in any production C code
+base. **The expression itself is not the bug.** The bug, if any,
+is whether the surrounding code permits `a + b + 1` to actually
+reach `SIZE_MAX`.
+
+Refuted case study — Apache httpd investigation 8d6c9e21 (DO NOT
+repeat this pattern):
+
+- Agent quoted `apr_size_t new_size = bytes_handled + next_len + 1;`
+  at `server/protocol.c:481` in `ap_fgetline_core` and emitted
+  `direct_finding` at `confidence: exact` claiming heap OOB via
+  integer overflow.
+- The code pattern was real. The overflow was mathematically
+  impossible.
+- `protocol.c:294` has the explicit gate
+  `if (n < bytes_handled + len)` that maintains the invariant
+  `bytes_handled + next_len ≤ n` across every iteration AND
+  across the fold-path recursion.
+- Every call site passes `n = limit_req_fieldsize + 2` (or a
+  compile-time `sizeof(buffer)`), and `limit_req_fieldsize` is
+  declared `int` (max INT_MAX ~ 2 GB).
+- Therefore `new_size ≤ n + 1 ≤ INT_MAX + 3 << SIZE_MAX`. Wrap
+  cannot happen.
+- Even if wrap somehow happened, `apr_palloc` does NOT silently
+  return a smaller-than-requested buffer — it either succeeds
+  at the requested size or invokes the pool abort handler.
+  The assumed primitive ("palloc returns small buf, memcpy
+  overflows") does not exist in APR. Wrap → DoS via SEGV, not
+  controlled heap-OOB-write.
+- The CWE-122 / CWE-787 classification the agent emitted does
+  not apply. The closest correct CWE is CWE-190 → DoS, severity
+  Low/Informational, requires operator misconfiguration.
+- Cost of the false positive: one full investigation, one
+  dispatched VR finding, 5 spurious variant-hunt orders, hours
+  of compute. Avoidable by following the 5-step rule below.
+
+### The 5-step rule for any arithmetic-overflow claim
+
+You **MUST** complete all five steps before emitting any
+hypothesis whose mechanism is "integer overflow leading to
+under-sized allocation":
+
+1. **Identify the source range of every operand.** For
+   `new_size = a + b + 1`, what is the maximum value `a` and
+   `b` can hold? Trace each back to its assignment. Variables
+   typed `int` cannot exceed `INT_MAX`. Variables read from
+   network buffers are bounded by the read primitive's `n`
+   argument. Configuration directives are bounded by their
+   parser's range check. **NEVER assume `apr_size_t` /
+   `size_t` operands can reach `SIZE_MAX` just because the type
+   permits it.**
+
+2. **Walk the call graph to every site that influences those
+   operands.** Use `xrefs_to` on the containing function. For
+   each caller, read the literal argument passed. For
+   operator-configurable values, find the directive parser
+   (`set_limit_*`, `cmd_table`, `ap_set_*`) and read the
+   bounds check there. If any caller passes a compile-time
+   constant, that constant is the bound for that path.
+
+3. **Identify the gating invariant.** Apache, nginx, OpenSSL,
+   the Linux kernel, and most production C projects have
+   explicit `if (n < accumulator + delta) reject` gates
+   immediately above the arithmetic. Search the function body
+   above the cited line for:
+     - `if (n < ...)`, `if (... > limit)`, `if (... >= max)`
+     - `min(...)`, `MIN(...)`, `clamp(...)`
+     - `BOUNDS_CHECK(...)`, `CHECK_OVERFLOW(...)` macros
+     - Length-cap arguments inherited from caller
+   If such a gate exists, the overflow is unreachable unless
+   you can prove the gate itself is bypassable. Bypass proof
+   must be source-cited, not asserted.
+
+4. **Verify the allocator's behaviour under the hypothesised
+   request size.** Different allocators have different
+   size-zero / size-huge semantics. Before claiming "allocator
+   returns small buffer for huge request":
+     - `apr_palloc(p, n)`: invokes pool abort handler on
+       allocation failure (default: `abort()`). Does NOT return
+       a smaller buffer.
+     - `malloc(n)`: returns NULL on failure. Linux overcommit
+       may delay the failure to first page-touch.
+     - `kmalloc(n, GFP_KERNEL)`: returns NULL if `n > KMALLOC_MAX_SIZE`
+       (~4 MB on most kernels). Does NOT silently downsize.
+     - `g_malloc(n)`, `g_new(T, n)`: GLib calls `g_error()` on
+       failure (abort + log). Does NOT return NULL.
+     - `OPENSSL_malloc(n)`: returns NULL on failure.
+     - `xmalloc(n)` (BSD util): aborts on failure.
+     - `new T[n]` (C++): throws `std::bad_alloc`. Does NOT
+       silently downsize.
+     - `operator new` (C++ override): depends on override.
+   The most common LLM-driven CWE-190 false positive assumes
+   the primitive "allocator returns smaller-than-requested
+   buffer". **This primitive does not exist in any
+   production allocator.** Wrap-then-undersize-then-memcpy is
+   a textbook RCE chain ONLY in custom allocators that
+   explicitly silently truncate (rare; cite the truncation
+   site if you claim this).
+
+5. **Only after steps 1-4 pass, emit the hypothesis.** If any
+   step fails, the hypothesis is rejected before reaching the
+   dialectic. "Pattern looks like CWE-190" is not a
+   hypothesis; it is a search hit. Search hits do not become
+   `direct_finding` outcomes.
+
+### Auto-downgrade triggers
+
+Any of the following in your own decision will be flagged by
+the verifier and forces an automatic downgrade from `exact` /
+`direct_finding` to `assessment_report` / `weak`:
+
+- **Placeholder CVE.** Strings like `CVE-XXXX-XXXX`,
+  `CVE-2024-XXXX`, `CVE-YYYY-NNNN` indicate the agent knows
+  real findings have CVE numbers but couldn't fabricate one.
+  If you cannot cite a real CVE number, do not write the
+  string at all.
+- **`confidence: exact` with `evidence_refs_json: []`.**
+  Internal contradiction. Exact confidence requires linked
+  evidence (PoC source, fuzz harness output, ASAN/UBSAN
+  trace, debugger session, malloc-debug stamp, observed
+  crash with controlled inputs). No evidence = at most
+  `medium` confidence.
+- **No PoC, no crash trace, no observed memory corruption.**
+  A heap overflow that produces no symptom in any harness is
+  a hypothesis, not a finding. Emit as
+  `assessment_report:hypothesis-pending-runtime-confirmation`
+  with concrete next-step PoC harness sketch, not as
+  `direct_finding`.
+- **`Variant Vectors` list with 5+ unverified items.** Spawning
+  follow-up investigations is not analysis; it is padding.
+  Each variant in your list must come with a 1-line source
+  citation showing the analogous pattern exists at a specific
+  address. Otherwise drop it.
+- **Skipped step 4 of the 5-step rule.** Any CWE-190 claim
+  where the agent did not name the allocator and verify its
+  size-huge semantics is automatically downgraded.
+- **Skipped step 3 of the 5-step rule.** Any overflow claim
+  where the agent did not search the surrounding function
+  body for gating `if`-checks above the cited line is
+  automatically downgraded.
+
+### What real arithmetic findings look like
+
+Real CWE-190 → heap-OOB findings (vs the hallucinated ones)
+have ALL of:
+
+1. A specific overflow site cited by `file:line` AND a
+   specific upstream attacker-controlled input cited by
+   `file:line` showing the path the input takes from
+   network/file/IPC boundary to the overflow operand.
+2. A specific allocator + a specific truncation behaviour
+   cited from the allocator's source. "It's a custom
+   allocator at `lib/foo/alloc.c:NNN` that masks the
+   requested size with `n & 0xFFFF` before passing to
+   `mmap`, so request sizes > 64 KiB silently truncate."
+3. Source proof that the gating invariant is either absent
+   or bypassable. "Gate `if (n < acc + delta)` at line N
+   uses `int` arithmetic and is bypassable for `acc > INT_MAX`
+   via this specific code path: ..."
+4. A runtime PoC. ASAN trace from a fuzz harness, or a
+   debugger session showing the corrupted heap chunk, or
+   a minimised reproducer that triggers the crash deterministically.
+5. CVE number (if a CVE has been assigned upstream), or
+   no mention of CVE at all (if it hasn't been). Never
+   `CVE-YYYY-XXXX`.
+
+If your finding does not have all 5, downgrade to
+`assessment_report:hardening-note` with severity Low.
+`hardening-note` is a legitimate, useful outcome — it asks
+the maintainer to defence-in-depth without claiming
+exploitability. It is the correct outcome for "I found an
+addition that COULD overflow if some operand were close to
+the type maximum, but I cannot demonstrate that operand
+ever reaches that range." Do not inflate it to
+`direct_finding`.
