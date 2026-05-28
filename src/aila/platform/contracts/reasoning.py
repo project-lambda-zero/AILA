@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 __all__ = [
     "ReasoningAction",
@@ -214,3 +214,98 @@ class ReasoningTurnDecision(BaseModel):
     # everywhere. Stored as a free-form dict so the schema doesn't have
     # to enumerate every submit-payload variant per module.
     payload: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_tool_run_command(self) -> ReasoningTurnDecision:
+        """When ``action='tool_run'``, ``command`` MUST parse as JSON with
+        a ``tool`` (string) and ``args`` (dict).
+
+        Why this lives on the schema instead of the executor:
+
+        Without this validator, a malformed ``command`` field (the most
+        common failure mode is truncation when the model's
+        ``max_tokens`` budget is exhausted by extended-thinking) surfaces
+        only at ``tool_executor._parse_command`` as a generic "Malformed
+        tool_run command" text message persisted to the investigation
+        thread. The agent's NEXT turn then re-tries the same broken
+        emission with no signal that the original failure was caused by
+        truncation. Worse, the LLM client's existing
+        ``_check_truncation`` (client.py:980) ONLY fires when the OUTER
+        wrapper JSON fails to parse; it does NOT validate inner string
+        fields like ``command``, so truncation of the inner JSON-as-
+        string slips through silently.
+
+        Promoting the check to a Pydantic validator makes the LLM
+        client's structured-response decoder fail validation BEFORE the
+        response is returned to the caller. That triggers
+        ``chat_structured``'s built-in retry-with-correction prompt
+        (client.py:360-446) so the agent gets one shot to fix the
+        emission on the same LLM round trip — much cheaper than burning
+        a full investigation turn on a parse failure.
+
+        Validation rules (lenient on purpose — we want to catch broken
+        emissions, not gatekeep the schema):
+
+          * ``action='tool_run'`` AND ``command`` is None/empty/blank
+            → fail with a message identifying the empty-command shape.
+          * ``action='tool_run'`` AND ``command`` doesn't parse as JSON
+            → fail with the parse error position and a hint about
+            max_tokens truncation, which is the dominant cause.
+          * ``action='tool_run'`` AND parsed value is not a dict
+            → fail naming the actual type seen.
+          * ``action='tool_run'`` AND ``tool`` key missing or
+            ``args`` key missing/wrong-type → fail naming the
+            specific missing field.
+          * Any other action (``reasoning``, ``submit``,
+            ``script_execute``) → no check on ``command`` (those
+            actions don't use it).
+        """
+        import json as _json  # noqa: PLC0415
+
+        if self.action != "tool_run":
+            return self
+
+        raw = self.command
+        if raw is None or not raw.strip():
+            raise ValueError(
+                "action='tool_run' requires a non-empty `command` "
+                "containing JSON with 'tool' (str) and 'args' (dict). "
+                f"Got: {raw!r}. Common cause: max_tokens truncation "
+                "cut the emission before the command JSON was written."
+            )
+
+        try:
+            parsed = _json.loads(raw)
+        except _json.JSONDecodeError as exc:
+            raise ValueError(
+                f"action='tool_run' command must be valid JSON. Parse "
+                f"failed at line {exc.lineno} col {exc.colno}: "
+                f"{exc.msg}. Common cause: max_tokens truncation cut "
+                f"the emission mid-string. Command starts with: "
+                f"{raw[:60]!r} ends with: {raw[-60:]!r} (length="
+                f"{len(raw)})."
+            ) from exc
+
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"action='tool_run' command JSON must decode to an "
+                f"object/dict. Got: {type(parsed).__name__}."
+            )
+
+        tool = parsed.get("tool")
+        if not isinstance(tool, str) or not tool:
+            raise ValueError(
+                "action='tool_run' command must include 'tool' as a "
+                "non-empty string of shape '<server>.<tool_name>' "
+                "(e.g. 'audit_mcp.semantic_search'). Got: "
+                f"tool={tool!r}."
+            )
+
+        args = parsed.get("args")
+        if not isinstance(args, dict):
+            raise ValueError(
+                "action='tool_run' command must include 'args' as a "
+                f"JSON object/dict. Got: args type={type(args).__name__}."
+            )
+
+        return self
