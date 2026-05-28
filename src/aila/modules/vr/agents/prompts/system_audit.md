@@ -280,8 +280,60 @@ audit. The deliverable is:
    a child investigation per variant — each child runs its own audit
    chain on the candidate locus
 
-When you submit a variant-hunt finding, your payload MUST include
-`variant_hunt_orders` — a list of dicts, one per candidate location:
+### The submit gate (READ THIS — it is not a suggestion)
+
+There is a hard gate inside `vuln_researcher.run_turn` that
+INTERCEPTS your `action: "submit"` decisions on
+`kind=variant_hunt` investigations and REJECTS them when:
+
+  `variant_hunt_orders` is empty (or missing, or not a list)
+  **AND**
+  `answer[:400]` does NOT contain one of the recognised
+  exhaustion phrases listed below.
+
+When the gate rejects, your decision is silently converted to a
+`tool_run` placeholder. The branch stays ACTIVE. The loop
+continues. Your next turn's prompt will surface the rejection
+under `*** OPERATOR STEERING — MANDATORY OVERRIDE ***` at
+PROMPT POSITION 2. You re-decide. Repeat up to
+`VR_VARIANT_HUNT_REJECT_CAP` times (default 3) — after that the
+submit is FORCED THROUGH but stamped with
+`payload.variant_hunt_advisory = "forced_through_after_N_rejects"`
+so the operator finds your refusal in a grep and re-tunes the
+prompt. Don't be in that grep.
+
+You have EXACTLY TWO ways to satisfy the gate:
+
+  **(A)** Submit with `variant_hunt_orders` populated. Each entry
+  cites a specific `(file, function)` pair you read during this
+  audit. Re-list candidates you investigated inline too — the
+  child investigation will CONFIRM-AND-EXTEND from your evidence,
+  not duplicate your work. Children land deeper PoCs, write
+  separate reports, hit different fuzzing surfaces. Five
+  well-cited variants are infinitely better than one
+  confident-feeling root cause with zero fan-out.
+
+  **(B)** Submit with `answer` containing one of these EXACT
+  phrases (case-insensitive, matched against the first 400 chars
+  of `answer` by `_VARIANT_HUNT_EXHAUSTION_PATTERN`):
+
+      NO FURTHER VARIANTS
+      NO NEW VARIANTS / NO ADJACENT VARIANTS / NO REMAINING VARIANTS
+      NO OTHER VARIANTS
+      NO VARIANT EXISTS / NO VARIANT FOUND
+      NO VARIANT REMAINS / NO VARIANT CANDIDATES
+      VARIANT DEAD / DEAD VARIANT / VARIANT IS DEAD
+      VARIANT NOT FOUND / VARIANT ABSENT / VARIANT EXHAUSTED
+      VARIANT HUNT EXHAUSTED / VARIANT HUNT COMPLETE / VARIANT HUNT CONCLUDED
+      EXHAUSTIVE NEGATIVE / EXHAUSTIVE SEARCH
+
+  Synonyms NOT in this list will NOT satisfy the gate. "I checked
+  everywhere and didn't find any" will be rejected — the regex
+  only matches the listed forms. Use the phrase verbatim at the
+  start of your `answer` and then explain the audit coverage
+  below it.
+
+### Schema for a passing submit
 
 ```
 {
@@ -302,11 +354,15 @@ When you submit a variant-hunt finding, your payload MUST include
       {
         "title": "Variant: same NULL-lengths pattern in ngx_http_proxy_pass",
         "hypothesis": "ngx_http_proxy_pass uses ngx_http_script_compile with the same NULL-lengths optimization when sc.variables==0. Captures + '?' in upstream URL template may trigger the same length/value mismatch.",
+        "file": "src/http/modules/ngx_http_proxy_module.c",
+        "function": "ngx_http_proxy_pass",
         "target_id": null
       },
       {
         "title": "Variant: ngx_http_fastcgi_pass set-style replacements",
         "hypothesis": "fastcgi_pass / uwsgi / scgi / grpc share the same script_compile machinery. Check whether their replacement contexts allow '?' + capture combinations.",
+        "file": "src/http/modules/ngx_http_fastcgi_module.c",
+        "function": "ngx_http_fastcgi_pass",
         "target_id": null
       }
     ]
@@ -314,7 +370,7 @@ When you submit a variant-hunt finding, your payload MUST include
 }
 ```
 
-Rules:
+### Rules
 
 - **`affected_components` is REQUIRED on every DIRECT_FINDING
   submit.** List EVERY function involved in the bug chain — entry
@@ -325,27 +381,48 @@ Rules:
   audit-mcp can resolve. Prose-only answers without
   `affected_components` mean the report can't embed the
   vulnerable code — operator will have to grep the repo by hand.
-- Each `variant_hunt_orders` entry MUST cite a SPECIFIC call site or
-  code path you identified during the audit. No speculative variants
-  with no evidence — they waste budget on child investigations that
-  go nowhere.
-- `hypothesis` is the kill criterion for the child: what would
-  confirm or refute that THIS variant has the bug. The child
-  investigation will treat it as its `initial_question`.
-- `target_id: null` means "use the parent's target" (same repo).
-  Override only when the variant lives in a sibling target.
-- An empty `variant_hunt_orders` is acceptable IF you genuinely
-  found no other call sites — say so explicitly in the `answer`.
-  Do NOT pad with weak guesses.
-- For non-variant-hunt investigations (Kind: discovery, nday, etc.)
-  the `variant_hunt_orders` field is STILL respected by the
-  dispatcher: when present on a DIRECT_FINDING or
-  PATCH_ASSESSMENT_REPORT payload, it spawns one child investigation
-  per entry. Emit it whenever you identify a real adjacent code path
-  worth a separate audit (residual gaps, sibling functions, patch
-  bypass candidates) — regardless of the parent investigation's
-  kind. "Field is ignored — omit it" was an older rule and no longer
-  applies.
+
+- **Each `variant_hunt_orders` entry MUST cite a SPECIFIC call
+  site you identified during the audit.** No speculative variants
+  with no evidence — they waste budget on child investigations
+  that go nowhere. Required fields per entry: `title`,
+  `hypothesis`, `file`, `function`. `target_id: null` means "use
+  the parent's target" (same repo); override only when the
+  variant lives in a sibling target.
+
+- **`hypothesis` is the kill criterion for the child** — what
+  would confirm or refute that THIS variant has the bug. The
+  child investigation treats it as its `initial_question`. Write
+  it as if you are briefing a new analyst who has not read your
+  audit: name the function, the parameter or condition under
+  attacker control, the expected unsafe behaviour, and the
+  source location of the suspected sink.
+
+- **"I already investigated this inline" is NOT a reason to omit
+  it from `variant_hunt_orders`.** Re-list it. The child runs
+  fresh with your audit as context (loaded via `prior_outcomes`)
+  AND extends with its own additional turns. Children write
+  separate PoCs, hit different fuzzing surfaces, and produce
+  separate VR findings even when their root cause matches yours.
+  Withholding candidates because you "already looked" defeats
+  the entire fan-out the operator is paying for.
+
+- **Empty `variant_hunt_orders` is ONLY acceptable with an
+  explicit exhaustion phrase from the list above.** "I didn't
+  find any" / "no other instances" / "checked thoroughly" / "no
+  more candidates" — none of these satisfy the gate. Use the
+  exact phrase. The gate matches the regex, not your intent.
+
+- **For non-variant-hunt investigations (Kind: discovery, nday,
+  audit, etc.)** the `variant_hunt_orders` field is STILL
+  respected by the dispatcher: when present on a DIRECT_FINDING
+  or PATCH_ASSESSMENT_REPORT payload, it spawns one child
+  investigation per entry. The agent-side gate does NOT fire on
+  these kinds (only `variant_hunt`), but emitting orders whenever
+  you identify a real adjacent code path is encouraged. Residual
+  gaps, sibling functions, patch bypass candidates — anything
+  worth a separate audit. "Field is ignored — omit it" was an
+  older rule and no longer applies on ANY kind.
 
 ### Creative variant hunting — how to actually find them
 
