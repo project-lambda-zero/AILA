@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlmodel import select as _select
 
-from aila.modules.vr.contracts.branch import PersonaVoice
+from aila.modules.vr.contracts.branch import BranchStatus, PersonaVoice
 from aila.modules.vr.contracts.investigation import InvestigationStatus
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
@@ -42,9 +42,48 @@ __all__ = ["state_investigation_setup"]
 
 _log = logging.getLogger(__name__)
 
+# Branches in any of these statuses are "dead" — investigation_loop
+# cannot make meaningful progress against them. ACTIVE + PAUSED are
+# the only resumable states; everything else has already reached a
+# terminal disposition. Used by state_investigation_setup to self-heal
+# stale cursors that resumed against a now-closed branch.
+_DEAD_BRANCH_STATUSES: frozenset[str] = frozenset({
+    BranchStatus.COMPLETED.value,
+    BranchStatus.MERGED.value,
+    BranchStatus.PROMOTED.value,
+    BranchStatus.ABANDONED.value,
+})
+
 
 async def state_investigation_setup(input: dict[str, Any], services: Any) -> StateResult:
-    """Validate + mark RUNNING. Returns input + resolved branch_id."""
+    """Validate + mark RUNNING. Returns input + resolved branch_id.
+
+    Stale-branch self-healing (added after observing investigation
+    e864f065 polling a closed halvar branch 736ceb58 after re-enqueue):
+
+      * **Primary task path** (no explicit branch_id): when picking the
+        primary branch via ``parent_branch_id IS NULL``, filter to
+        ``status IN (ACTIVE, PAUSED)`` AND order by ``created_at ASC``
+        for determinism. If ALL prior primary branches are terminal
+        (COMPLETED / MERGED / PROMOTED / ABANDONED) — which is the
+        post-completion / post-failure re-enqueue case — fork a fresh
+        primary branch instead of resuming a closed one. Without this,
+        ``re-enqueue`` after a successful or failed run silently
+        operates on the prior terminal branch, drives investigation_loop
+        against a dead branch, and the workflow never makes progress.
+
+      * **Sibling task path** (explicit_branch_id set): when the named
+        branch is already terminal, return a clean terminal exit
+        (``next_state="investigation_emit"`` with
+        ``exit_reason="branch_already_terminal"``) instead of entering
+        investigation_loop. This catches the case where a sibling task
+        was queued, the branch terminal-submitted via another path
+        before the task ran, and the cursor would otherwise enter the
+        loop on a closed branch.
+
+    Both paths leave a structured log line so the operator can audit
+    when the self-heal fired.
+    """
     del services
 
     investigation_id = str(input.get("investigation_id") or "")
@@ -76,17 +115,73 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 raise ValueError(
                     f"investigation_setup: branch {explicit_branch_id} not found",
                 )
+            # Self-heal: refuse to drive investigation_loop on a branch
+            # that's already reached a terminal disposition. Transition
+            # straight to investigation_emit with a recognisable exit
+            # reason so the finalizer skips re-enqueue and the run ends
+            # cleanly.
+            if branch.status in _DEAD_BRANCH_STATUSES:
+                _log.warning(
+                    "investigation_setup: sibling task targeted terminal "
+                    "branch inv=%s branch=%s status=%s closed_reason=%r "
+                    "— skipping investigation_loop and emitting clean exit",
+                    investigation_id, branch.id, branch.status,
+                    branch.closed_reason,
+                )
+                return StateResult(
+                    next_state="investigation_emit",
+                    output={
+                        "investigation_id": investigation_id,
+                        "branch_id": branch.id,
+                        "strategy_family": inv.strategy_family,
+                        "auto_pilot": inv.auto_pilot,
+                        "cost_budget_usd": inv.cost_budget_usd,
+                        "team_id": inv.team_id,
+                        "cve_intel": [],
+                        "exit_reason": "branch_already_terminal",
+                        "last_turn_idx": branch.turn_count or 0,
+                        "last_action": "",
+                        "outcome_id": None,
+                    },
+                )
         else:
+            # Pick the OLDEST resumable primary branch — deterministic
+            # across re-enqueues. The prior LIMIT 1 with no filter and
+            # no ORDER BY would silently pick a terminal branch when
+            # one happened to sort first under PG's storage order, then
+            # investigation_loop would spin forever on a closed branch.
             branch = (await uow.session.exec(
                 _select(VRInvestigationBranchRecord).where(
                     VRInvestigationBranchRecord.investigation_id == investigation_id,
                     VRInvestigationBranchRecord.parent_branch_id.is_(None),
-                ).limit(1)
+                    VRInvestigationBranchRecord.status.not_in(_DEAD_BRANCH_STATUSES),
+                ).order_by(VRInvestigationBranchRecord.created_at.asc()).limit(1)
             )).first()
             if branch is None:
-                raise ValueError(
-                    f"investigation_setup: no primary branch for {investigation_id}",
+                # Either the investigation row was created without its
+                # initial primary branch (defensive — API contract says
+                # this can't happen) OR all prior primaries reached
+                # terminal disposition and re-enqueue wants a fresh
+                # round. Fork a new ACTIVE primary so the run has
+                # somewhere live to land. Prior outcomes context loads
+                # via the existing re-enqueue blindness fix
+                # (vuln_researcher.run_turn loads prior_outcomes from
+                # the investigation, not from a single branch).
+                _log.warning(
+                    "investigation_setup: no live primary branch for "
+                    "inv=%s — forking fresh primary (persona=%s); prior "
+                    "primaries were terminal or absent",
+                    investigation_id, _PRIMARY_PERSONA.value,
                 )
+                branch = VRInvestigationBranchRecord(
+                    investigation_id=investigation_id,
+                    parent_branch_id=None,
+                    status=BranchStatus.ACTIVE.value,
+                    fork_reason="primary_reenqueue_after_terminal",
+                    persona_voice=_PRIMARY_PERSONA.value,
+                )
+                uow.session.add(branch)
+                await uow.session.flush()
             # Primary persona: researcher. Idempotent — only set when
             # the operator didn't pick a persona explicitly.
             if not branch.persona_voice:
