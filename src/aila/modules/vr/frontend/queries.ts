@@ -235,7 +235,12 @@ export function useInvestigationMessages(
   investigationId: string,
   branchId?: string,
   offset = 0,
-  limit = 5000,
+  // Match the API's `le=50000` ceiling so the full conversation arrives
+  // in one round trip even for marathon multi-branch hunts. The longest
+  // investigation observed in production was ~870 messages; 50000 is 50x
+  // headroom and still bounded enough to refuse a malicious/runaway
+  // queryString.
+  limit = 50000,
 ) {
   return useQuery({
     queryKey: ["vr", "investigation-messages", investigationId, branchId, offset, limit],
