@@ -182,6 +182,50 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 )
                 uow.session.add(branch)
                 await uow.session.flush()
+
+                # When the self-heal forks a fresh primary, ANY other
+                # branches in this investigation that are still ACTIVE
+                # (or PAUSED) are orphans from the prior round — their
+                # parent primary is COMPLETED / MERGED / etc., they
+                # were never explicitly closed when the primary
+                # terminal-submitted, and now they will race the fresh
+                # branches we just spawned, write duplicate findings,
+                # and waste budget. ABANDON them with a closed_reason
+                # that points back at this fresh primary so the audit
+                # trail is debuggable.
+                #
+                # Observed live on investigation e864f065 after the
+                # 2026-05-28 self-heal: 3 fresh branches got spawned
+                # on top of 2 still-running siblings from days
+                # earlier, leaving 5 active branches plus 1 completed
+                # = 6 total instead of the expected 3. Operator
+                # noticed in the UI before this cleanup landed.
+                orphans = (await uow.session.exec(
+                    _select(VRInvestigationBranchRecord).where(
+                        VRInvestigationBranchRecord.investigation_id == investigation_id,
+                        VRInvestigationBranchRecord.id != branch.id,
+                        VRInvestigationBranchRecord.status.in_(
+                            (BranchStatus.ACTIVE.value, BranchStatus.PAUSED.value),
+                        ),
+                    )
+                )).all()
+                if orphans:
+                    superseded_by = branch.id
+                    closed_at = utc_now()
+                    for o in orphans:
+                        o.status = BranchStatus.ABANDONED.value
+                        o.closed_reason = (
+                            f"superseded_by_reenqueue_self_heal:{superseded_by}"
+                        )
+                        o.closed_at = closed_at
+                        uow.session.add(o)
+                    _log.warning(
+                        "investigation_setup: abandoned %d orphan active/paused "
+                        "branches on inv=%s after fresh-primary self-heal (new "
+                        "primary=%s); orphans=%s",
+                        len(orphans), investigation_id, branch.id,
+                        [o.id for o in orphans],
+                    )
             # Primary persona: researcher. Idempotent — only set when
             # the operator didn't pick a persona explicitly.
             if not branch.persona_voice:
