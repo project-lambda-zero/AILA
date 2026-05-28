@@ -3280,7 +3280,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
         branch_id: str | None = Query(default=None),
         offset: int = Query(default=0, ge=0),
-        limit: int = Query(default=500, ge=1, le=5000),
+        limit: int = Query(default=10000, ge=1, le=50000),
     ) -> DataEnvelope[list[VRMessageSummary]]:
         del request
         inv = await _load_investigation(investigation_id, auth)
@@ -5226,7 +5226,7 @@ def create_vr_router() -> APIRouter:
         request: Request,
         campaign_id: str,
         offset: int = Query(default=0, ge=0),
-        limit: int = Query(default=500, ge=1, le=5000),
+        limit: int = Query(default=10000, ge=1, le=50000),
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[FuzzTelemetryPoint]]:
         del request, auth
