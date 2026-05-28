@@ -43,7 +43,7 @@ _log = logging.getLogger(__name__)
 # a code change.
 import os as _os
 
-_DEFAULT_MAX_TURNS = int(_os.environ.get("VR_MAX_TURNS_PER_TASK", "60"))
+_DEFAULT_MAX_TURNS = int(_os.environ.get("VR_MAX_TURNS_PER_TASK", "70"))
 
 
 async def _investigation_status(investigation_id: str) -> str | None:

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,7 @@ from aila.modules.vr.contracts import (
     SenderKind,
 )
 from aila.modules.vr.contracts.branch import BranchStatus
+from aila.modules.vr.contracts.investigation import InvestigationKind
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
@@ -72,6 +74,36 @@ __all__ = [
 ]
 
 _log = logging.getLogger(__name__)
+
+
+# Variant-hunt submit gate (Option B): when the agent terminal-submits
+# on a kind=variant_hunt investigation with zero variant_hunt_orders
+# AND no exhaustion declaration, the gate rejects the submit and forces
+# the agent to either populate orders or explicitly declare exhaustion.
+# Mirrors outcome_dispatcher._VARIANT_EXHAUSTION_PATTERN so what the
+# gate accepts and what the dispatcher accepts as exhaustion stay in
+# lockstep. Keep the two regexes synchronised if you change either.
+_VARIANT_HUNT_EXHAUSTION_PATTERN = re.compile(
+    r"\b("
+    r"NO\s+(?:FURTHER|NEW|ADJACENT|REMAINING|OTHER)\s+VARIANTS?"
+    r"|NO\s+VARIANT\s+(?:EXISTS?|FOUND|REMAINS?|CANDIDATES?)"
+    r"|VARIANT\s+(?:IS\s+)?DEAD"
+    r"|DEAD\s+VARIANT"
+    r"|VARIANT\s+(?:NOT\s+FOUND|ABSENT|EXHAUSTED)"
+    r"|VARIANT\s+HUNT\s+(?:EXHAUSTED|COMPLETE|CONCLUDED)"
+    r"|EXHAUSTIVE\s+(?:NEGATIVE|SEARCH)"
+    r")\b"
+)
+
+# After this many consecutive rejected submits on the same branch, the
+# gate FORCES the submit through with a `variant_hunt_advisory:
+# forced_through_after_N_rejects` flag on the payload. The agent never
+# loops forever; the operator gets an audit trail of the over-forced
+# submissions. Configurable via env for operators tuning the trade-off
+# between "more variant fan-out" and "fewer no-op forced submits".
+_VARIANT_HUNT_REJECT_CAP = int(__import__("os").environ.get(
+    "VR_VARIANT_HUNT_REJECT_CAP", "3",
+))
 
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
@@ -265,13 +297,16 @@ class HonestVulnResearcher:
         # prior attempt completed the LLM call but crashed before the
         # tool result was durably saved, the retry replays the cached
         # decision instead of paying for a duplicate Claude call.
-        from aila.platform.llm.idempotency_cache import (  # noqa: PLC0415
-            make_request_key, lookup_cached_response, store_response,
-        )
+        import hashlib as _hashlib  # noqa: PLC0415
+
         from aila.platform.contracts.reasoning import (  # noqa: PLC0415
             ReasoningTurnDecision,
         )
-        import hashlib as _hashlib  # noqa: PLC0415
+        from aila.platform.llm.idempotency_cache import (  # noqa: PLC0415
+            lookup_cached_response,
+            make_request_key,
+            store_response,
+        )
 
         prompt_hash = _hashlib.sha256(
             (system_prompt + "\x00" + user_prompt).encode()
@@ -344,6 +379,49 @@ class HonestVulnResearcher:
         # path is the raise VulnResearcherError above which exits
         # the function entirely.
         assert decision is not None, "decision unbound after both paths — logic bug"
+
+        # ── variant_hunt submit gate ────────────────────────────────────
+        # When the agent terminal-submits on a kind=variant_hunt
+        # investigation, the dispatcher spawns ONE CHILD investigation
+        # per `variant_hunt_orders` entry on the payload. After the
+        # turn-budget bump (c912d5b: 25→60→70) + branch-aware auto-
+        # continue (fba2a08) landed, agents started investigating
+        # candidates inline for the whole 60+ turn budget and submitting
+        # with `variant_hunt_orders=[]` AND no exhaustion declaration —
+        # collapsing the variant-hunt fan-out from ~120 children/day to
+        # ~2/day overnight (5-21 → 5-22). The submit was technically
+        # valid but it produced ZERO downstream investigations on
+        # exactly the investigation kind whose entire purpose is to
+        # fan out variant probes.
+        #
+        # The gate intercepts that submit and forces the agent to either:
+        #   (a) populate variant_hunt_orders with the candidates it
+        #       investigated inline (child investigations confirm-and-
+        #       extend, not duplicate work), or
+        #   (b) explicitly declare exhaustion via a recognised phrase
+        #       (matches outcome_dispatcher._VARIANT_EXHAUSTION_PATTERN
+        #       — NO FURTHER VARIANTS, VARIANT DEAD, etc.)
+        #
+        # On rejection we DON'T persist the outcome and DON'T mark the
+        # branch terminal. Instead we inject a loud
+        # `_directive.variant_hunt_submit_rejected` observable into
+        # case_state so next turn's prompt surfaces the rejection at
+        # PROMPT POSITION 2 (render_active_directives_section).
+        #
+        # Safety: after _VARIANT_HUNT_REJECT_CAP consecutive rejections
+        # on the same branch we force the submit through with a
+        # `variant_hunt_advisory: forced_through_after_N_rejects` flag
+        # on the payload so the operator can audit and the agent
+        # doesn't loop forever.
+        if (
+            decision.action == "submit"
+            and inv.kind == InvestigationKind.VARIANT_HUNT.value
+        ):
+            decision = self._maybe_reject_variant_hunt_submit(
+                decision=decision,
+                case_state=case_state,
+                turn_number=turn_number,
+            )
 
         new_case_state = self._engine.absorb(case_state, decision)
 
@@ -839,6 +917,153 @@ class HonestVulnResearcher:
             if stamped:
                 await uow.commit()
             return messages[:10]
+
+    # --- variant_hunt submit gate helpers ----------------------------
+
+    def _maybe_reject_variant_hunt_submit(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """Intercept a kind=variant_hunt terminal_submit that emits zero
+        ``variant_hunt_orders`` AND fails to declare exhaustion.
+
+        Returns either:
+          - the ORIGINAL decision (passed the gate, or forced-through
+            after _VARIANT_HUNT_REJECT_CAP rejections)
+          - a REPLACEMENT decision with ``action='tool_run'``,
+            ``command=''``, and a synthetic answer body explaining the
+            rejection. The replacement is non-terminal so the loop
+            continues; the agent sees the
+            ``_directive.variant_hunt_submit_rejected`` observable on
+            the next turn's prompt and re-decides.
+
+        Side effect: writes the rejection directive + counter into
+        ``case_state.observables`` IN PLACE. The caller passes the
+        pre-absorb case_state; absorb() runs afterwards in
+        ``run_turn`` so the observable persists onto the branch's
+        case_state_json.
+        """
+        payload = decision.payload or {}
+        raw_orders = payload.get("variant_hunt_orders")
+        orders_count = len(raw_orders) if isinstance(raw_orders, list) else 0
+        answer_text = (payload.get("answer") or "")[:400].upper()
+        declares_exhaustion = bool(
+            _VARIANT_HUNT_EXHAUSTION_PATTERN.search(answer_text),
+        )
+
+        if orders_count > 0 or declares_exhaustion:
+            # Passes the gate. Clear any prior rejection counter so a
+            # later regression on the same branch starts fresh.
+            if "_variant_hunt_submit_rejected_count" in case_state.observables:
+                case_state.observables.pop(
+                    "_variant_hunt_submit_rejected_count", None,
+                )
+            case_state.observables.pop(
+                "_directive.variant_hunt_submit_rejected", None,
+            )
+            return decision
+
+        prior_rejects = int(
+            case_state.observables.get("_variant_hunt_submit_rejected_count", 0) or 0,
+        )
+        new_reject_count = prior_rejects + 1
+
+        if new_reject_count > _VARIANT_HUNT_REJECT_CAP:
+            # Force through after N rejections so the agent doesn't loop
+            # forever. Stamp the payload with an audit flag so the
+            # operator can find these in the outcomes table.
+            _log.warning(
+                "variant_hunt submit FORCED THROUGH after %d rejections "
+                "inv=%s branch=%s turn=%d — payload had zero "
+                "variant_hunt_orders AND no exhaustion declaration",
+                prior_rejects, self.investigation_id, self.branch_id,
+                turn_number,
+            )
+            new_payload = dict(payload)
+            new_payload["variant_hunt_advisory"] = (
+                f"forced_through_after_{prior_rejects}_rejects"
+            )
+            case_state.observables.pop(
+                "_directive.variant_hunt_submit_rejected", None,
+            )
+            case_state.observables.pop(
+                "_variant_hunt_submit_rejected_count", None,
+            )
+            return decision.model_copy(update={"payload": new_payload})
+
+        _log.info(
+            "variant_hunt submit REJECTED inv=%s branch=%s turn=%d "
+            "rejects=%d/%d — orders=0, no exhaustion phrase",
+            self.investigation_id, self.branch_id, turn_number,
+            new_reject_count, _VARIANT_HUNT_REJECT_CAP,
+        )
+
+        case_state.observables["_variant_hunt_submit_rejected_count"] = new_reject_count
+        case_state.observables["_directive.variant_hunt_submit_rejected"] = (
+            "*** VARIANT_HUNT SUBMIT REJECTED ***\n"
+            f"Rejection {new_reject_count}/{_VARIANT_HUNT_REJECT_CAP} on this branch.\n"
+            "\n"
+            "You attempted to terminal_submit a kind=variant_hunt investigation\n"
+            "with EMPTY variant_hunt_orders AND no exhaustion declaration. The\n"
+            "dispatcher spawns ONE CHILD INVESTIGATION per variant_hunt_orders\n"
+            "entry; with zero entries, this investigation produces no fan-out.\n"
+            "That defeats the entire purpose of a variant_hunt run.\n"
+            "\n"
+            "REQUIRED for your next decision: choose EXACTLY ONE of:\n"
+            "\n"
+            "  (a) Re-submit with variant_hunt_orders populated. Each entry MUST\n"
+            "      cite a SPECIFIC (file, function) you read during this audit.\n"
+            "      Re-list candidates you investigated inline too — child\n"
+            "      investigations confirm-and-extend, they do not duplicate\n"
+            "      already-done work. The schema is:\n"
+            "          {\"title\": \"...\", \"hypothesis\": \"...\",\n"
+            "           \"target_descriptor\": {...}, \"file\": \"...\",\n"
+            "           \"function\": \"...\"}\n"
+            "      Five well-cited variants are infinitely better than a\n"
+            "      single confident-feeling root cause with zero downstream\n"
+            "      probes.\n"
+            "\n"
+            "  (b) Re-submit with answer starting with one of:\n"
+            "          NO FURTHER VARIANTS\n"
+            "          VARIANT DEAD\n"
+            "          NO VARIANT EXISTS / NO VARIANT FOUND\n"
+            "          VARIANT EXHAUSTED\n"
+            "          EXHAUSTIVE NEGATIVE\n"
+            "      Use this ONLY after you have audited every plausible call\n"
+            "      site of the shared machinery and found no new candidates.\n"
+            "      Cite which call sites you reviewed in the answer body.\n"
+            "\n"
+            f"After {_VARIANT_HUNT_REJECT_CAP} rejections on this branch the\n"
+            "submit is FORCED THROUGH with variant_hunt_advisory:\n"
+            f"forced_through_after_{_VARIANT_HUNT_REJECT_CAP}_rejects stamped on\n"
+            "the payload. Don't burn through your safety budget — pick (a)\n"
+            "or (b) cleanly."
+        )
+
+        # Convert the submit into a non-terminal placeholder. The
+        # message persisted to vr_investigation_messages still records
+        # the agent's submit attempt (audit trail), but the workflow
+        # treats this turn as non-terminal: branch stays ACTIVE,
+        # turn_count still increments, loop continues to next turn.
+        rejected_command_text = (
+            "[VARIANT_HUNT GATE: submit rejected — see "
+            "_directive.variant_hunt_submit_rejected]\n"
+            "Original submit attempt:\n"
+            + (payload.get("answer") or "(no answer)")[:1000]
+        )
+        return decision.model_copy(update={
+            "action": "tool_run",
+            "command": "",
+            "answer": rejected_command_text,
+            "payload": {
+                **payload,
+                "_variant_hunt_gate_rejected": True,
+                "_variant_hunt_gate_reject_count": new_reject_count,
+            },
+        })
 
 
 def _render_target_snapshot_section(snapshot: dict[str, Any]) -> str:
