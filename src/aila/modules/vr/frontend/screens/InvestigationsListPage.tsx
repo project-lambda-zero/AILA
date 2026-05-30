@@ -222,6 +222,12 @@ function InvestigationCard({
             style={{ color: dotColor }}
           >
             {inv.pause_reason ? `${inv.status}:${inv.pause_reason}` : inv.status}
+            {isRunning && inv.message_count > 0 && (
+              <span className="text-text-muted ml-1">
+                · {inv.message_count} turns
+                {inv.primary_outcome_kind ? " · has finding" : ""}
+              </span>
+            )}
           </span>
         </div>
         <div
