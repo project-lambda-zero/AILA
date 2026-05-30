@@ -199,11 +199,35 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
             )).first()
             if inv is not None:
                 now = utc_now()
-                if final_status is not None:
+                if final_status == InvestigationStatus.COMPLETED.value:
+                    # Only set COMPLETED if ALL non-abandoned branches with
+                    # turns have submitted. Otherwise this is just one branch
+                    # finishing — the investigation stays RUNNING until all
+                    # persona branches converge.
+                    from .investigation_setup import VRInvestigationBranchRecord as _BranchRec  # noqa: PLC0415
+                    active_siblings = (await uow.session.exec(
+                        _select(_BranchRec).where(
+                            _BranchRec.investigation_id == investigation_id,
+                            _BranchRec.status == "active",
+                            _BranchRec.turn_count > 0,
+                            _BranchRec.id != (branch_id or ""),
+                        )
+                    )).all()
+                    if active_siblings:
+                        # Other branches still working — stay running
+                        _log.info(
+                            "investigation_emit: branch %s done but %d sibling(s) "
+                            "still active — keeping investigation RUNNING",
+                            branch_id, len(active_siblings),
+                        )
+                    else:
+                        inv.status = final_status
+                        inv.stopped_at = now
+                elif final_status is not None:
                     inv.status = final_status
+                    inv.stopped_at = now
                 if outcome_id and not inv.primary_outcome_id:
                     inv.primary_outcome_id = str(outcome_id)
-                inv.stopped_at = now
                 inv.updated_at = now
                 uow.session.add(inv)
                 await uow.commit()
