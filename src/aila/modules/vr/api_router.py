@@ -3187,28 +3187,10 @@ def create_vr_router() -> APIRouter:
                 row.status = TaskStatus.CANCELLED.value
                 uow.session.add(row)
 
-            # Reset branches that the reaper abandoned (0-turn, stale) so
-            # investigation_setup re-spawns their sibling tasks. Without this,
-            # re-enqueue creates a fresh primary task but the abandoned sibling
-            # branches stay abandoned → emit sees "all terminal" too early →
-            # investigation falsely completes while active branches still work.
-            from .db_models import VRInvestigationBranchRecord  # noqa: PLC0415
-            abandoned_q = select(VRInvestigationBranchRecord).where(
-                VRInvestigationBranchRecord.investigation_id == investigation_id,
-                VRInvestigationBranchRecord.status == "abandoned",
-                VRInvestigationBranchRecord.closed_reason.like("reaper:%"),  # type: ignore[union-attr]
-            )
-            abandoned_rows = (await uow.session.exec(abandoned_q)).all()
-            for br in abandoned_rows:
-                br.status = "active"
-                br.closed_reason = ""
-                br.closed_at = None
-                uow.session.add(br)
-            if abandoned_rows:
-                logging.getLogger(__name__).info(
-                    "re-enqueue: reset %d reaper-abandoned branches to active",
-                    len(abandoned_rows),
-                )
+            # Branch cleanup is handled by investigation_setup's
+            # _spawn_persona_siblings_and_enqueue which now searches ALL
+            # branches by persona (not just current primary's children),
+            # reuses the best branch per persona, and abandons duplicates.
             # Also wipe __crashed__ cursors for this investigation so the
             # workflow engine starts fresh on next dispatch. Without this,
             # crashed cursors persist forever and re-enqueue fires a new
