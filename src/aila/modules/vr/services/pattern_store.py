@@ -189,11 +189,17 @@ class PatternStore:
                 await uow.session.refresh(row)
             return _record_to_summary(row)
 
-    async def get(self, pattern_id: str) -> VRPatternSummary | None:
+    async def get(
+        self,
+        pattern_id: str,
+        *,
+        team_id: str | None = None,
+    ) -> VRPatternSummary | None:
         async with UnitOfWork() as uow:
-            row = (await uow.session.exec(
-                _select(VRPatternRecord).where(VRPatternRecord.id == pattern_id),
-            )).first()
+            stmt = _select(VRPatternRecord).where(VRPatternRecord.id == pattern_id)
+            if team_id is not None:
+                stmt = stmt.where(VRPatternRecord.team_id == team_id)
+            row = (await uow.session.exec(stmt)).first()
             if row is None:
                 return None
             return _record_to_summary(row)
@@ -205,12 +211,16 @@ class PatternStore:
         kind: PatternKind | None = None,
         status: PatternStatus | None = None,
         scope: PatternScope | None = None,
+        team_id: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[list[VRPatternSummary], int]:
         async with UnitOfWork() as uow:
             stmt = _select(VRPatternRecord)
             count_stmt = _select(sa_func.count()).select_from(VRPatternRecord)
+            if team_id is not None:
+                stmt = stmt.where(VRPatternRecord.team_id == team_id)
+                count_stmt = count_stmt.where(VRPatternRecord.team_id == team_id)
             if workspace_id:
                 stmt = stmt.where(VRPatternRecord.workspace_id == workspace_id)
                 count_stmt = count_stmt.where(VRPatternRecord.workspace_id == workspace_id)

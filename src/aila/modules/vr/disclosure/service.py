@@ -215,6 +215,7 @@ class DisclosureService:
         workspace_id: str | None = None,
         track_id: str | None = None,
         status: DisclosureSubmissionStatus | None = None,
+        team_id: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[list[VRDisclosureSubmissionSummary], int]:
@@ -223,6 +224,11 @@ class DisclosureService:
             count_stmt = _select(sa_func.count()).select_from(
                 VRDisclosureSubmissionRecord,
             )
+            if team_id is not None:
+                stmt = stmt.where(VRDisclosureSubmissionRecord.team_id == team_id)
+                count_stmt = count_stmt.where(
+                    VRDisclosureSubmissionRecord.team_id == team_id,
+                )
             for col, val in (
                 (VRDisclosureSubmissionRecord.finding_id, finding_id),
                 (VRDisclosureSubmissionRecord.workspace_id, workspace_id),

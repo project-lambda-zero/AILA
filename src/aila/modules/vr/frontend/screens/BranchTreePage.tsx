@@ -29,6 +29,7 @@ const STATUS_COLORS: Record<BranchStatus, string> = {
   paused: "#f59e0b",        // amber — paused
   merged: "#6366f1",        // indigo — merged in
   promoted: "#22c55e",      // green — promoted to outcome
+  completed: "#3b82f6",     // blue — completed
   abandoned: "#ef4444",     // red — abandoned
 };
 
@@ -37,6 +38,7 @@ const STATUS_BORDER: Record<BranchStatus, string> = {
   paused: "#d97706",
   merged: "#4338ca",
   promoted: "#15803d",
+  completed: "#1d4ed8",
   abandoned: "#b91c1c",
 };
 

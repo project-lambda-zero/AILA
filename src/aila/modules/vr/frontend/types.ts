@@ -306,6 +306,7 @@ export type BranchStatus =
   | "paused"
   | "merged"
   | "promoted"
+  | "completed"
   | "abandoned";
 
 export type PersonaVoice =

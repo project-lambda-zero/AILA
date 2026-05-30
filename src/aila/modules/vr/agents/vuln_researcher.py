@@ -27,6 +27,7 @@ What this commit does NOT do:
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
@@ -154,11 +155,13 @@ class HonestVulnResearcher:
         investigation_id: str,
         branch_id: str,
         cve_intel: list[dict[str, Any]] | None = None,
+        applicable_patterns: list[dict[str, Any]] | None = None,
     ) -> None:
         self._engine = reasoning_engine
         self.investigation_id = investigation_id
         self.branch_id = branch_id
         self._cve_intel = list(cve_intel or [])
+        self._applicable_patterns = list(applicable_patterns or [])
 
     async def run_turn(self) -> VulnResearcherTurnResult:
         """Run one turn for this branch and write the result to the DB.
@@ -285,6 +288,7 @@ class HonestVulnResearcher:
             tool_specs=tool_specs,
             prior_outcomes=prior_outcomes,
             sibling_context=sibling_context,
+            applicable_patterns=self._applicable_patterns,
         )
 
         # v0.4 GA-52: branch persona maps to a per-role task_type
@@ -727,6 +731,7 @@ class HonestVulnResearcher:
         tool_specs: dict[str, list[dict[str, Any]]] | None = None,
         prior_outcomes: list[dict[str, Any]] | None = None,
         sibling_context: list[dict[str, Any]] | None = None,
+        applicable_patterns: list[dict[str, Any]] | None = None,
     ) -> str:
         """Render the per-turn user prompt.
 
@@ -758,6 +763,7 @@ class HonestVulnResearcher:
             sibling_context or [],
             this_persona=branch.persona_voice,
         )
+        pattern_section = _render_pattern_section(applicable_patterns or [])
         target_kind = (target_snapshot or {}).get("kind")
         primary_language = (target_snapshot or {}).get("primary_language")
         return (
@@ -775,6 +781,7 @@ class HonestVulnResearcher:
             f"\n"
             f"{target_section}"
             f"{cve_intel_section}"
+            f"{pattern_section}"
             f"# Current case state\n\n"
             f"{case_model}\n"
             f"\n"
@@ -1355,16 +1362,23 @@ def _render_sibling_context_section(
         key_obs = s.get("key_observables") or {}
         if key_obs:
             lines.append("Key observables:")
-            for k, v in key_obs.items():
-                lines.append(f"  - {k}: {v}")
+            # Cap to 10 entries x 300 chars per value to avoid prompt bloat
+            # (6 siblings x N key_obs each was producing multi-KB sections).
+            for k, v in list(key_obs.items())[:10]:
+                v_str = str(v)[:300]
+                lines.append(f"  - {k}: {v_str}")
         tool_obs = s.get("tool_observables") or {}
         if tool_obs:
             lines.append(
                 "Tool readings sibling has CACHED (you can SKIP re-fetching "
                 "these — reference the sibling's data instead):"
             )
-            for k, v in tool_obs.items():
-                lines.append(f"  - {k}: {v}")
+            # Cap to 5 entries x 500 chars per value. Each tool reading was
+            # already truncated to 5000 chars upstream; with 6 branches x
+            # 20 readings that was ~600KB of context per turn.
+            for k, v in list(tool_obs.items())[:5]:
+                v_str = str(v)[:500]
+                lines.append(f"  - {k}: {v_str}")
         term = s.get("terminal_outcome")
         if term:
             lines.append(
@@ -1392,6 +1406,58 @@ def _render_sibling_context_section(
     )
     lines.append("")
     return "\n".join(lines) + "\n"
+
+
+_PATTERN_SECTION_BUDGET = 3000
+
+
+def _render_pattern_section(patterns: list[dict[str, Any]]) -> str:
+    """Render reusable patterns from prior investigations (Knowledge
+    Transfer plan GA-41).
+
+    Patterns are extracted from completed investigations and surface
+    proven exploitation techniques, fuzzing strategies, search
+    heuristics, tool recipes, and triage rules. Without injecting them
+    into the per-turn prompt, every new investigation starts from zero
+    and the 1.7k+ patterns sitting in vr_patterns deliver no value.
+
+    Hard-caps the section at ``_PATTERN_SECTION_BUDGET`` chars so a
+    workspace with hundreds of relevant patterns doesn't blow the
+    prompt budget. Patterns are assumed to be pre-ranked by
+    ``PatternStore.applicable()`` so truncation drops the
+    lowest-relevance entries first.
+    """
+    if not patterns:
+        return ""
+    header = (
+        "# Applicable patterns from prior investigations\n\n"
+        "These patterns were extracted from successful prior investigations on\n"
+        "similar targets. Use them to guide your hypothesis formation and tool\n"
+        "selection — they represent proven techniques.\n\n"
+    )
+    lines: list[str] = []
+    used = len(header)
+    for p in patterns:
+        title = str(p.get("summary") or "(untitled pattern)").strip()
+        kind = str(p.get("kind") or "unknown").strip()
+        body = str(p.get("body") or "").strip()
+        block = f"## Pattern: {title}\nKind: {kind}\n"
+        if body:
+            block += f"{body}\n"
+        block += "\n"
+        if used + len(block) > _PATTERN_SECTION_BUDGET:
+            # Truncate the last block to fit the remaining budget rather
+            # than dropping it entirely, so the agent at least sees the
+            # title + kind of the next-most-relevant pattern.
+            remaining = _PATTERN_SECTION_BUDGET - used
+            if remaining > 80:
+                lines.append(block[: remaining - 4] + "...\n")
+            break
+        lines.append(block)
+        used += len(block)
+    if not lines:
+        return ""
+    return header + "".join(lines)
 
 
 def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
@@ -2019,6 +2085,18 @@ async def _upsert_canonical_outcome(
     return existing.id
 
 
+@functools.lru_cache(maxsize=16)
+def _cached_read_prompt(path_str: str) -> str:
+    """Read a prompt file from disk with content cached by path.
+
+    Prompts are static files baked into the repo; reading the same
+    48KB system_audit.md hundreds of times per investigation is pure
+    overhead. ``maxsize=16`` comfortably covers base prompts +
+    per-persona variants.
+    """
+    return Path(path_str).read_text(encoding="utf-8")
+
+
 def _load_prompt(strategy_family: str, persona_voice: str | None = None) -> str:
     """Load the system prompt for a strategy family + optional persona.
 
@@ -2038,12 +2116,12 @@ def _load_prompt(strategy_family: str, persona_voice: str | None = None) -> str:
         base_candidate = _PROMPT_DIR / "system_audit.md"
     if not base_candidate.exists():
         raise VulnResearcherError(f"prompt file missing: {base_candidate}")
-    base = base_candidate.read_text(encoding="utf-8")
+    base = _cached_read_prompt(str(base_candidate))
 
     if persona_voice:
         persona_candidate = _PROMPT_DIR / f"persona_{persona_voice.lower()}.md"
         if persona_candidate.exists():
-            persona_prefix = persona_candidate.read_text(encoding="utf-8")
+            persona_prefix = _cached_read_prompt(str(persona_candidate))
             return f"{persona_prefix}\n\n---\n\n{base}"
     return base
 

@@ -279,10 +279,50 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 "investigation_setup: CVE intel resolve failed: %s", exc,
             )
 
+    # Knowledge Transfer: query the pattern catalog for techniques
+    # extracted from prior investigations on similar targets. Store
+    # JSON-serialisable dicts in the run context so investigation_loop
+    # can thread them into the per-turn user prompt. Failure to load
+    # patterns NEVER blocks setup — every new investigation must still
+    # boot even if the pattern store is empty / broken.
+    applicable_patterns: list[dict[str, Any]] = []
+    try:
+        from aila.modules.vr.db_models import VRTargetRecord  # noqa: PLC0415
+        from aila.modules.vr.services.pattern_store import (  # noqa: PLC0415
+            PatternStore,
+        )
+        from aila.platform.services.knowledge import (  # noqa: PLC0415
+            KnowledgeService,
+        )
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _select(VRTargetRecord).where(VRTargetRecord.id == inv.target_id),
+            )).first()
+        if target is not None:
+            query = (inv.initial_question or inv.title or "").strip()
+            if query:
+                store = PatternStore(knowledge=KnowledgeService())
+                results = await store.applicable(
+                    workspace_id=target.workspace_id,
+                    team_id=inv.team_id,
+                    query=query,
+                    target_kind=target.kind,
+                    primary_language=target.primary_language,
+                    k=10,
+                )
+                for r in results:
+                    applicable_patterns.append(r.pattern.model_dump(mode="json"))
+    except Exception as exc:  # noqa: BLE001 — never block setup on pattern lookup
+        _log.warning(
+            "investigation_setup: pattern lookup failed: %s", exc,
+        )
+
     _log.info(
         "investigation_setup READY investigation_id=%s branch_id=%s "
-        "strategy=%s cve_intel=%d",
+        "strategy=%s cve_intel=%d patterns=%d",
         investigation_id, branch.id, inv.strategy_family, len(cve_intel),
+        len(applicable_patterns),
     )
 
     return StateResult(
@@ -295,6 +335,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
             "cost_budget_usd": inv.cost_budget_usd,
             "team_id": inv.team_id,
             "cve_intel": cve_intel,
+            "applicable_patterns": applicable_patterns,
         },
     )
 
