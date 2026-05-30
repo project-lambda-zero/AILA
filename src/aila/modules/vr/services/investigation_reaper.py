@@ -53,7 +53,19 @@ async def reap_stuck_investigations() -> int:
 
 
 async def _fix_orphan_investigations() -> int:
-    """Fix investigations that say 'running' but have no active tasks."""
+    """Fix investigations that say 'running' but are provably orphaned.
+
+    An investigation is orphaned ONLY when ALL of these are true:
+    1. Status is 'running'
+    2. No task in 'running' or 'queued' state references it
+    3. At least one task HAS run for it (it was started, not just created)
+    4. The MOST RECENT task activity (completed_at) is older than grace
+    5. No task completed within the last 30 minutes (synthesis gap)
+
+    This means: an investigation the operator hasn't started yet, or one
+    the operator intends to re-enqueue later, will NEVER be reaped.
+    Only investigations where the workflow engine lost track get fixed.
+    """
     from aila.modules.vr.db_models import VRInvestigationRecord  # noqa: PLC0415
     from aila.storage.db_models import TaskRecord  # noqa: PLC0415
 
@@ -62,29 +74,42 @@ async def _fix_orphan_investigations() -> int:
     grace = now - timedelta(minutes=_ORPHAN_GRACE_MINUTES)
 
     async with async_session_scope() as session:
-        # Find running investigations older than grace period
         running = (await session.exec(
             select(VRInvestigationRecord).where(
                 VRInvestigationRecord.status == "running",
-                VRInvestigationRecord.updated_at < grace,
             )
         )).all()
 
         for inv in running:
-            # Check if ANY task for this investigation is still active
+            # Guard 1: any active task → skip
             active_task = (await session.exec(
                 select(TaskRecord.id).where(
                     TaskRecord.status.in_(["running", "queued"]),  # type: ignore[union-attr]
                     TaskRecord.kwargs_json.contains(inv.id),  # type: ignore[union-attr]
                 ).limit(1)
             )).first()
-
             if active_task is not None:
-                continue  # legit — task is still working
+                continue
 
-            # Also check if any task completed RECENTLY (within 30 min).
-            # A task that just finished may trigger synthesis/verification
-            # tasks that haven't been enqueued yet.
+            # Guard 2: must have at least one terminal task (was actually started)
+            from sqlalchemy import func as sa_func  # noqa: PLC0415
+            latest_terminal = (await session.exec(
+                select(sa_func.max(TaskRecord.completed_at)).where(
+                    TaskRecord.status.in_(["done", "failed"]),  # type: ignore[union-attr]
+                    TaskRecord.kwargs_json.contains(inv.id),  # type: ignore[union-attr]
+                )
+            )).first()
+
+            if latest_terminal is None:
+                # No task ever ran for this investigation — operator hasn't
+                # started it yet, or intends to start it later. Leave it.
+                continue
+
+            # Guard 3: latest task activity must be older than grace period
+            if latest_terminal > grace:
+                continue  # task activity too recent — still settling
+
+            # Guard 4: no task completed in the last 30 min (synthesis gap)
             recent_done = (await session.exec(
                 select(TaskRecord.id).where(
                     TaskRecord.status == "done",
@@ -92,11 +117,10 @@ async def _fix_orphan_investigations() -> int:
                     TaskRecord.completed_at > (now - timedelta(minutes=30)),  # type: ignore[operator]
                 ).limit(1)
             )).first()
-
             if recent_done is not None:
-                continue  # task just finished — give downstream time to enqueue
+                continue
 
-            # No active task. Check if it has outcomes to decide status.
+            # All guards passed — this is a provable orphan.
             from aila.modules.vr.db_models import VRInvestigationOutcomeRecord  # noqa: PLC0415
             has_outcome = (await session.exec(
                 select(VRInvestigationOutcomeRecord.id).where(
