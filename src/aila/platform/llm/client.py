@@ -195,30 +195,27 @@ class LLMResponse:
 
 
 # Maximum retry attempts for transient errors (on top of SDK built-in retries).
-# Raised from 3→8 (2026-05-28) after operator reported investigations dying
-# on brief consecutive LLM failures. With the prior 3-retry / unbounded-
-# exponential default the total tolerated outage was only ~7 seconds
-# (1+2+4); a single provider hiccup longer than that propagated as
-# researcher_error_retryable through investigation_loop → investigation_emit
-# and the run was either re-enqueued (expensive) or finalised FAILED
-# (depending on max_turns budget).
+# Raised from 3→8→100. Investigations were dying on brief consecutive LLM
+# failures (429 rate-limit, 502/503 provider overload). With 8 retries and
+# 30s backoff cap the total tolerated outage was only ~121s — a single
+# provider hiccup longer than that propagated as researcher_error_retryable
+# through investigation_loop → investigation_emit and the run was either
+# re-enqueued (expensive) or finalised FAILED.
 #
-# New schedule with default _MAX_RETRIES=8 and capped 30s backoff:
-#   attempt 0:  1s    attempt 4: 16s
-#   attempt 1:  2s    attempt 5: 30s (capped)
-#   attempt 2:  4s    attempt 6: 30s
-#   attempt 3:  8s    attempt 7: 30s
-# Total tolerated outage = 121s before the loop gives up. Long enough to
-# absorb routine provider hiccups (OmniRoute restarts, rate-limit cooloffs)
-# without losing in-flight investigations.
+# With _MAX_RETRIES=100 and capped 30s backoff:
+#   attempts 0-4:  1s, 2s, 4s, 8s, 16s
+#   attempts 5-99: 30s each (capped)
+# Total tolerated outage ≈ 31 + 95*30 ≈ 2881s (~48 min). Long enough to
+# ride out sustained provider degradation (OmniRoute restarts, rate-limit
+# storms, regional outages) without losing in-flight investigations.
 #
 # Both knobs are env-configurable so operators can tune per host:
-#   AILA_LLM_MAX_RETRIES        — attempts cap (default 8)
+#   AILA_LLM_MAX_RETRIES        — attempts cap (default 100)
 #   AILA_LLM_RETRY_BASE_DELAY_S — first-attempt backoff seconds (default 1.0)
 #   AILA_LLM_RETRY_MAX_DELAY_S  — per-attempt backoff cap seconds (default 30)
 import os as _retry_os
 
-_MAX_RETRIES = max(1, int(_retry_os.environ.get("AILA_LLM_MAX_RETRIES", "8")))
+_MAX_RETRIES = max(1, int(_retry_os.environ.get("AILA_LLM_MAX_RETRIES", "100")))
 _RETRY_BASE_DELAY = max(0.1, float(_retry_os.environ.get("AILA_LLM_RETRY_BASE_DELAY_S", "1.0")))
 _RETRY_MAX_DELAY = max(_RETRY_BASE_DELAY, float(_retry_os.environ.get("AILA_LLM_RETRY_MAX_DELAY_S", "30.0")))
 

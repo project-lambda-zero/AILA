@@ -15,7 +15,8 @@
   "peerDependencies": {
     "react": "catalog:react19",
     "react-router": "catalog:router",
-    "@tanstack/react-query": "catalog:query"
+    "@tanstack/react-query": "catalog:query",
+    "@phosphor-icons/react": "catalog:ui"
   },
   "dependencies": {
     "@xyflow/react": "catalog:flow"

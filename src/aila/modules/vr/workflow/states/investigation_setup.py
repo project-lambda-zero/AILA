@@ -31,10 +31,18 @@ from aila.platform.workflows.types import StateResult
 _AUTO_DELIBERATION = os.environ.get("VR_AUTO_PERSONA_DELIBERATION", "1") == "1"
 
 # The personas assigned to the auto-spawned siblings. Primary branch
-# becomes the researcher; each entry below spawns a sibling.
+# becomes the first researcher; each entry below spawns a sibling.
+#
+# Full 6-persona panel (2 researchers + 2 critics + 2 implementers):
+#   halvar (primary) + noor  = researchers — propose hypotheses
+#   maddie + yuki            = critics — falsify, demand evidence
+#   renzo + wei              = implementers — build PoCs, settle disputes
 _DELIBERATION_SIBLINGS: tuple[PersonaVoice, ...] = (
-    PersonaVoice.MADDIE,  # critic
-    PersonaVoice.RENZO,   # implementer
+    PersonaVoice.NOOR,    # researcher (alternative style to halvar)
+    PersonaVoice.MADDIE,  # critic (aggressive falsifier)
+    PersonaVoice.YUKI,    # critic (methodical falsifier)
+    PersonaVoice.RENZO,   # implementer (PoC builder)
+    PersonaVoice.WEI,     # implementer (cost-efficient prioritizer)
 )
 _PRIMARY_PERSONA: PersonaVoice = PersonaVoice.HALVAR  # researcher
 

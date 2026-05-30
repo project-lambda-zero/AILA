@@ -5,6 +5,7 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import { outcomeKindLabel } from "../components/OutcomeKindBadge";
 import {
   EvidenceGraph,
   type GraphEdgeInput,
@@ -103,7 +104,7 @@ export function EvidenceGraphPage() {
       ns.push({
         id: `outcome-${o.id}`,
         kind: kind as "advisory" | "crash" | "evidence",
-        label: o.outcome_kind,
+        label: outcomeKindLabel(o.outcome_kind),
         state: o.dispatch_status,
         meta: { outcome: o },
       });

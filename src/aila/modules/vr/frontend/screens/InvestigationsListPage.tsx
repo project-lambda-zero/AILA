@@ -21,6 +21,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { SeverityPulse } from "@/components/aila/SeverityPulse";
 import { KpiTile } from "@/components/aila/KpiTile";
 
+import { OutcomeKindBadge, outcomeKindSeverity } from "../components/OutcomeKindBadge";
 import { DeleteButton } from "../components/DeleteButton";
 import {
   useCreateInvestigation,
@@ -216,18 +217,10 @@ function InvestigationRow({
       <td className={cellCls + " w-[170px]"}>
         {inv.primary_outcome_kind ? (
           <AilaBadge
-            severity={
-              inv.primary_outcome_kind === "direct_finding"
-                ? "high"
-                : inv.primary_outcome_kind === "patch_assessment_report"
-                  ? "info"
-                  : inv.primary_outcome_kind === "variant_hunt_order"
-                    ? "medium"
-                    : "low"
-            }
+            severity={outcomeKindSeverity(inv.primary_outcome_kind)}
             size="sm"
           >
-            {inv.primary_outcome_kind}
+            <OutcomeKindBadge kind={inv.primary_outcome_kind} />
             {inv.primary_outcome_confidence
               ? ` · ${inv.primary_outcome_confidence}`
               : ""}
