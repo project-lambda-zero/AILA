@@ -130,20 +130,16 @@ async def reaper(ctx: dict[str, object]) -> None:
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: vr stage reaper failed: %s", exc, exc_info=True)
     try:
-        # VR investigation-level orphan recovery. Fixes three stuck states
-        # that the task-level reaper can't see: orphan investigations
-        # (running + no active tasks), crashed workflow cursors (task already
-        # done but cursor stuck at __crashed__), and stale 0-turn branches
-        # (sibling task was reaped before it ran).
-        from aila.modules.vr.services.investigation_reaper import reap_stuck_investigations
-        reaped_invs = await reap_stuck_investigations()
-        if reaped_invs:
-            _log.warning(
-                "reaper.vr_investigations: fixed %d stuck investigation(s)",
-                reaped_invs,
-            )
+        # Cursor cleanup only — clear __crashed__ cursors for terminal tasks
+        # so re-enqueue works. The investigation-level reaper was removed
+        # because it caused more damage than it fixed (false completions,
+        # false failures, branch abandonment cascades).
+        from aila.modules.vr.services.investigation_reaper import _clear_crashed_cursors
+        cleared = await _clear_crashed_cursors()
+        if cleared:
+            _log.info("reaper: cleared %d crashed cursors", cleared)
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
-        _log.warning("reaper: vr investigation reaper failed: %s", exc, exc_info=True)
+        _log.warning("reaper: cursor cleanup failed: %s", exc, exc_info=True)
 
 
 async def _reconcile_orphan_arq_locks() -> None:
