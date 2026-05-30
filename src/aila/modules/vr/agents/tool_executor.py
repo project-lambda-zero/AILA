@@ -88,11 +88,30 @@ class ToolExecutor:
 
         parsed = _parse_command(command_raw)
         if parsed is None:
-            err = (
-                "Malformed tool_run command — expected JSON with "
-                "'tool' (e.g. 'server.tool_name') and 'args' dict. "
-                f"Got: {command_raw[:200]!r}"
+            # Count consecutive malformed commands on this branch.
+            # If the LLM keeps producing empty/broken commands, inject
+            # a hard redirect instead of letting it loop 70 times.
+            malformed_count = await self._count_consecutive_malformed(
+                branch_id,
             )
+            if malformed_count >= 2:
+                err = (
+                    "STOP — you have produced 3 consecutive malformed or empty "
+                    "tool_run commands. The engine cannot dispatch an empty command. "
+                    "You MUST either:\n"
+                    "  (a) Produce a valid JSON command: "
+                    '{\"tool\": \"audit_mcp.read_function\", \"args\": {\"name\": \"...\"}}\n'
+                    "  (b) Submit your current findings with action=submit if you "
+                    "have enough evidence.\n"
+                    "  (c) Switch to action=observe to reason without a tool call.\n\n"
+                    "Do NOT produce another empty command."
+                )
+            else:
+                err = (
+                    "Malformed tool_run command — expected JSON with "
+                    "'tool' (e.g. 'server.tool_name') and 'args' dict. "
+                    f"Got: {command_raw[:200]!r}"
+                )
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
             )
@@ -406,6 +425,37 @@ class ToolExecutor:
             at_turn=at_turn,
         )
 
+
+    async def _count_consecutive_malformed(
+        self,
+        branch_id: str,
+    ) -> int:
+        """Count consecutive recent malformed-command error messages on this
+        branch. Walks backward from the latest message; stops at the first
+        non-error or non-malformed message.
+        """
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(VRInvestigationMessageRecord)
+                .where(
+                    VRInvestigationMessageRecord.branch_id == branch_id,
+                    VRInvestigationMessageRecord.sender_kind == "engine",
+                )
+                .order_by(VRInvestigationMessageRecord.created_at.desc())
+                .limit(10)
+            )).all()
+
+        count = 0
+        for row in rows:
+            try:
+                payload = json.loads(row.payload_json or "{}")
+            except (ValueError, TypeError):
+                break
+            if payload.get("is_error") and "Malformed tool_run" in str(payload.get("text", "")):
+                count += 1
+            else:
+                break
+        return count
     async def _count_prior_failures(
         self,
         branch_id: str,
