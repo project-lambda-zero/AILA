@@ -608,6 +608,31 @@ def create_vr_router() -> APIRouter:
             stmt = stmt.where(model.team_id == auth.team_id)
         return stmt
 
+    async def _team_owned_or_404(
+        record_id: str,
+        model: Any,
+        auth: AuthContext,
+        not_found_detail: str,
+    ) -> Any:
+        """Load a row by id with team-scope enforcement; raise 404 on miss.
+
+        Mirrors the _team_filter pattern: callers that hold a row from
+        this helper have already been authorized for the row's team.
+        """
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(model).where(model.id == record_id),
+                    model, auth,
+                ),
+            )).first()
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=not_found_detail,
+            )
+        return row
+
     def _require_project_ownership(project: Any, auth: AuthContext) -> None:
         if auth.team_id is not None and getattr(project, "team_id", None) != auth.team_id:
             raise HTTPException(
@@ -1080,7 +1105,7 @@ def create_vr_router() -> APIRouter:
                 # Emit each in chronological order across all sources.
                 events: list[tuple[Any, str, dict[str, Any]]] = []
                 for m in new_messages:
-                    is_op = m.sender == SenderKind.OPERATOR.value
+                    is_op = m.sender_kind == SenderKind.OPERATOR.value
                     events.append((
                         m.created_at,
                         (
@@ -3525,7 +3550,7 @@ def create_vr_router() -> APIRouter:
                     # agent turns so the consumer can branch on the
                     # typed event name without parsing the payload
                     # (08_FRONTEND_UX.md §2.1).
-                    is_operator = row.sender == SenderKind.OPERATOR.value
+                    is_operator = row.sender_kind == SenderKind.OPERATOR.value
                     event_type = (
                         VREventType.OPERATOR_STEERING
                         if is_operator
@@ -4164,7 +4189,7 @@ def create_vr_router() -> APIRouter:
         limit: int = Query(default=50, ge=1, le=200),
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[VRPatternSummary]]:
-        del request, auth
+        del request
         from aila.modules.vr.services import PatternStore
         from aila.platform.services.knowledge import KnowledgeService
 
@@ -4176,6 +4201,7 @@ def create_vr_router() -> APIRouter:
             scope=scope,
             offset=offset,
             limit=limit,
+            team_id=auth.team_id,
         )
         return DataEnvelope(
             data=items,
@@ -4234,12 +4260,12 @@ def create_vr_router() -> APIRouter:
         pattern_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRPatternSummary]:
-        del request, auth
+        del request
         from aila.modules.vr.services import PatternStore
         from aila.platform.services.knowledge import KnowledgeService
 
         store = PatternStore(knowledge=KnowledgeService())
-        summary = await store.get(pattern_id)
+        summary = await store.get(pattern_id, team_id=auth.team_id)
         if summary is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -4320,7 +4346,7 @@ def create_vr_router() -> APIRouter:
         request: Request,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[DisclosureTrackInfo]]:
-        del request, auth
+        del request
         from aila.modules.vr.disclosure import track_info_list
 
         return DataEnvelope(data=track_info_list())
@@ -4376,7 +4402,7 @@ def create_vr_router() -> APIRouter:
         limit: int = Query(default=50, ge=1, le=200),
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[VRDisclosureSubmissionSummary]]:
-        del request, auth
+        del request
         from aila.modules.vr.disclosure import DisclosureService
 
         svc = DisclosureService()
@@ -4386,6 +4412,7 @@ def create_vr_router() -> APIRouter:
             track_id=track_id,
             status=submission_status,
             offset=offset,
+            team_id=auth.team_id,
             limit=limit,
         )
         return DataEnvelope(
@@ -4406,9 +4433,15 @@ def create_vr_router() -> APIRouter:
         submission_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRDisclosureSubmissionSummary]:
-        del request, auth
+        del request
         from aila.modules.vr.disclosure import DisclosureService
 
+        from .db_models import VRDisclosureSubmissionRecord
+
+        await _team_owned_or_404(
+            submission_id, VRDisclosureSubmissionRecord, auth,
+            f"Disclosure submission {submission_id} not found.",
+        )
         svc = DisclosureService()
         summary = await svc.get(submission_id)
         if summary is None:
@@ -4430,10 +4463,17 @@ def create_vr_router() -> APIRouter:
         body: VRDisclosureSubmissionPatch,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRDisclosureSubmissionSummary]:
-        del request, auth
+        del request
         from aila.modules.vr.disclosure import (
             DisclosureService,
             DisclosureServiceError,
+        )
+
+        from .db_models import VRDisclosureSubmissionRecord
+
+        await _team_owned_or_404(
+            submission_id, VRDisclosureSubmissionRecord, auth,
+            f"Disclosure submission {submission_id} not found.",
         )
 
         svc = DisclosureService()
@@ -4464,13 +4504,16 @@ def create_vr_router() -> APIRouter:
         submission_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> Response:
-        del request, auth
+        del request
         from .db_models import VRDisclosureSubmissionRecord
 
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
-                select(VRDisclosureSubmissionRecord).where(
-                    VRDisclosureSubmissionRecord.id == submission_id,
+                _team_filter(
+                    select(VRDisclosureSubmissionRecord).where(
+                        VRDisclosureSubmissionRecord.id == submission_id,
+                    ),
+                    VRDisclosureSubmissionRecord, auth,
                 ),
             )).first()
             if row is None:
@@ -4494,12 +4537,18 @@ def create_vr_router() -> APIRouter:
         submission_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[RenderedSubmission]:
-        del request, auth
+        del request
         from aila.modules.vr.disclosure import (
             DisclosureService,
             DisclosureServiceError,
         )
 
+        from .db_models import VRDisclosureSubmissionRecord
+
+        await _team_owned_or_404(
+            submission_id, VRDisclosureSubmissionRecord, auth,
+            f"Disclosure submission {submission_id} not found.",
+        )
         svc = DisclosureService()
         try:
             rendered = await svc.render(submission_id)
@@ -4538,7 +4587,7 @@ def create_vr_router() -> APIRouter:
         body: _DisclosureSectionsPatch,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRDisclosureSubmissionSummary]:
-        del request, auth
+        del request
         import json as _json
 
         from .db_models import VRDisclosureSubmissionRecord
@@ -4546,8 +4595,11 @@ def create_vr_router() -> APIRouter:
 
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
-                select(VRDisclosureSubmissionRecord).where(
-                    VRDisclosureSubmissionRecord.id == submission_id,
+                _team_filter(
+                    select(VRDisclosureSubmissionRecord).where(
+                        VRDisclosureSubmissionRecord.id == submission_id,
+                    ),
+                    VRDisclosureSubmissionRecord, auth,
                 ),
             )).first()
             if row is None:
@@ -4584,7 +4636,7 @@ def create_vr_router() -> APIRouter:
         submission_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRDisclosureSubmissionSummary]:
-        del request, auth
+        del request
         import json as _json
 
         from .db_models import (
@@ -4595,8 +4647,11 @@ def create_vr_router() -> APIRouter:
 
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
-                select(VRDisclosureSubmissionRecord).where(
-                    VRDisclosureSubmissionRecord.id == submission_id,
+                _team_filter(
+                    select(VRDisclosureSubmissionRecord).where(
+                        VRDisclosureSubmissionRecord.id == submission_id,
+                    ),
+                    VRDisclosureSubmissionRecord, auth,
                 ),
             )).first()
             if row is None:
@@ -4692,7 +4747,7 @@ def create_vr_router() -> APIRouter:
         limit: int = Query(default=50, ge=1, le=200),
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[VRFuzzCampaignSummary]]:
-        del request, auth
+        del request
         from aila.modules.vr.services import FuzzCampaignService
 
         svc = FuzzCampaignService()
@@ -4702,6 +4757,7 @@ def create_vr_router() -> APIRouter:
             status=campaign_status,
             offset=offset,
             limit=limit,
+            team_id=auth.team_id,
         )
         return DataEnvelope(
             data=items,
@@ -4721,9 +4777,15 @@ def create_vr_router() -> APIRouter:
         campaign_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRFuzzCampaignSummary]:
-        del request, auth
+        del request
         from aila.modules.vr.services import FuzzCampaignService
 
+        from .db_models import VRFuzzCampaignRecord
+
+        await _team_owned_or_404(
+            campaign_id, VRFuzzCampaignRecord, auth,
+            f"Fuzz campaign {campaign_id} not found.",
+        )
         svc = FuzzCampaignService()
         summary = await svc.get_campaign(campaign_id)
         if summary is None:
@@ -4745,9 +4807,15 @@ def create_vr_router() -> APIRouter:
         body: VRFuzzCampaignPatch,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRFuzzCampaignSummary]:
-        del request, auth
+        del request
         from aila.modules.vr.services import FuzzCampaignService, FuzzServiceError
 
+        from .db_models import VRFuzzCampaignRecord
+
+        await _team_owned_or_404(
+            campaign_id, VRFuzzCampaignRecord, auth,
+            f"Fuzz campaign {campaign_id} not found.",
+        )
         svc = FuzzCampaignService()
         try:
             summary = await svc.patch_campaign(campaign_id, body)
@@ -4862,12 +4930,17 @@ def create_vr_router() -> APIRouter:
         campaign_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> Response:
-        del request, auth
+        del request
         from .db_models import VRFuzzCampaignRecord, VRFuzzCrashRecord
 
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
-                select(VRFuzzCampaignRecord).where(VRFuzzCampaignRecord.id == campaign_id),
+                _team_filter(
+                    select(VRFuzzCampaignRecord).where(
+                        VRFuzzCampaignRecord.id == campaign_id,
+                    ),
+                    VRFuzzCampaignRecord, auth,
+                ),
             )).first()
             if row is None:
                 raise HTTPException(
@@ -5122,7 +5195,7 @@ def create_vr_router() -> APIRouter:
         limit: int = Query(default=50, ge=1, le=200),
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[VRFuzzCrashSummary]]:
-        del request, auth
+        del request
         from aila.modules.vr.services import FuzzCampaignService
 
         svc = FuzzCampaignService()
@@ -5132,6 +5205,7 @@ def create_vr_router() -> APIRouter:
             severity=severity,
             offset=offset,
             limit=limit,
+            team_id=auth.team_id,
         )
         return DataEnvelope(
             data=items,
@@ -5151,9 +5225,15 @@ def create_vr_router() -> APIRouter:
         crash_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRFuzzCrashSummary]:
-        del request, auth
+        del request
         from aila.modules.vr.services import FuzzCampaignService
 
+        from .db_models import VRFuzzCrashRecord
+
+        await _team_owned_or_404(
+            crash_id, VRFuzzCrashRecord, auth,
+            f"Fuzz crash {crash_id} not found.",
+        )
         svc = FuzzCampaignService()
         summary = await svc.get_crash(crash_id)
         if summary is None:
@@ -5185,7 +5265,12 @@ def create_vr_router() -> APIRouter:
 
         async with UnitOfWork() as uow:
             crash = (await uow.session.exec(
-                select(VRFuzzCrashRecord).where(VRFuzzCrashRecord.id == crash_id),
+                _team_filter(
+                    select(VRFuzzCrashRecord).where(
+                        VRFuzzCrashRecord.id == crash_id,
+                    ),
+                    VRFuzzCrashRecord, auth,
+                ),
             )).first()
             if crash is None:
                 raise HTTPException(
@@ -5209,7 +5294,6 @@ def create_vr_router() -> APIRouter:
             await uow.session.commit()
             await uow.session.refresh(crash)
 
-        del auth
         from aila.modules.vr.services.fuzz_service import _crash_record_to_summary
         return DataEnvelope(data=_crash_record_to_summary(crash))
 
@@ -5229,9 +5313,14 @@ def create_vr_router() -> APIRouter:
         limit: int = Query(default=10000, ge=1, le=50000),
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[FuzzTelemetryPoint]]:
-        del request, auth
-        from .db_models import VRFuzzTelemetryRecord
+        del request
+        from .db_models import VRFuzzCampaignRecord, VRFuzzTelemetryRecord
 
+
+        await _team_owned_or_404(
+            campaign_id, VRFuzzCampaignRecord, auth,
+            f"Fuzz campaign {campaign_id} not found.",
+        )
         async with UnitOfWork() as uow:
             count_stmt = (
                 select(sa_func.count())
@@ -5284,15 +5373,18 @@ def create_vr_router() -> APIRouter:
         body: FuzzTelemetryCreate,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[FuzzTelemetryPoint]:
-        del request, auth
+        del request
         from uuid import uuid4 as _uuid4
 
         from .db_models import VRFuzzCampaignRecord, VRFuzzTelemetryRecord
 
         async with UnitOfWork() as uow:
             campaign = (await uow.session.exec(
-                select(VRFuzzCampaignRecord).where(
-                    VRFuzzCampaignRecord.id == campaign_id,
+                _team_filter(
+                    select(VRFuzzCampaignRecord).where(
+                        VRFuzzCampaignRecord.id == campaign_id,
+                    ),
+                    VRFuzzCampaignRecord, auth,
                 ),
             )).first()
             if campaign is None:
@@ -5394,9 +5486,15 @@ def create_vr_router() -> APIRouter:
         investigation_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[VRInvestigationTargetSummary]]:
-        del request, auth
+        del request
         from aila.modules.vr.services import MultiTargetService
 
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
         svc = MultiTargetService()
         items = await svc.list_for_investigation(investigation_id)
         return DataEnvelope(data=items)
@@ -5413,12 +5511,18 @@ def create_vr_router() -> APIRouter:
         target_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> Response:
-        del request, auth
+        del request
         from aila.modules.vr.services import (
             MultiTargetService,
             MultiTargetServiceError,
         )
 
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
         svc = MultiTargetService()
         try:
             removed = await svc.detach(investigation_id, target_id)
@@ -5456,12 +5560,18 @@ def create_vr_router() -> APIRouter:
         body: StrategyBranchSpawn,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[dict]:
-        del request, auth
+        del request
         from aila.modules.vr.agents.branch_manager import (
             BranchManager,
             BranchManagerError,
         )
 
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
         mgr = BranchManager(investigation_id=investigation_id)
         try:
             result = await mgr.spawn_strategy(
@@ -5504,9 +5614,15 @@ def create_vr_router() -> APIRouter:
         investigation_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[dict]:
-        del request, auth
+        del request
         from aila.modules.vr.agents.branch_manager import BranchManager
 
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
         mgr = BranchManager(investigation_id=investigation_id)
         groups = await mgr.list_active_by_strategy()
         return DataEnvelope(
@@ -5534,7 +5650,7 @@ def create_vr_router() -> APIRouter:
         body: VRCVERecordCreate,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[dict]:
-        del request, auth
+        del request
         from aila.modules.vr.services import CVEService
         from aila.platform.services.knowledge import KnowledgeService
 
@@ -5564,7 +5680,7 @@ def create_vr_router() -> APIRouter:
         limit: int = Query(default=50, ge=1, le=200),
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[CVERecordSummary]]:
-        del request, auth
+        del request
         from aila.modules.vr.services import CVEService
         from aila.platform.services.knowledge import KnowledgeService
 
@@ -5590,7 +5706,7 @@ def create_vr_router() -> APIRouter:
         cve_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[CVERecordSummary]:
-        del request, auth
+        del request
         from aila.modules.vr.services import CVEService
         from aila.platform.services.knowledge import KnowledgeService
 
@@ -5619,7 +5735,7 @@ def create_vr_router() -> APIRouter:
         request: Request,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[dict[str, Any]]]:
-        del request, auth
+        del request
         from aila.modules.vr.services import McpRegistryService
 
         servers = await McpRegistryService().probe_all()
@@ -5636,7 +5752,7 @@ def create_vr_router() -> APIRouter:
         body: dict[str, Any],
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[dict[str, Any]]:
-        del request, auth
+        del request
         from aila.modules.vr.services import McpRegistryService
 
         base_url = (body or {}).get("base_url")
@@ -5670,11 +5786,12 @@ def create_vr_router() -> APIRouter:
         offset: int = Query(default=0, ge=0),
         limit: int = Query(default=50, ge=1, le=200),
     ) -> DataEnvelope[list[dict[str, Any]]]:
-        del request, auth
+        del request
         from .db_models import VRMcpCallLogRecord
 
         async with UnitOfWork() as uow:
             stmt = select(VRMcpCallLogRecord)
+            stmt = _team_filter(stmt, VRMcpCallLogRecord, auth)
             if server_id:
                 stmt = stmt.where(VRMcpCallLogRecord.server_id == server_id)
             if status_filter:

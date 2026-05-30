@@ -95,7 +95,7 @@ class BranchManager:
     ) -> BranchOpResult:
         """Spawn a new ACTIVE branch from ``parent_branch_id``."""
         async with UnitOfWork() as uow:
-            parent = await self._load_branch(uow, parent_branch_id)
+            parent = await self._load_branch(uow, parent_branch_id, for_update=True)
             if parent.status != BranchStatus.ACTIVE.value:
                 raise BranchManagerError(
                     f"cannot fork from branch {parent_branch_id} in status "
@@ -140,8 +140,8 @@ class BranchManager:
             )
 
         async with UnitOfWork() as uow:
-            a = await self._load_branch(uow, branch_a_id)
-            b = await self._load_branch(uow, branch_b_id)
+            a = await self._load_branch(uow, branch_a_id, for_update=True)
+            b = await self._load_branch(uow, branch_b_id, for_update=True)
             for branch in (a, b):
                 if branch.status != BranchStatus.ACTIVE.value:
                     raise BranchManagerError(
@@ -198,7 +198,7 @@ class BranchManager:
     ) -> BranchOpResult:
         """Mark branch as authoritative; sibling ACTIVE branches → ABANDONED."""
         async with UnitOfWork() as uow:
-            branch = await self._load_branch(uow, branch_id)
+            branch = await self._load_branch(uow, branch_id, for_update=True)
             if branch.status not in {
                 BranchStatus.ACTIVE.value, BranchStatus.PAUSED.value,
             }:
@@ -213,7 +213,7 @@ class BranchManager:
                     VRInvestigationBranchRecord.status.in_([
                         BranchStatus.ACTIVE.value, BranchStatus.PAUSED.value,
                     ]),
-                )
+                ).with_for_update()
             )).all()
 
             now = utc_now()
@@ -250,7 +250,7 @@ class BranchManager:
     ) -> BranchOpResult:
         """Close a branch without promotion."""
         async with UnitOfWork() as uow:
-            branch = await self._load_branch(uow, branch_id)
+            branch = await self._load_branch(uow, branch_id, for_update=True)
             if branch.status in {
                 BranchStatus.MERGED.value,
                 BranchStatus.PROMOTED.value,
@@ -419,12 +419,15 @@ class BranchManager:
             groups.setdefault(key, []).append(row.id)
         return groups
 
-    async def _load_branch(self, uow: Any, branch_id: str) -> VRInvestigationBranchRecord:
-        branch = (await uow.session.exec(
-            _select(VRInvestigationBranchRecord).where(
-                VRInvestigationBranchRecord.id == branch_id,
-            )
-        )).first()
+    async def _load_branch(
+        self, uow: Any, branch_id: str, *, for_update: bool = False,
+    ) -> VRInvestigationBranchRecord:
+        stmt = _select(VRInvestigationBranchRecord).where(
+            VRInvestigationBranchRecord.id == branch_id,
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        branch = (await uow.session.exec(stmt)).first()
         if branch is None:
             raise BranchManagerError(f"branch {branch_id} not found")
         if branch.investigation_id != self.investigation_id:

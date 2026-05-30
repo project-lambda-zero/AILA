@@ -412,6 +412,7 @@ class FuzzCampaignService:
         target_id: str | None = None,
         workspace_id: str | None = None,
         status: CampaignStatus | None = None,
+        team_id: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[list[VRFuzzCampaignSummary], int]:
@@ -420,6 +421,11 @@ class FuzzCampaignService:
             count_stmt = _select(sa_func.count()).select_from(
                 VRFuzzCampaignRecord,
             )
+            if team_id is not None:
+                stmt = stmt.where(VRFuzzCampaignRecord.team_id == team_id)
+                count_stmt = count_stmt.where(
+                    VRFuzzCampaignRecord.team_id == team_id,
+                )
             if target_id:
                 stmt = stmt.where(VRFuzzCampaignRecord.target_id == target_id)
                 count_stmt = count_stmt.where(
@@ -774,12 +780,18 @@ class FuzzCampaignService:
         campaign_id: str | None = None,
         verdict: CrashTriageVerdict | None = None,
         severity: CrashSeverity | None = None,
+        team_id: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[list[VRFuzzCrashSummary], int]:
         async with UnitOfWork() as uow:
             stmt = _select(VRFuzzCrashRecord)
             count_stmt = _select(sa_func.count()).select_from(VRFuzzCrashRecord)
+            if team_id is not None:
+                stmt = stmt.where(VRFuzzCrashRecord.team_id == team_id)
+                count_stmt = count_stmt.where(
+                    VRFuzzCrashRecord.team_id == team_id,
+                )
             if campaign_id:
                 stmt = stmt.where(VRFuzzCrashRecord.campaign_id == campaign_id)
                 count_stmt = count_stmt.where(
