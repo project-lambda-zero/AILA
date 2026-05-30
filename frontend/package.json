@@ -38,7 +38,7 @@
     "html2canvas": "catalog:data",
     "leaflet": "catalog:maps",
     "lucide-react": "catalog:ui",
-    "ogl": "^0.0.116",
+    "ogl": "catalog:ui",
     "motion": "catalog:ui",
     "papaparse": "catalog:data",
     "react": "catalog:react19",

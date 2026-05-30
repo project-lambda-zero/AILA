@@ -1,4 +1,23 @@
-import { useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import type { ComponentType } from "react";
+import type { IconProps } from "@phosphor-icons/react";
+import {
+  Brain,
+  CaretDown,
+  CaretRight,
+  ChatCentered,
+  ChatTeardropDots,
+  CheckCircle,
+  Eye,
+  FileCode,
+  Flag,
+  GearSix,
+  Lightbulb,
+  Terminal,
+  User,
+  Wrench,
+  XCircle,
+} from "@phosphor-icons/react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 
@@ -6,162 +25,681 @@ import type { VRMessageSummary } from "../types";
 
 /** Per-turn card from 08_FRONTEND_UX.md §1.10.
  *
- *  Investigation timeline is a vertical stack of these. Header strip
- *  carries turn number + sender badge + payload kind + timestamp; body
- *  shows the payload content (collapsed past a threshold with click-to-
- *  expand); evidence refs surface as inline chips.
+ *  Investigation timeline is a vertical stack of these. The card carries
+ *  the operator/researcher/tool/system identity via a left border colour
+ *  + sender icon, prominently surfaces the turn number for jump-nav,
+ *  and renders the payload in a kind-aware way (prose for text, a
+ *  structured tool-name + args table for tool_call, JSON only as a
+ *  collapsed disclosure).
  *
- *  Sender kind tone mapping:
- *    operator  → cyan info badge (operator-driven turn)
- *    persona   → orange (LLM reasoning / agent role)
- *    tool      → blue info (tool dispatch / observation)
- *    system    → muted info (platform events) */
-const SENDER_TONE: Record<
-  string,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
-  operator: "info",
-  persona: "medium",
-  tool: "low",
-  system: "info",
-};
+ *  Sender visual identity:
+ *    engine      → cyan left border, brain icon, persona avatar when
+ *                  sender_id matches a known researcher voice
+ *    tool        → emerald, wrench icon (also matches engine writes by
+ *                  the tool_executor in practice)
+ *    operator    → amber, user icon (auto_steering rendered as system)
+ *    system      → slate, gear icon
+ */
 
-const PAYLOAD_TONE: Record<
-  string,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
-  thought: "medium",
-  action: "info",
-  observation: "low",
-  outcome: "low",
-  finding: "high",
-  blocked: "critical",
-  user_message: "info",
-};
+type IconCmp = ComponentType<IconProps>;
 
 const COLLAPSE_THRESHOLD_CHARS = 600;
 
+// ─── Sender visual identity ────────────────────────────────────────────
+
+interface SenderStyle {
+  border: string;
+  bg: string;
+  Icon: IconCmp;
+  label: string;
+}
+
+const SENDER_STYLES: Record<string, SenderStyle> = {
+  engine: {
+    border: "border-l-cyan-500",
+    bg: "bg-cyan-500/[0.04]",
+    Icon: Brain,
+    label: "Researcher",
+  },
+  operator: {
+    border: "border-l-amber-500",
+    bg: "bg-amber-500/[0.04]",
+    Icon: User,
+    label: "Operator",
+  },
+  tool: {
+    border: "border-l-emerald-500",
+    bg: "bg-emerald-500/[0.04]",
+    Icon: Wrench,
+    label: "Tool",
+  },
+  system: {
+    border: "border-l-slate-500",
+    bg: "bg-slate-500/[0.04]",
+    Icon: GearSix,
+    label: "System",
+  },
+};
+
+const SENDER_FALLBACK: SenderStyle = SENDER_STYLES.system;
+
+/** Map the wire `sender_kind` + `sender_id` to the effective display
+ *  sender. The DB only stores 'engine' | 'operator', but in practice
+ *  `tool_executor` writes engine-kind rows that read better as 'tool',
+ *  and `auto_steering` writes operator-kind rows that read better as
+ *  'system'. Plain string in/out so unknown future kinds still resolve
+ *  to a fallback. */
+function resolveDisplaySender(
+  senderKind: string,
+  senderId: string | null,
+): string {
+  if (senderKind === "engine" && senderId === "tool_executor") return "tool";
+  if (senderKind === "operator" && senderId === "auto_steering") return "system";
+  return senderKind || "system";
+}
+
+// ─── Persona avatars ───────────────────────────────────────────────────
+
+interface PersonaStyle {
+  bg: string;
+  text: string;
+  initial: string;
+}
+
+const PERSONA_STYLES: Record<string, PersonaStyle> = {
+  halvar: { bg: "bg-red-500/25 border border-red-500/40", text: "text-red-300", initial: "H" },
+  maddie: { bg: "bg-violet-500/25 border border-violet-500/40", text: "text-violet-300", initial: "M" },
+  renzo: { bg: "bg-teal-500/25 border border-teal-500/40", text: "text-teal-300", initial: "R" },
+  noor: { bg: "bg-amber-500/25 border border-amber-500/40", text: "text-amber-300", initial: "N" },
+  yuki: { bg: "bg-blue-500/25 border border-blue-500/40", text: "text-blue-300", initial: "Y" },
+  wei: { bg: "bg-emerald-500/25 border border-emerald-500/40", text: "text-emerald-300", initial: "W" },
+};
+
+function personaStyle(senderId: string | null): PersonaStyle | null {
+  if (!senderId) return null;
+  return PERSONA_STYLES[senderId.toLowerCase()] ?? null;
+}
+
+// ─── Payload-kind treatment ────────────────────────────────────────────
+
+interface PayloadStyle {
+  Icon: IconCmp | null;
+  label: string | null;
+  iconClass: string;
+}
+
+function payloadStyle(
+  payloadKind: string,
+  payload: Record<string, unknown>,
+): PayloadStyle {
+  switch (payloadKind) {
+    case "text":
+      return { Icon: null, label: null, iconClass: "" };
+    case "tool_call":
+      return { Icon: Terminal, label: "Tool Call", iconClass: "text-emerald-400" };
+    case "tool_result": {
+      const isError = isToolError(payload);
+      return isError
+        ? { Icon: XCircle, label: "Error", iconClass: "text-red-400" }
+        : { Icon: CheckCircle, label: "Result", iconClass: "text-emerald-400" };
+    }
+    case "observation":
+      return { Icon: Eye, label: "Observation", iconClass: "text-cyan-400" };
+    case "user_message":
+      return { Icon: ChatCentered, label: "Operator", iconClass: "text-amber-400" };
+    case "hypothesis_update":
+      return { Icon: Lightbulb, label: "Hypothesis", iconClass: "text-yellow-400" };
+    case "outcome_draft":
+    case "outcome_pending":
+      return { Icon: Flag, label: "Draft Finding", iconClass: "text-orange-400" };
+    case "decompiled_function": {
+      const addr = (payload?.address as string) ?? "";
+      const isSource = /\.(go|py|c|cpp|h|rs|js|ts|java|rb|php)\b/i.test(addr);
+      return { Icon: FileCode, label: isSource ? "Source" : "Decompiled", iconClass: "text-violet-400" };
+    }
+    case "code_pointer":
+      return { Icon: FileCode, label: "Code", iconClass: "text-violet-400" };
+    default:
+      return payloadKind
+        ? { Icon: null, label: prettyKind(payloadKind), iconClass: "" }
+        : { Icon: null, label: null, iconClass: "" };
+  }
+}
+
+function prettyKind(s: string): string {
+  return s
+    .split("_")
+    .map((p) => (p.length ? p[0].toUpperCase() + p.slice(1) : p))
+    .join(" ");
+}
+
+function isToolError(payload: Record<string, unknown>): boolean {
+  if (!payload) return false;
+  if (payload.is_error === true) return true;
+  if (payload.success === false) return true;
+  if (typeof payload.error === "string" && payload.error.length > 0) return true;
+  if (payload.error && typeof payload.error === "object") return true;
+  const status = payload.status;
+  if (typeof status === "string" && status.toLowerCase() === "error") return true;
+  return false;
+}
+
+// ─── Payload content extraction ────────────────────────────────────────
+
+const PROSE_KEYS = ["text", "reasoning", "summary", "message", "content", "description"];
+
+function extractProse(payload: Record<string, unknown>): string | null {
+  for (const k of PROSE_KEYS) {
+    const v = payload[k];
+    if (typeof v === "string" && v.trim().length > 0) return v;
+  }
+  return null;
+}
+
+function extractToolName(payload: Record<string, unknown>): string | null {
+  for (const k of ["tool", "tool_name", "name", "callee"]) {
+    const v = payload[k];
+    if (typeof v === "string" && v.trim().length > 0) return v.trim();
+  }
+  return null;
+}
+
+function extractToolArgs(payload: Record<string, unknown>): Record<string, unknown> | null {
+  for (const k of ["args", "arguments", "input", "params"]) {
+    const v = payload[k];
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      return v as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+/** Humanize a tool name for display: strip prefix, prettify. */
+function humanToolName(raw: string): string {
+  // "audit_mcp.semantic_search" → "Semantic Search"
+  // "audit_mcp.read_function"  → "Read Function"
+  const name = raw.includes(".") ? raw.split(".").pop()! : raw;
+  return name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** First sentence (or first ~140 chars) collapsed-state preview.
+ *  Strips LLM role prefixes like "RESEARCHER (Halvar):", "ROUND 1 —". */
+function firstSentence(s: string, max = 140): string {
+  let trimmed = s.trim().replace(/\s+/g, " ");
+  if (trimmed.length === 0) return "";
+  // Strip role prefixes
+  trimmed = trimmed
+    .replace(/^ROUND\s+\d+\s*[-—]\s*/i, "")
+    .replace(/^(?:[\u{1F300}-\u{1FAD6}\u{2694}\u{1F52C}\u{2699}\u{1F6E0}]\s*)?(?:RESEARCHER|CRITIC|IMPLEMENTER)\s*\([^)]+\)\s*:\s*/gu, "")
+    .replace(/^(?:DIRECT_FINDING|ASSESSMENT_REPORT)\s*:\s*/i, "");
+  const m = trimmed.match(/^(.{10,180}?[.!?])\s/);
+  const head = m ? m[1] : trimmed.slice(0, max);
+  return head.length < trimmed.length ? head + "…" : head;
+}
+
 function formatRelative(iso?: string | null): string {
   if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  const delta = Math.max(0, (Date.now() - t) / 1000);
+  if (delta < 5) return "just now";
+  if (delta < 60) return `${Math.round(delta)}s ago`;
+  if (delta < 3600) return `${Math.round(delta / 60)}m ago`;
+  if (delta < 86400) return `${Math.round(delta / 3600)}h ago`;
+  const days = Math.round(delta / 86400);
+  if (days < 14) return `${days}d ago`;
   try {
-    return new Date(iso).toLocaleTimeString();
+    return new Date(iso).toLocaleDateString();
   } catch {
     return iso;
   }
 }
 
-function renderPayload(payload: Record<string, unknown>): string {
-  // Render-priority: text-shaped fields > full JSON
-  const textKeys = ["text", "reasoning", "summary", "message", "content"];
-  for (const k of textKeys) {
-    const v = payload[k];
-    if (typeof v === "string" && v.trim().length > 0) return v;
-  }
+function fullTimestamp(iso?: string | null): string {
+  if (!iso) return "";
   try {
-    return JSON.stringify(payload, null, 2);
+    return new Date(iso).toLocaleString();
   } catch {
-    return String(payload);
+    return iso;
   }
 }
 
-function truncate(s: string, n: number): { head: string; rest: string } {
-  if (s.length <= n) return { head: s, rest: "" };
-  return { head: s.slice(0, n), rest: s.slice(n) };
+function jsonString(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
+
+function formatArgValue(v: unknown): string {
+  if (v === null || v === undefined) return v === null ? "null" : "—";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+
+// ─── Component ─────────────────────────────────────────────────────────
 
 export function TurnCard({
   message,
   index,
+  persona: personaVoice,
 }: {
   message: VRMessageSummary;
   index: number;
+  /** Persona voice from the branch record — the message itself does NOT carry
+   *  the persona name (sender_id is always 'engine' or 'tool_executor'). */
+  persona?: string | null;
 }) {
   const [bodyOpen, setBodyOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const sender = message.sender_kind ?? "system";
-  const payloadKind = message.payload_kind ?? "";
-  const senderTone = SENDER_TONE[sender] ?? "info";
-  const payloadTone = payloadKind
-    ? PAYLOAD_TONE[payloadKind] ?? "info"
-    : "info";
+  const [rawOpen, setRawOpen] = useState(false);
 
-  const text = renderPayload(message.payload ?? {});
-  const { head, rest } = truncate(text, COLLAPSE_THRESHOLD_CHARS);
-  const hasMore = rest.length > 0;
+  const rawSender = message.sender_kind ?? "system";
+  const senderId = message.sender_id ?? null;
+  const payloadKind: string = message.payload_kind ?? "";
+  const payload = message.payload ?? {};
+
+  const displaySender = resolveDisplaySender(rawSender, senderId);
+  const senderStyle = SENDER_STYLES[displaySender] ?? SENDER_FALLBACK;
+  const persona = personaStyle(personaVoice ?? null);
+  const pStyle = payloadStyle(payloadKind, payload);
+
+  const prose = useMemo(() => extractProse(payload), [payload]);
+  const toolName = useMemo(() => extractToolName(payload), [payload]);
+  const toolArgs = useMemo(() => extractToolArgs(payload), [payload]);
+  const toolReasoning = useMemo(() => {
+    const r = payload?.reasoning;
+    return typeof r === "string" && r.length > 0 ? r : null;
+  }, [payload]);
+  const rawJson = useMemo(() => jsonString(payload), [payload]);
+
+  /** Sender display label. Engine messages with a persona id show the
+   *  persona name; engine messages from tool_executor read as 'Tool';
+   *  auto_steering reads as 'Auto-Steering' (a system actor). */
+  const senderLabel = useMemo(() => {
+    if (rawSender === "operator" && senderId === "auto_steering") return "Auto-Steering";
+    if (persona && personaVoice) return personaVoice[0].toUpperCase() + personaVoice.slice(1);
+    if (rawSender === "engine" && senderId === "tool_executor") return "Tool Executor";
+    if (rawSender === "operator" && senderId && senderId !== "auto_steering") {
+      return senderId;
+    }
+    return senderStyle.label;
+  }, [rawSender, senderId, persona, personaVoice, senderStyle.label]);
+
+  /** Collapsed-state one-line preview. For tool calls we show the tool
+   *  name (the most useful identifier); otherwise the first sentence of
+   *  prose; otherwise a small slice of the JSON. */
+  const preview = useMemo(() => {
+    if (payloadKind === "tool_call" && toolName) return humanToolName(toolName);
+    if (payloadKind === "tool_result" && toolName && !prose) return `← ${humanToolName(toolName)}`;
+    if (prose) return firstSentence(prose, 140);
+    if (toolName) return humanToolName(toolName);
+    return rawJson.slice(0, 80).replace(/\s+/g, " ");
+  }, [payloadKind, toolName, prose, rawJson]);
+
+  const SenderIcon = senderStyle.Icon;
+  const PayloadIcon = pStyle.Icon;
+  const turnNum = message.at_turn ?? index + 1;
+  const showStructuredToolCall = payloadKind === "tool_call" && toolName !== null;
+  const showProseBody = prose !== null;
+  const fellBackToJson = !showStructuredToolCall && !showProseBody;
 
   return (
     <article
-      className="border border-border-default rounded-md bg-surface/40 overflow-hidden"
       id={`turn-${index}`}
+      className={`relative rounded-md border border-border-default border-l-4 ${senderStyle.border} ${senderStyle.bg} overflow-hidden`}
     >
       <header
-        className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border-default bg-surface/60 cursor-pointer hover:bg-surface select-none"
         onClick={() => setBodyOpen((v) => !v)}
+        className="flex items-center justify-between gap-3 px-3 py-2 cursor-pointer hover:bg-surface/40 select-none"
       >
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] font-mono text-text-muted">
-            {bodyOpen ? "▼" : "▶"} #{message.at_turn ?? index + 1}
-          </span>
-          <AilaBadge severity={senderTone} size="sm">
-            {sender}
-            {message.sender_id ? `:${message.sender_id}` : ""}
-          </AilaBadge>
-          {payloadKind && (
-            <AilaBadge severity={payloadTone} size="sm">
-              {payloadKind}
-            </AilaBadge>
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          {bodyOpen ? (
+            <CaretDown size={12} weight="bold" className="text-text-muted shrink-0" />
+          ) : (
+            <CaretRight size={12} weight="bold" className="text-text-muted shrink-0" />
           )}
+
+          {/* prominent turn number — primary scroll anchor */}
+          <span className="font-mono text-sm font-bold text-foreground tabular-nums shrink-0">
+            #{turnNum}
+          </span>
+
+          {/* persona avatar OR sender icon chip */}
+          {persona ? (
+            <span
+              aria-label={`Persona ${personaVoice ?? senderId}`}
+              className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full font-mono text-[11px] font-bold ${persona.bg} ${persona.text}`}
+            >
+              {persona.initial}
+            </span>
+          ) : (
+            <span
+              aria-hidden
+              className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-surface/70 text-text-muted border border-border-default"
+            >
+              <SenderIcon size={13} weight="duotone" />
+            </span>
+          )}
+
+          {/* sender display name */}
+          <span className="text-xs font-medium text-foreground shrink-0">
+            {senderLabel}
+          </span>
+
+          {/* payload kind chip — only when non-default */}
+          {pStyle.label && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-text-muted shrink-0">
+              {PayloadIcon && (
+                <PayloadIcon size={11} weight="fill" className={pStyle.iconClass} />
+              )}
+              {pStyle.label}
+            </span>
+          )}
+
+          {/* operator intent — only on operator turns */}
           {message.operator_intent && (
             <AilaBadge severity="info" size="sm">
-              intent: {message.operator_intent}
+              {message.operator_intent.replace(/_/g, " ")}
             </AilaBadge>
           )}
-          {!bodyOpen && text && (
-            <span className="text-[10px] font-mono text-text-muted truncate max-w-md">
-              {text.slice(0, 80).replace(/\s+/g, " ")}
+
+          {/* collapsed-state preview */}
+          {!bodyOpen && preview && (
+            <span className="text-xs text-text-muted truncate min-w-0 italic">
+              {preview}
             </span>
           )}
         </div>
-        <span className="text-[10px] font-mono text-text-muted whitespace-nowrap">
+
+        <span
+          className="text-[10px] font-mono text-text-muted whitespace-nowrap shrink-0"
+          title={fullTimestamp(message.created_at)}
+        >
           {formatRelative(message.created_at)}
         </span>
       </header>
 
       {bodyOpen && (
-
-      <div className="px-3 py-2">
-        <pre className="text-xs font-mono whitespace-pre-wrap text-foreground leading-relaxed break-words">
-          {expanded ? text : head}
-          {hasMore && !expanded && (
-            <span className="text-text-muted">… ({rest.length} more)</span>
+        <div className="px-3 pb-3 pt-2 space-y-2 border-t border-border-default/60 bg-surface/20">
+          {/* Structured tool_call rendering */}
+          {showStructuredToolCall && (
+            <ToolCallBody name={toolName!} args={toolArgs} reasoning={toolReasoning} />
           )}
-        </pre>
+
+          {/* Prose body — sans-serif, NOT monospace */}
+          {showProseBody && (
+            <ProseBody
+              text={prose!}
+              expanded={expanded}
+              onToggleExpanded={() => setExpanded((v) => !v)}
+            />
+          )}
+
+          {/* Fallback: raw JSON when there's neither prose nor a tool name */}
+          {fellBackToJson && (
+            <pre className="text-xs font-mono whitespace-pre-wrap text-foreground leading-relaxed break-words bg-surface/40 rounded p-2 border border-border-default/50">
+              {expanded || rawJson.length <= COLLAPSE_THRESHOLD_CHARS
+                ? rawJson
+                : rawJson.slice(0, COLLAPSE_THRESHOLD_CHARS) + "\n…"}
+            </pre>
+          )}
+          {fellBackToJson && rawJson.length > COLLAPSE_THRESHOLD_CHARS && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground"
+            >
+              {expanded ? "collapse" : `expand (+${rawJson.length - COLLAPSE_THRESHOLD_CHARS} chars)`}
+            </button>
+          )}
+
+          {/* Raw payload disclosure — only when prose/structured body was shown */}
+          {(showStructuredToolCall || showProseBody) && (
+            <details
+              open={rawOpen}
+              onToggle={(e) => setRawOpen((e.currentTarget as HTMLDetailsElement).open)}
+            >
+              <summary className="cursor-pointer text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground select-none">
+                Raw payload
+              </summary>
+              <pre className="mt-1 text-[11px] font-mono whitespace-pre-wrap text-text-muted leading-relaxed break-words bg-surface/40 rounded p-2 border border-border-default/50">
+                {rawJson}
+              </pre>
+            </details>
+          )}
+
+          {/* Evidence refs */}
+          {message.evidence_refs && message.evidence_refs.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="text-[10px] uppercase tracking-wider text-text-muted">
+                evidence
+              </span>
+              {message.evidence_refs.map((ref) => (
+                <span
+                  key={ref}
+                  className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface border border-border-default text-text-muted"
+                >
+                  {ref}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+// ─── Sub-renderers ─────────────────────────────────────────────────────
+
+// Voice patterns in reasoning text: "RESEARCHER (Halvar):", "🔬 RESEARCHER (Halvar):", "🗡 CRITIC (Maddie):", etc.
+const VOICE_SECTION_RE = /(?:^|\n)(?:[\u{1F300}-\u{1FAD6}\u{2694}\u{1F52C}\u{2699}\u{1F6E0}]\s*)?(?:RESEARCHER|CRITIC|IMPLEMENTER)\s*\([^)]+\)\s*:/gu;
+
+interface VoiceSection {
+  role: "researcher" | "critic" | "implementer" | "unknown";
+  name: string;
+  text: string;
+}
+
+const VOICE_COLORS: Record<string, { border: string; label: string; bg: string }> = {
+  researcher: { border: "border-l-cyan-500/60", label: "text-cyan-400", bg: "bg-cyan-500/5" },
+  critic:     { border: "border-l-amber-500/60", label: "text-amber-400", bg: "bg-amber-500/5" },
+  implementer:{ border: "border-l-emerald-500/60", label: "text-emerald-400", bg: "bg-emerald-500/5" },
+  unknown:    { border: "border-l-gray-500/40", label: "text-gray-400", bg: "bg-gray-500/5" },
+};
+
+function parseVoiceSections(text: string): VoiceSection[] | null {
+  const markers: { index: number; role: string; name: string }[] = [];
+  const re = new RegExp(VOICE_SECTION_RE.source, "gu");
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    const full = match[0].trim();
+    const roleMatch = full.match(/(?:RESEARCHER|CRITIC|IMPLEMENTER)/i);
+    const nameMatch = full.match(/\(([^)]+)\)/);
+    if (roleMatch) {
+      markers.push({
+        index: match.index,
+        role: roleMatch[0].toLowerCase(),
+        name: nameMatch?.[1] ?? roleMatch[0],
+      });
+    }
+  }
+  if (markers.length < 2) return null; // not multi-voice, render as-is
+
+  const sections: VoiceSection[] = [];
+  for (let i = 0; i < markers.length; i++) {
+    const start = text.indexOf(":", markers[i].index) + 1;
+    const end = i + 1 < markers.length ? markers[i + 1].index : text.length;
+    const sectionText = text.slice(start, end).trim();
+    const role = (["researcher", "critic", "implementer"].includes(markers[i].role)
+      ? markers[i].role
+      : "unknown") as VoiceSection["role"];
+    sections.push({ role, name: markers[i].name, text: sectionText });
+  }
+
+  // Any preamble before the first voice marker
+  if (markers[0].index > 0) {
+    const preamble = text.slice(0, markers[0].index).trim();
+    if (preamble.length > 10) {
+      sections.unshift({ role: "unknown", name: "Context", text: preamble });
+    }
+  }
+
+  return sections;
+}
+
+function ToolCallBody({
+  name,
+  args,
+  reasoning,
+}: {
+  name: string;
+  args: Record<string, unknown> | null;
+  reasoning: string | null;
+}) {
+  const entries = args ? Object.entries(args) : [];
+  const [reasoningOpen, setReasoningOpen] = useState(false);
+  const voiceSections = useMemo(
+    () => (reasoning ? parseVoiceSections(reasoning) : null),
+    [reasoning],
+  );
+  return (
+    <div className="space-y-2">
+      {/* Tool invocation — always visible */}
+      <div className="flex items-center gap-2 flex-wrap px-2 py-1.5 rounded bg-emerald-500/8 border border-emerald-500/20">
+        <Terminal size={14} weight="fill" className="text-emerald-400 shrink-0" />
+        <code className="font-mono text-sm text-foreground font-medium break-all">
+          {name}
+        </code>
+      </div>
+      {entries.length > 0 && (
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs items-baseline px-2">
+          {entries.map(([k, v]) => (
+            <Fragment key={k}>
+              <dt className="font-mono text-text-muted">{k}</dt>
+              <dd className="font-mono text-foreground break-all whitespace-pre-wrap">
+                {formatArgValue(v)}
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+
+      {/* Reasoning — collapsible, with voice parsing */}
+      {reasoning && reasoning.length > 20 && (
+        <details
+          open={reasoningOpen}
+          onToggle={(e) => setReasoningOpen((e.currentTarget as HTMLDetailsElement).open)}
+        >
+          <summary className="cursor-pointer text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground select-none flex items-center gap-1">
+            <ChatTeardropDots size={12} weight="duotone" />
+            Deliberation ({voiceSections ? `${voiceSections.length} voices` : `${reasoning.length} chars`})
+          </summary>
+          <div className="mt-2 space-y-1.5">
+            {voiceSections ? (
+              voiceSections.map((section, i) => {
+                const vc = VOICE_COLORS[section.role] ?? VOICE_COLORS.unknown;
+                return (
+                  <div
+                    key={i}
+                    className={`border-l-2 ${vc.border} ${vc.bg} rounded-r px-3 py-2`}
+                  >
+                    <div className={`text-[10px] font-mono uppercase tracking-wider ${vc.label} mb-1`}>
+                      {section.role} · {section.name}
+                    </div>
+                    <div className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed break-words">
+                      {section.text}
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed break-words bg-surface/30 rounded p-2">
+                {reasoning}
+              </div>
+            )}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function ProseBody({
+  text,
+  expanded,
+  onToggleExpanded,
+}: {
+  text: string;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+}) {
+  const long = text.length > COLLAPSE_THRESHOLD_CHARS;
+  const voiceSections = useMemo(() => parseVoiceSections(text), [text]);
+
+  // If we detected multi-voice sections, render them structured
+  if (voiceSections) {
+    const shown = expanded ? voiceSections : voiceSections.slice(0, 3);
+    const hasMore = voiceSections.length > 3 && !expanded;
+    return (
+      <div className="space-y-1.5">
+        {shown.map((section, i) => {
+          const vc = VOICE_COLORS[section.role] ?? VOICE_COLORS.unknown;
+          return (
+            <div
+              key={i}
+              className={`border-l-2 ${vc.border} ${vc.bg} rounded-r px-3 py-2`}
+            >
+              <div className={`text-[10px] font-mono uppercase tracking-wider ${vc.label} mb-1`}>
+                {section.role} · {section.name}
+              </div>
+              <div className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed break-words">
+                {section.text}
+              </div>
+            </div>
+          );
+        })}
         {hasMore && (
           <button
             type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="mt-1 text-[10px] font-mono text-text-muted hover:text-foreground underline-offset-2 hover:underline"
+            onClick={onToggleExpanded}
+            className="text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground"
           >
-            {expanded ? "collapse" : "expand"}
+            +{voiceSections.length - 3} more voices
           </button>
         )}
-        {message.evidence_refs && message.evidence_refs.length > 0 && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] uppercase tracking-wide text-text-muted">
-              evidence:
-            </span>
-            {message.evidence_refs.map((ref) => (
-              <span
-                key={ref}
-                className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface border border-border-default text-text-muted"
-              >
-                {ref}
-              </span>
-            ))}
-          </div>
+      </div>
+    );
+  }
+
+  // Single-voice fallback — render as readable prose
+  const shown = !long || expanded ? text : text.slice(0, COLLAPSE_THRESHOLD_CHARS);
+  return (
+    <div>
+      <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed break-words">
+        {shown}
+        {long && !expanded && (
+          <span className="text-text-muted">
+            {" "}… (+{text.length - COLLAPSE_THRESHOLD_CHARS} chars)
+          </span>
         )}
       </div>
+      {long && (
+        <button
+          type="button"
+          onClick={onToggleExpanded}
+          className="mt-1 text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground"
+        >
+          {expanded ? "collapse" : "expand"}
+        </button>
       )}
-    </article>
+    </div>
   );
 }

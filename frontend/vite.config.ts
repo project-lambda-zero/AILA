@@ -10,6 +10,9 @@ const repoRoot = path.resolve(currentDirectory, "..");
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
+  optimizeDeps: {
+    include: ["ogl"],
+  },
   resolve: {
     alias: [
       { find: /^@\//, replacement: path.resolve(currentDirectory, "src/") + "/" },

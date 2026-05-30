@@ -98,3 +98,6 @@ swiftly-*.tar.gz
 .live_*.pdf
 .test_*.pdf
 .pre-filter-head.txt
+.agents/
+.codex/
+tmpollama-installer.exe

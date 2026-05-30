@@ -1323,13 +1323,19 @@ def _render_sibling_context_section(
     lines: list[str] = [
         "# Sibling deliberations (other personas reasoning in parallel)",
         "",
-        f"You are the **{this_persona or 'primary'}** voice. Two other "
+        f"You are the **{this_persona or 'primary'}** voice. Other "
         f"persona branches are reasoning about this SAME investigation in "
         f"parallel, each driven by a different LLM routing. Their latest "
         f"state is below. Your turn MUST react: agree with evidence, "
         f"counter with new evidence, or escalate by spawning a tool call "
         f"that settles a disagreement. Silently ignoring sibling "
         f"hypotheses defeats the deliberation.",
+        "",
+        f"**IMPORTANT: speak ONLY as {this_persona or 'yourself'}. "
+        f"Do NOT write text as other personas. Do NOT prefix your output "
+        f"with role headers like 'RESEARCHER (name):' or 'CRITIC (name):'. "
+        f"Your output is YOUR voice alone — reference siblings by name "
+        f"('Maddie argues...', 'Halvar claims...') but do not simulate them.**",
         "",
     ]
     for s in siblings:
