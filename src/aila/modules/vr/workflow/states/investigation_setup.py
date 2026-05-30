@@ -345,36 +345,80 @@ async def _spawn_persona_siblings_and_enqueue(
     primary_branch_id: str,
     team_id: str | None,
 ) -> None:
-    """Fork one sibling branch per persona in _DELIBERATION_SIBLINGS and
-    enqueue a separate run_vr_investigate task for each. Each sibling
-    runs its own setup→loop→emit chain against its assigned branch_id,
-    so each persona reasons with its own task_type-routed LLM in
-    parallel with the primary researcher branch.
+    """Fork one sibling branch per persona and enqueue tasks.
 
-    Idempotent: if siblings with the configured personas already exist
-    on this investigation (e.g. re-enqueue after a transient failure),
-    skip the spawn for that persona but still re-enqueue its task so
-    work resumes.
+    Searches ALL branches of the investigation by persona_voice — not
+    just children of the current primary. This survives re-enqueue:
+
+    - Persona has a branch with turns → reuse it, enqueue task to continue
+    - Persona has abandoned/0-turn branch → reactivate it, enqueue task
+    - Persona has no branch at all → fork a new one
+
+    This prevents branch accumulation across re-enqueues (the bug where
+    each re-enqueue added 6 new branches because parent_branch_id changed).
     """
     from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
     from aila.modules.vr.agents.branch_manager import BranchManager  # noqa: PLC0415
     from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
 
+    # Find ALL branches for this investigation, keyed by persona
     async with UnitOfWork() as uow:
-        existing = (await uow.session.exec(
+        all_branches = (await uow.session.exec(
             _select(VRInvestigationBranchRecord).where(
                 VRInvestigationBranchRecord.investigation_id == investigation_id,
-                VRInvestigationBranchRecord.parent_branch_id == primary_branch_id,
             )
         )).all()
-        existing_by_persona = {b.persona_voice: b for b in existing if b.persona_voice}
+
+        # Group by persona — pick the one with the most turns
+        best_by_persona: dict[str, VRInvestigationBranchRecord] = {}
+        for b in all_branches:
+            if not b.persona_voice:
+                continue
+            existing = best_by_persona.get(b.persona_voice)
+            if existing is None or b.turn_count > existing.turn_count:
+                best_by_persona[b.persona_voice] = b
+
+        # Reactivate best branch per persona, ABANDON duplicates
+        for b in all_branches:
+            if not b.persona_voice:
+                continue
+            best = best_by_persona.get(b.persona_voice)
+            if best is None:
+                continue
+            if b.id == best.id:
+                # This is the winner — reactivate if needed
+                if b.status in ("abandoned", "completed"):
+                    b.status = "active"
+                    b.closed_reason = ""
+                    b.closed_at = None
+                    uow.session.add(b)
+                    _log.info(
+                        "auto_deliberation: reactivated %s branch %s (turns=%d)",
+                        b.persona_voice, b.id, b.turn_count,
+                    )
+            else:
+                # This is a duplicate — abandon it
+                if b.status not in ("abandoned",):
+                    b.status = "abandoned"
+                    b.closed_reason = "duplicate_persona_cleanup"
+                    b.closed_at = utc_now()
+                    uow.session.add(b)
+                    _log.info(
+                        "auto_deliberation: abandoned duplicate %s branch %s (turns=%d, keeping %s)",
+                        b.persona_voice, b.id, b.turn_count, best.id,
+                    )
+        await uow.commit()
 
     manager = BranchManager(investigation_id)
     task_queue = default_task_queue()
     enqueued: list[str] = []
     for persona in _DELIBERATION_SIBLINGS:
-        sibling = existing_by_persona.get(persona.value)
-        if sibling is None:
+        existing_branch = best_by_persona.get(persona.value)
+        if existing_branch is not None:
+            # Reuse existing branch — continue from where it left off
+            sibling_branch_id = existing_branch.id
+        else:
+            # No branch for this persona — fork a new one
             try:
                 op = await manager.fork(
                     primary_branch_id,
@@ -389,8 +433,6 @@ async def _spawn_persona_siblings_and_enqueue(
                     persona.value, exc,
                 )
                 continue
-        else:
-            sibling_branch_id = sibling.id
 
         try:
             await task_queue.submit(
