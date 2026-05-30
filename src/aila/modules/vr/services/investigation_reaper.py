@@ -34,12 +34,13 @@ __all__ = ["reap_stuck_investigations"]
 _log = logging.getLogger(__name__)
 
 # Minimum age before we consider an investigation orphaned.
-# Prevents false positives on investigations that just finished their
-# last task but haven't been status-flipped by investigation_emit yet.
-_ORPHAN_GRACE_MINUTES = 10
+# Must be long enough for sibling tasks to queue + start. With 6 personas
+# and a deep queue (100+ tasks), siblings can wait hours. 2-hour grace
+# prevents false positives that prematurely mark investigations as failed.
+_ORPHAN_GRACE_MINUTES = 120
 
 # Minimum age before a 0-turn branch is considered stale.
-_STALE_BRANCH_HOURS = 2
+_STALE_BRANCH_HOURS = 4
 
 
 async def reap_stuck_investigations() -> int:
@@ -80,6 +81,20 @@ async def _fix_orphan_investigations() -> int:
 
             if active_task is not None:
                 continue  # legit — task is still working
+
+            # Also check if any task completed RECENTLY (within 30 min).
+            # A task that just finished may trigger synthesis/verification
+            # tasks that haven't been enqueued yet.
+            recent_done = (await session.exec(
+                select(TaskRecord.id).where(
+                    TaskRecord.status == "done",
+                    TaskRecord.kwargs_json.contains(inv.id),  # type: ignore[union-attr]
+                    TaskRecord.completed_at > (now - timedelta(minutes=30)),  # type: ignore[operator]
+                ).limit(1)
+            )).first()
+
+            if recent_done is not None:
+                continue  # task just finished — give downstream time to enqueue
 
             # No active task. Check if it has outcomes to decide status.
             from aila.modules.vr.db_models import VRInvestigationOutcomeRecord  # noqa: PLC0415
