@@ -764,55 +764,27 @@ export function InvestigationDetailPage() {
           </div>
         </div>
 
-        {/* 4-up KPI grid */}
-        <div className="mt-4 grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <KpiTile
-            label="Branches"
-            value={inv.branch_count}
-            icon={<TreeStructure weight="fill" />}
-            tone="accent"
-          />
-          <KpiTile
-            label="Messages"
-            value={inv.message_count}
-            icon={<ChatCircleText weight="fill" />}
-            tone="neutral"
-          />
-          <KpiTile
-            label="Outcomes"
-            value={inv.outcome_count}
-            icon={<Target weight="fill" />}
-            tone={inv.outcome_count > 0 ? "ok" : "neutral"}
-          />
-          <KpiTile
-            label="Est. Tokens"
-            value={`~${((inv.message_count * 28) / 1000).toFixed(0)}K`}
-            hint={`${inv.message_count} turns × ~28K avg`}
-            icon={<Lightning weight="fill" />}
-            tone="neutral"
-          />
-        </div>
-
-        {/* Usage breakdown */}
-        <div className="mt-4 pt-4 border-t border-border-default">
-          <dl className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-            <div>
-              <dt className="text-text-muted">Total turns</dt>
-              <dd className="font-mono text-foreground mt-0.5">{inv.message_count.toLocaleString()}</dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">Est. tokens</dt>
-              <dd className="font-mono text-foreground mt-0.5">~{((inv.message_count * 28000) / 1_000_000).toFixed(1)}M</dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">Branches</dt>
-              <dd className="font-mono text-foreground mt-0.5">{inv.branch_count}</dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">Outcomes</dt>
-              <dd className="font-mono text-foreground mt-0.5">{inv.outcome_count}</dd>
-            </div>
-          </dl>
+        {/* Compact stats row — no giant KPI boxes, no duplication */}
+        <div className="mt-3 flex items-center gap-4 flex-wrap text-xs font-mono text-text-muted">
+          <span className="inline-flex items-center gap-1.5">
+            <TreeStructure weight="fill" size={13} className="text-accent" />
+            <span className="text-foreground font-semibold">{inv.branch_count}</span> branches
+          </span>
+          <span className="w-px h-3 bg-border-default" />
+          <span className="inline-flex items-center gap-1.5">
+            <ChatCircleText weight="fill" size={13} className="text-text-muted" />
+            <span className="text-foreground font-semibold">{inv.message_count.toLocaleString()}</span> turns
+          </span>
+          <span className="w-px h-3 bg-border-default" />
+          <span className="inline-flex items-center gap-1.5">
+            <Lightning weight="fill" size={13} className="text-text-muted" />
+            ~<span className="text-foreground font-semibold">{((inv.message_count * 28000) / 1_000_000).toFixed(1)}M</span> tokens
+          </span>
+          <span className="w-px h-3 bg-border-default" />
+          <span className="inline-flex items-center gap-1.5">
+            <Target weight="fill" size={13} className={inv.outcome_count > 0 ? "text-emerald-400" : "text-text-muted"} />
+            <span className="text-foreground font-semibold">{inv.outcome_count}</span> outcomes
+          </span>
         </div>
       </AilaCard>
 
