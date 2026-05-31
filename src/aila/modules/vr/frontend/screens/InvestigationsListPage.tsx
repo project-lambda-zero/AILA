@@ -4,12 +4,10 @@ import {
   Plus,
   MagnifyingGlass,
   ArrowRight,
-  Pulse,
   Briefcase,
   Bug,
   Lightning,
   ShieldCheck,
-  ShieldWarning,
   Star,
   X,
   CaretLeft,
@@ -25,7 +23,6 @@ import {
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
-import { KpiTile } from "@/components/aila/KpiTile";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
@@ -569,54 +566,61 @@ export function InvestigationsListPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* KPI hero */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <KpiTile
-          label="Total"
-          value={totalRaw}
-          hint="across all targets"
-          icon={<Briefcase weight="duotone" />}
-          tone="accent"
-        />
-        <KpiTile
-          label="Running"
-          value={kpis.running}
-          hint={kpis.running === 0 ? "all idle" : "engine active"}
-          icon={<Pulse weight="duotone" />}
-          tone={kpis.running > 0 ? "ok" : "neutral"}
-        />
-        <KpiTile
-          label="With findings"
-          value={kpis.withFindings}
-          hint={
-            kpis.withFindings > 0
-              ? `${kpis.withFindings} confirmed`
-              : "none verified"
-          }
-          icon={<Bug weight="duotone" />}
-          tone={kpis.withFindings > 0 ? "crit" : "neutral"}
-        />
-        <KpiTile
-          label="Est. tokens"
-          value={kpis.estTokensM >= 1000 ? `${(kpis.estTokensM / 1000).toFixed(1)}B` : `${kpis.estTokensM.toFixed(0)}M`}
-          hint={`${kpis.totalMessages.toLocaleString()} total turns`}
-          icon={<Lightning weight="duotone" />}
-          tone="neutral"
-        />
-        <KpiTile
-          label="Verdicts"
-          value={`${kpis.confirmed}/${kpis.refuted}`}
-          hint={
-            <span className="font-mono">
-              <span style={{ color: "#97dbbe" }}>{kpis.confirmed} confirmed</span>
-              <span className="text-text-muted/60"> · </span>
-              <span style={{ color: "#f0a8c7" }}>{kpis.refuted} refuted</span>
+      {/* Stats bar — compact inline, no boxes */}
+      <AilaCard techBorder glow padding="sm">
+        <div className="flex items-center justify-between gap-6 flex-wrap">
+          <div className="flex items-center gap-5 flex-wrap">
+            <span className="inline-flex items-center gap-2 text-sm">
+              <Briefcase weight="fill" size={16} className="text-accent" />
+              <span className="font-mono font-bold text-foreground text-lg">{totalRaw}</span>
+              <span className="text-text-muted text-xs">investigations</span>
             </span>
-          }
-          icon={kpis.refuted > kpis.confirmed ? <ShieldWarning weight="duotone" /> : <ShieldCheck weight="duotone" />}
-          tone={kpis.refuted > kpis.confirmed ? "warn" : "ok"}
-        />
-      </div>
+            <span className="w-px h-5 bg-border-default" />
+            <span className="inline-flex items-center gap-1.5 text-sm">
+              <span
+                className="w-2 h-2 rounded-full"
+                style={{
+                  background: kpis.running > 0 ? "#97dbbe" : "#9aa0a6",
+                  boxShadow: kpis.running > 0 ? "0 0 6px #97dbbe" : "none",
+                }}
+              />
+              <span className="font-mono font-semibold text-foreground">{kpis.running}</span>
+              <span className="text-text-muted text-xs">running</span>
+            </span>
+            <span className="w-px h-5 bg-border-default" />
+            <span className="inline-flex items-center gap-1.5 text-sm">
+              <Bug weight="fill" size={14} className={kpis.withFindings > 0 ? "text-emerald-400" : "text-text-muted"} />
+              <span className="font-mono font-semibold text-foreground">{kpis.withFindings}</span>
+              <span className="text-text-muted text-xs">with findings</span>
+            </span>
+            <span className="w-px h-5 bg-border-default" />
+            <span className="inline-flex items-center gap-1.5 text-sm">
+              <Lightning weight="fill" size={14} className="text-text-muted" />
+              <span className="font-mono font-semibold text-foreground">
+                {kpis.estTokensM >= 1000 ? `${(kpis.estTokensM / 1000).toFixed(1)}B` : `${kpis.estTokensM.toFixed(0)}M`}
+              </span>
+              <span className="text-text-muted text-xs">tokens</span>
+            </span>
+            {(kpis.confirmed > 0 || kpis.refuted > 0) && (
+              <>
+                <span className="w-px h-5 bg-border-default" />
+                <span className="inline-flex items-center gap-1.5 text-sm">
+                  <ShieldCheck weight="fill" size={14} className="text-emerald-400" />
+                  <span className="font-mono text-xs">
+                    <span style={{ color: "#97dbbe" }}>{kpis.confirmed}</span>
+                    <span className="text-text-muted/60"> / </span>
+                    <span style={{ color: "#f0a8c7" }}>{kpis.refuted}</span>
+                  </span>
+                  <span className="text-text-muted text-xs">verdicts</span>
+                </span>
+              </>
+            )}
+          </div>
+          <span className="text-[11px] font-mono text-text-muted">
+            {kpis.totalMessages.toLocaleString()} total turns
+          </span>
+        </div>
+      </AilaCard>
 
       {/* Create form */}
       {showForm && (
