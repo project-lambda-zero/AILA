@@ -429,26 +429,26 @@ export function TurnCard({
       {bodyOpen && (
         <div className="px-3 pb-3 pt-2 space-y-2 border-t border-border-default/60 bg-surface/20">
           {/* Structured tool_call rendering */}
-          {showStructuredToolCall && (
+          {showStructuredToolCall ? (
             <ToolCallBody name={toolName!} args={toolArgs} reasoning={toolReasoning} />
-          )}
+          ) : null}
 
           {/* Prose body — sans-serif, NOT monospace */}
-          {showProseBody && (
+          {showProseBody ? (
             <ProseBody
               text={prose!}
               expanded={expanded}
               onToggleExpanded={() => setExpanded((v) => !v)}
             />
-          )}
+          ) : null}
 
           {/* Source/decompiled function — structured code viewer */}
-          {fellBackToJson && payload.pseudocode && (
+          {fellBackToJson && Boolean(payload.pseudocode) && (
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-xs">
                 <FileCode size={14} weight="fill" className="text-violet-400" />
                 <span className="font-mono text-foreground font-medium">{String(payload.function_name || payload.name || "")}</span>
-                {payload.address && (
+                {Boolean(payload.address) && (
                   <span className="text-text-muted font-mono text-[10px]">{String(payload.address)}</span>
                 )}
               </div>
@@ -467,7 +467,7 @@ export function TurnCard({
           )}
 
           {/* Error message — styled error box */}
-          {fellBackToJson && !payload.pseudocode && payload.is_error && (
+          {fellBackToJson && !payload.pseudocode && Boolean(payload.is_error) && (
             <div className="flex items-start gap-2 px-3 py-2 rounded-md border border-red-500/30 bg-red-500/8">
               <XCircle size={14} weight="fill" className="text-red-400 shrink-0 mt-0.5" />
               <p className="text-xs text-red-300/90 break-words">{String(payload.text || payload.error || rawJson)}</p>
@@ -475,9 +475,9 @@ export function TurnCard({
           )}
 
           {/* Search results / tool output with chunks */}
-          {fellBackToJson && !payload.pseudocode && !payload.is_error && (payload.chunks_text || payload.match_count != null) && (
+          {fellBackToJson && !payload.pseudocode && !payload.is_error && (Boolean(payload.chunks_text) || payload.match_count != null) && (
             <div className="space-y-1.5">
-              {payload.tool && (
+              {Boolean(payload.tool) && (
                 <div className="flex items-center gap-2 text-xs">
                   <Terminal size={14} weight="fill" className="text-emerald-400" />
                   <span className="font-mono text-foreground font-medium">{humanToolName(String(payload.tool))}</span>
