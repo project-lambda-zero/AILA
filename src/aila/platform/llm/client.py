@@ -743,11 +743,22 @@ class AilaLLMClient:
                     # Non-retryable LLM errors (ClassificationBlockedError, etc.)
                     raise
             except Exception as exc:
-                # Permanent error -- surface immediately
-                raise LLMError(
-                    f"LLM API error: {exc}",
-                    retryable=False,
-                ) from exc
+                # ALL provider errors are transient — 500, 502, 503,
+                # connection reset, timeout, DNS failure, etc. The only
+                # non-retryable errors are LLMError(retryable=False)
+                # which are caught above (classification blocks, schema
+                # violations). Everything else gets retried.
+                last_error = exc
+                delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
+                logger.warning(
+                    "LLM provider error (attempt %d/%d): %s: %s -- retrying in %.1fs",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    type(exc).__name__,
+                    str(exc)[:200],
+                    delay,
+                )
+                await asyncio.sleep(delay)
 
         raise LLMError(
             f"LLM API failed after {_MAX_RETRIES} retries: {last_error}",

@@ -53,8 +53,12 @@ _OVERALL_TURN_CAP = int(__import__("os").environ.get("VR_OVERALL_TURN_CAP", "500
 def _resolve_final_status(exit_reason: str) -> str | None:
     """Pick the final InvestigationStatus given the loop's exit reason.
 
-    Returns None when the status should NOT be touched (operator paused —
-    we don't auto-flip back to RUNNING here).
+    Returns None when the status should NOT be touched — the investigation
+    stays RUNNING so sibling branches can continue. Only terminal_submit
+    with no active siblings sets COMPLETED (handled in state_investigation_emit
+    body, not here). researcher_error returns None so the branch fails
+    silently without killing the whole investigation — other branches
+    continue, and auto_continue re-enqueues this branch.
     """
     if exit_reason == "terminal_submit":
         return InvestigationStatus.COMPLETED.value
@@ -62,14 +66,12 @@ def _resolve_final_status(exit_reason: str) -> str | None:
         return InvestigationStatus.COMPLETED.value
     if exit_reason.startswith("status_flipped:"):
         return None
-    if exit_reason.startswith("researcher_error_retryable:"):
-        # Transient LLM failure (rate limit, provider overload, network) —
-        # don't mark FAILED. _should_auto_continue handles re-enqueueing.
+    if exit_reason.startswith("researcher_error"):
+        # ALL researcher errors (retryable or not) leave status untouched.
+        # A single branch hitting a provider 500 should NOT kill the
+        # entire investigation. auto_continue will re-enqueue the branch.
         return None
-    if exit_reason.startswith("researcher_error:"):
-        return InvestigationStatus.FAILED.value
     return InvestigationStatus.COMPLETED.value
-
 
 async def _should_auto_continue(
     investigation_id: str,
@@ -88,8 +90,8 @@ async def _should_auto_continue(
     sibling auto-continue then enqueued without branch_id → setup
     defaulted to primary → siblings starved.
     """
-    is_retryable_failure = exit_reason.startswith("researcher_error_retryable:")
-    if (exit_reason != "max_turns" and not is_retryable_failure) or outcome_id is not None:
+    is_any_researcher_error = exit_reason.startswith("researcher_error")
+    if (exit_reason != "max_turns" and not is_any_researcher_error) or outcome_id is not None:
         return False, 0
     async with UnitOfWork() as uow:
         if branch_id:
