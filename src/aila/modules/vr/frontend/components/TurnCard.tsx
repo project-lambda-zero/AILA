@@ -20,6 +20,7 @@ import {
 } from "@phosphor-icons/react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
+import { CodeBlock } from "./CodeBlock";
 
 import type { VRMessageSummary } from "../types";
 
@@ -444,26 +445,11 @@ export function TurnCard({
 
           {/* Source/decompiled function — structured code viewer */}
           {fellBackToJson && Boolean(payload.pseudocode) && (
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2 text-xs">
-                <FileCode size={14} weight="fill" className="text-violet-400" />
-                <span className="font-mono text-foreground font-medium">{String(payload.function_name || payload.name || "")}</span>
-                {Boolean(payload.address) && (
-                  <span className="text-text-muted font-mono text-[10px]">{String(payload.address)}</span>
-                )}
-              </div>
-              <pre className="text-[11px] font-mono whitespace-pre-wrap text-foreground/90 leading-relaxed break-words bg-elevated/60 rounded p-2.5 border border-border-default/40 overflow-x-auto">
-                {expanded || String(payload.pseudocode).length <= COLLAPSE_THRESHOLD_CHARS
-                  ? String(payload.pseudocode)
-                  : String(payload.pseudocode).slice(0, COLLAPSE_THRESHOLD_CHARS) + "\n…"}
-              </pre>
-              {String(payload.pseudocode).length > COLLAPSE_THRESHOLD_CHARS && (
-                <button type="button" onClick={() => setExpanded((v) => !v)}
-                  className="text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground">
-                  {expanded ? "collapse" : `expand (+${String(payload.pseudocode).length - COLLAPSE_THRESHOLD_CHARS} chars)`}
-                </button>
-              )}
-            </div>
+            <CodeBlock
+              code={String(payload.pseudocode)}
+              filePath={String(payload.function_name || "")}
+              address={String(payload.address || "")}
+            />
           )}
 
           {/* Error message — styled error box */}
@@ -486,17 +472,10 @@ export function TurnCard({
                   )}
                 </div>
               )}
-              <pre className="text-[11px] font-mono whitespace-pre-wrap text-foreground/80 leading-relaxed break-words bg-elevated/60 rounded p-2.5 border border-border-default/40 overflow-x-auto">
-                {expanded || String(payload.chunks_text || "").length <= COLLAPSE_THRESHOLD_CHARS
-                  ? String(payload.chunks_text || rawJson)
-                  : String(payload.chunks_text || "").slice(0, COLLAPSE_THRESHOLD_CHARS) + "\n…"}
-              </pre>
-              {String(payload.chunks_text || "").length > COLLAPSE_THRESHOLD_CHARS && (
-                <button type="button" onClick={() => setExpanded((v) => !v)}
-                  className="text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground">
-                  {expanded ? "collapse" : "expand"}
-                </button>
-              )}
+              <CodeBlock
+                code={String(payload.chunks_text || rawJson)}
+                filePath={String(payload.query || "")}
+              />
             </div>
           )}
 
