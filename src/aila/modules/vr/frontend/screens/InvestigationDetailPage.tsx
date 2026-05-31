@@ -785,56 +785,32 @@ export function InvestigationDetailPage() {
             tone={inv.outcome_count > 0 ? "ok" : "neutral"}
           />
           <KpiTile
-            label="Cost"
-            value={fmtUsd(inv.cost_actual_usd)}
-            hint={inv.cost_budget_usd > 0 ? `of ${fmtUsd(inv.cost_budget_usd)} budget` : "no budget set"}
-            icon={<CurrencyDollar weight="fill" />}
-            tone={
-              inv.cost_budget_usd > 0 && inv.cost_actual_usd / inv.cost_budget_usd >= 0.8
-                ? "warn"
-                : "neutral"
-            }
+            label="Est. Tokens"
+            value={`~${((inv.message_count * 28) / 1000).toFixed(0)}K`}
+            hint={`${inv.message_count} turns × ~28K avg`}
+            icon={<Lightning weight="fill" />}
+            tone="neutral"
           />
         </div>
 
-        {/* Cost progress + breakdown */}
-        <div className="mt-4 pt-4 border-t border-border-default space-y-3">
-          <div>
-            <div className="flex items-center justify-between gap-2 mb-1.5">
-              <span className="text-[10px] font-mono uppercase tracking-[0.14em] text-text-muted">
-                Budget used
-              </span>
-              <span className="text-xs font-mono text-foreground tabular-nums">
-                {fmtUsd(inv.cost_actual_usd)}{" "}
-                <span className="text-text-muted">/ {fmtUsd(inv.cost_budget_usd)}</span>
-                {inv.cost_budget_usd > 0 && (
-                  <span className="ml-2 text-text-muted">
-                    ({((inv.cost_actual_usd / inv.cost_budget_usd) * 100).toFixed(0)}%)
-                  </span>
-                )}
-              </span>
-            </div>
-            <CostProgressBar
-              actual={inv.cost_actual_usd}
-              budget={inv.cost_budget_usd}
-            />
-          </div>
+        {/* Usage breakdown */}
+        <div className="mt-4 pt-4 border-t border-border-default">
           <dl className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
             <div>
-              <dt className="text-text-muted">Budget</dt>
-              <dd className="font-mono text-foreground mt-0.5">{fmtUsd(inv.cost_budget_usd)}</dd>
+              <dt className="text-text-muted">Total turns</dt>
+              <dd className="font-mono text-foreground mt-0.5">{inv.message_count.toLocaleString()}</dd>
             </div>
             <div>
-              <dt className="text-text-muted">Actual</dt>
-              <dd className="font-mono text-foreground mt-0.5">{fmtUsd(inv.cost_actual_usd)}</dd>
+              <dt className="text-text-muted">Est. tokens</dt>
+              <dd className="font-mono text-foreground mt-0.5">~{((inv.message_count * 28000) / 1_000_000).toFixed(1)}M</dd>
             </div>
             <div>
-              <dt className="text-text-muted">LLM tokens</dt>
-              <dd className="font-mono text-foreground mt-0.5">{fmtUsd(inv.llm_tokens_cost_usd)}</dd>
+              <dt className="text-text-muted">Branches</dt>
+              <dd className="font-mono text-foreground mt-0.5">{inv.branch_count}</dd>
             </div>
             <div>
-              <dt className="text-text-muted">MCP calls</dt>
-              <dd className="font-mono text-foreground mt-0.5">{fmtUsd(inv.mcp_calls_cost_usd)}</dd>
+              <dt className="text-text-muted">Outcomes</dt>
+              <dd className="font-mono text-foreground mt-0.5">{inv.outcome_count}</dd>
             </div>
           </dl>
         </div>

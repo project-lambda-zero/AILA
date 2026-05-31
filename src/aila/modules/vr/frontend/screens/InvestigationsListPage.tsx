@@ -7,6 +7,7 @@ import {
   Pulse,
   Briefcase,
   Bug,
+  Lightning,
   ShieldCheck,
   ShieldWarning,
   Star,
@@ -557,24 +558,19 @@ export function InvestigationsListPage() {
     groupByTarget;
 
   const kpis = useMemo(() => {
-    const running = investigationsRaw.filter((i) => i.status === "running")
-      .length;
-    const withFindings = investigationsRaw.filter(
-      (i) => i.linked_finding_ids.length > 0,
-    ).length;
-    const confirmed = investigationsRaw.filter(
-      (i) => i.verifier_verdict === "confirmed",
-    ).length;
-    const refuted = investigationsRaw.filter(
-      (i) => i.verifier_verdict === "refuted",
-    ).length;
-    return { running, withFindings, confirmed, refuted };
+    const running = investigationsRaw.filter((i) => i.status === "running").length;
+    const withFindings = investigationsRaw.filter((i) => i.linked_finding_ids.length > 0).length;
+    const confirmed = investigationsRaw.filter((i) => i.verifier_verdict === "confirmed").length;
+    const refuted = investigationsRaw.filter((i) => i.verifier_verdict === "refuted").length;
+    const totalMessages = investigationsRaw.reduce((sum, i) => sum + (i.message_count ?? 0), 0);
+    const estTokensM = ((totalMessages * 28000) / 1_000_000);
+    return { running, withFindings, confirmed, refuted, totalMessages, estTokensM };
   }, [investigationsRaw]);
 
   return (
     <div className="flex flex-col gap-6">
       {/* KPI hero */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <KpiTile
           label="Total"
           value={totalRaw}
@@ -587,21 +583,28 @@ export function InvestigationsListPage() {
           value={kpis.running}
           hint={kpis.running === 0 ? "all idle" : "engine active"}
           icon={<Pulse weight="duotone" />}
-          tone={kpis.running > 0 ? "warn" : "neutral"}
+          tone={kpis.running > 0 ? "ok" : "neutral"}
         />
         <KpiTile
           label="With findings"
           value={kpis.withFindings}
           hint={
-            kpis.confirmed
-              ? `${kpis.confirmed} verifier-confirmed`
+            kpis.withFindings > 0
+              ? `${kpis.withFindings} confirmed`
               : "none verified"
           }
           icon={<Bug weight="duotone" />}
           tone={kpis.withFindings > 0 ? "crit" : "neutral"}
         />
         <KpiTile
-          label="Verifier verdicts"
+          label="Est. tokens"
+          value={kpis.estTokensM >= 1000 ? `${(kpis.estTokensM / 1000).toFixed(1)}B` : `${kpis.estTokensM.toFixed(0)}M`}
+          hint={`${kpis.totalMessages.toLocaleString()} total turns`}
+          icon={<Lightning weight="duotone" />}
+          tone="neutral"
+        />
+        <KpiTile
+          label="Verdicts"
           value={`${kpis.confirmed}/${kpis.refuted}`}
           hint={
             <span className="font-mono">
@@ -610,13 +613,7 @@ export function InvestigationsListPage() {
               <span style={{ color: "#f0a8c7" }}>{kpis.refuted} refuted</span>
             </span>
           }
-          icon={
-            kpis.refuted > kpis.confirmed ? (
-              <ShieldWarning weight="duotone" />
-            ) : (
-              <ShieldCheck weight="duotone" />
-            )
-          }
+          icon={kpis.refuted > kpis.confirmed ? <ShieldWarning weight="duotone" /> : <ShieldCheck weight="duotone" />}
           tone={kpis.refuted > kpis.confirmed ? "warn" : "ok"}
         />
       </div>
