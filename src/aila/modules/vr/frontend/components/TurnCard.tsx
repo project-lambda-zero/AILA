@@ -442,20 +442,75 @@ export function TurnCard({
             />
           )}
 
-          {/* Fallback: raw JSON when there's neither prose nor a tool name */}
-          {fellBackToJson && (
+          {/* Source/decompiled function — structured code viewer */}
+          {fellBackToJson && payload.pseudocode && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-xs">
+                <FileCode size={14} weight="fill" className="text-violet-400" />
+                <span className="font-mono text-foreground font-medium">{String(payload.function_name || payload.name || "")}</span>
+                {payload.address && (
+                  <span className="text-text-muted font-mono text-[10px]">{String(payload.address)}</span>
+                )}
+              </div>
+              <pre className="text-[11px] font-mono whitespace-pre-wrap text-foreground/90 leading-relaxed break-words bg-elevated/60 rounded p-2.5 border border-border-default/40 overflow-x-auto">
+                {expanded || String(payload.pseudocode).length <= COLLAPSE_THRESHOLD_CHARS
+                  ? String(payload.pseudocode)
+                  : String(payload.pseudocode).slice(0, COLLAPSE_THRESHOLD_CHARS) + "\n…"}
+              </pre>
+              {String(payload.pseudocode).length > COLLAPSE_THRESHOLD_CHARS && (
+                <button type="button" onClick={() => setExpanded((v) => !v)}
+                  className="text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground">
+                  {expanded ? "collapse" : `expand (+${String(payload.pseudocode).length - COLLAPSE_THRESHOLD_CHARS} chars)`}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Error message — styled error box */}
+          {fellBackToJson && !payload.pseudocode && payload.is_error && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded-md border border-red-500/30 bg-red-500/8">
+              <XCircle size={14} weight="fill" className="text-red-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-red-300/90 break-words">{String(payload.text || payload.error || rawJson)}</p>
+            </div>
+          )}
+
+          {/* Search results / tool output with chunks */}
+          {fellBackToJson && !payload.pseudocode && !payload.is_error && (payload.chunks_text || payload.match_count != null) && (
+            <div className="space-y-1.5">
+              {payload.tool && (
+                <div className="flex items-center gap-2 text-xs">
+                  <Terminal size={14} weight="fill" className="text-emerald-400" />
+                  <span className="font-mono text-foreground font-medium">{humanToolName(String(payload.tool))}</span>
+                  {payload.match_count != null && (
+                    <span className="text-text-muted font-mono text-[10px]">{String(payload.match_count)} matches</span>
+                  )}
+                </div>
+              )}
+              <pre className="text-[11px] font-mono whitespace-pre-wrap text-foreground/80 leading-relaxed break-words bg-elevated/60 rounded p-2.5 border border-border-default/40 overflow-x-auto">
+                {expanded || String(payload.chunks_text || "").length <= COLLAPSE_THRESHOLD_CHARS
+                  ? String(payload.chunks_text || rawJson)
+                  : String(payload.chunks_text || "").slice(0, COLLAPSE_THRESHOLD_CHARS) + "\n…"}
+              </pre>
+              {String(payload.chunks_text || "").length > COLLAPSE_THRESHOLD_CHARS && (
+                <button type="button" onClick={() => setExpanded((v) => !v)}
+                  className="text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground">
+                  {expanded ? "collapse" : "expand"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Generic fallback — only for payloads that don't match any structured pattern */}
+          {fellBackToJson && !payload.pseudocode && !payload.is_error && !payload.chunks_text && payload.match_count == null && (
             <pre className="text-xs font-mono whitespace-pre-wrap text-foreground leading-relaxed break-words bg-surface/40 rounded p-2 border border-border-default/50">
               {expanded || rawJson.length <= COLLAPSE_THRESHOLD_CHARS
                 ? rawJson
                 : rawJson.slice(0, COLLAPSE_THRESHOLD_CHARS) + "\n…"}
             </pre>
           )}
-          {fellBackToJson && rawJson.length > COLLAPSE_THRESHOLD_CHARS && (
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground"
-            >
+          {fellBackToJson && !payload.pseudocode && !payload.is_error && !payload.chunks_text && payload.match_count == null && rawJson.length > COLLAPSE_THRESHOLD_CHARS && (
+            <button type="button" onClick={() => setExpanded((v) => !v)}
+              className="text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground">
               {expanded ? "collapse" : `expand (+${rawJson.length - COLLAPSE_THRESHOLD_CHARS} chars)`}
             </button>
           )}
