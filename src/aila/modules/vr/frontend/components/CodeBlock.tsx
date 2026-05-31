@@ -6,7 +6,9 @@ const MonacoEditor = lazy(() =>
 
 /** Detect language from file path or content heuristics. */
 function detectLanguage(path: string, content: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  // Strip line range suffixes like ":6928-6958" and escape sequences like "\\base\\"
+  const cleaned = path.replace(/:\d+(-\d+)?$/, "").replace(/\\\\/g, "/");
+  const ext = cleaned.split(".").pop()?.toLowerCase() ?? "";
   const map: Record<string, string> = {
     c: "c", h: "c", cpp: "cpp", cc: "cpp", cxx: "cpp", hpp: "cpp",
     go: "go", rs: "rust", py: "python", js: "javascript", ts: "typescript",
@@ -15,10 +17,11 @@ function detectLanguage(path: string, content: string): string {
     xml: "xml", html: "html", css: "css", sql: "sql", md: "markdown",
   };
   if (map[ext]) return map[ext];
-  // Heuristics
-  if (content.includes("#include") || content.includes("void ")) return "cpp";
-  if (content.includes("func ") && content.includes(":=")) return "go";
+  // Heuristics from content
+  if (content.includes("#include") || content.includes("void ") || content.includes("nsI")) return "cpp";
+  if (content.includes("func ") && (content.includes(":=") || content.includes("package "))) return "go";
   if (content.includes("def ") && content.includes("self")) return "python";
+  if (content.includes("fn ") && content.includes("->") && content.includes("let ")) return "rust";
   return "plaintext";
 }
 
@@ -40,7 +43,18 @@ interface CodeBlockProps {
  * in investigation turn cards. Lazy-loaded so Monaco's ~2MB bundle
  * doesn't block initial page render.
  */
-export function CodeBlock({ code, filePath = "", address, className = "" }: CodeBlockProps) {
+export function CodeBlock({ code: rawCode, filePath = "", address, className = "" }: CodeBlockProps) {
+  // Strip indexer preamble like "[file extent: 10160 lines total; ...]"
+  // and unescape \\n → newline, \\t → tab
+  const code = useMemo(() => {
+    let cleaned = rawCode
+      .replace(/^\[file extent:.*?\]\s*/i, "")
+      .replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t")
+      .trim();
+    return cleaned;
+  }, [rawCode]);
+
   const [collapsed, setCollapsed] = useState(code.length > 2000);
   const displayCode = collapsed ? code.slice(0, 2000) + "\n// … truncated" : code;
   const lang = useMemo(() => detectLanguage(filePath || address || "", code), [filePath, address, code]);
