@@ -19,7 +19,8 @@
     "@phosphor-icons/react": "catalog:ui"
   },
   "dependencies": {
-    "@xyflow/react": "catalog:flow"
+    "@xyflow/react": "catalog:flow",
+    "@monaco-editor/react": "catalog:ui"
   },
   "devDependencies": {
     "@aila/typescript-config": "workspace:*",
