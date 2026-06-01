@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 import httpx
 from sqlmodel import select as _select
@@ -106,6 +105,63 @@ def _detect_read_function_returned_file_header(
     )
 
 
+def _detect_read_lines_file_not_found(
+    server_id: str, tool_name: str, args: dict, raw: dict,
+) -> bool:
+    """``read_lines`` returned ``status=error`` with a file-not-found
+    message. Symptom of an agent chasing a path that doesn't exist in
+    the indexed tree — most commonly a function whose canonical path
+    sits in a sibling repo not indexed alongside the primary target
+    (e.g. ``srclib/apr-util/...`` querying the httpd-only index).
+
+    Without this rule, branches loop on the same dead path for hundreds
+    of turns because every retry returns the same error and no rule
+    fires (the existing past-EOF rule requires ``total_lines_in_file``
+    in the response, which an error response never has).
+    """
+    if (server_id, tool_name) != ("audit_mcp", "read_lines"):
+        return False
+    if not isinstance(raw, dict):
+        return False
+    if raw.get("status") != "error":
+        return False
+    err = str(raw.get("error") or "").lower()
+    # Accept both audit-mcp's "file not found" and the bridge's wrapped
+    # variants ("read_lines: file not found: <path>").
+    return "file not found" in err or "no such file" in err
+
+
+def _detect_tool_kwarg_rejected(
+    server_id: str, tool_name: str, args: dict, raw: dict,
+) -> bool:
+    """Bridge rejected the call because the kwargs don't match the
+    tool's signature (missing required, unknown keyword, wrong shape).
+    Agent retries are guaranteed to fail until the kwargs name+shape
+    change, so a steering message naming the correct signature is the
+    only thing that unblocks the loop.
+
+    Restricted to audit_mcp for now — the bridge validator at
+    ``audit_mcp_bridge._validate_kwargs`` is the source of these
+    rejections. Other MCP servers may use different phrasings.
+    """
+    if server_id != "audit_mcp":
+        return False
+    if not isinstance(raw, dict):
+        return False
+    if raw.get("status") != "error":
+        return False
+    err = str(raw.get("error") or "").lower()
+    return any(
+        marker in err for marker in (
+            "missing required kwarg",
+            "unknown keyword",
+            "unexpected keyword",
+            "rejected: missing",
+            "rejected: unknown",
+        )
+    )
+
+
 # ─────────────────────────────────────────────────────────────────
 # Correction derivation
 # ─────────────────────────────────────────────────────────────────
@@ -129,7 +185,7 @@ async def _derive_eof_correction(
             query = q[:200]
             break
     if not query:
-        basename = file_path.split("/")[-1].split(".")[0]
+        basename = file_path.rsplit("/", maxsplit=1)[-1].split(".", maxsplit=1)[0]
         if not basename:
             return None
         query = f"{basename} class declaration definition"
@@ -223,8 +279,102 @@ async def _derive_file_header_correction(
         f"file header (audit_mcp's symbol indexer lost the true "
         f"location). semantic_search found:\n"
         + "\n".join(lines) + "\n"
-        f"Call read_lines on one of those ranges to get the actual "
-        f"function body."
+        "Call read_lines on one of those ranges to get the actual "
+        "function body."
+    )
+
+
+async def _derive_file_not_found_correction(
+    base_url: str, index_id: str, file_path: str,
+    branch_recent_queries: list[str],
+) -> str | None:
+    """For read_lines file-not-found: surface semantic_search hits for
+    whatever the branch was last looking for, then explicitly warn that
+    the requested path is not in the indexed tree. This is the most
+    common "chasing a phantom" failure mode — the agent assumes a
+    canonical upstream layout (e.g. ``srclib/apr-util/...``) that the
+    actual indexed repo doesn't carry.
+    """
+    if not index_id:
+        return None
+    query: str | None = None
+    for q in reversed(branch_recent_queries):
+        if q and len(q) > 6:
+            query = q[:200]
+            break
+    if not query and file_path:
+        basename = file_path.rstrip("/").split("/")[-1].split(".")[0]
+        if basename:
+            query = f"{basename} definition implementation"
+    if not query:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{base_url}/tools/semantic_search",
+                json={"index_id": index_id, "query": query, "top_k": 5},
+            )
+            data = resp.json()
+    except (httpx.ConnectError, httpx.TimeoutException, ValueError):
+        data = {}
+    results = (data or {}).get("results") or (data or {}).get("matches") or []
+    hits: list[str] = []
+    for r in results[:5]:
+        if not isinstance(r, dict):
+            continue
+        fp = r.get("file_path") or "?"
+        ls = r.get("start_line") or "?"
+        le = r.get("end_line") or "?"
+        score = r.get("score")
+        score_tag = f" score={score:.3f}" if isinstance(score, (int, float)) else ""
+        hits.append(f"  - {fp}:{ls}-{le}{score_tag}")
+    if not hits:
+        return (
+            f"AUTO-STEERING: read_lines({file_path!r}) returned "
+            f"`file not found`. The path is not in the index "
+            f"(index_id={index_id!r}). A semantic_search for "
+            f"{query!r} ALSO returned zero hits — the symbol is "
+            f"almost certainly NOT in this indexed tree. The function "
+            f"may live in a sibling repo (e.g. apr-util sits outside "
+            f"httpd trunk, MozillaIPDL outside Firefox-core, etc.). "
+            f"STOP retrying this path. Either:\n"
+            f"  (1) re-target the investigation to the correct repo, or\n"
+            f"  (2) terminal_submit with a no-finding outcome explaining "
+            f"that the symbol is out-of-scope for this index."
+        )
+    return (
+        f"AUTO-STEERING: read_lines({file_path!r}) returned "
+        f"`file not found`. That path is NOT in the index "
+        f"(index_id={index_id!r}). A semantic_search for {query!r} "
+        f"found these candidate locations instead:\n"
+        + "\n".join(hits) + "\n"
+        "Call read_lines on one of those file:line ranges. If none "
+        "matches the function you mean, the function likely lives in "
+        "a sibling repo not indexed here — terminal_submit with a "
+        "no-finding outcome rather than retry the same dead path."
+    )
+
+
+async def _derive_kwarg_rejected_correction(
+    tool_name: str, raw_error: str, attempted_args: dict,
+) -> str:
+    """For bridge kwarg rejections: surface the bridge's error message
+    verbatim (it already names the bad/missing kwarg) and explicitly
+    instruct the agent that retrying with the same arg shape will keep
+    failing. The correction is synchronous — no remote calls needed
+    since the bridge already produced the actionable detail."""
+    arg_names = sorted(attempted_args.keys())
+    return (
+        f"AUTO-STEERING: {tool_name} REJECTED your call signature. "
+        f"Bridge error:\n\n  {raw_error}\n\n"
+        f"You passed kwargs: {arg_names}. The error names the missing "
+        f"or unknown kwarg — VARYING THE VALUE will not help, the arg "
+        f"NAME or SHAPE is wrong. Re-read the tool signature from the "
+        f"# Available tools section of your prompt. If the tool isn't "
+        f"listed there, it is not available to you and you must use "
+        f"a different one. Do NOT call {tool_name} again with the "
+        f"same kwarg shape — pivot or submit a finding noting the "
+        f"obstacle."
     )
 
 
@@ -390,11 +540,13 @@ async def maybe_post_auto_steering(
     """
     if not raw_result or not isinstance(raw_result, dict):
         return None
-    if raw_result.get("status") not in ("ready", None):
-        return None
+    # NOTE: do NOT early-return on status != "ready" — error responses
+    # are the trigger for Rule 3 (file_not_found) and Rule 4 (kwarg
+    # rejected). Each rule's detector decides whether it cares about
+    # the response shape.
 
     try:
-        # Rule 1: read_lines past EOF
+        # Rule 1: read_lines past EOF (successful response, EOF overshoot)
         if _detect_read_lines_past_eof(server_id, tool_name, args, raw_result):
             file_path = str(args.get("file_path") or "")
             total = int(raw_result.get("total_lines_in_file") or 0)
@@ -411,7 +563,7 @@ async def maybe_post_auto_steering(
                 return None
             return await _post(investigation_id, branch_id, correction, key)
 
-        # Rule 2: read_function returned file header
+        # Rule 2: read_function returned file header (indexer fault)
         if _detect_read_function_returned_file_header(server_id, tool_name, args, raw_result):
             file_path = str(args.get("file_path") or "")
             fn_name = str(args.get("name") or "")
@@ -424,6 +576,36 @@ async def maybe_post_auto_steering(
             )
             if not correction:
                 return None
+            return await _post(investigation_id, branch_id, correction, key)
+
+        # Rule 3: read_lines returned file-not-found error
+        if _detect_read_lines_file_not_found(server_id, tool_name, args, raw_result):
+            file_path = str(args.get("file_path") or "")
+            index_id = str(args.get("index_id") or "")
+            key = f"read_lines_file_not_found:{index_id}:{file_path}"
+            if await _already_posted(investigation_id, key):
+                return None
+            queries = await _recent_semantic_queries(investigation_id, branch_id)
+            correction = await _derive_file_not_found_correction(
+                bridge_base_url, index_id, file_path, queries,
+            )
+            if not correction:
+                return None
+            return await _post(investigation_id, branch_id, correction, key)
+
+        # Rule 4: bridge rejected kwarg shape
+        if _detect_tool_kwarg_rejected(server_id, tool_name, args, raw_result):
+            raw_err = str(raw_result.get("error") or "")
+            # De-dupe key is (tool, error-class). The kwarg name is in
+            # the error text — repeated identical attempts share the key,
+            # but a genuinely different rejection re-posts.
+            err_class = raw_err.split(":", 1)[0][:80] if raw_err else "unknown"
+            key = f"kwarg_rejected:{tool_name}:{err_class}"
+            if await _already_posted(investigation_id, key):
+                return None
+            correction = await _derive_kwarg_rejected_correction(
+                f"{server_id}.{tool_name}", raw_err, args,
+            )
             return await _post(investigation_id, branch_id, correction, key)
 
     except Exception as exc:  # noqa: BLE001 — auto-steering must never fail loud

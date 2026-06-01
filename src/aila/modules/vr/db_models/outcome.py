@@ -48,6 +48,15 @@ class VRInvestigationOutcomeRecord(SQLModel, table=True):
 
     accepted_by_operator: bool = Field(default=False)
     accepted_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+
+    # Draft-outcome lifecycle (migration 062). 'draft' = pending sibling
+    # review; 'approved' = quorum reached, dispatch may proceed; 'rejected'
+    # = at least one sibling refused; 'dispatched' = terminal, dispatch
+    # actually shipped to its downstream (vr_findings row, child investigation,
+    # knowledge memo, etc.). The OutcomeDispatcher refuses any outcome
+    # whose state is not 'approved'.
+    state: str = Field(default="draft", index=True, max_length=16)
+
     dispatch_status: str = Field(default="pending", index=True, max_length=16)
     dispatch_target: str | None = Field(default=None, max_length=128)
 

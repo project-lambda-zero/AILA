@@ -100,6 +100,8 @@ from .outcome import (
     OutcomeDispatchStatus,
     OutcomeKind,
     VROutcomeCreate,
+    VROutcomeReviewCreate,
+    VROutcomeReviewSummary,
     VROutcomeSummary,
 )
 from .pattern import (
@@ -212,6 +214,8 @@ __all__ = [
     "VRMessageCreate",
     "VRMessageSummary",
     "VROutcomeCreate",
+    "VROutcomeReviewCreate",
+    "VROutcomeReviewSummary",
     "VROutcomeSummary",
     "VRProjectCreate",
     "VRProjectStatus",

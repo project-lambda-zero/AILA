@@ -108,3 +108,52 @@ class VROutcomeSummary(BaseModel):
         description="Downstream artifact id — campaign_id / finding_id / spawned investigation_id / audit_memo_id.",
     )
     created_at: datetime | None = None
+    state: str = Field(
+        default="dispatched",
+        description=(
+            "Draft outcome lifecycle: 'draft' (pending sibling review), "
+            "'approved' (quorum reached, dispatch may fire), 'rejected' "
+            "(vetoed by sibling), 'dispatched' (shipped to downstream)."
+        ),
+    )
+    approve_count: int = Field(default=0, ge=0)
+    reject_count: int = Field(default=0, ge=0)
+    request_edit_count: int = Field(default=0, ge=0)
+    abstain_count: int = Field(default=0, ge=0)
+    quorum_k: int = Field(default=0, ge=0)
+
+
+class VROutcomeReviewCreate(BaseModel):
+    """Operator-facing payload for submitting a sibling review.
+
+    Reviewer branch id is the source-of-truth identity; operator review
+    posts (where there's no agent branch) MAY pass any sibling branch
+    id from the same investigation to register a vote on behalf of
+    that reviewer (treated as a manual override of the agent's
+    judgment).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_branch_id: str = Field(min_length=1, max_length=64)
+    vote: str = Field(
+        pattern=r"^(approve|reject|request_edit|abstain)$",
+        description="approve | reject | request_edit | abstain",
+    )
+    comment: str = Field(default="", max_length=4096)
+    suggested_edits: dict[str, Any] = Field(default_factory=dict)
+
+
+class VROutcomeReviewSummary(BaseModel):
+    """Read-only projection of one outcome review."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    outcome_id: str
+    reviewer_branch_id: str
+    reviewer_persona: str
+    vote: str
+    comment: str = ""
+    suggested_edits: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None

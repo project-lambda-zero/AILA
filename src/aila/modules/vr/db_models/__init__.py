@@ -16,6 +16,7 @@ from .investigation_target import VRInvestigationTargetRecord
 from .mcp_call_log import VRMcpCallLogRecord
 from .message import VRInvestigationMessageRecord
 from .outcome import VRInvestigationOutcomeRecord
+from .outcome_review import VRInvestigationOutcomeReviewRecord
 from .pattern import VRPatternRecord
 from .project import VRProjectRecord
 from .target import VRTargetRecord, VRTargetTagIndexRecord
@@ -34,6 +35,7 @@ __all__ = [
     "VRInvestigationBranchRecord",
     "VRInvestigationMessageRecord",
     "VRInvestigationOutcomeRecord",
+    "VRInvestigationOutcomeReviewRecord",
     "VRMcpCallLogRecord",
     "VRInvestigationRecord",
     "VRInvestigationTargetRecord",

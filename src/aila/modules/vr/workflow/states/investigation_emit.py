@@ -35,7 +35,7 @@ from aila.modules.vr.services.pattern_store import PatternStore
 from aila.platform.contracts._common import utc_now
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
-from aila.platform.workflows.types import RESERVED_SUCCEEDED, StateResult
+from aila.platform.workflows.types import RESERVED_FAILED, RESERVED_SUCCEEDED, StateResult
 
 __all__ = ["state_investigation_emit"]
 
@@ -171,9 +171,36 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 ),
             )).first()
             team_id = inv.team_id if inv is not None else None
-        await _enqueue_next_investigation_run(
-            investigation_id, team_id, branch_id=branch_id,
-        )
+        try:
+            await _enqueue_next_investigation_run(
+                investigation_id, team_id, branch_id=branch_id,
+            )
+        except (OSError, TimeoutError, RuntimeError, ConnectionError) as exc:
+            # Auto-continue submit failed (Redis down, queue full,
+            # serialization error). Without this guard the exception
+            # bubbles into the workflow engine which redacts it to a
+            # bare class name and parks the cursor in __crashed__
+            # without any forward progress — branch sits "active"
+            # with turn_count stuck and operator has no visibility.
+            # Mark the cursor crashed loudly + log the full traceback
+            # to the worker log so the operator can see why.
+            _log.exception(
+                "investigation_emit AUTO_CONTINUE_FAILED investigation_id=%s "
+                "branch_id=%s turn_count=%d err=%s — branch will be stranded "
+                "until operator re-enqueues; investigation stays RUNNING "
+                "but no further turns will execute on this branch.",
+                investigation_id, branch_id, turn_count, exc,
+            )
+            return StateResult(
+                next_state=RESERVED_FAILED,
+                output={
+                    "investigation_id": investigation_id,
+                    "branch_id": branch_id,
+                    "exit_reason": "auto_continue_enqueue_failed",
+                    "turn_count": turn_count,
+                    "error_class": type(exc).__name__,
+                },
+            )
         _log.info(
             "investigation_emit AUTO_CONTINUE investigation_id=%s turn_count=%d "
             "cap=%d (re-enqueued run_vr_investigate)",
@@ -234,27 +261,95 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 uow.session.add(inv)
                 await uow.commit()
 
+    # Draft outcome workflow: when an outcome row exists, post a
+    # review request to siblings and evaluate quorum. evaluate_quorum
+    # auto-approves single-branch investigations (no siblings to read
+    # the review); multi-branch investigations stay in DRAFT until
+    # enough sibling reviews land via the submit_outcome_review action.
+    # The dispatcher refuses any outcome whose state is not APPROVED,
+    # so calling it on a still-DRAFT outcome is safe (SKIPPED result).
     dispatch_status: str | None = None
     dispatch_target: str | None = None
     dispatch_reason: str | None = None
-    if outcome_id and final_status == InvestigationStatus.COMPLETED.value:
-        dispatcher = OutcomeDispatcher(knowledge=ServiceFactory().knowledge)
+    if outcome_id:
         try:
-            dispatch_result = await dispatcher.dispatch(str(outcome_id))
-            dispatch_status = dispatch_result.dispatch_status.value
-            dispatch_target = dispatch_result.dispatch_target
-            dispatch_reason = dispatch_result.reason
-            _log.info(
-                "investigation_emit DISPATCH outcome_id=%s status=%s target=%s",
-                outcome_id, dispatch_status, dispatch_target,
+            from aila.modules.vr.db_models import (  # noqa: PLC0415
+                VRInvestigationOutcomeRecord,
             )
+            from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
+                OUTCOME_STATE_APPROVED,
+                evaluate_quorum,
+                post_draft_review_request,
+            )
+
+            from .investigation_setup import (  # noqa: PLC0415
+                VRInvestigationBranchRecord as _BranchRec2,
+            )
+
+            async with UnitOfWork() as uow:
+                outcome_row = (await uow.session.exec(
+                    _select(VRInvestigationOutcomeRecord).where(
+                        VRInvestigationOutcomeRecord.id == outcome_id,
+                    ),
+                )).first()
+                proposing_branch = None
+                if outcome_row is not None:
+                    proposing_branch = (await uow.session.exec(
+                        _select(_BranchRec2).where(
+                            _BranchRec2.id == outcome_row.branch_id,
+                        ),
+                    )).first()
+
+            if outcome_row is not None and proposing_branch is not None:
+                await post_draft_review_request(
+                    investigation_id=investigation_id,
+                    outcome_id=str(outcome_id),
+                    proposing_branch_id=outcome_row.branch_id,
+                    proposing_persona=(
+                        proposing_branch.persona_voice or "unknown"
+                    ),
+                    outcome_kind=outcome_row.outcome_kind,
+                    confidence=outcome_row.confidence,
+                    payload_summary=(outcome_row.payload_json or "")[:400],
+                )
+            quorum = await evaluate_quorum(str(outcome_id))
+            _log.info(
+                "investigation_emit DRAFT_REVIEW outcome=%s state=%s "
+                "approve=%d reject=%d k=%d siblings_halted=%d transition=%s",
+                outcome_id, quorum.new_state, quorum.approve_count,
+                quorum.reject_count, quorum.quorum_k,
+                quorum.siblings_active if quorum.transition_occurred else 0,
+                quorum.transition_reason or "(no change)",
+            )
+            approved = quorum.new_state == OUTCOME_STATE_APPROVED
         except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
-            dispatch_status = "failed"
-            dispatch_reason = f"{type(exc).__name__}: {exc}"
             _log.warning(
-                "investigation_emit DISPATCH ERROR outcome_id=%s err=%s",
+                "investigation_emit DRAFT_REVIEW failed outcome=%s err=%s",
                 outcome_id, exc,
             )
+            approved = False
+
+        # Dispatch only when approved by quorum. The dispatcher itself
+        # refuses draft/rejected outcomes; checking here avoids the
+        # redundant DB load + log line for the common still-DRAFT path.
+        if approved:
+            dispatcher = OutcomeDispatcher(knowledge=ServiceFactory().knowledge)
+            try:
+                dispatch_result = await dispatcher.dispatch(str(outcome_id))
+                dispatch_status = dispatch_result.dispatch_status.value
+                dispatch_target = dispatch_result.dispatch_target
+                dispatch_reason = dispatch_result.reason
+                _log.info(
+                    "investigation_emit DISPATCH outcome_id=%s status=%s target=%s",
+                    outcome_id, dispatch_status, dispatch_target,
+                )
+            except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+                dispatch_status = "failed"
+                dispatch_reason = f"{type(exc).__name__}: {exc}"
+                _log.warning(
+                    "investigation_emit DISPATCH ERROR outcome_id=%s err=%s",
+                    outcome_id, exc,
+                )
 
     extraction_count: int | None = None
     extraction_reason: str | None = None
