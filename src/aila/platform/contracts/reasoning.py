@@ -25,7 +25,13 @@ __all__ = [
     "RejectedHypothesis",
 ]
 
-ReasoningAction = Literal["script_execute", "tool_run", "reasoning", "submit"]
+ReasoningAction = Literal[
+    "script_execute",
+    "tool_run",
+    "reasoning",
+    "submit",
+    "submit_outcome_review",
+]
 ReasoningConfidence = Literal["exact", "strong", "medium", "caveated", "unknown"]
 ReasoningStrategyFamily = Literal[
     "filesystem_triage",
@@ -213,6 +219,19 @@ class ReasoningTurnDecision(BaseModel):
     # emitted the right structure but the dispatcher saw empty lists
     # everywhere. Stored as a free-form dict so the schema doesn't have
     # to enumerate every submit-payload variant per module.
+    # Sibling-corroborated draft outcome review (vr draft workflow).
+    # When ``action == "submit_outcome_review"`` the agent MUST set
+    # ``review_outcome_id`` (the draft being reviewed) and ``review_vote``
+    # (approve | reject | request_edit | abstain). ``review_comment``
+    # carries the rationale that the operator sees on the outcome
+    # detail card; if absent, ``reasoning`` is used as a fallback.
+    # Suggested payload edits ride on the existing ``payload`` dict
+    # so the schema doesn't grow another free-form field.
+    review_outcome_id: str | None = None
+    review_vote: Literal[
+        "approve", "reject", "request_edit", "abstain",
+    ] | None = None
+    review_comment: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -308,4 +327,33 @@ class ReasoningTurnDecision(BaseModel):
                 f"JSON object/dict. Got: args type={type(args).__name__}."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def _validate_submit_outcome_review(self) -> ReasoningTurnDecision:
+        """When ``action='submit_outcome_review'``, ``review_outcome_id``
+        and ``review_vote`` MUST both be set.
+
+        Without this check the dispatcher receives a no-op review that
+        the agent thinks counted; the draft outcome stays in DRAFT
+        state forever because the upsert was rejected at the service
+        layer with a generic ValueError, and the agent burns turns
+        re-emitting the same broken vote shape.
+        """
+        if self.action != "submit_outcome_review":
+            return self
+        if not self.review_outcome_id:
+            raise ValueError(
+                "action='submit_outcome_review' requires "
+                "`review_outcome_id` (the uuid of the draft outcome "
+                "you are voting on). Copy it verbatim from the "
+                "'Outcome id:' line of the *** DRAFT OUTCOME UP FOR "
+                "REVIEW *** operator message."
+            )
+        if not self.review_vote:
+            raise ValueError(
+                "action='submit_outcome_review' requires `review_vote` "
+                "in {approve, reject, request_edit, abstain}. Got: "
+                f"{self.review_vote!r}."
+            )
         return self

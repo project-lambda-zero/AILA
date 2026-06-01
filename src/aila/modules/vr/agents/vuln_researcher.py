@@ -500,10 +500,62 @@ class HonestVulnResearcher:
             await uow.session.commit()
             await uow.session.refresh(msg)
 
+        # ------- submit_outcome_review handling (draft outcome workflow) -------
+        # The message was already written in the UoW above; here we
+        # turn the agent's vote into a row in vr_outcome_reviews and
+        # evaluate quorum. If quorum flips state to APPROVED, the
+        # dispatcher fires inline so the outcome ships immediately
+        # rather than waiting for the next worker poll.
+        review_state: str | None = None
+        if decision.action == "submit_outcome_review" and decision.review_outcome_id:
+            from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
+                OUTCOME_STATE_APPROVED,
+                evaluate_quorum,
+                upsert_review,
+            )
+
+            try:
+                await upsert_review(
+                    outcome_id=decision.review_outcome_id,
+                    reviewer_branch_id=self.branch_id,
+                    vote=decision.review_vote or "abstain",
+                    comment=(decision.review_comment or decision.reasoning or ""),
+                    suggested_edits=decision.payload or {},
+                )
+                quorum = await evaluate_quorum(decision.review_outcome_id)
+                review_state = quorum.new_state
+                _log.info(
+                    "vuln_researcher REVIEW inv=%s branch=%s outcome=%s "
+                    "vote=%s state=%s approve=%d reject=%d k=%d",
+                    self.investigation_id, self.branch_id,
+                    decision.review_outcome_id, decision.review_vote,
+                    quorum.new_state, quorum.approve_count,
+                    quorum.reject_count, quorum.quorum_k,
+                )
+                if quorum.new_state == OUTCOME_STATE_APPROVED:
+                    from aila.modules.vr.agents.outcome_dispatcher import (  # noqa: PLC0415
+                        OutcomeDispatcher,
+                    )
+                    from aila.platform.services.factory import (  # noqa: PLC0415
+                        ServiceFactory,
+                    )
+                    dispatcher = OutcomeDispatcher(
+                        knowledge=ServiceFactory().knowledge,
+                    )
+                    await dispatcher.dispatch(decision.review_outcome_id)
+            except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+                _log.warning(
+                    "vuln_researcher REVIEW failed inv=%s branch=%s "
+                    "outcome=%s err=%s",
+                    self.investigation_id, self.branch_id,
+                    decision.review_outcome_id, exc,
+                )
+
         _log.info(
-            "vuln_researcher TURN inv=%s branch=%s turn=%d action=%s terminal=%s",
+            "vuln_researcher TURN inv=%s branch=%s turn=%d action=%s terminal=%s "
+            "review_state=%s",
             self.investigation_id, self.branch_id, turn_number,
-            decision.action, terminal,
+            decision.action, terminal, review_state or "-",
         )
 
         return VulnResearcherTurnResult(
@@ -1863,6 +1915,18 @@ def _decision_to_message_payload(
             ),
             "reasoning": decision.reasoning,
             "provenance": decision.provenance.model_dump(mode="json"),
+        }
+    if decision.action == "submit_outcome_review":
+        return PayloadKind.OUTCOME_REVIEW, {
+            "outcome_id": decision.review_outcome_id or "",
+            "vote": decision.review_vote or "abstain",
+            "comment": (
+                decision.review_comment
+                or decision.reasoning
+                or ""
+            ),
+            "suggested_edits": decision.payload or {},
+            "reasoning": decision.reasoning,
         }
     return PayloadKind.TEXT, {
         "text": decision.reasoning,

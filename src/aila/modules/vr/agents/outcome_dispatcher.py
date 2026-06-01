@@ -152,7 +152,21 @@ class OutcomeDispatcher:
         )
 
     async def dispatch(self, outcome_id: str) -> OutcomeDispatchResult:
-        """Dispatch one outcome and update its dispatch_status."""
+        """Dispatch one outcome and update its dispatch_status.
+
+        Refuses any outcome whose ``state`` is not ``'approved'``:
+        draft outcomes are still waiting on sibling review; rejected
+        outcomes were vetoed and must not ship; dispatched outcomes
+        already shipped (re-dispatch is a no-op). The state machine
+        lives in ``aila.modules.vr.services.outcome_review``.
+        """
+        from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
+            OUTCOME_STATE_APPROVED,
+            OUTCOME_STATE_DISPATCHED,
+            OUTCOME_STATE_DRAFT,
+            OUTCOME_STATE_REJECTED,
+        )
+
         async with UnitOfWork() as uow:
             outcome = (await uow.session.exec(
                 _select(VRInvestigationOutcomeRecord).where(
@@ -161,10 +175,61 @@ class OutcomeDispatcher:
             )).first()
             if outcome is None:
                 raise ValueError(f"outcome {outcome_id} not found")
+            state = outcome.state or OUTCOME_STATE_DISPATCHED  # legacy NULL
             outcome_kind = OutcomeKind(outcome.outcome_kind)
             payload = json.loads(outcome.payload_json or "{}")
             investigation_id = outcome.investigation_id
 
+        if state == OUTCOME_STATE_DRAFT:
+            _log.info(
+                "outcome_dispatcher SKIP_DRAFT outcome_id=%s kind=%s "
+                "(awaiting sibling quorum)",
+                outcome_id, outcome_kind.value,
+            )
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=outcome_kind,
+                dispatch_status=OutcomeDispatchStatus.SKIPPED,
+                dispatch_target=None,
+                reason="draft_awaiting_sibling_quorum",
+            )
+        if state == OUTCOME_STATE_REJECTED:
+            _log.info(
+                "outcome_dispatcher SKIP_REJECTED outcome_id=%s kind=%s",
+                outcome_id, outcome_kind.value,
+            )
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=outcome_kind,
+                dispatch_status=OutcomeDispatchStatus.SKIPPED,
+                dispatch_target=None,
+                reason="rejected_by_sibling_review",
+            )
+        if state == OUTCOME_STATE_DISPATCHED:
+            _log.info(
+                "outcome_dispatcher SKIP_DISPATCHED outcome_id=%s kind=%s "
+                "(already shipped)",
+                outcome_id, outcome_kind.value,
+            )
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=outcome_kind,
+                dispatch_status=OutcomeDispatchStatus.SKIPPED,
+                dispatch_target=None,
+                reason="already_dispatched",
+            )
+        if state != OUTCOME_STATE_APPROVED:
+            _log.warning(
+                "outcome_dispatcher UNKNOWN_STATE outcome_id=%s state=%s",
+                outcome_id, state,
+            )
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=outcome_kind,
+                dispatch_status=OutcomeDispatchStatus.SKIPPED,
+                dispatch_target=None,
+                reason=f"unknown_state:{state}",
+            )
         try:
             if outcome_kind == OutcomeKind.AUDIT_MEMO:
                 result = await self._dispatch_audit_memo(
@@ -971,6 +1036,9 @@ class OutcomeDispatcher:
             return target, inv
 
     async def _update_outcome_status(self, result: OutcomeDispatchResult) -> None:
+        from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
+            OUTCOME_STATE_DISPATCHED,
+        )
         async with UnitOfWork() as uow:
             outcome = (await uow.session.exec(
                 _select(VRInvestigationOutcomeRecord).where(
@@ -981,6 +1049,11 @@ class OutcomeDispatcher:
                 return
             outcome.dispatch_status = result.dispatch_status.value
             outcome.dispatch_target = result.dispatch_target
+            # Only DISPATCHED-status flips the state machine; SKIPPED
+            # and FAILED leave the row's state untouched so the operator
+            # / retry path can re-evaluate.
+            if result.dispatch_status == OutcomeDispatchStatus.DISPATCHED:
+                outcome.state = OUTCOME_STATE_DISPATCHED
             uow.session.add(outcome)
             await uow.commit()
 

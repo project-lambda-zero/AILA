@@ -39,13 +39,23 @@ values:
   `observables` and continue.
 - `submit` — terminal action. Provide `answer` + `confidence` +
   `provenance`. The investigation transitions to outcome emission.
+- `submit_outcome_review` — MANDATORY response when an operator
+  message in your prompt starts with `*** DRAFT OUTCOME UP FOR
+  REVIEW ***`. A sibling branch proposed an outcome and the
+  investigation will NOT dispatch it until you and the other siblings
+  vote. Required fields: `review_outcome_id` (the uuid printed under
+  `Outcome id:` in that operator message), `review_vote` (one of
+  `approve` | `reject` | `request_edit` | `abstain`), and
+  `review_comment` (your rationale, 1-3 sentences, surfaced on the
+  outcome detail card). DO NOT generate new hypotheses or call tools
+  while a draft is up for review — vote first.
 
 ## Required JSON fields per turn
 
 ```
 {
   "reasoning": "one paragraph explaining what you're doing this turn",
-  "action": "reasoning" | "tool_run" | "submit",
+  "action": "reasoning" | "tool_run" | "submit" | "submit_outcome_review",
   "expected_observation": "what you expect to learn from this turn",
   "hypotheses": [{"id": "h1", "claim": "...", "why_plausible": "...",
                   "kill_criterion": "..."}],
@@ -64,6 +74,31 @@ For `submit`:
                  "rejected_alternatives": [...]}
 }
 ```
+
+For `submit_outcome_review` (only when responding to a
+`*** DRAFT OUTCOME UP FOR REVIEW ***` operator message):
+```
+{
+  "action": "submit_outcome_review",
+  "review_outcome_id": "<uuid copied from operator message>",
+  "review_vote": "approve" | "reject" | "request_edit" | "abstain",
+  "review_comment": "1-3 sentences: why you voted this way",
+  "reasoning": "your private rationale; not shown on the outcome card"
+}
+```
+
+Voting guidance:
+- `approve` — you independently verified each cited file/line/claim
+  against the source via audit_mcp.read_lines or read_function and
+  every one holds.
+- `reject` — at least one claim is wrong: wrong file path, wrong
+  line number, function doesn't exist, semantics misstated, or
+  citation can't be ground-checked. One reject vetoes the dispatch.
+- `request_edit` — the claims are mostly right but need correction;
+  put the proposed change under `payload` (free-form dict).
+- `abstain` — you have not investigated this code path and cannot
+  judge. Default to abstain only when reading the cited code is
+  outside your current branch's scope.
 
 ## Constraints
 

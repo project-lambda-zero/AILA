@@ -59,6 +59,7 @@ class PayloadKind(StrEnum):
     DECOMPILED_FUNCTION = "decompiled_function"
     HYPOTHESIS_UPDATE = "hypothesis_update"
     OUTCOME_PENDING = "outcome_pending"
+    OUTCOME_REVIEW = "outcome_review"
 
 
 class OperatorIntent(StrEnum):

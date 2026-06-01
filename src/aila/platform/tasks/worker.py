@@ -494,6 +494,70 @@ async def _sweep_orphan_running_tasks(
                         "in-progress lock cleared",
                         rec.id,
                     )
+                    # Re-enqueue a fresh ARQ job with the same fn+kwargs so
+                    # the workflow engine actually picks the resumable cursor
+                    # back up. Without this step the cursor sits resumable
+                    # forever and the investigation visibly stalls: the
+                    # sweep clears the in-progress lock, but no code path
+                    # ever schedules the next turn.
+                    try:
+                        fn_short = (
+                            rec.fn_path.rsplit(".", 1)[-1]
+                            if rec.fn_path else None
+                        )
+                        try:
+                            re_kwargs = (
+                                json.loads(rec.kwargs_json)
+                                if rec.kwargs_json else {}
+                            )
+                        except (TypeError, ValueError) as kw_exc:
+                            _log.warning(
+                                "worker.reverse_sweep: kwargs_json malformed "
+                                "for %s (%s); re-enqueue skipped",
+                                rec.id, kw_exc,
+                            )
+                            fn_short = None
+                            re_kwargs = None
+                        queue_key = (
+                            ARQ_QUEUE_KEY_TEMPLATE.format(track=rec.track)
+                            if rec.track else None
+                        )
+                        if fn_short and queue_key and re_kwargs is not None:
+                            from uuid import uuid4 as _uuid4
+
+                            from arq import create_pool as _create_pool
+                            from arq.connections import RedisSettings as _RedisSettings
+                            arq_pool = await _create_pool(
+                                _RedisSettings.from_dsn(redis_url)
+                            )
+                            try:
+                                new_job_id = str(_uuid4())
+                                await arq_pool.enqueue_job(
+                                    fn_short,
+                                    _queue_name=queue_key,
+                                    _job_id=new_job_id,
+                                    **re_kwargs,
+                                )
+                                _log.info(
+                                    "worker.reverse_sweep: re-enqueued "
+                                    "resumable workflow %s as %s "
+                                    "(fn=%s queue=%s)",
+                                    rec.id, new_job_id, fn_short, queue_key,
+                                )
+                            finally:
+                                try:
+                                    await arq_pool.close()
+                                except (OSError, TimeoutError, RuntimeError) as close_exc:
+                                    _log.debug(
+                                        "worker.reverse_sweep: arq pool close "
+                                        "failed for %s: %s",
+                                        rec.id, close_exc,
+                                    )
+                    except (OSError, TimeoutError, RuntimeError) as enq_exc:
+                        _log.warning(
+                            "worker.reverse_sweep: re-enqueue failed for %s: %s",
+                            rec.id, enq_exc,
+                        )
                     continue
                 reason = (
                     "lock_missing_or_stale_heartbeat"

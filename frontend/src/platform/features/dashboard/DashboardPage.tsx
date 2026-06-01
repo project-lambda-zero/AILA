@@ -118,8 +118,13 @@ export function DashboardPage() {
   // Hoist the page-level actions (Add Widget when editing + EditModeToggle)
   // into the PageShell sticky header via useUpdatePageHeader, so the
   // controls sit alongside the page title in the global cyber-tech bar.
-  useUpdatePageHeader({
-    actions: (
+  //
+  // MUST be memoized: useUpdatePageHeader stores `actions` in a useEffect
+  // dep array (reference equality). An inline JSX fragment here is a fresh
+  // object every render → effect fires → setOverrides → context update →
+  // re-render → "Maximum update depth exceeded".
+  const headerActions = React.useMemo(
+    () => (
       <>
         {editMode && (
           <Button
@@ -137,7 +142,9 @@ export function DashboardPage() {
         />
       </>
     ),
-  });
+    [editMode],
+  );
+  useUpdatePageHeader({ actions: headerActions });
   return (
     <div className="space-y-4">
       {/* Loading state */}

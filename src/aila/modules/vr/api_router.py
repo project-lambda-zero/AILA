@@ -86,6 +86,8 @@ from .contracts import (
     VRInvestigationTargetSummary,
     VRMessageCreate,
     VRMessageSummary,
+    VROutcomeReviewCreate,
+    VROutcomeReviewSummary,
     VROutcomeSummary,
     VRPatternCreate,
     VRPatternPatch,
@@ -515,9 +517,10 @@ async def _compute_live_investigation_cost(
     the stored zero rather than crashing the read path).
     """
     try:
-        from aila.platform.tasks.models import TaskRecord  # noqa: PLC0415
-        from aila.platform.llm.cost_record import LLMCostRecord  # noqa: PLC0415
         from sqlalchemy import func as sa_func  # noqa: PLC0415
+
+        from aila.platform.llm.cost_record import LLMCostRecord  # noqa: PLC0415
+        from aila.platform.tasks.models import TaskRecord  # noqa: PLC0415
 
         # Find all run_ids belonging to this investigation
         task_ids_q = select(TaskRecord.id).where(
@@ -596,6 +599,7 @@ def _outcome_summary(record: Any) -> VROutcomeSummary:
         dispatch_status=OutcomeDispatchStatus(record.dispatch_status),
         dispatch_target=record.dispatch_target,
         created_at=record.created_at,
+        state=record.state or "dispatched",  # legacy NULL rows
     )
 
 
@@ -3671,6 +3675,137 @@ def create_vr_router() -> APIRouter:
             )).all()
 
         return DataEnvelope(data=[_outcome_summary(r) for r in rows])
+
+    @router.post(
+        "/investigations/{investigation_id}/outcomes/{outcome_id}/reviews",
+        response_model=DataEnvelope[VROutcomeReviewSummary],
+        status_code=status.HTTP_201_CREATED,
+        summary=(
+            "Submit a sibling review on a draft outcome. Quorum is "
+            "evaluated after the upsert; when state flips to APPROVED "
+            "the dispatcher is fired automatically and remaining active "
+            "sibling branches are halted."
+        ),
+    )
+    @limiter.limit("60/minute")
+    async def create_outcome_review(
+        request: Request,
+        investigation_id: str,
+        outcome_id: str,
+        body: VROutcomeReviewCreate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VROutcomeReviewSummary]:
+        del request
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+        from .services.outcome_review import (
+            OUTCOME_STATE_APPROVED,
+            evaluate_quorum,
+            upsert_review,
+        )
+
+        try:
+            row = await upsert_review(
+                outcome_id=outcome_id,
+                reviewer_branch_id=body.reviewer_branch_id,
+                vote=body.vote,
+                comment=body.comment,
+                suggested_edits=body.suggested_edits,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+
+        # Evaluate quorum after every review insert. When the state
+        # flips to APPROVED, fire the dispatcher inline so the outcome
+        # ships immediately rather than waiting for the next worker
+        # poll. Best-effort: dispatch errors are logged but don't
+        # roll back the review.
+        try:
+            quorum = await evaluate_quorum(outcome_id)
+        except (OSError, TimeoutError, RuntimeError, ValueError):
+            quorum = None
+
+        if quorum is not None and quorum.new_state == OUTCOME_STATE_APPROVED:
+            try:
+                from aila.platform.services.factory import ServiceFactory
+
+                from .agents.outcome_dispatcher import OutcomeDispatcher
+                dispatcher = OutcomeDispatcher(
+                    knowledge=ServiceFactory().knowledge,
+                )
+                await dispatcher.dispatch(outcome_id)
+            except (OSError, TimeoutError, RuntimeError, ValueError):
+                pass  # logged inside dispatcher
+
+        import json as _json
+        return DataEnvelope(data=VROutcomeReviewSummary(
+            id=row.id,
+            outcome_id=row.outcome_id,
+            reviewer_branch_id=row.reviewer_branch_id,
+            reviewer_persona=row.reviewer_persona,
+            vote=row.vote,
+            comment=row.comment,
+            suggested_edits=_json.loads(row.suggested_edits_json or "{}"),
+            created_at=row.created_at,
+        ))
+
+    @router.get(
+        "/investigations/{investigation_id}/outcomes/{outcome_id}/reviews",
+        response_model=DataEnvelope[list[VROutcomeReviewSummary]],
+        summary=(
+            "List sibling reviews for one outcome (most recent first). "
+            "Vote counts are surfaced via the outcome summary itself; "
+            "this endpoint returns the per-review detail including "
+            "comments and suggested edits."
+        ),
+    )
+    @limiter.limit("120/minute")
+    async def list_outcome_reviews(
+        request: Request,
+        investigation_id: str,
+        outcome_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[VROutcomeReviewSummary]]:
+        del request
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+        import json as _json
+
+        from .db_models import VRInvestigationOutcomeReviewRecord
+
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                select(VRInvestigationOutcomeReviewRecord)
+                .where(
+                    VRInvestigationOutcomeReviewRecord.outcome_id == outcome_id,
+                )
+                .order_by(VRInvestigationOutcomeReviewRecord.created_at.desc())
+            )).all()
+
+        return DataEnvelope(data=[
+            VROutcomeReviewSummary(
+                id=r.id,
+                outcome_id=r.outcome_id,
+                reviewer_branch_id=r.reviewer_branch_id,
+                reviewer_persona=r.reviewer_persona,
+                vote=r.vote,
+                comment=r.comment,
+                suggested_edits=_json.loads(r.suggested_edits_json or "{}"),
+                created_at=r.created_at,
+            )
+            for r in rows
+        ])
 
     @router.get(
         "/investigations/{investigation_id}/hypotheses",
