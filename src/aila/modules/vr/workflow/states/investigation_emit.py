@@ -81,6 +81,13 @@ def _resolve_final_status(exit_reason: str) -> str | None:
         return InvestigationStatus.COMPLETED.value
     if exit_reason.startswith("status_flipped:"):
         return None
+    if exit_reason.startswith("status_locked:"):
+        # Setup hit a PAUSED / COMPLETED / FAILED row and short-circuited.
+        # Whatever the operator (or prior cap_exceeded) set is already
+        # correct — emit must NOT overwrite it. Without this, paused
+        # investigations get flipped to completed because the default
+        # fallthrough below returns COMPLETED.
+        return None
     if exit_reason.startswith("researcher_error"):
         # ALL researcher errors (retryable or not) leave status untouched.
         # A single branch hitting a provider 500 should NOT kill the
