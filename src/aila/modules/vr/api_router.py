@@ -2904,6 +2904,25 @@ def create_vr_router() -> APIRouter:
             await uow.session.commit()
             await uow.session.refresh(inv)
 
+        # Drop the investigation's pending ARQ jobs so the worker
+        # doesn't dequeue them after pause + log STATUS_LOCKED for
+        # every one. Best-effort: investigation_setup's STATUS_LOCKED
+        # guard catches anything we miss here.
+        try:
+            from .services.arq_purge import purge_arq_jobs_for_investigation
+            purged = await purge_arq_jobs_for_investigation(
+                investigation_id, track="vr",
+            )
+            if purged.get("purged_jobs", 0) > 0:
+                _log.info(
+                    "pause_investigation ARQ_PURGE inv=%s purged=%d (of %d scanned)",
+                    investigation_id, purged["purged_jobs"], purged["scanned"],
+                )
+        except (OSError, RuntimeError, ImportError) as exc:
+            _log.warning(
+                "pause_investigation ARQ_PURGE failed inv=%s err=%s",
+                investigation_id, exc,
+            )
         return DataEnvelope(data=_investigation_summary(inv))
 
     @router.post(
