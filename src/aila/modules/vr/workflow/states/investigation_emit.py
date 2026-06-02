@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC
 from typing import Any
 
 from sqlmodel import select as _select
@@ -44,10 +45,24 @@ _log = logging.getLogger(__name__)
 # Per-task cap is 25 turns (_DEFAULT_MAX_TURNS in investigation_loop).
 # When the loop exits on max_turns without a terminal outcome we
 # auto-re-enqueue another task run so the agent keeps reasoning across
-# task boundaries. _OVERALL_TURN_CAP bounds the total branch turn
-# count so a hopelessly stuck investigation eventually surfaces to the
-# operator instead of burning LLM tokens forever.
+# task boundaries. _OVERALL_TURN_CAP bounds the total per-BRANCH turn
+# count. _INVESTIGATION_* caps bound the whole investigation: total
+# turns across all 6 branches, total messages emitted, and wall-clock
+# lifetime. Without these, a 6-branch investigation can theoretically
+# burn 6 * 500 = 3000 turns and tens of thousands of messages before
+# any branch hits its individual cap — which has happened in production
+# (b4b1e5da: 1202 messages over 24h without convergence). All caps
+# env-overridable for deep-chase investigations.
 _OVERALL_TURN_CAP = int(__import__("os").environ.get("VR_OVERALL_TURN_CAP", "500"))
+_INVESTIGATION_TURN_CAP = int(
+    __import__("os").environ.get("VR_INVESTIGATION_TURN_CAP", "300")
+)
+_INVESTIGATION_MESSAGE_CAP = int(
+    __import__("os").environ.get("VR_INVESTIGATION_MESSAGE_CAP", "1000")
+)
+_INVESTIGATION_WALL_CLOCK_HOURS = float(
+    __import__("os").environ.get("VR_INVESTIGATION_WALL_CLOCK_HOURS", "6")
+)
 
 
 def _resolve_final_status(exit_reason: str) -> str | None:
@@ -218,6 +233,104 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
         )
 
     final_status = _resolve_final_status(exit_reason)
+
+    # Investigation-level caps (turns/messages/wall-clock). If exceeded,
+    # halt ALL active branches + flip investigation to COMPLETED with a
+    # cap_exceeded reason. Runs before the per-branch logic so a single
+    # cap-exceeded check covers every active branch at once instead of
+    # waiting for each one to independently trip.
+    if investigation_id:
+
+        from sqlalchemy import func as _func  # noqa: PLC0415
+
+        from .investigation_setup import (  # noqa: PLC0415
+            VRInvestigationBranchRecord as _BranchRec3,
+        )
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
+                )
+            )).first()
+            if inv is not None and inv.status == InvestigationStatus.RUNNING.value:
+                total_turns_row = await uow.session.exec(
+                    _select(_func.coalesce(_func.sum(_BranchRec3.turn_count), 0))
+                    .where(_BranchRec3.investigation_id == investigation_id)
+                )
+                total_turns = int(total_turns_row.first() or 0)
+                from aila.modules.vr.db_models import (  # noqa: PLC0415
+                    VRInvestigationMessageRecord as _MsgRec,
+                )
+                msg_count_row = await uow.session.exec(
+                    _select(_func.count(_MsgRec.id)).where(
+                        _MsgRec.investigation_id == investigation_id,
+                    )
+                )
+                total_messages = int(msg_count_row.first() or 0)
+                created_at = inv.created_at
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=UTC)
+                age_hours = (
+                    utc_now() - created_at
+                ).total_seconds() / 3600.0
+
+                breach: str | None = None
+                if total_turns >= _INVESTIGATION_TURN_CAP:
+                    breach = (
+                        f"investigation_turn_cap:"
+                        f"{total_turns}/{_INVESTIGATION_TURN_CAP}"
+                    )
+                elif total_messages >= _INVESTIGATION_MESSAGE_CAP:
+                    breach = (
+                        f"investigation_message_cap:"
+                        f"{total_messages}/{_INVESTIGATION_MESSAGE_CAP}"
+                    )
+                elif age_hours >= _INVESTIGATION_WALL_CLOCK_HOURS:
+                    breach = (
+                        f"investigation_wall_clock:"
+                        f"{age_hours:.1f}h/"
+                        f"{_INVESTIGATION_WALL_CLOCK_HOURS:.1f}h"
+                    )
+
+                if breach is not None:
+                    actives = (await uow.session.exec(
+                        _select(_BranchRec3).where(
+                            _BranchRec3.investigation_id == investigation_id,
+                            _BranchRec3.status == "active",
+                        )
+                    )).all()
+                    halt_now = utc_now()
+                    for branch in actives:
+                        branch.status = "abandoned"
+                        branch.closed_reason = f"cap_exceeded:{breach}"
+                        branch.closed_at = halt_now
+                        branch.updated_at = halt_now
+                        uow.session.add(branch)
+                    inv.status = InvestigationStatus.COMPLETED.value
+                    inv.stopped_at = halt_now
+                    inv.updated_at = halt_now
+                    uow.session.add(inv)
+                    await uow.commit()
+                    _log.warning(
+                        "investigation_emit CAP_EXCEEDED investigation=%s "
+                        "reason=%s halted_branches=%d "
+                        "(turns=%d/%d msgs=%d/%d age=%.1fh/%.1fh)",
+                        investigation_id, breach, len(actives),
+                        total_turns, _INVESTIGATION_TURN_CAP,
+                        total_messages, _INVESTIGATION_MESSAGE_CAP,
+                        age_hours, _INVESTIGATION_WALL_CLOCK_HOURS,
+                    )
+                    return StateResult(
+                        next_state=RESERVED_SUCCEEDED,
+                        output={
+                            "investigation_id": investigation_id,
+                            "status": InvestigationStatus.COMPLETED.value,
+                            "exit_reason": f"cap_exceeded:{breach}",
+                            "turn_count": turn_count,
+                            "outcome_id": str(outcome_id) if outcome_id else None,
+                        },
+                    )
 
     if investigation_id:
         async with UnitOfWork() as uow:
