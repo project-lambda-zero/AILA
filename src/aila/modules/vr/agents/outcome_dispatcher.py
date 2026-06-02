@@ -1139,6 +1139,29 @@ class OutcomeDispatcher:
                         )
             await uow.commit()
 
+        # If the investigation just completed (no active branches remain
+        # after sibling halt), drop the investigation's pending ARQ jobs
+        # so siblings whose tasks were dispatched but not yet dequeued
+        # don't run a wasted setup pass.
+        if just_dispatched:
+            try:
+                from aila.modules.vr.services.arq_purge import (  # noqa: PLC0415
+                    purge_arq_jobs_for_investigation,
+                )
+                purged = await purge_arq_jobs_for_investigation(
+                    outcome.investigation_id, track="vr",
+                )
+                if purged.get("purged_jobs", 0) > 0:
+                    _log.info(
+                        "outcome_dispatcher ARQ_PURGE inv=%s purged=%d",
+                        outcome.investigation_id, purged["purged_jobs"],
+                    )
+            except (OSError, RuntimeError, ImportError) as exc:
+                _log.warning(
+                    "outcome_dispatcher ARQ_PURGE failed inv=%s err=%s",
+                    outcome.investigation_id, exc,
+                )
+
 
 def _audit_memo_namespace(
     scope: str,

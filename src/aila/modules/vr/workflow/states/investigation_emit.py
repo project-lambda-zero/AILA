@@ -312,6 +312,25 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                     inv.updated_at = halt_now
                     uow.session.add(inv)
                     await uow.commit()
+                    # Drop the investigation's pending ARQ jobs so they
+                    # don't keep waking the worker post cap-exceeded.
+                    try:
+                        from aila.modules.vr.services.arq_purge import (  # noqa: PLC0415
+                            purge_arq_jobs_for_investigation,
+                        )
+                        purged = await purge_arq_jobs_for_investigation(
+                            investigation_id, track="vr",
+                        )
+                        if purged.get("purged_jobs", 0) > 0:
+                            _log.info(
+                                "investigation_emit CAP_EXCEEDED ARQ_PURGE inv=%s purged=%d",
+                                investigation_id, purged["purged_jobs"],
+                            )
+                    except (OSError, RuntimeError, ImportError) as exc:
+                        _log.warning(
+                            "investigation_emit CAP_EXCEEDED ARQ_PURGE failed inv=%s err=%s",
+                            investigation_id, exc,
+                        )
                     _log.warning(
                         "investigation_emit CAP_EXCEEDED investigation=%s "
                         "reason=%s halted_branches=%d "
