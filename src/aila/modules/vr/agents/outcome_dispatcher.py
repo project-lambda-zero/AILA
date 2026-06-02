@@ -1036,9 +1036,19 @@ class OutcomeDispatcher:
             return target, inv
 
     async def _update_outcome_status(self, result: OutcomeDispatchResult) -> None:
+        from aila.modules.vr.contracts import (  # noqa: PLC0415
+            BranchStatus,
+            InvestigationStatus,
+        )
+        from aila.modules.vr.db_models import (  # noqa: PLC0415
+            VRInvestigationBranchRecord,
+            VRInvestigationRecord,
+        )
         from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
             OUTCOME_STATE_DISPATCHED,
         )
+        from aila.platform.contracts._common import utc_now  # noqa: PLC0415
+
         async with UnitOfWork() as uow:
             outcome = (await uow.session.exec(
                 _select(VRInvestigationOutcomeRecord).where(
@@ -1049,12 +1059,84 @@ class OutcomeDispatcher:
                 return
             outcome.dispatch_status = result.dispatch_status.value
             outcome.dispatch_target = result.dispatch_target
-            # Only DISPATCHED-status flips the state machine; SKIPPED
-            # and FAILED leave the row's state untouched so the operator
-            # / retry path can re-evaluate.
-            if result.dispatch_status == OutcomeDispatchStatus.DISPATCHED:
+            just_dispatched = (
+                result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+            )
+            if just_dispatched:
                 outcome.state = OUTCOME_STATE_DISPATCHED
             uow.session.add(outcome)
+
+            # When an outcome successfully dispatches, the investigation
+            # has reached its goal — any remaining active sibling
+            # branches should stop burning turns on a question already
+            # answered. Halt them + flip the investigation to COMPLETED
+            # if no branches remain active.
+            #
+            # Safety net behind evaluate_quorum's halt: evaluate_quorum
+            # halts when state flips to APPROVED, but that requires
+            # sibling votes. A legacy outcome that dispatches via
+            # auto_promote (claim_verifier) or the operator promote-
+            # to-finding endpoint bypasses quorum. Without this hook,
+            # those paths leave siblings churning indefinitely.
+            if just_dispatched:
+                investigation_id = outcome.investigation_id
+                proposing_branch_id = outcome.branch_id
+                actives = (await uow.session.exec(
+                    _select(VRInvestigationBranchRecord).where(
+                        VRInvestigationBranchRecord.investigation_id
+                        == investigation_id,
+                        VRInvestigationBranchRecord.status
+                        == BranchStatus.ACTIVE.value,
+                    ),
+                )).all()
+                halted = 0
+                for branch in actives:
+                    if branch.id == proposing_branch_id:
+                        continue
+                    branch.status = BranchStatus.ABANDONED.value
+                    branch.closed_reason = (
+                        f"sibling_outcome_dispatched:{result.outcome_id}"
+                    )
+                    branch.closed_at = utc_now()
+                    branch.updated_at = utc_now()
+                    uow.session.add(branch)
+                    halted += 1
+                if halted > 0:
+                    _log.info(
+                        "outcome_dispatcher HALT_SIBLINGS outcome=%s "
+                        "halted=%d (dispatched)",
+                        result.outcome_id, halted,
+                    )
+                # Flip investigation to COMPLETED only when no active
+                # branch remains (proposing branch could still be in
+                # flight if dispatch was triggered async).
+                inv = (await uow.session.exec(
+                    _select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    )
+                )).first()
+                if (
+                    inv is not None
+                    and inv.status == InvestigationStatus.RUNNING.value
+                ):
+                    remaining = (await uow.session.exec(
+                        _select(VRInvestigationBranchRecord).where(
+                            VRInvestigationBranchRecord.investigation_id
+                            == investigation_id,
+                            VRInvestigationBranchRecord.status
+                            == BranchStatus.ACTIVE.value,
+                        ),
+                    )).all()
+                    if not remaining:
+                        inv.status = InvestigationStatus.COMPLETED.value
+                        inv.stopped_at = utc_now()
+                        inv.updated_at = utc_now()
+                        uow.session.add(inv)
+                        _log.info(
+                            "outcome_dispatcher COMPLETE investigation=%s "
+                            "(dispatched, no active branches remain)",
+                            investigation_id,
+                        )
             await uow.commit()
 
 
