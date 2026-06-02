@@ -113,6 +113,45 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 f"investigation_setup: investigation {investigation_id} not found",
             )
 
+        # Honor operator pause + terminal investigation states. The
+        # status flip at line 244 below is unconditional and would
+        # bypass any PAUSED / COMPLETED / FAILED state set after the
+        # ARQ task was enqueued (operator pauses + cap_exceeded sweeps
+        # both land in this window). Without this guard, a paused
+        # investigation's pending ARQ task wakes up, flips status back
+        # to RUNNING, runs the full turn loop, and the operator's
+        # pause is silently undone. Surface this loudly so the operator
+        # can see WHY their pause held.
+        _STATUS_LOCKED = {
+            InvestigationStatus.PAUSED.value,
+            InvestigationStatus.COMPLETED.value,
+            InvestigationStatus.FAILED.value,
+        }
+        if inv.status in _STATUS_LOCKED:
+            await uow.commit()  # flush nothing; release UoW cleanly
+            _log.info(
+                "investigation_setup STATUS_LOCKED inv=%s status=%s "
+                "pause_reason=%s — skipping setup + loop, emitting "
+                "clean exit",
+                investigation_id, inv.status, inv.pause_reason,
+            )
+            return StateResult(
+                next_state="investigation_emit",
+                output={
+                    "investigation_id": investigation_id,
+                    "branch_id": explicit_branch_id or "",
+                    "strategy_family": inv.strategy_family,
+                    "auto_pilot": inv.auto_pilot,
+                    "cost_budget_usd": inv.cost_budget_usd,
+                    "team_id": inv.team_id,
+                    "cve_intel": [],
+                    "exit_reason": f"status_locked:{inv.status}",
+                    "last_turn_idx": 0,
+                    "last_action": "",
+                    "outcome_id": None,
+                },
+            )
+
         if explicit_branch_id:
             branch = (await uow.session.exec(
                 _select(VRInvestigationBranchRecord).where(
