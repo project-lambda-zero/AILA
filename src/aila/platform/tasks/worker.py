@@ -78,6 +78,86 @@ def _should_drop_lock(
     return False, ""
 
 
+async def _sweep_orphan_queued_tasks() -> None:
+    """Reap TaskRecord rows marked QUEUED in DB but absent from the
+    ARQ Redis queue.
+
+    Observed live: after worker crashes, manual zombie kills, or ARQ
+    job-record deletion (e.g. operator-driven queue purge), the DB
+    keeps the TaskRecord at QUEUED but nothing in Redis will ever
+    dequeue it. The UI shows "queued" forever; the operator has no
+    visibility into the desync until they ask why a target isn't
+    progressing.
+
+    Strategy: for each non-cron QUEUED row in the DB, check if its
+    job_id is present in any arq:queue:<track> zset. If absent across
+    all tracks, flip to FAILED with reason orphan_not_in_arq_queue.
+    Tasks queued within the last 60s are skipped — they may have been
+    enqueued in DB but not yet pushed to Redis by an in-flight submit().
+    """
+    redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
+    if not redis_url:
+        return
+
+    import redis.asyncio as aioredis  # noqa: PLC0415
+
+    client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
+    try:
+        # Collect every job_id present in any arq:queue:<track> zset.
+        present_in_arq: set[str] = set()
+        async for key in client.scan_iter(match="arq:queue:*", count=50):
+            key_str = key.decode() if isinstance(key, bytes) else str(key)
+            # Skip cron / health-check keys (not real job queues).
+            if ":" in key_str.removeprefix("arq:queue:"):
+                continue
+            members = await client.zrange(key_str, 0, -1)
+            for m in members:
+                present_in_arq.add(m.decode() if isinstance(m, bytes) else str(m))
+
+        # Find candidate DB rows: QUEUED for >60s.
+        recency_cutoff = datetime.now(tz=UTC) - timedelta(seconds=60)
+        async with async_session_scope() as session:
+            rows = (await session.exec(
+                select(TaskRecord).where(
+                    TaskRecord.status == TaskStatus.QUEUED,
+                    TaskRecord.created_at < recency_cutoff,
+                )
+            )).all()
+            reaped = 0
+            now = datetime.now(tz=UTC)
+            for rec in rows:
+                if rec.id.startswith("cron:"):
+                    continue
+                if rec.id in present_in_arq:
+                    continue
+                rec.status = TaskStatus.FAILED
+                rec.completed_at = now
+                rec.updated_at = now
+                rec.error = (
+                    "Reaped by orphan-queued sweep — DB row marked queued "
+                    "but absent from arq:queue:* zsets. ARQ has no record "
+                    "of this job; operator can resume via the owning "
+                    "domain's resume endpoint."
+                )
+                session.add(rec)
+                reaped += 1
+                TASK_ZOMBIES_REAPED_TOTAL.labels(
+                    reason="orphan_queued_not_in_arq",
+                ).inc()
+            if reaped:
+                await session.commit()
+                _log.warning(
+                    "_sweep_orphan_queued_tasks: reaped %d DB-queued rows "
+                    "with no ARQ entry",
+                    reaped,
+                )
+    finally:
+        try:
+            await client.aclose()
+        except (OSError, RuntimeError):
+            pass
+
+
 async def reaper(ctx: dict[str, object]) -> None:
     """ARQ cron — every minute. Reconciles orphan locks AND orphan TaskRecord rows.
 
@@ -140,6 +220,10 @@ async def reaper(ctx: dict[str, object]) -> None:
             _log.info("reaper: cleared %d crashed cursors", cleared)
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: cursor cleanup failed: %s", exc, exc_info=True)
+    try:
+        await _sweep_orphan_queued_tasks()
+    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+        _log.warning("reaper: orphan-queued sweep failed: %s", exc, exc_info=True)
 
 
 async def _reconcile_orphan_arq_locks() -> None:
@@ -565,16 +649,38 @@ async def _sweep_orphan_running_tasks(
                 )
                 if not reap_null_heartbeat and hb is None:
                     # Periodic mode: tasks with heartbeat=None cannot be
-                    # safely judged as zombies. ARQ's lock TTL can expire
-                    # on legitimately long-running tasks that don't call
-                    # ctx.heartbeat() (e.g. single-shot async tool calls
-                    # like run_function_ranking that delegate to a 5-min
+                    # safely judged as zombies WITHIN the ARQ job timeout
+                    # window. ARQ's lock TTL can expire on legitimately
+                    # long-running tasks that don't call ctx.heartbeat()
+                    # (e.g. single-shot async tool calls like
+                    # run_function_ranking that delegate to a 5-min
                     # audit_mcp.fuzzing_targets HTTP request). Lock-missing
                     # in that scenario is normal, not evidence of death.
-                    # Boot-time sweep still catches genuine zombies because
-                    # any heartbeat=None row predating worker boot must be
-                    # orphan by construction.
-                    continue
+                    #
+                    # BUT: a task that started more than ARQ_JOB_TIMEOUT_S
+                    # ago with no heartbeat is definitively dead. ARQ caps
+                    # any single job run at ARQ_JOB_TIMEOUT_S (3600s); past
+                    # that, ARQ has already killed and abandoned the
+                    # execution. The DB row sitting at RUNNING forever is
+                    # the bug this branch fixes (observed live: BIND9
+                    # ingestion task stuck 199 min before manual kill).
+                    if started is not None:
+                        if started.tzinfo is None:
+                            started_norm = started.replace(tzinfo=UTC)
+                        else:
+                            started_norm = started
+                        from aila.platform.tasks.constants import ARQ_JOB_TIMEOUT_S  # noqa: PLC0415
+                        arq_giveup_cutoff = now - timedelta(
+                            seconds=ARQ_JOB_TIMEOUT_S + 120,
+                        )
+                        if started_norm < arq_giveup_cutoff:
+                            # Fall through to the reap block below.
+                            reason = "stale_no_heartbeat_past_arq_timeout"
+                        else:
+                            continue
+                    else:
+                        # No started_at AND no heartbeat → can't judge → safer to skip.
+                        continue
                 if started is not None and hb is None and started > stale_cutoff:
                     # Task was submitted literally a second ago and hasn't
                     # had time to write its first heartbeat. Don't reap.
