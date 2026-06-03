@@ -691,6 +691,24 @@ async def _sweep_orphan_running_tasks(
                     else:
                         # No started_at AND no heartbeat → can't judge → safer to skip.
                         continue
+                # Mirror of the null-heartbeat case: a task that DID write
+                # at least one heartbeat but hasn't written one in past
+                # ARQ_JOB_TIMEOUT_S is just as dead as one that never
+                # wrote any. ARQ would have killed the execution at
+                # timeout regardless. Observed live: task 7ca90d7d wrote
+                # one heartbeat at T+30s, then the worker died; reaper
+                # skipped it for 174 min because hb was not None.
+                if hb is not None:
+                    from aila.platform.tasks.constants import ARQ_JOB_TIMEOUT_S  # noqa: PLC0415
+                    if hb.tzinfo is None:
+                        hb_norm = hb.replace(tzinfo=UTC)
+                    else:
+                        hb_norm = hb
+                    hb_giveup_cutoff = now - timedelta(seconds=ARQ_JOB_TIMEOUT_S + 120)
+                    if hb_norm < hb_giveup_cutoff:
+                        # Override reason with explicit stale-heartbeat tag
+                        # so the failure record makes the diagnosis clear.
+                        reason = "stale_heartbeat_past_arq_timeout"
                 if started is not None and hb is None and started > stale_cutoff:
                     # Task was submitted literally a second ago and hasn't
                     # had time to write its first heartbeat. Don't reap.
@@ -710,9 +728,20 @@ async def _sweep_orphan_running_tasks(
                     "worker.reverse_sweep: task_id=%s reason=%s — marking failed",
                     rec.id, reason,
                 )
+            # Always commit — the D-86 resumable-workflow path also
+            # mutates rec.status (-> CANCELLED) and re-enqueues, but
+            # never increments `reaped`. Without an unconditional
+            # commit those cancellations got rolled back at session
+            # close, leaving the same task in RUNNING for the next
+            # cron pass and the same D-86 cancel-then-rollback cycle.
+            # Observed live: task 7ca90d7d survived 174 min of cron
+            # passes before manual kill.
+            await session.commit()
             if reaped:
-                await session.commit()
-                _log.warning("worker.reverse_sweep: reaped %d orphan running task(s)", reaped)
+                _log.warning(
+                    "worker.reverse_sweep: reaped %d orphan running task(s)",
+                    reaped,
+                )
     except Exception:
         _log.warning("worker.reverse_sweep failed", exc_info=True)
     finally:
