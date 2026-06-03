@@ -80,7 +80,7 @@ async def sweep_cap_exceeded_investigations() -> int:
 
     async with UnitOfWork() as uow:
         # Per-investigation aggregates. One query returns
-        # (inv_id, status, created_at, total_turns, total_messages).
+        # (inv_id, clock_start, total_turns, total_messages).
         # total_turns = sum of all branch.turn_count for that inv.
         # total_messages = count of vr_investigation_messages.
         branch_turns = (
@@ -102,7 +102,14 @@ async def sweep_cap_exceeded_investigations() -> int:
         running = (await uow.session.exec(
             select(
                 INV.id,
-                INV.created_at,
+                # Clock from started_at (first turn) falling back to
+                # created_at if the worker hasn't stamped it yet. Using
+                # created_at directly punishes investigations that sat
+                # queued during long target ingestion — they'd insta-cap
+                # the moment a worker finally picked them up. See the
+                # 9e99eda0 incident (32h queue wait, all branches cap
+                # killed on turn 1 with zero execution time).
+                coalesce(INV.started_at, INV.created_at).label("clock_start"),
                 coalesce(branch_turns.c.total_turns, 0),
                 coalesce(msg_counts.c.total_messages, 0),
             )
@@ -114,16 +121,16 @@ async def sweep_cap_exceeded_investigations() -> int:
         now = utc_now()
         breaches: list[tuple[str, str]] = []
         for row in running:
-            inv_id, created_at, total_turns, total_messages = row
-            if created_at and created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=now.tzinfo)
+            inv_id, clock_start, total_turns, total_messages = row
+            if clock_start and clock_start.tzinfo is None:
+                clock_start = clock_start.replace(tzinfo=now.tzinfo)
             reason = None
             if total_turns and total_turns >= turn_cap:
                 reason = f"investigation_turn_cap:{total_turns}/{turn_cap}"
             elif total_messages and total_messages >= message_cap:
                 reason = f"investigation_message_cap:{total_messages}/{message_cap}"
-            elif created_at and created_at < wallclock_cutoff:
-                age_hours = (now - created_at).total_seconds() / 3600.0
+            elif clock_start and clock_start < wallclock_cutoff:
+                age_hours = (now - clock_start).total_seconds() / 3600.0
                 reason = (
                     f"investigation_wall_clock:{age_hours:.1f}h/"
                     f"{wallclock_hours:.1f}h"

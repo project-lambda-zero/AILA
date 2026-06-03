@@ -275,11 +275,20 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                     )
                 )
                 total_messages = int(msg_count_row.first() or 0)
-                created_at = inv.created_at
-                if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=UTC)
+                # Clock the wall-clock cap from when work ACTUALLY began
+                # (started_at, set on first turn) — falling back to
+                # created_at when started_at is NULL (very early in the
+                # lifecycle, before the first investigation_setup commit).
+                # Using created_at directly would punish investigations
+                # that sat queued during a long target ingestion: the
+                # moment a worker picked them up they'd insta-cap with
+                # zero actual execution time. See the 9e99eda0 incident
+                # (32h queue wait, all branches cap-killed on turn 1).
+                clock_start = inv.started_at or inv.created_at
+                if clock_start.tzinfo is None:
+                    clock_start = clock_start.replace(tzinfo=UTC)
                 age_hours = (
-                    utc_now() - created_at
+                    utc_now() - clock_start
                 ).total_seconds() / 3600.0
 
                 breach: str | None = None
