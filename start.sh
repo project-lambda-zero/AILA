@@ -44,6 +44,16 @@ COMMAND="${1:-start}"
 : "${AUDIT_MCP_PORT:=18822}"
 : "${IDA_HEADLESS_PORT:=18821}"
 : "${WORKERS:=default vr vulnerability forensics sbd_nfr}"
+# Per-queue worker concurrency. The vr queue runs LLM-heavy investigations
+# with multi-minute LLM retries; one worker per queue serializes them
+# behind whichever investigation is mid-call. Default vr=5 so the queue
+# drains in parallel. Override via WORKER_COUNT_<QUEUE> env vars (queue
+# name uppercased, non-alnum -> underscore). E.g. WORKER_COUNT_VR=8.
+: "${WORKER_COUNT_VR:=5}"
+: "${WORKER_COUNT_DEFAULT:=1}"
+: "${WORKER_COUNT_VULNERABILITY:=1}"
+: "${WORKER_COUNT_FORENSICS:=1}"
+: "${WORKER_COUNT_SBD_NFR:=1}"
 : "${AUDIT_MCP_DIR:=../audit-mcp}"
 : "${IDA_HEADLESS_DIR:=../ida-headless-mcp-exp}"
 : "${AILA_START_FRONTEND:=1}"
@@ -378,6 +388,41 @@ restart_one() {
   fi
 }
 
+# Resolve a queue name to its configured worker count.
+# Reads WORKER_COUNT_<QUEUE_UPPER> env var, defaulting to 1.
+# Non-alnum chars in the queue name are translated to underscore so
+# "sbd_nfr" -> WORKER_COUNT_SBD_NFR.
+worker_count_for() {
+  local q="$1"
+  local varname
+  varname="WORKER_COUNT_$(echo "$q" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9' '_')"
+  varname="${varname%_}"
+  echo "${!varname:-1}"
+}
+
+# Kill the legacy single-worker pidfile (worker-<q>.pid) AND every
+# indexed pidfile (worker-<q>-N.pid for any N), then spawn fresh
+# WORKER_COUNT workers under indexed names. Idempotent: safe to run
+# on a host that's currently running legacy single-worker layout OR
+# the new indexed layout OR a mix.
+restart_pool() {
+  local q="$1"
+  local n
+  n=$(worker_count_for "$q")
+  # Kill legacy single-worker pidfile (worker-<q>.pid)
+  restart_one "worker-$q"
+  # Kill every indexed pidfile (worker-<q>-*.pid). 20 is a safe upper
+  # bound for any reasonable per-queue concurrency.
+  local i
+  for ((i=1; i<=20; i++)); do
+    [[ -f "$RUN_DIR/worker-$q-$i.pid" ]] && restart_one "worker-$q-$i"
+  done
+  # Spawn N fresh workers under indexed names.
+  for ((i=1; i<=n; i++)); do
+    spawn "worker-$q-$i" -m aila worker -q "$q"
+  done
+}
+
 case "$COMMAND" in
   stop)    load_env; kill_aila_processes; exit 0 ;;
   status)  load_env; show_status; exit 0 ;;
@@ -394,15 +439,14 @@ case "$COMMAND" in
     echo "[aila] Frontend restarted; rest of stack untouched." ; exit 0 ;;
   restart-workers)
     load_env
-    for q in $WORKERS; do restart_one "worker-$q"; done
     mkdir -p "$RUN_DIR"
-    for q in $WORKERS; do spawn "worker-$q" -m aila worker -q "$q"; done
+    for q in $WORKERS; do restart_pool "$q"; done
     echo "[aila] All workers restarted; backend/frontend/audit-mcp/ida-headless untouched." ; exit 0 ;;
   restart-worker)
     if [[ -z "${2:-}" ]]; then echo "Usage: bash start.sh restart-worker <queue>"; exit 1; fi
-    load_env; restart_one "worker-$2"; mkdir -p "$RUN_DIR"
-    spawn "worker-$2" -m aila worker -q "$2"
-    echo "[aila] worker-$2 restarted; rest of stack untouched." ; exit 0 ;;
+    load_env; mkdir -p "$RUN_DIR"
+    restart_pool "$2"
+    echo "[aila] worker-$2 pool restarted (count=$(worker_count_for "$2")); rest of stack untouched." ; exit 0 ;;
   restart-audit-mcp)
     load_env; restart_one "audit-mcp"; mkdir -p "$RUN_DIR"
     ( cd "$AUDIT_MCP_DIR" && spawn "audit-mcp" -m audit_mcp --mode http --port "$AUDIT_MCP_PORT" --host 127.0.0.1 --workers "$AUDIT_MCP_WORKERS" )
@@ -490,9 +534,12 @@ spawn "backend" \
 # Code changes require an explicit ``bash start.sh restart``.
 
 # ── Workers ─────────────────────────────────────────────────────────────────
-echo "[aila] Starting workers: $WORKERS"
+echo "[aila] Starting workers: $WORKERS (per-queue counts: $(for q in $WORKERS; do printf '%s=%s ' "$q" "$(worker_count_for "$q")"; done))"
 for q in $WORKERS; do
-  spawn "worker-$q" -m aila worker -q "$q"
+  n=$(worker_count_for "$q")
+  for ((i=1; i<=n; i++)); do
+    spawn "worker-$q-$i" -m aila worker -q "$q"
+  done
 done
 
 # ── Frontend ────────────────────────────────────────────────────────────────

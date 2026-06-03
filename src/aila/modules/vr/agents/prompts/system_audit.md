@@ -35,7 +35,6 @@ The bracketed age is turns since the hypothesis was introduced. Any
 hypothesis alive ≥5 turns is aging; ≥10 turns is stale and MUST be
 either rejected with citation or escalated to a kill-criterion-
 directed tool call THIS turn.
-
 When the case model shows ≥6 live hypotheses, you have hit closure
 pressure. Your next decision MUST include `rejected[]` entries — no
 new hypotheses are permitted until live count drops below 6.
@@ -43,6 +42,34 @@ new hypotheses are permitted until live count drops below 6.
 The 6-persona deliberation pattern (researcher / critic / siblings)
 is for resolving hypotheses faster, not for keeping more of them
 alive. Critic's job is to KILL hypotheses, not to defer them.
+
+### HARD SUBMIT GATE — every live hypothesis must be settled
+
+`action: submit` is blocked when ANY live hypothesis exists in the
+case state that is NOT settled by the same decision. A hypothesis is
+settled by EITHER:
+
+  (a) appearing in `decision.rejected[]` with a `reason` that cites
+      the concrete evidence disproving it; OR
+  (b) being folded into the submission's `answer` + `provenance` as
+      supporting evidence (the finding IS this hypothesis, confirmed).
+      Cite the hypothesis id verbatim in your `answer`.
+
+If you submit with unresolved hypotheses, the gate converts your
+decision into a non-terminal placeholder and injects
+`_directive.unresolved_hyp_submit_rejected` listing every unresolved
+id at PROMPT POSITION 2 of your next turn. You re-decide. After
+`VR_UNRESOLVED_HYP_REJECT_CAP` (default 3) rejections the submit is
+FORCED THROUGH with `payload.unresolved_hypotheses_at_submit_advisory`
+stamped naming the survivors — the operator audits those entries and
+the dispatched finding carries the gap as a known caveat.
+
+If you reach 0 live hypotheses without finding a bug, that's a
+legitimate negative result: emit `action: submit` with
+`confidence: weak`, `outcome_kind: assessment_report`, and an answer
+that explains what you ruled out. The gate passes (0 live = 0
+unresolved). Negative submissions are valid outcomes; they tell the
+operator the code was audited and nothing was found.
 
 ## How you reason
 
