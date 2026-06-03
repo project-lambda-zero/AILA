@@ -211,11 +211,10 @@ async def reaper(ctx: dict[str, object]) -> None:
         _log.warning("reaper: vr stage reaper failed: %s", exc, exc_info=True)
     try:
         # Cursor cleanup only — clear __crashed__ cursors for terminal tasks
-        # so re-enqueue works. The investigation-level reaper was removed
-        # because it caused more damage than it fixed (false completions,
-        # false failures, branch abandonment cascades).
-        from aila.modules.vr.services.investigation_reaper import _clear_crashed_cursors
-        cleared = await _clear_crashed_cursors()
+        # so re-enqueue works. The sweep lives in platform/tasks/cursor_reaper
+        # since workflow_state_cursor is a platform-owned table.
+        from .cursor_reaper import sweep_orphan_crashed_cursors
+        cleared = await sweep_orphan_crashed_cursors()
         if cleared:
             _log.info("reaper: cleared %d crashed cursors", cleared)
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
