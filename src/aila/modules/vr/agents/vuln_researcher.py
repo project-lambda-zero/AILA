@@ -105,6 +105,20 @@ _VARIANT_HUNT_EXHAUSTION_PATTERN = re.compile(
 _VARIANT_HUNT_REJECT_CAP = int(__import__("os").environ.get(
     "VR_VARIANT_HUNT_REJECT_CAP", "3",
 ))
+# Hypothesis-settlement gate on terminal submit. Every live hypothesis
+# must be either explicitly rejected (in decision.rejected[]) or folded
+# into the submitted answer/provenance as supported evidence — no live
+# hypotheses are permitted to survive a submit. Without this gate, agents
+# accumulate live hypotheses across deep-search turns and submit while
+# the case still has 5+ unresolved claims, leaving the operator to
+# manually decide which ones the finding actually addresses.
+#
+# Cap mirrors variant_hunt: after N rejections the submit is FORCED
+# through with payload.unresolved_hypotheses_at_submit_advisory stamped
+# so the operator can grep the outcomes table.
+_UNRESOLVED_HYP_REJECT_CAP = int(__import__("os").environ.get(
+    "VR_UNRESOLVED_HYP_REJECT_CAP", "3",
+))
 
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
@@ -417,6 +431,19 @@ class HonestVulnResearcher:
         # `variant_hunt_advisory: forced_through_after_N_rejects` flag
         # on the payload so the operator can audit and the agent
         # doesn't loop forever.
+        # Pre-submit: every live hypothesis must be either explicitly
+        # rejected (in decision.rejected[]) or folded into the answer
+        # as supported evidence. Runs BEFORE the variant_hunt gate so
+        # the agent fixes the hypothesis-resolution issue first; once
+        # resolved cleanly, the variant_hunt gate (if applicable)
+        # evaluates against the cleaned decision.
+        if decision.action == "submit":
+            decision = self._maybe_reject_submit_with_unresolved_hypotheses(
+                decision=decision,
+                case_state=case_state,
+                turn_number=turn_number,
+            )
+
         if (
             decision.action == "submit"
             and inv.kind == InvestigationKind.VARIANT_HUNT.value
@@ -1121,6 +1148,147 @@ class HonestVulnResearcher:
                 **payload,
                 "_variant_hunt_gate_rejected": True,
                 "_variant_hunt_gate_reject_count": new_reject_count,
+            },
+        })
+
+    def _maybe_reject_submit_with_unresolved_hypotheses(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """Intercept any terminal_submit emitted while live hypotheses
+        remain unresolved.
+
+        A hypothesis is "resolved" by this turn when it appears in
+        ``decision.rejected[]`` with the same id. Anything in
+        ``case_state.hypotheses`` whose id isn't in that set is an
+        unresolved live hypothesis. Submitting with unresolved
+        hypotheses leaves the operator (or a downstream reviewer) to
+        guess which claims the finding actually addresses — that's the
+        same trap the closure-discipline section of system_audit.md
+        warns against, made into a hard structural gate.
+
+        Same shape as ``_maybe_reject_variant_hunt_submit``:
+          - Pass: clear directive + counter, return original decision.
+          - Reject (under cap): convert to non-terminal placeholder,
+            inject directive into case_state.observables.
+          - Force-through (over cap): stamp payload with audit advisory
+            and return the submit.
+        """
+        live_ids = [h.id for h in case_state.hypotheses if h.id]
+        newly_rejected_ids = {r.id for r in decision.rejected if r.id}
+        unresolved = [hid for hid in live_ids if hid not in newly_rejected_ids]
+
+        if not unresolved:
+            # Passes the gate. Clear any prior rejection counter so a
+            # later regression on the same branch starts fresh.
+            case_state.observables.pop(
+                "_unresolved_hyp_submit_rejected_count", None,
+            )
+            case_state.observables.pop(
+                "_directive.unresolved_hyp_submit_rejected", None,
+            )
+            return decision
+
+        prior_rejects = int(
+            case_state.observables.get("_unresolved_hyp_submit_rejected_count", 0) or 0,
+        )
+        new_reject_count = prior_rejects + 1
+
+        # Compact hypothesis listing for the directive (cap at 10 to
+        # keep the prompt section bounded; agent can see the rest in
+        # the regular case_model rendering).
+        hyp_by_id = {h.id: h for h in case_state.hypotheses if h.id}
+        unresolved_lines: list[str] = []
+        for hid in unresolved[:10]:
+            h = hyp_by_id.get(hid)
+            claim = (h.claim if h else "")[:140]
+            unresolved_lines.append(f"  - {hid}: {claim}")
+        if len(unresolved) > 10:
+            unresolved_lines.append(f"  ... and {len(unresolved) - 10} more")
+        unresolved_block = "\n".join(unresolved_lines)
+
+        if new_reject_count > _UNRESOLVED_HYP_REJECT_CAP:
+            _log.warning(
+                "unresolved_hyp submit FORCED THROUGH after %d rejections "
+                "inv=%s branch=%s turn=%d — payload retained %d unresolved "
+                "hypothesis ids: %s",
+                prior_rejects, self.investigation_id, self.branch_id,
+                turn_number, len(unresolved), ",".join(unresolved[:20]),
+            )
+            payload = decision.payload or {}
+            new_payload = dict(payload)
+            new_payload["unresolved_hypotheses_at_submit_advisory"] = {
+                "count": len(unresolved),
+                "ids": unresolved[:50],
+                "forced_through_after_rejects": prior_rejects,
+            }
+            case_state.observables.pop(
+                "_directive.unresolved_hyp_submit_rejected", None,
+            )
+            case_state.observables.pop(
+                "_unresolved_hyp_submit_rejected_count", None,
+            )
+            return decision.model_copy(update={"payload": new_payload})
+
+        _log.info(
+            "unresolved_hyp submit REJECTED inv=%s branch=%s turn=%d "
+            "rejects=%d/%d — %d live hypotheses unresolved",
+            self.investigation_id, self.branch_id, turn_number,
+            new_reject_count, _UNRESOLVED_HYP_REJECT_CAP, len(unresolved),
+        )
+
+        case_state.observables["_unresolved_hyp_submit_rejected_count"] = new_reject_count
+        case_state.observables["_directive.unresolved_hyp_submit_rejected"] = (
+            "*** SUBMIT REJECTED - UNRESOLVED LIVE HYPOTHESES ***\n"
+            f"Rejection {new_reject_count}/{_UNRESOLVED_HYP_REJECT_CAP} on this branch.\n"
+            "\n"
+            f"You attempted action: submit while {len(unresolved)} live "
+            "hypotheses are unresolved. Submitting now leaves the operator "
+            "unable to tell which hypotheses your finding actually settles.\n"
+            "\n"
+            "UNRESOLVED LIVE HYPOTHESES:\n"
+            f"{unresolved_block}\n"
+            "\n"
+            "REQUIRED for your next decision: for EACH unresolved id above,\n"
+            "EITHER\n"
+            "  (a) add it to `decision.rejected[]` with a `reason` that cites\n"
+            "      the concrete evidence (file:line, tool output, or another\n"
+            "      hypothesis's rejection) that disproves it. The standard\n"
+            "      'rejected' schema is {id, claim, reason}.\n"
+            "  (b) fold it into your submission's `answer` + `provenance` as\n"
+            "      supporting evidence (the finding IS this hypothesis,\n"
+            "      confirmed). Cite the hypothesis id verbatim in your answer\n"
+            "      so the reader can trace what your finding claims to settle.\n"
+            "\n"
+            "Then re-emit `action: submit` with the cleaned state. ALL live\n"
+            "hypotheses must be reachable from (a) OR (b) on the same turn as\n"
+            "the submit.\n"
+            "\n"
+            f"After {_UNRESOLVED_HYP_REJECT_CAP} rejections on this branch the\n"
+            "submit is FORCED THROUGH with unresolved_hypotheses_at_submit_\n"
+            "advisory stamped on the payload listing the surviving ids. The\n"
+            "operator will audit those entries. Don't burn through your\n"
+            "safety budget when the fix is mechanical."
+        )
+
+        payload = decision.payload or {}
+        rejected_command_text = (
+            "[HYPOTHESIS GATE: submit rejected - see "
+            "_directive.unresolved_hyp_submit_rejected]\n"
+            "Original submit attempt:\n"
+            + (payload.get("answer") or "(no answer)")[:1000]
+        )
+        return decision.model_copy(update={
+            "action": "tool_run",
+            "command": "",
+            "answer": rejected_command_text,
+            "payload": {
+                **payload,
+                "_unresolved_hyp_gate_rejected": True,
+                "_unresolved_hyp_gate_reject_count": new_reject_count,
             },
         })
 
