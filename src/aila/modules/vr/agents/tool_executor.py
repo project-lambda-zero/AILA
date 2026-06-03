@@ -66,6 +66,16 @@ class ToolExecutor:
     method returning a canned dict.
     """
 
+    # Known placeholder strings agents hallucinate in place of a real
+    # audit-mcp index_id. Each one costs an LLM retry-storm worth of
+    # wall-clock when it round-trips through the bridge and back to
+    # the agent as "Unknown index". Auto-substitute with the actual
+    # index_id resolved from the investigation's primary target.
+    _BAD_INDEX_PLACEHOLDERS: frozenset[str] = frozenset({
+        "main", "master", "head", "trunk", "current", "latest",
+        "default", "tip", "primary", "this", "auto",
+    })
+
     def __init__(
         self,
         ida: IDABridgeTool | Any,
@@ -75,6 +85,11 @@ class ToolExecutor:
             "ida_headless": ida,
             "audit_mcp": audit_mcp,
         }
+        # Per-process cache: investigation_id -> resolved audit_mcp index_id
+        # (or empty string when the investigation's target has no source
+        # repo). Filled lazily on first use per investigation, never
+        # invalidated — the index_id of a target doesn't change.
+        self._inv_index_id_cache: dict[str, str] = {}
 
     async def execute(
         self,
@@ -160,6 +175,13 @@ class ToolExecutor:
                 server_id=server_id, tool_name=tool_name,
                 message_id=msg_id, success=False, error=err,
             )
+        # Pre-call: auto-correct audit_mcp index_id if the agent passed
+        # a known placeholder or omitted it entirely. Saves a 30s+ LLM
+        # round-trip per call that would otherwise come back as
+        # "Unknown index: 'main'" or "missing required kwarg(s)
+        # ['index_id']".
+        if server_id == "audit_mcp":
+            args = await self._maybe_correct_index_id(investigation_id, args)
 
         try:
             raw = await bridge.forward(action=tool_name, **args)
@@ -410,6 +432,92 @@ class ToolExecutor:
             await uow.session.commit()
             await uow.session.refresh(msg)
             return msg.id
+
+    async def _maybe_correct_index_id(
+        self,
+        investigation_id: str,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Auto-correct ``index_id`` for audit_mcp calls.
+
+        Returns args unchanged when:
+          - the agent passed a non-placeholder string; OR
+          - the investigation has no resolvable index_id (caller's
+            target is a binary, an empty placeholder, or ingestion
+            never landed); OR
+          - the args.index_id already matches the resolved id.
+
+        Returns args with ``index_id`` substituted when the agent
+        passed a known placeholder ('main', 'master', 'head', etc.)
+        or omitted it entirely. Logs INFO so the operator can audit
+        every auto-fix in the worker log.
+
+        Cache key: investigation_id. The mapping investigation -> index
+        id never changes for the lifetime of an investigation, so a
+        plain dict cache is safe (no TTL needed).
+        """
+        resolved = await self._resolve_index_id(investigation_id)
+        if not resolved:
+            return args
+        current = args.get("index_id")
+        if isinstance(current, str) and current and current.lower() not in self._BAD_INDEX_PLACEHOLDERS:
+            return args
+        if current == resolved:
+            return args
+        new_args = dict(args)
+        new_args["index_id"] = resolved
+        from logging import getLogger  # noqa: PLC0415
+        getLogger(__name__).info(
+            "tool_executor: auto-corrected index_id inv=%s "
+            "from %r to %r (saves an LLM round-trip)",
+            investigation_id, current, resolved,
+        )
+        return new_args
+
+    async def _resolve_index_id(self, investigation_id: str) -> str:
+        """Resolve investigation -> primary target -> audit_mcp_index_id.
+
+        Returns empty string when no source-repo target / no audit-mcp
+        index for this investigation.
+        """
+        if investigation_id in self._inv_index_id_cache:
+            return self._inv_index_id_cache[investigation_id]
+        try:
+            from sqlmodel import select  # noqa: PLC0415
+
+            from aila.modules.vr.db_models import (  # noqa: PLC0415
+                VRInvestigationRecord,
+                VRTargetRecord,
+            )
+            from aila.platform.uow import UnitOfWork  # noqa: PLC0415
+
+            async with UnitOfWork() as uow:
+                inv = (await uow.session.exec(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                )).first()
+                if inv is None or not inv.target_id:
+                    self._inv_index_id_cache[investigation_id] = ""
+                    return ""
+                target = (await uow.session.exec(
+                    select(VRTargetRecord).where(
+                        VRTargetRecord.id == inv.target_id,
+                    ),
+                )).first()
+                if target is None or not target.mcp_handles_json:
+                    self._inv_index_id_cache[investigation_id] = ""
+                    return ""
+            import json  # noqa: PLC0415
+            try:
+                handles = json.loads(target.mcp_handles_json or "{}")
+            except (ValueError, TypeError):
+                handles = {}
+            resolved = str(handles.get("audit_mcp_index_id") or "")
+            self._inv_index_id_cache[investigation_id] = resolved
+            return resolved
+        except (OSError, RuntimeError, ImportError, AttributeError):
+            return ""
 
     async def _write_error_message(
         self,

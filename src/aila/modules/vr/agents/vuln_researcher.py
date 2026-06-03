@@ -1425,8 +1425,16 @@ def _mcp_family_rule_for_kind(
         idx = handles.get("audit_mcp_index_id")
         if idx:
             return (
-                f"RULE: source repo. Use **audit_mcp** tools with "
-                f"`index_id=\"{idx}\"`."
+                f"!!! INDEX_ID FOR THIS INVESTIGATION: `{idx}` !!!\n"
+                f"RULE: source repo. EVERY audit_mcp tool call MUST pass "
+                f"`index_id=\"{idx}\"`. Do NOT pass the branch name "
+                f"(\"main\", \"master\", \"HEAD\", \"trunk\", \"current\", "
+                f"\"latest\", \"default\") — those are placeholders the "
+                f"agent commonly hallucinates and they all bounce back as "
+                f"`Unknown index`, costing a 30s LLM retry. Copy the "
+                f"index_id verbatim from the line above, every call, no "
+                f"variation. The bridge auto-corrects placeholders to the "
+                f"right id but each correction still rounds-trips a turn."
             )
         return (
             "RULE: source repo. Use **audit_mcp** tools. If you need an "
