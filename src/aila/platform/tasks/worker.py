@@ -225,6 +225,19 @@ async def reaper(ctx: dict[str, object]) -> None:
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: orphan-queued sweep failed: %s", exc, exc_info=True)
     try:
+        from aila.modules.vr.services.investigation_reaper import (
+            sweep_cap_exceeded_investigations,
+        )
+        capped = await sweep_cap_exceeded_investigations()
+        if capped:
+            _log.warning(
+                "reaper: completed %d cap-exceeded investigations "
+                "(turns/messages/wall-clock breach)",
+                capped,
+            )
+    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+        _log.warning("reaper: cap-exceeded sweep failed: %s", exc, exc_info=True)
+    try:
         from aila.modules.vr.services.branch_reaper import sweep_orphan_active_branches
         flipped = await sweep_orphan_active_branches()
         if flipped:
