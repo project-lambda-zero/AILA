@@ -77,6 +77,13 @@ class Hypothesis(BaseModel):
     claim: str
     why_plausible: str = ""
     kill_criterion: str = ""
+    # Turn number at which this hypothesis became live. Used by
+    # ``render_case_model`` to surface aging so the agent feels
+    # pressure to close hypotheses that have been live for many turns
+    # without resolution. Defaults to 0 for backward compat with rows
+    # serialized before this field existed; ``absorb`` stamps new
+    # hypotheses with the current turn number when given one.
+    opened_at_turn: int = 0
 
 
 class RejectedHypothesis(BaseModel):
@@ -157,6 +164,11 @@ class ReasoningCaseState(BaseModel):
     rejected: list[RejectedHypothesis] = Field(default_factory=list)
     resolved: list[ResolvedHypothesis] = Field(default_factory=list)
     observables: dict[str, Any] = Field(default_factory=dict)
+    # Most recent turn number this state was absorbed at. Used by
+    # ``render_case_model`` to compute hypothesis age (current_turn -
+    # hypothesis.opened_at_turn). 0 means "never absorbed with a turn
+    # number" (legacy rows). Filled in by ``absorb(turn_number=N)``.
+    current_turn: int = 0
 
 
 class ReasoningOperatorSteering(BaseModel):
