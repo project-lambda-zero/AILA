@@ -30,6 +30,16 @@ from aila.platform.tools._common import Tool
 __all__ = ["AuditMcpBridgeTool"]
 
 
+# Tools that walk the call graph. Used by forward() to apply the
+# zero-result auto-suggestion: if any of these returns 0 results, the
+# bridge appends a `_bridge_note` field with diagnostic guidance and
+# nearest-name suggestions so the agent doesn't walk away thinking
+# "no edges = no bug here" when the real cause is an indexer miss.
+_XREF_ACTIONS = frozenset({
+    "callers_of", "callees_of", "ancestors_of", "reachable_from",
+})
+
+
 def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
     """Project an MCP tool catalog entry into the form the prompt
     builder + agent need.
@@ -324,6 +334,56 @@ class AuditMcpBridgeTool(Tool):
                                 f"semantic_search):\n"
                                 + "\n".join(f"  - {s}" for s in suggestions)
                             )
+
+            # Zero-result enrichment for xref tools. callers_of /
+            # callees_of / ancestors_of / reachable_from can return
+            # 0 hits for two very different reasons: (a) the queried
+            # symbol genuinely doesn't exist in the indexed tree (agent
+            # hallucinated a name, the symbol is in an unindexed sibling
+            # repo); or (b) the symbol exists but trailmark's call-graph
+            # indexer missed its forward edges — observed live with
+            # ngx_http_init_phase_handlers having only 1 of ~10 real
+            # outgoing calls indexed. Without a hint, the agent treats
+            # both cases as "no edges = my hypothesis is wrong" and
+            # walks away from a real lead. Embed both possibilities +
+            # nearest-name suggestions so the agent's next turn knows
+            # whether to fix the name or fall back to read_function.
+            if (
+                ctx.get("status") == "ready"
+                and isinstance(payload, dict)
+                and action in _XREF_ACTIONS
+                and isinstance(normalized_kwargs.get("name"), str)
+            ):
+                result_keys = ("callers", "callees", "results", "nodes")
+                result_list: list[Any] = []
+                for k in result_keys:
+                    v = payload.get(k)
+                    if isinstance(v, list):
+                        result_list = v
+                        break
+                if len(result_list) == 0:
+                    suggestions = await self._suggest_function_names(
+                        base=base,
+                        index_id=normalized_kwargs.get("index_id") or "",
+                        name=str(normalized_kwargs["name"]),
+                    )
+                    note_lines = [
+                        f"audit_mcp.{action}({normalized_kwargs['name']!r}) "
+                        f"returned 0 results. Two possibilities:",
+                        "  (a) the symbol does not exist in this index "
+                        "(hallucinated name, or in a sibling repo not "
+                        "indexed alongside the primary target);",
+                        "  (b) the call-graph indexer missed this "
+                        "function's edges in this direction. Fall back "
+                        "to read_function() to see the body and grep "
+                        "for calls directly, OR run semantic_search() "
+                        "to find the body via embedding.",
+                    ]
+                    if suggestions:
+                        note_lines.append(
+                            "NEAREST INDEXED FUNCTION NAMES:")
+                        note_lines.extend(f"  - {s}" for s in suggestions)
+                    payload["_bridge_note"] = "\n".join(note_lines)
             return payload
 
     async def _suggest_function_names(
@@ -388,6 +448,14 @@ class AuditMcpBridgeTool(Tool):
     # required flag + default per tool, so it never has to guess —
     # which is what was causing read_function(file_hint=...) etc.
     _SPEC_CACHE: list[dict[str, Any]] | None = None
+    # Cache TTL: audit-mcp restarts can ship new tools / renamed kwargs.
+    # Without a TTL, the bridge's first-startup schema stays stuck until
+    # AILA backend itself restarts. 300s matches the operator-observable
+    # latency of "I just restarted audit-mcp, when do schemas refresh?"
+    # and is short enough that the auto-refresh fires before a typical
+    # multi-investigation batch finishes.
+    _SPEC_CACHE_TTL_S: float = 300.0
+    _SPEC_CACHE_FETCHED_AT: float | None = None
 
     async def _list_tools(self) -> dict:
         """Return available audit-mcp tool names + schemas."""
@@ -407,8 +475,20 @@ class AuditMcpBridgeTool(Tool):
         concurrent fetches may both hit the server on cold start;
         each sets the same value so the cache converges.
         """
-        if self.__class__._SPEC_CACHE is not None:
+        import time as _time  # noqa: PLC0415
+        now = _time.monotonic()
+        cached_at = self.__class__._SPEC_CACHE_FETCHED_AT
+        if (
+            self.__class__._SPEC_CACHE is not None
+            and cached_at is not None
+            and (now - cached_at) < self.__class__._SPEC_CACHE_TTL_S
+        ):
             return self.__class__._SPEC_CACHE
+        if self.__class__._SPEC_CACHE is not None and cached_at is not None:
+            logging.getLogger(__name__).info(
+                "audit_mcp_bridge: schema cache stale (%.0fs old, TTL %.0fs) — refetching",
+                now - cached_at, self.__class__._SPEC_CACHE_TTL_S,
+            )
         base = await self._resolve_base_url()
         url = f"{base}/tools"
         try:
@@ -420,9 +500,21 @@ class AuditMcpBridgeTool(Tool):
                 "audit_mcp catalog fetch failed (%s) — agent will see "
                 "name-only listing without schemas", exc,
             )
-            self.__class__._SPEC_CACHE = []
-            return []
+            # On fetch failure: keep any prior cache (better stale than
+            # empty) and back off TTL so we retry sooner. Only flatten
+            # to [] when we never had a cache to begin with.
+            if self.__class__._SPEC_CACHE is None:
+                self.__class__._SPEC_CACHE = []
+                self.__class__._SPEC_CACHE_FETCHED_AT = now
+            else:
+                # Back off TTL by 30s so the next call retries; without
+                # this the stale cache would be honored for the full TTL.
+                self.__class__._SPEC_CACHE_FETCHED_AT = now - (
+                    self.__class__._SPEC_CACHE_TTL_S - 30.0
+                )
+            return self.__class__._SPEC_CACHE
         self.__class__._SPEC_CACHE = [_compact_spec(t) for t in raw]
+        self.__class__._SPEC_CACHE_FETCHED_AT = now
         # Inject the bridge-side virtual `read_lines` tool. audit_mcp
         # doesn't ship this; we resolve index_id -> root_path locally
         # and read the file slice from disk. The agent sees it in the
