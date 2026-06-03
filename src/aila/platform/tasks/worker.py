@@ -224,6 +224,16 @@ async def reaper(ctx: dict[str, object]) -> None:
         await _sweep_orphan_queued_tasks()
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: orphan-queued sweep failed: %s", exc, exc_info=True)
+    try:
+        from aila.modules.vr.services.branch_reaper import sweep_orphan_active_branches
+        flipped = await sweep_orphan_active_branches()
+        if flipped:
+            _log.warning(
+                "reaper: flipped %d orphan active branches under terminal investigations",
+                flipped,
+            )
+    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+        _log.warning("reaper: orphan-branch sweep failed: %s", exc, exc_info=True)
 
 
 async def _reconcile_orphan_arq_locks() -> None:
