@@ -172,6 +172,8 @@ class CyberReasoningEngine:
         self,
         case_state: ReasoningCaseState,
         decision: ReasoningTurnDecision,
+        *,
+        turn_number: int = 0,
     ) -> ReasoningCaseState:
         """Merge a turn decision into cumulative reasoning state."""
         contract = case_state.contract
@@ -212,13 +214,24 @@ class CyberReasoningEngine:
         ]
         for new_h in decision.hypotheses or []:
             if not new_h.id:
+                # No id: append; stamp current turn if not already set.
+                if new_h.opened_at_turn == 0 and turn_number > 0:
+                    new_h = new_h.model_copy(update={"opened_at_turn": turn_number})
                 merged_live.append(new_h)
                 continue
             for i, existing in enumerate(merged_live):
                 if existing.id == new_h.id:
-                    merged_live[i] = new_h
+                    # Update in place but preserve the original opened_at_turn
+                    # so age keeps counting from when the hypothesis FIRST
+                    # appeared, not from each refinement the agent posts.
+                    merged_live[i] = new_h.model_copy(update={
+                        "opened_at_turn": existing.opened_at_turn or new_h.opened_at_turn,
+                    })
                     break
             else:
+                # Truly new id: stamp opened_at_turn.
+                if new_h.opened_at_turn == 0 and turn_number > 0:
+                    new_h = new_h.model_copy(update={"opened_at_turn": turn_number})
                 merged_live.append(new_h)
 
         observables = dict(case_state.observables)
@@ -257,7 +270,9 @@ class CyberReasoningEngine:
             contract=contract,
             hypotheses=merged_live,
             rejected=rejected,
+            resolved=case_state.resolved,
             observables=observables,
+            current_turn=turn_number or case_state.current_turn,
         )
 
     def render_case_model(self, case_state: ReasoningCaseState) -> str:
@@ -315,13 +330,30 @@ class CyberReasoningEngine:
                 parts.append(f"  - {key} = {value}")
         if not tool_obs and not agent_obs:
             parts.append("Observables: (none yet)")
-
         if case_state.hypotheses:
-            parts.append("Live hypotheses:")
-            for hypothesis in case_state.hypotheses[:6]:
-                parts.append(f"  - {hypothesis.id or '?'}: {hypothesis.claim}")
+            live_count = len(case_state.hypotheses)
+            header_suffix = ""
+            if live_count >= 6:
+                header_suffix = "  !! CLOSURE PRESSURE - close at least one this turn before adding new ones"
+            elif live_count >= 4:
+                header_suffix = "  (aging - prefer closing over adding)"
+            parts.append(f"Live hypotheses ({live_count}):{header_suffix}")
+            current_turn = case_state.current_turn or 0
+            for hypothesis in case_state.hypotheses[:10]:
+                age_marker = ""
+                if hypothesis.opened_at_turn and current_turn:
+                    age = current_turn - hypothesis.opened_at_turn
+                    if age >= 10:
+                        age_marker = f" [alive {age} turns - STALE, RESOLVE OR REJECT]"
+                    elif age >= 5:
+                        age_marker = f" [alive {age} turns - aging]"
+                    elif age > 0:
+                        age_marker = f" [alive {age} turns]"
+                parts.append(f"  - {hypothesis.id or '?'}: {hypothesis.claim}{age_marker}")
                 if hypothesis.kill_criterion:
                     parts.append(f"      kill: {hypothesis.kill_criterion}")
+            if live_count > 10:
+                parts.append(f"  ... and {live_count - 10} more (close them - rendering capped)")
         else:
             parts.append("Live hypotheses: (propose 2-3 this turn)")
 

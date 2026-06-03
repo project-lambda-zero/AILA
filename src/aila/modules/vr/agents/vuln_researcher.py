@@ -427,7 +427,7 @@ class HonestVulnResearcher:
                 turn_number=turn_number,
             )
 
-        new_case_state = self._engine.absorb(case_state, decision)
+        new_case_state = self._engine.absorb(case_state, decision, turn_number=turn_number)
 
         payload_kind, payload = _decision_to_message_payload(decision)
         terminal = decision.action == "submit"
