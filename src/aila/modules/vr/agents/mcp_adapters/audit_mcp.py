@@ -541,12 +541,15 @@ def _audit_xref_result(
     summary_noun: str,
 ) -> AdapterResult:
     refs = _list_or_empty(raw, *list_keys)
+    note = raw.get("_bridge_note") if isinstance(raw, dict) else None
     payload: dict[str, Any] = {
         target_field: target,
         "xrefs": refs,
         "total": len(refs),
         "source_provenance": provenance_stamp(ctx),
     }
+    if isinstance(note, str) and note.strip():
+        payload["bridge_note"] = note
     lines = [
         _audit_xref_compact_line(r)
         for r in refs[:MAX_LIST_PREVIEW]
@@ -556,6 +559,11 @@ def _audit_xref_result(
         lines.append(f"  ... and {len(refs) - MAX_LIST_PREVIEW} more")
     body = "\n".join(lines) if lines else "  (none)"
     obs_value = f"{summary_noun} of {target} ({len(refs)}):\n{body}"
+    if isinstance(note, str) and note.strip():
+        # Surface the bridge's zero-result diagnostic to the agent.
+        # The note already includes nearest-name suggestions when the
+        # symbol resolved to something close.
+        obs_value = f"{obs_value}\n\n{note}"
     return AdapterResult(
         payload_kind=PayloadKind.XREF_VIEW,
         payload=payload,
