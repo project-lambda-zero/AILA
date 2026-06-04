@@ -278,6 +278,28 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
             new_state = OUTCOME_STATE_APPROVED
             transition_reason = "auto_approved_no_siblings"
 
+        # Fallback: siblings exist (quorum_k > 0) but every single one
+        # is already non-active (completed/abandoned) and the recorded
+        # votes are still below quorum. Nobody can ever vote on this
+        # outcome — auto-approve so the investigation can settle.
+        # Stamps the transition with a distinct reason so the operator
+        # can audit which outcomes shipped without sibling corroboration.
+        # The pre-submit draft_pending gate (vuln_researcher) is the
+        # primary mitigation; this is the safety net for investigations
+        # that predate the gate or hit the gate's blind spots.
+        if (
+            prior_state == OUTCOME_STATE_DRAFT
+            and quorum_k > 0
+            and len(active_siblings) == 0
+            and (approve_count + reject_count) < quorum_k
+        ):
+            new_state = OUTCOME_STATE_APPROVED
+            transition_reason = (
+                f"auto_approved_no_active_voters_"
+                f"approve={approve_count}_reject={reject_count}_"
+                f"abstain={abstain_count}_k={quorum_k}"
+            )
+
         # Reject is hard veto, evaluated before approve.
         if (
             prior_state == OUTCOME_STATE_DRAFT
