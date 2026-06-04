@@ -357,7 +357,15 @@ async def post_draft_review_request(
     (same shape auto_steering uses). The message text spells out
     exactly how to respond: call the ``submit_outcome_review`` action
     with vote and rationale.
+
+    Idempotent: if a review-request message for the same outcome was
+    already posted, this is a no-op and returns the existing message
+    id. Without this guard, every re-entry of the ``investigation_emit``
+    state (e.g. after a sibling vote, after a workflow restart, after
+    operator pause/resume) re-posts the same notice, producing the spam
+    pattern operators have reported.
     """
+    auto_steering_key = f"draft_review_request:{outcome_id}"
     text = (
         f"*** DRAFT OUTCOME UP FOR REVIEW ***\n"
         f"\n"
@@ -387,6 +395,27 @@ async def post_draft_review_request(
         f"If you cannot ground a claim, vote reject or abstain."
     )
     async with UnitOfWork() as uow:
+        # Idempotency: skip if a request for the same outcome already exists.
+        # We match on the auto_steering_key substring stored verbatim in the
+        # payload_json TEXT column. Using ``LIKE`` against the JSON-serialised
+        # blob is intentional — adding a JSONB column or an extracted-value
+        # index is overkill for a single-key idempotency check.
+        existing = (await uow.session.exec(
+            _select(VRInvestigationMessageRecord)
+            .where(
+                VRInvestigationMessageRecord.investigation_id
+                == investigation_id,
+            )
+            .where(
+                VRInvestigationMessageRecord.payload_json.contains(
+                    auto_steering_key,
+                ),
+            )
+            .limit(1),
+        )).first()
+        if existing is not None:
+            return existing.id
+
         msg = VRInvestigationMessageRecord(
             investigation_id=investigation_id,
             branch_id=proposing_branch_id,
@@ -395,7 +424,7 @@ async def post_draft_review_request(
             payload_kind=PayloadKind.TEXT.value,
             payload_json=json.dumps({
                 "text": text,
-                "auto_steering_key": f"draft_review_request:{outcome_id}",
+                "auto_steering_key": auto_steering_key,
                 "outcome_id": outcome_id,
             }),
             operator_intent=OperatorIntent.STEERING.value,
