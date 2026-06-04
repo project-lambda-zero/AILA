@@ -103,29 +103,47 @@ class ToolExecutor:
 
         parsed = _parse_command(command_raw)
         if parsed is None:
-            # Count consecutive malformed commands on this branch.
-            # If the LLM keeps producing empty/broken commands, inject
-            # a hard redirect instead of letting it loop 70 times.
+            # Empty / malformed tool_run is by far the most common loop
+            # mode the agent gets stuck in: it picks action=tool_run but
+            # produces no command string. The previous behaviour was a
+            # plain error text that the LLM ignored on the next turn,
+            # producing the same empty command, looping until the turn
+            # cap. Two-layer mitigation:
+            #   (a) FIRST malformed command on this branch → return the
+            #       error AS BEFORE, but include the "you should have
+            #       picked observe" hint so the LLM has a clear next move.
+            #   (b) SECOND consecutive malformed command → STOP message
+            #       with explicit submit/observe options; the agent has
+            #       proven it cannot recover via tool_run.
+            # The original threshold of >= 2 fired the STOP message only
+            # after 3 broken commands; observed b53d3bb0 had branches
+            # producing 4-8 consecutive empty commands without the STOP
+            # ever firing because the counter only sees the LAST run on
+            # this branch (not the whole history).
             malformed_count = await self._count_consecutive_malformed(
                 branch_id,
             )
-            if malformed_count >= 2:
+            if malformed_count >= 1:
                 err = (
-                    "STOP — you have produced 3 consecutive malformed or empty "
-                    "tool_run commands. The engine cannot dispatch an empty command. "
-                    "You MUST either:\n"
-                    "  (a) Produce a valid JSON command: "
+                    "STOP — you have produced 2 consecutive empty or "
+                    "malformed tool_run commands. The engine cannot "
+                    "dispatch an empty command. Your next turn MUST be "
+                    "one of:\n"
+                    "  (a) action=tool_run with valid JSON command: "
                     '{\"tool\": \"audit_mcp.read_function\", \"args\": {\"name\": \"...\"}}\n'
-                    "  (b) Submit your current findings with action=submit if you "
-                    "have enough evidence.\n"
-                    "  (c) Switch to action=observe to reason without a tool call.\n\n"
-                    "Do NOT produce another empty command."
+                    "  (b) action=submit if you have enough evidence to "
+                    "submit your findings.\n"
+                    "  (c) action=observe to reason without a tool call.\n\n"
+                    "Pick (c) if you are unsure — observe is always safe "
+                    "and lets you think before dispatching another tool."
                 )
             else:
                 err = (
                     "Malformed tool_run command — expected JSON with "
                     "'tool' (e.g. 'server.tool_name') and 'args' dict. "
-                    f"Got: {command_raw[:200]!r}"
+                    f"Got: {command_raw[:200]!r}. "
+                    "If you don't have a specific tool query to make this "
+                    "turn, pick action=observe instead of action=tool_run."
                 )
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,

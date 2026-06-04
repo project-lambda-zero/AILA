@@ -437,6 +437,22 @@ class HonestVulnResearcher:
         # the agent fixes the hypothesis-resolution issue first; once
         # resolved cleanly, the variant_hunt gate (if applicable)
         # evaluates against the cleaned decision.
+        # Pre-submit gate (NEW): if another branch in this investigation
+        # has a draft outcome up for review and this branch has not yet
+        # voted, refuse the submit and inject a "vote first" directive.
+        # Otherwise multiple siblings race to terminal_submit before
+        # anyone votes on the first draft, and the first draft sits
+        # stuck in draft forever because every potential voter has
+        # closed itself out. See investigation b53d3bb0 (renzo's draft
+        # never reached quorum because maddie/wei/yuki all submitted
+        # their own before voting on it).
+        if decision.action == "submit":
+            decision = await self._maybe_reject_submit_when_draft_pending(
+                decision=decision,
+                case_state=case_state,
+                turn_number=turn_number,
+            )
+
         if decision.action == "submit":
             decision = self._maybe_reject_submit_with_unresolved_hypotheses(
                 decision=decision,
@@ -1289,6 +1305,143 @@ class HonestVulnResearcher:
                 **payload,
                 "_unresolved_hyp_gate_rejected": True,
                 "_unresolved_hyp_gate_reject_count": new_reject_count,
+            },
+        })
+
+    async def _maybe_reject_submit_when_draft_pending(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """Intercept a terminal_submit when another sibling already has
+        a draft outcome up for review on this investigation, and this
+        branch has not yet voted on that draft.
+
+        Returns a non-terminal observe with a directive injected at
+        operator-priority. Original submit payload is preserved on the
+        observables under ``_pending_draft_blocked_submit`` so the agent
+        can re-submit once it has voted on every open draft.
+
+        Without this gate, multiple siblings race each other to
+        terminal_submit, each one closes itself out, and the first
+        draft's quorum never assembles — every potential voter has
+        already submitted its own and gone to status=completed (which
+        cannot vote, see ``vr_investigation_branches.status``).
+        """
+        from sqlmodel import select as _select_local  # noqa: PLC0415
+
+        from aila.modules.vr.db_models.outcome import (  # noqa: PLC0415
+            VRInvestigationOutcomeRecord,
+        )
+        from aila.modules.vr.db_models.outcome_review import (  # noqa: PLC0415
+            VRInvestigationOutcomeReviewRecord,
+        )
+        from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
+            OUTCOME_STATE_DRAFT,
+        )
+
+        async with UnitOfWork() as uow:
+            drafts = (await uow.session.exec(
+                _select_local(VRInvestigationOutcomeRecord)
+                .where(
+                    VRInvestigationOutcomeRecord.investigation_id
+                    == self.investigation_id,
+                )
+                .where(
+                    VRInvestigationOutcomeRecord.state
+                    == OUTCOME_STATE_DRAFT,
+                ),
+            )).all()
+            if not drafts:
+                return decision
+
+            # Exclude drafts proposed by this branch — the proposer
+            # doesn't vote on its own outcome.
+            other_drafts = [
+                d for d in drafts if d.branch_id != self.branch_id
+            ]
+            if not other_drafts:
+                return decision
+
+            voted_on: set[str] = set()
+            for d in other_drafts:
+                review = (await uow.session.exec(
+                    _select_local(VRInvestigationOutcomeReviewRecord)
+                    .where(
+                        VRInvestigationOutcomeReviewRecord.outcome_id
+                        == d.id,
+                    )
+                    .where(
+                        VRInvestigationOutcomeReviewRecord.reviewer_branch_id
+                        == self.branch_id,
+                    )
+                    .limit(1),
+                )).first()
+                if review is not None:
+                    voted_on.add(d.id)
+
+            pending = [d for d in other_drafts if d.id not in voted_on]
+            if not pending:
+                return decision
+
+        _log.info(
+            "draft_pending submit REJECTED inv=%s branch=%s turn=%d — "
+            "%d unvoted draft outcomes: %s",
+            self.investigation_id, self.branch_id, turn_number,
+            len(pending), [d.id[:8] for d in pending],
+        )
+
+        directive_lines = [
+            "*** SUBMIT BLOCKED - UNVOTED DRAFT OUTCOMES IN THIS INVESTIGATION ***",
+            "",
+            "Another sibling branch submitted a terminal outcome that is now in",
+            "DRAFT state and waiting for quorum. You MUST vote on it before",
+            "submitting your own outcome. The dispatcher will not ship any",
+            "outcome until existing drafts reach quorum.",
+            "",
+            "Unvoted drafts on this investigation:",
+        ]
+        for d in pending[:10]:
+            directive_lines.append(
+                f"  - outcome_id={d.id} kind={d.outcome_kind} "
+                f"confidence={d.confidence}",
+            )
+        directive_lines.extend([
+            "",
+            "Your next turn MUST be a submit_outcome_review action with one",
+            "of: approve | reject | request_edit | abstain. Re-read the",
+            "submit_outcome_review block in your prompt for the exact shape.",
+            "",
+            "Once all drafts on this investigation have your vote, you may",
+            "submit your own outcome.",
+        ])
+        directive = "\n".join(directive_lines)
+
+        case_state.observables["_directive.draft_pending_submit_blocked"] = (
+            directive
+        )
+        case_state.observables["_pending_draft_blocked_submit"] = {
+            "answer": decision.answer or "",
+            "payload": decision.payload or {},
+            "blocked_at_turn": turn_number,
+            "unvoted_draft_ids": [d.id for d in pending[:10]],
+        }
+
+        rejected_command_text = (
+            "[DRAFT PENDING GATE: submit blocked - see "
+            "_directive.draft_pending_submit_blocked]\n"
+            "Vote on the listed drafts via submit_outcome_review first."
+        )
+        return decision.model_copy(update={
+            "action": "tool_run",
+            "command": "",
+            "answer": rejected_command_text,
+            "payload": {
+                **(decision.payload or {}),
+                "_draft_pending_gate_rejected": True,
+                "_draft_pending_unvoted_count": len(pending),
             },
         })
 
