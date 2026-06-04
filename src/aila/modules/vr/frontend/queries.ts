@@ -241,7 +241,26 @@ export function useInvestigationMessages(
   // headroom and still bounded enough to refuse a malicious/runaway
   // queryString.
   limit = 50000,
+  // Live-tail is OPT-IN. The previous default (refetchInterval: 3000)
+  // hammered the messages endpoint with the full 50000-row payload
+  // every 3 seconds per open tab. On long investigations that single
+  // endpoint generated more bytes than the rest of the UI combined
+  // AND amplified pressure during memory crises (see D-251/D-252:
+  // 50k-row materialization tipped uvicorn into OOM).
+  //
+  // Live updates land via the SSE channel from
+  // `useInvestigationMessagesStream`, which merges incremental
+  // messages into THIS query's cache key. The polling fallback is
+  // therefore redundant whenever the stream is connected.
+  //
+  // Callers that genuinely need a polling fallback (e.g. an
+  // operator view that wants to keep auto-refreshing even when SSE
+  // is broken) MUST opt in explicitly: `useInvestigationMessages(id,
+  // undefined, 0, 50000, { liveTail: true })`.
+  opts: { liveTail?: boolean; refetchIntervalMs?: number } = {},
 ) {
+  const liveTail = opts.liveTail ?? false;
+  const refetchIntervalMs = opts.refetchIntervalMs ?? 3000;
   return useQuery({
     queryKey: ["vr", "investigation-messages", investigationId, branchId, offset, limit],
     queryFn: async () => {
@@ -255,7 +274,7 @@ export function useInvestigationMessages(
       );
     },
     enabled: !!investigationId,
-    refetchInterval: 3000,
+    refetchInterval: liveTail ? refetchIntervalMs : false,
   });
 }
 
