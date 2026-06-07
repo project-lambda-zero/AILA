@@ -284,6 +284,26 @@ spawn() {
       cmd_args+="${arg}"
     fi
   done
+  # Collect simple KEY=VAL lines from .env so spawned children see them.
+  # PowerShell Start-Process strips the bash shell's exported env (D-251)
+  # so .env settings would otherwise be invisible to detached children.
+  # We translate each line into `set KEY=VAL && ` and prepend to the cmd
+  # block so the cmd shell sets them before launching python. Skip blank
+  # lines, comments, and any line whose key is not a bare identifier.
+  local env_prefix=""
+  if [[ -f .env ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%$'\r'}"
+      [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
+      local k="${line%%=*}"
+      local v="${line#*=}"
+      [[ "$k" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+      # strip surrounding quotes from value if present
+      [[ "$v" =~ ^\".*\"$ ]] && v="${v:1:-1}"
+      [[ "$v" =~ ^\'.*\'$ ]] && v="${v:1:-1}"
+      env_prefix+="set ${k}=${v}&& "
+    done < .env
+  fi
   local slug log_path
   slug=$(slugify "$label")
   log_path="${RUN_DIR_ABS}/${slug}.log"
@@ -293,7 +313,7 @@ spawn() {
   [[ -f "$log_path" ]] && mv -f "$log_path" "${log_path}.prev" 2>/dev/null
   local pidv
   pidv=$("$PS" -NoProfile -Command \
-    "(Start-Process cmd -ArgumentList '/c','python ${cmd_args} > \"${log_path}\" 2>&1' -WindowStyle Hidden -PassThru).Id" \
+    "(Start-Process cmd -ArgumentList '/c','${env_prefix}python ${cmd_args} > \"${log_path}\" 2>&1' -WindowStyle Hidden -PassThru).Id" \
     2>/dev/null | tr -d '\r\n ')
   record_pid "$label" "$pidv"
   echo "[aila]   $label started (PID $pidv, log $log_path)"
@@ -451,7 +471,20 @@ case "$COMMAND" in
     load_env; restart_one "audit-mcp"; mkdir -p "$RUN_DIR"
     ( cd "$AUDIT_MCP_DIR" && spawn "audit-mcp" -m audit_mcp --mode http --port "$AUDIT_MCP_PORT" --host 127.0.0.1 --workers "$AUDIT_MCP_WORKERS" )
     echo "[aila] audit-mcp restarted; rest of stack untouched. Firefox semble pickle reloads in ~9s." ; exit 0 ;;
-  *) echo "Unknown: $COMMAND. start | stop | status | restart | restart-backend | restart-frontend | restart-workers | restart-worker <q> | restart-audit-mcp"; exit 1 ;;
+  refresh-audit-mcp)
+    load_env
+    # Walk every audit-mcp index, git-fetch upstream, and re-index when
+    # HEAD moved. Unchanged repos are a no-op via the SHA short-circuit.
+    # Pass --force to rebuild regardless (use after a trailmark/semble
+    # upgrade where the on-disk format changed).
+    extra=()
+    [[ "${2:-}" == "--force" ]] && extra=(--force)
+    [[ -n "${AUDIT_MCP_REFRESH_ONLY:-}" ]] && extra+=(--only "$AUDIT_MCP_REFRESH_ONLY")
+    python "$REPO/scripts/refresh_audit_mcp_indexes.py" \
+      --url "http://127.0.0.1:${AUDIT_MCP_PORT:-18822}" \
+      "${extra[@]}"
+    exit $? ;;
+  *) echo "Unknown: $COMMAND. start | stop | status | restart | restart-backend | restart-frontend | restart-workers | restart-worker <q> | restart-audit-mcp | refresh-audit-mcp [--force]"; exit 1 ;;
 esac
 
 REPO="$PWD"
