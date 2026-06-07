@@ -4,6 +4,8 @@ The reasoning loop (`docs/vr/01_REASONING_LOOP.md`) sketches an "adjudicator" th
 
 The frame: **the LLM is allowed to be confident only when the evidence graph contains the artifacts that justify the confidence.** Every claim creates a debt; the loop discharges debts by collecting matching evidence. Submission is gated on the debt being paid. This is the Metis pattern (`docs/VR_MODULE_METIS_INSPIRATIONS.md`), specialized to vulnerability research where claims fan out across static, dynamic, and exploitation domains.
 
+> **Status note (2026-06).** The taxonomy and lifecycle below remain the design; the LLM-side honesty discipline ships today through the persona-deliberation panel, `claim_verifier`, the variant-hunt submit gate, the pre-submit draft-pending gate (`01_REASONING_LOOP.md §8.bis.5`), and auto-steering. A dedicated `VRObligation` table + standalone rule engine is NOT yet in `src/aila/modules/vr/db_models/`; the frontend `ObligationChecklist` renders an empty list with a "no obligation API yet" caveat. Read this document as the contract the loop is being held to, not the current API surface.
+
 ---
 
 ## 1. Why Obligations Exist
@@ -34,8 +36,8 @@ Obligations are typed by claim category. The table below is exhaustive for v0.1 
 | "stack overflow" / `bug_class=stack_overflow` | ASAN report `stack-buffer-overflow` OR core dump showing return address overwrite | run_target / GDB | CRITICAL | If both ASAN and GDB disagree on bug class, force `confidence=inconclusive`. |
 | "use-after-free" / `bug_class=uaf` | ASAN `heap-use-after-free` with allocation-stack and free-stack frames | ASAN | CRITICAL | The free-stack frame must be present in the report — "UAF without a free site" is a false-positive shape ASAN occasionally produces with mmap'd objects; flag as caveat. |
 | "double-free" / `bug_class=double_free` | ASAN `attempting double-free` | ASAN | CRITICAL | — |
-| "controlled write" | GDB output showing `mov [rdi], rax` (or equivalent) where `rdi` and `rax` both contain attacker-supplied bytes; bytes traceable to the input | GDB session log + input-mapping artifact | CRITICAL | Both the address and the value must be attacker-controlled. "Crash in `mov` instruction" is not a controlled write. |
-| "controlled call / RIP control" | Core dump or GDB output where instruction pointer equals attacker-supplied bytes | core file, GDB | CRITICAL | The bytes must be matchable against an entry in the trigger input (the model can't claim RIP control with a hardcoded `0x4141414141414141` if the input is JSON). |
+| "controlled write" | GDB output showing `mov [rdi], rax` (or equivalent) where `rdi` and `rax` both contain untrusted-input bytes; bytes traceable to the input | GDB session log + input-mapping artifact | CRITICAL | Both the address and the value must derive from untrusted input. "Crash in `mov` instruction" is not a controlled write. |
+| "controlled call / RIP control" | Core dump or GDB output where instruction pointer equals untrusted-input bytes | core file, GDB | CRITICAL | The bytes must be matchable against an entry in the trigger input (the model can't claim RIP control with a hardcoded `0x4141414141414141` if the input is JSON). |
 | "exploitable" | All target mitigations enumerated; bypass primitive present for each enabled mitigation OR explicit "no bypass needed" justification per mitigation | `analyze_binary` mitigations block + per-mitigation evidence | CRITICAL | The mitigation set is read from `analyze_binary` (deterministic). Each enabled mitigation must be addressed in the reasoning. CFI on, ROP claimed, no CFI bypass cited → reject. |
 | "RCE" | Either (a) a working PoC that executes a marker command in the target context, OR (b) demonstrated RIP control + a verified ROP/JOP chain that reaches a syscall/library call equivalent to code execution | exploit-run log with marker output, OR ROP chain log + gadget verification | CRITICAL | If (b), every gadget address must appear in `ROPgadget --binary` output. If (a), the marker command's output must be captured (not "presumably worked"). |
 | "ASLR bypassed" | Info-leak primitive that prints a concrete address from a randomized region; computed module base from leak; runtime confirmation that base + offset hits expected symbol | exploit-run log showing leaked pointer, GDB confirmation | REQUIRED | The leaked value must be different across runs (or the model is reading a non-randomized region). Reject "ASLR bypassed" if run-to-run leaked value is identical. |
@@ -487,7 +489,7 @@ ObligationEvent {
     actor: "operator:rkim",
     timestamp: 2026-04-12T14:23:11Z,
     reason: "tcache layout is irrelevant here; the UAF reuses an
-             attacker-allocated chunk in the same arena. See ../notes/2026-04-12-tcache.md"
+             input-allocated chunk in the same arena. See ../notes/2026-04-12-tcache.md"
 }
 ```
 

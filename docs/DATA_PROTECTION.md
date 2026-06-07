@@ -7,13 +7,11 @@ How AILA prevents sensitive data from leaking into LLM prompts, API responses, a
 ## Data Posture Mode
 
 A global switch that controls how aggressively the platform handles sensitive data in LLM interactions. Configurable at runtime via ConfigRegistry or environment variable.
-
 | Mode | Behavior |
 |---|---|
-| `transparent` | Skip classification entirely. All prompts marked PUBLIC. No redaction. Used in lab/development environments where the LLM is local and trusted. |
-| `standard` | Full classification. RESTRICTED prompts are handled per task_type config: either blocked (`fail`) or redacted (`redact`). Default mode. |
-| `paranoid` | Full classification. RESTRICTED prompts are always redacted, never blocked. Used when you want the scan to complete but with sensitive tokens replaced. |
-
+| `transparent` | Skip classification entirely. All prompts marked PUBLIC. No redaction. Use only with a local LLM or a host you operate. Shipped in `.env.example` as the dev convenience default. |
+| `standard` | Full classification. RESTRICTED prompts are handled per task-type config: either blocked (`fail`) or redacted (`redact`). The in-process fallback when `AILA_PLATFORM_DATA_POSTURE_MODE` is unset or carries an unrecognized value (`resolve_posture()` in `platform/llm/config.py`). |
+| `paranoid` | Full classification. RESTRICTED prompts are always redacted, never blocked. Use when you want the scan to complete but with sensitive tokens replaced. |
 ### Configuration
 
 ```bash
@@ -25,11 +23,16 @@ PUT /config/platform/data_posture_mode
 {"value": "standard"}
 ```
 
-Resolution chain: env var `AILA_PLATFORM_DATA_POSTURE_MODE` -> ConfigRegistry DB row -> default `"standard"`.
+Resolution chain: env var `AILA_PLATFORM_DATA_POSTURE_MODE` -> ConfigRegistry
+`platform.data_posture_mode` -> in-process fallback `"standard"`. The shipped
+`.env.example` sets the value to `transparent` for local-LLM development; flip
+to `standard` or `paranoid` before pointing the platform at a third-party API.
 
 ### Where it's read
 
-`platform/llm/config.py:resolve_posture()` is called by the classify pipeline step before every LLM call. The posture mode is stamped on the pipeline context (`ctx["posture_mode"]`) and persisted in the audit seal.
+`platform/llm/config.py::LLMConfigProvider.resolve_posture()` is called by the
+classify pipeline step before every LLM call. The posture mode is stamped on
+the pipeline context (`ctx["posture_mode"]`) and persisted in the audit seal.
 
 ---
 
@@ -220,7 +223,15 @@ No prompt content is stored in audit records. The seal proves the call happened 
 
 ## Exception Redaction
 
-Workflow engine audit records redact exception messages by default. `safe_exc_message()` in `platform/workflows/log.py` truncates and sanitizes exception text before it reaches the `workflowauditrecord` table. This prevents stack traces containing credentials or internal paths from being persisted.
+Workflow engine transition rows in `workflow_state_transitions` redact
+exception text by default. `safe_exc_message()`
+(`src/aila/platform/workflows/log.py`) returns `type(exc).__name__` for any
+exception that is not a `WorkflowSafeMessage` subclass, so handler crashes
+cannot leak credentials or internal paths into the durable audit table.
+Handlers that want a longer message persisted must raise an exception that
+inherits from `WorkflowSafeMessage`; the writer then stores `str(exc)`
+truncated to 2000 characters. The full traceback always reaches structlog
+server-side via `logger.exception(...)`; only the persisted row is sanitized.
 
 ---
 
@@ -249,9 +260,15 @@ Workflow engine audit records redact exception messages by default. `safe_exc_me
 
 ## Configuration Reference
 
-| Variable | Default | Effect |
-|---|---|---|
-| `AILA_PLATFORM_DATA_POSTURE_MODE` | `standard` | Global posture: transparent / standard / paranoid |
-| `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_RESTRICTED_BEHAVIOR_{TASK_TYPE}` | `fail` | Per-task-type: fail (block) or redact (replace and continue) |
+| Variable | Code fallback | Shipped in `.env.example` | Effect |
+|---|---|---|---|
+| `AILA_PLATFORM_DATA_POSTURE_MODE` | `standard` | `transparent` | Global posture: `transparent` / `standard` / `paranoid`. |
+| `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_RESTRICTED_BEHAVIOR_{TASK_TYPE}` | `fail` | `transparent` for `scoring` and `synthesis` (no-op — see note) | Per task type: `redact` (replace tokens and continue) is the only non-default; any other value, including the shipped `transparent`, resolves to `fail`. |
+
+The `transparent` value in `.env.example` for the restricted-behavior keys is
+a no-op: `_resolve_restricted_behavior()` recognises only `redact` as the
+non-default. While `AILA_PLATFORM_DATA_POSTURE_MODE=transparent` is set the
+classify step short-circuits to PUBLIC before the behavior key is consulted,
+so the value never matters in the shipped dev configuration.
 
 Both are configurable via environment variable, Config page (`/admin/config`), or `PUT /config/platform/{key}` API.

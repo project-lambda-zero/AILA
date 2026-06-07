@@ -89,6 +89,67 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Documentation: README module inventory now lists `vr` with its
   full capability surface. Quick-start uses `pnpm` (not `npm`) and
   references the full-stack docker compose option.
+- Frontend live-tail of investigation messages is now opt-in (commit
+  `ca1ff83`). The previous `useInvestigationMessages` default fired
+  `refetchInterval: 3000` against `/messages?limit=50000` from every
+  open tab, generating more bytes than the rest of the UI combined and
+  contributing to two uvicorn OOMs (D-251 / D-252). Live updates now
+  flow exclusively through `useInvestigationMessagesStream` (SSE);
+  callers that still want polling pass
+  `useInvestigationMessages(id, undefined, 0, 50000, { liveTail: true })`.
+  Existing positional args remain compatible.
+- VR investigation wall-clock cap clocks from `coalesce(started_at,
+  created_at)` instead of `created_at` (commit `b47dd65`). Both the
+  reaper and the per-turn cap stop killing investigations whose only
+  "age" is queue-wait time during long target ingestion. Caught by the
+  WebKit JSC incident (`9e99eda0`) where every branch died at turn 1
+  with `cap_exceeded:investigation_wall_clock:32.7h/6.0h`.
+- `post_draft_review_request` is now idempotent (commit `8f2d1f5`).
+  Investigation_emit re-entry on sibling vote, workflow restart, or
+  operator pause/resume no longer re-posts the `*** DRAFT OUTCOME UP
+  FOR REVIEW ***` notice. Dedupe keys on
+  `auto_steering_key='draft_review_request:<outcome_id>'`; if a prior
+  post exists, returns its id as a no-op. Observed 12 duplicate posts
+  on a single outcome in investigation `b3eebd6b` before the fix.
+- Three fixes for the stuck-investigation pattern (commit `2328b4e`):
+  (1) `tool_executor` lowers `_count_consecutive_malformed` from `>=2`
+      to `>=1` and points both error texts at `action=observe` as the
+      explicit safe fallback;
+  (2) `vuln_researcher` gains `_maybe_reject_submit_when_draft_pending`,
+      which refuses a terminal_submit when another sibling has an
+      un-voted draft in this investigation (runs before the unresolved-
+      hypothesis and variant-hunt gates);
+  (3) `outcome_review.evaluate_quorum` auto-approves when `quorum_k > 0`
+      but `len(active_siblings) == 0` and votes are still below quorum,
+      under transition reason `auto_approved_no_active_voters_*` so the
+      operator can audit which outcomes shipped without corroboration.
+- Hard submit-gate forces every live hypothesis to be settled before
+  terminal submit (commit `9bb2c29`). `_maybe_reject_submit_with_unresolved_hypotheses`
+  runs before the variant_hunt gate on every submit. Computes
+  `unresolved = live_ids - newly_rejected`; if non-empty, converts the
+  submit into a non-terminal placeholder and injects
+  `_directive.unresolved_hyp_submit_rejected` at prompt position 2 of
+  the next turn. After `VR_UNRESOLVED_HYP_REJECT_CAP` (default 3) the
+  submit is forced through with `payload.unresolved_hypotheses_at_submit_advisory`
+  stamped naming the survivors. Negative results (0 live hypotheses)
+  terminate cleanly as `assessment_report` through the same gate.
+- `__crashed__` workflow cursor sweep moved from VR to platform tasks
+  with an ORM `delete()` (commit `af9a724`), so any module that lands
+  in `__crashed__` is reaped on worker startup.
+- ARQ stale-heartbeat zombies are now reaped with an unconditional
+  commit (commit `e42dea2`) — the previous reaper logged the reap but
+  did not always commit, leaving heartbeats stuck.
+- VR branch reaper switched from raw `text()` SQL to an ORM `update()`
+  construct (commit `c7c6820`) after the prior race window between
+  SELECT and UPDATE could mark a healthy branch as terminated (commit
+  `ffb8f93`). Atomic UPDATE with safety graces closes the race.
+- VR bridge schema cache now expires (commit `15311b7`), so a newly
+  added MCP tool surface is picked up without a worker restart, and
+  xref tools that return zero results carry an auto-suggestion for
+  the operator's next step.
+- Auto-correction for hallucinated `audit_mcp` `index_id` values: the
+  bridge rewrites obviously-bad ids to the active investigation's
+  target and surfaces a sharper prompt callout (commit `ad2af51`).
 
 ### Fixed
 

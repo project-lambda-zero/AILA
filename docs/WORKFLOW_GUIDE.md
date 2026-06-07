@@ -57,6 +57,7 @@ async def state_my_step(
 ### Rules
 
 1. **`output` must be JSON-serializable.** `StateResult` validates this at construction time via `json.dumps()`. If your output contains a Pydantic model, datetime, UUID, or any non-primitive, serialize it first. The engine will reject it with a `ValidationError` otherwise.
+   - Validated by `StateResult` model_validator at `src/aila/platform/workflows/types.py:119`.
 
 2. **`state_input` is a `dict[str, Any]`.** Not a Pydantic model. Not a dataclass. Every handler receives a raw dict and must parse what it needs from it.
 
@@ -283,7 +284,7 @@ terminal = await analyze_fleet(
 )
 ```
 
-Task kwargs become `initial_input` in the engine. `initial_input` is stored in a JSONB column. Non-serializable objects crash the INSERT. The engine validates this at `execute()` entry with `json.dumps()` and raises a clear `TypeError` if it fails.
+Task kwargs become `initial_input` in the engine. `initial_input` is stored in a JSONB column. Non-serializable objects crash the INSERT. The engine validates this at `execute()` entry with `json.dumps()` and raises a clear `TypeError` if it fails. Validated at `DurableStateMachine.execute()` entry via `json.dumps(initial_input, default=None)` — see `src/aila/platform/workflows/engine.py:112`.
 
 ### Do not: put datetimes, UUIDs, or enums directly in `output`
 
@@ -337,7 +338,7 @@ await session.merge(run_record)
 await session.commit()
 ```
 
-The orchestrator and engine may both create `WorkflowRunRecord` rows for the same `run_id`. Use `merge()` or `INSERT ON CONFLICT DO NOTHING`.
+The orchestrator and engine may both create `WorkflowRunRecord` rows for the same `run_id`. Use `merge()` or `INSERT ON CONFLICT DO NOTHING`. Live merge sites: `src/aila/platform/runtime/orchestrator.py:304, 309`.
 
 ### Do not: hard-code state transitions in handler logic
 
@@ -440,6 +441,25 @@ Let retriable exceptions propagate. Declare them in `retriable_on` on the `State
 
 ---
 
+## Platform-Owned Sweeps
+
+### `__crashed__` cursor sweep (commit `af9a724`)
+
+Lives at `src/aila/platform/tasks/cursor_reaper.py`. ORM `delete(WorkflowStateCursor)` filtered by `current_state == "__crashed__"` AND `run_id NOT IN (active TaskRecord ids)` (queued, running, waiting). Runs every minute from the worker reaper cron.
+
+A `__crashed__` cursor is reclaimed only once its `TaskRecord` has settled to a non-active status (`done`, `failed`, `cancelled`, `dead_letter`). The crash event itself is preserved on the `TaskRecord`; only the cursor row is removed.
+
+### VR wall-clock cap (commit `b47dd65`)
+
+The per-investigation reaper clocks elapsed time from `coalesce(started_at, created_at)` rather than `created_at`.
+
+- SQL site: `src/aila/modules/vr/services/investigation_reaper.py:112`
+- Python site: `src/aila/modules/vr/services/investigation_emit.py:288`
+
+The cap envelope (`VR_INVESTIGATION_WALL_CLOCK_HOURS`, default 6 hours) no longer fires while an investigation sits queued.
+
+---
+
 ## File Layout
 
 ```
@@ -464,7 +484,7 @@ See `src/aila/modules/vulnerability/workflow/` for the canonical production refe
 
 ## Cyber Reasoning Engine
 
-The platform provides `CyberReasoningEngine` (`platform/services/reasoning.py`) for modules that need multi-turn LLM reasoning inside a workflow state. The forensics module uses it for bounded investigations; future modules (web_pentest, mobile_reverse) will share the same protocol.
+The platform provides `CyberReasoningEngine` (`platform/services/reasoning.py`) for modules that need multi-turn LLM reasoning inside a workflow state. The forensics and vr modules use it for bounded investigations; future modules (web_pentest, mobile_reverse) will share the same protocol.
 
 The reasoning engine is **not** a workflow engine. It runs *inside* a single workflow state handler. A handler calls the engine in a loop:
 
@@ -580,7 +600,7 @@ Operators can influence reasoning without modifying code:
 
 ```python
 steering = ReasoningOperatorSteering(
-    confirmed_facts=["the attacker used Cobalt Strike"],
+    confirmed_facts=["the intrusion used a Cobalt Strike beacon"],
     disproved_hypotheses=["H2: lateral movement via RDP"],
     guidance=["focus on DNS exfiltration channels"],
     pinned_strategy_family="network_forensics",
@@ -589,6 +609,23 @@ steering = ReasoningOperatorSteering(
 ```
 
 Confirmed facts and guidance are injected into the prompt. Disproved hypotheses bypass the engine's own rejection logic. Required artifacts enforce that the submission cites specific evidence.
+
+### VR Submit / Quorum Lifecycle
+
+Three gates from commit `2328b4e` plus the idempotent draft-review request from commit `8f2d1f5`.
+
+**Pre-submit gate.** A `terminal_submit` is intercepted by `_maybe_reject_submit_when_draft_pending` (`src/aila/modules/vr/agents/vuln_researcher.py:1311-1403`) when an unvoted DRAFT outcome exists for the investigation (excluding drafts proposed by this branch). The submit is converted into a non-terminal `observe` carrying a `SUBMIT BLOCKED - UNVOTED DRAFT OUTCOMES` directive, and the original submit payload is preserved on observables under `_pending_draft_blocked_submit` so the agent can re-submit after voting.
+
+**Auto-approve fallback in `evaluate_quorum`** (`src/aila/modules/vr/services/outcome_review.py:275-296`):
+
+- `quorum_k == 0` (single-branch investigation) flips a DRAFT to APPROVED with `transition_reason="auto_approved_no_siblings"`.
+- `quorum_k > 0` with every non-proposing sibling non-active and votes still below quorum flips a DRAFT to APPROVED with `transition_reason="auto_approved_no_active_voters_*"`.
+
+`compute_quorum` returns `max(2, ceil(N/2))` for `N >= 1`.
+
+**Empty-`tool_run` STOP threshold.** The second consecutive empty or malformed `tool_run` (`src/aila/modules/vr/agents/tool_executor.py:109-155`) injects a hard STOP directive listing valid options (`tool_run`, `submit`, `observe`). The first empty command receives a softer hint.
+
+**Idempotent draft-review request (commit `8f2d1f5`).** `post_draft_review_request` (`src/aila/modules/vr/services/outcome_review.py:365-459`) builds `auto_steering_key = f"draft_review_request:{outcome_id}"`. Before inserting a new operator-kind message it runs a substring `.contains(auto_steering_key)` lookup against `VRInvestigationMessageRecord.payload_json` (lines 432-434); if a match exists no new row is written and the existing message id is returned.
 
 ### Do / Do Not
 

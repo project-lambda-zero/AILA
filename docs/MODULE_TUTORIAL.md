@@ -337,20 +337,78 @@ uvicorn aila.api.app:app --host 0.0.0.0 --port 8000 --reload
 
 ## Step 11: Add a frontend page (optional)
 
-Create `frontend/` in your module with three files:
+Each module that contributes UI is its own pnpm workspace package living at
+`src/aila/modules/<module_id>/frontend/`. The shell imports it by package
+name, so it must declare a `package.json` and `tsconfig.json` before any
+`.ts`/`.tsx` files compile.
 
-**spec.ts** -- module UI contribution:
+Use `src/aila/modules/hello_world/frontend/` as the canonical reference.
+
+**`frontend/package.json`** — workspace package metadata. Name follows the
+`@aila/<module>-frontend` (kebab-case) convention:
+
+```json
+{
+  "name": "@aila/my-module-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./spec.ts",
+  "types": "./spec.ts",
+  "exports": { ".": "./spec.ts" },
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf node_modules"
+  },
+  "peerDependencies": {
+    "react": "catalog:react19",
+    "@tanstack/react-query": "catalog:query"
+  },
+  "devDependencies": {
+    "@aila/typescript-config": "workspace:*",
+    "@types/react": "catalog:react19",
+    "typescript": "catalog:"
+  }
+}
+```
+
+Add any module-specific deps under `dependencies` (with `catalog:<group>`
+references where a catalog entry exists). Add shell-owned framework / data
+/ design-system packages under `peerDependencies`. See
+`docs/FRONTEND_MODULE_STANDARD.md` for the full dep-ownership matrix.
+
+**`frontend/tsconfig.json`** — extends the shared module config and points
+`@/`, `@app/`, `@platform/` aliases back at the shell:
+
+```json
+{
+  "extends": "@aila/typescript-config/react-module",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../../../../../frontend/src/*"],
+      "@app/*": ["../../../../../frontend/src/app/*"],
+      "@platform/*": ["../../../../../frontend/src/platform/*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}
+```
+
+**`frontend/spec.ts`** — module UI contribution. The shell imports this
+file via the package's `main` field:
+
 ```typescript
 import { lazy } from "react";
 import type { ModuleFrontendSpec } from "@platform/extension-registry/types";
 
 const MyModulePage = lazy(() => import("./MyModulePage"));
 
-export const spec: ModuleFrontendSpec = {
+export const frontendSpec = {
   moduleId: "my_module",
   nav: [{
     id: "my_module.home",
-    slot: "sidebar.main",
+    slot: "sidebar.main" as const,
     label: "My Module",
     to: "/my_module",
     order: 100,
@@ -360,14 +418,16 @@ export const spec: ModuleFrontendSpec = {
     path: "/my_module",
     title: "My Module",
     nav: true,
-    slot: "page.full",
+    slot: "page.full" as const,
     page: MyModulePage,
     breadcrumb: "My Module",
   }],
-};
+} satisfies ModuleFrontendSpec;
 ```
 
-**MyModulePage.tsx** -- page component using platform design system:
+**`frontend/MyModulePage.tsx`** — page component using platform design
+tokens:
+
 ```tsx
 import { PageFrame } from "@app/layout/PageFrame";
 import { AilaCard } from "@platform/ui/AilaCard";
@@ -383,7 +443,47 @@ export default function MyModulePage() {
 }
 ```
 
-Use platform tokens: `bg-base`, `bg-surface`, `text-text`, `text-text-muted`, `border-border`. No custom CSS files. No hardcoded hex colors.
+Use platform tokens: `bg-base`, `bg-surface`, `text-text`, `text-text-muted`,
+`border-border`. No custom CSS files. No hardcoded hex colors.
+
+**Register the package with the shell** — add the new workspace dependency
+to `frontend/package.json` so the shell can import it by name:
+
+```json
+{
+  "dependencies": {
+    "@aila/my-module-frontend": "workspace:*"
+  }
+}
+```
+
+…and add the corresponding entry to
+`frontend/src/platform/extension-registry/loadModuleSpecs.ts`:
+
+```ts
+import { frontendSpec as myModuleSpec } from "@aila/my-module-frontend";
+```
+
+**Wire Tailwind v4 scanning** — Tailwind's content scan starts from the
+directory containing `frontend/src/styles/globals.css` and ignores
+`node_modules/`, so classes used only inside a module file get no CSS
+generated unless you add an explicit `@source` directive. Add one line per
+module right after the `@import "tailwindcss";` block:
+
+```css
+@source "../../../src/aila/modules/my_module/frontend/**/*.{ts,tsx}";
+```
+
+Already wired for `vr`, `vulnerability`, `forensics`, `sbd_nfr`, and
+`hello_world`.
+
+**Run `pnpm install`** — relinks the workspace so the shell can resolve the
+new package and pnpm strict mode validates every bare import:
+
+```bash
+pnpm install
+pnpm --filter @aila/my-module-frontend run type-check
+```
 
 ---
 
@@ -391,7 +491,7 @@ Use platform tokens: `bg-base`, `bg-surface`, `text-text`, `text-text-muted`, `b
 
 1. **Top-level `api_router` import in `module.py`** -- must be deferred inside `route_specs()`. The honesty audit catches this.
 
-2. **`def register_tools` instead of `async def register_tools`** -- the protocol requires `async def`. Sync `def` does not satisfy the Protocol and fails at startup.
+2. **`def register_tools` instead of `async def register_tools`** -- the protocol expects an awaitable. Sync `def` fails at startup.
 
 3. **`def seed_data` instead of `async def seed_data`** -- same issue. The session is async; all DB calls must be awaited.
 
@@ -399,16 +499,27 @@ Use platform tokens: `bg-base`, `bg-surface`, `text-text`, `text-text-muted`, `b
 
 5. **Missing `__all__`** -- every `__init__.py` and public module needs it. The honesty audit flags this.
 
-6. **Importing from another module** -- `from aila.modules.vulnerability import ...` is forbidden. The honesty audit flags cross-module imports.
+6. **Importing from another module** -- `from aila.modules.vulnerability import ...` is forbidden. The honesty audit flags cross-module imports via the `import_boundary` rule.
 
 7. **Calling `init_db()` in tool `__init__`** -- `init_db` is async and runs during platform startup. Tools must not call it.
 
-8. **Using `os.getenv()` for module config** -- use `ConfigRegistry.get()` which resolves env var -> DB -> schema default.
+8. **Using `os.getenv()` for module config** -- use `ConfigRegistry.get()` which resolves env var → DB → schema default.
 
-9. **`metadata.create_all()` for new tables** -- write an Alembic migration instead.
+9. **`metadata.create_all()` for new tables** -- write an Alembic migration instead. Latest revision lives in `src/aila/alembic/versions/`.
 
-10. **Non-serializable task kwargs** -- every kwarg to a `@platform_task` function must be JSON-serializable. Pydantic models must be `.model_dump(mode="json")`.
+10. **Non-serializable task kwargs** -- every kwarg to a `@platform_task` function (or to `DurableStateMachine.execute()`) must be JSON-serializable. Pydantic models need `.model_dump(mode="json")` before crossing the boundary.
 
+11. **`session.add()` on a row that may already exist** -- the second call raises an `IntegrityError`. Use `session.merge()` for INSERT-or-UPDATE on the primary key.
+
+12. **Adding a bare import in a module frontend without declaring it in the module `package.json`** -- pnpm strict mode rejects the install. Add the import to `dependencies`, `peerDependencies`, or `devDependencies` as appropriate.
+
+13. **Importing `react-router-dom`** -- React Router v7 collapsed both packages into `react-router`. Every import in this codebase uses `react-router`.
+
+14. **Literal versions in a module `package.json`** -- shared deps must reference catalog entries (`"react": "catalog:react19"`); literals only for genuinely module-private deps.
+
+15. **Forgetting the Tailwind `@source` directive for a new module** -- Tailwind v4 generates no CSS for classes it cannot see. Add the `@source` line to `frontend/src/styles/globals.css` when you ship the module.
+
+16. **Editing `pnpm-lock.yaml` by hand** -- the file regenerates on every `pnpm install`. Edit `pnpm-workspace.yaml` or a `package.json` instead and re-run install.
 ---
 
 ## File Checklist

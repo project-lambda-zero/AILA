@@ -172,13 +172,22 @@ For a call with `task_type="scoring"`:
 
 The same pattern applies to temperature, max tokens, and tool steps:
 
-| Parameter | Task-specific key | Default key | Hardcoded fallback |
-|-----------|-------------------|-------------|-------------------|
-| Model | `llm_model_{task_type}` | `llm_default_model` | `openai/gpt-4o-mini` |
-| Base URL | -- | `llm_base_url` | `https://openrouter.ai/api/v1` |
-| Max tokens | `llm_max_tokens_{task_type}` | `llm_default_max_tokens` | `4096` |
-| Temperature | `llm_temperature_{task_type}` | `llm_default_temperature` | `0.0` |
-| Max tool steps | `llm_max_tool_steps_{task_type}` | -- | `0` (disabled) |
+| Parameter | Task-specific key | Default key | In-process fallback | Shipped `.env.example` |
+|-----------|-------------------|-------------|--------------------|------------------------|
+| Model | `llm_model_{task_type}` | `llm_default_model` (env: `AILA_PLATFORM_LLM_DEFAULT_MODEL`) | `antigravity/claude-opus-4-6-thinking` | `gpt-4o` |
+| Base URL | — | `llm_base_url` (env: `AILA_PLATFORM_LLM_BASE_URL`) | `https://openrouter.ai/api/v1` | `https://api.openai.com/v1` |
+| Max tokens | `llm_max_tokens_{task_type}` | `llm_default_max_tokens` (env: `AILA_PLATFORM_LLM_DEFAULT_MAX_TOKENS`) | `4096` | `32000` |
+| Temperature | `llm_temperature_{task_type}` | `llm_default_temperature` | `0.0` | — |
+| Max tool steps | `llm_max_tool_steps_{task_type}` | — | `0` (disabled) | — |
+| Per-call timeout | — | `AILA_LLM_TIMEOUT_SECONDS` env var | `180` | `300` |
+
+Models that reject the `temperature` parameter (the o1/o3/o4/gpt-5 family,
+Claude Opus 4.6) are declared in `AILA_LLM_MODELS_REJECTING_TEMPERATURE`
+(comma-separated substrings, matched lowercase against the routed `model_id`).
+The resolved list is cached for the process lifetime and falls back, in
+order, to the env var, the `platform.llm_models_rejecting_temperature`
+config DB entry, and finally a hardcoded tuple of known offenders. When a
+routed model matches, the client omits `temperature` from the request.
 
 ### Configuring at runtime
 
@@ -502,18 +511,55 @@ You typically do not need to call `sanitize_output` manually -- the pipeline han
 
 ## 8. Cost Tracking and Budget
 
-### Automatic per-run tracking
+Cost flows through three layers, all driven by the same `run_id` and
+`team_id` arguments passed to `client.chat*()`.
 
-When you pass a `run_id` to `client.chat()`, token usage is automatically accumulated per run via `CostTracker`. The tracker uses `RunMemory` (a thread-safe, run-scoped in-memory key-value store) to accumulate token counts. Both are wired at platform startup -- module authors do not instantiate them. This happens transparently after each successful API call.
+### Layer 1: in-memory per-run tracker (`CostTracker`)
+
+`CostTracker` accumulates `prompt_tokens` and `completion_tokens` per
+`run_id` in `RunMemory` (a process-local thread-safe store). It is wired at
+platform startup so module authors never instantiate it. After every
+successful API call the client records usage on the tracker. The tracker is
+also the budget gate — see below.
 
 ```python
 response = await client.chat("scoring", messages, run_id="run-abc-123")
 # Usage is recorded automatically
+usage = client.cost_tracker.get_usage("run-abc-123")
+print(f"Tokens used so far: {usage['total_tokens']}")
 ```
 
-### Budget enforcement
+### Layer 2: durable `LLMCostRecord`
 
-Set a token ceiling per task type to prevent runaway costs:
+After every successful call the client also writes an `LLMCostRecord` row
+(`src/aila/platform/llm/cost_record.py`) into Postgres via
+`persist_cost_record()`:
+
+| Column | Source |
+|--------|--------|
+| `run_id` | Caller-supplied `run_id`, or `"_no_run"` |
+| `model_id` | The routed model identifier |
+| `task_type` | The routing key |
+| `team_id` | Caller-supplied `team_id` (RLS-scoped via `TeamScopedMixin`) |
+| `prompt_tokens`, `completion_tokens` | From the upstream response |
+| `cost_usd` | `calculate_cost_usd()` over operator-configured pricing; `0.0` + a one-time `pricing_missing:{model}` notification when pricing is not set |
+| `duration_ms` | Wall clock for the upstream call |
+| `prompt_preview` | First 200 chars of the last `user` message (or NULL) |
+| `response_preview` | First 200 chars of the response content (or NULL) |
+| `status` | `"ok"` |
+
+Cost persistence is fire-and-forget: a Postgres failure is logged but never
+aborts the LLM call. After commit, `check_monthly_budget()` runs for the
+team if `team_id` and a registry are present (Plan 175 budget alerts).
+`LLM_COST_TOTAL` Prometheus counter increments per call.
+
+The admin LLM interaction log at `GET /llm-log` (admin-only) projects from
+`LLMCostRecord` rows using `prompt_preview` and `response_preview` so the
+full secrets-bearing prompt is never mirrored into a long-lived surface.
+
+### Layer 3: in-flight budget ceiling
+
+Set a token ceiling per task type to short-circuit before the next API call:
 
 ```bash
 # Limit scoring tasks to 50,000 tokens per run
@@ -522,45 +568,85 @@ curl -X PUT http://localhost:8000/config/platform/llm_budget_max_total_tokens_sc
   -d '{"value": 50000}'
 ```
 
-When a run's accumulated `total_tokens` reaches the ceiling, `BudgetExceededError` is raised **before** the next API call. The budget check runs before the retry loop to prevent wasted calls.
-
-**Handling budget errors:**
+When a run's accumulated `total_tokens` reaches the ceiling, the next call
+raises `BudgetExceededError` **before** any HTTP request is made. The check
+runs ahead of the retry loop so a depleted budget never costs a single
+retry.
 
 ```python
 from aila.platform.llm import AilaLLMClient, BudgetExceededError
 
-async def score_all_findings(client: AilaLLMClient, findings: list, run_id: str):
+async def score_all_findings(client, findings, run_id):
     results = []
     for finding in findings:
         try:
             response = await client.chat("scoring", messages, run_id=run_id)
             results.append(response.content)
         except BudgetExceededError:
-            # Preserve partial results -- do not discard work already done
+            # Preserve partial results; never re-raise without writing what you have
             break
     return results
 ```
 
-### Reading usage
-
-```python
-usage = client.cost_tracker.get_usage("run-abc-123")
-print(f"Tokens used: {usage['total_tokens']}")
-print(f"  Prompt: {usage['prompt_tokens']}")
-print(f"  Completion: {usage['completion_tokens']}")
-```
-
-### Standalone calls
-
-Calls without a `run_id` (or with `run_id=None`) are recorded under an internal `_no_run` sentinel and **bypass budget enforcement entirely**. They still accumulate usage but are never budget-checked.
+Calls without a `run_id` (or with `run_id=None`) accumulate under the
+`_no_run` sentinel and **bypass budget enforcement entirely** — the budget
+check requires a real run id.
 
 ### Budget configuration
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `llm_budget_max_total_tokens_{task_type}` | `0` (unlimited) | Maximum total tokens per run for this task type. `0` means no limit. |
+| `llm_budget_max_total_tokens_{task_type}` | `0` (unlimited) | Maximum total tokens per run for this task type. `0` means no enforcement. |
+
+### Known gap: VR investigation cost aggregation
+
+`VRInvestigationRecord.cost_actual_usd` has **no writer** — it stays `0.0`
+forever. The investigation summary instead reads a live value computed by
+`_compute_live_investigation_cost()`
+(`src/aila/modules/vr/api_router.py`), which sums
+`LLMCostRecord.cost_usd` over rows whose `run_id` joins back to the
+investigation's `TaskRecord` ids via
+`TaskRecord.kwargs_json LIKE '%"<investigation_id>"%'`.
+
+The join only works when `LLMCostRecord.run_id` matches the ARQ
+`TaskRecord.id`. In VR-driven calls the value of `run_id` is the
+workflow-engine `RunRecord.id` rather than the ARQ `TaskRecord.id`, so the
+sum often comes back as `0.0` even when LLM spend is real. The budget
+gauge is therefore decorative for some investigations until the join is
+routed through `workflow_run_records` (planned follow-up). Use the
+`/llm-log` admin surface or query `LLMCostRecord` directly when you need
+the actual spend for an investigation.
+
+### Idempotency cache (VR turn replay)
+
+VR's vulnerability researcher loop wraps every LLM turn in a deterministic
+cache (`src/aila/platform/llm/idempotency_cache.py`, table
+`llm_idempotency_cache`, Alembic migration `061_llm_idempotency_cache`).
+The caller derives the cache key via:
+
+```python
+request_key = make_request_key(
+    self.investigation_id,
+    self.branch_id,
+    turn_number,
+    prompt_hash,  # sha256 of the serialized messages
+)
+```
+
+`make_request_key` concatenates the parts with a `\x00` separator and
+returns `sha256().hexdigest()`. On HIT (`lookup_cached_response`) the
+cached response replays without an upstream call, including its
+`prompt_tokens`, `completion_tokens`, and `cost_usd` so dashboards can
+report cost saved. On MISS, the response is persisted via
+`store_response()` under the same key, scoped to the investigation, with a
+7-day TTL. DB write failures are best-effort: the call still returned a
+real response to the caller.
+
+The cache is opt-in per caller — the general `client.chat*()` API does not
+invoke it. Only the VR researcher turn pipeline currently uses it.
 
 ---
+
 
 ## 9. Audit Trail
 
@@ -616,10 +702,10 @@ All LLM configuration lives in the `platform` namespace of ConfigRegistry. Chang
 | Key | Default | Description |
 |-----|---------|-------------|
 | `llm_kill_switch` | `false` | When `true`, all `chat*()` methods return a disabled response immediately. No API calls made. |
-| `llm_default_model` | `openai/gpt-4o-mini` | Default model for all task types when no per-task override is set. |
+| `llm_default_model` (env: `AILA_PLATFORM_LLM_DEFAULT_MODEL`) | `antigravity/claude-opus-4-6-thinking` (in-process); `.env.example` sets `gpt-4o` | Default model when no per-task override is set. |
 | `llm_model_{task_type}` | *(unset)* | Per-task-type model override. Example: `llm_model_scoring`. |
-| `llm_base_url` | `https://openrouter.ai/api/v1` | API base URL. Change to point to a local endpoint or direct OpenAI. |
-| `llm_default_max_tokens` | `4096` | Default max completion tokens. |
+| `llm_base_url` (env: `AILA_PLATFORM_LLM_BASE_URL`) | `https://openrouter.ai/api/v1` (in-process); `.env.example` sets `https://api.openai.com/v1` | API base URL. Change to point to a local endpoint or direct OpenAI. |
+| `llm_default_max_tokens` (env: `AILA_PLATFORM_LLM_DEFAULT_MAX_TOKENS`) | `4096` (in-process); `.env.example` sets `32000` | Default max completion tokens. |
 | `llm_max_tokens_{task_type}` | *(unset)* | Per-task-type max tokens override. |
 | `llm_default_temperature` | `0.0` | Default sampling temperature (deterministic). |
 | `llm_temperature_{task_type}` | *(unset)* | Per-task-type temperature override. |
@@ -759,6 +845,23 @@ The change takes effect immediately -- no restart required.
 
 ### Retry behavior
 
-The client retries transient errors (connection failures, timeouts, rate limits) up to 3 times with exponential backoff (1s, 2s, 4s). The OpenAI SDK's built-in retry is disabled (`max_retries=0`) so all retries go through the client's own observability layer.
+Transient errors (connection failures, timeouts, rate limits, and every
+other provider exception that is not `LLMError(retryable=False)`) are
+retried with exponential backoff capped per attempt. Defaults:
 
-Non-transient errors (auth failures, invalid requests) surface immediately as `LLMError`.
+| Env var | Default | Effect |
+|---------|---------|--------|
+| `AILA_LLM_MAX_RETRIES` | `100` | Total attempts before raising `LLMError(retryable=True)` with the last cause. |
+| `AILA_LLM_RETRY_BASE_DELAY_S` | `1.0` | First-attempt backoff (seconds). |
+| `AILA_LLM_RETRY_MAX_DELAY_S` | `30.0` | Per-attempt backoff cap (seconds). |
+
+At the shipped defaults the client tolerates roughly 48 minutes of
+sustained provider degradation (attempts 0–4 backoff `1s, 2s, 4s, 8s,
+16s`, then 30 s thereafter) before surfacing failure. The OpenAI SDK's
+built-in retry is disabled (`max_retries=0`) so every retry passes
+through this layer for observability.
+
+Non-retryable errors — `ClassificationBlockedError`,
+`ConfidenceRejectedError`, `BudgetExceededError`, and any `LLMError`
+constructed with `retryable=False` — surface immediately on first
+attempt, regardless of the retry cap.

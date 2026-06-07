@@ -197,7 +197,7 @@ class ConsumerReachability:
     privilege_gain: PrivilegeGain            # what does RCE in this consumer get us?
 ```
 
-The crucial point: **a crash in the library is not a vulnerability until it's reachable through a consumer.** The module produces a Crash record on the library and a `ConsumerReachability` record per consumer. A consumer where the path is unreachable, or requires authentication the attacker doesn't have, is not a finding for that consumer.
+The crucial point: **a crash in the library is not a vulnerability until it's reachable through a consumer.** The module produces a Crash record on the library and a `ConsumerReachability` record per consumer. A consumer where the path is unreachable, or requires authentication unavailable to an external untrusted caller, is not a finding for that consumer.
 
 This avoids the common mistake of reporting "libfoo has a heap overflow → all 3 binaries are vulnerable" when in reality only `mqttd` is exploitable pre-auth.
 
@@ -397,7 +397,7 @@ class Chain(SQLModel, table=True):
     project_id: UUID
     name: str                                # human or LLM assigned
     steps: list[ChainStep]                   # ordered
-    initial_attacker_capability: str         # "remote unauthenticated TCP to :1883"
+    initial_external_capability: str         # "remote unauthenticated TCP to :1883"
     final_capability: str                    # "kernel code execution"
     end_to_end_confirmed: bool
     confirmation_artifact_id: Optional[UUID] # the trace
@@ -576,7 +576,7 @@ In words: do library reconnaissance before consumer reconnaissance, because unde
 ### Network-first within consumers
 
 Among consumer binaries, network-facing ones go first. Reasoning:
-- Bugs in network-facing binaries are reachable by the lowest-privilege attacker.
+- Bugs in network-facing binaries are reachable by the lowest-privilege external caller.
 - Findings in those binaries become the first step of any external chain.
 - Discovering "mqttd has pre-auth RCE" early means *all subsequent analyses* on local-only binaries get re-prioritized: their bugs are now potentially second steps in a chain.
 
@@ -686,6 +686,22 @@ Each variant is a new hypothesis the LLM can test:
 > "Pattern P-01 (trusted-length-field) matched in `httpd::parse_chunked`, `vpnd::ctl_parse_msg`, `libfoo::parse_packet`. Schedule directed fuzzing with length-overflow inputs against each."
 
 Variant analysis multiplies the value of every confirmed bug — finding one is finding many.
+
+### Shipped: `variant_hunt_orders` and the variant-hunt child pipeline
+
+The cross-binary variant query above lands today as a structured field the LLM emits on its terminal `submit`. The system prompt at `src/aila/modules/vr/agents/prompts/system_audit.md` MANDATES that every `DIRECT_FINDING` and every `PATCH_ASSESSMENT_REPORT` payload carry a `variant_hunt_orders: list[dict]`. Each order names a specific `(file, function)` site the audit identified plus a one-sentence hypothesis.
+
+One submit produces one primary outcome plus N variant probes:
+
+1. The agent submits a `DIRECT_FINDING` (or `PATCH_ASSESSMENT_REPORT`) payload with a populated `variant_hunt_orders` array.
+2. `OutcomeDispatcher._spawn_variant_child` (`src/aila/modules/vr/agents/outcome_dispatcher.py`) iterates the list and creates one child `VRInvestigationRecord` per entry, with `parent_investigation_id` set, `kind = variant_hunt`, `strategy_family = vulnerability_research.variant_hunt`, and a per-child budget split.
+3. Each child immediately enqueues `run_vr_investigate` so the variant probe actually executes; without that enqueue children would sit in `created` forever.
+4. Child investigations confirm-and-extend from the parent's evidence (loaded as `prior_outcomes`) AND run their own turns. They can confirm, refute, or pivot off the parent's pattern.
+5. Confirmed variant children land as additional findings on the project graph; the obligation system (`05_OBLIGATION_SYSTEM.md`) cross-checks them against the parent.
+
+The variant-hunt submit gate is enforced on `kind = variant_hunt` investigations: a terminal submit with `variant_hunt_orders = []` AND no exhaustion declaration (`"VARIANT DEAD"`, `"NO VARIANT EXISTS"`, etc.) is rejected by `vuln_researcher._maybe_reject_variant_hunt_submit`, which injects a `_directive.variant_hunt_submit_rejected` observable into case state. After `_UNRESOLVED_HYP_REJECT_CAP` consecutive rejections on the same branch the submit is FORCED THROUGH but stamped with `payload.variant_hunt_advisory = "forced_through_after_N_rejects"` so the operator can grep for over-forced submissions and re-tune the prompt.
+
+For non-`variant_hunt` kinds (`discovery`, `nday`, `audit`), `variant_hunt_orders` is still honoured by the dispatcher — the gate does not fire, but populating the field still spawns the children. Identifying real adjacent code paths and offloading them as variant probes is the canonical mechanism for amortising a finding across the project.
 
 ### Bug attribution across consumers
 
@@ -838,7 +854,7 @@ The "Caveats" line is what separates an honest report from a marketing one. It t
 A chain is not a single CVE; it's a sequence of CVEs. But customers want a number. Convention:
 
 - Each step has its own CVSS (becomes a separate CVE per coordinated disclosure).
-- The chain has a **composite severity** computed as: severity of the worst single step, escalated by the *attacker capability achieved* (network → root → kernel raises severity even if every individual step is medium-rated).
+- The chain has a **composite severity** computed as: severity of the worst single step, escalated by the *external capability achieved* (network → root → kernel raises severity even if every individual step is medium-rated).
 - The chain advisory cross-references all per-step CVEs and includes the composite reproducer.
 
 Example: 3 medium-severity bugs, no individual one is critical, but composed → kernel from internet → composite severity CRITICAL.
@@ -849,12 +865,12 @@ The report must answer:
 - What attack surface exists? (entrypoint count, exposure)
 - What attack surface was tested? (coverage achieved)
 - What was found? (findings inventory with severities)
-- What can attackers actually achieve? (chains, with capabilities)
+- What can an external untrusted caller actually achieve? (chains, with capabilities)
 - What is systemic? (patterns)
 - What should be fixed first? (prioritized remediation)
 - What did we *not* test? (honest scope statement)
 
-Generating this report is itself a multi-turn LLM task with strong adjudication: every claim ("attackers can achieve kernel code execution") must trace to a confirmed chain in the project graph. The adjudicator rejects unsupported product-level claims the same way it rejects unsupported per-bug claims.
+Generating this report is itself a multi-turn LLM task with strong adjudication: every claim ("untrusted external callers can achieve kernel code execution") must trace to a confirmed chain in the project graph. The adjudicator rejects unsupported product-level claims the same way it rejects unsupported per-bug claims.
 
 ---
 

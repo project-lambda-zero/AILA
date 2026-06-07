@@ -2,6 +2,8 @@
 
 Topics not covered by the first eight documents. These are the operational, organizational, and adjacent-domain questions the previous deep-dives left implicit. Each section explores one topic; each ends with the open questions it leaves on the table.
 
+> **Status note.** This document is brainstorm-grade. The shapes proposed below (`Reproducer` records, layered SCA, supply-chain regression replay, knowledge-base RAG, etc.) are the design space the module was exploring at the time. The concrete schemas that shipped live under `src/aila/modules/vr/db_models/` and `src/aila/alembic/versions/060_…`, `061_…`, `062_…`. Where this doc names a Python class or SQLModel table by name, treat it as a sketch — verify against the current model files before quoting a field name. The strategic discussion still applies.
+
 Cross-references:
 - `docs/vr/01_REASONING_LOOP.md` — turn anatomy and the reasoning engine
 - `docs/vr/02_IDA_HEADLESS_MCP.md` — the binary-database query layer
@@ -58,7 +60,7 @@ The shape of `ExpectedObservation` is what makes replay verifiable without a hum
 - an ASAN/UBSAN signature,
 - a register value at a named address,
 - a successful network response shape,
-- a heap-state predicate ("`tcache[0x40]` head is `attacker_pointer` after step 3").
+- a heap-state predicate ("`tcache[0x40]` head is `untrusted_pointer` after step 3").
 
 The obligation system already requires findings to carry an `expected_observable`. The Reproducer extends that obligation across time: the finding is still alive only if the observable still holds. A nightly job re-runs every active finding's Reproducer and records the result.
 
@@ -351,7 +353,7 @@ class BugPatternTemplate(SQLModel, table=True):
 ```python
 class VulnerableFunctionSignature(SQLModel, table=True):
     id: UUID
-    description: str                    # "strcpy with no bounds, attacker-influenced src"
+    description: str                    # "strcpy with no bounds, input-influenced src"
     function_hash_pattern: dict         # Pharos-style fuzzy hash predicate
     callgraph_pattern: dict             # "called by recv-handler, no canary"
     rejected_when: list[str]            # callsite-context predicates that disqualify
@@ -586,7 +588,7 @@ The research workstation is a finite resource. A multi-tenant CI integration can
 - **Per-tenant workstation pool.** Each customer gets a dedicated workstation (or a workstation slice via VMs). Cost passes through to the customer.
 - **Tiered scheduling.** Regression runs are cheap and parallelizable; gate runs are bounded and prioritizable; continuous fuzz fights for leftover capacity. The dependency graph from doc 04 already does the per-project scheduling; the cross-tenant version is a layer above.
 
-Realistically, security-gate mode is the killer CI feature; continuous fuzz is for customers willing to commit infrastructure; regression is essentially free.
+Realistically, security-gate mode is the killer CI feature; continuous fuzz is for customers willing to commit infrastructure; regression is free.
 
 ### 4.7 Disclosure flow from CI
 
@@ -1105,7 +1107,7 @@ The most common embedded target. The mitigation surface is shaped differently:
 
 Exploitation primitives:
 - Writing to MMIO. The peripheral registers are memory-mapped. A write primitive against the GPIO bank turns LEDs on; a write primitive against the flash controller can rewrite the firmware itself.
-- Hijacking interrupt handlers. The vector table is at a fixed RAM/flash address; if RAM is writable and the vector table is in RAM (some firmware copies it there), an attacker who can write to that region pivots to arbitrary execution next time the relevant interrupt fires.
+- Hijacking interrupt handlers. The vector table is at a fixed RAM/flash address; if RAM is writable and the vector table is in RAM (some firmware copies it there), an untrusted caller who can write to that region pivots to arbitrary execution next time the relevant interrupt fires.
 - Stack overflow into return addresses. With no canaries, no ASLR, the textbook stack overflow primitive works on the first attempt.
 
 Tooling:

@@ -7,22 +7,58 @@ Every `AILA_*` variable is documented with its default, type, location, and prod
 
 ## Quick Reference
 
+The `.env.example` at the repo root carries the minimum set every deployment must
+have. Required keys block boot when missing.
+
 | Variable | Default | Type | Used In |
 |----------|---------|------|---------|
 | `AILA_DATABASE_URL` | `postgresql+asyncpg://postgres:changeme@localhost:5432/aila` | SQLAlchemy URL | `config.py` |
+| `AILA_PLATFORM_REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis URL | ConfigRegistry override (`platform.redis_url`) |
+| `AILA_JWT_SECRET_KEY` | random 32-byte hex (regenerated per process if unset) | hex string | `config.py` |
+| `AILA_ADMIN_PASSWORD` | *(unset — required on first boot)* | string | `api/app.py` |
+| `AILA_CORS_ORIGINS` | `http://localhost:3000` | comma-separated URLs | `api/app.py` |
+| `OPENAI_API_KEY` | *(unset)* | string | LLM client |
+| `AILA_PLATFORM_LLM_DEFAULT_MODEL` | `openai/gpt-4o-mini` (fallback) | string | ConfigRegistry override (`platform.llm_default_model`) |
+| `AILA_PLATFORM_LLM_BASE_URL` | `https://openrouter.ai/api/v1` (fallback) | URL | ConfigRegistry override (`platform.llm_base_url`) |
+| `AILA_PLATFORM_LLM_DEFAULT_MAX_TOKENS` | `4096` (fallback) | int | ConfigRegistry override (`platform.llm_default_max_tokens`) |
+| `AILA_LLM_TIMEOUT_SECONDS` | `180` | float | `platform/llm/client.py` |
+| `AILA_LLM_MODELS_REJECTING_TEMPERATURE` | *(unset)* | csv substrings | `platform/llm/client.py` |
+| `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_RESTRICTED_BEHAVIOR_SCORING` | *(unset)* | string mode | ConfigRegistry override |
+| `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_RESTRICTED_BEHAVIOR_SYNTHESIS` | *(unset)* | string mode | ConfigRegistry override |
+| `AILA_PLATFORM_DATA_POSTURE_MODE` | `standard` | enum | ConfigRegistry override (`platform.data_posture_mode`) |
 | `AILA_REPORT_DIR` | `<project>/reports` | directory path | `config.py` |
 | `AILA_SECRET_KEYRING_PATH` | `<project>/data/secrets/keyring.json` | file path | `config.py` |
 | `AILA_SECRET_ACTIVE_KEY_VERSION` | `v1` | string | `config.py` |
 | `AILA_TIMEOUT` | `20` | float (seconds) | `config.py` |
-| `AILA_JWT_SECRET_KEY` | random 32-byte hex | hex string | `config.py` |
-| `AILA_API_HOST` | `127.0.0.1` | IP address | `config.py` |
+| `AILA_API_HOST` | `127.0.0.1` (or `0.0.0.0` via `.env.example`) | IP address | `config.py` |
 | `AILA_API_PORT` | `8000` | integer | `config.py` |
-| `AILA_PLATFORM_JWT_ACCESS_EXPIRY_S` | `2592000` (30 days) | integer (seconds) | ConfigRegistry override |
-| `AILA_PLATFORM_JWT_REFRESH_EXPIRY_S` | `7776000` (90 days) | integer (seconds) | ConfigRegistry override |
-| `AILA_BOOTSTRAP_KEY` | *(none)* | string | `api/app.py` |
-| `AILA_CORS_ORIGINS` | `http://localhost:3000` | comma-separated URLs | `api/app.py` |
+| `AILA_BOOTSTRAP_KEY` | *(unset, optional)* | string | `api/app.py` |
 | `AILA_JSON_LOGS` | *(unset)* | boolean flag | `cli.py` |
 | `AILA_{NAMESPACE}_{KEY}` | *(per schema)* | varies | `storage/registry.py` |
+
+**Optional / commented in `.env.example`:**
+- Forensics per-pipeline overrides: `AILA_PLATFORM_LLM_MODEL_FORENSICS_{FREEFLOW,RESOLVER,WRITEUP}`, `AILA_PLATFORM_LLM_MAX_TOKENS_FORENSICS_{FREEFLOW,RESOLVER,WRITEUP}`, `AILA_FORENSICS_CAPA_RULES`, `AILA_FORENSICS_CAPA_SIGS`.
+- `AILA_LLM_MODELS_REJECTING_TEMPERATURE`.
+
+**Dev-stack knobs read by `start.sh` (not Python config):**
+- `WORKER_COUNT_VR`, `WORKER_COUNT_VULNERABILITY`, `WORKER_COUNT_FORENSICS`, `WORKER_COUNT_SBD_NFR`, `WORKER_COUNT_DEFAULT` (per-queue worker concurrency)
+- `BACKEND_PORT`, `FRONTEND_PORT`, `AUDIT_MCP_PORT`, `IDA_HEADLESS_PORT`
+- `AILA_START_FRONTEND`, `AILA_START_AUDIT_MCP`, `AILA_START_IDA_HEADLESS` (toggle 1/0)
+- `AUDIT_MCP_DIR`, `IDA_HEADLESS_DIR`, `AUDIT_MCP_WORKERS`
+
+**VR-specific runtime knobs:**
+- `VR_INVESTIGATION_WALL_CLOCK_HOURS` (default `6`) — investigation lifetime; the emit-side cap and the reaper both consult this.
+- `VR_INVESTIGATION_MESSAGE_CAP` (default `1000`) — message ceiling per investigation, reaper-enforced.
+
+**audit-mcp dev knobs (separate repo, dev only):**
+- `AUDIT_MCP_THREAD_POOL_LIMIT` (default `64`), `AUDIT_MCP_TOOL_CAP_<TOOLNAME>`, `AUDIT_MCP_TIMEOUT_<TOOLNAME>`, `AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S` (default `7200`).
+
+On Windows, `start.sh` spawns workers via PowerShell `Start-Process`, which strips
+the bash environment. The `spawn()` helper reads `.env` line-by-line and prepends
+each `KEY=VAL` as `set KEY=VAL && ` in the cmd block so detached workers inherit
+the configured environment. `AUDIT_MCP_WORKERS` is the exception — it MUST stay on
+the CLI line passed to `audit_mcp` because the env-prefix path does not reach
+through PowerShell.
 
 ---
 
@@ -84,21 +120,48 @@ Every `AILA_*` variable is documented with its default, type, location, and prod
 - **Used in:** `src/aila/config.py` (`Settings.api_port`)
 - **Production guidance:** Change to match your deployment's port allocation. Common choices: `8000` (direct), `80`/`443` (if not behind a reverse proxy).
 
+### AILA_ADMIN_PASSWORD
+
+- **Default:** *(unset)*
+- **Type:** String (plaintext password — argon2id-hashed before storage)
+- **Used in:** `src/aila/api/app.py` (lifespan startup, admin-user bootstrap)
+- **Production guidance:** Required on first boot when no `UserRecord` row exists; startup raises `RuntimeError` otherwise so an unprotected admin user is never created automatically. Creates the `admin` user with this password (argon2id-hashed), then logs a notice. **Remove this variable after the first boot succeeds.** Never commit a real value.
+
 ### AILA_PLATFORM_JWT_ACCESS_EXPIRY_S
 
-- **Default:** `2592000` (30 days)
+- **Default:** `2592000` (30 days, from `PlatformConfigSchema`)
 - **Type:** Integer (seconds)
 - **Used in:** ConfigRegistry override for `platform.jwt_access_expiry_s`
-- **Resolution:** This is a ConfigRegistry env var override. The actual value is resolved via `get_task_tuning("jwt_access_expiry_s", 2592000)` which checks the `platform` namespace in ConfigRegistry (env var > DB row > schema default). See `docs/CONFIG_REGISTRY.md` for the resolution chain.
-- **Production guidance:** 30 days is the default for v1.5 single-operator deployments. For multi-user or higher-security environments, reduce to `3600` (1 hour) or `86400` (1 day) and rely on refresh tokens for session continuity. Can also be changed at runtime via `PUT /config/platform/jwt_access_expiry_s`.
+- **Resolution:** Standard ConfigRegistry chain (env > DB row > schema default). See `docs/CONFIG_REGISTRY.md`.
+- **Production guidance:** 30 days is the default for single-operator deployments. For multi-user or higher-security environments, reduce to `3600` (1 hour) or `86400` (1 day) and rely on refresh tokens for session continuity. Can also be changed at runtime via `PUT /config/platform/jwt_access_expiry_s`.
 
 ### AILA_PLATFORM_JWT_REFRESH_EXPIRY_S
 
-- **Default:** `7776000` (90 days)
+- **Default:** `7776000` (90 days, from `PlatformConfigSchema`)
 - **Type:** Integer (seconds)
 - **Used in:** ConfigRegistry override for `platform.jwt_refresh_expiry_s`
-- **Resolution:** Same ConfigRegistry resolution chain as the access expiry. See above.
-- **Production guidance:** Controls how long a refresh token remains valid. Set shorter than access token expiry only if you want forced re-authentication. Revoking the originating API key invalidates all its refresh tokens immediately via the key_id blacklist. Can also be changed at runtime via `PUT /config/platform/jwt_refresh_expiry_s`.
+- **Resolution:** Same chain as the access expiry.
+- **Production guidance:** Controls how long a refresh token remains valid. Revoking the originating API key invalidates all its refresh tokens immediately via the key_id blacklist. Can also be changed at runtime via `PUT /config/platform/jwt_refresh_expiry_s`.
+
+### AILA_PLATFORM_REDIS_URL
+
+- **Default:** *(empty)* — `.env.example` sets `redis://127.0.0.1:6379/0`
+- **Type:** Redis connection URL
+- **Used in:** ConfigRegistry override for `platform.redis_url`
+- **Production guidance:** Required for the ARQ task queue and the SSE event bus. Empty falls back to in-process synchronous execution (development only). Point at a real Redis 6+ / Memurai instance for any deployment with workers.
+
+### AILA_PLATFORM_LLM_DEFAULT_MODEL / _BASE_URL / _DEFAULT_MAX_TOKENS
+
+- **Used in:** `src/aila/platform/llm/config.py` (`LLMConfigResolver`)
+- **Resolution:** ConfigRegistry env-var override path. These keys live under the `platform` namespace but are NOT in `PlatformConfigSchema` — the env var sets the value, the DB row carries persistent overrides, and the resolver bakes in its own fallbacks (`openai/gpt-4o-mini`, `https://openrouter.ai/api/v1`, `4096`) when nothing matches.
+- **Production guidance:** Set per deployment to pin the default model/provider for every task type. Per-task-type overrides land under `AILA_PLATFORM_LLM_MODEL_<TASK_TYPE>` and `AILA_PLATFORM_LLM_MAX_TOKENS_<TASK_TYPE>`.
+
+### AILA_LLM_TIMEOUT_SECONDS
+
+- **Default:** `180`
+- **Type:** Float (seconds)
+- **Used in:** `src/aila/platform/llm/client.py`
+- **Production guidance:** Wall-clock ceiling for each LLM API call. Bump for thinking models that stream slowly (e.g. `claude-opus-thinking` can take 90+ seconds). Lower in environments with strict request budgets.
 
 ### AILA_BOOTSTRAP_KEY
 
@@ -150,12 +213,28 @@ All fields from `PlatformConfigSchema` (registered under namespace `platform`):
 | `AILA_PLATFORM_REDIS_URL` | *(empty)* | str | Redis connection URL for task queue |
 | `AILA_PLATFORM_JWT_ACCESS_EXPIRY_S` | `2592000` | int | JWT access token expiry (seconds) |
 | `AILA_PLATFORM_JWT_REFRESH_EXPIRY_S` | `7776000` | int | JWT refresh token expiry (seconds) |
-| `AILA_PLATFORM_HEARTBEAT_INTERVAL_S` | `30` | int | Worker heartbeat interval (seconds) |
-| `AILA_PLATFORM_REAPER_ZOMBIE_THRESHOLD_S` | `120` | int | Zombie task detection threshold (seconds) |
+| `AILA_PLATFORM_HEARTBEAT_INTERVAL_S` | `30` | int | Worker heartbeat write interval |
+| `AILA_PLATFORM_REAPER_ZOMBIE_THRESHOLD_S` | `3300` | int | Worker-side zombie detection threshold |
+| `AILA_PLATFORM_REAPER_HEARTBEAT_THRESHOLD_S` | `86400` | int | DB-side stale-heartbeat threshold |
 | `AILA_PLATFORM_ARQ_JOB_TIMEOUT_S` | `3600` | int | Max ARQ job execution time (seconds) |
 | `AILA_PLATFORM_ARQ_MAX_TRIES` | `3` | int | Max retry attempts for failed jobs |
 | `AILA_PLATFORM_ARQ_KEEP_RESULT_S` | `3600` | int | How long to keep job results in Redis |
 | `AILA_PLATFORM_PROGRESS_STREAM_MAXLEN` | `1000` | int | Max events per Redis progress stream |
+| `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_DEFAULT` | `true` | bool | LLM pipeline classify stage default-on |
+| `AILA_PLATFORM_LLM_PIPELINE_VALIDATE_DEFAULT` | `true` | bool | LLM pipeline validate stage default-on |
+| `AILA_PLATFORM_LLM_PIPELINE_GATE_DEFAULT` | `true` | bool | LLM pipeline gate stage default-on |
+| `AILA_PLATFORM_LLM_PIPELINE_SEAL_DEFAULT` | `true` | bool | LLM pipeline seal stage default-on |
+| `AILA_PLATFORM_LLM_PIPELINE_VERIFY_DEFAULT` | `false` | bool | Cross-model verification default-off |
+| `AILA_PLATFORM_LLM_PIPELINE_VERIFY_THRESHOLD_DEFAULT` | `0.7` | float | Verification agreement threshold |
+| `AILA_PLATFORM_LLM_PIPELINE_VERIFY_MODEL_DEFAULT` | *(empty)* | str | Verifier model id (empty = same as task model) |
+| `AILA_PLATFORM_LLM_SEAL_HMAC_KEY` | *(empty)* | str | Audit-seal HMAC key (auto-generated when empty) |
+| `AILA_PLATFORM_LLM_SEAL_RETENTION_DAYS` | `90` | int | Audit-seal retention period |
+| `AILA_PLATFORM_LLM_BUDGET_MAX_TOTAL_TOKENS_DEFAULT` | `0` | int | Per-task-type token ceiling (0 = unlimited) |
+| `AILA_PLATFORM_LLM_COST_ESTIMATE_FALLBACK_MAX_TOKENS` | `4096` | int | Fallback max-token assumption for cost estimation |
+| `AILA_PLATFORM_LLM_COST_ESTIMATE_FALLBACK_PRICE_PER_1K` | `0.03` | float | Fallback per-1k token price for cost estimation |
+| `AILA_PLATFORM_LLM_HUMAN_CONSULTANT_HOURLY_RATE` | `150.0` | float | USD/hr used for human-equivalent cost projections |
+| `AILA_PLATFORM_DATA_POSTURE_MODE` | `standard` | str | `transparent` / `standard` / `paranoid` |
+| `AILA_PLATFORM_DATA_DIRECTION_DEFAULT` | `bidirectional` | str | `inbound` / `local_only` / `bidirectional` |
 
 ---
 
@@ -182,14 +261,17 @@ These standard environment variables are also read by AILA:
 
 Before deploying to production, verify these are set:
 
-- [ ] `AILA_JWT_SECRET_KEY` -- **required**, prevents token invalidation on restart
-- [ ] `AILA_DATABASE_URL` -- set to a persistent volume path
-- [ ] `AILA_CORS_ORIGINS` -- set to your frontend origin(s)
-- [ ] `AILA_BOOTSTRAP_KEY` -- set for first start, then remove
-- [ ] `AILA_API_HOST=0.0.0.0` -- if exposing beyond localhost
-- [ ] `AILA_SECRET_KEYRING_PATH` -- set to a secure, backed-up location
+- [ ] `AILA_JWT_SECRET_KEY` — **required**; prevents token invalidation on restart.
+- [ ] `AILA_DATABASE_URL` — points at the production PostgreSQL with pgvector.
+- [ ] `AILA_PLATFORM_REDIS_URL` — points at the production Redis / Memurai.
+- [ ] `AILA_ADMIN_PASSWORD` — set on first boot, then removed once the admin user exists.
+- [ ] `AILA_CORS_ORIGINS` — exact frontend origin(s); never `*`.
+- [ ] `AILA_API_HOST=0.0.0.0` — when exposing beyond localhost behind a reverse proxy.
+- [ ] `AILA_SECRET_KEYRING_PATH` — secure, backed-up location for the AES keyring.
+- [ ] `AILA_PLATFORM_LLM_DEFAULT_MODEL`, `AILA_PLATFORM_LLM_BASE_URL`, and `OPENAI_API_KEY` (or equivalent provider key) — LLM provider wired before first request.
+- [ ] `AILA_BOOTSTRAP_KEY` — only when bootstrapping the first API key; remove after the key has been recorded.
 
 ---
 
-*Generated from source code grep of all `AILA_*` and `os.getenv`/`os.environ` calls.*
-*Last updated: 2026-04-29 (v7.0 -- PostgreSQL default, LLM temperature rejection env var)*
+*Generated from source: `src/aila/config.py`, `src/aila/platform/config.py`, `src/aila/platform/llm/`, `src/aila/api/app.py`, `.env.example`, `start.sh`.*
+*Last updated: 2026-06-07 (head: `062_vr_outcome_review`).*

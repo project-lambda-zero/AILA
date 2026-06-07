@@ -18,7 +18,7 @@ must hold for the system to behave correctly.
                              |
                     +--------v---------+
                     |   FastAPI REST   |
-                    |   28 routers     |
+                    |   30 routers     |
                     +--------+---------+
                              |
           +------------------+------------------+
@@ -28,21 +28,22 @@ must hold for the system to behave correctly.
 |  routing       |  |  vulnerability |  |  SQLModel/PG   |
 |  runtime       |  |  forensics     |  |  Alembic       |
 |  services      |  |  sbd_nfr       |  |  pgvector      |
-|  contracts     |  |  hello_world   |  +----------------+
-|  tools         |  +----------------+
-|  llm           |           |
-|  tasks (ARQ)   |  +--------v-------+
-|  workflows     |  |  Redis / ARQ   |
-+----------------+  |  task queues   |
+|  contracts     |  |  vr            |  +----------------+
+|  tools         |  |  hello_world   |
+|  llm           |  +----------------+
+|  tasks (ARQ)   |           |
+|  workflows     |  +--------v-------+
++----------------+  |  Redis / ARQ   |
+                    |  task queues   |
                     +----------------+
 ```
 
 The frontend talks only to the FastAPI layer. FastAPI delegates to the
 platform's service and runtime layers. The platform owns infrastructure;
 modules own domain logic. Long-running work is dispatched onto ARQ
-queues (default, vulnerability, forensics) backed by Redis. Persistent
-state lives in PostgreSQL through SQLModel, with schema managed by
-Alembic and vector search backed by pgvector.
+queues (default, vulnerability, forensics, sbd_nfr, vr) backed by
+Redis. Persistent state lives in PostgreSQL through SQLModel, with
+schema managed by Alembic and vector search backed by pgvector.
 
 ## Platform Packages
 
@@ -88,7 +89,7 @@ All model calls flow through this package so policy and cost controls
 apply uniformly.
 
 **`tasks/`** is the ARQ integration: queue definitions (default,
-vulnerability, forensics), worker entry points wired into
+vulnerability, forensics, sbd_nfr, vr), worker entry points wired into
 `aila worker -q <queue>`, `TaskRecord` persistence, and the contract
 for storing large results as file paths (see INFRA-06).
 
@@ -278,8 +279,9 @@ fixtures.
 **Rules:**
 
 - Every schema change ships as a reviewed Alembic revision.
-- Migrations are applied with `cd src/aila && alembic upgrade head`
-  before the application starts.
+- Migrations are applied with `make migrate` (which wraps
+  `cd src/aila && alembic upgrade head`); `make db-init` performs the
+  one-time fresh-DB bootstrap before the first `make migrate`.
 - Module-owned tables (under a module's `db_models/`) are picked up by
   Alembic's autogeneration; they still ship as explicit revisions.
 - Downgrade paths must be implemented for any revision that may need

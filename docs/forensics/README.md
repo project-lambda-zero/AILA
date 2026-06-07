@@ -7,11 +7,14 @@ Remote, artifact-first digital forensics workbench. Connects to an Analyzer Mach
 ## Architecture
 
 ```
-81 source files across 11 packages
-├── Backend ─── Python 3 (FastAPI, SQLModel, SSH, LLM agents)
-├── Frontend ── React (PatternFly v6, TanStack Query v5)
-├── Brain ───── 93 investigation strategies, 42 example workflows
-└── Coverage ── 138 CTF questions mapped
+Backend ───── Python 3 (FastAPI, SQLModel, SSH, LLM agents)
+Frontend ──── React (PatternFly + AILA design system, TanStack Query v5)
+Reasoning ─── strategy-neutral LLM investigator with closed-loop protocol
+              (no hardcoded playbooks; the LLM is the strategist end-to-end)
+Pipeline ──── two workflow definitions:
+              • FORENSICS_FULL_ANALYSIS_V1 — intake → collection → deep_analysis
+                  → promotion → resolution → writeup → response_emit
+              • FORENSICS_FREEFLOW_V1     — freeflow → writeup → response_emit
 ```
 
 ### Package Map
@@ -25,61 +28,68 @@ src/aila/modules/forensics/
 ├── config_schema.py        Operator-tunable settings (Pydantic)
 │
 ├── agents/
-│   ├── freeflow_agent.py   LLM-powered free-flow investigator
-│   ├── resolver_agent.py   Automatic question→artifact resolver
-│   └── strategies.py       93 strategies + regex-aware classifier
+│   ├── investigator.py     Closed-loop forensic investigator (strategy-neutral)
+│   └── resolver_agent.py   Automatic question → artifact resolver
 │
-├── contracts/              Pydantic DTOs (artifact, investigation, machine, project, question)
-├── db_models/              SQLModel tables (project, evidence, artifact, lead, investigation, answer, writeup)
-├── data/
-│   ├── example_workflows.json   42 step-by-step investigation playbooks
-│   └── tool_requirements.json   Per-OS tool check/install definitions
+├── contracts/              Pydantic DTOs (artifact, investigation, machine,
+│                           project, question, directive, retrieve,
+│                           finding_suppression, status, solid_evidence)
+│
+├── db_models/              SQLModel tables (project, evidence, artifact,
+│                           investigation, question, directive,
+│                           finding_suppression, solid_evidence)
 │
 ├── reporting/
-│   └── writeup_builder.py  LLM-assisted professional forensic report generator
+│   └── writeup_builder.py  LLM-assisted DFIR / malware-analysis report writer
 │
 ├── services/
-│   ├── evidence_classifier.py   Regex/heuristic file classification by extension/name
-│   └── machine_readiness.py     SSH tool check + auto-install service
+│   ├── evidence_classifier.py   Regex / heuristic file classification
+│   ├── machine_readiness.py     SSH tool check + auto-install service
+│   ├── investigation_artifacts.py  Per-investigation artifact joiner
+│   ├── file_retriever.py        Stream raw bytes back from analyzer FS
+│   ├── pcap_enrich.py           Zeek post-processing
+│   └── offline_installer.py     Air-gapped tool bundle installer
 │
-├── tools/                  14 registered SSH-based tools (see below)
+├── tools/                  13 registered SSH-based tools (see below)
 │
 ├── workflow/
-│   ├── definitions.py      State-machine workflow graphs
+│   ├── definitions.py      FORENSICS_DISPATCHER_V1, FORENSICS_FULL_ANALYSIS_V1,
+│   │                       FORENSICS_FREEFLOW_V1, FORENSICS_RAW_DIRECTORY_V1
 │   ├── task.py             ARQ async task entrypoints
 │   ├── services.py         Shared services dataclass for state handlers
 │   ├── emitter.py          Real-time progress events
-│   └── states/             7 pipeline stages (see below)
+│   └── states/             7 pipeline stages + collectors/
 │
-└── frontend/               Co-located React UI
-    ├── spec.ts / nav.ts / routes.tsx
-    ├── screens/            4 pages
-    └── components/         11 components
+├── scripts/                Operator-side helpers (offline bundle prep,
+│                           dryrun_collection, windows tool install rewrites,
+│                           ghidra/ Java scripts for headless analysis)
+│
+└── frontend/               Co-located React UI (@aila/forensics-frontend
+                            pnpm workspace package: spec.ts, nav.ts,
+                            routes.tsx, 5 screens, 18 components, stories/)
 ```
 
 ---
 
-## 14 Forensic Tools
+## 13 Forensic Tools
 
-Every tool runs on the remote Analyzer Machine via SSH and is OS-aware (Linux/Windows).
-
+Every tool runs on the remote Analyzer Machine via SSH and is OS-aware (Linux / Windows). Source: `tool_catalog.iter_tool_specs()`.
 
 | #   | Tool                  | Actions                                                                      | Purpose                                                                                                                                                         |
 | --- | --------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | **Evidence Intake**   | scan, classify, hash                                                         | Discover and fingerprint all evidence files                                                                                                                     |
-| 2   | **Dissect Runner**    | target_info, target_query, target_fs                                         | Disk image analysis — OS-aware queries: Windows (registry, prefetch, shellbags), Linux (docker, systemd), macOS (LaunchAgents, plist, Spotlight, unified logs) |
-| 3   | **Volatility Runner** | Any vol3 plugin                                                              | Memory forensics — pslist, netscan, malfind, dlllist, hashdump, filescan, cmdline, handles, svcscan, modscan, etc. Auto-detects Windows vs Linux vs macOS dumps |
-| 4   | **tshark Runner**     | 16 actions                                                                   | Full PCAP analysis (see Network section below)                                                                                                                  |
-| 5   | **Zeek Runner**       | 16 actions                                                                   | Deep PCAP behavioral analysis — structured logs, JA3 fingerprinting, file extraction, anomaly detection (see Zeek section below)                                |
-| 6   | **Strings Runner**    | strings, floss, capa                                                         | String extraction, deobfuscation (FLOSS), and MITRE ATT&CK capability mapping (capa)                                                                            |
-| 7   | **Ghidra Runner**     | analyze, decompile_function, list_functions                                  | Headless binary reverse engineering — decompilation, function listing, import analysis                                                                          |
-| 8   | **Script Tool**       | execute                                                                      | Upload and run **agent-generated Python scripts** — the agent's most flexible tool                                                                              |
-| 9   | **Artifact Query**    | list, get, search                                                            | Query the normalized artifact database                                                                                                                          |
-| 10  | **YARA Runner**       | scan, compile, match_tags                                                    | Signature-based malware detection against .yar rule files                                                                                                       |
+| 2   | **Artifact Query**    | list, get, search                                                            | Query the normalized artifact database                                                                                                                          |
+| 3   | **Dissect Runner**    | target_info, target_query, target_fs, dissect_timeline                       | Disk image analysis — OS-aware queries: Windows (registry, prefetch, shellbags), Linux (docker, systemd), macOS (LaunchAgents, plist, Spotlight, unified logs) |
+| 4   | **Volatility Runner** | Any vol3 plugin                                                              | Memory forensics — pslist, netscan, malfind, dlllist, hashdump, filescan, cmdline, handles, svcscan, modscan, etc. Auto-detects Windows vs Linux vs macOS dumps |
+| 5   | **tshark Runner**     | 16 actions                                                                   | Full PCAP analysis (see Network section below)                                                                                                                  |
+| 6   | **Zeek Runner**       | 16 actions                                                                   | Deep PCAP behavioral analysis — structured logs, JA3 fingerprinting, file extraction, anomaly detection (see Zeek section below)                                |
+| 7   | **Strings Runner**    | strings, floss, capa                                                         | String extraction, deobfuscation (FLOSS), and MITRE ATT&CK capability mapping (capa)                                                                            |
+| 8   | **Script Tool**       | execute                                                                      | Upload and run agent-generated Python scripts — the investigator's most flexible tool                                                                           |
+| 9   | **Ghidra Runner**     | analyze, decompile_function, list_functions                                  | Headless binary reverse engineering — decompilation, function listing, import analysis                                                                          |
+| 10  | **YARA Runner**       | scan, compile, match_tags                                                    | Signature-based malware detection against `.yar` rule files                                                                                                     |
 | 11  | **Registry Viewer**   | 15 actions                                                                   | Windows Registry browser + forensic artifact extraction (see Registry section below)                                                                            |
-| 12  | **Carving Runner**    | binwalk_scan, binwalk_extract, foremost, bulk_extractor                      | Embedded file extraction, raw image carving, bulk PII/IOC extraction                                                                                            |
-| 13  | **Timeline Runner**   | plaso_parse, plaso_export, dissect_timeline, mactime                         | Super-timeline generation for chronological attack reconstruction                                                                                               |
-| 14  | **dd Runner**         | image_disk, image_partition, extract_bytes, extract_mbr, extract_vbr, + more | Raw disk imaging, partition extraction, MBR/VBR capture, byte-range slicing, and disk verification (see dd section below)                                       |
+| 12  | **Carving Runner**    | binwalk_scan, binwalk_extract, foremost, bulk_extractor                      | Embedded file extraction, raw image carving, bulk PII / IOC extraction                                                                                          |
+| 13  | **dd Runner**         | image_disk, image_partition, extract_bytes, extract_mbr, extract_vbr, + more | Raw disk imaging, partition extraction, MBR / VBR capture, byte-range slicing, disk verification (see dd section below)                                         |
 
 
 ### Disk Image OS Detection + OS-Aware Queries
@@ -354,72 +364,104 @@ Automatically checked and installed via SSH when a project is created.
 
 Both Linux (`apt`, `pip3`) and Windows (`winget`, `pip`) install paths are defined.
 
+### CAPA integration
+
+The `strings` runner exposes a `capa` action for MITRE ATT&CK capability mapping on PE binaries. The runner needs both the rules and signatures pointed at the analyzer's filesystem:
+
+| Variable | Resolves via | Purpose |
+|---|---|---|
+| `AILA_FORENSICS_CAPA_RULES` (env) or `capa_rules` (ConfigRegistry) | env → DB → schema default | Path to the capa rules directory on the analyzer |
+| `AILA_FORENSICS_CAPA_SIGS` (env) or `capa_sigs` (ConfigRegistry) | env → DB → schema default | Path to the capa signatures directory on the analyzer |
+
+The investigator invokes capa with both paths supplied explicitly: `capa -q -j -r <rules> -s <sigs> <input_file>` (`-j` for JSON; the agent walks `rules.*` to extract matches). When the values are unset, the strings runner skips capa and reports it in the artifact log.
+
 ---
 
-## 7-Stage Investigation Pipeline
+## Investigation Pipelines
+
+The module ships TWO ARQ-driven workflow definitions (`workflow/definitions.py`). The dispatcher (`FORENSICS_DISPATCHER_V1`) selects between them at intake.
+
+### `FORENSICS_FULL_ANALYSIS_V1`
 
 ```
-intake → collection → deep_analysis → promotion → resolution → freeflow → writeup
+intake → collection → deep_analysis → promotion → resolution → writeup → response_emit
 ```
-
 
 | Stage             | What Happens                                                                                                                                                                                                                                                                                                                 |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Intake**        | Scans evidence directory, classifies every file (disk image, PCAP, memory dump, APK, PE, document, archive), computes SHA-256 hashes, persists `ProjectEvidenceRecord`s, determines active lanes                                                                                                                             |
-| **Collection**    | Per-lane artifact extraction: 26 Dissect queries for disk, 10 tshark queries for PCAP, 10+ Volatility plugins for memory (auto-detects Windows vs Linux), log preview for log files                                                                                                                                          |
+| **Collection**    | Per-lane artifact extraction: Dissect queries for disk, tshark queries for PCAP, Volatility plugins for memory (auto-detects Windows / Linux / macOS), log preview for log files. Cross-cuts to per-binary collectors under `workflow/states/collectors/` (disk, network, memory, memory_enrich, binary_analysis, log)        |
 | **Deep Analysis** | Second pass on suspicious binaries: SHA-256 hashing, strings + regex IOC extraction (IPs, URLs, emails, hashes, registry paths), FLOSS deobfuscated strings, capa ATT&CK capability mapping                                                                                                                                  |
 | **Promotion**     | Scores all artifacts against suspicion indicators, promotes top leads with reasoning, builds a structured **Valuable Items** summary across 8 categories (identities, malware samples, network IOCs, credentials, persistence mechanisms, lateral movement indicators, data exfiltration indicators, exploitation artifacts) |
-| **Resolution**    | Maps each user question to artifact families via the strategy classifier, attempts automatic answers from existing evidence and leads                                                                                                                                                                                        |
-| **Free-Flow**     | LLM-powered investigation loop: agent receives strategy playbook + all artifact context, sets goals, writes Python scripts or shell commands, runs them on the analyzer, learns from output, iterates up to 10 times per question                                                                                            |
-| **Write-Up**      | LLM generates a professional security engineer write-up covering methodology, findings, evidence chain, and conclusions                                                                                                                                                                                                      |
+| **Resolution**    | Maps each user question to artifact families and attempts automatic answers from existing evidence and promoted leads                                                                                                                                                                                                        |
+| **Write-Up**      | LLM generates a 15-section DFIR / malware-analysis report with inline `artifact_id` citations                                                                                                                                                                                                                                |
+| **Response Emit** | Assembles the terminal `PlatformResponse` payload                                                                                                                                                                                                                                                                            |
 
+### `FORENSICS_FREEFLOW_V1`
+
+```
+freeflow → writeup → response_emit
+```
+
+| Stage         | What Happens                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Free-Flow** | Bounded LLM investigation loop driven by `agents/investigator.py`. The investigator is strategy-NEUTRAL — no hardcoded playbooks, no keyword routers, no pre-written profile bodies. It receives the artifact graph + Valuable Items + OS-dispatched system prompts, sets goals each turn, writes Python or shell commands, runs them via the script tool, learns from output, iterates ≤10× |
+| **Write-Up**  | Same writer as the full analysis variant, narrated against the freeflow trajectory                                                                                                                                                                                                                                                                                                            |
+
+`FORENSICS_RAW_DIRECTORY_V1` is a side variant for projects rooted at a raw filesystem directory rather than a single evidence artefact; it runs the same stages with adjusted intake.
 
 ---
 
-## 93 Investigation Strategies
+## How the Investigator Reasons
 
-Each strategy provides: goal, step-by-step investigative playbook, recommended tools, and expected answer format. The regex-aware classifier (`classify_question`) routes questions to the correct strategy using a tiered priority system.
+The freeflow investigator is strategy-neutral by design. Replaces the prior strategy-catalogue agent that shipped a 93-entry playbook + classifier — the playbook biased the model toward CTF-shaped questions and away from real engagements. The current contract:
 
-### Coverage by Domain
+- One OS-dispatched system prompt (Windows / Linux / macOS variants) names the closed-loop protocol explicitly: every step is `hypothesis → action → observation → refinement`.
+- The agent sees the full normalized artifact graph (not a curated subset), the Valuable Items rollup, and the running history of prior steps.
+- The agent picks its own tool: shell command, Python script (uploaded via `ScriptTool`), or a structured Dissect / Volatility / tshark / Zeek action.
+- Output is graded twice per investigation: (a) answer correctness; (b) whether a DFIR / CTF-grade report can be produced from the captured trajectory alone, without re-running the case.
 
 ---
 
-## Frontend — 4 Screens, 11 Components
+## Frontend — 5 Screens, 18 Components
 
 ### Screens
-
 
 | Screen                | Route                             | Purpose                                                                                      |
 | --------------------- | --------------------------------- | -------------------------------------------------------------------------------------------- |
 | **Projects List**     | `/forensics`                      | All forensics projects with status badges                                                    |
 | **New Project**       | `/forensics/new`                  | Wizard: select Analyzer Machine, check tool readiness, name project, pick evidence directory |
 | **Project Dashboard** | `/forensics/projects/:id`         | Free-flow chat, investigation progress, agent activity feed                                  |
-| **Project Details**   | `/forensics/projects/:id/details` | 6-tab analysis viewer (see below)                                                            |
+| **Project Details**   | `/forensics/projects/:id/details` | Multi-tab analysis viewer (see below)                                                        |
+| **Investigation Detail** | `/forensics/projects/:id/investigations/:iid` | Per-investigation transcript, agent steps, write-up                                |
 
-
-### Details Page — 6 Tabs
-
+### Details Page — multi-tab analysis viewer
 
 | Tab                     | Component              | Content                                                                                                                                                                                                |
 | ----------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Network Analysis**    | `NetworkAnalysisPanel` | 12-subtab NetworkMiner-style interface: Hosts, Sessions, DNS, HTTP, Files, Images, Credentials, Parameters, Anomalies, Messages, Endpoints, TLS. Sortable columns, full-text filter, row counts        |
-| **Registry**            | `RegistryViewer`       | 12-subtab Windows Registry browser: Autoruns, Services, Software, User Accounts, USB History, Recent Docs, Network, ShellBags, AmCache, ShimCache, BAM, Security Packages. Click-to-expand JSON detail |
+| **Network Analysis**    | `NetworkAnalysisPanel` | 12-subtab NetworkMiner-style interface: Hosts, Sessions, DNS, HTTP, Files, Images, Credentials, Parameters, Anomalies, Messages, Endpoints, TLS                                                        |
+| **Registry**            | `RegistryViewer`       | 12-subtab Windows Registry browser: Autoruns, Services, Software, User Accounts, USB History, Recent Docs, Network, ShellBags, AmCache, ShimCache, BAM, Security Packages                              |
 | **Timeline**            | `TimelineViewer`       | Chronological event viewer with color-coded source tags, source filter pills, full-text search                                                                                                         |
+| **Findings**            | `FindingsPanel`        | Confident findings extracted from artifacts; suppression-aware (operator can suppress false positives)                                                                                                  |
+| **Solid Evidence**      | `SolidEvidencePanel`   | Analyst-tagged "this is the answer" rows that survive across reruns                                                                                                                                    |
+| **Carved Files**        | `CarvedFilesPanel`     | Files extracted from PCAPs by Zeek; downloadable by SHA-256                                                                                                                                            |
+| **Directives**          | `AnalystDirectivesPanel` | Operator-attached steering hints visible to the freeflow agent                                                                                                                                        |
 | **V.I.A.**              | `VIATable`             | Very Important Artifacts — top scored artifacts with suspicion reasoning                                                                                                                               |
-| **Questions & Answers** | `QuestionsTable`       | All questions asked + answers + confidence levels                                                                                                                                                      |
-| **Write-Ups**           | `WriteUpViewer`        | Professional forensic write-ups in markdown                                                                                                                                                            |
-
+| **Questions & Answers** | `QuestionsTable`       | Questions asked + answers + confidence levels                                                                                                                                                          |
+| **Write-Ups**           | `WriteUpViewer`        | DFIR / malware-analysis write-ups (markdown)                                                                                                                                                           |
 
 ### Other Components
 
-
 | Component               | Purpose                                                    |
 | ----------------------- | ---------------------------------------------------------- |
-| `FreeFlowChat`          | Ask questions, see agent reasoning + commands in real-time |
-| `EvidenceTree`          | File tree browser of evidence on the analyzer machine      |
+| `FreeFlowChat`          | Ask questions, see investigator reasoning + commands live  |
+| `EvidenceTree`          | File-tree browser of evidence on the analyzer machine      |
 | `ArtifactExplorer`      | Browse all extracted artifacts by family and type          |
 | `LeadScoreCard`         | Top promoted leads with scoring breakdown                  |
-| `MachineReadinessCheck` | Tool installation status (green/red per tool)              |
+| `MachineReadinessCheck` | Tool installation status (green / red per tool)            |
+| `ReadinessStreamPanel`  | Live SSE stream of the readiness check while it runs       |
+| `RetrieveFilePanel`     | Pull a specific file out of a disk image                   |
+| `FetchRawFilePanel`     | Fetch a file or directory from a raw-directory project     |
 
 
 ---
@@ -429,66 +471,79 @@ Each strategy provides: goal, step-by-step investigative playbook, recommended t
 All endpoints use `DataEnvelope[T]`, platform auth, and rate limiting.
 
 
-| Method | Path                                          | Purpose                                         |
-| ------ | --------------------------------------------- | ----------------------------------------------- |
-| `POST` | `/forensics/projects`                         | Create a new forensics project                  |
-| `GET`  | `/forensics/projects`                         | List projects (paginated)                       |
-| `GET`  | `/forensics/projects/:id`                     | Get project details with counts                 |
-| `POST` | `/forensics/projects/:id/readiness-check`     | Check analyzer machine tool readiness           |
-| `GET`  | `/forensics/projects/:id/evidence`            | List evidence files                             |
-| `GET`  | `/forensics/projects/:id/artifacts`           | Query artifacts (family/type filter, paginated) |
-| `GET`  | `/forensics/projects/:id/leads`               | Get top promoted leads                          |
-| `POST` | `/forensics/projects/:id/investigate`         | Start a free-flow investigation                 |
-| `GET`  | `/forensics/projects/:id/investigations`      | List investigation runs                         |
-| `GET`  | `/forensics/projects/:id/investigations/:iid` | Get investigation detail with agent steps       |
-| `GET`  | `/forensics/projects/:id/answers`             | List all answered questions                     |
-| `GET`  | `/forensics/projects/:id/writeups`            | List write-ups                                  |
-| `GET`  | `/forensics/projects/:id/network-analysis`    | NetworkMiner-style PCAP analysis                |
-| `GET`  | `/forensics/projects/:id/registry-analysis`   | Windows Registry analysis                       |
-| `GET`  | `/forensics/projects/:id/timeline`            | Forensic timeline events                        |
-
+| Method | Path                                                                  | Purpose                                                          |
+| ------ | --------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `POST` | `/forensics/projects`                                                 | Create a new forensics project                                   |
+| `GET`  | `/forensics/projects`                                                 | List projects (paginated)                                        |
+| `GET`  | `/forensics/projects/:id`                                             | Get project details with counts                                  |
+| `DELETE` | `/forensics/projects/:id`                                           | Delete project + all its data                                    |
+| `POST` | `/forensics/projects/:id/full-analysis`                               | Trigger the full-analysis pipeline                               |
+| `POST` | `/forensics/projects/:id/readiness-check`                             | Check analyzer-machine tool readiness                            |
+| `GET`  | `/forensics/projects/:id/readiness-check/stream`                      | Stream readiness check progress via SSE                          |
+| `GET`  | `/forensics/projects/:id/evidence`                                    | List evidence files                                              |
+| `GET`  | `/forensics/projects/:id/findings`                                    | Confident findings extracted from artifacts                      |
+| `GET`  | `/forensics/projects/:id/artifacts`                                   | Query artifacts (family / type filter, paginated)                |
+| `GET`  | `/forensics/projects/:id/leads`                                       | Top promoted leads                                               |
+| `POST` | `/forensics/projects/:id/investigate`                                 | Start a free-flow investigation                                  |
+| `POST` | `/forensics/projects/:id/investigations/:iid/rerun`                   | Rerun an investigation, carrying prior findings forward          |
+| `GET`  | `/forensics/projects/:id/investigations`                              | List investigation runs                                          |
+| `GET`  | `/forensics/projects/:id/investigations/:iid`                         | Investigation detail with agent steps                            |
+| `GET`  | `/forensics/projects/:id/investigations/:iid/reasoning-graphs`        | Durable reasoning-graph snapshots                                |
+| `GET`  | `/forensics/projects/:id/investigations/:iid/reasoning-graphs/diff`   | Diff two reasoning-graph snapshots                               |
+| `GET`  | `/forensics/projects/:id/investigations/:iid/events`                  | Stream investigation progress via SSE                            |
+| `POST` | `/forensics/projects/:id/investigations/:iid/cancel`                  | Hard-cancel a running investigation                              |
+| `POST` | `/forensics/projects/:id/investigations/:iid/tag`                     | Tag an investigation step as solid evidence                      |
+| `GET`  | `/forensics/projects/:id/answers`                                     | Answered questions                                               |
+| `GET`  | `/forensics/projects/:id/writeups`                                    | List write-ups                                                   |
+| `GET`  | `/forensics/projects/:id/writeups/:wid.md`                            | Download single write-up as Markdown                             |
+| `GET`  | `/forensics/projects/:id/writeups.md`                                 | Download all write-ups as a single Markdown bundle               |
+| `DELETE` | `/forensics/projects/:id/writeups/:wid`                             | Permanently delete a write-up                                    |
+| `GET`  | `/forensics/projects/:id/network-analysis`                            | NetworkMiner-style PCAP analysis                                 |
+| `GET`  | `/forensics/projects/:id/registry-analysis`                           | Windows Registry analysis                                        |
+| `GET`  | `/forensics/projects/:id/timeline`                                    | Forensic timeline events                                         |
+| `GET`  | `/forensics/projects/:id/occurrences`                                 | Confident findings without an event-time                         |
+| `GET`  | `/forensics/projects/:id/directives`                                  | List analyst steering directives                                 |
+| `POST` | `/forensics/projects/:id/directives`                                  | Create an analyst directive                                      |
+| `DELETE` | `/forensics/projects/:id/directives/:did`                           | Soft-deactivate a directive                                      |
+| `GET`  | `/forensics/projects/:id/directives.md`                               | Download all directives as Markdown                              |
+| `POST` | `/forensics/projects/:id/retrieve-file`                               | Extract a file from a disk image and stream it back              |
+| `POST` | `/forensics/projects/:id/fetch-raw`                                   | Fetch a file / directory from a raw-directory project's evidence |
+| `GET`  | `/forensics/projects/:id/solid-evidence`                              | List analyst-tagged solid-evidence rows                          |
+| `DELETE` | `/forensics/projects/:id/solid-evidence/:eid`                       | Remove a solid-evidence row (also deactivates its directive)     |
+| `POST` | `/forensics/projects/:id/findings/suppress`                           | Suppress an auto-finding as a false positive                     |
+| `GET`  | `/forensics/projects/:id/findings/suppressions`                       | List suppressed findings                                         |
+| `DELETE` | `/forensics/projects/:id/findings/suppressions/:sid`                | Un-suppress a finding (row re-appears + directive deactivated)   |
+| `GET`  | `/forensics/projects/:id/pcap/carved/:sha256`                         | Download a file carved from a PCAP by the Zeek stage             |
 
 ---
 
 ## Database Models
 
-
-| Table                    | Key Fields                                                                                                                 |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `ForensicsProjectRecord` | name, system_id, evidence_directory, analyzer_os, status, team_id                                                          |
-| `ProjectEvidenceRecord`  | project_id, file_path, evidence_type, file_hash_sha256, size_bytes                                                         |
-| `ArtifactRecord`         | project_id, artifact_family, artifact_type, source_tool, data_json, lead_score                                             |
-| `LeadRecord`             | project_id, artifact_id, score, reason, artifact_family, related_artifact_ids_json, question_families_json                 |
-| `InvestigationRunRecord` | project_id, question, status, max_attempts, attempts_used, final_answer, confidence                                        |
-| `AgentStepRecord`        | investigation_id, step_number, action, script_content, command, stdout, stderr, exit_code, reasoning                       |
-| `AnswerCandidateRecord`  | project_id, investigation_id, question_text, answer_text, confidence, primary_artifact_id, corroboration_json, format_hint |
-| `WriteUpRecord`          | project_id, investigation_id, title, content_markdown, methodology, artifacts_referenced_json                              |
-
-
----
-
-## How the Agent Thinks
-
-When a user asks a question (e.g., "What is the malware filename?"):
-
-1. **Classify** — The regex-aware classifier matches the question to one of 93 strategies
-2. **Inject Context** — The strategy's goal, steps, tools, and format are injected into the LLM prompt alongside all artifact data and Valuable Items
-3. **Plan** — The LLM decides what to run: a shell command, a Python script, or a Dissect/Volatility/tshark query
-4. **Execute** — The command runs on the Analyzer Machine via SSH; stdout/stderr are captured
-5. **Learn** — The agent analyzes the output, updates its knowledge, and decides: answer or try another approach
-6. **Iterate** — Up to 10 attempts per question, each building on previous findings
-7. **Answer** — Final answer with confidence level and corroborating evidence
-8. **Write-Up** — Professional forensic report generated from the full investigation chain
+| Table                          | Key Fields                                                                                                                 |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `ForensicsProjectRecord`       | name, system_id, evidence_directory, analyzer_os, status, team_id                                                          |
+| `ProjectEvidenceRecord`        | project_id, file_path, evidence_type, file_hash_sha256, size_bytes                                                         |
+| `ArtifactRecord`               | project_id, artifact_family, artifact_type, source_tool, data_json, lead_score                                             |
+| `LeadRecord`                   | project_id, artifact_id, score, reason, artifact_family, related_artifact_ids_json, question_families_json                 |
+| `InvestigationRunRecord`       | project_id, question, status, max_attempts, attempts_used, final_answer, confidence                                        |
+| `AgentStepRecord`              | investigation_id, step_number, action, script_content, command, stdout, stderr, exit_code, reasoning                       |
+| `AnswerCandidateRecord`        | project_id, investigation_id, question_text, answer_text, confidence, primary_artifact_id, corroboration_json, format_hint |
+| `WriteUpRecord`                | project_id, investigation_id, title, content_markdown, methodology, artifacts_referenced_json                              |
+| `AnalystDirectiveRecord`       | project_id, investigation_id?, directive_text, active, created_at                                                          |
+| `SolidEvidenceRecord`          | project_id, investigation_id, evidence_text, source_artifact_id?, directive_id?                                            |
+| `FindingSuppressionRecord`     | project_id, finding_signature, reason, suppressed_by, directive_id?                                                        |
+| `QuestionRecord`               | project_id, question_text, family, expected_format                                                                         |
 
 ---
 
 ## Key Design Decisions
 
-- **OS-Aware Everything** — Every tool, command, and path adapts based on `AnalyzerOS` (linux/windows)
-- **Memory Dump Auto-Detection** — Volatility automatically selects Windows or Linux plugins based on dump analysis
-- **Pre-Analysis Before Free-Flow** — 4 pipeline stages extract artifacts before the agent ever sees a question
-- **Strategy-Guided, Not Random** — The agent gets a domain-specific playbook, not generic "figure it out"
-- **Dynamic Script Execution** — The agent writes and runs arbitrary Python on the analyzer when pre-built tools aren't enough
-- **Tiered Classifier** — Keyword rules are organized by specificity (Tier 1 > Tier 1.5 > Tier 2) to prevent shadowing
-- **Valuable Items Summary** — 8-category structured IOC summary feeds the agent rich, pre-digested context
+- **OS-Aware Everything** — Every tool, command, and path adapts based on `AnalyzerOS` (linux / windows).
+- **Memory Dump Auto-Detection** — Volatility automatically selects Windows / Linux / macOS plugins based on a 5-tier cascade.
+- **Pre-Analysis Before Free-Flow** — The full-analysis pipeline extracts artifacts before the investigator ever sees a question; freeflow runs against the same artifact graph the operator can browse.
+- **Strategy-Neutral Investigator** — No hardcoded playbooks or keyword routers. The LLM is the strategist; the module provides the artifact graph + Valuable Items + closed-loop protocol.
+- **Dynamic Script Execution** — The investigator writes and runs Python on the analyzer when pre-built tools aren't enough (`ScriptTool`).
+- **Operator Steering Lives in `AnalystDirective` Rows** — Operator-attached hints are first-class data; the freeflow agent reads them every turn, and the audit log records when each fired.
+- **Solid Evidence Survives Reruns** — Analyst-tagged "this is the answer" rows are persisted independent of the investigation that produced them, so a rerun starts with the known facts.
+- **Valuable Items Summary** — 8-category structured IOC rollup feeds the agent pre-digested context.
 

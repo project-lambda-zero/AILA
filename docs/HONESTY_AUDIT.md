@@ -28,7 +28,12 @@ Each tuple is `(filename_suffix, function_name, detail)`. A finding is suppresse
 
 ---
 
-## Rules (17 total)
+## Rules (33 total)
+
+The source file (`src/aila/tools/honesty_audit.py`) carries the canonical
+rule list in its module docstring; this page details the most commonly hit
+rules. Rules 1–17 are described first, followed by additional checks
+(rules 18–33) that have been added since.
 
 ### 1. unused_parameter
 
@@ -428,15 +433,215 @@ from aila.platform.modules import ModuleProtocol
 
 ---
 
+### 18. asyncio_in_module
+
+**Detects:** A file under `src/aila/modules/` that imports or calls
+`asyncio.to_thread`, `asyncio.run`, `asyncio.run_until_complete`,
+`asyncio.run_in_executor`, `ThreadPoolExecutor`, or `concurrent.futures`.
+
+**Why it matters:** Modules execute inside the platform event loop or
+the worker process; both already manage their own threading. A module
+that spins its own threads bypasses the platform's lifecycle, queues,
+and backpressure, and races the platform's own thread usage.
+
+**Fix:** Use platform services (`SSHService`, IDA bridge, task queue)
+for blocking work. Pure-CPU sync helpers can stay sync and be
+`asyncio.to_thread`-wrapped at the platform boundary, not inside the
+module.
+
 ---
 
-### 18. asyncio_thread_on_async
+### 19. response_model_dict
 
-**Detects:** `asyncio.to_thread(fn, ...)` where `fn` is itself an `async def` (coroutine function).
+**Detects:** A FastAPI endpoint declares `response_model=dict` (or
+`Dict[...]`, `dict[...]`).
 
-**Why it matters:** `asyncio.to_thread` runs a **sync** callable in a thread-pool executor. Passing an `async def` to it creates a coroutine object that is never awaited — the function body never executes. This is a silent no-op bug.
+**Why it matters:** `response_model=dict` returns an opaque shape;
+clients cannot generate types from it and the contract is invisible.
+The frontend then re-invents the structure from runtime observation.
 
-**Common trigger:** Confusing `submit()` (async, returns awaitable handle) with a sync queue-put call.
+**Fix:** Define a Pydantic model in the module's `contracts/` and
+reference it as `response_model=DataEnvelope[YourModel]`.
+
+---
+
+### 20. bare_dict_return_endpoint
+
+**Detects:** A `@router.*`-decorated handler returns a raw `dict`
+literal or a `dict()` call.
+
+**Why it matters:** Same problem as rule 19: the wire shape is invisible
+to static tooling and impossible to evolve safely.
+
+**Fix:** Return a Pydantic model instance, ideally wrapped in
+`DataEnvelope`:
+
+```python
+return DataEnvelope(data=MyResponse(...))
+```
+
+---
+
+### 21. noqa_inline
+
+**Detects:** An inline `# noqa` comment in production source.
+
+**Why it matters:** `# noqa` is invisible to the honesty audit's
+structural suppression mechanism. Every linter exception belongs in
+`honesty_whitelist.py` with the (filename suffix, function name, detail)
+triple so it can be reviewed and re-evaluated periodically.
+
+**Exemptions:** Alembic migration files and `alembic/env.py` may carry
+`# noqa: F401` for side-effect imports because the import must live at
+module scope and ruff processes it independently.
+
+---
+
+### 22. http_client_in_module
+
+**Detects:** A module imports `httpx`, `requests`, `urllib3`, or
+`aiohttp` directly.
+
+**Why it matters:** Cross-cutting concerns (timeouts, proxies, auth,
+observability) belong on the platform HTTP client. A module that builds
+its own client diverges from the project's defaults and bypasses audit.
+
+**Fix:** Route HTTP through the platform service (`SSHService`,
+`IdaBridge`, etc.) or accept an injected client from the platform.
+
+---
+
+### 23. direct_db_in_module
+
+**Detects:** A module imports `asyncpg`, `psycopg`, `psycopg2`,
+`sqlite3`, `create_engine`, or `create_async_engine` directly.
+
+**Why it matters:** All module DB access goes through the platform
+`UnitOfWork`. Building a raw connection bypasses team scoping, audit
+logging, and the connection pool.
+
+**Fix:** Use `ServiceFactory().storage.*` or `async_session_scope()`
+from `aila.storage.database`.
+
+---
+
+### 24. tautological_docstring
+
+**Detects:** A docstring that restates the function or class name with
+no additional information (e.g. `def get_user(): """Get user."""`).
+
+**Fix:** Either delete the docstring or describe behavior, side effects,
+inputs, or invariants.
+
+---
+
+### 25. commented_out_code
+
+**Detects:** A comment line that looks like a commented-out Python
+statement (import/def/class/if/for/return/raise) outside of doc
+examples and Alembic migrations.
+
+**Fix:** Delete the dead code. Git history retains it.
+
+---
+
+### 26. except_return_default
+
+**Detects:** An `except` handler that returns an empty default (`None`,
+`{}`, `[]`, `0`, `""`) without logging the failure.
+
+**Why it matters:** Hiding real failures behind an empty return value
+is the same anti-pattern as `silent_exception`, but expressed via a
+return path instead of a bare assignment.
+
+---
+
+### 27. nested_if_collapsible
+
+**Detects:** An `if` whose body is a single `if` (no `else` on either)
+and can be combined with `and`.
+
+---
+
+### 28. pointless_pass
+
+**Detects:** `pass` as the sole body of a function that is not abstract
+or otherwise stub-decorated.
+
+---
+
+### 29. f_string_no_interpolation
+
+**Detects:** An `f"..."` string that contains no embedded expressions.
+
+**Fix:** Use a plain string literal.
+
+---
+
+### 30. single_use_variable
+
+**Detects:** A variable assigned and then immediately returned with no
+other reference (`x = expr; return x`).
+
+**Fix:** `return expr` directly.
+
+---
+
+### 31. placeholder_return
+
+**Detects:** A function body that is only a docstring followed by
+`return {}` or `return []` with no other logic.
+
+**Why it matters:** Placeholder returns are the most common shape of a
+silently-stubbed function. The honesty audit flags them so they are
+either implemented or removed.
+
+---
+
+### 32. log_format_concat
+
+**Detects:** A logging call (`_log.info`, `_log.error`, etc.) that uses
+an f-string or string concatenation instead of `%`-style formatting.
+
+**Why it matters:** Eager interpolation defeats the logger's lazy
+formatting and skips structured log fields.
+
+**Fix:**
+
+```python
+_log.info("processed %s items in %.2fs", count, elapsed)
+```
+
+---
+
+### 33. broad_exception_catch
+
+**Detects:** `except Exception` without a justifying comment on or just
+above the handler.
+
+**Why it matters:** A blanket catch with no rationale is almost always
+a swallow. If the catch is intentional, a one-line comment explains why.
+
+---
+
+## Review-Enforced Conventions
+
+The patterns below are enforced at code review, not by the AST audit.
+They are documented here so reviewers and module authors share the same
+checklist.
+
+### C1. asyncio_thread_on_async
+
+**Pattern:** `asyncio.to_thread(fn, ...)` where `fn` is itself an
+`async def` (coroutine function).
+
+**Why it matters:** `asyncio.to_thread` runs a **sync** callable in a
+thread-pool executor. Passing an `async def` to it creates a coroutine
+object that is never awaited — the function body never executes. Silent
+no-op bug.
+
+**Common trigger:** Confusing `submit()` (async, returns awaitable
+handle) with a sync queue-put call.
 
 **Violation:**
 
@@ -454,11 +659,16 @@ handle = await task_queue.submit(track="forensics", fn=..., kwargs={...})
 
 ---
 
-### 19. sse_missing_no_redis_guard
+### C2. sse_missing_no_redis_guard
 
-**Detects:** An SSE streaming endpoint (`StreamingResponse` + `text/event-stream`) that does NOT check `pool_available()` before opening the Redis stream.
+**Pattern:** An SSE streaming endpoint (`StreamingResponse` +
+`text/event-stream`) that does NOT check `pool_available()` before
+opening the Redis stream.
 
-**Why it matters:** If Redis is down and the endpoint proceeds, the client hangs indefinitely on the first `XREAD` call. Every SSE endpoint MUST short-circuit with a single informational event when Redis is unavailable.
+**Why it matters:** If Redis is down and the endpoint proceeds, the
+client hangs indefinitely on the first `XREAD` call. Every SSE endpoint
+MUST short-circuit with a single informational event when Redis is
+unavailable.
 
 **Required pattern:**
 
@@ -471,13 +681,17 @@ if not pool_available():
 
 ---
 
-### 20. sse_missing_done_sentinel
+### C3. sse_missing_done_sentinel
 
-**Detects:** An SSE streaming endpoint that never emits `event: done` when the backing resource reaches a terminal state.
+**Pattern:** An SSE streaming endpoint that never emits `event: done`
+when the backing resource reaches a terminal state.
 
-**Why it matters:** Without a `done` event the frontend never knows the stream has ended. It keeps the connection open and the user sees "connecting" forever after the task completes.
+**Why it matters:** Without a `done` event the frontend never knows the
+stream has ended. It keeps the connection open and the user sees
+"connecting" forever after the task completes.
 
-**Required pattern:** On every `ping` (keepalive), check DB status. On terminal, emit and return:
+**Required pattern:** On every `ping` (keepalive), check DB status. On
+terminal, emit and return:
 
 ```python
 if status in _TERMINAL_STATUSES:
@@ -487,11 +701,14 @@ if status in _TERMINAL_STATUSES:
 
 ---
 
-### 21. sse_eventfeed_hook_missing_abort
+### C4. sse_eventfeed_hook_missing_abort
 
-**Detects (frontend):** A React hook that opens a streaming fetch (SSE) without an `AbortController` cleanup in the `useEffect` return.
+**Pattern (frontend):** A React hook that opens a streaming fetch (SSE)
+without an `AbortController` cleanup in the `useEffect` return.
 
-**Why it matters:** Without abort cleanup, the stream continues after the component unmounts. This leaks network connections and causes React state-update-after-unmount warnings.
+**Why it matters:** Without abort cleanup, the stream continues after
+the component unmounts. This leaks network connections and causes React
+state-update-after-unmount warnings.
 
 **Required pattern:**
 
@@ -504,6 +721,7 @@ useEffect(() => {
 ```
 
 ---
+
 
 ## Running the Audit
 

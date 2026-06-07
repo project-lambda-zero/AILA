@@ -1,176 +1,148 @@
 # Production Rubric
 
-What works, what doesn't, and what will bite your colleagues.
+Pre-merge readiness checklist for any change that lands a feature module
+in production. Run every gate below — green across the board is the bar.
 
-Assessed by running every command a newcomer would run, reading every doc they'd follow, and building a module from the template. Not scored by the people who wrote it.
-
-Last assessed: 2026-04-29 (v7.0)
-
----
-
-## Newcomer Onboarding: What Actually Happens
-
-### Clone and install
-
-| Step | Works? | Issue |
-|---|---|---|
-| `git clone` + `pip install -e ".[dev]"` | Yes | |
-| `cd frontend && npm install` | Yes | |
-| `cp .env.example .env` | Yes | .env.example exists with all required vars |
-| `make install` | **No on Windows** | `make` is not installed by default. QUICKSTART.md documents the manual commands but Makefile targets require GNU Make (install via `choco install make` or use WSL). |
-
-### Database setup
-
-| Step | Works? | Issue |
-|---|---|---|
-| `createdb aila` | Yes | Requires PostgreSQL running on :5432 |
-| `cd src/aila && alembic upgrade head` | Yes | |
-| `python -m alembic upgrade head` | **No** | `alembic` is a package, not a `__main__` module. Must `cd src/aila` first because `alembic.ini` is there. Docs say this correctly. |
-
-### Start services
-
-| Step | Works? | Issue |
-|---|---|---|
-| Backend: `uvicorn aila.api.app:app --reload` | Yes | |
-| Frontend: `cd frontend && npm run dev` | Yes | |
-| Workers: `python -m aila worker` | Yes | |
-| `bash start.sh` | Yes on Windows Git Bash | Uses PowerShell Start-Process for persistent workers. Workers survive shell exit. |
-| `./start-linux.sh` | Untested | Written but not validated on Linux. PID-based shutdown. |
-
-### Quality gates
-
-| Gate | Works? | Issue |
-|---|---|---|
-| `python -m compileall -q src/aila` | Yes | Zero errors |
-| `python -m ruff check src/aila/` | **393 errors** | Pre-existing. 224 auto-fixable. Per-file ignores in pyproject.toml suppress the known ones. Newcomer running bare `ruff check` sees a wall of red. |
-| Honesty audit | Yes | 5 pre-existing warnings in cli.py (do_nothing_wrapper, unused params). Not from module code. |
-| `npm run typecheck` | Yes | Zero errors |
-| `npm run build` | Yes | |
-| `make check` | **No on Windows** | Requires GNU Make. Commands work individually. |
-
-### Tests
-
-| Step | Works? | Issue |
-|---|---|---|
-| `pytest tests/ --ignore=test_e2e*` | **1 error** | `test_knowledge_hybrid_retrieve.py` crashes with "SQLite is no longer supported" because it doesn't set `AILA_DATABASE_URL`. The test was written for the SQLite era. |
-| Passing tests | 40 pass | |
-| Coverage | 25.3% | Below the configured `fail_under=60`. pytest prints a FAIL line at the end even when all tests pass. Confusing for newcomers. |
+The rubric is enforced by `make check` plus targeted tests; the per-item
+rows below explain *what* each gate asserts and *why* a green result means
+the change is shippable.
 
 ---
 
-## Module Development: What Actually Happens
+## 0. Scope and Definitions
 
-### Following the template
-
-| Step | Works? | Issue |
-|---|---|---|
-| Copy `_template/` to `my_module/` | Yes | |
-| Rename Template -> MyModule | Yes | _template/README.md has clear instructions |
-| Register in `builtin.py` | **Silent** | Auto-discovery via pkgutil scans `aila.modules` -- newcomer doesn't need to edit builtin.py at all. But docs say to do it. Confusing: is it needed or not? |
-| `python -m compileall` on new module | Yes | Template compiles clean |
-| Run the module | Yes | Platform discovers it, registers tools, boots |
-
-### Following MODULE_TUTORIAL.md
-
-| Step | Works? | Issue |
-|---|---|---|
-| Step 2: Set module_id | **Wrong API** | Tutorial uses `@property def module_id`. Actual protocol uses class attribute `module_id = MODULE_ID`. Tutorial also shows `display_name` and `description` properties -- these don't exist on ModuleProtocol. |
-| Step 3: Define route_specs | **Wrong API** | Tutorial uses `ModuleRouteSpec(path=, method=, fn=)`. Actual dataclass uses `ModuleRouteSpec(prefix=, router_factory=, tool_keys=)`. A newcomer following this tutorial writes code that crashes at startup. |
-| Step 4+: Tool registration | **Partially stale** | Tutorial references correct patterns but some imports are from old paths. |
-
-**MODULE_TUTORIAL.md is the single most dangerous doc for a newcomer.** It teaches the wrong API. The _template/ and hello_world/ are correct. The tutorial contradicts them.
-
-### Following MODULE_STANDARD.md
-
-| Section | Accurate? | Issue |
-|---|---|---|
-| Module layout | Yes | Matches actual modules |
-| Lifecycle methods | **Wrong count** | Says "four methods" -- ModuleProtocol has 17+ methods (most with defaults). Not blocking but misleading. |
-| register_tools signature | **Missing `async`** | Doc shows `def register_tools(...)` but actual protocol is `async def register_tools(...)` |
-| seed_data signature | **Wrong type** | Doc shows `session: Session` (sync). Actual is `session: Any` (AsyncSession in practice). Code examples use `session.exec()` not `await session.exec()`. |
-| ModuleRouteSpec shape | **Stale version label** | Header says "(v1.5)" -- this is the current shape, not a v1.5 artifact. |
+"Module" means a package under `src/aila/modules/<name>/` that the platform
+discovers via `pkgutil.iter_modules`. The reference module is
+`hello_world`; the production set today is `forensics`, `sbd_nfr`, `vr`,
+`vulnerability`. Platform-level changes (`src/aila/platform/*`,
+`src/aila/api/*`) use the same gates but additionally require sign-off
+from a code-reviewer agent.
 
 ---
 
-## Infrastructure: What Actually Works
+## 1. Build Gates
 
-### Database
+| Gate | Command | Pass criterion |
+|------|---------|---------------|
+| Bytecode compile | `python -m compileall -q src/aila` | Exits 0. No syntax errors anywhere in the package. |
+| Lint | `python -m ruff check src/aila/` | Clean. Per-file ignores in `pyproject.toml` are intentional; new code must not extend them. |
+| Honesty audit | `python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py` | Zero findings. The audit catches structural dishonesty (mirroring constants, forwarding wrappers, fake managers, eager `api_router` imports in `module.py`, bare `except Exception`, missing `__all__`). |
+| Frontend typecheck | `pnpm -r run type-check` | Clean across `@aila/shell` and every `@aila/<module>-frontend` workspace member. |
+| Frontend build | `pnpm --filter @aila/shell run build` | Exits 0; emits the single SPA bundle. |
 
-| Aspect | Status |
-|---|---|
-| PostgreSQL + asyncpg | Working. 59 tables across 4 modules. |
-| Alembic migrations | 39 versioned files. upgrade + downgrade both work. |
-| Connection pooling | asyncpg pool with configurable size. |
-| Backup/restore | CLI commands exist (`aila db backup/restore`). No automation. No documented drill. |
-
-### Task queue
-
-| Aspect | Status |
-|---|---|
-| ARQ + Redis | Working. 3 queue tracks (default, vulnerability, forensics). |
-| Worker heartbeat | Reaper detects zombie tasks. Threshold is 24 hours (comment used to say 5 minutes -- fixed in v7.0). |
-| Dead letter queue | Admin page exists. Inspect + requeue works. |
-| Task dedup | SHA-256 hash prevents duplicate active submissions. |
-
-### LLM pipeline
-
-| Aspect | Status |
-|---|---|
-| Pipeline steps | classify -> call -> validate -> gate -> verify -> seal. All registered and functional. |
-| Audit seals | HMAC-SHA256 persisted per call. |
-| Cost tracking | Per-call token + USD estimation in CostRecord. Admin page works. |
-| Temperature rejection | Configurable via env var + config DB. Covers o1, o3, o4, gpt-5, claude-opus. |
-| Kill switch | Returns error without API call. Works. |
-
-### Frontend
-
-| Aspect | Status |
-|---|---|
-| Platform design system | CSS variables + Tailwind tokens. AilaCard, AilaBadge, EmptyState, PageFrame. |
-| Module extension | ModuleFrontendSpec with nav, routes, panels, widgets. Auto-discovered. |
-| All pages render | Verified via Playwright audit (v6.0). 40+ routes tested. |
+Aggregate: `make check` runs lint + honesty + compile + typecheck. Use it
+as the one-shot gate.
 
 ---
 
-## What Will Embarrass You
+## 2. Test Gates
 
-1. **MODULE_TUTORIAL.md teaches the wrong API.** A newcomer following it will write code that doesn't compile. The _template and hello_world are correct. The tutorial is not. Fix or delete.
+| Gate | Command | Pass criterion |
+|------|---------|---------------|
+| Backend unit tests | `python -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_e2e_live.py` | Every test the module adds passes. Pre-existing failures are documented in the PR description, not silenced. |
+| Module-specific tests | Tests under `tests/<module>_*.py` cover every state machine branch, every error path, every contract field a caller relies on. | Domain logic, not plumbing — the test would actually break if the bug came back. No `assert True`-style sentinels. |
+| Frontend unit tests | `pnpm -r run test` | Vitest passes across every workspace package, including the module's own `tests/` folder. |
+| Optional E2E | `pytest tests/test_e2e.py` (Playwright + live infra) | Green only when the change affects user-visible flows; otherwise skipped and noted in the PR. |
 
-2. **393 ruff errors on bare `ruff check`.** They're suppressed by per-file-ignores in pyproject.toml, but a newcomer who runs the command without `--config pyproject.toml` (which ruff auto-detects in most cases, but not all) sees 393 errors and thinks the codebase is broken.
+Test conduct:
 
-3. **Test coverage 25.3% with fail_under=60.** Every `pytest` run prints "FAIL Required test coverage of 60.0% not reached" in red. This is the first thing a newcomer sees after tests pass. Either lower the threshold to match reality or raise coverage.
-
-4. **One test crashes on import.** `test_knowledge_hybrid_retrieve.py` fails because it doesn't configure a PostgreSQL URL. Easy to fix (skip if no DB) but embarrassing on first run.
-
-5. **`make` doesn't work on Windows without GNU Make.** The Makefile is well-written but Windows devs can't use it out of the box. QUICKSTART.md documents the manual commands. Consider adding a `tasks.py` (invoke) or PowerShell equivalent.
-
-6. **Module auto-discovery vs manual registration.** `builtin.py` has explicit registration, but `pkgutil.iter_modules` also scans `aila.modules`. Docs say "register in builtin.py" -- but modules work without it. This confusion will generate questions.
-
-7. **pyproject.toml version is 0.1.0.** The project is at v7.0 by milestone count but the Python package version is 0.1.0. OpenAPI docs, Prometheus metrics, and health endpoint all report 0.1.0 now (fixed from hardcoded 1.5.0 / 4.1 in v7.0). Either bump to 7.0.0 or accept that package version != milestone version and document why.
-
----
-
-## What's Actually Solid
-
-- Platform/module boundary is enforced by AST audit and breaks the build if violated.
-- Durable state machine survives crashes, retries transient failures, and audits every transition.
-- LLM pipeline has 5 post-call safety steps and cryptographic seals.
-- The honesty audit catches structural dishonesty that no linter covers.
-- SSH fleet scanning works end-to-end (tested on real Raspberry Pi, Arch VM).
-- Forensics investigation loop with multi-turn LLM reasoning, evidence graphs, and operator steering works.
-- SbD NFR questionnaire with 164 questions, conditional logic, and ReactFlow editor works.
-- Frontend extension system lets modules add pages, sidebar entries, dashboard widgets, and system detail panels without touching platform code.
+- Test behaviour, not defaults. Changing a config default must not break a
+  test that asserts the config default.
+- Exercise every conditional branch and at least one error path per public
+  surface (HTTP route, tool, workflow handler).
+- No new mocks of internal AILA code. Mocks for paramiko, openai, httpx
+  upstreams are fine.
 
 ---
 
-## Fix Priority
+## 3. Architectural Rules
 
-| # | Fix | Effort | Impact |
-|---|---|---|---|
-| 1 | Delete or rewrite MODULE_TUTORIAL.md | 1 hour | Unblocks every new module developer |
-| 2 | Fix test_knowledge_hybrid_retrieve.py | 5 min | Clean first-run experience |
-| 3 | Lower fail_under to 25 or remove it | 1 min | No more false FAIL on passing runs |
-| 4 | Bump pyproject.toml version to 7.0.0 | 1 min | Package version matches reality |
-| 5 | Add Windows-native task runner (PowerShell script or invoke) | 30 min | Windows devs get `make`-equivalent |
-| 6 | Clarify auto-discovery vs builtin.py in CONTRIBUTING.md | 10 min | No more confusion about registration |
-| 7 | Write missing tests to reach fail_under threshold | Days | Real coverage improvement |
+| Rule | How to verify |
+|------|---------------|
+| Platform does not import from `aila.modules.*` | `python -m aila.tools.honesty_audit` plus a manual `grep` if you added a new import. |
+| Modules do not import from each other (Python or frontend) | Python: honesty audit. Frontend: `pnpm install` fails on undeclared bare imports in strict mode. |
+| Module config goes through `ConfigRegistry`, not `os.getenv` | Search the module for `os.getenv` / `os.environ.get`. Allowed cases: the platform `app.py`, `cli.py`, `_dotenv.py`, and the `argon2` / `redis` / `openai` provider plumbing that resolves credentials. Module code paths use `await registry.get("<module_id>", "<key>")` with a registered schema. |
+| Multi-step behaviour is an explicit state machine | The module exposes a `workflow.py` (or `workflow/` package) that names states and transitions. Long if/elif chains over `status` strings are a red flag. |
+| All DDL goes through Alembic | A new column, table, or index requires a versioned file under `src/aila/alembic/versions/`. No `metadata.create_all()` outside test fixtures. No runtime `CREATE TABLE`. |
+| Errors raise typed exceptions | New error paths raise an `AILAError` subclass with `ClassVar code` + `http_status` + `user_message`. Generic `RuntimeError` for user-visible failures is a regression. |
+
+---
+
+## 4. Surface Conformance
+
+| Surface | Bar |
+|---------|-----|
+| `module.py` | Defers the `api_router` import inside `route_specs()`. Eager import at module top is caught by the honesty audit. |
+| Tool keys | Prefixed by `module_id.` (e.g. `vr.search_functions`). Constants live in `tool_keys.py`. |
+| Public exports | Every `__init__.py` and public module declares `__all__`. Private submodules start with `_`. |
+| HTTP responses | Success bodies wrap in `DataEnvelope`. Errors raise typed exceptions or `HTTPException`; see `docs/API_ERRORS.md` for the envelope contract. |
+| LLM calls | Route through `AilaLLMClient` (`platform.llm`) with a routing `task_type`. Modules never instantiate `openai.AsyncOpenAI` directly. |
+| Task functions | Decorated with `@platform_task`. All kwargs JSON-serializable (Pydantic models pass `.model_dump(mode="json")`). |
+| Frontend | Every bare import declared in the module's `package.json`. Shared deps via `pnpm-workspace.yaml` catalogs, not literal versions. Tailwind `@source` line added to `frontend/src/styles/globals.css` if the module ships UI. |
+
+---
+
+## 5. Operational Readiness
+
+| Item | Bar |
+|------|-----|
+| Logs | Module code uses structlog via `aila.logging_config`; every log emission inherits the request `correlation_id` automatically. No `print()`. |
+| Metrics | Long-running paths emit Prometheus counters/histograms via `aila.api.metrics` or module-local registries; new metrics include label cardinality docs. |
+| Audit | State-changing operations write to `AuditEventRecord` via `record_audit_event(stage="<module>", action="<verb>", ...)`. |
+| LLM cost | Calls pass `run_id` so `LLMCostRecord` rows land with the right scope; pricing is configured for any new `model_id` (see `docs/LLM_INTEGRATION.md`). |
+| Worker queue | If the module uses ARQ, the worker target is documented (`python -m aila worker -q <queue>`) and the runbook in `docs/RUNBOOK.md` is updated. |
+| Database | New Alembic revision listed in the PR. Migration is idempotent and tested locally with `make migrate` against a non-empty DB. |
+| Bootstrap impact | First-boot behaviour (`AILA_ADMIN_PASSWORD` requirement, `AILA_BOOTSTRAP_KEY` idempotency, Alembic head) is preserved. |
+| Config defaults | Every new `ConfigRegistry` key has a sensible default, an env-var override pattern (`AILA_<NS>_<KEY>`), and is documented in `docs/ENV_VARS.md`. |
+
+---
+
+## 6. Docs and Communication
+
+| Item | Bar |
+|------|-----|
+| Module README | `src/aila/modules/<name>/README.md` reflects the current contracts, routes, and tools. |
+| Top-level docs | If the change shifts an externally-visible contract (auth surface, error envelope, LLM behaviour), `docs/SECURITY_MODEL.md`, `docs/API_ERRORS.md`, `docs/LLM_INTEGRATION.md`, or `docs/DATA_PROTECTION.md` are updated in the same PR. |
+| Env vars | Any new env var lands in `.env.example` with a default appropriate for local development and a comment if production needs a different value. |
+| Decision record | A new architectural decision lands as an ADR under `docs/ADR/` rather than a paragraph in a module README. |
+| PR description | Lists the gates that ran green, the migrations involved, and the operator actions required at deploy (env vars to add, workers to restart). |
+
+---
+
+## 7. Verification Checklist (paste into the PR)
+
+```
+[ ] python -m compileall -q src/aila
+[ ] python -m ruff check src/aila/
+[ ] python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py
+[ ] pnpm -r run type-check
+[ ] pnpm --filter @aila/shell run build
+[ ] make test                       (or: pytest tests/ --ignore=tests/test_e2e*)
+[ ] pnpm -r run test
+[ ] Alembic head matches src/aila/alembic/versions/ tip (if DDL touched)
+[ ] LLMCostRecord pricing configured for any new model_id
+[ ] No new os.getenv in module code
+[ ] No new bare except Exception in module code
+[ ] Affected docs updated in the same PR
+```
+
+---
+
+## 8. Known Platform Caveats
+
+Carry-overs callers may hit while the gates above stay green. Document
+per-module exposure in the PR if the change touches these areas:
+
+- **VR cost gauge** — `VRInvestigationRecord.cost_actual_usd` is not written
+  to by the LLM client; `_compute_live_investigation_cost()` aggregates from
+  `LLMCostRecord` via `TaskRecord.id`, which mismatches the workflow
+  `RunRecord.id` actually stored in `LLMCostRecord.run_id` for VR. The
+  budget gauge therefore underreports for VR investigations. See
+  `docs/LLM_INTEGRATION.md`.
+- **Restricted-behavior env values** — `.env.example` ships `transparent`
+  for `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_RESTRICTED_BEHAVIOR_*`. The
+  resolver only recognises `redact`; any other value (including
+  `transparent`) falls back to `fail`. See `docs/DATA_PROTECTION.md`.
+- **JWT secret in dev** — Missing `AILA_JWT_SECRET_KEY` synthesises a
+  random secret per process start and invalidates every issued JWT on
+  restart. Production deployments MUST set it explicitly.

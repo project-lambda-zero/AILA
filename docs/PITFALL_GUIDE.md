@@ -477,3 +477,275 @@ def submit_task(task):
         session.commit()
         raise ValueError("Cycle detected")
 ```
+
+---
+
+## 21. Bare `except Exception` Without Justification
+
+**Source:** `.claude/CLAUDE.md` mistake #2; honesty audit rules `bare_exception_wrap`, `silent_exception`, `broad_exception_catch`.
+
+**Symptom:** The honesty audit fails with `broad_exception_catch` or `silent_exception`. Real failures get swallowed; debugging is impossible.
+
+**Mistake:**
+
+```python
+try:
+    advisory = client.fetch(cve_id)
+except Exception:
+    advisory = None
+```
+
+**Fix:** Catch the exception types you actually expect. For infra paths, group them explicitly:
+
+```python
+try:
+    advisory = client.fetch(cve_id)
+except (OSError, TimeoutError, RuntimeError, httpx.HTTPError):
+    _log.exception("advisory fetch failed for %s", cve_id)
+    advisory = None
+```
+
+If a broad catch is genuinely required (top-level worker loop, callback boundary), leave a comment explaining why and re-raise or `_log.exception(...)` before swallowing.
+
+---
+
+## 22. CSS Variables Inside SVG `fill` / `stroke`
+
+**Source:** `.claude/CLAUDE.md` mistake #4 (frontend).
+
+**Symptom:** Recharts series render with no color, or fall back to the SVG default black/grey. Theme switches do not update the chart.
+
+**Mistake:**
+
+```tsx
+<Bar dataKey="count" fill="var(--color-accent)" />  // SVG ignores the var() reference
+```
+
+**Fix:** Resolve the variable with `getComputedStyle` via the `useThemeChartColors()` hook and pass the resolved value:
+
+```tsx
+const colors = useThemeChartColors();
+<Bar dataKey="count" fill={colors.accent} />
+```
+
+The hook reads computed values from the document root, so it tracks `data-theme` changes correctly.
+
+---
+
+## 23. Tailwind v4 Arbitrary Values With `h-[…]`, `bg-[#…]`
+
+**Source:** `.claude/CLAUDE.md` mistake #5 (frontend).
+
+**Symptom:** `class="h-[720px] bg-[#131313]"` renders with the default height/background; Tailwind v4 silently emits no CSS for these.
+
+**Mistake:**
+
+```tsx
+<div className="h-[720px] bg-[#131313]" />
+```
+
+**Fix:** Use an inline `style` for one-off literal values, or add a token:
+
+```tsx
+<div className="bg-surface" style={{ height: 720 }} />
+```
+
+Arbitrary values that should be reused belong in the design system, not inline.
+
+---
+
+## 24. Schema Changes Without Alembic
+
+**Source:** `.claude/CLAUDE.md` mistake #6.
+
+**Symptom:** Tables created at runtime by `SQLModel.metadata.create_all()` from a tool or service. Production DB drifts from the migration head; rollbacks corrupt state.
+
+**Mistake:**
+
+```python
+# In some_service.py
+SQLModel.metadata.create_all(engine)
+```
+
+**Fix:** All DDL lives in `src/aila/alembic/versions/`. Write a migration:
+
+```bash
+alembic revision -m "063_my_module_tables"
+alembic upgrade head
+```
+
+Runtime `create_all()` is allowed only inside test fixtures that build a throwaway engine.
+
+---
+
+## 25. Worker Bytecode Cache Staleness
+
+**Source:** `.claude/CLAUDE.md` mistake #8.
+
+**Symptom:** ARQ workers run old logic after a Python file edit. Tracebacks point at line numbers that no longer exist. The change works in the API but not the worker.
+
+**Mistake:** Assuming `--reload` semantics from `uvicorn` apply to the worker.
+
+**Fix:** Workers do not auto-reload. After Python file changes:
+
+```bash
+# Kill and restart the queue worker
+python -m aila worker -q vulnerability
+```
+
+If a traceback references stale line numbers, clear `__pycache__` directories under the touched modules and restart.
+
+---
+
+## 26. Pydantic Models Passed As Task Kwargs
+
+**Source:** `.claude/CLAUDE.md` mistake #9.
+
+**Symptom:** `TypeError: Object of type RunState is not JSON serializable` raised when a `@platform_task` function is enqueued or `DurableStateMachine.execute()` runs.
+
+**Mistake:**
+
+```python
+await task_queue.submit(track="vr", fn=run_step, kwargs={"state": run_state})
+```
+
+**Fix:** Every kwarg to a `@platform_task`-decorated function or to `DurableStateMachine.execute()` MUST be JSON-serializable. Convert `BaseModel` instances:
+
+```python
+await task_queue.submit(
+    track="vr",
+    fn=run_step,
+    kwargs={"state": run_state.model_dump(mode="json")},
+)
+```
+
+The workflow engine validates kwargs at runtime and raises `TypeError` if a non-serializable value reaches the boundary.
+
+---
+
+## 27. `session.add()` on a Possibly-Existing Row
+
+**Source:** `.claude/CLAUDE.md` mistake #10.
+
+**Symptom:** `IntegrityError` for a duplicate primary key when a row created by an earlier helper (e.g. `_ensure_run_record`) is `add()`-ed again later in the same flow.
+
+**Mistake:**
+
+```python
+record = WorkflowRunRecord(id=run_id, ...)
+session.add(record)   # always INSERT
+await session.commit()
+```
+
+**Fix:** When the row may already exist (created earlier by another helper, by `_ensure_run_record`, or by a sibling worker), use `session.merge()`:
+
+```python
+record = WorkflowRunRecord(id=run_id, ...)
+merged = await session.merge(record)   # INSERT or UPDATE on PK
+await session.commit()
+```
+
+`add()` always issues an INSERT; `merge()` issues INSERT-or-UPDATE based on the primary key.
+
+---
+
+## 28. Module Frontend Bare Import Not Declared in `package.json`
+
+**Source:** `.claude/CLAUDE.md` mistake #11.
+
+**Symptom:** `pnpm install` fails with "missing peer dependencies" or "ERR_PNPM_UNDECLARED_DEPENDENCY". `tsc --noEmit` flags an unresolved import.
+
+**Mistake:** Adding `import { Foo } from "some-pkg"` inside a module frontend file without listing `some-pkg` in that module's `package.json`.
+
+**Fix:** pnpm strict mode rejects undeclared imports at install time. Decide which section the import belongs to (per the dep ownership matrix in `FRONTEND_MODULE_STANDARD.md`) and declare it:
+
+```json
+{
+  "dependencies": {
+    "some-pkg": "catalog:ui"
+  }
+}
+```
+
+Then `pnpm install` to relink.
+
+---
+
+## 29. Importing `react-router-dom`
+
+**Source:** `.claude/CLAUDE.md` mistake #12.
+
+**Symptom:** Module type-check fails with "Cannot find module 'react-router-dom'", or runtime fails because the package isn't installed.
+
+**Mistake:**
+
+```ts
+import { useNavigate } from "react-router-dom";
+```
+
+**Fix:** React Router v7 unified `react-router-dom` and `react-router` into the single `react-router` package. Every import in this codebase comes from `react-router`:
+
+```ts
+import { useNavigate } from "react-router";
+```
+
+---
+
+## 30. Literal Versions in Module `package.json`
+
+**Source:** `.claude/CLAUDE.md` mistake #13.
+
+**Symptom:** Two modules pin different versions of the same dep; pnpm hoists both; bundle doubles in size; runtime type mismatches when two `react` copies meet.
+
+**Mistake:**
+
+```json
+{ "peerDependencies": { "react": "19.2.4" } }
+```
+
+**Fix:** Every shared dep references a pnpm catalog entry from `pnpm-workspace.yaml`:
+
+```json
+{ "peerDependencies": { "react": "catalog:react19" } }
+```
+
+Only a dep that no other workspace package consumes is allowed a literal version, and even then prefer adding it to a catalog so a future second consumer cannot drift.
+
+---
+
+## 31. Hand-Editing `pnpm-lock.yaml`
+
+**Source:** `.claude/CLAUDE.md` mistake #14.
+
+**Symptom:** `pnpm install` rewrites the file on the next run, undoing the edit. CI fails the lockfile-is-up-to-date check. Reproducible builds break.
+
+**Mistake:** Patching a version or `integrity:` hash directly in `pnpm-lock.yaml`.
+
+**Fix:** Treat the lockfile as generated output. Re-run `pnpm install` after any change to a `package.json` or to `pnpm-workspace.yaml`. The lockfile is regenerated deterministically from those inputs.
+
+---
+
+## 32. Missing `@source` Directive for a New Module's Tailwind Classes
+
+**Source:** `.claude/CLAUDE.md` mistake #15 (frontend).
+
+**Symptom:** Tailwind classes used only inside a module's frontend (e.g. `bottom-6 right-6 z-[60]` on a floating pill) generate no CSS rules. The element renders with no `bottom`/`right` set and anchors at flow position instead of viewport.
+
+**Cause:** Tailwind v4 scans content starting from the directory containing the entry CSS file (`frontend/src/styles/globals.css` → `frontend/src/`). Module frontends live at `src/aila/modules/<id>/frontend/`, reached only via pnpm symlinks under `node_modules/@aila/*` that Tailwind ignores by default.
+
+**Fix:** Add one `@source` line per module to `frontend/src/styles/globals.css`, right after the Tailwind import:
+
+```css
+@import "tailwindcss";
+@source "../../../src/aila/modules/<your_module>/frontend/**/*.{ts,tsx}";
+```
+
+Already wired for: `vr`, `vulnerability`, `forensics`, `sbd_nfr`, `hello_world`. When you copy `_template/` to start a new module, add the `@source` line in the same change.
+
+Verify with a curl against the dev server:
+
+```bash
+curl -s http://localhost:3000/src/styles/globals.css | grep "\.your-new-class"
+```
+
+If the rule is present, Tailwind is scanning the module correctly.

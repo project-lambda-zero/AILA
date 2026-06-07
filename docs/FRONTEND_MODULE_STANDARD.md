@@ -113,13 +113,15 @@ Optional:
 
 Every bare import in a module's source MUST be declared in that module's `package.json`:
 
-| Import category                                           | Section in package.json   | Version reference                |
-|-----------------------------------------------------------|---------------------------|----------------------------------|
-| Module-specific (e.g., `@dnd-kit/core`, `@xyflow/react`) | `dependencies`            | `catalog:<group>` (preferred)    |
-| Shell-owned framework/design-system                       | `peerDependencies`        | `catalog:<group>`                |
-| Test/storybook tooling                                    | `devDependencies`         | `catalog:<group>`                |
+| Import category                                                   | Section in `package.json` | Version reference                |
+|-------------------------------------------------------------------|---------------------------|----------------------------------|
+| Shell-owned framework / router / data layer / design system       | `peerDependencies`        | `catalog:<group>`                |
+| Module-specific runtime dep (e.g., `@dnd-kit/core`, `@xyflow/react`) | `dependencies`         | `catalog:<group>` (preferred) or literal if not shared |
+| Test / storybook tooling                                          | `devDependencies`         | `catalog:<group>`                |
 
-pnpm strict mode enforces this at install time — `pnpm install` fails if any module imports a package it didn't declare. Cross-module imports (`@aila/<other>-frontend`) are forbidden by convention; reviewers must reject them.
+pnpm strict mode rejects undeclared bare imports at install time, so `pnpm install` fails any module that uses a package it did not declare. Cross-module imports (`@aila/<other>-frontend`) are forbidden by convention; reviewers must reject them.
+
+`pnpm-workspace.yaml` defines the catalog groups currently in use: `react19`, `router`, `vite`, `tailwind`, `query`, `ui`, `testing`, `storybook`, `types`, `maps`, `data`, `dnd`, `flow`, plus the top-level `catalog:` slot (TypeScript). Shared versions live there; modules and the shell reference them by `catalog:<group>` so a single edit propagates.
 
 See `.claude/rules/frontend-workspace.md` for the full ruleset.
 
@@ -516,6 +518,74 @@ Add one line per module to `frontend/src/styles/globals.css` (right after the `@
 Already wired for: `vr`, `vulnerability`, `forensics`, `sbd_nfr`, `hello_world`. If you copy `_template/` to start a new module, add the line at the same time.
 
 Verify by curl on the running dev server: `curl http://localhost:3000/src/styles/globals.css | grep "\.your-new-class"` — if the rule exists, Tailwind is scanning correctly.
+
+## Implementation Gotchas
+
+These traps catch every contributor at least once. Read once, save a
+debugging session later.
+
+### `react-router`, not `react-router-dom`
+
+React Router v7 unified the two packages. Every import in this codebase
+resolves from `react-router`:
+
+```ts
+// CORRECT
+import { Link, useNavigate } from "react-router";
+
+// WRONG — package is not installed; tsc and pnpm both fail
+import { Link, useNavigate } from "react-router-dom";
+```
+
+The catalog entry is `catalog:router`. Modules that route declare
+`"react-router": "catalog:router"` in `peerDependencies`.
+
+### Tailwind v4 arbitrary values do not generate CSS
+
+`class="h-[720px] bg-[#131313]"` produces no CSS rules under Tailwind v4
+— the scanner cannot see the values. The element renders at the default
+height with the default background and silently loses the intent.
+
+Use an inline `style` for one-off literal values, or add a token:
+
+```tsx
+// CORRECT
+<div className="bg-surface" style={{ height: 720 }} />
+
+// WRONG — both classes are dropped
+<div className="h-[720px] bg-[#131313]" />
+```
+
+Arbitrary values that need to be reused belong in the design system,
+not inline.
+
+### Recharts `fill` / `stroke` do not resolve CSS `var(--…)`
+
+An SVG `fill="var(--color-accent)"` does not resolve through CSS
+variables — the chart renders empty (or with the SVG default colour).
+Theme switches do not propagate either.
+
+Resolve the variable in JS via `getComputedStyle` (the
+`useThemeChartColors()` hook already does this) and pass the resolved
+string:
+
+```tsx
+const colors = useThemeChartColors();
+<Bar dataKey="count" fill={colors.accent} />
+```
+
+The hook re-reads on `data-theme` changes so charts stay in sync with
+the active theme.
+
+### pnpm strict mode rejects undeclared imports
+
+Every bare import in a module's frontend MUST be declared in that
+module's `package.json`. Adding `import { foo } from "some-pkg"` without
+a matching entry in `dependencies`, `peerDependencies`, or
+`devDependencies` fails `pnpm install` with
+`ERR_PNPM_UNDECLARED_DEPENDENCY`. See the dep ownership matrix above.
+
+---
 
 ## Anti-Patterns
 

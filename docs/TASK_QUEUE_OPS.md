@@ -14,7 +14,7 @@ API Server (uvicorn)              ARQ Worker (aila worker)
   |                                  |
   |  POST /analyze                   |
   |  -> TaskQueue.submit()           |
-  |     -> TaskRecord (SQLite)       |
+  |     -> TaskRecord (Postgres)     |
   |     -> arq:queue:vulnerability   |
   |        (Redis enqueue)           |
   |                                  |
@@ -25,30 +25,48 @@ API Server (uvicorn)              ARQ Worker (aila worker)
   |                            -> mark DONE/FAILED
   |                                  |
   |  GET /tasks/{id}                 |
-  |  -> TaskRecord (SQLite)          |
+  |  -> TaskRecord (Postgres)        |
   |                                  |
   SSE /scans/{id}/progress    Redis Streams (progress)
 ```
 
-**SQLite** stores the durable task lifecycle (`TaskRecord` table).
+**PostgreSQL** stores the durable task lifecycle (`TaskRecord` table).
 **Redis** handles the job queue and progress streams.
-**When Redis is unavailable**, tasks execute synchronously in-process (sync fallback).
+**When Redis is unreachable**, `TaskQueue.submit()` deletes the ghost `TaskRecord` and raises `WorkerUnreachableError` (HTTP 503 through the standard envelope pipeline). There is no in-process fallback (D-19, Phase 178). Source: `src/aila/platform/tasks/queue.py:148-153, 210-222`.
 
 ---
 
 ## Starting the Worker
 
+### Make targets (canonical)
+
+```bash
+make worker            # python -m aila worker            (queue: default)
+make worker-vuln       # python -m aila worker -q vulnerability
+make worker-forensics  # python -m aila worker -q forensics
+make worker-sbd        # python -m aila worker -q sbd_nfr
+make worker-vr         # python -m aila worker -q vr
+```
+
+Each `make worker-*` target depends on `dev-up` and `db-init` so the worker only starts once Postgres and Redis are up and the schema is at head.
+
 ### CLI
 
 ```bash
-# Start a single ARQ worker (recommended for SQLite deployments)
-aila worker
+# Default queue
+python -m aila worker
 
-# With explicit queue track
-aila worker --queue vulnerability
+# Explicit queue track (-q or --queue)
+python -m aila worker -q vulnerability
 ```
 
-### Direct ARQ
+Source: `src/aila/cli.py:269-358`. The CLI also accepts `--redis-url` to override `AILA_PLATFORM_REDIS_URL`.
+
+### ARQ queue tracks
+
+`default` (PlatformModule and cross-cutting tasks), `vulnerability`, `forensics`, `sbd_nfr`, `vr`. One ARQ queue per track. Workers subscribe to exactly one queue.
+
+### Direct ARQ (legacy callers)
 
 ```bash
 arq aila.platform.tasks.worker.WorkerSettings
@@ -56,19 +74,50 @@ arq aila.platform.tasks.worker.WorkerSettings
 
 ### Worker configuration
 
-`WorkerSettings` in `src/aila/platform/tasks/worker.py`:
+`WorkerSettings` in `src/aila/platform/tasks/worker.py:766-789`:
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
-| `max_jobs` | `1` | Single-concurrent-scan (INFRA-03, SQLite single-writer) |
 | `job_timeout` | `3600` (1 hour) | Max time per job before ARQ kills it |
 | `keep_result` | `3600` (1 hour) | How long job results stay in Redis |
 | `max_tries` | `3` | Max retry attempts on failure |
 | `retry_jobs` | `True` | Enable ARQ retry machinery |
-| `cron_jobs` | `[reaper every minute]` | Zombie task detection |
+| `allow_abort_jobs` | `True` | Cooperative abort via `TaskCancelled` |
+| `health_check_interval` | `60` | ARQ health-key refresh interval (seconds) |
+| `cron_jobs` | `[cron(reaper, second=0)]` | Zombie detection runs every minute |
 
-**Single-worker constraint:** With SQLite, only one worker should run. Multiple workers
-cause write-lock contention. See `docs/ADR/ADR-005-single-concurrent-scan.md`.
+`max_jobs` is not hard-coded; the ARQ default applies. INFRA-03 (one in-flight scan per system) is enforced at the service layer, not by worker count.
+
+---
+
+## start.sh + pidfile interplay
+
+`start.sh` is the canonical Windows-host launcher. It spawns each worker via PowerShell `Start-Process` and records the spawned PID in `${RUN_DIR_ABS}/${slug}.pid` via the `record_pid` helper (`start.sh:163-176`). The worker slug is `worker-<queue>-<i>`, so PID files land in `.run/worker-<queue>-<i>.pid`.
+
+Per-queue worker count is set by `WORKER_COUNT_<UPPER_QUEUE>` env vars. Defaults in `start.sh:50-56`:
+
+| Queue | Default count |
+|-------|---------------|
+| `vr` | `5` |
+| `default` | `1` |
+| `vulnerability` | `1` |
+| `forensics` | `1` |
+| `sbd_nfr` | `1` |
+
+`bash start.sh restart-worker <queue>` (`start.sh:465-469`) calls `restart_pool`, which kills the legacy single pidfile `worker-<q>.pid` AND every indexed pidfile `worker-<q>-*.pid`, then spawns `WORKER_COUNT_<q>` fresh workers via `spawn worker-<q>-<i> -m aila worker -q <q>`.
+
+### Recovery when a stuck worker has no pidfile
+
+Per CLAUDE.md D-253: `restart-worker` kills via pidfile. If the pidfile is absent but a stuck worker is still alive, the restart spawns ON TOP of it. The recovery sequence is:
+
+1. Find rogue PIDs first. On Windows, Task Manager or PowerShell:
+   ```powershell
+   Get-Process | Where-Object { $_.CommandLine -match 'aila worker' }
+   ```
+   Stop-Process each match.
+2. Then run `bash start.sh restart-worker <queue>`.
+
+Skipping step 1 spawns the new pool alongside the stuck worker; both will then race for jobs on the same queue.
 
 ---
 
@@ -121,7 +170,7 @@ It is cancelled in the `finally` block when the job completes (success, failure,
 
 **Healthy task:** `heartbeat_at` is within `heartbeat_interval_s` of now.
 
-**Stale task:** `heartbeat_at` is older than `reaper_zombie_threshold_s` (default 120s).
+**Stale task:** `heartbeat_at` is older than `reaper_heartbeat_threshold_s` (default 86400s) — or, when `heartbeat_at` is NULL, `started_at` is older than `reaper_zombie_threshold_s` (default 3300s).
 This indicates the worker crashed without cleanup.
 
 ### Query for stale tasks
@@ -130,7 +179,7 @@ This indicates the worker crashed without cleanup.
 SELECT id, fn_module, status, heartbeat_at, started_at
 FROM taskrecord
 WHERE status = 'running'
-  AND heartbeat_at < datetime('now', '-120 seconds');
+  AND heartbeat_at < NOW() - INTERVAL '3300 seconds';
 ```
 
 Or via the API:
@@ -154,7 +203,14 @@ zombie tasks -- tasks stuck in RUNNING state because the worker crashed.
 
 A task is a zombie if:
 1. `status == RUNNING`
-2. `heartbeat_at < now - reaper_zombie_threshold_s` (default 120 seconds)
+2. Its heartbeat is stale beyond the configured threshold. The reaper prefers `heartbeat_at` when present; if `heartbeat_at` is NULL it falls back to `started_at`.
+
+Thresholds (`src/aila/platform/tasks/constants.py:55-56`):
+
+- `REAPER_ZOMBIE_THRESHOLD_S = 3300` (55 minutes; applied when `heartbeat_at` is NULL)
+- `REAPER_HEARTBEAT_THRESHOLD_S = 86400` (24 hours; applied when the worker is actively updating `heartbeat_at`)
+
+The 55-minute floor sits deliberately below the 3600 s `job_timeout` so the reaper never races ARQ's own timeout for a still-running job.
 
 ### Actions
 
@@ -172,15 +228,13 @@ Worker heartbeat timeout -- task presumed dead (TASK-10 reaper)
 
 ### Crash recovery flow
 
-```
 1. Worker crashes during scan (items 0-49 processed, checkpoint saved)
-2. Reaper detects zombie (heartbeat stale > 120s)
+2. Reaper detects zombie (heartbeat stale beyond threshold)
 3. Reaper marks FAILED, then re-queues
 4. Worker picks up re-queued task
 5. Task reads checkpoint: resume from item 50
 6. Task processes items 50-99
 7. Task completes as DONE
-```
 
 ---
 
@@ -207,17 +261,13 @@ Or via environment variable:
 export AILA_PLATFORM_REDIS_URL=redis://localhost:6379
 ```
 
-### Sync fallback (TASK-11)
+### Redis-unreachable behavior (D-19)
 
-When Redis is unavailable (empty URL or connection failure):
-
-1. `TaskQueue.submit()` executes the task function **synchronously in-process**
-2. The task runs in the API server process (blocking for that request)
-3. `TaskRecord` status transitions directly from QUEUED to DONE/FAILED
-4. The fallback **never raises** -- it logs a warning and completes the work
-5. SSE progress streams are not available (polling only)
-
-This means AILA works without Redis, just without async execution or real-time progress.
+When Redis is unreachable, `TaskQueue.submit()` deletes the ghost `TaskRecord` and raises
+`WorkerUnreachableError`, surfaced as HTTP 503 through the standard envelope pipeline. The
+previous in-process fallback was removed in Phase 178 (D-19) because it ran the task inside
+the API process and bypassed every queue-side safety (`max_tries`, dead-letter, per-track
+isolation). Source: `src/aila/platform/tasks/queue.py:148-153, 210-222`.
 
 ### Windows: Memurai
 
@@ -238,7 +288,8 @@ All task queue parameters are configurable via ConfigRegistry (namespace: `platf
 | Parameter | Default | ConfigRegistry Key | What it controls |
 |-----------|---------|-------------------|-----------------|
 | Heartbeat interval | 30s | `heartbeat_interval_s` | How often worker writes heartbeat |
-| Zombie threshold | 120s | `reaper_zombie_threshold_s` | How stale before reaper acts |
+| Zombie threshold (no heartbeat) | 3300s | `reaper_zombie_threshold_s` | How stale `started_at` may be before the reaper acts when `heartbeat_at` is NULL |
+| Heartbeat threshold (with heartbeat) | 86400s | `reaper_heartbeat_threshold_s` | How stale `heartbeat_at` may be before the reaper acts when the worker is updating it |
 | Job timeout | 3600s | `arq_job_timeout_s` | Max job execution time |
 | Max retries | 3 | `arq_max_tries` | Retry attempts on failure |
 | Result retention | 3600s | `arq_keep_result_s` | How long results stay in Redis |
@@ -269,10 +320,10 @@ at runtime via `get_task_tuning()` and take effect without restart.
 | Scenario | Adjustment |
 |----------|------------|
 | Long-running scans | Increase `arq_job_timeout_s` (e.g., 7200 for 2 hours) |
-| Slow networks | Increase `heartbeat_interval_s` (e.g., 60s) and `reaper_zombie_threshold_s` (e.g., 300s) |
+| Slow networks | Increase `heartbeat_interval_s` (e.g., 60s); `reaper_heartbeat_threshold_s` defaults to 24h so it already tolerates long pauses |
 | Frequent transient failures | Increase `arq_max_tries` (e.g., 5) |
 | High progress event volume | Increase `progress_stream_maxlen` (e.g., 5000) |
-| Quick zombie detection | Decrease `reaper_zombie_threshold_s` (minimum: 2x heartbeat interval) |
+| Quick zombie detection | Decrease `reaper_zombie_threshold_s` (must stay above `arq_job_timeout_s` so the reaper never preempts a still-running job) |
 
 ---
 
@@ -298,7 +349,7 @@ at runtime via `get_task_tuning()` and take effect without restart.
 1. Verify the ARQ worker is running: check for the `aila worker` process
 2. Verify Redis is reachable: `redis-cli ping` should return `PONG`
 3. Check the Redis queue has the job: `redis-cli LLEN arq:queue:vulnerability`
-4. If no worker and no Redis, the task should have used sync fallback -- check logs
+4. If the task is QUEUED but Redis is now unreachable, Redis went down after the enqueue. The task will resume once Redis is back and a worker picks it up; there is no in-process fallback.
 
 ### Task stuck in WAITING
 
@@ -310,7 +361,7 @@ at runtime via `get_task_tuning()` and take effect without restart.
 
 1. Check `platform.redis_url` via `GET /config`
 2. Verify Redis/Memurai is running: `redis-cli -u <url> ping`
-3. If Redis is down, new tasks will use sync fallback (existing queued tasks in Redis are lost until Redis recovers)
+3. If Redis is unreachable, new `TaskQueue.submit()` calls raise `WorkerUnreachableError` (HTTP 503) — the ghost `TaskRecord` is deleted before the call returns. Existing queued jobs in Redis resume once Redis is back and a worker reconnects.
 
 ### Worker keeps crashing
 
@@ -332,5 +383,18 @@ at runtime via `get_task_tuning()` and take effect without restart.
 
 ---
 
+## Dead-letter queue
+
+Tasks that exhaust `max_tries` retries or are explicitly dead-lettered land in the
+dead-letter store. Two admin endpoints (both require the `admin` role) drive recovery:
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/admin/tasks/dead-letter` | GET | List dead-lettered tasks |
+| `/admin/tasks/dead-letter/{task_id}/requeue` | POST | Requeue a task back to its original track |
+
+Source: `src/aila/api/routers/admin_dead_letter.py:159-204`.
+
+
 *Source: `src/aila/platform/tasks/worker.py`, `src/aila/platform/tasks/queue.py`, `src/aila/platform/tasks/constants.py`*
-*Last updated: 2026-04-05*
+*Last updated: 2026-06-07*

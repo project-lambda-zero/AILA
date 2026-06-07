@@ -5,20 +5,25 @@ will be licensed under the same terms.
 
 ## Prerequisites
 
-- Python 3.12+
-- `pip install -e ".[dev]"` for development dependencies
-- 4 registered SSH VMs for e2e tests (ubuntu-vm, arch-vm, alpine-vm, debian-vm)
-- OpenAI API key configured for LLM-backed scoring and routing
+- Python 3.11+
+- Node.js 20+ and `corepack enable` (frontend uses pnpm)
+- `pip install -e ".[dev]"` for backend development dependencies
+- Docker (for `make dev-up` Postgres + Redis) OR host-installed Postgres 15+ with pgvector and Redis 7+
+- OpenAI-compatible API key for LLM-backed features
+- Vulnerability-module e2e tests require 4 reachable SSH VMs (`ubuntu-vm`, `arch-vm`, `alpine-vm`, `debian-vm`)
 
 ## Development Setup
 
 ```bash
 git clone <repo-url>
-cd aila
+cd AILA
 python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 pip install -e ".[dev]"
+corepack enable && pnpm install
 ```
+
+Or `make install` for the same two-step bundle. See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full zero-to-running walkthrough (database, env vars, services).
 
 ## Running Tests
 

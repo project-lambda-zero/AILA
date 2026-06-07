@@ -1,6 +1,6 @@
 # VR Module — The Reasoning Loop
 
-Deep dive on the turn-by-turn reasoning loop. This is the engine of the module: how the LLM thinks about finding bugs, what it sees each turn, what it produces, and how the platform keeps it honest. Brainstorm-grade exploration — every gray area I can find, surfaced and named.
+Reference on the turn-by-turn reasoning loop. This is the engine of the module: how the LLM thinks about finding bugs, what it sees each turn, what it produces, and how the platform keeps it honest. Brainstorm-grade exploration — every gray area I can find, surfaced and named.
 
 Cross-references:
 - `docs/VR_MODULE_DECISIONS.md` (D-01 .. D-06) — closed scope
@@ -914,13 +914,52 @@ This is not graceful degradation — it is the design. The LLM never sees full o
 
 This is more a containment concern than a reasoning concern, but it touches the loop because rejected artefacts must propagate back as observations the LLM can react to.
 
+
+---
+
+## 8.bis What shipped — corrections to the brainstorm
+
+The sections above are the original design exploration. The module that shipped narrows several of them in ways worth recording in this doc so a new reader doesn't take the brainstorm as the API.
+
+### 8.bis.1 Six personas, not three
+
+Section 9 used to file a single-vs-split-LLM question as open. It's settled — see the persona table in §9.2. The reasoning loop ALWAYS runs through `HonestVulnResearcher.run_turn()` in `src/aila/modules/vr/agents/vuln_researcher.py`, parameterised by the per-branch `persona_voice`. Six branches deliberate in parallel; `claim_verifier.py` plus a synthesis agent reduce their outcomes to one finding.
+
+### 8.bis.2 Auto-steering (in addition to the watchdog)
+
+`src/aila/modules/vr/agents/auto_steering.py` runs after every tool dispatch. When a tool result matches a known dead-end pattern (`read_lines` past EOF; `read_function` returning a file header because the indexer faulted on the requested symbol; xref tool returning 0 hits despite the symbol existing), the dispatcher POSTs an operator-style message to the investigation with the corrective info — the exact same DB write the UI's chat composer makes. The agent sees it next turn under `*** OPERATOR STEERING — MANDATORY OVERRIDE ***` and cannot tell human steering apart from auto steering; that is intentional. De-dupe is keyed on `(rule, target_file, target_symbol)`. Auto-steering rules ship as `_detect_X` / `_derive_X_correction` pairs and are appended without prompt changes.
+
+### 8.bis.3 Sibling-consensus rejection
+
+Each branch's case state is private. Without intervention, persona Halvar keeps H1 alive forever even after Maddie + Renzo reject it. The renderer in `vuln_researcher._render_sibling_consensus` injects a `_directive.sibling_consensus_rejection` observable when two or more siblings have rejected an id that this branch still treats as live. The directive lands at PROMPT POSITION 2 alongside operator steering and is hard to ignore.
+
+### 8.bis.4 Operator-message ACK
+
+Operator messages persist with a per-investigation wall-clock TTL (24h). Without acknowledgement, the same message would re-render at the top of every turn within the TTL window. The agent emits `observables: {"_acked_operator_messages": "<id1>,<id2>"}` to confirm receipt; absorbed messages stop re-rendering. ACK is one of the few pieces of state the agent itself controls.
+
+### 8.bis.5 Three submission-time gates (commit `2328b4e`)
+
+Three correctness fixes layered onto the loop's `submit` path:
+
+1. **Pre-submit draft-pending gate** (`vuln_researcher._maybe_reject_submit_when_draft_pending`). A branch may not submit a new outcome while it still has draft outcomes pending sibling review. The gate rejects the submit, stamps `_directive.draft_pending_submit_blocked` on case state, and forces the agent to vote on the pending drafts (`submit_outcome_review`) before the next submit attempt is admitted.
+2. **Auto-approve fallback in `evaluate_quorum`** (`services/outcome_review.py`). The sibling review workflow halts a single-branch investigation indefinitely when there is no sibling to read the review request. `evaluate_quorum` now treats "no active siblings can vote" as approve-and-dispatch, with the absence logged so the operator can grep for outcomes that shipped without sibling corroboration. The pre-submit draft-pending gate is the primary mitigation; this is the safety net for investigations that predate the gate.
+3. **Tightened empty-tool_run STOP threshold** (`tool_executor` handling of malformed `tool_run`). Previously the STOP message fired only after three consecutive empty / malformed commands, because the counter saw only the most recent run on the branch. The threshold now fires after the second consecutive malformed command; the STOP message names the three legal next actions (`tool_run` with valid JSON; `submit`; `observe`) and recommends `observe` when the agent is unsure.
+
 ---
 
 ## 9. Open Questions
 
 1. **Per-turn vs per-action tool budget.** Is the budget "you have 18 turns left" or "you have 40 tool-action units, decompile=1, fuzz=8, run_angr=4"? Per-action better reflects actual cost (a 6-hour fuzz is not the same as a decompilation), but it is harder for the LLM to reason about and risks the model gaming the cost function. Leaning per-action with the costs surfaced in the user prompt — but not yet decided.
 
-2. **Single LLM or split-roles.** The forensics module uses one model end-to-end. VR has at least three plausible role splits: a "researcher" (hypothesis generation), an "implementer" (writes harnesses, exploits), a "critic" (challenges submissions). Splitting would let us tune prompt and model per role and reduce confabulation. It would also multiply latency and complicate state. Worth a controlled experiment in v0.4 — not a v0.1 decision.
+2. **Single LLM vs split-roles — settled, six personas.** Open at brainstorm time; settled in shipping code. The module ships SIX personas, three role buckets, one model task type per role:
+
+   | Persona | Role | Routed task type |
+   |---|---|---|
+   | `halvar`, `noor` | researcher | `vulnerability_research.researcher` |
+   | `maddie`, `yuki` | critic | `vulnerability_research.critic` |
+   | `renzo`, `wei` | implementer | `vulnerability_research.implementer` |
+
+   Source of truth: `src/aila/modules/vr/agents/persona_router.py` + `src/aila/modules/vr/agents/prompts/persona_*.md`. Auto-spawning the 5 sibling personas alongside a primary is toggled by `VR_AUTO_PERSONA_DELIBERATION` (default `1`). Synthesis + claim-verifier + PoC-writer have their own task types (`vulnerability_research.synthesizer`, `vulnerability_research.poc_writer`).
 
 3. **Adjudicator rule maintenance.** The adjudicator's rules are the truth-keeper. Hardcoded rules will rot as target classes shift. Should adjudicator rules be expressed as a small DSL with hot-reload, so security engineers can add rules without redeploying? Or are they Python? Hardcoded Python is simpler now; a DSL becomes worth it once we have ≥30 rules.
 

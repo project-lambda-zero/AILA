@@ -1,48 +1,127 @@
 # API Error Catalog
 
-Every error response from the AILA REST API. All errors follow the `ErrorResponse` envelope:
+The AILA REST API ships two coexisting non-2xx envelopes. Which one a
+response uses depends on the exception class raised by the route, not the
+status code. Both are documented here.
+
+## Envelope shapes
+
+### `ErrorResponse` — raised by `HTTPException` and the catch-all
+
+Returned by the Phase 80 handlers in `src/aila/api/app.py` and the
+`_catch_unhandled_exceptions` middleware:
 
 ```json
 {
   "detail": "Human-readable error message",
-  "code": "MACHINE_READABLE_CODE",
-  "errors": []
+  "code": "MACHINE_READABLE_CODE_OR_NULL",
+  "errors": null
 }
 ```
 
----
+`code` may be `null` for status codes where the API has no machine code
+(401, 403, 404, 409 — see the catalog below). `errors` is `null` except for
+validation errors that flow through the Phase 80 handler.
+
+### `ErrorEnvelope` — raised by typed `AILAError` and validation errors
+
+Returned by `register_error_handlers()`
+(`src/aila/api/errors/handlers.py`) for every `AILAError` subclass, every
+`fastapi.RequestValidationError`, and any otherwise-unhandled `Exception`:
+
+```json
+{
+  "code": "MISSING_API_KEY",
+  "message": "LLM API key is not configured.",
+  "hint": "Go to Admin -> API Keys and add the provider key for this operation.",
+  "trace_id": "5e7c1c4f3f8d4a4c8b9c0d1e2f3a4b5c"
+}
+```
+
+- `code` comes from the exception's `ClassVar code` for typed subclasses,
+  or a derived `_DERIVED_NAME_ERROR` token for pre-Phase-176a subclasses
+  that fall back to HTTP 500.
+- `message` is **always a safe static string** sourced from the exception's
+  `ClassVar user_message` (typed taxonomy) or `"An internal error occurred."`
+  for any 500-class path. `str(exc)` is **never** placed in `message` — it
+  could leak file paths, provider identifiers, or other caller-supplied
+  context (Phase 178 S1).
+- `hint` resolves through `ERROR_HINTS` in
+  `src/aila/api/errors/hints.py`; falls back to the `DEFAULT` entry when no
+  code-specific hint is registered.
+- `trace_id` is the current `correlation_id` contextvar set by
+  `CorrelationIdMiddleware`; `None` when the exception fires before that
+  middleware binds the context.
+
+The Phase 178 redactor `safe_exc_message()` in
+`src/aila/platform/workflows/log.py` enforces the matching redaction for
+the audit log: exception text persisted to `workflow_state_transitions` is
+replaced with `type(exc).__name__` unless the exception inherits from
+`WorkflowSafeMessage`. Full stack traces always land in structlog
+server-side via `logger.exception(...)`.
+
+### Typed codes and HTTP status mapping
+
+| `code` | HTTP | Exception | When |
+|--------|------|-----------|------|
+| `MISSING_API_KEY` | 503 | `MissingApiKeyError` | LLM/provider API key is not configured. |
+| `SSH_CONNECTION_FAILED` | 502 | `SSHConnectionFailedError` | SSH to a target system fails. |
+| `ROUTER_ERROR` | 500 | `RouterError` | Internal LLM/OmniRoute routing failure. |
+| `MODULE_PLATFORM_NOT_READY` | 503 | `ModulePlatformNotReadyError` | A module runtime is still initializing. |
+| `CONFIG_VALUE_MISSING` | 500 | `ConfigValueMissingError` | A required `ConfigRegistry` entry is absent. |
+| `WORKER_UNREACHABLE` | 503 | `WorkerUnreachableError` | The background task worker is unreachable. |
+| `VALIDATION_ERROR` | 422 | `RequestValidationError` | Request body or query/path params fail Pydantic validation. |
+| `INTERNAL_ERROR` | 500 | any otherwise-unhandled `Exception` | The generic last-resort handler. |
+| *(derived)* | 500 | any legacy `AILAError` (`AuthenticationError`, `NotFoundError`, …) | Subclass lacks the `ClassVar code` / `http_status` pair; the handler derives a code from the class name and returns 500. |
+
+The legacy catalog below documents the `ErrorResponse` shape used by every
+route that raises `HTTPException` directly.
+
 
 ## Authentication Errors (401)
 
 ### Invalid or missing token
 
-- **When:** No `Authorization: Bearer <token>` header, or token is malformed
+- **When:** No `Authorization: Bearer <token>` header, or the token is malformed.
 - **Response:** `{"detail": "Not authenticated"}`
-- **Fix:** Include a valid JWT token from `POST /auth/token`
+- **Fix:** Present a valid Bearer JWT from `POST /auth/login` (user) or `POST /auth/token` (API key).
+
+### Invalid credentials (user login)
+
+- **When:** `POST /auth/login` with an unknown username, an inactive account, an OIDC-only account, or a wrong password.
+- **Response:** `{"detail": "Invalid credentials"}`
+- **Fix:** Verify username + password. The same string is returned for every failure mode to avoid username enumeration; check the server audit log for `login_failed` with the specific reason.
+
+### Invalid or expired refresh token
+
+- **When:** `POST /auth/refresh/user` with a missing, expired, revoked, or wrong-type refresh token, or whose user account is no longer active.
+- **Response:** `{"detail": "Invalid or expired refresh token"}`
+- **Fix:** Re-authenticate via `POST /auth/login`.
 
 ### Expired token
 
-- **When:** JWT `exp` claim has passed
-- **Response:** `{"detail": "Token expired"}`
-- **Fix:** Refresh via `POST /auth/refresh` or re-authenticate with `POST /auth/token`
+- **When:** JWT `exp` claim has passed.
+- **Response:** `{"detail": "JWT access token has expired -- obtain a new token via POST /auth/token or POST /auth/refresh"}`
+- **Fix:** Refresh via `POST /auth/refresh` (API key) or `POST /auth/refresh/user` (user), or re-authenticate.
 
-### Revoked key
+### Revoked API key
 
-- **When:** The API key that issued the JWT has been revoked (`revoked_at` is set)
+- **When:** The `ApiKeyRecord` matched by the JWT's `key_id` claim has `revoked_at` set (zero-cache-window blacklist).
 - **Response:** `{"detail": "API key has been revoked"}`
-- **Fix:** Create a new API key via `POST /auth/keys` (admin) or `aila create-api-key` (CLI)
+- **Fix:** Create a new API key via `POST /auth/keys` (admin) or `aila create-api-key` (CLI).
 
 ### Invalid API key
 
-- **When:** `POST /auth/token` with an API key that does not match any stored hash
-- **Response:** `{"detail": "Invalid API key"}`
-- **Fix:** Verify the key value; create a new key if lost
+- **When:** `POST /auth/token` with a raw key that does not match any active `ApiKeyRecord` hash.
+- **Response:** `{"detail": "Invalid API key -- verify the key is correct and not revoked, then retry POST /auth/token"}`
+- **Fix:** Verify the key value or create a new key.
 
-### Blacklisted token
+### Rate limit exceeded (429)
 
-- **When:** JWT's `key_id` claim matches a revoked ApiKeyRecord
-- **Response:** `{"detail": "API key has been revoked"}`
-- **Fix:** Re-authenticate with a non-revoked key
+- **When:** slowapi rate limit triggered for the bucket derived from the JWT `user_id`/`key_id` claim or remote IP (e.g. >10 logins/min, >5 token exchanges/min).
+- **Response:** slowapi handler body (JSON with `error` + `Retry-After` header).
+- **Fix:** Back off and retry after the duration in `Retry-After`. For per-user limits, the bucket is identity-based, so a noisy peer cannot starve other callers.
+
 
 ---
 
@@ -75,19 +154,21 @@ Every error response from the AILA REST API. All errors follow the `ErrorRespons
 
 ```json
 {
-  "detail": "1 validation error: field 'query_text' is required",
   "code": "VALIDATION_ERROR",
-  "errors": [
-    {
-      "loc": ["body", "query_text"],
-      "msg": "Field required",
-      "type": "missing"
-    }
-  ]
+  "message": "Request validation failed",
+  "hint": "Fix the highlighted input fields and retry.",
+  "trace_id": "5e7c1c4f3f8d4a4c8b9c0d1e2f3a4b5c"
 }
 ```
 
-- **Fix:** Check the request body against the schema (see OpenAPI docs at `/docs`)
+Phase 176a routes validation errors through `validation_error_handler`,
+which emits the `ErrorEnvelope` shape above. Pre-Phase-176a code paths
+that raise a custom 422 via `HTTPException` still return the older
+`ErrorResponse` shape with `detail` + `errors` populated. Refer to the
+route's OpenAPI documentation for the exact shape it returns.
+
+- **Fix:** Match the request body against the schema published at `/docs`.
+
 
 ### Config value validation
 
@@ -145,9 +226,10 @@ Every error response from the AILA REST API. All errors follow the `ErrorRespons
 
 ### Oversized request
 
-- **When:** Request body exceeds 10MB (Content-Length header check in middleware)
-- **Response:** `{"detail": "Request body too large"}`
-- **Fix:** Reduce payload size; for bulk operations, use smaller batches
+- **When:** Request body exceeds 10 MB (Content-Length header check in `_reject_oversized_requests`).
+- **Response:** `{"detail": "Request body too large (max 10MB)", "code": "PAYLOAD_TOO_LARGE", "errors": null}`
+- **Fix:** Reduce payload size; for bulk operations, use smaller batches.
+
 
 ---
 
@@ -165,11 +247,16 @@ Every error response from the AILA REST API. All errors follow the `ErrorRespons
 
 ### Unhandled exception
 
-- **When:** An unexpected error occurs in request processing
-- **Response:** `{"detail": "Internal server error", "code": null}`
-- **Fix:** Check server logs for the full stack trace; report as a bug if reproducible
+- **When:** The exception bubbles past every typed handler.
+- **Response (`ErrorEnvelope` path):** `{"code": "INTERNAL_ERROR", "message": "An internal error occurred.", "hint": "...contact support with the trace ID shown below.", "trace_id": "..."}`
+- **Response (legacy `_catch_unhandled_exceptions` path):** `{"detail": "Internal server error", "code": null, "errors": null}`
+- **Fix:** Capture the `trace_id` and correlate against server-side structlog. `safe_exc_message()` redacts persisted audit text to the exception class name; full traceback only ever reaches structlog.
 
-The `@app.middleware('http')` catch-all ensures that non-HTTPException errors always return an `ErrorResponse` envelope, never a bare HTML error page.
+`register_error_handlers()` covers `AILAError`, `RequestValidationError`,
+and bare `Exception`. The middleware-level `_catch_unhandled_exceptions`
+exists as a belt-and-suspenders 500 wrapper for any path that escapes the
+handler chain (e.g. errors raised in middleware itself).
+
 
 ---
 
@@ -199,11 +286,15 @@ data: {"message": "Redis not configured \u2014 no progress stream available"}
 | 403 | Forbidden | Insufficient role for endpoint |
 | 404 | Not Found | Resource missing or not accessible |
 | 409 | Conflict | Terminal state, already revoked, cycle |
-| 413 | Payload Too Large | Request body > 10MB |
-| 422 | Validation Error | Schema validation failure |
-| 500 | Internal Error | Unhandled exception |
+| 413 | Payload Too Large | Request body > 10 MB |
+| 422 | Validation Error | Schema validation failure (`ErrorEnvelope`, `code=VALIDATION_ERROR`) |
+| 429 | Too Many Requests | slowapi rate limit triggered |
+| 500 | Internal Error | Unhandled exception (`ErrorEnvelope`, `code=INTERNAL_ERROR`) |
 | 503 | Service Unavailable | Platform not initialized |
 
 ---
 
-*Last updated: 2026-04-05 (v1.7)*
+*Source: `src/aila/api/errors/` (envelope handlers + hint registry),
+`src/aila/platform/exceptions.py` (typed taxonomy),
+`src/aila/api/app.py` (Phase 80 handlers + middleware),
+`src/aila/platform/workflows/log.py` (`safe_exc_message`).*
