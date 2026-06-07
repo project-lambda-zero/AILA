@@ -1,12 +1,17 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
+import { ArrowsClockwise } from "@phosphor-icons/react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
-import { useCreateTarget, useDeleteTarget } from "../mutations";
+import {
+  useCreateTarget,
+  useDeleteTarget,
+  useRefreshTargetSource,
+} from "../mutations";
 import { useTargets, useWorkspaces } from "../queries";
 import type { AnalysisState, TargetKind, TargetStatus } from "../types";
 
@@ -310,12 +315,19 @@ export function TargetsPage() {
                   {formatDate(t.created_at)}
                 </td>
                 <td className="px-2 py-2 text-right">
-                  <DeleteButton
-                    id={t.id}
-                    label={`target "${t.display_name}"`}
-                    mutation={deleteMut}
-                    compact
-                  />
+                  <div className="flex items-center justify-end gap-1">
+                    <RefreshSourceButton
+                      targetId={t.id}
+                      kind={t.kind}
+                      analysisState={t.analysis_state}
+                    />
+                    <DeleteButton
+                      id={t.id}
+                      label={`target "${t.display_name}"`}
+                      mutation={deleteMut}
+                      compact
+                    />
+                  </div>
                 </td>
               </tr>
             ))}
@@ -323,5 +335,83 @@ export function TargetsPage() {
         </table></AilaCard>
       )}
     </div>
+  );
+}
+
+// ─── RefreshSourceButton ────────────────────────────────────────────
+//
+// Per-row action: re-fetch upstream git for the target's audit-mcp
+// index and rebuild when HEAD moved. Only enabled for git-backed
+// target kinds (source_repo / patch_diff / cve) that have a complete
+// ingestion (analysis_state == "ready"). Backend returns HTTP 409 if
+// the target lacks an audit_mcp_index_id; the toast surfaces that
+// message verbatim.
+//
+// Shift-click forces a full rebuild even when the SHA didn't change
+// (use after a trailmark/semble upgrade where the on-disk format
+// shifted). Default click = normal idempotent refresh.
+
+const GIT_BACKED_KINDS: ReadonlySet<TargetKind> = new Set([
+  "source_repo",
+  "patch_diff",
+  "cve",
+]);
+
+interface RefreshSourceButtonProps {
+  targetId: string;
+  kind: TargetKind;
+  analysisState: AnalysisState;
+}
+
+function RefreshSourceButton({
+  targetId,
+  kind,
+  analysisState,
+}: RefreshSourceButtonProps) {
+  const refreshMut = useRefreshTargetSource(targetId);
+  const eligible =
+    GIT_BACKED_KINDS.has(kind) && analysisState === "ready";
+  const isPending = refreshMut.isPending;
+
+  const title = !eligible
+    ? kind === "native_binary" ||
+      kind === "apk" ||
+      kind === "ipa" ||
+      kind === "jar" ||
+      kind === "dotnet_assembly" ||
+      kind === "kernel_image" ||
+      kind === "kernel_module" ||
+      kind === "hypervisor_image" ||
+      kind === "protocol_capture" ||
+      kind === "crash_input"
+      ? `Refresh unavailable: ${kind} is not git-backed`
+      : `Refresh unavailable: analysis_state=${analysisState}`
+    : "Refresh source from upstream git (shift-click = force rebuild)";
+
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label="Refresh source from upstream"
+      disabled={!eligible || isPending}
+      onClick={(e) => {
+        e.stopPropagation();
+        const force = e.shiftKey;
+        refreshMut.mutate({ force });
+      }}
+      className={[
+        "inline-flex items-center justify-center",
+        "h-6 w-6 rounded border border-border-default",
+        "text-text-muted transition-colors",
+        eligible
+          ? "hover:border-accent hover:text-accent cursor-pointer"
+          : "opacity-40 cursor-not-allowed",
+        isPending ? "border-accent text-accent" : "",
+      ].join(" ")}
+    >
+      <ArrowsClockwise
+        className={`h-3.5 w-3.5 ${isPending ? "animate-spin" : ""}`}
+      />
+    </button>
   );
 }
