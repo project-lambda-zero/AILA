@@ -1,8 +1,15 @@
 # ADR-002: SQLite + Redis Hybrid Storage Architecture
 
-**Status:** Accepted
+**Status:** SUPERSEDED (2026; PostgreSQL replaces SQLite, sync fallback removed)
 **Date:** 2025 (v1.5)
 **Supersedes:** None
+
+> Superseded. Durable persistence is now PostgreSQL 16 (pgvector). The
+> in-process synchronous fallback was removed in Phase 178 / D-19;
+> `TaskQueue.submit()` raises `WorkerUnreachableError` (HTTP 503) when
+> Redis is unreachable. Live infrastructure is captured in
+> `docs/ARCHITECTURE.md` and `infra/utilities/docker-compose.yml`. The
+> body below is retained as historical context for the v1.5 decision.
 
 ## Context
 

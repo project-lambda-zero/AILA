@@ -90,8 +90,7 @@ apply uniformly.
 
 **`tasks/`** is the ARQ integration: queue definitions (default,
 vulnerability, forensics, sbd_nfr, vr), worker entry points wired into
-`aila worker -q <queue>`, `TaskRecord` persistence, and the contract
-for storing large results as file paths (see INFRA-06).
+`aila worker -q <queue>`, and `TaskRecord` persistence.
 
 **`workflows/`** provides the explicit state-machine primitives modules
 use to orchestrate multi-step domain flows. Workflows are declared as
@@ -234,26 +233,25 @@ This is a hard requirement, not a soft guideline. Scans across
 _different_ systems can and do run in parallel; the constraint is
 per-system, not global.
 
-### INFRA-06: Large Task Results as File Paths
+### INFRA-06: Task results stay in the database
 
-Task results that exceed a few KB (scan reports, CSV exports, raw CVE
-dumps, forensic artifacts) must not be stored as DB column values.
-`TaskRecord.result_path` stores a filesystem path to the artifact; the
-actual content lives on disk.
+Task results are surfaced through the module's own result tables —
+`vr_findings`, `vr_investigation_outcomes`, `scan_findings`,
+`forensics_*`, and so on — not as file-system artifacts referenced by
+a path column. The historical `TaskRecord.result_path` column survives
+for wire-shape compatibility (the column is nullable and currently
+populated by no task in `src/aila/`); every consumer reads the result
+from the module table or its dedicated API endpoint (e.g.
+`GET /vr/investigations/{id}`, `GET /scans/{id}/findings`).
 
-**Pattern:**
-
-```python
-# In a background task - write result to disk, store path in TaskRecord
-result_file = settings.report_dir / f"task_{task_id}_result.json"
-result_file.write_text(json.dumps(result))
-# Platform stores result_file path in TaskRecord.result_path
-```
-
-This keeps row sizes bounded, keeps status polls cheap, and gives a
-clean separation between task-queue metadata (DB) and artifact storage
-(filesystem). Callers that need the result content must read the file
-via the path stored in `result_path`, not from the database row.
+The earlier file-path pattern existed to keep SQLite row sizes
+bounded under the single-writer model. PostgreSQL handles large rows
+without contention, the on-disk artifact directory introduced an
+orthogonal lifecycle problem (cleanup, permissions, backup), and
+modules already needed structured per-result tables anyway. The
+pattern was retired; `result_path` should not be populated by new
+code and will be dropped in a future migration once the schema
+column can be cleanly removed from every TaskResponse consumer.
 
 ### INFRA-07: No Module Cross-Imports
 

@@ -18,7 +18,7 @@ This document is data-only. It does not redesign the loop, the campaign manager,
 
 ## 0. Naming and Layout
 
-All VR tables live under `src/aila/modules/vulnerability_research/db_models/` (the `vr` module's `db_models` package, mirroring `forensics/db_models/`). Table names are prefixed `vr_*`. Every team-scoped table inherits `TeamScopedMixin` so the platform's `do_orm_execute` listener auto-injects `WHERE team_id = ?`. UUIDs are stored as `Text` (not `UUID(as_uuid=True)`) for SQLite parity, matching the forensics module's existing convention. Every table has `created_at: DateTime(timezone=True)` defaulted via `utc_now`; mutable rows also have `updated_at`. All long blobs (decompilation snippets, ASAN reports, GDB transcripts, exploit scripts) are stored as `Text` columns named `*_json` or `*_content` and **not** indexed; the materialized columns alongside them carry the queryable signal (mirrors the `LatestFindingRecord` pattern in vulnerability findings).
+All VR tables live under `src/aila/modules/vr/db_models/` (mirroring `forensics/db_models/`). Table names are prefixed `vr_*`. Every team-scoped table inherits `TeamScopedMixin` so the platform's `do_orm_execute` listener auto-injects `WHERE team_id = ?`. UUIDs are stored as `Text` (not `UUID(as_uuid=True)`) to keep the column type identical to the forensics module's existing convention and to avoid a forced cast on every join across modules. Every table has `created_at: DateTime(timezone=True)` defaulted via `utc_now`; mutable rows also have `updated_at`. All long blobs (decompilation snippets, ASAN reports, GDB transcripts, exploit scripts) are stored as `Text` columns named `*_json` or `*_content` and **not** indexed; the materialized columns alongside them carry the indexed scalars used in queries.
 
 Module name in code: `vulnerability_research`. Module name in URLs and frontend: `vr`. Database prefix: `vr_`.
 
@@ -1079,7 +1079,7 @@ The hot-path queries below drive index choices. Two principles:
 Composite indexes worth calling out:
 
 - `ix_vr_evidence_edges_src(src_node_id, kind)` and the symmetric `_dst` — graph traversal in either direction is one index scan, no full-table.
-- `ix_vr_obligations_anchor(anchor_node_id)` with a partial filter on `state='open'` is tempting but SQLite won't honor partial indexes the way Postgres does. We index the full column and let the query planner do the rest. Postgres deployments may add a partial index in a follow-on migration.
+- `ix_vr_obligations_anchor(anchor_node_id)` — full-column index. A partial filter on `state='open'` would shrink the index by an order of magnitude; deferred until a measurement under load shows the full index isn't enough. Adding it later is a one-line migration.
 - `ix_vr_crashes_signature(crash_signature)` is per-target via the project_id correlation; if signature collisions across projects ever become a problem (they won't — the signature includes the binary hash) we'll add a composite.
 
 ---
@@ -1155,7 +1155,7 @@ def findings_affecting_library(session, project_id: str, library_target_id: str)
     return out
 ```
 
-Two index scans (project_id+target_id+kind, src_node_id+kind) and N point lookups. For a typical library with 5–20 findings and 3–10 consumers per finding, this is ~100 row reads — fast even on SQLite.
+Two index scans (project_id+target_id+kind, src_node_id+kind) and N point lookups. For a typical library with 5–20 findings and 3–10 consumers per finding, this is ~100 row reads — single-digit ms on PostgreSQL.
 
 ### 5.4 Full evidence chain from hypothesis to advisory
 
@@ -1273,7 +1273,7 @@ What comes *later* than v0.1, deliberately not in these migrations:
 - A materialized `latest_finding` table analogous to `LatestFindingRecord` for cross-target queries — punted until usage data shows the per-finding queries are too slow.
 - An external object-storage offload column (`raw_input_storage_uri`) on `vr_crashes` for >100MB crashing inputs — added when on-disk space on the workstation becomes the bottleneck. Until then, paths are absolute on the workstation filesystem.
 
-The migration set passes an offline test: spin up an empty SQLite DB, run `alembic upgrade head`, then `alembic downgrade base`, then `alembic upgrade head` again. No errors, no schema drift between the up/down/up cycle. This is the same gate every other module's migrations pass.
+The migration set passes an offline test: against the project's PostgreSQL test database, run `alembic upgrade head`, then `alembic downgrade base`, then `alembic upgrade head` again. No errors, no schema drift between the up/down/up cycle. This is the same gate every other module's migrations pass.
 
 ---
 

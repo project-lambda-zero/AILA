@@ -219,9 +219,9 @@ phantom PID until reboot. The selector loop closes sockets cleanly. On Linux the
 default loop is already fine; the flag is harmless either way.
 
 For multi-replica deployments (or multi-worker uvicorn), point every replica at
-the same Redis and PostgreSQL and share `AILA_JWT_SECRET_KEY`. PostgreSQL handles
-concurrent writes from many backend processes; there are no SQLite-style
-single-writer limits.
+the same Redis and PostgreSQL and share `AILA_JWT_SECRET_KEY`. PostgreSQL
+absorbs concurrent writes from many backend processes without per-row
+contention.
 
 ### First Start
 

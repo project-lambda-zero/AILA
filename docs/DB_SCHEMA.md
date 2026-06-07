@@ -229,7 +229,7 @@ Platform-owned task lifecycle record (task queue).
 | group_id | Text | indexed | Owning role for RBAC scoping |
 | kwargs_json | Text | default="{}" | Serialized task arguments |
 | checkpoint_json | Text/null | | Checkpoint state for resume |
-| result_path | Text/null | | Path to task output |
+| result_path | Text/null | | **Legacy** — retired file-path slot; no task in `src/aila/` populates it. Results live in module-specific tables. |
 | error | Text/null | | Error message on failure |
 | depends_on_json | Text/null | | JSON list of dependency task IDs |
 | started_at | datetime/null | | Worker pickup time |

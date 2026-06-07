@@ -1,8 +1,17 @@
 # ADR-005: Single-Concurrent-Scan Constraint (INFRA-03)
 
-**Status:** Accepted
+**Status:** Accepted (constraint still in force); SQLite rationale obsolete.
 **Date:** 2025 (v1.5)
 **Supersedes:** None
+
+> Substrate note: the Context below describes the v1.5 SQLite single-writer
+> rationale. PostgreSQL has no such constraint. INFRA-03 (one in-flight
+> scan per system) is **still in force** but for a different reason —
+> preventing duplicate scan effort against the same target — and is now
+> enforced at the service layer, not by the database. The "Task results
+> as file paths" pattern in this ADR is also obsolete (see
+> `docs/ARCHITECTURE.md` INFRA-06: results live in module result tables,
+> `TaskRecord.result_path` is a legacy nullable column).
 
 ## Context
 

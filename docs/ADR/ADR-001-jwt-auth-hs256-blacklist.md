@@ -1,8 +1,14 @@
 # ADR-001: JWT Authentication with HS256 and Per-Request Blacklist
 
-**Status:** Accepted
+**Status:** Accepted (auth decision); substrate context outdated.
 **Date:** 2025 (v1.5)
 **Supersedes:** None
+
+> Substrate note: this ADR's Context describes the v1.5 SQLite era. The
+> HS256 + per-request blacklist decision still holds, but the storage
+> substrate is now PostgreSQL (see ADR-002 superseded note). Latency
+> figures cited as "~1ms on SQLite" are now sub-ms on PostgreSQL with
+> the indexed `apikey_blacklist` table.
 
 ## Context
 
