@@ -417,6 +417,57 @@ export function useAnalyzeTarget(targetId: string) {
   });
 }
 
+export interface RefreshSourceResult {
+  target_id: string;
+  display_name: string;
+  /** `current` (no upstream change), `refreshing` (rebuild started),
+   *  `error` (audit-mcp surfaced an error). */
+  status: "current" | "refreshing" | "error" | string;
+  old_sha: string | null;
+  new_sha: string | null;
+  index_id: string;
+  forced: boolean;
+  root_path: string | null;
+}
+
+/** Pull the latest upstream git for a target's audit-mcp index and
+ * rebuild when the HEAD SHA changed. Idempotent when upstream did not
+ * move (returns status=current). Backend bridges to audit-mcp's
+ * refresh_index tool. */
+export function useRefreshTargetSource(targetId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (opts: { force?: boolean } = {}) =>
+      authorizedRequestJson<Envelope<RefreshSourceResult>>(
+        `/vr/targets/${encodeURIComponent(targetId)}/refresh-source${
+          opts.force ? "?force=true" : ""
+        }`,
+        { method: "POST" },
+      ),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "target", targetId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "targets"] });
+      const r = result.data;
+      if (r.status === "current") {
+        toast.success(
+          `Source current (${(r.new_sha ?? "?").slice(0, 8)})`,
+        );
+      } else if (r.status === "refreshing") {
+        const oldS = (r.old_sha ?? "—").slice(0, 8);
+        const newS = (r.new_sha ?? "?").slice(0, 8);
+        toast.success(
+          `Refreshing ${r.display_name}: ${oldS} → ${newS}`,
+        );
+      } else {
+        toast.success(`Refresh status: ${r.status}`);
+      }
+    },
+    onError: (err: Error) => {
+      toast.error(`Refresh failed: ${err.message}`);
+    },
+  });
+}
+
 // ─── Patterns ───────────────────────────────────────────────────────────────
 
 export interface PatternPatchBody {

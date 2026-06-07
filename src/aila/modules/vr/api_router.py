@@ -2071,6 +2071,136 @@ def create_vr_router() -> APIRouter:
         })
 
     @router.post(
+        "/targets/{target_id}/refresh-source",
+        response_model=DataEnvelope[dict],
+        status_code=status.HTTP_200_OK,
+        summary=(
+            "Pull the latest upstream git for a target's audit-mcp index "
+            "and rebuild it when the HEAD SHA changed. Idempotent when "
+            "the upstream did not move (returns status=current)."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def refresh_target_source(
+        request: Request,
+        target_id: str,
+        force: bool = False,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        """Refresh a single target's source clone + audit-mcp index.
+
+        The target must already carry an ``audit_mcp_index_id`` handle
+        (i.e. INGESTION has completed at least once). Calling refresh
+        on a never-indexed target returns 409 with a hint to run
+        analysis first.
+        """
+        import json as _json
+
+        import httpx  # noqa: PLC0415  (transit-only proxy; see whitelist)
+
+        from .db_models import VRTargetRecord
+        from .services.mcp_registry import McpRegistryService
+
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target {target_id} not found.",
+                )
+            try:
+                handles = _json.loads(row.mcp_handles_json or "{}")
+            except (ValueError, TypeError):
+                handles = {}
+            index_id = (handles.get("audit_mcp_index_id") or "").strip()
+            display_name = row.display_name
+
+        if not index_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Target {display_name!r} has no audit-mcp index "
+                    "yet — run analysis (POST /targets/{id}/analyze or "
+                    "resume-analysis) before refreshing."
+                ),
+            )
+
+        registry_svc = McpRegistryService()
+        # _spec/_resolved_url are 'private' by convention but stable
+        # since they back the public /mcp/servers route too.
+        spec = registry_svc._spec("audit_mcp")  # noqa: SLF001
+        if spec is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="audit_mcp not registered in MCP_SERVERS catalog.",
+            )
+        base_url, _src = await registry_svc._resolved_url(spec)  # noqa: SLF001
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    f"{base_url}/tools/refresh_index",
+                    json={"index_id": index_id, "force": bool(force)},
+                )
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"audit-mcp at {base_url} unreachable: {exc}",
+            ) from exc
+        try:
+            mcp_result = resp.json()
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"audit-mcp returned non-JSON: {resp.text[:200]}",
+            ) from exc
+        if resp.status_code >= 400 or mcp_result.get("status") == "error":
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    f"audit-mcp refresh_index failed: "
+                    f"{mcp_result.get('error', resp.text[:200])}"
+                ),
+            )
+
+        # If audit-mcp re-keyed the index (drop + start_index can yield a
+        # new id when the deterministic path-based key changes), persist
+        # the new handle so subsequent calls find it.
+        new_index_id = mcp_result.get("index_id")
+        if new_index_id and new_index_id != index_id:
+            async with UnitOfWork() as uow:
+                refreshed_row = (await uow.session.exec(
+                    _team_filter(
+                        select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                        VRTargetRecord, auth,
+                    ),
+                )).first()
+                if refreshed_row is not None:
+                    try:
+                        h = _json.loads(refreshed_row.mcp_handles_json or "{}")
+                    except (ValueError, TypeError):
+                        h = {}
+                    h["audit_mcp_index_id"] = new_index_id
+                    refreshed_row.mcp_handles_json = _json.dumps(h)
+                    uow.session.add(refreshed_row)
+
+        return DataEnvelope(data={
+            "target_id": target_id,
+            "display_name": display_name,
+            "status": mcp_result.get("status", "unknown"),
+            "old_sha": mcp_result.get("old_sha"),
+            "new_sha": mcp_result.get("new_sha") or mcp_result.get("sha"),
+            "index_id": new_index_id or index_id,
+            "forced": bool(force),
+            "root_path": mcp_result.get("root_path"),
+        })
+
+    @router.post(
         "/targets/{target_id}/upload",
         response_model=DataEnvelope[dict],
         status_code=status.HTTP_202_ACCEPTED,
