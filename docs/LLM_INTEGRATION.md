@@ -408,7 +408,7 @@ classify -> call -> validate -> gate -> seal
 | **call** | -- | The actual LLM API call. Not a registered step -- it is the core `_single_call` logic. |
 | **validate** | Post-call | Runs registered EvidenceValidators against the response content. Reports hallucinated citations. |
 | **gate** | Post-call | Extracts confidence score, maps to HIGH/MEDIUM/LOW/REJECT. May run consensus retries for LOW. Discards REJECT. |
-| **seal** | Post-call | Computes HMAC-SHA256 seal over input+model+output+classification+confidence+validation. Stores to SQLite. |
+| **seal** | Post-call | Computes HMAC-SHA256 seal over input+model+output+classification+confidence+validation. Stores to PostgreSQL (`llm_audit_seals`). |
 
 ### Per-task-type step toggling
 

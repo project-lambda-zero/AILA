@@ -192,49 +192,118 @@ Then check `heartbeat_at` in the response.
 
 ---
 
-## Reaper (Zombie Detection)
+## Reapers (every-minute cron tick)
 
-### What it does
+The reaper is one ARQ cron job (`cron(reaper, second=0)` in `WorkerSettings`,
+`src/aila/platform/tasks/worker.py:779`) that runs **six independent sub-sweeps
+in order**. Each sub-sweep catches a different desync mode. Failures inside one
+sub-sweep log and continue; the others still run.
 
-The reaper is an ARQ cron job that runs every minute (`second=0`). It detects
-zombie tasks -- tasks stuck in RUNNING state because the worker crashed.
+The cron-context invocation uses a longer grace window than the boot-context
+invocation because cron fires while jobs are mid-flight:
 
-### Detection criteria
+| Path | `grace_seconds` | `reap_null_heartbeat` |
+|------|-----------------|------------------------|
+| Cron tick (every minute) | `600` | `False` |
+| Boot path (`_sweep_orphan_running_tasks` on worker start) | default `30` | `True` |
 
-A task is a zombie if:
+The cron path skips `heartbeat=None` tasks because a single-shot tool call
+(e.g. `run_function_ranking`, one ~5 min audit-mcp HTTP request) parks the
+coroutine in `await` without calling `ctx.heartbeat()`, so `heartbeat=None`
+mid-flight is ambiguous. Boot is unambiguous — `heartbeat=None` at startup
+means the previous worker died before the first beat.
+
+### Sub-sweep 1 — `_sweep_orphan_running_tasks` (platform)
+
+Heartbeat-based zombie detection. Marks a task FAILED when both:
+
 1. `status == RUNNING`
-2. Its heartbeat is stale beyond the configured threshold. The reaper prefers `heartbeat_at` when present; if `heartbeat_at` is NULL it falls back to `started_at`.
+2. The heartbeat is stale beyond the configured threshold. Reaper prefers
+   `heartbeat_at` when present; falls back to `started_at` when it is NULL.
 
 Thresholds (`src/aila/platform/tasks/constants.py:55-56`):
 
-- `REAPER_ZOMBIE_THRESHOLD_S = 3300` (55 minutes; applied when `heartbeat_at` is NULL)
-- `REAPER_HEARTBEAT_THRESHOLD_S = 86400` (24 hours; applied when the worker is actively updating `heartbeat_at`)
+- `REAPER_ZOMBIE_THRESHOLD_S = 3300` (55 min — applied when `heartbeat_at` is
+  NULL). Sits deliberately below the `3600` s `job_timeout` so the reaper
+  never races ARQ's own timeout for a still-running job.
+- `REAPER_HEARTBEAT_THRESHOLD_S = 86400` (24 h — applied when the worker is
+  actively updating `heartbeat_at`).
 
-The 55-minute floor sits deliberately below the 3600 s `job_timeout` so the reaper never races ARQ's own timeout for a still-running job.
+On checkpoint presence the task is re-queued (see *Crash recovery flow* below);
+without a checkpoint the task is marked FAILED with
+`Worker heartbeat timeout -- task presumed dead (TASK-10 reaper)`.
 
-### Actions
+### Sub-sweep 2 — `reap_stuck_stages` (VR; migration 060)
 
-**Without checkpoint:** The task is marked FAILED with error:
-```
-Worker heartbeat timeout -- task presumed dead (TASK-10 reaper)
-```
+Per-stage VR target-analysis reaper. Flips any `vr_targets.analysis_stages_json`
+stage stuck in RUNNING past its per-stage timeout to `FAILED:timeout`. Stage
+timeouts:
 
-**With checkpoint:** The task is:
-1. Marked FAILED (commits to DB)
-2. Then re-enqueued as QUEUED with `error=None` and `completed_at=None`
-3. When the worker picks it up, it finds `checkpoint_json` on the `TaskRecord`
-4. The checkpoint data is passed as `resume_from` in the task kwargs
-5. The module function resumes from the checkpoint
+| Stage | Timeout |
+|-------|---------|
+| `INGESTION` (audit-mcp `index_codebase`) | 14400 s (4 h) |
+| `CAPABILITY_PROFILE` | 1800 s (30 min) |
+| `FUNCTION_RANKING` (GPU CSR `fuzzing_targets`) | 1800 s (30 min) |
+
+After reap, the operator resumes via `POST /vr/targets/{id}/resume-analysis`
+which fans out a fresh ARQ job per non-DONE stage. Without this sweep, a
+crashed mid-stage worker would leave the target stuck in `ingesting` forever
+(the firefox case that motivated migration 060).
+
+### Sub-sweep 3 — `sweep_orphan_crashed_cursors` (platform; commit `af9a724`)
+
+Clears `workflow_state_cursor` rows whose `current_state = '__crashed__'`
+when the underlying `TaskRecord` is absent or already terminal. Without this,
+a `__crashed__` cursor persists forever and blocks re-enqueue of the same
+investigation/scan. Source: `src/aila/platform/tasks/cursor_reaper.py`.
+
+Originally a per-module sweep; moved to platform in commit `af9a724` because
+`workflow_state_cursor` is a platform-owned table and the same lifecycle
+applies to every module that uses `DurableStateMachine`.
+
+### Sub-sweep 4 — `_sweep_orphan_queued_tasks` (platform)
+
+Detects tasks parked in QUEUED whose ARQ job has gone missing from Redis
+(typically because Redis was wiped and the durable `TaskRecord` survived).
+Re-enqueues so a worker can pick them up.
+
+### Sub-sweep 5 — `sweep_cap_exceeded_investigations` (VR)
+
+Walks `vr_investigations` and completes any that breach a per-investigation
+cap: turn count, message count, or wall-clock budget. Wall-clock is now
+clocked from `coalesce(started_at, created_at)` (commit `b47dd65`), so an
+investigation that sits in queue for hours doesn't insta-kill at turn 1 the
+moment a worker picks it up. The cap defaults to
+`VR_INVESTIGATION_WALL_CLOCK_HOURS` (24 h after the worker stamps
+`started_at`).
+
+### Sub-sweep 6 — `sweep_orphan_active_branches` (VR)
+
+Flips any `vr_investigation_branches` row still ACTIVE under an investigation
+whose top-level `status` is already terminal (`completed`/`failed`/`cancelled`).
+Without this, a branch left active under a closed investigation pins quorum
+forever and blocks dispatch.
+
+### Auxiliary — `_reconcile_orphan_arq_locks`
+
+Runs from the boot path of every worker (not from the cron tick). Deletes
+`arq:in-progress:*` Redis keys whose `TaskRecord` is absent or terminal. This
+is the third leg of the desync triangle documented in CLAUDE.md
+(`TaskRecord.status` + `workflow_state_cursor.current_state` +
+`arq:in-progress:<id>`). Without it, an ARQ in-progress lock from a crashed
+worker prevents the next worker from picking up the same task id.
 
 ### Crash recovery flow
 
-1. Worker crashes during scan (items 0-49 processed, checkpoint saved)
-2. Reaper detects zombie (heartbeat stale beyond threshold)
-3. Reaper marks FAILED, then re-queues
-4. Worker picks up re-queued task
-5. Task reads checkpoint: resume from item 50
-6. Task processes items 50-99
-7. Task completes as DONE
+1. Worker crashes during a scan (items 0–49 processed, checkpoint saved).
+2. Sub-sweep 1 detects zombie (heartbeat stale beyond threshold).
+3. Reaper marks FAILED, then re-queues with `error=None` and
+   `completed_at=None`.
+4. Worker picks up the re-queued task and finds `checkpoint_json` on the
+   `TaskRecord`.
+5. The checkpoint data is passed as `resume_from` in the task kwargs.
+6. The module function resumes from item 50.
+7. Task completes as DONE.
 
 ---
 
