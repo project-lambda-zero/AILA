@@ -91,7 +91,7 @@ Worker picks up job:
   -> on_job_end hook: TaskRecord -> DONE (or DEAD_LETTER on failure)
 ```
 
-The API path decouples submission from execution. The caller polls `GET /tasks/{task_id}` for status. Long-running scans (minutes) use this path.
+The API path decouples submission from execution. The caller polls `GET /tasks/{task_id}` for status. Long-running scans (minutes) use this path. ARQ runs five queues (`default | vulnerability | forensics | sbd_nfr | vr`), selected via the `track=` argument on `TaskQueue.submit()`.
 
 ### What TaskQueue.submit() does
 
@@ -101,6 +101,7 @@ The API path decouples submission from execution. The caller polls `GET /tasks/{
 4. Validates dependency DAG for cycles.
 5. Enqueues to ARQ via Redis `ZADD`.
 6. Returns `TaskHandle(task_id)`.
+7. If Redis is unreachable, `submit()` deletes the ghost `TaskRecord` and raises `WorkerUnreachableError` (HTTP 503). There is no in-process fallback execution (D-19, Phase 178).
 
 ---
 
@@ -129,6 +130,8 @@ async def handle(self, query, module_payload, module_options, ...):
         await _finalize_run(session, run_record, run_state, "completed", response)
         return response
 ```
+
+Effective middleware order (outer to inner): `_prometheus_request_middleware -> _reject_oversized_requests -> _catch_unhandled_exceptions -> CORSMiddleware -> IdempotencyMiddleware -> CorrelationIdMiddleware -> route handler`. Starlette applies middleware LIFO, so the last-added wrapper runs first; see `src/aila/api/app.py`.
 
 **What it owns:**
 - RunState lifecycle (creation through finalization)
@@ -244,14 +247,17 @@ emitter.emit(PlatformEvent(stage="inventory", action="start", message="..."))
 ### PlatformEvent
 
 ```python
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PlatformEvent:
-    stage: str          # "routing", "inventory", "scoring", ...
-    action: str         # "start", "complete", "fail", "progress"
-    key: str            # dedup key for SSE reconnection
-    message: str        # human-readable summary
-    run_id: str
-    data: dict = {}     # arbitrary payload
+    stage: str                          # "routing", "inventory", "scoring", ...
+    action: str                         # "start", "complete", "fail", "progress"
+    key: str                            # dedup key for SSE reconnection
+    message: str                        # human-readable summary
+    details: dict = field(default_factory=dict)   # structured payload
+    run_id: str = ""
+    current: int | None = None          # progress: items completed
+    total: int | None = None            # progress: total items
+    progress_message: str | None = None # progress: status text
 ```
 
 ---
@@ -286,7 +292,7 @@ ModuleRequest(
 
 ### Critical rule
 
-Everything in `ModuleRequest` that gets passed as a kwarg to a `@platform_task` function **must be JSON-serializable**. Pydantic models must be `.model_dump(mode="json")`. The workflow engine validates this at entry and crashes with a clear TypeError if violated.
+Everything in `ModuleRequest` that gets passed as a kwarg to a `@platform_task` function **must be JSON-serializable**. Pydantic models must be `.model_dump(mode="json")`. The workflow engine validates this at entry via `json.dumps(initial_input, default=None)` (`src/aila/platform/workflows/engine.py:112`) and crashes with a clear TypeError if violated.
 
 ---
 
@@ -310,7 +316,7 @@ See `docs/WORKFLOW_GUIDE.md` for the full handler contract, StateSpec configurat
 
 ## Layer 8: Cyber Reasoning Engine
 
-`CyberReasoningEngine` in `platform/services/reasoning.py`. Multi-turn LLM reasoning protocol used inside workflow state handlers (currently by forensics).
+`CyberReasoningEngine` in `platform/services/reasoning.py`. Multi-turn LLM reasoning protocol used inside workflow state handlers (currently by forensics and vr).
 
 See `docs/WORKFLOW_GUIDE.md` (Cyber Reasoning Engine section) for the turn loop, case state merging, evidence graphs, domain profiles, and operator steering.
 
@@ -346,7 +352,7 @@ Key tables and who owns them:
 
 | Table | Owner | Purpose |
 |---|---|---|
-| `workflowrunrecord` | Platform | One row per handle() call. Status, route, summary, report path. |
+| `workflowrunrecord` | Platform | One row per handle() call. Status, route, summary, report path. Writes use `session.merge()` (not `add()`) because orchestrator and engine may both create the row for the same `run_id`; see `src/aila/platform/runtime/orchestrator.py:304, 309`. |
 | `workflow_state_cursor` | Platform | Durable state machine cursor. FK to workflowrunrecord. |
 | `workflowauditrecord` | Platform | Audit trail: every state transition with timing and output. |
 | `taskrecord` | Platform | Task queue: status, fn_path, kwargs, depends_on, heartbeat. |
@@ -365,6 +371,8 @@ Used for three things:
 1. **ARQ task queue.** Sorted sets keyed by `arq:queue:{track}`. Workers poll with ZRANGEBYSCORE.
 2. **SSE progress streams.** Redis Streams keyed by `aila:progress:{run_id}`. Frontend EventSource reads via XREAD.
 3. **Worker heartbeat.** Workers write `aila:heartbeat:{worker_id}` with TTL. Health endpoint checks key existence.
+
+A cron-driven sweep in `src/aila/platform/tasks/cursor_reaper.py` issues an ORM `delete(WorkflowStateCursor)` every minute for `__crashed__` cursors whose `run_id` no longer has an active `TaskRecord`.
 
 ### Report artifacts
 

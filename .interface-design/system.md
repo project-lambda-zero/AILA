@@ -131,5 +131,5 @@ For pages with <10 rows OR when each row needs >1 logical line, use single-row c
 
 - Shared primitives:    `frontend/src/components/aila/`
 - Module-local components: `src/aila/modules/<m>/frontend/components/`
-- Tokens (CSS):         `frontend/src/styles/themes.css`
-- Theme provider:       `frontend/src/app/providers/ThemeProvider.tsx`
+- Tokens (CSS):         `frontend/src/styles/globals.css`
+- Theme provider:       `frontend/src/providers/ThemeProvider.tsx`

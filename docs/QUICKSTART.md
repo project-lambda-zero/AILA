@@ -56,12 +56,9 @@ pip install -e ".[dev]"
 corepack enable && pnpm install
 ```
 
-The frontend is a pnpm workspace at the repo root; `pnpm install` wires up `@aila/shell`, `@aila/typescript-config`, and the four module packages (`@aila/hello-world-frontend`, `@aila/vulnerability-frontend`, `@aila/sbd-nfr-frontend`, `@aila/forensics-frontend`) in one pass.
+The frontend is a pnpm workspace at the repo root; `pnpm install` wires up `@aila/shell`, `@aila/typescript-config`, and the five module packages (`@aila/forensics-frontend`, `@aila/hello-world-frontend`, `@aila/sbd-nfr-frontend`, `@aila/vr-frontend`, `@aila/vulnerability-frontend`) in one pass.
 
 > **Verify the venv is activated**: `which uvicorn` should print a path inside `.venv/bin/`. If it prints `~/.local/bin/uvicorn` or `/usr/bin/uvicorn`, your venv is not active and uvicorn will fail to import `aila` (because system Python doesn't have it installed).
-
-The frontend is a pnpm workspace at the repo root; `pnpm install` wires up `@aila/shell`, `@aila/typescript-config`, and the four module packages (`@aila/hello-world-frontend`, `@aila/vulnerability-frontend`, `@aila/sbd-nfr-frontend`, `@aila/forensics-frontend`) in one pass.
-
 Or:
 
 ```bash
@@ -133,10 +130,10 @@ python -m aila worker
 Or, in one terminal:
 
 ```bash
-make dev
+make dev-all
 ```
 
-`make dev` starts all three processes together.
+`make dev-all` brings up dev infra and all three processes under one supervisor (Ctrl+C stops everything). `make dev` by itself only prints the canonical workflow above — it does not start anything.
 
 ---
 
@@ -160,6 +157,7 @@ If the backend health endpoint returns 200 and the frontend renders the login pa
 The default worker subscribes to the `default` queue. Module-heavy workloads (vulnerability scans, forensics analyses) are dispatched to dedicated queues so they can be scaled independently. Run additional workers per queue track:
 
 ```bash
+python -m aila worker -q vr                  # vulnerability research (audit-mcp + IDA Headless MCP)
 python -m aila worker -q vulnerability       # vulnerability scans (CVE, scoring, remediation)
 python -m aila worker -q forensics           # DFIR investigations, evidence analysis
 python -m aila worker -q sbd_nfr             # Security-by-Design NFR assessments
@@ -169,6 +167,7 @@ Or via Make:
 
 ```bash
 make worker            # default queue
+make worker-vr         # vr queue
 make worker-vuln       # vulnerability queue
 make worker-forensics  # forensics queue
 make worker-sbd        # sbd_nfr queue
@@ -197,7 +196,7 @@ python -m compileall -q src/aila
 make security-scan                       # pip-audit + bandit
 
 # Frontend (from repo root)
-pnpm -r run type-check                   # TypeScript across shell + all 4 modules
+pnpm -r run type-check                   # TypeScript across shell + all 5 modules
 pnpm -r run test                         # vitest across shell + modules
 pnpm --filter @aila/shell run build      # production build
 ```

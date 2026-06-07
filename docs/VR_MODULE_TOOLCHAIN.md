@@ -28,6 +28,50 @@ Layer 0: Target Environment
 
 ---
 
+## What VR actually drives today
+
+AILA's VR module reaches the layers above through two HTTP MCP servers and one in-process retriever, mediated by the module's bridge tools (`src/aila/modules/vr/tools/audit_mcp_bridge.py`, `ida_bridge.py`).
+
+| Server | Port | Surface | Owner |
+|---|---|---|---|
+| **audit-mcp** | 18822 | 58 tools: source graph (Trailmark) + semantic search (semble) + SARIF correlation | source-code targets |
+| **ida-headless-mcp** | 18821 | 81 tools: Hex-Rays + miasm + CAPA + symbolic / SMT (binbit) | binary targets |
+| **semble** | embedded inside audit-mcp | Model2Vec + BM25 + RRF code-chunk retriever | semantic search backend |
+
+The bridges sit between the LLM action layer and the HTTP transport. They are the only places in the VR module that touch the MCP servers. Behaviors that matter for the loop:
+
+- **Schema-driven kwarg validation.** Each bridge fetches `GET /tools` once per process (TTL 300 s), parses every tool's JSON Schema, and rejects calls with unknown kwargs before paying the HTTP round-trip. The agent's "did you mean" error includes the live parameter list.
+- **Per-action kwarg synonyms.** Common LLM aliases (`top_k` ↔ `limit` ↔ `max_results`; `max_depth` ↔ `depth`; `function_name` ↔ `name`) are normalized to each tool's canonical kwarg via `_kwarg_alias.py`. Both bridges share the same resolver and a small per-action override map.
+- **Pending / poll pattern.** Heavy graph queries (`dead_code`, `unreachable_from_entrypoints`, `scan_and_correlate`) and IDA `analyze_binary` runs return `{status: "pending", task_id: ...}`. The bridge polls every few seconds for up to ~15 minutes. Callers see one synchronous result.
+- **Circuit breaker + survey-streak pivot.** Repeated identical-shape failures (3-strike) and survey-tool streaks without a source read (3 consecutive `attack_surface` / `complexity_hotspots` / `fuzzing_targets` / `search_functions` without an intervening `read_function` / `decompile`) inject a hard "pivot" directive into the next prompt.
+- **Language-aware tool suppression.** `dead_code` and `unreachable_from_entrypoints` are hidden from the prompt for C++, Java, Kotlin, C#, Swift, Objective-C, and Scala targets where the indexer's reach analysis is unreliable.
+- **Lazy pre-warm fan-out.** When `AUDIT_MCP_WORKERS > 1` and a new `index_id` lands its first call, the bridge fires 16 cheap parallel requests so round-robin distribution warms each uvicorn worker's TypeResolver + semble + engine caches once. Skipped on `AUDIT_MCP_WORKERS=1` (the Windows reality).
+- **`read_lines` — bridge-side virtual tool.** No upstream MCP endpoint. The bridge resolves `index_id → root_path` via `/tools/list_indexes` and slices the file from disk. Use when an indexer returned a stale or wrong slice (`read_function` returning a file header, `search_constants` returning 0) and you need verbatim source.
+- **IDA mutations.** Mutating IDA tools (`rename_function`, `rename_variable`, `set_comment`, `set_function_type`, `patch_bytes`, `patch_cff`, ...) return a `ticket_id` and apply asynchronously; the bridge polls `poll_mutation` for completion.
+
+Operators and embedded harnesses can reach audit-mcp's HTTP API directly when they want a one-shot query (e.g. `mcp__audit_mcp_*` MCP tools exposed to outer agent harnesses). Inside AILA, the bridges are the canonical path — they carry the validation, dedup, pre-warm, and survey-streak logic the loop needs.
+
+### Target ingestion stages
+
+VR target onboarding (after a `source_repo` or binary upload lands) runs a three-stage pipeline. Each stage has its own row in `vr_target_analysis_stages` (migration `060_vr_target_analysis_stages`) with `status`, `attempts`, `started_at`, `completed_at`, and `error`:
+
+| Stage | What runs |
+|---|---|
+| `INGESTION` | audit-mcp `clone_repo` + `index_codebase`, or IDA `open_binary`. Polls until ready. |
+| `CAPABILITY_PROFILE` | semble warm-up + per-language tool catalog projection; populates the suppression set above |
+| `FUNCTION_RANKING` | `fuzzing_targets` ranking with per-language thresholds; persists ranked function index for the agent prompt |
+
+`aila.modules.vr.services.stage_tracker` owns idempotency, `RUNNING`-timeout reaping (separate `aila.modules.vr.services.target_analysis` reaper), and serialized commits. Operator-driven resume:
+
+```bash
+curl -X POST http://localhost:8000/vr/targets/<target_id>/resume-analysis \
+     -H "Authorization: Bearer $TOKEN"
+```
+
+Re-entrant: it picks up at the first non-`COMPLETED` stage and retries idempotently.
+
+---
+
 ## Tools by Research Phase
 
 ### Phase: Reconnaissance

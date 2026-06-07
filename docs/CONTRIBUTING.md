@@ -15,14 +15,14 @@ module. It assumes familiarity with Python, FastAPI, and async I/O.
 ### Clone
 
 ```bash
-git clone <repo-url> aila
-cd aila
+git clone <repo-url> AILA
+cd AILA
 ```
 
 ### Install
 
 Full setup steps (Postgres, Redis, env vars, migrations, first run) live in
-[`../QUICKSTART.md`](../QUICKSTART.md). The minimum to start hacking on Python
+[`./QUICKSTART.md`](./QUICKSTART.md). The minimum to start hacking on Python
 code is:
 
 ```bash
@@ -31,11 +31,10 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-Frontend work additionally needs:
+Frontend work uses the pnpm workspace at the repo root:
 
 ```bash
-cd frontend
-npm install
+corepack enable && pnpm install
 ```
 
 ### Branch
@@ -119,8 +118,8 @@ fix/<module>/<description>      # bug fix in a module
 docs/<description>              # documentation-only change
 ```
 
-`<module>` is the module id (`vulnerability`, `forensics`, `sbd_nfr`,
-`hello_world`) or `platform` for platform-wide work. `<description>` is
+`<module>` is the module id (`forensics`, `hello_world`, `sbd_nfr`, `vr`,
+`vulnerability`) or `platform` for platform-wide work. `<description>` is
 kebab-case and short.
 
 Examples:
@@ -167,7 +166,7 @@ Every PR must pass all four gates. Run them locally before pushing.
 | 1 | Unit tests | `python -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_e2e_live.py` |
 | 2 | Honesty audit | `python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py` |
 | 3 | Lint | `python -m ruff check src/aila/` |
-| 4 | Frontend typecheck (if frontend changed) | `cd frontend && npm run typecheck` |
+| 4 | Frontend typecheck (if frontend changed) | `pnpm -r run type-check` (workspace-wide) |
 
 The honesty audit must report zero findings. Whitelist entries in
 [`honesty_whitelist.py`](../honesty_whitelist.py) require an inline comment
@@ -350,8 +349,8 @@ See `src/aila/modules/hello_world/frontend/` for a working example.
 | `start-linux.sh` | Linux / macOS | `./start-linux.sh` / `./start-linux.sh stop` |
 | `make dev` | Any (prints instructions) | `make backend`, `make frontend`, `make worker` in separate terminals |
 
-The startup scripts load `.env`, start backend (`aila serve --reload`),
-3 workers (default, vulnerability, forensics), and the Vite frontend.
+The startup scripts load `.env`, start audit-mcp, the FastAPI backend, 5 ARQ
+workers (default, vr, vulnerability, forensics, sbd_nfr), and the Vite frontend.
 Logs go to `/tmp/aila_*.log`.
 
 ---

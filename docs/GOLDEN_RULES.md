@@ -1,11 +1,72 @@
 # Golden Rules
 
-58 non-negotiable code quality rules.
+60 non-negotiable code quality rules.
 Any code that enters this codebase must satisfy these.
 Derived from: Linus Torvalds, Guido van Rossum, Richard Stallman,
 an angry OSS standards developer, an AI slop detector, and a Reddit basher.
 
 ---
+
+## Six Operator Non-Negotiables
+
+These six rules sit above everything else in this document. They are the
+operator-stated baseline (`.claude/CLAUDE.md`) and override style preferences,
+convenience, and any of the numbered rules below if a conflict arises.
+
+### 1. No legacy preservation
+
+Delete old code when it is replaced. Do not add fallbacks, compatibility
+fields, alias fields, or shims that exist only to soften the cutover.
+Two paths to the same outcome doubles the maintenance surface and hides the
+real contract.
+
+### 2. No structural dishonesty
+
+No string-mirroring constants. No forwarding wrappers that add nothing.
+No "manager" / "coordinator" / "handler" classes that only delegate.
+No reflection for a fixed, knowable set. No `*Agent` naming for plain
+dispatch. The honesty audit (`docs/HONESTY_AUDIT.md`) enforces a subset of
+this; the rest is enforced at code review.
+
+### 3. No hidden smartness
+
+No deceptive routing. No fake personalization. No confidence numbers the
+code did not compute. No silent deterministic parsing inserted to bypass
+the model behind a "model-driven" facade. If the behavior is rule-based,
+the code reads as rule-based.
+
+### 4. Explicit state machines over implicit flow
+
+Multi-step behavior is declared as a state machine with named stages, a
+`STAGE_ORDER`, and a `HANDLER_REGISTRY`. Nested `if`/`elif` chains that
+encode the same shape are rejected. See `docs/MODULE_STANDARD.md`
+(workflow handler contract) for the canonical pattern.
+
+### 5. Respect ownership boundaries
+
+- Platform owns: routing, runtime, services, contracts, tools, task queue.
+- Modules own: domain logic, module-specific contracts/tools/services,
+  reports, workflow.
+- Platform never imports from `aila.modules.*`.
+- Modules never import from each other (Python OR frontend; pnpm strict mode
+  fails the install if a module imports a package it did not declare).
+
+Audit rules `import_boundary` and `api_imports_module_internals` enforce the
+Python side at CI time.
+
+### 6. Frontend dep ownership
+
+- Every bare import in a module's frontend MUST be declared in that
+  module's `package.json` (`dependencies`, `peerDependencies`, or
+  `devDependencies`).
+- Shared versions go through pnpm catalogs in `pnpm-workspace.yaml`, never
+  as literal versions in a module package.
+- The shell never imports from a module-specific dep that no other shell
+  code uses (e.g. `@dnd-kit/*` is owned by `@aila/vulnerability-frontend`,
+  not the shell). See `docs/FRONTEND_MODULE_STANDARD.md`.
+
+---
+
 
 ## Linus Torvalds — The Kernel Lord
 

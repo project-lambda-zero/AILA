@@ -93,6 +93,17 @@ A few invariants the schema is forced to maintain:
 - **A `VRDisclosure` is 1:1 with a `VRAdvisory`.** The advisory is the body of the report; the disclosure record is the coordination state with the vendor.
 - **`VREvidenceNode.target_id` is nullable** (project-level nodes like CHAIN, PATTERN have NULL). `VREvidenceNode.project_id` is **not** nullable.
 - **All team-scoped tables share `team_id`**; the platform's row-level filter uses it. Project-scoped child tables (campaigns, hypotheses, crashes, etc.) duplicate `team_id` rather than join through the project; this matches the vulnerability module convention and avoids JOINs in hot-path queries.
+- **Storage prefix today.** Tables live under `src/aila/modules/vr/db_models/` (not `vulnerability_research/`), table names are prefixed `vr_*`, and the module id used in routes and the frontend matches the package name: `vr`. The historical `vulnerability_research` naming above is preserved for design context only.
+
+### Migration heads adjacent to this doc
+
+The shipped schema is the union of `db_models/` modules and the Alembic migrations under `src/aila/alembic/versions/`. Three recent heads that affect the diagrams above:
+
+| Revision | Adds |
+|---|---|
+| `060_vr_target_analysis_stages` | `vr_target_analysis_stages_json` on `vr_targets` (per-stage status + timestamps + attempts + error); `aila.modules.vr.services.stage_tracker` owns idempotency + RUNNING-timeout reaping. |
+| `061_llm_idempotency_cache` | `llm_idempotency_cache` table keyed on `sha256(investigation_id, branch_id, turn_number, prompt_hash)`. Retries replay the cached decision so a transport hiccup never re-pays the LLM. Caller-supplied keys live in `vuln_researcher.run_turn`. |
+| `062_vr_outcome_review` (current head) | `state` column on `vr_investigation_outcomes` (`draft | approved | rejected | dispatched`) and `vr_outcome_reviews` (one row per sibling vote: `approve | reject | request_edit | abstain`, with `UNIQUE(outcome_id, reviewer_branch_id)`). Powers the sibling-corroborated draft-outcome workflow plus the pre-submit draft-pending gate referenced in `01_REASONING_LOOP.md §8.bis.5`. |
 
 ---
 

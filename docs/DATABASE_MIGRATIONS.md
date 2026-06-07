@@ -33,16 +33,23 @@ src/aila/
       001_baseline_stamp.py
       002_plan_a_auth_tables.py
       ...
-      039_forensics_directive_controls.py
+      060_vr_target_analysis_stages.py
+      061_llm_idempotency_cache.py
+      062_vr_outcome_review.py    # current head
 ```
 
-`alembic.ini` and the `alembic/` directory live under `src/aila/`, not at the repo root. All Alembic commands must be run from `src/aila/`:
+`alembic.ini` and the `alembic/` directory live under `src/aila/`, not at the repo root. All Alembic commands must run from `src/aila/`:
 
 ```bash
 cd src/aila && alembic upgrade head
 ```
 
-Or: `make migrate`
+Or the Make wrappers:
+
+- `make db-init` — fresh database only. Creates every SQLModel-registered table via `metadata.create_all()`, then stamps `alembic_version` at the current head. Run once on a brand-new database.
+- `make migrate` — every subsequent run. Plain `alembic upgrade head`.
+
+The split exists because the early module tables (vulnerability, sbd_nfr, forensics) predate the Alembic baseline (`001_baseline_stamp` is intentionally empty) and are still created via `metadata.create_all()` on first boot. `make db-init` covers the bootstrap; `make migrate` covers every column/index/table added after the baseline.
 
 ---
 
@@ -74,7 +81,7 @@ Where `{NNN}` is the next sequential number (zero-padded to 3 digits). Check the
 
 ```bash
 ls src/aila/alembic/versions/*.py | tail -1
-# 039_forensics_directive_controls.py -> next is 040
+# 062_vr_outcome_review.py -> next is 063
 ```
 
 ### Step 3: Write the migration
@@ -82,21 +89,21 @@ ls src/aila/alembic/versions/*.py | tail -1
 Use this template:
 
 ```python
-"""040 — add priority column to task records.
+"""063 — add priority column to task records.
 
 Adds a nullable priority field so operators can influence queue ordering.
 
-Revision ID: 040_taskrecord_priority
-Revises: 039_forensics_directive_controls
-Create Date: 2026-04-30
+Revision ID: 063_taskrecord_priority
+Revises: 062_vr_outcome_review
+Create Date: 2026-06-10
 """
 from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "040_taskrecord_priority"
-down_revision = "039_forensics_directive_controls"
+revision = "063_taskrecord_priority"
+down_revision = "062_vr_outcome_review"
 branch_labels = None
 depends_on = None
 
@@ -147,8 +154,10 @@ Examples from the codebase:
 | `017_llm_cost_record.py` | Platform subsystem |
 | `023_workflow_state_cursor.py` | Platform workflow engine |
 | `028_forensics_tables.py` | Module initial tables |
-| `031_forensics_evidence_size_bigint.py` | Module column fix |
-| `039_forensics_directive_controls.py` | Module column addition |
+| `040_vr_tables.py` | Module initial tables |
+| `060_vr_target_analysis_stages.py` | Module column addition |
+| `061_llm_idempotency_cache.py` | Platform subsystem |
+| `062_vr_outcome_review.py` | Module column + new table |
 
 The `revision` string inside the file must match the filename (without `.py`).
 

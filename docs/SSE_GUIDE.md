@@ -1,19 +1,24 @@
 # SSE Integration Guide
 
-How to consume Server-Sent Events from AILA's three SSE endpoints.
+How to consume Server-Sent Events from AILA's SSE endpoints.
 
 ---
 
 ## Overview
 
-AILA exposes four SSE surfaces:
+AILA exposes nine SSE surfaces across the platform and the production modules:
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/scans/{run_id}/events` | GET | Scan progress (stage, percent, message) |
-| `/tasks/{task_id}/events` | GET | Task progress (stage, percent, message) |
-| `/forensics/projects/{project_id}/investigations/{investigation_id}/events` | GET | Forensic investigation agent progress |
-| `/sessions/{session_id}/messages` | POST | Chat token streaming |
+| Endpoint | Method | Owner | Notes |
+|----------|--------|-------|-------|
+| `/events/stream` | GET | platform | User-scoped lifecycle events |
+| `/scans/{run_id}/events` | GET | platform | Scan progress (Redis Streams, `last_id` cursor) |
+| `/tasks/{task_id}/events` | GET | platform | Task progress (Redis Streams, `last_id` cursor) |
+| `/sessions/{session_id}/messages` | POST | platform | Chat token stream (requires `Accept: text/event-stream`) |
+| `/forensics/projects/{project_id}/investigations/{investigation_id}/events` | GET | forensics | Forensic investigation progress |
+| `/forensics/projects/{project_id}/readiness-check/stream` | GET | forensics | Tool readiness probe stream |
+| `/vr/projects/{project_id}/events?since_iso=...` | GET | vr | Typed VR envelopes multiplexed across the project |
+| `/vr/investigations/{investigation_id}/messages/stream?since_iso=...&branch_id=...` | GET | vr | Per-investigation message tail |
+| `/sbd_nfr/sessions/{session_id}/events` | GET | sbd_nfr | Session progress |
 
 All require a valid JWT Bearer token. SSE responses use `Content-Type: text/event-stream` with `Cache-Control: no-cache` and `X-Accel-Buffering: no`.
 
@@ -60,10 +65,15 @@ Keepalive pings are sent every 30 seconds when no events arrive:
 ### curl Example
 
 ```bash
-# Get a JWT token first
-TOKEN=$(curl -s -X POST http://localhost:8000/auth/token \
+# Get a JWT token first -- primary path: username/password login (dev creds: admin/admin)
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"api_key": "aila_sk_..."}' | jq -r .access_token)
+  -d '{"username": "admin", "password": "admin"}' | jq -r .data.access_token)
+
+# Alternative: service-account API key
+# TOKEN=$(curl -s -X POST http://localhost:8000/auth/token \
+#   -H "Content-Type: application/json" \
+#   -d '{"api_key": "aila_sk_..."}' | jq -r .data.access_token)
 
 # Submit a scan
 RUN_ID=$(curl -s -X POST http://localhost:8000/analyze \
@@ -234,6 +244,51 @@ Only open the feed when the investigation status is running (`queued | running |
 
 ---
 
+## 5. VR Investigation Streams
+
+Two VR endpoints, both backed by DB polling (~1 s interval) over typed envelope rows rather than Redis Streams.
+
+### Project-wide
+
+```
+GET /vr/projects/{project_id}/events?since_iso=<ISO-8601>
+```
+
+Multiplexes typed envelopes across every investigation and fuzz campaign owned by the project. Bearer JWT (`require_auth`).
+
+### Per-investigation
+
+```
+GET /vr/investigations/{investigation_id}/messages/stream?since_iso=<ISO-8601>&branch_id=<branch>
+```
+
+Live tail of new `VRInvestigationMessageRecord` rows for one investigation, wrapped in the same envelope. `branch_id` is optional and filters by branch.
+
+### `since_iso` cursor
+
+`since_iso` is the resume cursor. Clients pass the timestamp of the last envelope they received; the server returns every envelope strictly newer than that. On first connect, pass `since_iso` set to one second before the current time (or omit to receive only new envelopes). The frontend persists the last-seen cursor so a reconnect resumes from there.
+
+### `VREventEnvelope`
+
+Fields:
+
+- `type` -- one of `message.created`, `operator.steering`, `hypothesis.state_changed`, `outcome.created`, `campaign.crash_found`.
+- `ts` -- ISO-8601 UTC timestamp.
+- `project_id`, `investigation_id`, `campaign_id`, `branch_id` -- scope identifiers (nullable depending on event type).
+- `payload` -- type-specific JSON body.
+
+---
+
+## 6. SBD NFR Session Events
+
+```
+GET /sbd_nfr/sessions/{session_id}/events?last_id=0
+```
+
+Same `ProgressStream`-backed shape as scan / task events. Emits `{event, stage, message, percent, timestamp}` per event. Bearer JWT.
+
+---
+
 ## Module SSE Standard
 
 **Any AILA module that emits async progress MUST follow this pattern.**
@@ -321,12 +376,16 @@ async function streamSSE(url, token) {
 
 ## Redis Streams Architecture
 
-SSE progress is backed by Redis Streams, not pub/sub.
+Most SSE progress is backed by Redis Streams, not pub/sub.
 
 - Key format: `task:{task_id}:progress`
 - MAXLEN: 1000 events per stream (configurable via `AILA_PLATFORM_PROGRESS_STREAM_MAXLEN`)
 - XADD for emit, XRANGE for catchup, XREAD (block=30s) for live streaming
 - Late-connect clients replay the full event history from their `last_id`
+
+### Polling-backed VR streams
+
+The per-project and per-investigation VR streams (`/vr/projects/{project_id}/events`, `/vr/investigations/{investigation_id}/messages/stream`) do NOT use Redis Streams. They poll Postgres at ~1 s intervals over typed envelope rows and use a `since_iso` timestamp cursor instead of a Redis `last_id`. The Redis-backed `task:{task_id}:progress` stream still carries the VR worker's coarse task progress; the typed envelope stream is a separate surface.
 
 ### Tuning
 
@@ -338,4 +397,4 @@ SSE progress is backed by Redis Streams, not pub/sub.
 
 ---
 
-*Last updated: 2026-04-05 (v1.7)*
+*Last updated: 2026-06-07 (v1.8)*

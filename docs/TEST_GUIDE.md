@@ -22,16 +22,19 @@ How to write and run tests for the AILA platform.
 
 ```text
 tests/
-  conftest.py                           # Root -- minimal (just imports)
+  conftest.py                           # Root — minimal (just imports)
   api/
-    conftest.py                         # API fixtures: test_db, tokens, async_client, seeded data
+    conftest.py                         # API fixtures: session PG engine, test_db,
+                                        # tokens, async_client, seeded data
+  storage/
+    conftest.py                         # `pg_url`, `pg_engine`, `pg_session` for
+                                        # PostgreSQL-backed storage tests
   modules/
     vulnerability/
       conftest.py                       # Module fixtures: mirrors test_db + module-specific seeds
 ```
 
-Each conftest provides fixtures scoped to its directory. API tests use `tests/api/conftest.py`. Module-level tests use `tests/modules/<module_id>/conftest.py`.
-
+Each conftest provides fixtures scoped to its directory. API tests use `tests/api/conftest.py`. Module-level tests use `tests/modules/<module_id>/conftest.py`. Storage tests use `tests/storage/conftest.py`.
 ---
 
 ## Core Fixtures
@@ -41,25 +44,24 @@ Each conftest provides fixtures scoped to its directory. API tests use `tests/ap
 The foundation fixture. Every test that touches the database depends on `test_db`.
 
 **What it does:**
-1. Creates a fresh SQLite database in `tmp_path` (isolated per test).
-2. Sets `AILA_DATABASE_URL` to point to the test DB.
-3. Clears the Settings `lru_cache` to pick up the new DB URL.
-4. Imports vulnerability module tables so `SQLModel.metadata` knows them.
-5. Creates a fresh SQLAlchemy engine and calls `create_all()`.
-6. Overrides the global `_ENGINES` and `_INITIALIZED_URLS` caches.
-7. Restores everything after the test.
+1. Targets PostgreSQL via `AILA_TEST_DATABASE_URL` (default `postgresql+asyncpg://postgres:admin@localhost:5432/aila_test`). The session-scoped `_session_async_engine` fixture drops and recreates every table once per pytest session so TSVECTOR and pgvector columns load natively.
+2. Overrides `AILA_DATABASE_URL` for the test, clears the Settings `lru_cache`, and registers the session engine in `_ASYNC_ENGINES` / `_INITIALIZED_URLS` so application code resolves to the test DB.
+3. Imports every module's `db_models` so `SQLModel.metadata` is complete (platform + vr + vulnerability + sbd_nfr + forensics).
+4. On teardown, truncates every table to isolate the next test, then restores the prior `AILA_DATABASE_URL` value.
 
-**Scope:** `function` -- every test gets a clean database.
+**Scope:** `function`. The engine is session-scoped (one connection pool for the whole pytest run); per-test isolation is via `TRUNCATE`, not by reconnecting.
+
+**Prerequisite:** a running PostgreSQL with pgvector. `make dev-up` brings up `aila-postgres` on `127.0.0.1:5432` with the right extensions. Storage tests create the `aila_test` database on first run via `psql` (see `tests/storage/conftest.py` for the connection defaults — `AILA_TEST_PG_HOST/PORT/USER/PASSWORD/DB` override them).
 
 ```python
-@pytest.fixture(scope="function")
-def test_db(tmp_path) -> Generator[None, None, None]:
+@pytest_asyncio.fixture(scope="function")
+async def test_db(_session_async_engine) -> AsyncGenerator[None, None]:
     ...
     yield
-    # Cleanup: restore engines, env vars, settings cache
+    # Cleanup: TRUNCATE every table, restore AILA_DATABASE_URL
 ```
 
-**Why `function` scope:** SQLModel metadata collisions occur if tests share engines. Each test must get its own isolated database to prevent state leaks.
+**Why TRUNCATE over drop+recreate:** drop+recreate per test costs ~3s on Windows. TRUNCATE keeps the schema warm and runs in milliseconds.
 
 ### Token Fixtures
 
@@ -300,34 +302,45 @@ stub_platform.runtime.config_registry = ConfigRegistry()
 ## Running Tests
 
 ```bash
-# Run all tests
-pytest tests/
+# All backend tests except e2e + integration (matches `make test`)
+pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_e2e_live.py -x
 
-# Run API tests only
-pytest tests/api/
+# Same gating via Make
+make test
 
-# Run with verbose output
-pytest tests/ -v
+# E2E backend tests (require live infrastructure: PG + Redis + workers)
+pytest tests/test_e2e.py -v       # or: make test-e2e
 
-# Run a specific test file
+# Run one file or one test
 pytest tests/api/test_auth.py
-
-# Run a specific test function
 pytest tests/api/test_auth.py::test_token_issuance
 
-# Run with coverage
-pytest tests/ --cov=src/aila/api --cov-report=term-missing
-
-# Run async tests only
-pytest tests/ -m asyncio
+# Coverage already on by default (see [tool.pytest.ini_options].addopts)
+pytest tests/ -k auth
 ```
 
-## Coverage Target
+`pyproject.toml` sets `addopts = "--cov=src/aila --cov-report=term-missing -m 'not e2e and not integration'"`, so `pytest tests/` skips anything marked `e2e` or `integration` and emits a coverage report at the end. The `e2e` and `integration` markers gate tests that need real API keys or live infrastructure.
 
-Minimum 80% on `src/aila/api/`. Check coverage:
+Frontend tests run through the pnpm workspace:
 
 ```bash
-pytest tests/ --cov=src/aila/api --cov-report=term-missing
+pnpm -r run test                                          # vitest across shell + every module
+pnpm --filter @aila/shell run test                        # shell only (same as `make test-frontend`)
+pnpm --filter @aila/vulnerability-frontend run test       # one module
+```
+
+End-to-end browser tests live under `frontend/tests/e2e/` and run via Playwright (`frontend/playwright.config.ts`). The config has a `webServer` hook that boots `pnpm run dev` on `http://localhost:3000` and reuses an existing server outside CI. Chromium is the default project; Firefox and WebKit run a smoke subset (auth + dashboard + systems list).
+
+## Coverage Targets
+
+- Backend: `[tool.coverage.report].fail_under = 25` in `pyproject.toml`. `pytest tests/` reports against `src/aila/`. New endpoint code should land with enough tests that the project-wide threshold stays clear.
+- Frontend: `frontend/vitest.config.ts` enforces `lines: 80`, `branches: 70`, `functions: 80` on the `coverage.include` set (currently `src/hooks/**`, `src/platform/features/radar/topologyUtils.ts`, `src/platform/features/viz/useChartExport.ts`).
+
+Re-run with coverage explicitly:
+
+```bash
+pytest tests/ --cov=src/aila --cov-report=term-missing
+pnpm --filter @aila/shell run test -- --coverage
 ```
 
 Focus coverage on:
@@ -340,9 +353,10 @@ Focus coverage on:
 
 ## Common Testing Mistakes
 
-1. **Using TestClient instead of AsyncClient** -- TestClient deadlocks on SSE and async routes.
-2. **Sharing engines across tests** -- SQLModel metadata collisions cause phantom failures.
-3. **Forgetting `test_db` dependency** -- Database operations fail with "no such table".
-4. **Patching at definition site** -- Patches must target the import site in the module under test.
-5. **Missing `pytest.mark.asyncio`** -- Async tests silently pass without executing.
-6. **Asserting response body before status code** -- Status code assertion gives a clearer failure message.
+1. **Using TestClient instead of AsyncClient** — TestClient deadlocks on SSE and async routes.
+2. **Sharing engines across tests** — registering an engine that points at a different URL than `_session_async_engine` desyncs the per-test TRUNCATE list.
+3. **Forgetting `test_db` dependency** — database operations fail with "no such table" because `AILA_DATABASE_URL` still points at the dev DB.
+4. **Patching at definition site** — patches must target the import site in the module under test.
+5. **Missing `pytest.mark.asyncio`** — the project sets `asyncio_mode = "auto"`, but bare `def` tests that need an event loop still silently pass; mark them async or use `pytest_asyncio.fixture`.
+6. **Asserting response body before status code** — status-code assertion gives a clearer failure message.
+7. **Skipping `make dev-up`** — every backend test depends on the PostgreSQL container; without it the session fixture fails on first connect.

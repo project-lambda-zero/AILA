@@ -59,6 +59,31 @@ Rules:
 - It must return an object implementing `ModuleProtocol`.
 - Returned `module_id` must match folder name `<module_id>`.
 
+## Module Discovery
+
+The platform auto-discovers feature modules by scanning
+`src/aila/modules/` with `pkgutil.iter_modules`:
+
+- Only sub-packages are considered (a bare `.py` file under `modules/` is
+  ignored).
+- Packages whose short name starts with `_` are skipped (this is how
+  `_template` is excluded from the live registry).
+- The synthetic `PlatformModule` is always first, then feature modules
+  follow in filesystem (alphabetical) order.
+- Each discovered package is passed through `build_module_factory()`,
+  which calls `validate_module_layout()` before returning the
+  `create_module` callable.
+
+There is no central manifest to edit. Drop a new package under
+`src/aila/modules/<your_module>/` that satisfies the required layout and
+the platform picks it up at the next boot.
+
+If the module's `create_module()` raises or fails validation, the
+platform logs a WARNING (`Module '<id>' failed validation -- disabled`)
+and continues startup with reduced functionality rather than crashing.
+The discovery code catches `(AILAError, ValueError)` specifically — bare
+`except Exception` is banned everywhere, including this path.
+
 ## Registration Validation Rules
 
 At registration time, the platform enforces:
@@ -70,6 +95,9 @@ At registration time, the platform enforces:
 - Every capability profile has a non-empty description.
 - `required_tools()` is non-empty.
 - No empty tool keys and no duplicate tool keys.
+- Every tool key is prefixed `<module_id>.<tool_name>` (e.g.
+  `vulnerability.osv_advisory`, `hello_world.greet`). The prefix
+  prevents collisions across modules in the shared `ToolRegistry`.
 
 ## Ownership Rules
 
@@ -221,12 +249,15 @@ def create_module() -> ModuleProtocol:
 
 The returned `module.module_id` **must** match the folder name exactly (e.g., folder `vulnerability` → `module_id = "vulnerability"`). Platform discovery enforces this.
 
-### `register_tools(tool_registry, settings, registry, schema_registry)`
+### `async register_tools(tool_registry, settings, registry, schema_registry)`
 
-Called once at startup. Register all tools, schemas, and config the module needs.
+Called once at startup. Register all tools, schemas, and config the module
+needs. The method is `async def` so it can await async setup (provider
+warm-up, config materialization). Synchronous `register_*` calls inside
+the body stay synchronous; no `await` is required for them.
 
 ```python
-def register_tools(
+async def register_tools(
     self,
     tool_registry: ToolRegistry,
     settings: Settings,
@@ -243,9 +274,12 @@ def register_tools(
 
 See "SchemaRegistry Usage" and "Tool Registration Pattern" sections below.
 
-### `seed_data(session: Session) -> None`
+### `async seed_data(session: AsyncSession) -> None`
 
-Called once per startup after `register_tools`. Seeds default data into the DB (scoring policies, distribution profiles, lookup tables, etc.).
+Called once per startup after `register_tools`. Seeds default data into
+the DB (scoring policies, distribution profiles, lookup tables, etc.).
+The `session` is an `AsyncSession`; every `session.exec(...)` and
+`session.commit()` MUST be awaited.
 
 See the dedicated "seed_data() Contract" section below.
 
@@ -277,29 +311,29 @@ Rules:
 
    ```python
    from aila.storage.db_models import SeedVersionRecord
-   existing = session.exec(
+   existing = (await session.exec(
        select(SeedVersionRecord).where(SeedVersionRecord.module_id == self.module_id)
-   ).first()
+   )).first()
    if existing is not None and existing.seed_version == SEED_VERSION:
        return
    ```
 
-2. **Call `session.commit()` before returning.** The session is caller-owned; do not open a new session inside `seed_data()`. The platform provides a live session and expects the commit to happen inside this call.
+2. **Call `await session.commit()` before returning.** The session is caller-owned; do not open a new session inside `seed_data()`. The platform provides a live `AsyncSession` and expects the commit to happen inside this call.
 
 3. **Bump `SEED_VERSION` to re-trigger seeding.** Define `SEED_VERSION` as a module-level constant (e.g., `SEED_VERSION = "1.0"`). Changing this value causes the platform to re-seed on the next startup.
 
-4. **Session ownership.** Do not call `session_scope()` or open a new engine connection inside `seed_data()`. The caller owns the session lifetime.
+4. **Session ownership.** Do not call `session_scope()`, `async_session_scope()`, or open a new engine connection inside `seed_data()`. The caller owns the session lifetime.
 
 ```python
 SEED_VERSION = "1.0"
 
-def seed_data(self, session: Session) -> None:
+async def seed_data(self, session: AsyncSession) -> None:
     from sqlmodel import select
     from aila.storage.db_models import SeedVersionRecord
 
-    existing = session.exec(
+    existing = (await session.exec(
         select(SeedVersionRecord).where(SeedVersionRecord.module_id == self.module_id)
-    ).first()
+    )).first()
     if existing is not None and existing.seed_version == SEED_VERSION:
         return
 
@@ -310,7 +344,7 @@ def seed_data(self, session: Session) -> None:
     else:
         existing.seed_version = SEED_VERSION
         session.add(existing)
-    session.commit()
+    await session.commit()
 ```
 
 ---
@@ -362,7 +396,7 @@ from .my_contract import MyContract
 DB table classes are registered by modules during `register_tools()`. The platform calls `create_all()` after all modules have registered.
 
 ```python
-def register_tools(self, tool_registry, settings, registry=None, schema_registry=None):
+async def register_tools(self, tool_registry, settings, registry=None, schema_registry=None):
     if schema_registry is not None:
         schema_registry.push(
             MyTableRecord,
@@ -632,12 +666,12 @@ FindingResponse(
 
 These methods have default implementations that return empty values. Modules override them when they contribute data to platform endpoints. All three are called by platform API routes; modules that do not participate simply inherit the default.
 
-### `system_summary(system_id, session) -> dict[str, Any]`
+### `async system_summary(system_id, session) -> dict[str, Any]`
 
 **Signature:**
 
 ```python
-def system_summary(self, system_id: int, session: Session) -> dict[str, Any]:
+async def system_summary(self, system_id: int, session: AsyncSession) -> dict[str, Any]:
 ```
 
 **When the platform calls it:** `GET /systems/{id}` collects module-contributed dashboard data. The platform iterates all registered modules, calls `system_summary()` on each, and merges all non-empty dicts into the response.
@@ -649,13 +683,13 @@ def system_summary(self, system_id: int, session: Session) -> dict[str, Any]:
 **Example implementation:**
 
 ```python
-def system_summary(self, system_id: int, session: Session) -> dict[str, Any]:
+async def system_summary(self, system_id: int, session: AsyncSession) -> dict[str, Any]:
     from sqlmodel import select
     from my_module.db_models import FindingRecord
 
-    rows = session.exec(
+    rows = (await session.exec(
         select(FindingRecord).where(FindingRecord.system_id == system_id)
-    ).all()
+    )).all()
     if not rows:
         return {}
     return {
@@ -664,12 +698,12 @@ def system_summary(self, system_id: int, session: Session) -> dict[str, Any]:
     }
 ```
 
-### `report_count(run_id, session) -> dict[str, Any]`
+### `async report_count(run_id, session) -> dict[str, Any]`
 
 **Signature:**
 
 ```python
-def report_count(self, run_id: str, session: Session) -> dict[str, Any]:
+async def report_count(self, run_id: str, session: AsyncSession) -> dict[str, Any]:
 ```
 
 **When the platform calls it:** `GET /reports/{run_id}/count` collects semantic count breakdowns. The platform calls this on the module that owns the given `run_id`. Modules that do not own the `run_id` should return `{}` without raising.
@@ -681,11 +715,11 @@ def report_count(self, run_id: str, session: Session) -> dict[str, Any]:
 **Example implementation:**
 
 ```python
-def report_count(self, run_id: str, session: Session) -> dict[str, Any]:
+async def report_count(self, run_id: str, session: AsyncSession) -> dict[str, Any]:
     from sqlmodel import select
     from my_module.db_models import FindingRecord
 
-    rows = session.exec(select(FindingRecord)).all()
+    rows = (await session.exec(select(FindingRecord))).all()
     if not rows:
         return {}
     return {
@@ -916,7 +950,7 @@ class NetworkScanModule(ModuleProtocol):
         """Return tool keys the platform scopes for this module."""
         return list(MODULE_TOOLS)
 
-    def register_tools(
+    async def register_tools(
         self,
         tool_registry: ToolRegistry,
         settings: Settings,
@@ -969,16 +1003,16 @@ class NetworkScanModule(ModuleProtocol):
 
     # --- Optional lifecycle methods (defaults inherited if not overridden) ---
 
-    def seed_data(self, session: Session) -> None:
+    async def seed_data(self, session: AsyncSession) -> None:
         """Seed default configuration. Idempotent via SeedVersionRecord."""
         from sqlmodel import select
         from aila.storage.db_models import SeedVersionRecord
 
-        existing = session.exec(
+        existing = (await session.exec(
             select(SeedVersionRecord).where(
                 SeedVersionRecord.module_id == self.module_id
             )
-        ).first()
+        )).first()
         if existing is not None and existing.seed_version == SEED_VERSION:
             return
 
@@ -992,7 +1026,7 @@ class NetworkScanModule(ModuleProtocol):
         else:
             existing.seed_version = SEED_VERSION
             session.add(existing)
-        session.commit()
+        await session.commit()
 
     def filter_report_rows(
         self,
@@ -1009,11 +1043,11 @@ class NetworkScanModule(ModuleProtocol):
         """Return valid filter keys for filter_report_rows."""
         return ["host", "port"]
 
-    def system_summary(self, system_id: int, session: Session) -> dict[str, Any]:
+    async def system_summary(self, system_id: int, session: AsyncSession) -> dict[str, Any]:
         """Contribute data to GET /systems/{id}. Return {} if nothing to add."""
         return {}
 
-    def report_count(self, run_id: str, session: Session) -> dict[str, Any]:
+    async def report_count(self, run_id: str, session: AsyncSession) -> dict[str, Any]:
         """Contribute count data to GET /reports/{run_id}/count."""
         return {}
 
@@ -1204,13 +1238,13 @@ Calling `session.add(MyRecord(...))` without first registering `MyRecord` via `s
 
 ```python
 # WRONG -- table class not pushed to schema_registry
-def register_tools(self, tool_registry, settings, registry=None, schema_registry=None):
+async def register_tools(self, tool_registry, settings, registry=None, schema_registry=None):
     for spec in iter_tool_specs():
         tool_registry.register(spec.key(), spec.factory(settings))
     # MyRecord never registered -- will crash at runtime
 
 # CORRECT
-def register_tools(self, tool_registry, settings, registry=None, schema_registry=None):
+async def register_tools(self, tool_registry, settings, registry=None, schema_registry=None):
     if schema_registry is not None:
         schema_registry.push(MyRecord)
     for spec in iter_tool_specs():
@@ -1225,15 +1259,15 @@ def register_tools(self, tool_registry, settings, registry=None, schema_registry
 
 ```python
 # WRONG
-def seed_data(self, session):
-    with session_scope() as new_session:  # creates a second connection
+async def seed_data(self, session):
+    async with async_session_scope() as new_session:  # creates a second connection
         new_session.add(MyRecord(...))
-        new_session.commit()
+        await new_session.commit()
 
 # CORRECT
-def seed_data(self, session):
+async def seed_data(self, session):
     session.add(MyRecord(...))
-    session.commit()
+    await session.commit()
 ```
 
 ### 5. Prefix in router paths

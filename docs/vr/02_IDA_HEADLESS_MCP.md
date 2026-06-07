@@ -2,6 +2,8 @@
 
 A purpose-built MCP server for batch binary analysis. Not the interactive IDA MCP. This document explores the design space; it is not a spec.
 
+
+> **Where this lives in code today.** The headless MCP exists. It ships as the `ida-headless-mcp` service alongside `audit-mcp`, exposes 81 tools over HTTP on port 18821, and is reached from the VR module exclusively through `src/aila/modules/vr/tools/ida_bridge.py`. The sections below remain the design rationale; concrete shape is in the bridge's tool catalogue (fetched via `GET /tools` and cached per process) plus the IDA mutation lifecycle described in §4. Mutating tools (`rename_function`, `rename_variable`, `set_comment`, `set_function_type`, `patch_bytes`, `patch_cff`, ...) return a `ticket_id` and the bridge polls `poll_mutation` until the IDB write has applied.
 ---
 
 ## Why a New MCP
@@ -750,7 +752,7 @@ What's lost:
 What's the same:
 
 - Decompilation quality on x86_64 ELF/PE for typical compiler output is comparable. If the LLM can't tell which tool produced the pseudocode by reading it, the difference doesn't matter.
-- All metadata commands (xrefs, strings, imports, segments) are essentially equivalent.
+- All metadata commands (xrefs, strings, imports, segments) are equivalent.
 - Annotation persistence — both tools have project files; the MCP saves both as `.i64` or `.gzf` respectively.
 
 The MCP advertises its backend in `analyze_binary` response (`backend: "ida_9.0" | "ghidra_11.1"`) so the LLM knows what it's looking at, and the obligation system can suppress checks that depend on backend-specific features.

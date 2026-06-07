@@ -7,11 +7,15 @@ the server, inspected via API, and overridden by environment variables.
 
 ## What Is ConfigRegistry
 
-ConfigRegistry is a typed key-value store backed by SQLite (`ConfigEntryRecord` table).
+ConfigRegistry is a typed key-value store backed by PostgreSQL (`ConfigEntryRecord` table).
 It stores runtime-tunable settings that modules and the platform declare via Pydantic
 schemas. Unlike `Settings` (8 infrastructure fields, read once at startup),
 ConfigRegistry values are resolved on every access and can be changed at runtime
 via the `/config` API.
+
+Module code MUST read its own settings through `ConfigRegistry.get()`, not direct
+`os.getenv` calls — `os.getenv` bypasses the DB row and the schema default, and
+the honesty audit flags new occurrences.
 
 **Source:** `src/aila/storage/registry.py`
 
@@ -55,17 +59,27 @@ Invalid casts raise `ValueError`, which the config router converts to HTTP 422.
 
 ### From application code
 
+`ConfigRegistry.get()` is async — every caller must `await` it from inside an
+event loop (FastAPI handlers, ARQ task wrappers, `async def` services):
+
 ```python
 # Direct ConfigRegistry access (requires a registry instance)
-value = config_registry.get("platform", "redis_url")
+value = await config_registry.get("platform", "redis_url")
+```
 
-# Via get_task_tuning (convenience for platform namespace int values)
+Worker bootstrap paths that run before an event loop is available can use the
+`get_task_tuning(key, default)` shim, which returns the compiled default for a
+platform-namespace integer key:
+
+```python
 from aila.platform.tasks import get_task_tuning
 interval = get_task_tuning("heartbeat_interval_s", 30)
 ```
 
-`get_task_tuning` queries `ConfigEntryRecord` directly for the `platform` namespace.
-It falls back to the provided default if the DB is unavailable (tests, startup, sync fallback).
+`get_task_tuning` deliberately skips the DB lookup so it can run during worker
+startup on Windows where `asyncio.run()` from a worker bootstrap creates stale
+asyncpg connections that crash ARQ. Use it only for tuning knobs that worker
+startup needs before the event loop exists.
 
 ### From the API
 
@@ -156,16 +170,12 @@ value `"5"` and `value_type="int"`.
 If the row already exists (from a previous start), it is left unchanged -- operator
 overrides survive schema re-registration.
 
-### Step 3: Read the value
+# Option A: Via ConfigRegistry instance (await it — get() is async)
+max_retries = await config_registry.get("platform", "max_retries")
 
-```python
-# Option A: Via ConfigRegistry instance
-max_retries = config_registry.get("platform", "max_retries")  # Returns int
-
-# Option B: Via get_task_tuning (convenience for platform int fields)
+# Option B: Via get_task_tuning when no event loop is available
 from aila.platform.tasks import get_task_tuning
-max_retries = get_task_tuning("max_retries", 5)
-```
+max_retries = get_task_tuning("max_retries", 5)  # returns the compiled default
 
 ### Step 4: Override via env var (optional)
 
@@ -202,11 +212,32 @@ The `platform` namespace is registered with `PlatformConfigSchema`. All fields:
 | `jwt_access_expiry_s` | int | `2592000` | JWT access token lifetime (seconds) |
 | `jwt_refresh_expiry_s` | int | `7776000` | JWT refresh token lifetime (seconds) |
 | `heartbeat_interval_s` | int | `30` | Worker heartbeat write interval |
-| `reaper_zombie_threshold_s` | int | `120` | Zombie task detection threshold |
+| `reaper_zombie_threshold_s` | int | `3300` | Worker-side zombie detection threshold |
+| `reaper_heartbeat_threshold_s` | int | `86400` | DB-side stale-heartbeat threshold |
 | `arq_job_timeout_s` | int | `3600` | Maximum ARQ job execution time |
 | `arq_max_tries` | int | `3` | Maximum retry attempts for failed jobs |
 | `arq_keep_result_s` | int | `3600` | Job result retention in Redis |
 | `progress_stream_maxlen` | int | `1000` | Max events per Redis progress stream |
+| `llm_pipeline_classify_default` | bool | `True` | LLM pipeline classify stage default-on |
+| `llm_pipeline_validate_default` | bool | `True` | LLM pipeline validate stage default-on |
+| `llm_pipeline_gate_default` | bool | `True` | LLM pipeline gate stage default-on |
+| `llm_pipeline_seal_default` | bool | `True` | LLM pipeline seal stage default-on |
+| `llm_pipeline_verify_default` | bool | `False` | Cross-model verification default-off |
+| `llm_pipeline_verify_threshold_default` | float | `0.7` | Verification agreement threshold |
+| `llm_pipeline_verify_model_default` | str | `""` | Verifier model id (empty = same as task model) |
+| `llm_seal_hmac_key` | str | `""` | Audit-seal HMAC key (auto-generated when empty) |
+| `llm_seal_retention_days` | int | `90` | Audit-seal retention period |
+| `llm_budget_max_total_tokens_default` | int | `0` | Per-task-type token ceiling (0 = unlimited) |
+| `llm_cost_estimate_fallback_max_tokens` | int | `4096` | Fallback max-token assumption for cost estimation |
+| `llm_cost_estimate_fallback_price_per_1k` | float | `0.03` | Fallback per-1k token price for cost estimation |
+| `llm_human_consultant_hourly_rate` | float | `150.0` | USD/hr used for human-equivalent cost projections |
+| `data_posture_mode` | str | `"standard"` | `transparent` / `standard` / `paranoid` |
+| `data_direction_default` | str | `"bidirectional"` | `inbound` / `local_only` / `bidirectional` |
+
+Per-task-type overrides land under namespaced keys (e.g.
+`llm_pipeline_classify_<task_type>`, `llm_pipeline_classify_fail_mode_<task_type>`,
+`llm_budget_max_total_tokens_<task_type>`) and are read through the same
+`platform` namespace.
 
 ---
 
@@ -248,7 +279,7 @@ export AILA_VULNERABILITY_SOME_FIELD=new_value
 |--------|----------|----------------|
 | **Purpose** | Infrastructure (DB, JWT secret, API bind) | Runtime tuning (timeouts, intervals, URLs) |
 | **Fields** | 8 fixed fields | Extensible via schemas |
-| **Read pattern** | Once at startup, cached via `lru_cache` | Per access, resolved each time |
+| **Read pattern** | Once at startup, cached via `lru_cache` | Per access, resolved each time, in-process TTL cache |
 | **Mutation** | Process restart required | API or env var, no restart |
 | **Source** | `src/aila/config.py` | `src/aila/storage/registry.py` |
 | **Env var pattern** | `AILA_{FIELD}` (e.g., `AILA_API_PORT`) | `AILA_{NS}_{KEY}` (e.g., `AILA_PLATFORM_REDIS_URL`) |
@@ -286,4 +317,4 @@ WHERE namespace = 'platform' AND key = 'removed_field';
 ---
 
 *Source: `src/aila/storage/registry.py`, `src/aila/platform/config.py`*
-*Last updated: 2026-04-05*
+*Last updated: 2026-06-07*

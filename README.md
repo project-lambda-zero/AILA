@@ -15,7 +15,7 @@ and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.
                              |  HTTP / SSE / JWT
 +----------------------------v--------------------------------+
 |                    API (src/aila/api/)                      |
-|        FastAPI app with 28 routers, JWT auth, RBAC,         |
+|        FastAPI app with 30 routers, JWT auth, RBAC,         |
 |              SSE event streams, OpenAPI at /docs            |
 +----------------------------+--------------------------------+
                              |
@@ -25,27 +25,33 @@ and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.
 |  Platform           |                  |  Modules           |
 |  src/aila/platform/ |                  |  src/aila/modules/ |
 |                     |                  |                    |
-|  routing/           |                  |  vulnerability/    |
-|  runtime/           | <-- ModuleProto. |  forensics/        |
+|  routing/           |                  |  forensics/        |
+|  runtime/           | <-- ModuleProto. |  hello_world/      |
 |  services/          |     contracts -> |  sbd_nfr/          |
-|  contracts/         |                  |  hello_world/      |
-|  tools/             |                  |                    |
-|  llm/               |                  |  Each module owns  |
-|  tasks/   (ARQ)     |                  |  its own runtime,  |
-|  workflows/         |                  |  tools, workflow,  |
-|  sse/               |                  |  contracts, API    |
-|  events/            |                  |  router, frontend, |
-|  automation/        |                  |  and DB models.    |
-|  config.py, uow.py  |                  |                    |
+|  contracts/         |                  |  vr/               |
+|  tools/             |                  |  vulnerability/    |
+|  llm/               |                  |                    |
+|  tasks/   (ARQ)     |                  |  Each module owns  |
+|  workflows/         |                  |  its own runtime,  |
+|  sse/               |                  |  tools, workflow,  |
+|  events/            |                  |  contracts, API    |
+|  automation/        |                  |  router, frontend, |
+|  config.py, uow.py  |                  |  and DB models.    |
+|                     |                  |                    |
+|                     |                  |  See docs/vr/ for  |
+|                     |                  |  the VR engine +   |
+|                     |                  |  MCP architecture. |
+|                     |                  |                    |
 +----+-------------+--+                  +---------+----------+
      |             |                               |
 +----v---+   +-----v------+                +-------v---------+
 | Redis  |   | PostgreSQL |                | Per-module ARQ  |
 | ARQ    |   | SQLModel + |                | queue tracks:   |
-| queues |   | Alembic +  |                | default,        |
+| queues |   | Alembic +  |                | default, vr,    |
 |        |   | pgvector   |                | vulnerability,  |
-+--------+   +------------+                | forensics       |
-             src/aila/storage/             +-----------------+
++--------+   +------------+                | forensics,      |
+             src/aila/storage/             | sbd_nfr         |
+                                           +-----------------+
 ```
 
 **Layer responsibilities**
@@ -187,70 +193,63 @@ For day-to-day MCP operations and the full VR agent design see [docs/vr/](docs/v
 
    ```bash
    git clone <repo-url>
-   cd Playground
+   cd AILA
    ```
 
-2. Install backend dependencies (editable, with dev extras).
+2. Install backend and frontend dependencies.
 
    ```bash
-   pip install -e ".[dev]"
+   make install
    ```
 
-3. Install frontend dependencies.
+   Equivalent to `pip install -e ".[dev]"` plus `corepack enable && pnpm install`. The frontend is a pnpm workspace at the repo root; one install wires the shell, `@aila/typescript-config`, and all module packages.
 
-   ```bash
-   corepack enable && pnpm install
-   ```
-
-4. Create the database.
-
-   ```bash
-   createdb aila
-   ```
-
-   Or via `psql`:
-
-   ```bash
-   psql -U postgres -c "CREATE DATABASE aila;"
-   psql -U postgres -d aila -c "CREATE EXTENSION IF NOT EXISTS vector;"
-   ```
-
-5. Copy the environment template and fill in real values.
+3. Copy the environment template and fill in real values.
 
    ```bash
    cp .env.example .env
    ```
 
-   At minimum, set `AILA_DATABASE_URL`, `AILA_PLATFORM_REDIS_URL`,
-   `AILA_JWT_SECRET_KEY`, and the `AILA_PLATFORM_LLM_*` group. Generate the
-   JWT secret with `openssl rand -hex 32`. See
-   [docs/ENV_VARS.md](docs/ENV_VARS.md) for the full reference.
+   At minimum, set `AILA_DATABASE_URL`, `AILA_PLATFORM_REDIS_URL`, `AILA_JWT_SECRET_KEY`, `AILA_ADMIN_PASSWORD` (first-boot bootstrap, removed afterward), and the `AILA_PLATFORM_LLM_*` group. Generate the JWT secret with `openssl rand -hex 32`. See [docs/ENV_VARS.md](docs/ENV_VARS.md) for the full reference.
 
-6. Apply database migrations.
+4. Bring up Postgres (pgvector) and Redis via Docker Compose.
 
    ```bash
-   cd src/aila && alembic upgrade head && cd ../..
+   make dev-up
    ```
 
-7. Start the services in three terminals.
+   This launches `pgvector/pgvector:pg16` on `:5432` and `redis:7-alpine` on `127.0.0.1:6379`, defined in `infra/utilities/docker-compose.yml`. Idempotent. Use `make dev-down` to stop (keeps volumes), `make dev-reset` to wipe.
+
+5. Initialize or migrate the schema.
 
    ```bash
-   # Terminal 1 -- REST API
-   uvicorn aila.api.app:app --host 0.0.0.0 --port 8000 --reload
+   make db-init        # FIRST RUN ONLY: create tables + stamp Alembic head
+   make migrate        # subsequent runs: alembic upgrade head
+   ```
 
-   # Terminal 2 -- frontend (port 3000)
-   cd frontend && npm run dev
+6. Start the services in three terminals.
 
-   # Terminal 3 -- ARQ worker (default queue)
-   python -m aila worker
+   ```bash
+   # Terminal 1 -- REST API on :8000
+   make backend
+
+   # Terminal 2 -- Vite dev server on :3000 (single SPA, all module UIs)
+   make frontend
+
+   # Terminal 3 -- ARQ worker, default queue
+   make worker
    ```
 
    For per-module queue tracks, run additional workers:
 
    ```bash
-   python -m aila worker -q vulnerability
-   python -m aila worker -q forensics
+   make worker-vr           # vulnerability research
+   make worker-vuln         # vulnerability scans
+   make worker-forensics    # DFIR investigations
+   make worker-sbd          # Security-by-Design NFR
    ```
+
+   On Windows, `bash start.sh` brings up audit-mcp + backend + 5 workers + frontend in a single command.
 
 For the expanded walkthrough including admin user creation, smoke tests, and
 common pitfalls, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
@@ -264,6 +263,7 @@ common pitfalls, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 | `sbd_nfr`       | Security-by-Design NFR assessment: questionnaire-driven workbook generation and Jira handoff.     | production |
 | `vr`            | Vulnerability research: graph-aware source/binary audit (audit-mcp + IDA Headless MCP), hypothesis-driven reasoning, fuzz campaign proposals (audit→fuzz pipeline), enterprise PDF reports with LLM writer agent, automatic exploit/PoC drafting, variant hunting with child-investigation spawning. | production |
 | `hello_world`   | Minimal reference module proving the `ModuleProtocol` contract end-to-end.                        | example    |
+
 Modules are auto-discovered at platform boot by scanning `src/aila/modules/*`.
 Packages whose name starts with `_` are skipped (used for templates and
 fixtures). To add a new module, follow [docs/MODULE_STANDARD.md](docs/MODULE_STANDARD.md)
@@ -276,19 +276,29 @@ Common targets in the root `Makefile`:
 | Target                  | What it runs                                                              |
 |-------------------------|---------------------------------------------------------------------------|
 | `make install`          | `pip install -e ".[dev]"` plus `corepack enable && pnpm install`          |
-| `make dev`              | Prints the commands to launch backend, frontend, audit-mcp, and all workers |
-| `make backend`          | `uvicorn aila.api.app:app --host 0.0.0.0 --port 8000 --reload`            |
-| `make frontend`         | `pnpm dev` (Vite on `:3000`)                                              |
+| `make dev-up`           | `docker compose -f infra/utilities/docker-compose.yml up -d postgres redis` (idempotent) |
+| `make dev-down`         | Stop dev infra containers (keeps data volumes)                            |
+| `make dev-reset`        | Stop containers and wipe data volumes                                     |
+| `make dev-logs`         | Follow compose service logs                                               |
+| `make dev-status`       | `docker compose ps`                                                       |
+| `make db-init`          | `python scripts/db_init.py` — create tables + stamp Alembic head (first run only) |
+| `make migrate`          | `cd src/aila && alembic upgrade head`                                     |
+| `make dev`              | Print the canonical dev workflow (no services started)                    |
+| `make backend`          | Ensure `dev-up` + `db-init`, free port 8000, run `uvicorn aila.api.app:app --host 0.0.0.0 --port 8000 --reload` |
+| `make frontend`         | Free port 3000, run `pnpm --filter @aila/shell run dev` (Vite on :3000)   |
+| `make frontend-build`   | `pnpm --filter @aila/shell run build` (production SPA bundle)             |
+| `make storybook`        | `pnpm --filter @aila/shell run storybook`                                 |
 | `make worker`           | `python -m aila worker` (default queue)                                   |
 | `make worker-vr`        | `python -m aila worker -q vr`                                             |
 | `make worker-vuln`      | `python -m aila worker -q vulnerability`                                  |
 | `make worker-forensics` | `python -m aila worker -q forensics`                                      |
-| `make worker-sbd-nfr`   | `python -m aila worker -q sbd_nfr`                                        |
-| `bash start.sh`         | Spawn every service (audit-mcp + backend + 5 workers + frontend) in one shot, Git-Bash + PowerShell on Windows |
+| `make worker-sbd`       | `python -m aila worker -q sbd_nfr`                                        |
+| `make dev-all`          | Bring up all services in one terminal (Ctrl+C stops everything)           |
+| `bash start.sh`         | Spawn audit-mcp + backend + 5 workers + frontend in one shot (Windows: Git Bash + PowerShell) |
 | `docker compose -f infra/utilities/docker-compose.full.yml up --build` | Full-stack containers: postgres + redis + api + 5 workers + frontend. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
-| `make migrate`          | `cd src/aila && alembic upgrade head`                                     |
 | `make test`             | `pytest`, excluding `tests/test_e2e*.py`                                  |
 | `make test-e2e`         | `pytest tests/test_e2e.py -v` (requires live infrastructure)              |
+| `make test-frontend`    | `pnpm -r run test` across shell + module packages                         |
 | `make lint`             | `ruff check src/aila/`                                                    |
 | `make typecheck`        | `pnpm -r run type-check` (every workspace package, shell + modules)       |
 | `make honesty`          | `python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py` |
@@ -334,8 +344,7 @@ Command groups expose related subcommands:
 - **Base URL (dev):** `http://localhost:8000`
 - **OpenAPI / Swagger UI:** `http://localhost:8000/docs`
 - **OpenAPI JSON:** `http://localhost:8000/openapi.json`
-- **Authentication:** API-key bootstrap (`POST /auth/token`) returning a JWT
-  used as `Authorization: Bearer <token>` for all subsequent calls. RBAC roles
+- **Authentication:** `POST /auth/login` with `{"username", "password"}` returns a JWT (`data.access_token`) used as `Authorization: Bearer <token>` for all subsequent calls; `POST /auth/token` exchanges an API key for the same envelope. RBAC roles
   are `admin`, `operator`, `reader` -- see
   [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md).
 - **Streaming:** long-running scans, sessions, and tasks expose SSE endpoints
@@ -361,6 +370,7 @@ The OpenAPI document is the source of truth for the route surface; the
 | [docs/FRONTEND_MODULE_STANDARD.md](docs/FRONTEND_MODULE_STANDARD.md)        | Frontend shell and per-module UI contribution contract                  |
 | [docs/forensics/](docs/forensics/)                                          | Forensics module domain reference and design history                     |
 | [docs/DB_SCHEMA.md](docs/DB_SCHEMA.md)                                      | Database tables, relationships, and ownership                           |
+| [docs/DATABASE_MIGRATIONS.md](docs/DATABASE_MIGRATIONS.md)                  | Alembic policy, conventions, and migration authoring                    |
 | [docs/CONFIG_REGISTRY.md](docs/CONFIG_REGISTRY.md)                          | Config resolution chain (env -> registry -> defaults)                   |
 | [docs/ENV_VARS.md](docs/ENV_VARS.md)                                        | Environment variable reference                                          |
 | [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md)                            | Auth, RBAC, API keys, JWT lifecycle                                     |
@@ -377,6 +387,9 @@ The OpenAPI document is the source of truth for the route surface; the
 | [docs/HONESTY_AUDIT.md](docs/HONESTY_AUDIT.md)                              | Structural honesty rules enforced by `aila.tools.honesty_audit`         |
 | [docs/PITFALL_GUIDE.md](docs/PITFALL_GUIDE.md)                              | Common mistakes when working on AILA                                    |
 | [docs/PRODUCTION_RUBRIC.md](docs/PRODUCTION_RUBRIC.md)                      | Readiness rubric for shipping a module to production                    |
+| [docs/vr/](docs/vr/)                                                        | VR engine internals: reasoning loop, IDA Headless MCP, exploit automation |
+| [docs/VR_INSTALLATION_GUIDE.md](docs/VR_INSTALLATION_GUIDE.md)              | Standing up audit-mcp + IDA Headless MCP next to AILA                    |
+| [docs/ADR/](docs/ADR/)                                                      | Architecture Decision Records (point-in-time)                           |
 | [CHANGELOG.md](CHANGELOG.md)                                                | Version history                                                         |
 
 ## License

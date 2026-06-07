@@ -42,6 +42,27 @@ That's the contract. Everything in this doc is in service of one of those five j
 
 ---
 
+## 0.bis Shipped frontend behaviours
+
+The pages below describe the design intent. Three places where the live frontend has narrowed or refined the brainstorm:
+
+### 0.bis.1 `useInvestigationMessages` — opt-in live tail (commit `ca1ff83`)
+
+`useInvestigationMessages(investigationId, branchId?, offset?, limit?, opts?)` defaults to a one-shot fetch — `refetchInterval` is **off** by default. Pass `{ liveTail: true }` to opt back into polling (default 3 s). Day-to-day live updates land via `useInvestigationMessagesStream`, an SSE client that subscribes to `/vr/investigations/{id}/messages/stream?since_iso=<connect-time>` and merges incoming `VRMessageSummary` rows into the same `["vr", "investigation-messages", ...]` query cache. Result: every consumer of `useInvestigationMessages` sees new turns land as they happen, with zero polling cost on the API. The polling path is the explicit fallback when an operator view wants to keep auto-refreshing even when SSE is broken.
+
+`InvestigationDetailPage` toggles a separate UI-level `liveTail` boolean to control auto-scroll-into-view on new messages; that toggle controls scroll behaviour, not refetch.
+
+### 0.bis.2 PDF report export — `GET /vr/investigations/{id}/report.pdf`
+
+`<ExportReportButton>` (`frontend/components/ExportReportButton.tsx`) issues `GET /vr/investigations/{investigation_id}/report.pdf` and downloads the resulting blob. The backend runs the writer agent for prose synthesis plus a ReportLab renderer; the call typically takes 5–15 seconds, so the button shows a pending state and disables itself for the duration to prevent duplicate report jobs.
+
+### 0.bis.3 Re-enqueue from `InvestigationDetailPage`
+
+The `<ReenqueuePicker>` component renders next to the start/pause controls. It is visible **only when** `inv.status === "completed"` or `inv.status === "failed"`. The component lets the operator pick a kind (`discovery` / `nday` / `audit` / `variant_hunt` / ...) and submits to `POST /vr/investigations/{id}/re-enqueue`, which re-runs `run_vr_investigate` with the new kind. Live (`running` / `paused`) investigations show the start / pause / reset triple instead.
+
+
+---
+
 ## 1. Page Inventory
 
 Each page is a `RouteContribution` with `slot: "page.full"`. Module routes are mounted under `/vr/*`. The breadcrumb on each page is set explicitly so the header doesn't synthesize intermediate links to paths the module hasn't registered (the same trap forensics avoids).
@@ -167,7 +188,7 @@ One crash bucket. Where triage lives.
 2. **Minimised input** — a hex dump panel (binary inputs) or pretty-printed (recognized text/JSON inputs). Download button. "Re-run" button (reproduces the crash on the workstation and updates the crash record with the latest stack).
 3. **Stack trace** — clickable frames. Each frame: function, address, source line if symbols are present. Clicking a frame jumps to §1.4 functions-of-interest tab on the relevant target, scrolled to that function. This is the single most-used cross-page link in the module.
 4. **Triage chain** — the *narrative* of how this crash was understood. Built from the reasoning turns that touched it:
-   - "Turn 47 (decompile): `parse_tlv` calls `memcpy(dst, src, len)` where `len` is attacker-controlled."
+   - "Turn 47 (decompile): `parse_tlv` calls `memcpy(dst, src, len)` where `len` is derived from untrusted input."
    - "Turn 48 (data_flow_trace): `len` traces back to a 4-byte field in the input."
    - "Turn 49 (hypothesis_confirm): integer overflow on `len * count` — confirmed by repro with crafted input."
    - Each entry links into §1.10 at that turn.

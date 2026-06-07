@@ -2,7 +2,25 @@
 
 All SQLModel tables used by AILA, organized by ownership (platform vs module).
 
-SQLite is the default database backend. All tables use SQLModel (SQLAlchemy Core) DDL with `sa_column=Column(Text)` for dialect-agnostic large-text columns. WAL mode is enabled at engine creation for concurrent read/write access.
+PostgreSQL 16 with the `pgvector` extension is the only supported backend. Tables
+use SQLModel (SQLAlchemy Core) DDL; `sa_column=Column(Text)` carries large-text
+columns; `pgvector` carries 384-dim embedding columns. asyncpg is the runtime
+driver; Alembic swaps to psycopg automatically via `src/aila/alembic/env.py`.
+
+Two creation paths coexist:
+- Platform + module tables that predate the Alembic baseline (`001_baseline_stamp`)
+  are created on first boot by `make db-init`, which runs `SQLModel.metadata.create_all()`
+  then stamps `alembic_version` at the current head (`062_vr_outcome_review`).
+- Every schema change since then ships as an Alembic revision under
+  `src/aila/alembic/versions/`. See [`DATABASE_MIGRATIONS.md`](DATABASE_MIGRATIONS.md).
+
+No production code path calls `metadata.create_all()` outside the `make db-init`
+bootstrap and test fixtures.
+
+Lifecycle note: rows that may exist (e.g. `WorkflowRunRecord` rows created upfront
+by `_ensure_run_record` and later updated by the workflow engine) MUST be
+persisted with `session.merge()`. `session.add()` always INSERTs and crashes on
+conflict; `merge()` does INSERT-or-UPDATE keyed on the primary key.
 
 ---
 
@@ -444,37 +462,153 @@ Module-level key-value cache entry.
 
 ---
 
-## Table Summary
+## Additional Platform Tables
 
-| # | Table | Owner | Records |
-|---|-------|-------|---------|
-| 1 | ManagedSystemRecord | Platform | SSH targets |
-| 2 | SecretRecord | Platform | Encrypted secrets |
-| 3 | ProviderConfigRecord | Platform | Provider settings |
-| 4 | WorkflowRunRecord | Platform | Workflow executions |
-| 5 | PermanentMemoryRecord | Platform | Agent memory |
-| 6 | ReportArtifactRecord | Platform | Report file paths |
-| 7 | ArtifactRecord | Platform | Generic artifacts |
-| 8 | AuditEventRecord | Platform | Audit trail |
-| 9 | ConfigEntryRecord | Platform | ConfigRegistry entries |
-| 10 | KnowledgeEntryRecord | Platform | Agent RAG vectors |
-| 11 | SeedVersionRecord | Platform | Module seed tracking |
-| 12 | TaskRecord | Platform | Task queue lifecycle |
-| 13 | ApiKeyRecord | Platform | API authentication keys |
-| 14 | SessionRecord | Platform | Chat sessions |
-| 15 | SessionMessageRecord | Platform | Chat messages |
-| 16 | ExplainCacheRecord | Platform | LLM explanation cache |
-| 17 | PrioritizedFindingRecord | Vulnerability | Per-run scored findings |
-| 18 | LatestFindingRecord | Vulnerability | Latest-state findings |
-| 19 | AssetTagRecord | Vulnerability | System asset tags |
-| 20 | RemediationRecord | Vulnerability | Remediation tracking |
-| 21 | DistributionProfileRecord | Vulnerability | Distribution profiles |
-| 22 | InventoryArtifactRecord | Vulnerability | Inventory snapshots |
-| 23 | ScoringPolicyRecord | Vulnerability | Scoring configuration |
-| 24 | ScheduledScanRecord | Vulnerability | Cron schedules |
-| 25 | CacheRecord | Vulnerability | Advisory/CVE cache |
+The original platform section above covers the core lifecycle tables. The
+following platform-owned tables ship today and are persisted by `make db-init` +
+the Alembic migration chain. Column lists are abbreviated to the load-bearing
+fields; consult `src/aila/storage/db_models.py`, `src/aila/platform/tasks/models.py`,
+`src/aila/platform/llm/cost_record.py`, and `src/aila/platform/llm/idempotency_cache.py`
+for the full SQLModel definitions.
+
+### Workflow engine
+
+- **WorkflowStateCursor** (`workflow_state_cursor`) — one row per active workflow run; tracks `current_state`, `version`, scheduled-tick metadata, crash sentinel (`__crashed__`).
+- **WorkflowStateTransition** (`workflow_state_transitions`) — append-only audit/replay log of every state transition. Indexed `(run_id, sequence DESC)` for tail-reads.
+
+### LLM pipeline + audit
+
+- **AuditSealRecord** (`auditsealrecord`) — cryptographic seals over LLM pipeline outputs. HMAC key from `platform.llm_seal_hmac_key`.
+- **VerificationRecord** (`verification_records`) — cross-model verification results (Phase 174 LLM-SEC-01).
+- **ReasoningGraphSnapshotRecord** (`reasoning_graph_snapshots`) — durable graph snapshot emitted by the platform reasoning engine; unique on `(module_id, run_id, sequence)`.
+- **LLMCostRecord** (`llm_cost_records`) — per-call token + USD cost record; indexes on `(run_id, model_id)` and `(team_id, created_at)`.
+- **LLMIdempotencyCacheRecord** (`llm_idempotency_cache`) — request-key keyed cache for retry-safe LLM calls (migration 061). PK is the SHA-256 of `(investigation, branch, turn, prompt_hash)`. Carries `response_json`, token counts, cost, 7-day TTL.
+
+### Multi-team auth (Phase 177)
+
+- **UserRecord** (`user_records`) — username/password user. Hash via argon2id.
+- **OIDCProviderRecord** (`oidc_provider_records`) — OIDC provider configuration (Microsoft, generic OIDC).
+- **RefreshTokenRecord** (`refresh_token_records`) — refresh-token record for user sessions; key_id blacklist on revoke.
+- **TeamRecord** (`team_records`) — first-class team identity. UNIQUE on `name`. Soft-delete via `deleted_at`.
+- **TeamMemberRecord** (`team_member_records`) — explicit (team, user) edge with role. UNIQUE on `(team_id, user_id)`.
+
+### Plan C — endpoint support
+
+- **NotificationRecord** (`notification_records`) — per-user notifications.
+- **WidgetLayoutRecord** (`widget_layout_records`) — dashboard widget layout JSON per user (one row per user).
+- **SavedFilterRecord** (`saved_filter_records`) — user-saved filter configs for entity list views.
+- **ScheduledReportRecord** (`scheduled_report_records`) — cron-scheduled report jobs.
+- **FindingWorkflowRecord** (`finding_workflow_records`) — audit trail entry for finding workflow state transitions.
+- **AssetTagVocabRecord** (`asset_tag_vocab_records`) — admin-managed tag key vocabulary.
+
+### Plan D — network discovery
+
+- **ConfidenceDriftRecord** (`confidence_drift_records`) — per-`(target_name, task_type)` drift tracking.
+- **SystemPortRecord** (`system_port_records`) — open TCP/UDP listening ports per system (from `ss -tlnp`).
+- **SystemServiceRecord** (`system_service_records`) — running systemd services per system.
+- **SystemConnectionRecord** (`system_connection_records`) — active TCP connections between registered systems (topology edges).
+- **SystemMetadataRecord** (`system_metadata_records`) — per-system SSH-discovered metadata (Phase 176d). UNIQUE on `system_id`.
+
+### Automation
+
+- **AutomationScheduleRecord** (`automation_schedule_records`) — cron-driven automation schedule.
 
 ---
 
-*Generated from source models in `src/aila/storage/db_models.py`, `src/aila/platform/tasks/models.py`, and `src/aila/modules/vulnerability/db_models/`.*
-*Last updated: 2026-04-05 (v1.7)*
+## Vulnerability Module — Additional Tables
+
+- **FindingFeedbackRecord** (`finding_feedbacks`) — operator feedback on a finding (false-positive / accepted / deferred etc.). CHECK constraint on `reason`.
+
+---
+
+## Forensics Module Tables
+
+Owned by `aila.modules.forensics.db_models`. Every table is prefixed with
+`forensics_` to keep ownership obvious in the shared database.
+
+- **ForensicsProjectRecord** (`forensics_projects`, migration 028) — top-level forensics project.
+- **ForensicsProjectEvidenceRecord** (`forensics_project_evidence`, migration 028) — evidence file metadata; `size_bytes` widened to BIGINT in migration 031.
+- **ForensicsArtifactRecord** (`forensics_artifacts`, migration 028) — artifacts produced during analysis; `source_investigation_id` column added in migration 036.
+- **ForensicsLeadRecord** (`forensics_leads`, migration 028) — investigative leads surfaced by analyzers.
+- **ForensicsInvestigationRecord** (`forensics_investigations`, migration 028) — one investigation per project run; `parent_investigation_id` added in migration 037, `task_id` linkage in migration 030.
+- **ForensicsAgentStepRecord** (`forensics_agent_steps`, migration 028) — per-step agent trace.
+- **ForensicsWriteupRecord** (`forensics_writeups`, migration 028) — generated investigation writeup.
+- **ForensicsAnswerCandidateRecord** (`forensics_answer_candidates`, migration 028) — candidate answers for question-driven investigations.
+- **ForensicsAnalystDirectiveRecord** (`forensics_analyst_directives`, migrations 032/039) — operator directives that steer agent behavior.
+- **ForensicsSolidEvidenceRecord** (`forensics_solid_evidence`, migration 034) — promoted, high-confidence evidence.
+- **ForensicsFindingSuppressionRecord** (`forensics_finding_suppressions`, migration 035) — operator-suppressed findings.
+
+---
+
+## SBD NFR Module Tables
+
+Owned by `aila.modules.sbd_nfr.db_models`. Tables are created by `make db-init`
+from the SQLModel metadata (no per-module Alembic init; later columns land via
+migrations like 007 / 008).
+
+- **SBDSchemaVersionRecord** (`sbd_nfr_schema_version_record`) — workbook schema version pin.
+- **SBDSectionRecord** (`sbd_nfr_section_record`) — top-level workbook section. `condition_expr_json` added in migration 008.
+- **SBDSubgroupRecord** (`sbd_nfr_subgroup_record`) — section subgroup.
+- **SBDQuestionRecord** (`sbd_nfr_question_record`) — workbook question. `condition_expr_json` added in migration 008.
+- **SBDQuestionOptionRecord** (`sbd_nfr_question_option_record`) — option for a multiple-choice question.
+- **SBDSubtaskComponentRecord** (`sbd_nfr_subtask_component_record`) — Jira subtask component template.
+- **SBDQuestionSubtaskMap** (`sbd_nfr_question_subtask_map`) — many-to-many between questions and subtask components. UNIQUE on `(question_id, subtask_key)`.
+- **SBDSessionRecord** (`sbd_nfr_session_record`) — operator-facing workbook session. `report_hash_sha256` + `report_hash_generated_at` added in migration 007.
+- **SBDAnswerRecord** (`sbd_nfr_answer_record`) — per-session answer. UNIQUE on `(session_id, question_id)`.
+- **SBDActivityRecord** (`sbd_nfr_activity_record`) — session activity log.
+- **SBDSessionSystemRecord** (`sbd_nfr_session_system_record`) — session ↔ managed-system link. UNIQUE on `(session_id, system_id)`.
+- **SBDResolutionResultRecord** (`sbd_nfr_resolution_result_record`) — LLM-driven subtask resolution result. UNIQUE on `(session_id, subtask_key)`.
+
+---
+
+## Vulnerability Research (VR) Module Tables
+
+Owned by `aila.modules.vr.db_models`. Created and evolved by migrations 040 + 042 + 044 + 045 + 046 + 047 + 048 + 050 + 052 + 053 + 055 + 060 + 061 + 062. See those migration files for the canonical DDL.
+
+- **VRWorkspaceRecord** (`vr_workspaces`, migration 042) — team-scoped workspace. UNIQUE on `(team_id, slug)`.
+- **VRTargetRecord** (`vr_targets`, migration 042) — persistent target identity inside a workspace. **Migration 060** added `analysis_stages_json` for per-stage durable analysis state across the `ingestion` / `capability_profile` / `function_ranking` pipeline.
+- **VRTargetTagIndexRecord** (`vr_target_tag_index`, migration 042) — denormalized tag-to-target index for fast multi-tag filter queries. UNIQUE on `(target_id, tag, tag_source)`.
+- **VRProjectRecord** (`vr_projects`, migration 040; FK to target hardened in migration 043) — per-target research project with budget/obligation snapshot.
+- **VRFindingRecord** (`vr_findings`, migration 040; nullable `project_id` since migration 057; `poc_skip_reason` since migration 059) — confirmed vulnerabilities with triage, PoC, disclosure state.
+- **VRInvestigationRecord** (`vr_investigations`, migration 044; `is_favorite` since migration 058; CVE intel columns since migration 056) — one operator-initiated reasoning session.
+- **VRInvestigationBranchRecord** (`vr_investigation_branches`, migration 044; `strategy_family` added in migration 049) — one persona-branched conversation within an investigation.
+- **VRInvestigationMessageRecord** (`vr_investigation_messages`, migration 044) — per-turn message stream for a branch.
+- **VRInvestigationOutcomeRecord** (`vr_investigation_outcomes`, migration 044; `state` column added in **migration 062**) — typed outcomes emitted by a branch. `state` is `draft | approved | rejected | dispatched`; the dispatcher refuses any outcome whose state is not `approved`.
+- **VRInvestigationOutcomeReviewRecord** (`vr_outcome_reviews`, **migration 062**) — sibling-review row per `(outcome_id, reviewer_branch_id)`. Vote enum is `approve | reject | request_edit | abstain`; the quorum evaluator flips the outcome to `approved` once enough approve votes land with zero rejects.
+- **VRInvestigationTargetRecord** (`vr_investigation_targets`, migration 048) — many-to-many between investigations and additional targets.
+- **VRMcpCallLogRecord** (`vr_mcp_call_log`, migration 052) — every MCP tool call surfaced through the VR bridges (audit-mcp / ida-headless-mcp).
+- **VRPatternRecord** (`vr_patterns`, migration 045) — durable pattern memory shared across investigations.
+- **VRCVERecord** (`vr_cve_records`, migration 050) — CVE record cache. UNIQUE on `cve_id`.
+- **VRCVEFeedStateRecord** (`vr_cve_feed_state`, migration 050) — per-source feed poll state.
+- **VRDisclosureSubmissionRecord** (`vr_disclosure_submissions`, migration 046) — vendor disclosure submission tracking.
+- **VRFuzzCampaignRecord** (`vr_fuzz_campaigns`, migration 047; `system_id` FK added in migration 054) — fuzzing campaign metadata.
+- **VRFuzzCrashRecord** (`vr_fuzz_crashes`, migration 047) — deduplicated crashes; UNIQUE on `(campaign_id, stack_hash)`.
+- **VRFuzzCampaignProposalRecord** (`vr_fuzz_campaign_proposals`, migration 055) — proposed campaigns awaiting operator approval.
+- **VRFuzzTelemetryRecord** (`vr_fuzz_telemetry`, migration 053) — fuzz campaign telemetry samples.
+
+---
+
+## Table Summary
+
+Counts reflect the Alembic head `062_vr_outcome_review` (2026-06-07).
+
+| Group | Owner | Tables |
+|---|---|---|
+| Core lifecycle (SSH, secrets, providers, workflow runs, memory, reports, artifacts, audit, config, knowledge, seeds, tasks, API keys, sessions, messages, explain cache) | Platform | 16 |
+| Workflow engine (state cursor + transitions) | Platform | 2 |
+| LLM pipeline + audit (seals, verification, reasoning snapshots, cost, idempotency cache) | Platform | 5 |
+| Multi-team auth (users, OIDC, refresh tokens, teams, team members) | Platform | 5 |
+| Plan C endpoint support (notifications, widget layout, saved filters, scheduled reports, finding workflow, asset tag vocab) | Platform | 6 |
+| Plan D network discovery (confidence drift, ports, services, connections, metadata) | Platform | 5 |
+| Automation schedules | Platform | 1 |
+| Vulnerability module (findings, asset tags, remediation, distribution profile, inventory, scoring policy, scheduled scans, cache, finding feedback) | Vulnerability | 10 |
+| Forensics module | Forensics | 11 |
+| SBD NFR module | SBD NFR | 12 |
+| Vulnerability Research module | VR | 20 |
+
+The `hello_world` module ships as a reference and does not own any DB tables.
+
+---
+
+*Generated from source models in `src/aila/storage/db_models.py`, `src/aila/platform/tasks/models.py`, `src/aila/platform/llm/cost_record.py`, `src/aila/platform/llm/idempotency_cache.py`, `src/aila/platform/automation/models.py`, and the per-module `db_models/` packages under `src/aila/modules/<module>/`.*
+*Last updated: 2026-06-07 (Alembic head `062_vr_outcome_review`).*

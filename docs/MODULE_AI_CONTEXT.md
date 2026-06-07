@@ -8,7 +8,7 @@
 
 ## 1. Mental Model
 
-A module is a self-contained feature unit. The platform discovers it, validates it, and routes requests to it. The platform never imports from inside a module except through `create_module()`.
+A module is a self-contained feature unit. The platform discovers it (auto-scan of `src/aila/modules/` via `pkgutil.iter_modules`; packages starting with `_` are skipped), validates it, and routes requests to it. The platform never imports from inside a module except through `create_module()`.
 
 ```
 Platform
@@ -570,6 +570,26 @@ async with async_session_scope() as session:
 
 ## 13. Frontend: Module Registration
 
+Every module that contributes UI is a pnpm workspace package. Before any
+`.ts`/`.tsx` file compiles, two metadata files must exist:
+
+- `frontend/package.json` — name `@aila/<module>-frontend` (kebab-case),
+  `private: true`, `main: "./spec.ts"`. Shared deps reference pnpm
+  catalogs from `pnpm-workspace.yaml` (`"react": "catalog:react19"`,
+  `"react-router": "catalog:router"`, etc.). pnpm strict mode rejects any
+  bare import that is not declared here.
+- `frontend/tsconfig.json` — extends `@aila/typescript-config/react-module`
+  and points `@/`, `@app/`, `@platform/` aliases at the shell. Copy from
+  `src/aila/modules/hello_world/frontend/tsconfig.json`.
+
+The shell wires the package in two places:
+
+1. Add `"@aila/<module>-frontend": "workspace:*"` to `frontend/package.json`.
+2. Add an import in `frontend/src/platform/extension-registry/loadModuleSpecs.ts`.
+
+Then run `pnpm install` to relink. The module's `frontend/spec.ts` exports
+the `frontendSpec` the shell consumes:
+
 ```typescript
 // src/aila/modules/mymod/frontend/spec.ts
 import { nav } from "./nav";
@@ -581,6 +601,13 @@ export const frontendSpec = {
   routes,
 };
 ```
+
+Routes use `react-router` (NOT `react-router-dom`; React Router v7
+collapsed both packages). Tailwind v4 needs an explicit `@source` entry
+in `frontend/src/styles/globals.css` for every module — without it,
+classes used only inside the module emit no CSS rules and elements like
+`fixed bottom-6 right-6` anchor at flow position. Already wired for
+`vr`, `vulnerability`, `forensics`, `sbd_nfr`, and `hello_world`.
 
 ```typescript
 // src/aila/modules/mymod/frontend/nav.ts
@@ -984,5 +1011,5 @@ cd frontend && npx tsc --noEmit
 
 ---
 
-*This document reflects AILA codebase state as of 2026-04-14 (v4.1 complete, Phase 184).*
+*This document reflects AILA codebase state as of 2026-06-05 (Alembic head `062_vr_outcome_review`, five feature modules: forensics, hello_world, sbd_nfr, vr, vulnerability).*
 *Reference modules: `src/aila/modules/hello_world/` (minimal), `src/aila/modules/vulnerability/` (production scale).*

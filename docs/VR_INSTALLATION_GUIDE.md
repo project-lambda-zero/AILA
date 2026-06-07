@@ -155,15 +155,35 @@ Requires a licensed IDA Pro installation.
 ### 3.3 MCP environment variables
 
 ```env
-# audit-mcp
+# audit-mcp (HTTP server, default :18822)
 AUDIT_MCP_URL=http://127.0.0.1:18822
 AUDIT_MCP_TIMEOUT=300
+# Multi-worker uvicorn fan-out. Set via env OR via `--workers N` on the
+# audit-mcp launch line. Linux / macOS only — Windows uvicorn multi-worker
+# is broken (proactor IOCP handle leak), keep `AUDIT_MCP_WORKERS=1` there.
 AUDIT_MCP_WORKERS=1
+# anyio worker-thread pool (default 64). Raise when you see "all threads
+# busy" symptoms despite the dedup hit-rate being high.
+AUDIT_MCP_THREAD_POOL_LIMIT=64
+# Per-tool concurrency cap. Name is uppercased. e.g.
+# AUDIT_MCP_TOOL_CAP_SEMANTIC_SEARCH=8 doubles the default for semantic_search.
+# See `GET http://127.0.0.1:18822/runtime` for live caps + availability.
+# AUDIT_MCP_TOOL_CAP_<TOOLNAME>=<int>
+# Per-tool wall-clock timeout. e.g. AUDIT_MCP_TIMEOUT_DEEP_AUDIT=1200.
+# AUDIT_MCP_TIMEOUT_<TOOLNAME>=<seconds>
+# Bounded timeout for the semble cold-build child process (default 7200s = 2h).
+# Was unbounded historically; a stuck child would hold semble_status='building'
+# forever and starve every query that touches the index.
+AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S=7200
 
-# ida-headless-mcp (optional)
+# ida-headless-mcp (optional, HTTP server, default :18821)
 IDA_HEADLESS_URL=http://127.0.0.1:18821
 IDA_HEADLESS_TIMEOUT=120
 ```
+
+The audit-mcp `/runtime` endpoint returns live `{dedup: {inflight, hits, misses}, semaphores: {<tool>: {cap, available}}, thread_pool_limit}`. When agents complain "audit_mcp slow", read it first — `available: 0` on a tool is the bottleneck; bump its `AUDIT_MCP_TOOL_CAP_<TOOL>` cap. High `hits` with low `misses` means sibling branches are deduping the same call, which is the design.
+
+Semble (the embedded code-chunk retriever inside audit-mcp) caches per-index pickles at `~/.audit-mcp/semble-cache/<index_id>.pkl`. After a clean restart, semble pickle reloads in ~9 s for repos audit-mcp has previously built; cold builds are minutes to hours depending on repo size, gated by `AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S`.
 
 ---
 
@@ -277,11 +297,15 @@ The investigation detail page shows:
 | `VR_AUTO_PERSONA_DELIBERATION` | `1` | Set to `0` to disable auto-spawning of 5 sibling personas |
 | `VR_VARIANT_HUNT_REJECT_CAP` | `3` | Exhaustion threshold for variant hunt branches |
 | `AUDIT_MCP_URL` | `http://127.0.0.1:18822` | audit-mcp server URL |
-| `AUDIT_MCP_TIMEOUT` | `300` | Timeout for audit-mcp tool calls (seconds) |
-| `AUDIT_MCP_WORKERS` | `1` | Number of audit-mcp worker processes |
-| `IDA_HEADLESS_URL` | `http://127.0.0.1:18821` | IDA headless MCP server URL |
+| `AUDIT_MCP_TIMEOUT` | `300` | Per-tool-call default timeout (seconds), bridge side |
+| `AUDIT_MCP_WORKERS` | `1` | Uvicorn workers (Linux/macOS only). Bridge pre-warms each worker on first index access when `>1` |
+| `AUDIT_MCP_THREAD_POOL_LIMIT` | `64` | audit-mcp anyio worker-thread pool size |
+| `AUDIT_MCP_TOOL_CAP_<NAME>` | per-tool default | Per-tool concurrency cap; name uppercased |
+| `AUDIT_MCP_TIMEOUT_<NAME>` | per-tool default | Per-tool wall-clock cap (seconds); name uppercased |
+| `AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S` | `7200` | Hard ceiling for semble cold-build subprocess |
+| `IDA_HEADLESS_URL` | `http://127.0.0.1:18821` | ida-headless-mcp server URL |
 | `IDA_HEADLESS_TIMEOUT` | `120` | Timeout for IDA tool calls (seconds) |
-| `AILA_LLM_MAX_RETRIES` | `100` | LLM call retries on 429/502/503 errors |
+| `AILA_LLM_MAX_RETRIES` | `100` | LLM call retries on 429 / 502 / 503 errors |
 | `AILA_LLM_RETRY_BASE_DELAY_S` | `1.0` | First retry backoff (seconds) |
 | `AILA_LLM_RETRY_MAX_DELAY_S` | `30.0` | Max retry backoff cap (seconds) |
 
