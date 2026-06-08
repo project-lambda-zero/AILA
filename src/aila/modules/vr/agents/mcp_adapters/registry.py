@@ -56,7 +56,7 @@ from .ida_headless import (
     adapt_xrefs_from,
     adapt_xrefs_to,
 )
-from .known_tools import KNOWN_TOOLS
+from .known_tools import _VIRTUAL_TOOLS, KNOWN_TOOLS
 
 __all__ = [
     "get_adapter",
@@ -145,11 +145,17 @@ def get_adapter(server_id: str, tool_name: str) -> AdapterFn | None:
 def registered_tools() -> list[str]:
     """List every callable '<server>.<tool>' identifier (specialized OR generic).
 
-    Used by the system prompt builder so the engine sees the complete
-    callable surface, not just specialized tools.
+    Used by diagnostics and as the upper bound for ``specialized_tools``:
+    every specialized entry MUST appear here. Includes upstream MCP tools
+    listed in ``KNOWN_TOOLS`` AND bridge-side virtual tools listed in
+    ``_VIRTUAL_TOOLS`` (e.g. ``audit_mcp.read_lines``), since the agent
+    can call either via the same ``tool_run`` surface.
     """
     seen: set[str] = set()
     for server, tools in KNOWN_TOOLS.items():
+        for tool in tools:
+            seen.add(f"{server}.{tool}")
+    for server, tools in _VIRTUAL_TOOLS.items():
         for tool in tools:
             seen.add(f"{server}.{tool}")
     return sorted(seen)
