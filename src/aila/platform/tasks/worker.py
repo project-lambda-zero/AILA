@@ -246,6 +246,20 @@ async def reaper(ctx: dict[str, object]) -> None:
             )
     except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
         _log.warning("reaper: orphan-branch sweep failed: %s", exc, exc_info=True)
+    try:
+        from aila.modules.vr.masvs.parent_reconciler import (
+            sweep_masvs_audit_parents,
+        )
+        masvs_flips = await sweep_masvs_audit_parents()
+        if masvs_flips["started"] or masvs_flips["completed"]:
+            _log.info(
+                "reaper: masvs parent batch transitions started=%d completed=%d",
+                masvs_flips["started"], masvs_flips["completed"],
+            )
+    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+        _log.warning(
+            "reaper: masvs parent reconciler failed: %s", exc, exc_info=True,
+        )
 
 
 async def _reconcile_orphan_arq_locks() -> None:
