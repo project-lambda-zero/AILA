@@ -753,7 +753,426 @@ _CRYPTO_CONTROLS: tuple[MasvsControl, ...] = (
 )
 
 
+_AUTH_CONTROLS: tuple[MasvsControl, ...] = (
+    MasvsControl(
+        id="MSTG-AUTH-1",
+        group=MasvsGroup.AUTH,
+        level=MasvsLevel.L1,
+        title=(
+            "If the app provides users access to a remote service, some form of authentication "
+            "such as username/password authentication is performed at the remote endpoint."
+        ),
+        description=(
+            "Every protected operation an app exposes — reading user records, writing user "
+            "records, triggering account actions, viewing financial data — must verify the "
+            "requesting user's identity at the server before responding. Client-only checks "
+            "(UI flags, hidden screens, role booleans the client trusts) are flippable by a "
+            "repackaged APK, by a rooted device, or by anyone running a Frida script against "
+            "their own install, and therefore do not satisfy this control. The verification "
+            "target is that every protected endpoint requires a server-validated credential "
+            "(session cookie, bearer token, mTLS certificate, signed request) and that the "
+            "client transmits that credential on every protected call."
+        ),
+        verification_steps=(
+            "Enumerate every Retrofit / OkHttp / HttpURLConnection / Volley call site and "
+            "record the endpoint path plus whether the request carries an Authorization "
+            "header or a session cookie.",
+            "Identify the login flow (screens that submit credentials) and trace the resulting "
+            "token / session id into client storage; confirm protected endpoint calls reuse "
+            "that token rather than recomputing access from a local flag.",
+            "Flag any 'guest', 'anonymous', or 'offline' mode that returns non-public data "
+            "without a server-validated token, including offline caches whose freshness is "
+            "never re-checked against the server.",
+        ),
+        relevant_apis=(
+            "okhttp3.Interceptor.intercept",
+            "okhttp3.OkHttpClient.Builder.addInterceptor",
+            "retrofit2.http.Header",
+            "retrofit2.http.Headers",
+            "java.net.HttpURLConnection.setRequestProperty",
+            "com.android.volley.toolbox.JsonObjectRequest",
+            "android.webkit.CookieManager",
+            "okhttp3.CookieJar",
+        ),
+        evidence_hints=(
+            "Authorization",
+            "Bearer ",
+            "@Header",
+            "addHeader",
+            "OkHttpClient",
+            "Retrofit",
+            "login",
+            "signin",
+            "CookieJar",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-AUTH-2",
+        group=MasvsGroup.AUTH,
+        level=MasvsLevel.L1,
+        title=(
+            "If stateful session management is used, the remote endpoint uses randomly "
+            "generated session identifiers to authenticate client requests without sending "
+            "the user's credentials."
+        ),
+        description=(
+            "After the initial login the client must reference the user's session via an "
+            "opaque server-issued identifier (session cookie, server-side bearer token) and "
+            "must never replay the username, password, or PIN on subsequent requests. "
+            "Replaying credentials extends their exposure across every request log, every "
+            "TLS-terminating proxy, and every crash report that captures a request body. The "
+            "verification target is that credentials appear in exactly one request (the login "
+            "submission), the session identifier is treated as opaque (never parsed, "
+            "modified, or recomputed client-side), and the identifier carries enough entropy "
+            "that brute-force enumeration over a realistic budget is infeasible."
+        ),
+        verification_steps=(
+            "Identify every endpoint that receives credentials (request body keyed by "
+            "'password' / 'pin' / 'credential' / 'secret') and confirm credentials appear "
+            "only on the /login or equivalent registration endpoint, never on subsequent "
+            "calls.",
+            "Inspect the login response handler to identify the session token or cookie "
+            "returned by the server, then trace where it is persisted (SharedPreferences, "
+            "EncryptedSharedPreferences, AccountManager, in-memory only) and how it travels "
+            "with later requests.",
+            "Verify the session identifier is treated as opaque on the client — no Base64 "
+            "decode-then-mutate, no client-side issuance, no concatenation with locally "
+            "derived data that the server then trusts.",
+        ),
+        relevant_apis=(
+            "okhttp3.Cookie",
+            "okhttp3.CookieJar",
+            "java.net.CookieHandler",
+            "android.webkit.CookieManager.setCookie",
+            "android.accounts.AccountManager.setAuthToken",
+            "android.content.SharedPreferences.Editor.putString",
+            "androidx.security.crypto.EncryptedSharedPreferences",
+            "retrofit2.http.Body",
+        ),
+        evidence_hints=(
+            "Set-Cookie",
+            "JSESSIONID",
+            "PHPSESSID",
+            "session_id",
+            "sessionId",
+            "CookieJar",
+            "password",
+            "credential",
+            "setAuthToken",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-AUTH-3",
+        group=MasvsGroup.AUTH,
+        level=MasvsLevel.L1,
+        title=(
+            "If stateless token-based authentication is used, the server provides a token "
+            "that has been signed using a secure algorithm."
+        ),
+        description=(
+            "Stateless tokens such as JWTs encode their own validity claims and must be "
+            "rejected by the verifier when the signature is missing, when the declared "
+            "algorithm is 'none', or when the signing key has been substituted for a "
+            "client-controllable value. From the APK side the verification target is that "
+            "the client never mints its own tokens (a client-side issuer means the server "
+            "is not verifying), never parses 'alg: none' as acceptable, and never trusts "
+            "the alg header from the token without checking the expected algorithm against "
+            "a fixed allowlist."
+        ),
+        verification_steps=(
+            "Locate JWT-handling libraries on the classpath (java-jwt, jose4j, nimbus-jose-"
+            "jwt, jjwt) and inspect every verify / parse call to confirm a signature check "
+            "is enforced and the algorithm comes from a fixed allowlist (RS256 / ES256 / "
+            "HS256 with strong secret).",
+            "Flag any code path that issues a JWT from the client (Jwts.builder().signWith) "
+            "and any code that accepts an unsigned token (JwtParserBuilder without "
+            ".verifyWith / .setSigningKey) as a finding.",
+            "Inspect alg-handling code for explicit acceptance of 'none' or for derivation "
+            "of the verification algorithm from the token's own header.alg field — both are "
+            "the canonical JWT confusion patterns.",
+        ),
+        relevant_apis=(
+            "io.jsonwebtoken.Jwts.parser",
+            "io.jsonwebtoken.Jwts.builder",
+            "io.jsonwebtoken.JwtParserBuilder.verifyWith",
+            "io.jsonwebtoken.SignatureAlgorithm",
+            "com.auth0.jwt.JWT.decode",
+            "com.auth0.jwt.JWT.require",
+            "com.auth0.jwt.algorithms.Algorithm",
+            "java.util.Base64.getUrlDecoder",
+        ),
+        evidence_hints=(
+            "Jwts.parser",
+            "Jwts.builder",
+            "Algorithm.none",
+            "Algorithm.HMAC",
+            "JwtParserBuilder",
+            "verifyWith",
+            "signWith",
+            "HS256",
+            "RS256",
+            "decodeJwt",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-AUTH-4",
+        group=MasvsGroup.AUTH,
+        level=MasvsLevel.L1,
+        title="The remote endpoint terminates the existing session when the user logs out.",
+        description=(
+            "Logout must call a server endpoint that invalidates the current session or "
+            "revokes the current token; clearing the client-side store alone leaves the "
+            "token valid at the server until it expires naturally, which means any copy of "
+            "the token (in a captured backup, in a previously-logged request, in a "
+            "third-party SDK that mirrored it) can replay successful authenticated calls. "
+            "The verification target is that every logout UI handler reaches a server "
+            "logout / revoke endpoint, that the server's success response is observed "
+            "before local credential material is wiped, and that no offline-only logout "
+            "path silently skips the server call when the network is unreachable."
+        ),
+        verification_steps=(
+            "Find every logout / sign-out UI handler (onClick listener, Compose callback, "
+            "navigation observer) and trace the network call it issues; confirm the call "
+            "hits a server endpoint that revokes the session (typical paths: /logout, "
+            "/signout, /sessions DELETE, /oauth/revoke).",
+            "Confirm the local token storage is cleared after the server call succeeds, "
+            "not before; a clear-then-call ordering means a network failure leaves the "
+            "server session live while the user believes they are logged out.",
+            "Inspect for offline-only logout paths that wipe local storage and skip the "
+            "server call when no network is available; flag with a note that the token "
+            "remains valid server-side until natural expiry.",
+        ),
+        relevant_apis=(
+            "android.content.SharedPreferences.Editor.clear",
+            "android.content.SharedPreferences.Editor.remove",
+            "android.accounts.AccountManager.removeAccountExplicitly",
+            "android.accounts.AccountManager.invalidateAuthToken",
+            "okhttp3.Request.Builder.delete",
+            "retrofit2.http.DELETE",
+            "androidx.security.crypto.EncryptedSharedPreferences",
+            "android.webkit.CookieManager.removeAllCookies",
+        ),
+        evidence_hints=(
+            "logout",
+            "signOut",
+            "sign_out",
+            "clearTokens",
+            "invalidateAuthToken",
+            "/logout",
+            "/signout",
+            "/revoke",
+            "removeAccountExplicitly",
+            "removeAllCookies",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-AUTH-5",
+        group=MasvsGroup.AUTH,
+        level=MasvsLevel.L1,
+        title="A password policy exists and is enforced at the remote endpoint.",
+        description=(
+            "The server must reject weak passwords on registration and on password change — "
+            "too short, common-list, leaked-corpus matches — because client-side checks are "
+            "skippable by anyone interacting with the API directly. From the APK side the "
+            "verification target is that the client at minimum mirrors the documented "
+            "server policy (so a user is not led to submit a password the server will "
+            "reject), that the client surfaces server-side policy rejections clearly "
+            "instead of generic error toasts, and that the password value never leaks "
+            "into a logger, an analytics event, or a third-party crash reporter on its way "
+            "to the network layer."
+        ),
+        verification_steps=(
+            "Find the registration and password-change screens; identify the client-side "
+            "validators (length checks, character-class regex, Pattern.matches calls) and "
+            "record whether they match the documented server policy.",
+            "Inspect the submit-response handler; verify the client distinguishes a "
+            "server-side policy rejection (4xx with a structured error body) from a "
+            "generic network failure and surfaces the rejection reason to the user.",
+            "Confirm the password value is not passed to android.util.Log, Timber, "
+            "Crashlytics, Sentry, Bugsnag, Firebase Analytics, or any HttpLoggingInterceptor "
+            "set to BODY level on the way to the network layer.",
+        ),
+        relevant_apis=(
+            "android.text.TextWatcher",
+            "android.text.InputFilter",
+            "java.util.regex.Pattern.matches",
+            "android.widget.EditText.setError",
+            "okhttp3.logging.HttpLoggingInterceptor",
+            "com.google.firebase.crashlytics.FirebaseCrashlytics.log",
+            "android.util.Log.d",
+            "timber.log.Timber.d",
+        ),
+        evidence_hints=(
+            "password",
+            "validatePassword",
+            "passwordPolicy",
+            "minLength",
+            "Pattern.matches",
+            "/register",
+            "/password",
+            "/change-password",
+            "HttpLoggingInterceptor",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-AUTH-6",
+        group=MasvsGroup.AUTH,
+        level=MasvsLevel.L1,
+        title=(
+            "The remote endpoint implements a mechanism to protect against the submission "
+            "of credentials an excessive number of times."
+        ),
+        description=(
+            "The server must rate-limit failed authentication and lock or throttle accounts "
+            "above a threshold of failures, otherwise credential stuffing against leaked "
+            "password corpora runs unobstructed. From the APK side the verification target "
+            "is that the client does not undermine that defence: the login handler must not "
+            "auto-retry on 401 / 429 / 423 without exponential backoff or user interaction, "
+            "must surface lockout responses (Retry-After header, 423 Locked) to the user "
+            "rather than swallow them, and must not include any client-derivable bypass "
+            "header (debug flag, internal-build token) that a repackaged APK can flip."
+        ),
+        verification_steps=(
+            "Inspect the login response handler for retry loops; flag any loop that retries "
+            "on 401 / 429 / 423 without a backoff or explicit user re-prompt.",
+            "Verify the login screen handles HTTP 429 and 423 by reading the Retry-After "
+            "header (when present) and displaying a wait-time message, rather than treating "
+            "either status as a generic failure.",
+            "Search for credential-bypass code paths: build-flavor checks that skip the "
+            "auth call, debug-only login shortcuts, hardcoded fallback credentials in "
+            "BuildConfig — any of which give a repackaged APK an unrate-limited path.",
+        ),
+        relevant_apis=(
+            "okhttp3.Authenticator",
+            "okhttp3.Interceptor.Chain.proceed",
+            "okhttp3.Response.code",
+            "okhttp3.Headers.get",
+            "java.net.HttpURLConnection.getResponseCode",
+            "androidx.work.WorkRequest.setBackoffCriteria",
+            "com.android.volley.DefaultRetryPolicy",
+            "io.reactivex.rxjava3.core.Single.retryWhen",
+        ),
+        evidence_hints=(
+            "429",
+            "423",
+            "Retry-After",
+            "Authenticator",
+            "loginAttempts",
+            "lockout",
+            "retryWhen",
+            "DefaultRetryPolicy",
+            "BuildConfig.DEBUG",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-AUTH-7",
+        group=MasvsGroup.AUTH,
+        level=MasvsLevel.L1,
+        title=(
+            "Sessions are invalidated at the remote endpoint after a predefined period of "
+            "inactivity and access tokens expire."
+        ),
+        description=(
+            "Server-issued tokens must carry a bounded lifetime so that a copy captured "
+            "from a backup or a stale log stops working after a known window. From the APK "
+            "side the verification target is that the client honours that expiry: it checks "
+            "the exp claim or the server-issued expires_in field before sending, drives a "
+            "refresh flow (or a re-login) when the server returns 401-due-to-expiry, and "
+            "stores any long-lived refresh token in a Keystore-backed wrapper rather than "
+            "plain SharedPreferences. Silent indefinite retries on a 401 mean a leaked "
+            "token is replayable for as long as the server allows."
+        ),
+        verification_steps=(
+            "Identify the token storage layer and inspect the expiry field; confirm the "
+            "client checks expiry before sending a protected request and triggers a refresh "
+            "or re-login path rather than sending an expired token.",
+            "Verify the refresh token (if any) is stored in EncryptedSharedPreferences, "
+            "AccountManager, or a Keystore-backed wrapper — not plain SharedPreferences and "
+            "not a flat file under getFilesDir.",
+            "Find the 401 handler in the OkHttp Authenticator or Interceptor chain and "
+            "confirm it triggers exactly one refresh attempt followed by a forced logout "
+            "on second failure, never a silent indefinite retry.",
+        ),
+        relevant_apis=(
+            "okhttp3.Authenticator.authenticate",
+            "okhttp3.Interceptor.Chain.proceed",
+            "androidx.security.crypto.EncryptedSharedPreferences",
+            "android.accounts.AccountManager.getAuthToken",
+            "android.accounts.AccountManager.invalidateAuthToken",
+            "java.security.KeyStore",
+            "io.jsonwebtoken.Claims.getExpiration",
+            "java.time.Instant.isAfter",
+        ),
+        evidence_hints=(
+            "expires_in",
+            "\"exp\"",
+            "refreshToken",
+            "refresh_token",
+            "Authenticator",
+            "401",
+            "Bearer ",
+            "accessToken",
+            "getAuthToken",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-AUTH-12",
+        group=MasvsGroup.AUTH,
+        level=MasvsLevel.L1,
+        title="Authorization rules are enforced at the remote endpoint.",
+        description=(
+            "After authentication answers 'who is this user', authorization answers 'is "
+            "this user permitted to perform this action against this resource'. That "
+            "second decision must run at the server with the server's view of the user's "
+            "identity and role; client-side hide/show of UI elements is convenience, never "
+            "security. From the APK side the verification target is that protected requests "
+            "carry only the server-issued identity (token / session), never a "
+            "client-derived role / permission / is_admin flag in the request payload, and "
+            "that no path skips the Authorization header based on a flippable local flag "
+            "such as 'trustedDevice' or 'BuildConfig.INTERNAL'."
+        ),
+        verification_steps=(
+            "Enumerate every API call carrying a user-id, account-id, customer-id, or "
+            "resource-id in the URL path / query / body; confirm the call also carries an "
+            "Authorization header so the server can re-derive the requester independently "
+            "of the client-supplied id.",
+            "Search request bodies for client-derived role / permission / capability "
+            "claims (is_admin, role, capabilities, scopes, is_premium) the server might "
+            "trust; flag each one — the server must derive these from the authenticated "
+            "identity, never accept them from the client.",
+            "Confirm the OkHttp interceptor / Retrofit @Header chain does not skip the "
+            "Authorization header based on a flag like trustedDevice, BuildConfig.DEBUG, "
+            "BuildConfig.INTERNAL, or a SharedPreferences entry — any such flag is "
+            "flippable by a repackaged APK and can short-circuit auth.",
+        ),
+        relevant_apis=(
+            "okhttp3.Interceptor.intercept",
+            "okhttp3.Request.Builder.header",
+            "okhttp3.Request.Builder.addHeader",
+            "retrofit2.http.Header",
+            "retrofit2.http.HeaderMap",
+            "retrofit2.http.Path",
+            "retrofit2.http.Query",
+            "retrofit2.http.Body",
+        ),
+        evidence_hints=(
+            "Authorization",
+            "X-User-Id",
+            "X-Account",
+            "isAdmin",
+            "\"role\"",
+            "permission",
+            "scope",
+            "addHeader",
+            "@Header",
+            "trustedDevice",
+        ),
+    ),
+)
+
+
 MASVS_CONTROLS: tuple[MasvsControl, ...] = (
     *_STORAGE_CONTROLS,
     *_CRYPTO_CONTROLS,
+    *_AUTH_CONTROLS,
 )
