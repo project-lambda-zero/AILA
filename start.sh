@@ -392,9 +392,17 @@ show_status() {
 # ── Commands ────────────────────────────────────────────────────────────────
 
 # Per-service restart helper: stop just one named service, re-run start.sh.
-# Avoids the "audit_mcp lost firefox semble cache" pain of full restart.
+# Idempotent restart of a single tracked service. Two-phase kill:
+#   1. Tree-kill the recorded pidfile (if present) — owns the happy path.
+#   2. (optional) Sweep whoever currently holds $port — owns the case
+#      where the pidfile got lost (manual cleanup, partial stop, crash
+#      mid-spawn) but a previous process is still squatting the port.
+#      Without this, restart silently no-ops then spawns a new process
+#      that fails to bind and dies inside the cmd.exe wrapper —
+#      Start-Process -PassThru only reports the wrapper's success.
 restart_one() {
   local svc="$1"
+  local port="${2:-}"
   local pidfile="$RUN_DIR/${svc}.pid"
   if [[ -f "$pidfile" ]]; then
     local pid; pid=$(cat "$pidfile" 2>/dev/null || echo "")
@@ -405,6 +413,12 @@ restart_one() {
       sleep 2
     fi
     rm -f "$pidfile"
+  fi
+  if [[ -n "$port" ]]; then
+    # Sweep any process still listening on $port. Idempotent — no-op
+    # when the pidfile kill already cleared it.
+    kill_port_owner "$port"
+    sleep 1
   fi
 }
 
@@ -449,12 +463,12 @@ case "$COMMAND" in
   restart) echo "[aila] Restart: stop + start" ;;
   start)   ;;
   restart-backend)
-    load_env; restart_one "backend"
+    load_env; restart_one "backend" "$BACKEND_PORT"
     REPO="$PWD"; mkdir -p "$RUN_DIR"
     spawn "backend" -m uvicorn aila.api.app:app --host 0.0.0.0 --port "$BACKEND_PORT" --loop asyncio
     echo "[aila] Backend restarted; rest of stack untouched." ; exit 0 ;;
   restart-frontend)
-    load_env; restart_one "frontend"; mkdir -p "$RUN_DIR"
+    load_env; restart_one "frontend" "$FRONTEND_PORT"; mkdir -p "$RUN_DIR"
     spawn_shell "frontend" "corepack pnpm --filter @aila/shell run dev"
     echo "[aila] Frontend restarted; rest of stack untouched." ; exit 0 ;;
   restart-workers)
@@ -468,7 +482,7 @@ case "$COMMAND" in
     restart_pool "$2"
     echo "[aila] worker-$2 pool restarted (count=$(worker_count_for "$2")); rest of stack untouched." ; exit 0 ;;
   restart-audit-mcp)
-    load_env; restart_one "audit-mcp"; mkdir -p "$RUN_DIR"
+    load_env; restart_one "audit-mcp" "$AUDIT_MCP_PORT"; mkdir -p "$RUN_DIR"
     ( cd "$AUDIT_MCP_DIR" && spawn "audit-mcp" -m audit_mcp --mode http --port "$AUDIT_MCP_PORT" --host 127.0.0.1 --workers "$AUDIT_MCP_WORKERS" )
     echo "[aila] audit-mcp restarted; rest of stack untouched. Firefox semble pickle reloads in ~9s." ; exit 0 ;;
   refresh-audit-mcp)
