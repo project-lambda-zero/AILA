@@ -37,6 +37,7 @@ __all__ = [
     "MasvsAuditAggregate",
     "MasvsAuditDispatchResponse",
     "MasvsControlVerdict",
+    "MasvsEvidenceLocation",
     "MasvsVerdict",
 ]
 
@@ -64,6 +65,45 @@ class MasvsVerdict(StrEnum):
     NOT_APPLICABLE = "not_applicable"
     NO_FINDING = "no_finding"
     INCONCLUSIVE = "inconclusive"
+
+
+class MasvsEvidenceLocation(BaseModel):
+    """One ``{file, function}`` reference cited by a child investigation.
+
+    Sourced verbatim from the child outcome's
+    ``payload['affected_components']`` list — the canonical evidence
+    shape every DIRECT_FINDING submit carries per ``system_audit.md``.
+    The PDF renderer (R-2b) prints these as the "Affected components"
+    block under the per-control subsection: file path + function name,
+    one row per entry. No source body is fetched here; that resolution
+    lives in :func:`aila.modules.vr.reporting.pdf_report._resolve_code_excerpts`
+    behind the audit-mcp bridge and is not part of this read-only
+    contract.
+
+    Both fields are required at construction; the mapper drops any
+    ``affected_components`` entry that does not carry both a non-empty
+    ``file`` and a non-empty ``function`` so a malformed payload never
+    produces a half-populated location.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str = Field(
+        min_length=1,
+        max_length=512,
+        description=(
+            "Source-relative path the agent cited, e.g. "
+            "``'sources/com/vodafone/selfservis/login/LoginActivity.java'``."
+        ),
+    )
+    function: str = Field(
+        min_length=1,
+        max_length=256,
+        description=(
+            "Function / method name within :attr:`file`, e.g. "
+            "``'onCreate'`` or ``'com.example.crypto.AesHelper.encrypt'``."
+        ),
+    )
 
 
 class MasvsControlVerdict(BaseModel):
@@ -117,6 +157,21 @@ class MasvsControlVerdict(BaseModel):
             ":attr:`MasvsVerdict.INCONCLUSIVE` verdicts "
             "(e.g. ``'timeout'``, ``'cost_cap_exhausted'``). ``None`` "
             "for the three conclusive verdicts."
+        ),
+    )
+    evidence_locations: list[MasvsEvidenceLocation] = Field(
+        default_factory=list,
+        max_length=64,
+        description=(
+            "``{file, function}`` entries the child investigation cited "
+            "as evidence in its primary outcome's "
+            "``payload['affected_components']``. Populated by the mapper "
+            "for any child whose primary outcome carries a non-empty "
+            "components list (typically DIRECT_FINDING submits); empty "
+            "for inconclusive paths with no primary outcome and for "
+            "outcomes whose payload omits the field. The PDF renderer "
+            "(R-2b) prints these under the per-control subsection as "
+            "the operator-visible evidence trail."
         ),
     )
 
