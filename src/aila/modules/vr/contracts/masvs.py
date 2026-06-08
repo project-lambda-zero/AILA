@@ -35,6 +35,7 @@ from aila.modules.vr.masvs.models import MasvsGroup
 
 __all__ = [
     "MasvsAuditAggregate",
+    "MasvsAuditDispatchResponse",
     "MasvsControlVerdict",
     "MasvsVerdict",
 ]
@@ -178,5 +179,75 @@ class MasvsAuditAggregate(BaseModel):
             "Per-verdict counts across the full :attr:`verdicts` list. "
             "Sum equals ``len(verdicts)``; absent keys mean zero "
             "occurrences of that verdict in this aggregate."
+        ),
+    )
+
+
+class MasvsAuditDispatchResponse(BaseModel):
+    """Response body for ``POST /vr/targets/{target_id}/masvs-audit`` (D-1).
+
+    Returned after the batch dispatcher creates one parent investigation
+    (``kind=masvs_audit``) plus one child investigation per L1 control
+    (``kind=audit``). The list of ``child_investigation_ids`` is ordered
+    to mirror the catalog's iteration order (group-major, then
+    catalog-author order within each group) so the frontend can render a
+    deterministic per-control progress table without re-sorting.
+
+    The ARQ dispatch itself lands in D-2 — this response signals that
+    every row exists in the database; the children sit in
+    :attr:`InvestigationStatus.CREATED` until a future task submission
+    flips them to :attr:`InvestigationStatus.RUNNING`. Operators polling
+    against this response should not assume scout turns have started.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    parent_investigation_id: str = Field(
+        min_length=1,
+        max_length=64,
+        description=(
+            "Parent :class:`VRInvestigation` id "
+            "(``kind=masvs_audit``). Carries the audit batch tag plus "
+            "the catalog version pin on "
+            ":attr:`VRInvestigationRecord.secondary_target_refs_json`."
+        ),
+    )
+    child_investigation_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "One id per dispatched child investigation, in MASVS catalog "
+            "order. ``len(child_investigation_ids) == total_controls`` "
+            "always — a partial dispatch raises 500 instead of silently "
+            "returning fewer ids."
+        ),
+    )
+    total_controls: int = Field(
+        ge=0,
+        description=(
+            "Count of L1 controls the dispatcher fanned out. Matches "
+            "``len(child_investigation_ids)``. Surfaced explicitly so the "
+            "frontend can render ``0 / total_controls`` progress without "
+            "needing to ``len()`` the list itself."
+        ),
+    )
+    masvs_spec_version: str = Field(
+        min_length=1,
+        max_length=32,
+        description=(
+            "Catalog version that produced this audit, pinned on the "
+            "parent record so D-3 idempotency can match same-target / "
+            "same-version dispatches and so the PDF report (R-2) labels "
+            "the audit with the catalog snapshot in effect at dispatch "
+            "time. Mirrors "
+            ":data:`aila.modules.vr.masvs.CATALOG_VERSION`."
+        ),
+    )
+    cost_budget_total_usd: float = Field(
+        ge=0.0,
+        description=(
+            "Sum of every child investigation's ``cost_budget_usd``. "
+            "Recorded on the parent so the operator sees total expected "
+            "spend in one place before deciding whether to abandon the "
+            "audit (D-5)."
         ),
     )
