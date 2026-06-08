@@ -1027,3 +1027,72 @@ export function useRejectFuzzProposal(proposalId: string) {
     },
   });
 }
+
+// ─── MASVS audit ────────────────────────────────────────────────────────────
+// POST /vr/targets/{id}/masvs-audit fans one batch into one parent
+// VRInvestigation (kind=masvs_audit) plus one child per OWASP MASVS L1
+// control (kind=audit, parent_investigation_id pointing at the parent).
+// The dispatcher is idempotent: same target + same catalog version with
+// an active parent returns HTTP 200 + idempotent_reuse=true and reuses
+// the prior ids verbatim. Fresh dispatches return HTTP 201. Per-child
+// ARQ submit failures land in `enqueue_errors` keyed by child
+// investigation id — the row exists, the operator retries via
+// POST /vr/investigations/{id}/re-enqueue.
+
+export interface MasvsAuditDispatchResult {
+  parent_investigation_id: string;
+  /** One id per dispatched child investigation, in MASVS catalog order.
+   *  `child_investigation_ids.length === total_controls` always. */
+  child_investigation_ids: string[];
+  total_controls: number;
+  /** Catalog snapshot pinned on the parent (e.g. "1.4.2-aila"). */
+  masvs_spec_version: string;
+  /** Sum of every child investigation's cost_budget_usd. */
+  cost_budget_total_usd: number;
+  /** Per-child submit failures keyed by child id. Empty on the happy
+   *  path and always empty on an idempotent reuse. */
+  enqueue_errors: Record<string, string>;
+  /** True when the dispatcher matched an existing active parent (same
+   *  target, same catalog version, status not terminal) and returned
+   *  that parent's ids without fanning a fresh batch. */
+  idempotent_reuse: boolean;
+}
+
+export function useMasvsAudit(targetId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<MasvsAuditDispatchResult>>(
+        `/vr/targets/${encodeURIComponent(targetId)}/masvs-audit`,
+        { method: "POST" },
+      ),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "target", targetId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigations-for-target", targetId],
+      });
+      const r = result.data;
+      const parentShort = r.parent_investigation_id.slice(0, 8);
+      const failedCount = Object.keys(r.enqueue_errors).length;
+      if (r.idempotent_reuse) {
+        toast.info(
+          `MASVS audit already in progress: ${r.total_controls} controls, parent ${parentShort}`,
+        );
+      } else if (failedCount > 0) {
+        toast.warning(
+          `MASVS audit dispatched (${r.total_controls} controls) — ${failedCount} child${
+            failedCount === 1 ? "" : "ren"
+          } failed to enqueue, retry via /re-enqueue`,
+        );
+      } else {
+        toast.success(
+          `MASVS audit dispatched: ${r.total_controls} controls (catalog ${r.masvs_spec_version}, ~$${r.cost_budget_total_usd.toFixed(0)} budget)`,
+        );
+      }
+    },
+    onError: (err: Error) => {
+      toast.error(`MASVS audit failed: ${err.message}`);
+    },
+  });
+}
