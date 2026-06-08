@@ -24,6 +24,10 @@ type SubTab =
   | "beacons"
   | "anomalies";
 
+// D24 exception: `render` is a cell-formatter slot tied to the column's
+// placement constraints (header, alignment, width, mono-font) — not a
+// public render-prop API. ColumnDef is module-internal; the only
+// exported surface here is <NetworkAnalysisPanel projectId>.
 interface ColumnDef<T = Record<string, unknown>> {
   key: string;
   header: string;
