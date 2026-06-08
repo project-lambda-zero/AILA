@@ -1,5 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -7,6 +9,39 @@ import { defineConfig } from "vite";
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(currentDirectory, "..");
+
+/**
+ * Read version from package.json at config time. Falls back to "0.0.0"
+ * if package.json is unreadable so vite never fails to start.
+ */
+function readPackageVersion(): string {
+  try {
+    const raw = readFileSync(path.resolve(currentDirectory, "package.json"), "utf8");
+    const parsed = JSON.parse(raw) as { version?: string };
+    return typeof parsed.version === "string" && parsed.version.length > 0 ? parsed.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+/**
+ * Best-effort short git SHA. Falls back to "dev" when git is unavailable
+ * (e.g. tarball build, sandboxed CI). Never throws.
+ */
+function readBuildSha(): string {
+  try {
+    return execSync("git rev-parse --short=8 HEAD", {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+    }).trim() || "dev";
+  } catch {
+    return "dev";
+  }
+}
+
+const appVersion = readPackageVersion();
+const buildSha = readBuildSha();
 
 /**
  * C14 — partition vendor code into deterministic chunks. Without this,
@@ -62,6 +97,13 @@ function manualChunks(id: string): string | undefined {
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
+  define: {
+    // Compile-time substitutions read in `platform/config/version.ts`.
+    // JSON.stringify wraps each value as a string literal so the
+    // substitution is syntactically valid wherever the global is read.
+    __APP_VERSION__: JSON.stringify(appVersion),
+    __APP_BUILD_SHA__: JSON.stringify(buildSha),
+  },
   optimizeDeps: {
     include: ["ogl", "@monaco-editor/react", "monaco-editor"],
   },
