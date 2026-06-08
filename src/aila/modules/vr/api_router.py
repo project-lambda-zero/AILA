@@ -2447,8 +2447,8 @@ def create_vr_router() -> APIRouter:
             "(`~/.android-mcp/uploads/<team_id>/<sha>.apk`, override via "
             "`ANDROID_MCP_UPLOAD_DIR`), creates a VRTargetRecord with "
             "kind=android_apk and an apk_path descriptor, and auto-enqueues "
-            "the APK_DECODE / JADX_DECOMPILE / STATIC_SUMMARY / MOBSF_SCAN "
-            "ingestion stages."
+            "the APK_DECODE / JADX_DECOMPILE / INDEX_DECOMPILED / "
+            "STATIC_SUMMARY / MOBSF_SCAN ingestion stages."
         ),
     )
     @limiter.limit("10/minute")
@@ -2468,11 +2468,12 @@ def create_vr_router() -> APIRouter:
         ``~/.android-mcp/uploads`` root so the operator can stage uploads
         on a different volume without symlink tricks.
 
-        Per-stage ingestion (APK_DECODE / JADX_DECOMPILE / STATIC_SUMMARY
-        / MOBSF_SCAN) is dispatched via ``run_target_analysis``. Until
-        the C-20 android branch ships the analyze() call records the
-        stage as FAILED with a clear "no ingestion path" message —
-        the upload itself still succeeds.
+        Per-stage ingestion (APK_DECODE / JADX_DECOMPILE / INDEX_DECOMPILED
+        / STATIC_SUMMARY / MOBSF_SCAN) is dispatched via
+        ``run_target_analysis``; ``TargetAnalysisService.analyze()`` routes
+        ``android_apk`` through ``_analyze_android_apk`` so each stage runs
+        under its own ``StageTracker`` and persists handles in
+        ``mcp_handles_json``.
         """
         import hashlib
         import json as _json
