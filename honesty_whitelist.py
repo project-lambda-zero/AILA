@@ -85,6 +85,8 @@ HONESTY_WHITELIST = [
     ("vr/tools/ida_bridge.py", "_resolve_base_url", "noqa"),
     ("vr/tools/audit_mcp_bridge.py", "forward", "noqa"),
     ("vr/tools/ida_bridge.py", "forward", "noqa"),
+    ("vr/tools/android_mcp_bridge.py", "_resolve_base_url", "noqa"),
+    ("vr/tools/android_mcp_bridge.py", "forward", "noqa"),
 
     # Category (b): _enqueue_next_investigation_run lives in
     # workflow/states/investigation_emit.py — a state file. Workflow
@@ -162,6 +164,7 @@ HONESTY_WHITELIST = [
     # httpx is its transport layer — same role as paramiko in SSHService.
     ("vr/tools/ida_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
     ("vr/tools/audit_mcp_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
+    ("vr/tools/android_mcp_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
     ("vr/services/mcp_registry.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
 
     # Category (g): VRModule.health_checks probes the IDA MCP over HTTP.
