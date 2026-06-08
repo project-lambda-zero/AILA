@@ -1,23 +1,21 @@
 import { Fragment, useMemo, useState } from "react";
 import type { ComponentType } from "react";
-import type { IconProps } from "@phosphor-icons/react";
-import {
-  Brain,
-  CaretDown,
-  CaretRight,
-  ChatCentered,
-  ChatTeardropDots,
-  CheckCircle,
-  Eye,
-  FileCode,
-  Flag,
-  GearSix,
-  Lightbulb,
-  Terminal,
-  User,
-  Wrench,
-  XCircle,
-} from "@phosphor-icons/react";
+import type { IconProps } from "@phosphor-icons/react/lib";
+import { Brain } from "@phosphor-icons/react/dist/csr/Brain";
+import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
+import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { ChatCentered } from "@phosphor-icons/react/dist/csr/ChatCentered";
+import { ChatTeardropDots } from "@phosphor-icons/react/dist/csr/ChatTeardropDots";
+import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { Eye } from "@phosphor-icons/react/dist/csr/Eye";
+import { FileCode } from "@phosphor-icons/react/dist/csr/FileCode";
+import { Flag } from "@phosphor-icons/react/dist/csr/Flag";
+import { GearSix } from "@phosphor-icons/react/dist/csr/GearSix";
+import { Lightbulb } from "@phosphor-icons/react/dist/csr/Lightbulb";
+import { Terminal } from "@phosphor-icons/react/dist/csr/Terminal";
+import { User } from "@phosphor-icons/react/dist/csr/User";
+import { Wrench } from "@phosphor-icons/react/dist/csr/Wrench";
+import { XCircle } from "@phosphor-icons/react/dist/csr/XCircle";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { CodeBlock } from "./CodeBlock";

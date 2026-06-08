@@ -1,28 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
-import {
-  TreeStructure,
-  Graph,
-  GearSix,
-  ArrowCounterClockwise,
-  Funnel,
-  PaperPlaneRight,
-  Pause,
-  Play,
-  Lightning,
-  CaretRight,
-  CaretDown,
-  Hash,
-  CheckCircle,
-  XCircle,
-  WarningCircle,
-  Crown,
-  ChatCircleText,
-  Target,
-  CurrencyDollar,
-  ShieldCheck,
-} from "@phosphor-icons/react";
+import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
+import { Graph } from "@phosphor-icons/react/dist/csr/Graph";
+import { GearSix } from "@phosphor-icons/react/dist/csr/GearSix";
+import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/csr/ArrowCounterClockwise";
+import { Funnel } from "@phosphor-icons/react/dist/csr/Funnel";
+import { PaperPlaneRight } from "@phosphor-icons/react/dist/csr/PaperPlaneRight";
+import { Pause } from "@phosphor-icons/react/dist/csr/Pause";
+import { Play } from "@phosphor-icons/react/dist/csr/Play";
+import { Lightning } from "@phosphor-icons/react/dist/csr/Lightning";
+import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
+import { Hash } from "@phosphor-icons/react/dist/csr/Hash";
+import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { XCircle } from "@phosphor-icons/react/dist/csr/XCircle";
+import { WarningCircle } from "@phosphor-icons/react/dist/csr/WarningCircle";
+import { Crown } from "@phosphor-icons/react/dist/csr/Crown";
+import { ChatCircleText } from "@phosphor-icons/react/dist/csr/ChatCircleText";
+import { Target } from "@phosphor-icons/react/dist/csr/Target";
+import { CurrencyDollar } from "@phosphor-icons/react/dist/csr/CurrencyDollar";
+import { ShieldCheck } from "@phosphor-icons/react/dist/csr/ShieldCheck";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";

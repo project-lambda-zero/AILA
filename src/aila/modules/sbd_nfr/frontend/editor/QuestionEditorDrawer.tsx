@@ -7,7 +7,8 @@
  */
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash } from "@phosphor-icons/react";
+import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
 import {
   Sheet,

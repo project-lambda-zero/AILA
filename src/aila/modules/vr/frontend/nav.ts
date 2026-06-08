@@ -1,15 +1,13 @@
-import {
-  Briefcase,
-  Bug,
-  ClipboardText,
-  Crosshair,
-  EnvelopeSimple,
-  Folders,
-  MagnifyingGlass,
-  Pulse,
-  Plugs,
-  Receipt,
-} from "@phosphor-icons/react";
+import { Briefcase } from "@phosphor-icons/react/dist/csr/Briefcase";
+import { Bug } from "@phosphor-icons/react/dist/csr/Bug";
+import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
+import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
+import { EnvelopeSimple } from "@phosphor-icons/react/dist/csr/EnvelopeSimple";
+import { Folders } from "@phosphor-icons/react/dist/csr/Folders";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+import { Pulse } from "@phosphor-icons/react/dist/csr/Pulse";
+import { Plugs } from "@phosphor-icons/react/dist/csr/Plugs";
+import { Receipt } from "@phosphor-icons/react/dist/csr/Receipt";
 
 import type { NavContribution } from "@platform/extension-registry/types";
 

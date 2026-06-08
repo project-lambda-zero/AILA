@@ -1,4 +1,6 @@
-import { Code, ListChecks, ShieldStar } from "@phosphor-icons/react";
+import { Code } from "@phosphor-icons/react/dist/csr/Code";
+import { ListChecks } from "@phosphor-icons/react/dist/csr/ListChecks";
+import { ShieldStar } from "@phosphor-icons/react/dist/csr/ShieldStar";
 
 import type { AppRole } from "@platform/auth/roles";
 import type { NavContribution } from "@platform/extension-registry/types";

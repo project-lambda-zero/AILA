@@ -1,5 +1,5 @@
 import { lazy } from "react";
-import { HandWaving } from "@phosphor-icons/react";
+import { HandWaving } from "@phosphor-icons/react/dist/csr/HandWaving";
 import type { ModuleFrontendSpec } from "@platform/extension-registry/types";
 
 const HelloWorldPage = lazy(() => import("./HelloWorldPage"));

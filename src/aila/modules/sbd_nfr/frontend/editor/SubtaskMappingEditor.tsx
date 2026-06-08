@@ -18,7 +18,10 @@
 import * as React from "react";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Shield, X, Plus, MagnifyingGlass } from "@phosphor-icons/react";
+import { Shield } from "@phosphor-icons/react/dist/csr/Shield";
+import { X } from "@phosphor-icons/react/dist/csr/X";
+import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 
 import { authorizedRequestJson } from "@platform/api/http";
 import { EmptyState } from "@/components/aila/EmptyState";

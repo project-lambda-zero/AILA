@@ -1,16 +1,14 @@
 import type { ComponentType } from "react";
-import type { IconProps } from "@phosphor-icons/react";
-import {
-  Crosshair,
-  FileText,
-  GitBranch,
-  Bug,
-  Gear,
-  TreeStructure,
-  Notepad,
-  Rocket,
-  MagnifyingGlass,
-} from "@phosphor-icons/react";
+import type { IconProps } from "@phosphor-icons/react/lib";
+import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
+import { FileText } from "@phosphor-icons/react/dist/csr/FileText";
+import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
+import { Bug } from "@phosphor-icons/react/dist/csr/Bug";
+import { Gear } from "@phosphor-icons/react/dist/csr/Gear";
+import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
+import { Notepad } from "@phosphor-icons/react/dist/csr/Notepad";
+import { Rocket } from "@phosphor-icons/react/dist/csr/Rocket";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 
 import type { OutcomeKind } from "../types";
 
