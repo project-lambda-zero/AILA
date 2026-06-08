@@ -1359,9 +1359,535 @@ _NETWORK_CONTROLS: tuple[MasvsControl, ...] = (
 )
 
 
+_PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
+    MasvsControl(
+        id="MSTG-PLATFORM-1",
+        group=MasvsGroup.PLATFORM,
+        level=MasvsLevel.L1,
+        title="The app only requests the minimum set of permissions necessary.",
+        description=(
+            "Every permission an Android app declares becomes a standing capability tied "
+            "to the install: the system grants it (install-time normal permissions) or "
+            "the user is prompted to grant it (runtime dangerous permissions), and from "
+            "that point on any code path inside the app can use it without further "
+            "consent. Permissions the app does not actually need expand the blast "
+            "radius of any client-side compromise, raise the cost of a Play Store "
+            "review, and give a malicious SDK pulled in transitively a wider surface "
+            "to abuse. The verification target is that every <uses-permission> entry "
+            "in AndroidManifest.xml is consumed by a real feature shipped in the build, "
+            "that dangerous permissions follow the runtime-request flow with a stated "
+            "user benefit at the prompt site, and that no permission tagged signature / "
+            "system / privileged is requested by an app that could not legitimately "
+            "hold it."
+        ),
+        verification_steps=(
+            "Parse AndroidManifest.xml for every <uses-permission> entry and "
+            "cross-reference each against actual call sites — Manifest.permission.X "
+            "constant references, ContextCompat.checkSelfPermission, "
+            "ActivityCompat.requestPermissions, and any API the permission gates; flag "
+            "any permission with no consuming code path as either dead or covertly used "
+            "via reflection.",
+            "For each android.permission-group.DANGEROUS permission (READ_CONTACTS, "
+            "ACCESS_FINE_LOCATION, READ_EXTERNAL_STORAGE, RECORD_AUDIO, CAMERA, "
+            "READ_PHONE_STATE, READ_SMS, etc.) trace the runtime-request flow and "
+            "confirm the requesting feature is reachable from the app's UI with a "
+            "user-visible justification, not a silent background prompt at first "
+            "launch.",
+            "Flag overly-broad permissions for the app's stated purpose "
+            "(READ_PHONE_STATE / READ_SMS / RECEIVE_SMS used only for analytics, "
+            "WRITE_EXTERNAL_STORAGE without a file-export feature, ACCESS_FINE_LOCATION "
+            "where ACCESS_COARSE_LOCATION would do) and confirm protectionLevel="
+            "\"signature\" / \"signatureOrSystem\" / \"privileged\" permissions are "
+            "appropriate for the app's signing identity.",
+        ),
+        relevant_apis=(
+            "android.Manifest.permission",
+            "android.app.Activity.requestPermissions",
+            "androidx.core.content.ContextCompat.checkSelfPermission",
+            "androidx.core.app.ActivityCompat.requestPermissions",
+            "androidx.activity.result.contract.ActivityResultContracts.RequestPermission",
+            "android.content.pm.PackageManager.checkPermission",
+            "android.content.pm.PackageManager.PERMISSION_GRANTED",
+            "android.content.pm.PackageInfo.requestedPermissions",
+        ),
+        evidence_hints=(
+            "<uses-permission",
+            "android.permission.",
+            "checkSelfPermission",
+            "requestPermissions",
+            "PERMISSION_GRANTED",
+            "android:protectionLevel",
+            "RequestPermission",
+            "shouldShowRequestPermissionRationale",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-PLATFORM-2",
+        group=MasvsGroup.PLATFORM,
+        level=MasvsLevel.L1,
+        title=(
+            "All inputs from external sources and the user are validated and if "
+            "necessary sanitized. This includes data received via the UI, IPC "
+            "mechanisms such as intents, custom URLs, and network sources."
+        ),
+        description=(
+            "Every value the app reads from an untrusted boundary — Intent extras "
+            "delivered by another app, deep-link parameters parsed from a Uri, "
+            "ContentProvider selection clauses passed by an external querier, JSON "
+            "fields pulled from a network response, free-form text entered by the "
+            "user — must be type-checked, length-checked, and (where the destination "
+            "is a structured sink such as SQL, a shell, an HTML render, or a file "
+            "path) sanitized for that sink before use. Skipped validation allows "
+            "injection (SQLi via rawQuery, command injection via Runtime.exec, "
+            "path traversal via File constructors), state-machine confusion (an "
+            "invalid enum value driving an unintended branch), and crashes that "
+            "external untrusted callers can trigger at will to deny service. The "
+            "verification target is that every external-input read passes through a "
+            "validator (typed accessor, length bound, allowlist, regex check) before "
+            "reaching a sink."
+        ),
+        verification_steps=(
+            "Identify every Intent entry point (Activity.getIntent / "
+            "BroadcastReceiver.onReceive / Service.onStartCommand) and inspect how "
+            "its extras and data Uri are consumed; flag every path that reads a "
+            "string and passes it to a sink (SQLiteDatabase.rawQuery, "
+            "Runtime.exec, File constructors, WebView.loadUrl, Retrofit URL "
+            "concatenation) without an intervening allowlist / regex / length "
+            "check.",
+            "Inspect every ContentProvider.query / insert / update / delete "
+            "override for SQL string concatenation; flag any rawQuery / execSQL "
+            "using selection clauses that interpolate caller-supplied extras "
+            "instead of using parameter binding (selectionArgs) with a fixed "
+            "selection template.",
+            "Inspect deep-link handlers (Activities exported with "
+            "<intent-filter><data android:scheme=\"...\"/>) and confirm "
+            "parameters are parsed via Uri.getQueryParameter and then validated "
+            "(numeric range, enum lookup, signature check) before driving "
+            "navigation, file reads, or network calls; flag any handler that "
+            "concatenates getQueryParameter results into a request URL or a SQL "
+            "selection.",
+        ),
+        relevant_apis=(
+            "android.content.Intent.getStringExtra",
+            "android.content.Intent.getData",
+            "android.content.ContentProvider.query",
+            "android.database.sqlite.SQLiteDatabase.rawQuery",
+            "android.database.sqlite.SQLiteDatabase.execSQL",
+            "android.net.Uri.getQueryParameter",
+            "android.webkit.WebView.loadUrl",
+            "java.lang.Runtime.exec",
+            "java.io.File",
+        ),
+        evidence_hints=(
+            "getStringExtra",
+            "getQueryParameter",
+            "rawQuery",
+            "execSQL",
+            "Runtime.getRuntime",
+            "exec(",
+            "intent-filter",
+            "<data android:scheme",
+            "getIntent",
+            "loadUrl",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-PLATFORM-3",
+        group=MasvsGroup.PLATFORM,
+        level=MasvsLevel.L1,
+        title=(
+            "The app does not export sensitive functionality via custom URL schemes, "
+            "unless these mechanisms are properly protected."
+        ),
+        description=(
+            "A custom URL scheme registered via <intent-filter><data "
+            "android:scheme=\"foo\"/> can be invoked by any other app on the device, "
+            "by a web page the user visits in any browser, and by a QR code the user "
+            "scans — the calling identity is not authenticated by the system unless "
+            "the app re-checks. If the scheme handler performs sensitive operations "
+            "(account changes, money transfers, settings writes, file deletes, "
+            "credential resets) without a per-invocation identity / consent check, "
+            "any unrelated app or any visited web page can trigger those operations "
+            "silently. The verification target is that every custom-scheme entry "
+            "point either restricts itself to read-only navigation, or requires "
+            "fresh user consent (a confirmation screen the user must tap through) "
+            "for any state-changing action, and that web links use Android App "
+            "Links with android:autoVerify=\"true\" + a /.well-known/assetlinks.json "
+            "association so unrelated apps cannot register the same scheme to "
+            "phish users."
+        ),
+        verification_steps=(
+            "Enumerate every Activity / Receiver in AndroidManifest.xml with "
+            "<intent-filter><data android:scheme=\"...\"/> (excluding http / https "
+            "with autoVerify); for each, record the scheme + host + path pattern "
+            "and identify the handler class and method.",
+            "For each custom-scheme entry point, inspect the handler for sensitive "
+            "actions (account mutation, payment trigger, settings write, password "
+            "reset, file delete) and confirm an authentication / authorization gate "
+            "(recent-login check, biometric prompt, signature verification of the "
+            "calling package via Binder.getCallingUid + PackageManager.checkSignatures) "
+            "runs before the action; flag any handler that performs a sensitive "
+            "action from getIntent extras without such a gate.",
+            "Confirm http / https <intent-filter> entries use App Links semantics — "
+            "android:autoVerify=\"true\" plus a published "
+            "/.well-known/assetlinks.json on the named host — so unrelated apps "
+            "cannot register the same domain and intercept the user's clicks; flag "
+            "any web-link handler without autoVerify as a phishing surface.",
+        ),
+        relevant_apis=(
+            "android.content.Intent.ACTION_VIEW",
+            "android.net.Uri.parse",
+            "android.content.Intent.getData",
+            "android.app.Activity.getIntent",
+            "android.content.pm.PackageManager.queryIntentActivities",
+            "android.os.Binder.getCallingUid",
+            "android.content.pm.PackageManager.checkSignatures",
+        ),
+        evidence_hints=(
+            "android:scheme",
+            "intent-filter",
+            "autoVerify",
+            "assetlinks.json",
+            "ACTION_VIEW",
+            "getIntent",
+            "getData",
+            "getCallingUid",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-PLATFORM-4",
+        group=MasvsGroup.PLATFORM,
+        level=MasvsLevel.L1,
+        title=(
+            "The app does not export sensitive functionality through IPC facilities, "
+            "unless these mechanisms are properly protected."
+        ),
+        description=(
+            "Activities, Services, Broadcast Receivers, and Content Providers marked "
+            "android:exported=\"true\" (or implicitly exported by an <intent-filter> "
+            "declaration on API < 31) are reachable by every other app on the "
+            "device. If those components perform sensitive operations without a "
+            "permission gate or a caller-identity check, any installed app can "
+            "invoke them: reading private data via ContentProvider.query, triggering "
+            "account actions via Activity startActivityForResult, exfiltrating "
+            "files via FileProvider misconfigurations, or sending broadcasts that "
+            "drive state-machine transitions. The verification target is that "
+            "every exported component either is intentionally public (a launcher "
+            "Activity, a shared share-sheet target) or carries a "
+            "android:permission=\"...\" attribute with android:protectionLevel="
+            "\"signature\" plus a runtime caller check before any sensitive "
+            "action."
+        ),
+        verification_steps=(
+            "Enumerate every Activity / Service / Receiver / Provider in "
+            "AndroidManifest.xml with android:exported=\"true\" (and on API < 31, "
+            "every component with an <intent-filter> child but no explicit "
+            "android:exported attribute — these are implicitly exported); record "
+            "each entry point's intended caller class (system_only, the app's own "
+            "UI, any signed-by-same-key app, any installed app).",
+            "For each exported component handling sensitive operations (account, "
+            "payment, settings, content read, file read), confirm an "
+            "android:permission=\"<custom>\" attribute with android:protectionLevel="
+            "\"signature\" restricts use to apps signed with the same key, AND a "
+            "runtime caller check via Binder.getCallingUid + "
+            "PackageManager.checkSignatures rejects calls from unexpected uids; "
+            "flag any exported component that performs a sensitive action without "
+            "both checks.",
+            "Inspect every <provider> for android:grantUriPermissions semantics and "
+            "FileProvider authority configuration; confirm exported providers do "
+            "not return arbitrary file paths from caller-supplied authority / path "
+            "parameters (path traversal via ../ segments) and that "
+            "<paths>/<external-path> entries scope the share root to a specific "
+            "subdirectory, not the entire app data directory.",
+        ),
+        relevant_apis=(
+            "android.os.Binder.getCallingUid",
+            "android.content.pm.PackageManager.checkSignatures",
+            "android.content.Context.checkCallingPermission",
+            "android.content.Context.enforceCallingPermission",
+            "androidx.core.content.FileProvider",
+            "android.content.ContentProvider.call",
+            "android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION",
+        ),
+        evidence_hints=(
+            "android:exported",
+            "android:permission",
+            "protectionLevel=\"signature\"",
+            "getCallingUid",
+            "checkSignatures",
+            "checkCallingPermission",
+            "FileProvider",
+            "grantUriPermissions",
+            "<external-path",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-PLATFORM-5",
+        group=MasvsGroup.PLATFORM,
+        level=MasvsLevel.L1,
+        title="JavaScript is disabled in WebViews unless explicitly required.",
+        description=(
+            "A WebView with JavaScript enabled becomes a script-execution surface "
+            "for whatever HTML reaches it: a remote page loaded from a non-HTTPS "
+            "endpoint, a file:// page reached through a path-traversal bug, an "
+            "Intent-supplied URL the app forwards into loadUrl without a domain "
+            "allowlist. If JavaScript is on by default and the loaded origin can "
+            "be influenced by external untrusted callers, hostile script runs in "
+            "the WebView's process — reading WebView cookies, exfiltrating "
+            "localStorage, calling any @JavascriptInterface bridge the app "
+            "exposes (see MSTG-PLATFORM-7). The verification target is that every "
+            "WebSettings.setJavaScriptEnabled(true) call site has a documented "
+            "need (an in-app help renderer, a checkout flow against a vetted "
+            "domain) AND the URL loaded into that WebView is restricted to a "
+            "trusted origin: a bundled asset under file:///android_asset, a "
+            "hard-coded https:// allowlist, or a domain validated against a "
+            "compile-time constant — never a Uri pulled from getIntent or a "
+            "network response without validation."
+        ),
+        verification_steps=(
+            "Enumerate every android.webkit.WebView instantiation and its "
+            "getSettings() configuration; flag every setJavaScriptEnabled(true) "
+            "call site and trace the URL ultimately loaded into that WebView (a "
+            "remote http(s) host, a file:///android_asset path, a content:// "
+            "URI) to confirm JS is enabled only for trusted content.",
+            "For WebViews loading remote HTML, confirm the loaded origin is an "
+            "allowlist constant (a specific app-controlled domain) or validated "
+            "against a constant before loadUrl is called; flag any path that "
+            "passes getIntent.getData().toString() or a Retrofit response field "
+            "straight to WebView.loadUrl with JS enabled.",
+            "Confirm setJavaScriptEnabled(true) is not flipped on globally by a "
+            "base WebViewClient or a shared WebView factory that downstream code "
+            "reuses for every WebView instance — a single factory enabling JS "
+            "affects every consumer including ones that load untrusted HTML.",
+        ),
+        relevant_apis=(
+            "android.webkit.WebView.getSettings",
+            "android.webkit.WebSettings.setJavaScriptEnabled",
+            "android.webkit.WebSettings.setJavaScriptCanOpenWindowsAutomatically",
+            "android.webkit.WebView.loadUrl",
+            "android.webkit.WebView.loadData",
+            "android.webkit.WebView.loadDataWithBaseURL",
+            "android.webkit.WebViewClient",
+        ),
+        evidence_hints=(
+            "setJavaScriptEnabled",
+            "getSettings",
+            "WebView",
+            "loadUrl",
+            "loadDataWithBaseURL",
+            "file:///android_asset",
+            "WebSettings",
+            "WebViewClient",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-PLATFORM-6",
+        group=MasvsGroup.PLATFORM,
+        level=MasvsLevel.L1,
+        title=(
+            "WebViews are configured to allow only the minimum set of protocol "
+            "handlers required (ideally, only https is supported). Potentially "
+            "dangerous handlers, such as file, tel and app-id, are disabled."
+        ),
+        description=(
+            "A WebView accepts more URI schemes than http and https by default — "
+            "file://, content://, javascript:, intent://, tel:, sms:, mailto: — "
+            "and each one carries distinct trust semantics. file:// reads can "
+            "expose private app storage when setAllowFileAccessFromFileURLs is "
+            "true; javascript: URIs trigger script execution in whatever origin "
+            "the WebView currently holds; intent:// hops out of the WebView and "
+            "back into Android Intent dispatch with caller-supplied extras; "
+            "tel: / sms: / mailto: launch external apps with caller-supplied "
+            "parameters. If the WebViewClient forwards every scheme to the "
+            "system without an allowlist, an HTML page (loaded over https) can "
+            "trigger any of these by setting window.location, and an external "
+            "untrusted page can chain through to scheme handlers the app never "
+            "intended to expose. The verification target is that "
+            "setAllowFileAccessFromFileURLs / setAllowUniversalAccessFromFileURLs "
+            "are false on every WebView, that shouldOverrideUrlLoading restricts "
+            "scheme handling to an explicit allowlist, and that the loaded "
+            "origin cannot reach file:// content unless the page is itself a "
+            "trusted file:///android_asset bundle."
+        ),
+        verification_steps=(
+            "For every WebView instance inspect WebSettings configuration — "
+            "setAllowFileAccess / setAllowFileAccessFromFileURLs / "
+            "setAllowUniversalAccessFromFileURLs / setAllowContentAccess; flag "
+            "every true value on a WebView loading remote HTML, and call out the "
+            "FromFileURLs variants in particular since they permit cross-origin "
+            "reads under a file:// origin.",
+            "Inspect every WebViewClient.shouldOverrideUrlLoading override; "
+            "confirm tel:, sms:, mailto:, intent://, javascript:, file:, and "
+            "content: schemes are explicitly classified (allowed / blocked / "
+            "delegated to the system) rather than passed through with a "
+            "default-true return that lets the WebView load them in-place.",
+            "Confirm no WebViewClient routes a getIntent-derived deep link "
+            "straight into WebView.loadUrl, which would let external untrusted "
+            "callers trigger custom-scheme handlers (intent://, javascript:) "
+            "inside the app's WebView and bypass the shouldOverrideUrlLoading "
+            "allowlist by reaching loadUrl directly.",
+        ),
+        relevant_apis=(
+            "android.webkit.WebSettings.setAllowFileAccess",
+            "android.webkit.WebSettings.setAllowFileAccessFromFileURLs",
+            "android.webkit.WebSettings.setAllowUniversalAccessFromFileURLs",
+            "android.webkit.WebSettings.setAllowContentAccess",
+            "android.webkit.WebViewClient.shouldOverrideUrlLoading",
+            "android.webkit.WebView.loadUrl",
+            "android.content.Intent.parseUri",
+        ),
+        evidence_hints=(
+            "setAllowFileAccess",
+            "setAllowFileAccessFromFileURLs",
+            "setAllowUniversalAccessFromFileURLs",
+            "setAllowContentAccess",
+            "shouldOverrideUrlLoading",
+            "intent://",
+            "javascript:",
+            "file://",
+            "Intent.parseUri",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-PLATFORM-7",
+        group=MasvsGroup.PLATFORM,
+        level=MasvsLevel.L1,
+        title=(
+            "If native methods of the app are exposed to a WebView, verify that the "
+            "WebView only renders JavaScript contained within the app package."
+        ),
+        description=(
+            "WebView.addJavascriptInterface(obj, name) injects a JS-callable bridge "
+            "into every page the WebView loads. Any method on the bridge class "
+            "annotated with @JavascriptInterface (or every public method on API "
+            "< 17, where the annotation is not required) becomes invokable from "
+            "page-loaded script — including script that the page itself imported "
+            "from a different origin, that a redirect chain led to, or that a "
+            "third-party ad SDK injected. If the bridge methods do anything "
+            "privileged (file reads, settings writes, Intent dispatches, account "
+            "operations, Runtime.exec) the page running in the WebView gains "
+            "those privileges. The verification target is that every WebView with "
+            "addJavascriptInterface loads only JS bundled inside the APK (under "
+            "/assets or /res, or a hard-coded https:// allowlist whose contents "
+            "the app vendor controls end-to-end), that every @JavascriptInterface "
+            "method is read-only or restricted to non-sensitive lookup data, and "
+            "that the WebViewClient.shouldOverrideUrlLoading rejects navigation "
+            "to URLs outside the trusted origin."
+        ),
+        verification_steps=(
+            "Enumerate every WebView.addJavascriptInterface call site and record "
+            "the bridge class plus the URL ultimately loaded into that WebView; "
+            "confirm the loaded URL points to an asset bundled in /assets or "
+            "/res or a hard-coded https:// allowlist, NOT a remote URL derived "
+            "from getIntent / a Retrofit response / a content URI.",
+            "For each @JavascriptInterface-annotated method, inspect the body "
+            "for side effects that could escalate privilege if invoked from a "
+            "hostile page (File / FileOutputStream / SharedPreferences edits, "
+            "Intent dispatches, AccountManager / KeyStore reads, Runtime.exec, "
+            "ContentResolver writes); flag any bridge method that does more "
+            "than return immutable lookup data.",
+            "Confirm the WebView's WebViewClient.shouldOverrideUrlLoading and "
+            "WebChromeClient.onJsAlert / onJsConfirm / onJsPrompt prevent "
+            "navigation to URLs outside the trusted origin, so a successful "
+            "redirect from a trusted page to a hostile page cannot then use the "
+            "JS bridge from a different origin.",
+        ),
+        relevant_apis=(
+            "android.webkit.WebView.addJavascriptInterface",
+            "android.webkit.JavascriptInterface",
+            "android.webkit.WebViewClient.shouldOverrideUrlLoading",
+            "android.webkit.WebViewClient.onPageStarted",
+            "android.webkit.WebView.loadUrl",
+            "android.webkit.WebChromeClient.onJsAlert",
+            "android.webkit.WebChromeClient.onJsPrompt",
+        ),
+        evidence_hints=(
+            "addJavascriptInterface",
+            "@JavascriptInterface",
+            "shouldOverrideUrlLoading",
+            "onPageStarted",
+            "WebView",
+            "loadUrl",
+            "WebChromeClient",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-PLATFORM-8",
+        group=MasvsGroup.PLATFORM,
+        level=MasvsLevel.L1,
+        title=(
+            "Object deserialization, wherever it is used, is implemented using "
+            "safe serialization APIs."
+        ),
+        description=(
+            "Java's java.io.ObjectInputStream materializes object graphs from a "
+            "byte stream by walking class names, invoking readObject hooks, and "
+            "wiring up references — a process the byte stream itself controls. "
+            "If the bytes come from an untrusted source (a file the app did not "
+            "write, a network response, an Intent extra, a clipboard read), a "
+            "gadget chain through readObject hooks in classpath libraries can "
+            "trigger code execution before the application code ever sees the "
+            "deserialized object. Android's untyped Intent.getSerializableExtra "
+            "exhibits the same shape and has been the source of multiple "
+            "Android-specific deserialization CVEs. The verification target is "
+            "that every readObject / Externalizable.readExternal call site "
+            "operates on bytes the app itself produced, that Intent extras are "
+            "read with the type-checked getStringExtra / getParcelableExtra("
+            "key, Class<T>) accessors rather than getSerializableExtra, and "
+            "that JSON / XML / Protobuf parsers do not perform polymorphic "
+            "deserialization against a class set the byte stream chooses."
+        ),
+        verification_steps=(
+            "Search for java.io.ObjectInputStream / java.io.Externalizable / "
+            "java.beans.XMLDecoder use; flag every readObject / readExternal / "
+            "readObject call site where the input bytes are not provably "
+            "app-produced (input from File whose path is caller-supplied, from "
+            "the network, from an Intent extra, from the clipboard), since "
+            "such call sites enable gadget-chain deserialization attacks.",
+            "For Android Parcelable / Bundle reads from Intent extras, confirm "
+            "extras are read with type-checked accessors (getStringExtra, "
+            "getIntExtra, getParcelableExtra(key, Class<T>)) rather than the "
+            "untyped getSerializableExtra / getParcelableExtra(key); flag every "
+            "getSerializableExtra call site as a finding and every "
+            "getParcelableExtra without an explicit Class<T> argument on API "
+            ">= 33 as a hardening gap.",
+            "Inspect JSON / XML / Protobuf parsing for unbounded polymorphic "
+            "type bindings (Jackson @JsonTypeInfo with class-name discriminators, "
+            "Gson RuntimeTypeAdapterFactory with a wildcard, XStream / "
+            "SnakeYAML default constructor calls); confirm polymorphic "
+            "deserialization is restricted to a fixed sealed-class hierarchy "
+            "with an allowlist of permitted concrete types.",
+        ),
+        relevant_apis=(
+            "java.io.ObjectInputStream.readObject",
+            "java.io.Externalizable.readExternal",
+            "java.beans.XMLDecoder",
+            "android.content.Intent.getSerializableExtra",
+            "android.content.Intent.getParcelableExtra",
+            "android.os.Bundle.getSerializable",
+            "com.fasterxml.jackson.databind.ObjectMapper.readValue",
+            "com.google.gson.Gson.fromJson",
+            "org.yaml.snakeyaml.Yaml.load",
+        ),
+        evidence_hints=(
+            "ObjectInputStream",
+            "readObject",
+            "Externalizable",
+            "getSerializableExtra",
+            "getParcelableExtra",
+            "@JsonTypeInfo",
+            "RuntimeTypeAdapterFactory",
+            "XStream",
+            "SnakeYAML",
+        ),
+    ),
+)
+
+
 MASVS_CONTROLS: tuple[MasvsControl, ...] = (
     *_STORAGE_CONTROLS,
     *_CRYPTO_CONTROLS,
     *_AUTH_CONTROLS,
     *_NETWORK_CONTROLS,
+    *_PLATFORM_CONTROLS,
 )
