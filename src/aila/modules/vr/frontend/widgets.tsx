@@ -38,7 +38,7 @@ function ActiveProjectsWidget() {
       </h3>
       <Link
         to="/vr"
-        className="text-[10px] text-accent hover:underline"
+        className="text-3xs text-accent hover:underline"
       >
         open →
       </Link>
@@ -74,7 +74,7 @@ function CrashesFoundWidget() {
     <p className="text-xs text-text-muted mt-1">
       +{last24h} in the last 24h
     </p>
-    <div className="mt-2 -mx-2 -mb-2 flex-1 min-h-[40px]">
+    <div className="mt-2 -mx-2 -mb-2 flex-1" style={{ minHeight: 40 }}>
       {trend.length > 0 && (
         <AilaChart
           type="bar"
@@ -123,7 +123,7 @@ function ExploitableWidget() {
       </h3>
       <Link
         to="/vr/fuzz/campaigns"
-        className="text-[10px] text-accent hover:underline"
+        className="text-3xs text-accent hover:underline"
       >
         fuzz crashes →
       </Link>
@@ -176,7 +176,7 @@ function FuzzingCoverageWidget() {
       </h3>
       <Link
         to="/vr/fuzz/campaigns"
-        className="text-[10px] text-accent hover:underline"
+        className="text-3xs text-accent hover:underline"
       >
         campaigns →
       </Link>
@@ -187,7 +187,7 @@ function FuzzingCoverageWidget() {
     <p className="text-xs text-text-muted mt-1">
       avg across {running.length} running
     </p>
-    <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[10px]">
+    <div className="mt-2 flex items-center gap-1.5 flex-wrap text-3xs">
       {stable > 0 && (
         <AilaBadge severity="low" size="sm">
           {stable} stable
@@ -209,7 +209,7 @@ function FuzzingCoverageWidget() {
         </AilaBadge>
       )}
     </div>
-    <p className="text-[10px] text-text-muted mt-1">
+    <p className="text-3xs text-text-muted mt-1">
       Stuck = no progress in 4h despite high exec/sec.
     </p></AilaCard>
   );
@@ -252,7 +252,7 @@ function PendingFuzzProposalsWidget() {
       </h3>
       <Link
         to="/vr/investigations"
-        className="text-[10px] text-accent hover:underline"
+        className="text-3xs text-accent hover:underline"
       >
         review →
       </Link>
@@ -264,7 +264,7 @@ function PendingFuzzProposalsWidget() {
       agent-authored, awaiting operator decision
     </p>
     {proposals.length > 0 && (
-      <ul className="mt-2 space-y-1 text-[10px] font-mono max-h-32 overflow-y-auto">
+      <ul className="mt-2 space-y-1 text-3xs font-mono max-h-32 overflow-y-auto">
         {proposals.slice(0, 5).map((p) => (
           <li
             key={p.id}

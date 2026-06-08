@@ -211,7 +211,7 @@ function PayloadPreview({
           <button
             type="button"
             onClick={() => setExpanded((e) => !e)}
-            className="block mt-2 text-text-muted hover:text-foreground underline text-[10px]"
+            className="block mt-2 text-text-muted hover:text-foreground underline text-3xs"
           >
             {expanded ? "Collapse" : `Show full (${proseCandidate.length} chars)`}
           </button>
@@ -223,7 +223,7 @@ function PayloadPreview({
   const truncated = !fullByDefault && json.length > 320;
   const shown = expanded || !truncated ? json : json.slice(0, 320) + "…";
   return (
-    <div className="text-[10px] text-text-muted font-mono">
+    <div className="text-3xs text-text-muted font-mono">
       <pre className="whitespace-pre-wrap break-words bg-elevated/40 rounded px-2 py-1.5 border border-border-default/60">
         {shown}
       </pre>
@@ -242,11 +242,11 @@ function PayloadPreview({
 
 /** Cost progress bar — green/yellow/red based on actual-vs-budget %.
  *  Inline-styled width because Tailwind v4 strips arbitrary numeric
- *  values like `w-[73%]` if they aren't statically detectable. */
+ *  width classes when the percent isn't statically detectable. */
 function CostProgressBar({ actual, budget }: { actual: number; budget: number }) {
   if (budget <= 0) {
     return (
-      <div className="h-1.5 rounded-[2px] bg-elevated border border-border-default/60">
+      <div className="h-1.5 rounded-sharp bg-elevated border border-border-default/60">
         <span className="sr-only">No budget set</span>
       </div>
     );
@@ -260,12 +260,13 @@ function CostProgressBar({ actual, budget }: { actual: number; budget: number })
       aria-valuemin={0}
       aria-valuemax={100}
       aria-label={`Cost ${fmtUsd(actual)} of ${fmtUsd(budget)} (${pct.toFixed(0)}%)`}
-      className="relative h-1.5 rounded-[2px] overflow-hidden border border-border-default/60 bg-elevated"
+      className="relative h-1.5 rounded-sharp overflow-hidden border border-border-default/60 bg-elevated"
     >
       <div
-        className="h-full transition-[width] duration-300 ease-out"
+        className="h-full"
         style={{
           width: `${pct}%`,
+          transition: "width 300ms ease-out",
           background: `linear-gradient(to right, color-mix(in srgb, ${color} 60%, transparent), ${color})`,
         }}
       />
@@ -300,7 +301,7 @@ function StatusIndicator({ status, pauseReason }: {
         {meta.label}
       </span>
       {pauseReason && (
-        <span className="text-[10px] font-mono uppercase tracking-wide text-text-muted">
+        <span className="text-3xs font-mono uppercase tracking-wide text-text-muted">
           · {humanize(pauseReason)}
         </span>
       )}
@@ -842,7 +843,7 @@ export function InvestigationDetailPage() {
             <div className="flex items-center gap-2 flex-wrap text-xs">
               <span className="inline-flex items-center gap-1.5 text-text-muted px-1">
                 <Funnel weight="fill" size={14} />
-                <span className="font-mono uppercase tracking-wide text-[10px]">Filter</span>
+                <span className="font-mono uppercase tracking-wide text-3xs">Filter</span>
               </span>
               <select
                 value={senderFilter}
@@ -891,7 +892,7 @@ export function InvestigationDetailPage() {
                 <span className="text-foreground tabular-nums">{filtered.length}</span>
                 <span>/ {messages.length}</span>
                 {visibleTurn != null && (
-                  <span className="ml-1 text-[10px]">· at #{visibleTurn + 1}</span>
+                  <span className="ml-1 text-3xs">· at #{visibleTurn + 1}</span>
                 )}
               </span>
               <label
@@ -909,7 +910,7 @@ export function InvestigationDetailPage() {
                   className="sr-only"
                 />
                 <Lightning weight={liveTail ? "fill" : "regular"} size={12} />
-                <span className="font-mono uppercase tracking-wide text-[10px]">
+                <span className="font-mono uppercase tracking-wide text-3xs">
                   Live tail
                 </span>
                 <span
@@ -921,7 +922,7 @@ export function InvestigationDetailPage() {
                 />
               </label>
               <div className="inline-flex items-center gap-1">
-                <span className="text-[10px] font-mono text-text-muted uppercase tracking-wide">
+                <span className="text-3xs font-mono text-text-muted uppercase tracking-wide">
                   Jump
                 </span>
                 <input
@@ -966,7 +967,7 @@ export function InvestigationDetailPage() {
             <AilaCard techBorder glow>
               <div className="flex items-center gap-2 mb-3">
                 <PaperPlaneRight weight="fill" size={14} className="text-accent" />
-                <h2 className="text-[10px] font-mono uppercase tracking-[0.14em] text-text-muted">
+                <h2 className="text-3xs font-mono uppercase tracking-cyber-sm text-text-muted">
                   Operator Input · Inject context for next turn
                 </h2>
               </div>
@@ -985,7 +986,7 @@ export function InvestigationDetailPage() {
                       key={it.value || "auto"}
                       type="button"
                       onClick={() => setMessageIntent(it.value)}
-                      className={`px-2.5 py-1 text-[11px] font-mono rounded-full border transition-colors ${
+                      className={`px-2.5 py-1 text-2xs font-mono rounded-full border transition-colors ${
                         active
                           ? "bg-accent/20 border-accent text-foreground"
                           : "bg-elevated/60 border-border-default/60 text-text-muted hover:border-accent/40 hover:text-foreground"
@@ -1066,7 +1067,7 @@ export function InvestigationDetailPage() {
           <AilaCard techBorder glow>
             <div className="flex items-center gap-2 mb-3">
               <TreeStructure weight="fill" size={14} className="text-accent" />
-              <h3 className="text-[10px] font-mono uppercase tracking-[0.14em] text-text-muted">
+              <h3 className="text-3xs font-mono uppercase tracking-cyber-sm text-text-muted">
                 Branches
               </h3>
               <span className="text-xs font-mono text-foreground tabular-nums">
@@ -1097,7 +1098,7 @@ export function InvestigationDetailPage() {
                               <span className="text-sm font-medium text-foreground">
                                 {pm.label}
                               </span>
-                              <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wide text-text-muted">
+                              <span className="inline-flex items-center gap-1 text-3xs font-mono uppercase tracking-wide text-text-muted">
                                 <span
                                   className="w-1.5 h-1.5 rounded-full"
                                   style={{
@@ -1113,7 +1114,7 @@ export function InvestigationDetailPage() {
                                 </AilaBadge>
                               )}
                             </div>
-                            <p className="mt-0.5 text-[11px] font-mono text-text-muted">
+                            <p className="mt-0.5 text-2xs font-mono text-text-muted">
                               {b.turn_count} turn{b.turn_count === 1 ? "" : "s"} · {fmtUsd(b.branch_cost_usd)}
                               {b.fork_at_turn != null && (
                                 <span> · forked @t{b.fork_at_turn}</span>
@@ -1136,7 +1137,7 @@ export function InvestigationDetailPage() {
                     })}
                   </ul>
                   {queuedBranches.length > 0 && (
-                    <div className="mt-2 flex items-center gap-2 text-[11px] text-text-muted font-mono">
+                    <div className="mt-2 flex items-center gap-2 text-2xs text-text-muted font-mono">
                       <span className="w-1.5 h-1.5 rounded-full bg-text-muted/40" />
                       {queuedBranches.length} branch{queuedBranches.length === 1 ? "" : "es"} queued
                       <span className="text-text-muted/60">
@@ -1166,7 +1167,7 @@ export function InvestigationDetailPage() {
         <>
           {/* Top-right: jump-to-latest pill, only when not near bottom */}
           {!scrollNearBottom && (
-            <div className="fixed top-20 right-6 z-[60]">
+            <div className="fixed top-20 right-6" style={{ zIndex: 60 }}>
               <button
                 type="button"
                 onClick={jumpToLatest}
@@ -1176,7 +1177,7 @@ export function InvestigationDetailPage() {
                 <Lightning weight="fill" size={12} />
                 Jump to latest
                 {visibleTurn != null && (
-                  <span className="font-mono text-[10px] opacity-80">
+                  <span className="font-mono text-3xs opacity-80">
                     #{visibleTurn + 1} / {messages.length}
                   </span>
                 )}
@@ -1185,7 +1186,7 @@ export function InvestigationDetailPage() {
           )}
 
           {/* Bottom-right: scroll up / down */}
-          <div className="fixed bottom-6 right-6 z-[60] flex flex-col gap-2">
+          <div className="fixed bottom-6 right-6 flex flex-col gap-2" style={{ zIndex: 60 }}>
             <button
               type="button"
               onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
@@ -1246,7 +1247,7 @@ function VerifierBanner({ vr }: { vr: ReturnType<typeof readVerifier> }) {
     >
       <Icon weight="fill" size={16} className="flex-shrink-0 mt-0.5" />
       <div className="min-w-0 flex-1">
-        <div className="font-semibold uppercase tracking-wide text-[10px]">
+        <div className="font-semibold uppercase tracking-wide text-3xs">
           Verifier: {vr.verdict}{conf}
         </div>
         {(vr.summary || vr.counter_evidence) && (
@@ -1285,7 +1286,7 @@ function PrimaryOutcomeCard({
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="inline-flex items-center gap-2">
           <Crown weight="fill" size={14} className="text-accent" />
-          <span className="text-[10px] font-mono uppercase tracking-[0.14em] text-accent">
+          <span className="text-3xs font-mono uppercase tracking-cyber-sm text-accent">
             Primary · Synthesis
           </span>
         </div>
@@ -1313,7 +1314,7 @@ function PrimaryOutcomeCard({
         {persona && (
           <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-elevated/60 border border-border-default/60">
             <PersonaAvatar voice={persona} size={18} />
-            <span className="text-[11px] font-mono text-text-muted">{persMeta.label}</span>
+            <span className="text-2xs font-mono text-text-muted">{persMeta.label}</span>
           </span>
         )}
         <AilaBadge severity="info" size="sm">
@@ -1342,7 +1343,7 @@ function PrimaryOutcomeCard({
             e.stopPropagation();
             reverifyMut.mutate(invId);
           }}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] rounded-md border border-border-default text-text-muted hover:text-foreground hover:border-accent disabled:opacity-50 transition-colors"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-2xs rounded-md border border-border-default text-text-muted hover:text-foreground hover:border-accent disabled:opacity-50 transition-colors"
           title={
             vr?.verdict
               ? "Clear current verifier_report and re-run the verifier on this finding"
@@ -1371,7 +1372,7 @@ function PrimaryOutcomeCard({
                     : "operator promote — no verifier verdict";
               promoteMut.mutate({ outcomeId: o.id, reason: note });
             }}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] rounded-md border transition-colors disabled:opacity-50 ${
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-2xs rounded-md border transition-colors disabled:opacity-50 ${
               vr?.verdict === "confirmed"
                 ? "border-emerald-500/60 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-500/10"
                 : "border-border-default text-text-muted hover:text-foreground hover:border-accent"
@@ -1425,12 +1426,12 @@ function CompactOutcomeRow({
           <PersonaAvatar voice={persona} size={18} />
         )}
         <span className="ml-auto inline-flex items-center gap-1.5 flex-shrink-0">
-          <span className="text-[10px] font-mono text-text-muted uppercase tracking-wide">
+          <span className="text-3xs font-mono text-text-muted uppercase tracking-wide">
             {humanConfidence(o.confidence)}
           </span>
           {vr?.verdict && (
             <span
-              className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wide"
+              className="inline-flex items-center gap-1 text-3xs font-mono uppercase tracking-wide"
               style={{
                 color:
                   vr.verdict === "confirmed"
@@ -1459,7 +1460,7 @@ function CompactOutcomeRow({
       {expanded && (
         <div className="px-2.5 pb-2.5 pt-1 space-y-2 border-t border-border-default/40">
           {persona && (
-            <p className="text-[10px] font-mono text-text-muted">
+            <p className="text-3xs font-mono text-text-muted">
               Voice: <span style={{ color: persMeta.color }}>{persMeta.label}</span>
             </p>
           )}
@@ -1485,7 +1486,7 @@ function CompactOutcomeRow({
                         : "operator promote — no verifier verdict";
                   promoteMut.mutate({ outcomeId: o.id, reason: note });
                 }}
-                className={`px-2 py-0.5 text-[10px] rounded border transition-colors disabled:opacity-50 ${
+                className={`px-2 py-0.5 text-3xs rounded border transition-colors disabled:opacity-50 ${
                   vr?.verdict === "confirmed"
                     ? "border-emerald-500/60 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-500/10"
                     : "border-border-default text-text-muted hover:text-foreground hover:border-accent"

@@ -374,7 +374,7 @@ export function TurnCard({
           {persona ? (
             <span
               aria-label={`Persona ${personaVoice ?? senderId}`}
-              className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full font-mono text-[11px] font-bold ${persona.bg} ${persona.text}`}
+              className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full font-mono text-2xs font-bold ${persona.bg} ${persona.text}`}
             >
               {persona.initial}
             </span>
@@ -394,7 +394,7 @@ export function TurnCard({
 
           {/* payload kind chip — only when non-default */}
           {pStyle.label && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-text-muted shrink-0">
+            <span className="inline-flex items-center gap-1 text-3xs font-mono uppercase tracking-wider text-text-muted shrink-0">
               {PayloadIcon && (
                 <PayloadIcon size={11} weight="fill" className={pStyle.iconClass} />
               )}
@@ -418,7 +418,7 @@ export function TurnCard({
         </div>
 
         <span
-          className="text-[10px] font-mono text-text-muted whitespace-nowrap shrink-0"
+          className="text-3xs font-mono text-text-muted whitespace-nowrap shrink-0"
           title={fullTimestamp(message.created_at)}
         >
           {formatRelative(message.created_at)}
@@ -466,7 +466,7 @@ export function TurnCard({
                   <Terminal size={14} weight="fill" className="text-emerald-400" />
                   <span className="font-mono text-foreground font-medium">{humanToolName(String(payload.tool))}</span>
                   {payload.match_count != null && (
-                    <span className="text-text-muted font-mono text-[10px]">{String(payload.match_count)} matches</span>
+                    <span className="text-text-muted font-mono text-3xs">{String(payload.match_count)} matches</span>
                   )}
                 </div>
               )}
@@ -487,7 +487,7 @@ export function TurnCard({
           )}
           {fellBackToJson && !payload.pseudocode && !payload.is_error && !payload.chunks_text && payload.match_count == null && rawJson.length > COLLAPSE_THRESHOLD_CHARS && (
             <button type="button" onClick={() => setExpanded((v) => !v)}
-              className="text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground">
+              className="text-3xs font-mono uppercase tracking-wider text-text-muted hover:text-foreground">
               {expanded ? "collapse" : `expand (+${rawJson.length - COLLAPSE_THRESHOLD_CHARS} chars)`}
             </button>
           )}
@@ -498,10 +498,10 @@ export function TurnCard({
               open={rawOpen}
               onToggle={(e) => setRawOpen((e.currentTarget as HTMLDetailsElement).open)}
             >
-              <summary className="cursor-pointer text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground select-none">
+              <summary className="cursor-pointer text-3xs font-mono uppercase tracking-wider text-text-muted hover:text-foreground select-none">
                 Raw payload
               </summary>
-              <pre className="mt-1 text-[11px] font-mono whitespace-pre-wrap text-text-muted leading-relaxed break-words bg-surface/40 rounded p-2 border border-border-default/50">
+              <pre className="mt-1 text-2xs font-mono whitespace-pre-wrap text-text-muted leading-relaxed break-words bg-surface/40 rounded p-2 border border-border-default/50">
                 {rawJson}
               </pre>
             </details>
@@ -510,13 +510,13 @@ export function TurnCard({
           {/* Evidence refs */}
           {message.evidence_refs && message.evidence_refs.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              <span className="text-[10px] uppercase tracking-wider text-text-muted">
+              <span className="text-3xs uppercase tracking-wider text-text-muted">
                 evidence
               </span>
               {message.evidence_refs.map((ref) => (
                 <span
                   key={ref}
-                  className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface border border-border-default text-text-muted"
+                  className="text-3xs font-mono px-1.5 py-0.5 rounded bg-surface border border-border-default text-text-muted"
                 >
                   {ref}
                 </span>
@@ -612,7 +612,7 @@ function ToolCallBody({
         </code>
       </div>
       {entries.length > 0 && (
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs items-baseline px-2">
+        <dl className="grid grid-cols-key-value gap-x-3 gap-y-1 text-xs items-baseline px-2">
           {entries.map(([k, v]) => (
             <Fragment key={k}>
               <dt className="font-mono text-text-muted">{k}</dt>
@@ -630,7 +630,7 @@ function ToolCallBody({
           open={reasoningOpen}
           onToggle={(e) => setReasoningOpen((e.currentTarget as HTMLDetailsElement).open)}
         >
-          <summary className="cursor-pointer text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground select-none flex items-center gap-1">
+          <summary className="cursor-pointer text-3xs font-mono uppercase tracking-wider text-text-muted hover:text-foreground select-none flex items-center gap-1">
             <ChatTeardropDots size={12} weight="duotone" />
             Deliberation ({voiceSections ? `${voiceSections.length} voices` : `${reasoning.length} chars`})
           </summary>
@@ -643,7 +643,7 @@ function ToolCallBody({
                     key={i}
                     className={`border-l-2 ${vc.border} ${vc.bg} rounded-r px-3 py-2`}
                   >
-                    <div className={`text-[10px] font-mono uppercase tracking-wider ${vc.label} mb-1`}>
+                    <div className={`text-3xs font-mono uppercase tracking-wider ${vc.label} mb-1`}>
                       {section.role} · {section.name}
                     </div>
                     <div className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed break-words">
@@ -689,7 +689,7 @@ function ProseBody({
               key={i}
               className={`border-l-2 ${vc.border} ${vc.bg} rounded-r px-3 py-2`}
             >
-              <div className={`text-[10px] font-mono uppercase tracking-wider ${vc.label} mb-1`}>
+              <div className={`text-3xs font-mono uppercase tracking-wider ${vc.label} mb-1`}>
                 {section.role} · {section.name}
               </div>
               <div className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed break-words">
@@ -702,7 +702,7 @@ function ProseBody({
           <button
             type="button"
             onClick={onToggleExpanded}
-            className="text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground"
+            className="text-3xs font-mono uppercase tracking-wider text-text-muted hover:text-foreground"
           >
             +{voiceSections.length - 3} more voices
           </button>
@@ -727,7 +727,7 @@ function ProseBody({
         <button
           type="button"
           onClick={onToggleExpanded}
-          className="mt-1 text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground"
+          className="mt-1 text-3xs font-mono uppercase tracking-wider text-text-muted hover:text-foreground"
         >
           {expanded ? "collapse" : "expand"}
         </button>

@@ -96,8 +96,9 @@ function ProjectCard({
       {/* Top edge — 2px severity-tinted bar */}
       <span
         aria-hidden
-        className="absolute inset-x-0 top-0 h-[2px]"
+        className="absolute inset-x-0 top-0"
         style={{
+          height: 2,
           background: `linear-gradient(90deg, transparent, ${topEdgeColor[sev]}, transparent)`,
         }}
       />
@@ -121,7 +122,7 @@ function ProjectCard({
           </SeverityPulse>
           {project.cve_id && (
             <span
-              className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono tracking-wider"
+              className="inline-flex items-center px-2 py-0.5 rounded text-3xs font-mono tracking-wider"
               style={{
                 color: "var(--color-accent)",
                 background: "color-mix(in srgb, var(--color-accent) 10%, transparent)",
@@ -153,7 +154,7 @@ function ProjectCard({
         aria-hidden={false}
       >
         <div className="bg-surface px-4 py-3">
-          <p className="text-[9px] font-mono uppercase tracking-[0.14em] text-text-muted">
+          <p className="text-4xs font-mono uppercase tracking-cyber-sm text-text-muted">
             findings
           </p>
           <p className="mt-0.5 font-display text-xl font-semibold text-foreground leading-none">
@@ -161,7 +162,7 @@ function ProjectCard({
           </p>
         </div>
         <div className="bg-surface px-4 py-3">
-          <p className="text-[9px] font-mono uppercase tracking-[0.14em] text-text-muted">
+          <p className="text-4xs font-mono uppercase tracking-cyber-sm text-text-muted">
             disclosures
           </p>
           <p
@@ -179,7 +180,7 @@ function ProjectCard({
           </p>
         </div>
         <div className="bg-surface px-4 py-3">
-          <p className="text-[9px] font-mono uppercase tracking-[0.14em] text-text-muted">
+          <p className="text-4xs font-mono uppercase tracking-cyber-sm text-text-muted">
             activity
           </p>
           <p className="mt-0.5 text-xs font-mono text-foreground truncate leading-none pt-1">
@@ -192,7 +193,7 @@ function ProjectCard({
       <div className="relative flex items-center justify-between gap-2 px-5 py-2.5 border-t border-border bg-base/40">
         <div className="min-w-0 flex-1">
           {project.latest_disclosure_status ? (
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-text-muted">
+            <span className="inline-flex items-center gap-1.5 text-3xs font-mono uppercase tracking-wider text-text-muted">
               <PaperPlaneTilt className="h-3 w-3" />
               {project.latest_disclosure_status}
               {(project.disclosure_submission_count ?? 0) > 1 && (
@@ -202,7 +203,7 @@ function ProjectCard({
               )}
             </span>
           ) : (
-            <span className="text-[10px] font-mono text-text-muted/60">
+            <span className="text-3xs font-mono text-text-muted/60">
               created {formatDate(project.created_at)}
             </span>
           )}
@@ -352,7 +353,7 @@ export function ProjectsPage() {
 
       {/* ── Action bar ──────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[220px] max-w-md">
+        <div className="relative flex-1 max-w-md" style={{ minWidth: 220 }}>
           <MagnifyingGlass
             className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted pointer-events-none"
           />
@@ -388,7 +389,7 @@ export function ProjectsPage() {
           <option value="name">name</option>
           <option value="findings">findings</option>
         </select>
-        <span className="text-[11px] font-mono text-text-muted ml-auto">
+        <span className="text-2xs font-mono text-text-muted ml-auto">
           {filteredProjects.length}
           <span className="text-text-muted/50"> / {projects.length}</span>
         </span>

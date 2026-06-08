@@ -83,7 +83,7 @@ export function MitigationsRibbon({
         </AilaBadge>
       ))}
       {m.notes && (
-        <span className="text-[10px] text-text-muted italic ml-2">
+        <span className="text-3xs text-text-muted italic ml-2">
           {m.notes}
         </span>
       )}

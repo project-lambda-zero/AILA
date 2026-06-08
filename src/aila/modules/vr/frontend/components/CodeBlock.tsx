@@ -64,17 +64,17 @@ export function CodeBlock({ code: rawCode, filePath = "", address, className = "
     <div className={`rounded-md border border-border-default/40 overflow-hidden ${className}`}>
       {(filePath || address) && (
         <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-elevated/80 border-b border-border-default/40">
-          <span className="text-[11px] font-mono text-foreground/80 truncate">
+          <span className="text-2xs font-mono text-foreground/80 truncate">
             {filePath || address}
           </span>
-          <span className="text-[9px] font-mono text-text-muted uppercase tracking-wider shrink-0">
+          <span className="text-4xs font-mono text-text-muted uppercase tracking-wider shrink-0">
             {lang}
           </span>
         </div>
       )}
       <Suspense
         fallback={
-          <pre className="p-3 text-[11px] font-mono text-foreground/80 whitespace-pre-wrap bg-elevated/40">
+          <pre className="p-3 text-2xs font-mono text-foreground/80 whitespace-pre-wrap bg-elevated/40">
             {displayCode}
           </pre>
         }
@@ -113,7 +113,7 @@ export function CodeBlock({ code: rawCode, filePath = "", address, className = "
         <button
           type="button"
           onClick={() => setCollapsed((v) => !v)}
-          className="w-full py-1 text-[10px] font-mono uppercase tracking-wider text-text-muted hover:text-foreground bg-elevated/60 border-t border-border-default/40"
+          className="w-full py-1 text-3xs font-mono uppercase tracking-wider text-text-muted hover:text-foreground bg-elevated/60 border-t border-border-default/40"
         >
           {collapsed ? `expand (+${(code.length - 2000).toLocaleString()} chars)` : "collapse"}
         </button>

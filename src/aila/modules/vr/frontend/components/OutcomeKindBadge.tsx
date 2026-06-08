@@ -107,7 +107,7 @@ export function OutcomeKindBadge({
     >
       <Icon size={14} weight="bold" />
       {showLabel && (
-        <span className="text-[11px] font-medium">{meta.label}</span>
+        <span className="text-2xs font-medium">{meta.label}</span>
       )}
     </span>
   );

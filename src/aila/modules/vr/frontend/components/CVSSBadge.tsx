@@ -169,7 +169,7 @@ export function CVSSBreakdown({
       <div className="flex items-center gap-2 flex-wrap">
         <CVSSBadge score={score} vector={vector} source={source} />
         {vector && (
-          <code className="text-[10px] font-mono text-text-muted break-all">
+          <code className="text-3xs font-mono text-text-muted break-all">
             {vector}
           </code>
         )}
@@ -193,7 +193,7 @@ export function CVSSBreakdown({
                   {valueSpec ? (
                     <span>
                       <strong>{valueSpec.label}</strong>
-                      <span className="text-text-muted ml-2 font-sans text-[10px]">
+                      <span className="text-text-muted ml-2 font-sans text-3xs">
                         {valueSpec.description}
                       </span>
                     </span>
@@ -206,7 +206,7 @@ export function CVSSBreakdown({
           })}
         </tbody>
       </table>
-      <p className="text-[10px] text-text-muted">
+      <p className="text-3xs text-text-muted">
         Severity: <span className="uppercase font-semibold">{sev}</span>
         {score != null && ` · Score: ${score.toFixed(1)}`}
       </p>
@@ -231,10 +231,10 @@ export function CWEBadge({
       target="_blank"
       rel="noopener noreferrer"
       title={name ?? `Open ${cweId} on cwe.mitre.org`}
-      className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface border border-border-default text-foreground hover:bg-surface-hover"
+      className="inline-flex items-center gap-1 text-3xs font-mono px-1.5 py-0.5 rounded bg-surface border border-border-default text-foreground hover:bg-surface-hover"
     >
       {cweId}
-      {name && <span className="text-text-muted truncate max-w-[18ch]">— {name}</span>}
+      {name && <span className="text-text-muted truncate" style={{ maxWidth: "18ch" }}>— {name}</span>}
     </a>
   );
 }

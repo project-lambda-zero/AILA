@@ -58,7 +58,7 @@ export function HexView({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2 flex-wrap text-[10px] text-text-muted font-mono">
+      <div className="flex items-center justify-between gap-2 flex-wrap text-3xs text-text-muted font-mono">
         <span>
           {bytes.byteLength.toLocaleString()} bytes
           {filename && <span className="ml-2">· {filename}</span>}
@@ -66,12 +66,12 @@ export function HexView({
         <button
           type="button"
           onClick={downloadBytes}
-          className="px-2 py-0.5 text-[10px] font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
+          className="px-2 py-0.5 text-3xs font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
         >
           Download
         </button>
       </div>
-      <pre className="text-[10px] font-mono p-3 rounded bg-surface border border-border-default overflow-x-auto max-h-96 overflow-y-auto leading-relaxed">
+      <pre className="text-3xs font-mono p-3 rounded bg-surface border border-border-default overflow-x-auto max-h-96 overflow-y-auto leading-relaxed">
         {rows.map((row) => (
           <div key={row.offset}>
             <span className="text-text-muted">
@@ -90,7 +90,7 @@ export function HexView({
         <button
           type="button"
           onClick={() => setShowAll(true)}
-          className="text-[10px] font-mono px-2 py-0.5 rounded bg-surface border border-border-default hover:bg-surface-hover"
+          className="text-3xs font-mono px-2 py-0.5 rounded bg-surface border border-border-default hover:bg-surface-hover"
         >
           Show all {bytes.byteLength.toLocaleString()} bytes
         </button>

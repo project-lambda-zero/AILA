@@ -40,12 +40,12 @@ export function FuzzProposalsPanel({
         <h2 className="text-sm font-semibold text-foreground">
           Fuzz proposals
         </h2>
-        <p className="text-[10px] text-text-muted mt-0.5">
+        <p className="text-3xs text-text-muted mt-0.5">
           Agent-authored — operator decides. Accept ships the harness,
           builds it on the workstation, and launches the fuzzer.
         </p>
       </div>
-      <span className="text-[10px] text-text-muted font-mono">
+      <span className="text-3xs text-text-muted font-mono">
         {proposals.length} pending
       </span>
     </div>
@@ -105,7 +105,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
             <span className="font-mono text-sm text-foreground">
               {proposal.profile}
             </span>
-            <span className="text-[10px] text-text-muted">→</span>
+            <span className="text-3xs text-text-muted">→</span>
             <span className="font-mono text-xs text-foreground">
               {descriptorKey}
             </span>
@@ -156,14 +156,14 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="text-[10px] text-accent hover:underline"
+            className="text-3xs text-accent hover:underline"
           >
             {expanded ? "▾ collapse" : "▸ overrides"}
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] font-mono text-text-muted">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-3xs font-mono text-text-muted">
         <div>
           <div className="text-text-muted">engine</div>
           <div className="text-foreground">{proposal.suggested_engine_id ?? "—"}</div>
@@ -239,7 +239,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
           <button
             type="button"
             onClick={() => setShowHarness((v) => !v)}
-            className="text-[10px] text-accent hover:underline"
+            className="text-3xs text-accent hover:underline"
           >
             {showHarness ? "▾ hide harness" : "▸ show harness + build + seeds"}
           </button>
@@ -247,7 +247,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
             <div className="space-y-2">
               {hasHarness ? (
                 <div>
-                  <p className="text-[10px] text-text-muted mb-1">
+                  <p className="text-3xs text-text-muted mb-1">
                     Harness ({harnessLang})
                   </p>
                   <SyntaxHighlighter
@@ -256,14 +256,14 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                   />
                 </div>
               ) : (
-                <p className="text-[10px] text-amber-500 font-mono">
+                <p className="text-3xs text-amber-500 font-mono">
                   Agent did not author a harness — proposal cannot be
                   accepted until harness_source is filled.
                 </p>
               )}
               {hasBuild && (
                 <div>
-                  <p className="text-[10px] text-text-muted mb-1">
+                  <p className="text-3xs text-text-muted mb-1">
                     Build command
                   </p>
                   <pre className="text-xs font-mono p-2 rounded bg-surface border border-border-default overflow-x-auto">
@@ -273,10 +273,10 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
               )}
               {seedCount > 0 && (
                 <div>
-                  <p className="text-[10px] text-text-muted mb-1">
+                  <p className="text-3xs text-text-muted mb-1">
                     Seed corpus ({seedCount})
                   </p>
-                  <ul className="text-[10px] font-mono space-y-0.5">
+                  <ul className="text-3xs font-mono space-y-0.5">
                     {proposal.seed_corpus.map((s) => (
                       <li
                         key={s.filename}
@@ -296,7 +296,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
               )}
               {hasDict && (
                 <div>
-                  <p className="text-[10px] text-text-muted mb-1">
+                  <p className="text-3xs text-text-muted mb-1">
                     Dictionary
                   </p>
                   <pre className="text-xs font-mono p-2 rounded bg-surface border border-border-default overflow-x-auto max-h-32">

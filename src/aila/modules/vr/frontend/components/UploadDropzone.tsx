@@ -90,7 +90,7 @@ export function UploadDropzone({
         </label>
       </p>
       {hint && (
-        <p className="text-[10px] text-text-muted mt-2 font-mono">{hint}</p>
+        <p className="text-3xs text-text-muted mt-2 font-mono">{hint}</p>
       )}
     </div>
   );

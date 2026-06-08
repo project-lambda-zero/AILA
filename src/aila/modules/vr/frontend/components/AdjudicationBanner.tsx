@@ -68,7 +68,7 @@ export function AdjudicationBanner({ result }: { result: AdjudicationResult }) {
         <p className="text-xs text-foreground mt-1">{result.reason}</p>
       )}
       {result.hedge_phrases && result.hedge_phrases.length > 0 && (
-        <p className="text-[10px] text-text-muted mt-1">
+        <p className="text-3xs text-text-muted mt-1">
           Hedge phrases:{" "}
           <code className="text-amber-300">
             {result.hedge_phrases.join(", ")}
@@ -76,7 +76,7 @@ export function AdjudicationBanner({ result }: { result: AdjudicationResult }) {
         </p>
       )}
       {result.unmet_obligations && result.unmet_obligations.length > 0 && (
-        <ul className="text-[10px] text-text-muted mt-1 list-disc ml-4">
+        <ul className="text-3xs text-text-muted mt-1 list-disc ml-4">
           {result.unmet_obligations.map((o) => (
             <li key={o}>{o}</li>
           ))}

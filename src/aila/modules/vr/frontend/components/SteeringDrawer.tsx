@@ -69,13 +69,13 @@ export function SteeringDrawer({
         className="flex-1 bg-black/40 backdrop-blur-sm"
       />
       {/* Drawer */}
-      <aside className="w-full max-w-[480px] h-full bg-base border-l border-border-default overflow-y-auto">
+      <aside className="w-full h-full bg-base border-l border-border-default overflow-y-auto" style={{ maxWidth: 480 }}>
         <header className="sticky top-0 z-10 px-4 py-3 bg-base border-b border-border-default flex items-center justify-between">
           <div>
             <h2 className="text-sm font-bold font-mono text-foreground">
               Steering
             </h2>
-            <p className="text-[10px] text-text-muted mt-0.5">
+            <p className="text-3xs text-text-muted mt-0.5">
               Modify what the engine sees next turn. All edits are audit-logged.
             </p>
           </div>
@@ -276,7 +276,7 @@ function ComingSection({
           backend pending
         </AilaBadge>
       </div>
-      <p className="text-[10px] text-text-muted leading-relaxed" id={`coming-${id}`}>
+      <p className="text-3xs text-text-muted leading-relaxed" id={`coming-${id}`}>
         {description}
       </p>
     </div>

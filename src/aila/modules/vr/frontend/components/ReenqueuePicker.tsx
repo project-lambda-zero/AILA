@@ -49,7 +49,8 @@ export function ReenqueuePicker({
         value={picked}
         onChange={(e) => setPicked(e.target.value as InvestigationKindOverride | "")}
         disabled={mutation.isPending}
-        className="text-xs px-2 py-1.5 rounded-md bg-surface border border-border-default text-foreground disabled:opacity-50 max-w-[10rem] truncate"
+        className="text-xs px-2 py-1.5 rounded-md bg-surface border border-border-default text-foreground disabled:opacity-50 truncate"
+        style={{ maxWidth: "10rem" }}
         title="Optionally convert to a different kind before re-enqueueing"
       >
         <option value="">keep: {currentKind}</option>
