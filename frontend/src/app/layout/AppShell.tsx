@@ -5,6 +5,7 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { CommandPalette } from "@/components/shell/CommandPalette";
 import { OfflineBanner } from "@/components/shell/OfflineBanner";
 import { OnboardingWizard } from "@platform/features/onboarding";
+import { buildIdentity } from "@platform/config/version";
 import { AppSidebar } from "./AppSidebar";
 import { AppHeader } from "./AppHeader";
 
@@ -67,6 +68,23 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
         >
           {children}
         </main>
+        {/*
+          B13 — low-prominence contentinfo footer. Renders the app
+          version + short git SHA so a reviewer / support engineer can
+          identify the exact build from a screenshot. Kept inside
+          SidebarInset so the sidebar overlay doesn't paint over it.
+          `text-text-muted` + small monospace keeps it out of the
+          visual hierarchy; `aria-label` distinguishes it from any
+          page-owned footer a child route might render.
+        */}
+        <footer
+          aria-label="Application info"
+          className="shrink-0 border-t border-border bg-surface px-4 py-2 font-mono text-2xs text-text-muted"
+        >
+          <span>AILA</span>
+          <span className="mx-2 select-none" aria-hidden>·</span>
+          <span>{buildIdentity}</span>
+        </footer>
       </SidebarInset>
       {/* CommandPalette renders via portal — outside layout flow (D-09, D-10) */}
       <CommandPalette />
