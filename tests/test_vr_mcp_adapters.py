@@ -227,12 +227,17 @@ class TestAdaptGeneric:
         assert out.payload["data"] is raw
         assert out.payload["source_provenance"]["call_id"] == "call-1"
 
-    def test_observables_bounded(self) -> None:
+    def test_observable_includes_full_preview(self) -> None:
+        # The generic adapter no longer truncates per-call (commit
+        # 7ee32a7 — MAX_OBS_DUMP_CHARS bumped to 100MB). Inputs well
+        # below the cap surface verbatim in the observable so the
+        # agent never has to issue a follow-up read to see the tail.
         raw = {"results": ["X" * 100 for _ in range(100)]}
         out = adapt_generic(raw, _ctx(tool="search_pattern"))
         obs = out.observables_delta["ida_headless.search_pattern"]
-        assert "truncated" in obs
-        assert len(obs) < 6000
+        assert "truncated" not in obs
+        # All 100 entries × 100 X's land in the JSON dump verbatim.
+        assert obs.count("X" * 100) == 100
 
     def test_summary_includes_status_and_counts(self) -> None:
         raw = {"status": "ready", "total": 42}
@@ -277,12 +282,17 @@ class TestAdaptDecompile:
         assert key in out.observables_delta
         assert "int main()" in out.observables_delta[key]
 
-    def test_truncates_long_pseudocode(self) -> None:
+    def test_preserves_long_pseudocode_verbatim(self) -> None:
+        # Per the 2026-05-24 "remove per-tool-call observable truncation"
+        # decision (commit 7ee32a7), per-value caps were bumped to 100MB
+        # so the agent never sees a truncated load-bearing branch. The
+        # observable carries the full body verbatim — no truncation
+        # marker, no banner — up to that hard floor.
         raw = {"function_name": "huge", "pseudocode": "X" * 5000}
         out = adapt_decompile(raw, _ctx())
         obs = out.observables_delta["ida_headless.decompile.decompiled.huge"]
-        assert "truncated" in obs
-        assert len(obs) < 5000
+        assert "truncated" not in obs
+        assert obs == "X" * 5000
 
     def test_missing_fields_recover(self) -> None:
         raw = {"status": "ready"}
@@ -653,20 +663,38 @@ class TestAdaptCapaScan:
 
 class TestAdaptAttackSurface:
     def test_basic(self) -> None:
+        # Canonical audit_mcp shape: ``entrypoints`` list with
+        # ``node_id``/``kind``/``trust_level``/``asset_value``/``description``.
+        # The adapter groups by ``kind`` and renders a per-kind section
+        # with trust/asset distribution. Legacy ``surfaces|entries|results``
+        # keys still parse through ``_list_or_empty`` for older fixtures.
         raw = {
-            "surfaces": [
-                {"name": "http_handle_request", "kind": "http_route",
-                 "file": "main.c", "line": 100},
-                {"name": "rpc_dispatch", "kind": "rpc_handler"},
+            "entrypoints": [
+                {"node_id": "http_handle_request", "kind": "http_route",
+                 "trust_level": "untrusted", "asset_value": "high",
+                 "description": "primary HTTP request entry"},
+                {"node_id": "rpc_dispatch", "kind": "rpc_handler",
+                 "trust_level": "internal", "asset_value": "medium"},
             ],
         }
         ctx = _ctx(server="audit_mcp", tool="attack_surface", index_id="x")
         out = adapt_attack_surface(raw, ctx)
         assert out.payload_kind == PayloadKind.TEXT
         obs = out.observables_delta["audit_mcp.attack_surface"]
+        # Header line: total count + by-kind breakdown
+        assert "2 entry point(s) across 2 kind(s)" in obs
+        # Per-kind section heading
+        assert "## http_route (1)" in obs
+        assert "## rpc_handler (1)" in obs
+        # Both entries rendered with their node_id
         assert "http_handle_request" in obs
-        assert "main.c:100" in obs
-        assert "[rpc_handler]" in obs
+        assert "rpc_dispatch" in obs
+        # Trust / asset surfaced per kind
+        assert "untrusted" in obs
+        assert "high" in obs
+        # Payload exposes total + by_kind aggregation for downstream UI
+        assert out.payload["total"] == 2
+        assert out.payload["by_kind"] == {"http_route": 1, "rpc_handler": 1}
 
 
 class TestAdaptComplexityHotspots:
