@@ -145,6 +145,17 @@ class VRTargetSummary(BaseModel):
             "the backend-internal mcp_handles_json — never settable directly."
         ),
     )
+    android_package_name: str | None = Field(
+        default=None,
+        description=(
+            "For kind=android_apk only: the Android application package id "
+            "(e.g. 'com.examplecorp.selfservis') discovered by android-mcp's "
+            "androguard_summary during STATIC_SUMMARY. None until that stage "
+            "completes. Projected from mcp_handles_json.android_mcp_package_name "
+            "— never settable directly. Frontend uses this as the row "
+            "label once it is populated."
+        ),
+    )
     primary_language: str | None = None
     secondary_languages: list[str] = Field(default_factory=list)
     status: TargetStatus
