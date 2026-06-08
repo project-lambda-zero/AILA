@@ -438,6 +438,7 @@ function NotesTab({ targetId }: { targetId: string }) {
       onBlur={save}
       rows={10}
       placeholder="Free-text notes about this target. Stays in your browser until the backend per-target notes API ships."
+      aria-label="Operator notes"
       className="w-full px-3 py-2 text-sm font-mono rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
     />
     <p className="text-3xs text-text-muted mt-1">
@@ -608,6 +609,7 @@ export function TargetDetailPage() {
             ref={fileInputRef}
             type="file"
             className="hidden"
+            aria-label="Upload target file"
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) uploadMut.mutate(f);

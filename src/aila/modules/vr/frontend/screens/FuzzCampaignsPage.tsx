@@ -49,6 +49,7 @@ export function FuzzCampaignsPage() {
         <select
           value={workspaceFilter}
           onChange={(e) => setWorkspaceFilter(e.target.value)}
+          aria-label="Filter by workspace"
           className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
         >
           <option value="">— all —</option>
@@ -63,6 +64,7 @@ export function FuzzCampaignsPage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as CampaignStatus | "")}
+          aria-label="Filter by status"
           className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
         >
           <option value="">— all —</option>

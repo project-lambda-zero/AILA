@@ -1016,6 +1016,7 @@ export function InvestigationDetailPage() {
                   }}
                   placeholder="e.g. 'try the JSPI base address path' or 'that hypothesis is wrong because…'  (⌘↵ to send)"
                   rows={3}
+                  aria-label="Operator message composer"
                   className="flex-1 px-3 py-2.5 text-sm font-mono bg-transparent text-foreground placeholder-text-muted/60 focus:outline-none resize-none rounded-lg"
                 />
                 <button

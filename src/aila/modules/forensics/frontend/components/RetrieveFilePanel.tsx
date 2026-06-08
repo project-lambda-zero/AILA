@@ -62,6 +62,7 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
     
     <form onSubmit={onSubmit} className="space-y-2">
       <Input
+        aria-label="Virtual file path"
         type="text"
         value={virtualPath}
         onChange={(e) => setVirtualPath(e.target.value)}
@@ -74,6 +75,7 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
     
       {diskImages.length > 1 && (
         <select
+          aria-label="Select disk image"
           value={evidenceId}
           onChange={(e) => setEvidenceId(e.target.value)}
           disabled={retrieveMut.isPending}

@@ -131,6 +131,7 @@ function QuestionInput({ question, answersMap, subtaskLookup, onAnswer, onAssist
     // Non-compliance options → select
     inputElement = (
       <SelectInput
+        id={question.id}
         options={question.options}
         value={currentValue}
         onChange={handleValueChange}
@@ -140,6 +141,7 @@ function QuestionInput({ question, answersMap, subtaskLookup, onAnswer, onAssist
     // Free text / textarea
     inputElement = (
       <TextInput
+        id={question.id}
         value={currentValue ?? ""}
         onChange={handleValueChange}
         maxLength={question.max_length ?? undefined}

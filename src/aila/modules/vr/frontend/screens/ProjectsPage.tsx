@@ -362,6 +362,7 @@ export function ProjectsPage() {
             placeholder="Search by name or CVE…"
             value={searchText}
             onChange={(e) => updateFilter("q", e.target.value)}
+            aria-label="Search projects by name or CVE"
             className="w-full pl-9 pr-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
           />
         </div>

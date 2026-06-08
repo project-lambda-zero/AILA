@@ -143,6 +143,7 @@ export function TargetsPage() {
           <select
             value={formWorkspaceId}
             onChange={(e) => setFormWorkspaceId(e.target.value)}
+            aria-label="Workspace"
             className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
           >
             <option value="">— select workspace —</option>
@@ -157,6 +158,7 @@ export function TargetsPage() {
             value={formDisplayName}
             onChange={(e) => setFormDisplayName(e.target.value)}
             placeholder="Display name (e.g. 'V8 d8 (chromium 148)')"
+            aria-label="Display name"
             className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
           />
           <div className="flex gap-2">
@@ -167,6 +169,7 @@ export function TargetsPage() {
                 setFormKind(newKind);
                 setFormDescriptorJson(DESCRIPTOR_TEMPLATES[newKind]);
               }}
+              aria-label="Target kind"
               className="px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
             >
               {TARGET_KINDS.map((k) => (
@@ -180,6 +183,7 @@ export function TargetsPage() {
               value={formPrimaryLanguage}
               onChange={(e) => setFormPrimaryLanguage(e.target.value)}
               placeholder="primary_language (c / c++ / rust / go / javascript / java / kotlin / python / …)"
+              aria-label="Primary language"
               className="flex-1 px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
             />
           </div>
@@ -188,6 +192,7 @@ export function TargetsPage() {
             onChange={(e) => setFormDescriptorJson(e.target.value)}
             placeholder='descriptor JSON, e.g. {"binary_path": "/var/lib/aila/uploads/d8"}'
             rows={3}
+            aria-label="Descriptor JSON"
             className="w-full px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
           />
           <div className="flex gap-2">
@@ -235,8 +240,9 @@ export function TargetsPage() {
       )}
 
       <AilaCard  techBorder glow><div className="flex items-center gap-2">
-        <label className="text-sm text-text-muted">Filter workspace:</label>
+        <label htmlFor="target-workspace-filter" className="text-sm text-text-muted">Filter workspace:</label>
         <select
+          id="target-workspace-filter"
           value={workspaceFilter}
           onChange={(e) => setWorkspaceFilter(e.target.value)}
           className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"

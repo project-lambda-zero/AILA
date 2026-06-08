@@ -54,6 +54,7 @@ export function DisclosuresPage() {
         <select
           value={trackFilter}
           onChange={(e) => setTrackFilter(e.target.value)}
+          aria-label="Filter by track"
           className="px-3 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
         >
           <option value="">— all —</option>
@@ -70,6 +71,7 @@ export function DisclosuresPage() {
           onChange={(e) =>
             setStatusFilter(e.target.value as DisclosureSubmissionStatus | "")
           }
+          aria-label="Filter by status"
           className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
         >
           <option value="">— all —</option>

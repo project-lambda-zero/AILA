@@ -169,6 +169,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
       {/* Controls: search + type chips */}
       <div className="flex flex-wrap items-center gap-2">
         <input
+          aria-label="Search evidence by path or sha256"
           type="text"
           placeholder="Search path or sha256..."
           value={filterText}

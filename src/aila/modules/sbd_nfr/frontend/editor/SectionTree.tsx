@@ -76,6 +76,7 @@ function InlineLabel({ value, onSave, className }: InlineLabelProps) {
     return (
       <span className="flex items-center gap-1">
         <input
+          aria-label="Rename node"
           autoFocus
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

@@ -62,6 +62,7 @@ export function WorkspacesPage() {
             value={formName}
             onChange={(e) => setFormName(e.target.value)}
             placeholder="Name (e.g. 'Browser engines')"
+            aria-label="Workspace name"
             className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
           />
           <input
@@ -72,6 +73,7 @@ export function WorkspacesPage() {
             }
             placeholder="Slug (URL-safe, e.g. 'browser-engines')"
             pattern="[a-z0-9][a-z0-9_-]*"
+            aria-label="Workspace slug"
             className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
           />
           <textarea
@@ -79,11 +81,13 @@ export function WorkspacesPage() {
             onChange={(e) => setFormDescription(e.target.value)}
             placeholder="Description (optional)"
             rows={2}
+            aria-label="Workspace description"
             className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
           />
           <div className="flex gap-2 items-center">
-            <label className="text-sm text-text-muted">Theme:</label>
+            <label htmlFor="ws-theme" className="text-sm text-text-muted">Theme:</label>
             <select
+              id="ws-theme"
               value={formTheme}
               onChange={(e) => setFormTheme(e.target.value as WorkspaceTheme)}
               className="px-3 py-2 text-sm rounded-md bg-surface border border-border-default"

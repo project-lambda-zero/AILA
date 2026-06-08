@@ -66,6 +66,7 @@ export function PatternsPage() {
         <select
           value={workspaceFilter}
           onChange={(e) => setWorkspaceFilter(e.target.value)}
+          aria-label="Filter by workspace"
           className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
         >
           <option value="">— all —</option>
@@ -80,6 +81,7 @@ export function PatternsPage() {
         <select
           value={kindFilter}
           onChange={(e) => setKindFilter(e.target.value as PatternKind | "")}
+          aria-label="Filter by kind"
           className="px-3 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
         >
           <option value="">— all —</option>
@@ -94,6 +96,7 @@ export function PatternsPage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as PatternStatus | "")}
+          aria-label="Filter by status"
           className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
         >
           <option value="">— all —</option>
@@ -108,6 +111,7 @@ export function PatternsPage() {
         <select
           value={scopeFilter}
           onChange={(e) => setScopeFilter(e.target.value as PatternScope | "")}
+          aria-label="Filter by scope"
           className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
         >
           <option value="">— all —</option>

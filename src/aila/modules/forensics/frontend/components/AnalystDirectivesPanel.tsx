@@ -121,6 +121,7 @@ export function AnalystDirectivesPanel({
     <>
     <form onSubmit={onSubmit} className="space-y-2 mb-4 mt-3">
       <Textarea
+        aria-label="New analyst directive"
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={placeholder}

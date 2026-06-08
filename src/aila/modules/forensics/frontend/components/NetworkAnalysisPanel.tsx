@@ -518,6 +518,7 @@ function DataTable({
     <div>
       <div className="px-3 py-2 border-b border-border bg-surface-secondary/50 flex items-center gap-3">
         <input
+          aria-label="Filter network rows"
           type="text"
           placeholder="Filter rows..."
           value={filterText}

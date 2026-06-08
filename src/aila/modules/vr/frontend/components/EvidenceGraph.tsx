@@ -384,6 +384,7 @@ export function EvidenceGraph({
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           placeholder="search labels…"
+          aria-label="Search evidence graph"
           className="ml-auto px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border-default"
         />
         <button

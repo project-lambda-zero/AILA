@@ -197,6 +197,7 @@ export function PatternDetailPage() {
           <input
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
+            aria-label="Pattern summary"
             className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
             placeholder="One-sentence summary"
           />
@@ -204,12 +205,14 @@ export function PatternDetailPage() {
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={12}
+            aria-label="Pattern body"
             className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
             placeholder="Full body with code/queries/output"
           />
           <select
             value={confidence}
             onChange={(e) => setConfidence(e.target.value as PatternConfidence)}
+            aria-label="Pattern confidence"
             className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
           >
             {(["exact", "strong", "medium", "caveated", "unknown"] as PatternConfidence[]).map(

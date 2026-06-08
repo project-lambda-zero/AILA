@@ -190,6 +190,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3">
         <input
+          aria-label="Search timeline events and occurrences"
           type="text"
           placeholder="Search events & occurrences..."
           value={filterText}

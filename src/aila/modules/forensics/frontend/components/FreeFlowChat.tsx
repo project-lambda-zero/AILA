@@ -36,6 +36,7 @@ export function FreeFlowChat({ projectId }: { projectId: string }) {
 
       <AilaCard  techBorder glow><div className="space-y-3">
         <textarea
+          aria-label="Question for the investigator"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="Ask a question about the evidence..."
@@ -44,8 +45,9 @@ export function FreeFlowChat({ projectId }: { projectId: string }) {
         />
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <label className="text-xs text-text-muted">Max attempts:</label>
+            <label className="text-xs text-text-muted" htmlFor="ffchat-max-attempts">Max attempts:</label>
             <input
+              id="ffchat-max-attempts"
               type="number"
               min={1}
               max={50}

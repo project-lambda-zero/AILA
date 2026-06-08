@@ -358,6 +358,7 @@ function RightPanel({
         <div className="px-4 py-2 border-t border-b border-amber-500/20 bg-sbd-input flex items-center gap-2">
           <MagnifyingGlass className="h-3.5 w-3.5 text-amber-400/60 shrink-0" />
           <input
+            aria-label="Search subtask components"
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
