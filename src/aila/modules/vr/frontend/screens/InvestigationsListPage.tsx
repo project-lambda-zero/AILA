@@ -23,6 +23,10 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
+import {
+  StaggeredItem,
+  StaggeredList,
+} from "@/components/aila/StaggeredList";
 
 import { OutcomeKindBadge, outcomeKindSeverity } from "../components/OutcomeKindBadge";
 import { DeleteButton } from "../components/DeleteButton";
@@ -145,7 +149,8 @@ function InvestigationCard({
   const dim = isCreated && !inv.is_favorite;
 
   return (
-    <li
+    <StaggeredItem
+      as="li"
       onClick={onOpen}
       className="group relative flex items-center gap-3 px-4 py-3 rounded-md border bg-surface hover:bg-elevated cursor-pointer transition-all"
       style={{
@@ -317,7 +322,7 @@ function InvestigationCard({
           aria-hidden
         />
       </div>
-    </li>
+    </StaggeredItem>
   );
 }
 
@@ -1029,7 +1034,7 @@ export function InvestigationsListPage() {
 
       {/* Card list — either flat or grouped by target */}
       {!isLoading && !isError && sorted.length > 0 && !groupByTarget && (
-        <ul className="flex flex-col gap-2">
+        <StaggeredList as="ul" className="flex flex-col gap-2">
           {sorted.map((inv) => (
             <InvestigationCard
               key={inv.id}
@@ -1042,7 +1047,7 @@ export function InvestigationsListPage() {
               deleteMut={deleteMut}
             />
           ))}
-        </ul>
+        </StaggeredList>
       )}
 
       {!isLoading && !isError && sorted.length > 0 && groupByTarget && (
@@ -1091,7 +1096,7 @@ export function InvestigationsListPage() {
                   />
                 </button>
                 {!collapsed && (
-                  <ul className="flex flex-col gap-2">
+                  <StaggeredList as="ul" className="flex flex-col gap-2">
                     {items.map((inv) => (
                       <InvestigationCard
                         key={inv.id}
@@ -1104,7 +1109,7 @@ export function InvestigationsListPage() {
                         deleteMut={deleteMut}
                       />
                     ))}
-                  </ul>
+                  </StaggeredList>
                 )}
               </section>
             );
