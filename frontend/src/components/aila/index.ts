@@ -11,7 +11,7 @@
  */
 
 export { AilaCard, ailaCardVariants } from "./AilaCard"
-export type { AilaCardProps, AilaCardVariants } from "./AilaCard"
+export type { AilaCardProps, AilaCardVariants, AilaCardDecoration } from "./AilaCard"
 
 export { AilaBadge, ailaBadgeVariants } from "./AilaBadge"
 export type { AilaBadgeProps, AilaBadgeVariants } from "./AilaBadge"
