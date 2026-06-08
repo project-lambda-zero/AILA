@@ -381,21 +381,32 @@ export function TargetsPage() {
 
 // ─── RefreshSourceButton ────────────────────────────────────────────
 //
-// Per-row action: re-fetch upstream git for the target's audit-mcp
-// index and rebuild when HEAD moved. Only enabled for git-backed
-// target kinds (source_repo / patch_diff / cve) that have a complete
-// ingestion (analysis_state == "ready"). Backend returns HTTP 409 if
-// the target lacks an audit_mcp_index_id; the toast surfaces that
-// message verbatim.
+// Per-row action: re-run a target's ingestion. For git-backed kinds
+// (source_repo / patch_diff / cve) this hits audit-mcp's refresh_index
+// — idempotent when upstream did not move. For android_apk targets
+// it resets the apktool / jadx / index-decompiled / static-summary /
+// mobsf stages back to PENDING and re-enqueues the staged-analysis
+// worker. Only enabled when analysis_state == "ready". Backend
+// returns HTTP 409 if a git-backed target lacks an
+// audit_mcp_index_id; the toast surfaces that message verbatim.
 //
 // Shift-click forces a full rebuild even when the SHA didn't change
 // (use after a trailmark/semble upgrade where the on-disk format
-// shifted). Default click = normal idempotent refresh.
+// shifted). For android_apk the force flag is informational only —
+// the staged-analysis worker always re-runs every reset stage.
 
 const GIT_BACKED_KINDS: ReadonlySet<TargetKind> = new Set([
   "source_repo",
   "patch_diff",
   "cve",
+]);
+
+// Union with android_apk so the refresh button is enabled for APK
+// targets too, with a different action path (stage reset + analyze
+// re-enqueue) wired in the backend's refresh-source endpoint.
+const REFRESHABLE_KINDS: ReadonlySet<TargetKind> = new Set<TargetKind>([
+  ...GIT_BACKED_KINDS,
+  "android_apk",
 ]);
 
 interface RefreshSourceButtonProps {
@@ -411,7 +422,7 @@ function RefreshSourceButton({
 }: RefreshSourceButtonProps) {
   const refreshMut = useRefreshTargetSource(targetId);
   const eligible =
-    GIT_BACKED_KINDS.has(kind) && analysisState === "ready";
+    REFRESHABLE_KINDS.has(kind) && analysisState === "ready";
   const isPending = refreshMut.isPending;
 
   const title = !eligible
@@ -425,9 +436,11 @@ function RefreshSourceButton({
       kind === "hypervisor_image" ||
       kind === "protocol_capture" ||
       kind === "crash_input"
-      ? `Refresh unavailable: ${kind} is not git-backed`
+      ? `Refresh unavailable: ${kind} has no refresh path`
       : `Refresh unavailable: analysis_state=${analysisState}`
-    : "Refresh source from upstream git (shift-click = force rebuild)";
+    : kind === "android_apk"
+      ? "Re-run apktool / jadx / static-summary / mobsf"
+      : "Refresh source from upstream git (shift-click = force rebuild)";
 
   return (
     <button
