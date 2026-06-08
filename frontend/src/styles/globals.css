@@ -2074,6 +2074,49 @@ a:hover {
 @utility grid-cols-key-value { grid-template-columns: max-content 1fr; }
 
 /* =====================================================================
+   AMBIENT DEPTH — soft radial-gradient mesh (A4)
+   ---------------------------------------------------------------------
+   Wrap a page-level surface in `.depth-mesh` to paint a faint
+   radial-gradient field behind its children. The mesh uses the active
+   theme's `--color-accent`, `--color-primary`, and `--color-accent-muted`
+   so every theme lights its own atmosphere automatically — synthwave
+   gets a pink/cyan haze, matrix glows green, vendetta bleeds soft red.
+   Scoped to a `.depth-mesh::before` pseudo-element so it cannot collide
+   with the body-level theme decorations (synthwave scanline, vaporwave
+   stipple, matrix rain, etc.) which already claim `body::before` /
+   `body::after` per-theme. Static — no animation, no reduced-motion
+   concern. Light mode gets a weaker opacity so the cards still lift
+   visibly off the surface.
+   ===================================================================== */
+
+.depth-mesh {
+  position: relative;
+  isolation: isolate;
+}
+
+.depth-mesh::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(70% 50% at 8% -8%,
+      color-mix(in srgb, var(--color-accent) 22%, transparent),
+      transparent 60%),
+    radial-gradient(60% 45% at 96% 4%,
+      color-mix(in srgb, var(--color-primary) 18%, transparent),
+      transparent 60%),
+    radial-gradient(85% 60% at 50% 112%,
+      color-mix(in srgb, var(--color-accent-muted, var(--color-accent)) 28%, transparent),
+      transparent 65%);
+  opacity: 0.6;
+}
+
+[data-mode="light"] .depth-mesh::before { opacity: 0.4; }
+
+
+/* =====================================================================
    UTILITIES — loading skeleton, focus ring, severity pulse
    ===================================================================== */
 
