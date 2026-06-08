@@ -56,6 +56,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
 )
+from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
 from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
 from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.contracts._common import utc_now
@@ -1594,6 +1595,38 @@ def _mcp_family_rule_for_kind(
             "index_id, the target's ingestion may not be complete "
             "(check analysis_state)."
         )
+    if k == "android_apk":
+        idx = handles.get("audit_mcp_decompiled_index_id")
+        apk_path = handles.get("android_mcp_apk_path")
+        parts: list[str] = []
+        if idx:
+            parts.append(
+                "For source-graph queries against the jadx-decompiled "
+                f"Java tree, use **audit_mcp** with `index_id=\"{idx}\"`."
+            )
+        else:
+            parts.append(
+                "For source-graph queries against the jadx-decompiled "
+                "Java tree, use **audit_mcp**. If you need an index_id, "
+                "the target's decompiled-index stage may still be "
+                "running (check analysis_state)."
+            )
+        if apk_path:
+            parts.append(
+                "For APK-specific facts — manifest, permissions, "
+                "signing certificates, behaviour classification, "
+                "MobSF / drozer / QARK / AndroBugs / LIEF / YARA — "
+                f"use **android_mcp** with `apk_path=\"{apk_path}\"`."
+            )
+        else:
+            parts.append(
+                "For APK-specific facts — manifest, permissions, "
+                "signing certificates, behaviour classification, "
+                "MobSF / drozer / QARK / AndroBugs / LIEF / YARA — "
+                "use **android_mcp**. The bridge will resolve the APK "
+                "path from the target descriptor automatically."
+            )
+        return "RULE: " + " ".join(parts)
     if k in {
         "native_binary", "apk", "ipa", "jar", "dotnet_assembly",
         "kernel_image", "kernel_module", "hypervisor_image",
@@ -1994,17 +2027,27 @@ _BINARY_KINDS = frozenset({
     "native_binary", "apk", "ipa", "jar", "dotnet_assembly",
     "kernel_image", "kernel_module", "hypervisor_image",
 })
+# F-2: android_apk targets need BOTH bridges — android_mcp for the
+# APK-specific surface (manifest, permissions, signing, behaviour
+# classification, MobSF, drozer, etc.) AND audit_mcp for source-graph
+# queries against the jadx-decompiled Java tree (the index_id lands in
+# mcp_handles_json.audit_mcp_decompiled_index_id from F-3).
+_ANDROID_KINDS = frozenset({"android_apk"})
 
 
 def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     """Return the MCP server ids the agent should consider given the
-    target's kind. Source repos resolve via audit-mcp; binary kinds
-    via ida_headless. Unknown / mixed kinds default to BOTH so the
-    agent isn't locked out of either path.
+    target's kind. Source repos resolve via audit-mcp; classic binary
+    kinds via ida_headless; android_apk gets the android_mcp bridge
+    PLUS audit_mcp (source-graph over the decompiled Java tree).
+    Unknown / mixed kinds default to every known bridge so the agent
+    isn't locked out of any path.
     """
     k = (target_kind or "").lower()
     if k in _SOURCE_REPO_KINDS:
         return {"audit_mcp"}
+    if k in _ANDROID_KINDS:
+        return {"android_mcp", "audit_mcp"}
     if k in _BINARY_KINDS:
         return {"ida_headless"}
     return set(KNOWN_TOOLS.keys())
@@ -2046,6 +2089,10 @@ async def _fetch_tool_specs(
         specs = await IDABridgeTool().list_tool_specs()
         allowed = tools_for_language("ida_headless", primary_language)
         out["ida_headless"] = [s for s in specs if s.get("name", "") in allowed]
+    if "android_mcp" in applicable:
+        specs = await AndroidMcpBridgeTool().list_tool_specs()
+        allowed = tools_for_language("android_mcp", primary_language)
+        out["android_mcp"] = [s for s in specs if s.get("name", "") in allowed]
     return out
 
 

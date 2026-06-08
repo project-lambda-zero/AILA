@@ -42,6 +42,40 @@ __all__ = ["AndroidMcpBridgeTool"]
 _log = logging.getLogger(__name__)
 
 
+def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
+    """Project an MCP tool catalog entry into the shape the prompt
+    builder + agent expect. Mirrors ``audit_mcp_bridge._compact_spec``
+    and ``ida_bridge._compact_spec`` — duplicated rather than imported
+    to keep ``tools/`` free of cross-bridge coupling (each bridge
+    stays independently swappable).
+    """
+    name = str(raw.get("name") or "")
+    description = str(raw.get("description") or "").strip()
+    schema = raw.get("parameters") or raw.get("inputSchema") or {}
+    properties = schema.get("properties") or {}
+    required = list(schema.get("required") or [])
+    params: list[dict[str, Any]] = []
+    for pname in sorted(properties.keys()):
+        pspec = properties[pname] or {}
+        entry: dict[str, Any] = {
+            "name": pname,
+            "type": pspec.get("type") or "any",
+            "required": pname in required,
+        }
+        if "default" in pspec:
+            entry["default"] = pspec["default"]
+        pdesc = pspec.get("description")
+        if pdesc:
+            entry["description"] = str(pdesc)[:240]
+        params.append(entry)
+    return {
+        "name": name,
+        "description": description[:400],
+        "params": params,
+        "required": required,
+    }
+
+
 class AndroidMcpBridgeTool(Tool):
     """HTTP bridge for android-mcp.
 
@@ -92,6 +126,12 @@ class AndroidMcpBridgeTool(Tool):
     # 900 s, static-summary 300 s, mobsf 1800 s) are tighter; this is
     # only the absolute network ceiling for one HTTP call.
     _DEFAULT_TIMEOUT_S: float = 1800.0
+
+    # Cached tool catalog. None until first ``list_tool_specs()`` call;
+    # then a list of ``_compact_spec`` dicts. Class-level so multiple
+    # bridge instances (tests, DI) share the same warm cache the way
+    # ``AuditMcpBridgeTool`` and ``IDABridgeTool`` do.
+    _SPEC_CACHE: list[dict[str, Any]] | None = None
 
     def __init__(
         self,
@@ -231,22 +271,54 @@ class AndroidMcpBridgeTool(Tool):
             }
 
     async def _list_tools(self) -> dict:
-        """Return android-mcp's tool catalog. Best-effort fallback."""
+        """Return android-mcp's tool catalog with parsed schemas."""
+        specs = await self.list_tool_specs()
+        return {
+            "status": "ready",
+            "tools": [s["name"] for s in specs],
+            "count": len(specs),
+            "specs": specs,
+        }
+
+    async def list_tool_specs(self) -> list[dict[str, Any]]:
+        """Fetch android-mcp's tool catalog with parsed schemas.
+
+        Cached per process at the class level so concurrent investigations
+        share one HTTP round-trip. On fetch failure we return an empty
+        list and cache it — the agent then sees a name-only listing
+        (from ``KNOWN_TOOLS``) without schemas instead of repeated
+        connect-error stalls per turn.
+        """
+        if self.__class__._SPEC_CACHE is not None:
+            return self.__class__._SPEC_CACHE
         base = await self._resolve_base_url()
+        url = f"{base}/tools"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(f"{base}/tools")
+                resp = await client.get(url)
             raw = resp.json()
         except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
-            _log.warning("android_mcp_bridge: tool listing failed: %s", exc)
-            return {"status": "error", "error": f"Tool listing failed: {exc}"}
-        if isinstance(raw, list):
-            return {
-                "status": "ready",
-                "tools": [t.get("name") for t in raw if isinstance(t, dict)],
-                "count": len(raw),
-            }
-        return {"status": "ready", "raw": raw}
+            _log.warning(
+                "android_mcp_bridge: catalog fetch failed (%s) — agent "
+                "will see name-only listing without schemas", exc,
+            )
+            self.__class__._SPEC_CACHE = []
+            return []
+        if not isinstance(raw, list):
+            _log.warning(
+                "android_mcp_bridge: /tools returned non-list payload "
+                "(%s) — treating as empty catalog", type(raw).__name__,
+            )
+            self.__class__._SPEC_CACHE = []
+            return []
+        self.__class__._SPEC_CACHE = [
+            _compact_spec(t) for t in raw if isinstance(t, dict)
+        ]
+        _log.info(
+            "android_mcp_bridge: catalog loaded — %d tools",
+            len(self.__class__._SPEC_CACHE),
+        )
+        return self.__class__._SPEC_CACHE
 
     async def health(self) -> dict:
         """Quick reachability check for machine readiness verification."""

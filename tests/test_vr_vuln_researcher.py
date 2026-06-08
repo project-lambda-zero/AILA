@@ -13,19 +13,24 @@ import json
 import pytest
 
 from aila.modules.vr.agents.vuln_researcher import (
+    _applicable_servers_for_kind,
     _decision_to_message_payload,
     _decode_case_state,
     _encode_case_state,
-    _load_prompt,
-    _outcome_payload,
     _fetch_tool_specs,
     _format_param,
+    _load_prompt,
+    _mcp_family_rule_for_kind,
+    _outcome_payload,
     _render_available_tools_section,
     _render_operator_messages_section,
     _terminal_outcome_kind,
     _to_outcome_confidence,
 )
 from aila.modules.vr.contracts import OutcomeConfidence, OutcomeKind, PayloadKind
+from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
+from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
+from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.contracts.reasoning import (
     EvidenceProvenance,
     Hypothesis,
@@ -428,3 +433,122 @@ class TestFetchToolSpecs:
         assert "audit_mcp" not in out
         assert ida_calls == ["hit"]
         assert audit_calls == []
+
+
+    @pytest.mark.asyncio
+    async def test_android_apk_hits_both_android_and_audit_mcp(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """F-2: android_apk targets need both android_mcp (APK facts:
+        manifest, perms, signing, behaviour classification) AND
+        audit_mcp (source-graph over the decompiled Java tree).
+        ida_headless must NOT be polled for this kind.
+        """
+        audit_calls: list[str] = []
+        ida_calls: list[str] = []
+        android_calls: list[str] = []
+
+        async def fake_audit_specs(self: object) -> list[dict]:
+            audit_calls.append("hit")
+            return [{"name": "semantic_search", "params": [], "required": []}]
+
+        async def fake_ida_specs(self: object) -> list[dict]:
+            ida_calls.append("hit")
+            return [{"name": "decompile", "params": [], "required": []}]
+
+        async def fake_android_specs(self: object) -> list[dict]:
+            android_calls.append("hit")
+            return [
+                {"name": "apktool_decode", "params": [], "required": []},
+                {"name": "androguard_summary", "params": [], "required": []},
+                {"name": "verify_capabilities", "params": [], "required": []},
+            ]
+
+        monkeypatch.setattr(
+            AuditMcpBridgeTool, "list_tool_specs", fake_audit_specs,
+        )
+        monkeypatch.setattr(
+            IDABridgeTool, "list_tool_specs", fake_ida_specs,
+        )
+        monkeypatch.setattr(
+            AndroidMcpBridgeTool, "list_tool_specs", fake_android_specs,
+        )
+
+        out = await _fetch_tool_specs(target_kind="android_apk")
+        assert "android_mcp" in out
+        assert "audit_mcp" in out
+        assert "ida_headless" not in out
+        assert android_calls == ["hit"]
+        assert audit_calls == ["hit"]
+        assert ida_calls == []
+        # Both bridges contribute their full filtered catalog.
+        android_names = {s["name"] for s in out["android_mcp"]}
+        assert "apktool_decode" in android_names
+        assert "androguard_summary" in android_names
+        assert "verify_capabilities" in android_names
+        audit_names = {s["name"] for s in out["audit_mcp"]}
+        assert "semantic_search" in audit_names
+
+
+class TestApplicableServersForKind:
+    """F-2: target-kind -> applicable MCP server set mapping."""
+
+    def test_source_repo_returns_audit_only(self) -> None:
+        assert _applicable_servers_for_kind("source_repo") == {"audit_mcp"}
+
+    def test_native_binary_returns_ida_only(self) -> None:
+        assert _applicable_servers_for_kind("native_binary") == {"ida_headless"}
+
+    def test_legacy_apk_still_routes_to_ida(self) -> None:
+        # Pre-existing "apk" kind ingests through ida_headless via the
+        # _ingest_binary path. F-2 must NOT widen this kind — only the
+        # new "android_apk" gets the dual-bridge treatment.
+        assert _applicable_servers_for_kind("apk") == {"ida_headless"}
+
+    def test_android_apk_returns_both_android_and_audit(self) -> None:
+        assert _applicable_servers_for_kind("android_apk") == {
+            "android_mcp", "audit_mcp",
+        }
+
+    def test_unknown_kind_defaults_to_every_bridge(self) -> None:
+        out = _applicable_servers_for_kind("totally_made_up")
+        assert "android_mcp" in out
+        assert "audit_mcp" in out
+        assert "ida_headless" in out
+
+
+class TestMcpFamilyRuleForKind:
+    """F-2: the prompt-builder rule line that pins the agent to the
+    right MCP family for the target kind.
+    """
+
+    def test_android_apk_with_both_handles_names_both_servers(self) -> None:
+        rule = _mcp_family_rule_for_kind(
+            "android_apk",
+            {
+                "audit_mcp_decompiled_index_id": "idx-abc123",
+                "android_mcp_apk_path": "/tmp/yanimda.apk",
+            },
+        )
+        assert "audit_mcp" in rule
+        assert "android_mcp" in rule
+        assert "idx-abc123" in rule
+        assert "/tmp/yanimda.apk" in rule
+        # The rule MUST NOT reach for ida_headless on this kind.
+        assert "ida_headless" not in rule
+
+    def test_android_apk_missing_handles_still_emits_rule(self) -> None:
+        rule = _mcp_family_rule_for_kind("android_apk", {})
+        assert "audit_mcp" in rule
+        assert "android_mcp" in rule
+        # When ingestion handles aren't ready yet, the rule should still
+        # name both bridges so the agent doesn't drift to ida_headless.
+        assert "ida_headless" not in rule
+
+    def test_legacy_apk_kind_still_routes_to_ida(self) -> None:
+        # The legacy "apk" kind (binary-style ingestion) stays on
+        # ida_headless. Only "android_apk" gets the new dual-bridge
+        # rule.
+        rule = _mcp_family_rule_for_kind("apk", {"binary_id": "b_xyz"})
+        assert "ida_headless" in rule
+        assert "android_mcp" not in rule
