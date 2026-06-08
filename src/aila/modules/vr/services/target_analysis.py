@@ -180,7 +180,7 @@ _NO_INGEST_KINDS: frozenset[TargetKind] = frozenset({
 
 # Per-kind applicable stage sets (PRD §C-20). Source-repo / binary /
 # no-ingest kinds run the legacy INGESTION / CAPABILITY_PROFILE /
-# FUNCTION_RANKING trio. Android APKs run the four android-mcp stages
+# FUNCTION_RANKING trio. Android APKs run the five android-mcp stages
 # instead. Stages NOT in the kind's applicable set are pre-marked
 # DONE-skipped by ``_skip_inapplicable_stages`` at analyze() entry,
 # so ``roll_up_overall_state`` (which requires every stage at DONE
@@ -228,8 +228,9 @@ class TargetAnalysisService:
 
         Dispatches by target kind:
 
-        * ``android_apk`` → drives the four android-mcp stages
-          (APK_DECODE / JADX_DECOMPILE / STATIC_SUMMARY / MOBSF_SCAN)
+        * ``android_apk`` → drives the five android-mcp stages
+          (APK_DECODE / JADX_DECOMPILE / INDEX_DECOMPILED /
+          STATIC_SUMMARY / MOBSF_SCAN)
           sequentially, each under its own StageTracker. See
           :meth:`_analyze_android_apk`.
         * All other kinds → run the legacy INGESTION stage (clone /

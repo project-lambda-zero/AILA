@@ -55,7 +55,7 @@ class StageName(StrEnum):
                ida_headless.assess_exploitability and persist a ranked
                function list under `capability_profile.function_ranking`.
 
-    `android_apk` targets (PRD §C-20) drive a separate four-stage
+    `android_apk` targets (PRD §C-20 + F-3) drive a separate five-stage
     pipeline through android-mcp instead:
 
     APK_DECODE: apktool — resource + AndroidManifest + smali decode.

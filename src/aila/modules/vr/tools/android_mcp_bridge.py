@@ -10,9 +10,11 @@ adb, plus composite handlers) at the URL configured by the
 
 Scope: this bridge is the ONLY place where AILA's VR module touches the
 android-mcp HTTP surface. The ``TargetAnalysisService`` android branch
-(PRD §C-20) uses it to drive the four ingestion stages — APK_DECODE,
-JADX_DECOMPILE, STATIC_SUMMARY, MOBSF_SCAN — sequentially against an
-uploaded APK.
+(PRD §C-20 + F-3) uses it to drive the APK_DECODE / JADX_DECOMPILE /
+STATIC_SUMMARY / MOBSF_SCAN stages against an uploaded APK. (The fifth
+stage, INDEX_DECOMPILED, is driven through the audit-mcp bridge, not
+this one, since it calls audit-mcp's ``index_codebase`` on the jadx
+output rather than an android-mcp tool.)
 
 Timeout: ``ANDROID_MCP_TIMEOUT`` env var, default 1800 s (30 min — covers
 MobSF static scan upper bound; per-stage StageTracker timeouts in
