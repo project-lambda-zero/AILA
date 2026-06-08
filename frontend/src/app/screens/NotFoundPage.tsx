@@ -24,12 +24,12 @@ export function NotFoundPage() {
           aria-hidden="true"
         />
 
-        <h1
+        <h2
           className="glitch-text error-page__heading"
           data-text="SIGNAL LOST"
         >
           SIGNAL LOST
-        </h1>
+        </h2>
 
         <p className="error-page__subtitle">
           The page you requested does not exist.

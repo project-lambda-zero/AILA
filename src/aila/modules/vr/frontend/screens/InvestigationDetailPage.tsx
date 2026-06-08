@@ -792,9 +792,9 @@ export function InvestigationDetailPage() {
         <AilaCard techBorder glow>
           <div className="flex items-center gap-2 mb-3">
             <Target weight="fill" size={16} className="text-accent" />
-            <h3 className="text-sm font-semibold text-foreground">
+            <h2 className="text-sm font-semibold text-foreground">
               Outcomes
-            </h3>
+            </h2>
             <span className="text-xs font-mono text-text-muted tabular-nums">
               {outcomes.length}
             </span>
