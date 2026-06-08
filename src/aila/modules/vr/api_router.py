@@ -15,7 +15,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func as sa_func
@@ -2333,6 +2333,213 @@ def create_vr_router() -> APIRouter:
                 "task_id": handle.task_id,
                 "target_id": target_id,
                 "uploaded_filename": file.filename,
+            },
+        )
+
+    @router.post(
+        "/targets/upload-apk",
+        response_model=DataEnvelope[dict],
+        status_code=status.HTTP_201_CREATED,
+        summary=(
+            "Upload an Android APK and create a new android_apk target. "
+            "Streams the bytes to the android-mcp uploads directory "
+            "(`~/.android-mcp/uploads/<team_id>/<sha>.apk`, override via "
+            "`ANDROID_MCP_UPLOAD_DIR`), creates a VRTargetRecord with "
+            "kind=android_apk and an apk_path descriptor, and auto-enqueues "
+            "the APK_DECODE / JADX_DECOMPILE / STATIC_SUMMARY / MOBSF_SCAN "
+            "ingestion stages."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def upload_apk_target(
+        request: Request,
+        workspace_id: str = Form(..., min_length=1, max_length=64),
+        display_name: str = Form(..., min_length=1, max_length=255),
+        file: UploadFile = File(...),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        """Upload an APK as a new ``android_apk`` target (PRD §C-19).
+
+        The endpoint is content-addressed: two uploads with identical
+        SHA-256 share the on-disk APK file but still create distinct
+        target rows (each row carries its own descriptor + lifecycle).
+        ``ANDROID_MCP_UPLOAD_DIR`` overrides the default
+        ``~/.android-mcp/uploads`` root so the operator can stage uploads
+        on a different volume without symlink tricks.
+
+        Per-stage ingestion (APK_DECODE / JADX_DECOMPILE / STATIC_SUMMARY
+        / MOBSF_SCAN) is dispatched via ``run_target_analysis``. Until
+        the C-20 android branch ships the analyze() call records the
+        stage as FAILED with a clear "no ingestion path" message —
+        the upload itself still succeeds.
+        """
+        import hashlib
+        import json as _json
+        import os
+        import tempfile
+        from pathlib import Path
+
+        from aila.api.deps import get_task_queue
+
+        from .db_models import VRTargetRecord, VRWorkspaceRecord
+
+        # 1) Validate workspace ownership before touching disk.
+        async with UnitOfWork() as uow:
+            workspace = (await uow.session.exec(
+                _team_filter(
+                    select(VRWorkspaceRecord).where(VRWorkspaceRecord.id == workspace_id),
+                    VRWorkspaceRecord, auth,
+                ),
+            )).first()
+            if workspace is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Workspace {workspace_id} not found or not "
+                        "owned by your team."
+                    ),
+                )
+
+        if not file.filename:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="file.filename is required.",
+            )
+        if not file.filename.lower().endswith(".apk"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Expected an .apk file extension.",
+            )
+
+        # 2) Resolve the upload root + per-team subdir. With admin auth
+        #    (TEAM-06 god-tier) team_id is None; those uploads land
+        #    under a "shared" subdir to avoid clashing with team data.
+        upload_root_env = os.environ.get("ANDROID_MCP_UPLOAD_DIR")
+        upload_root = (
+            Path(upload_root_env)
+            if upload_root_env
+            else Path.home() / ".android-mcp" / "uploads"
+        )
+        team_subdir = auth.team_id or "shared"
+        team_dir = upload_root / team_subdir
+        try:
+            team_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create upload directory {team_dir}: {exc}",
+            ) from exc
+
+        # 3) Stream to a temp file in the same directory and hash on the
+        #    fly. Atomic rename only after we know the digest — keeps
+        #    half-written partials out of the SHA-named slot.
+        sha256 = hashlib.sha256()
+        fd, tmp_str = tempfile.mkstemp(
+            prefix=".upload-", suffix=".apk.partial", dir=str(team_dir),
+        )
+        tmp_path = Path(tmp_str)
+        bytes_written = 0
+        try:
+            with os.fdopen(fd, "wb") as out:
+                while True:
+                    chunk = await file.read(1 << 20)  # 1 MiB
+                    if not chunk:
+                        break
+                    sha256.update(chunk)
+                    out.write(chunk)
+                    bytes_written += len(chunk)
+        except OSError as exc:
+            tmp_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to persist APK upload: {exc}",
+            ) from exc
+
+        if bytes_written == 0:
+            tmp_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Empty APK upload.",
+            )
+
+        digest = sha256.hexdigest()
+        apk_path = team_dir / f"{digest}.apk"
+        if apk_path.exists():
+            # Same content already on disk — discard the duplicate copy.
+            tmp_path.unlink(missing_ok=True)
+        else:
+            try:
+                tmp_path.replace(apk_path)
+            except OSError as exc:
+                tmp_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to finalize APK upload at {apk_path}: {exc}",
+                ) from exc
+
+        # 4) Create the target row. descriptor.apk_path matches the key
+        #    used by the existing `apk` (IDA) kind so the C-20 staged
+        #    ingestion can resolve the path with the same lookup.
+        descriptor = {
+            "apk_path": str(apk_path.resolve()),
+            "uploaded_filename": file.filename,
+            "uploaded_sha256": digest,
+        }
+        async with UnitOfWork() as uow:
+            record = VRTargetRecord(
+                workspace_id=workspace_id,
+                team_id=auth.team_id,
+                display_name=display_name,
+                kind=TargetKind.ANDROID_APK.value,
+                descriptor_json=_json.dumps(descriptor),
+                primary_language=None,
+                secondary_languages_json="[]",
+                tags_json="[]",
+                status="active",
+                capability_profile_json="{}",
+            )
+            uow.session.add(record)
+            await uow.session.commit()
+            await uow.session.refresh(record)
+            target_id = record.id
+
+        # 5) Enqueue ingestion. Mirrors create_target's "fire-and-fall-
+        #    back" pattern: if the queue isn't reachable, persist the
+        #    failure on the row so the operator can retry via
+        #    POST /vr/targets/{id}/analyze without a 500.
+        enqueue_error: str | None = None
+        try:
+            from .workflow.task import run_target_analysis
+
+            task_queue = get_task_queue("vr", request)
+            await task_queue.submit(
+                track="vr",
+                fn=run_target_analysis,
+                kwargs={"target_id": target_id},
+                user_id=auth.user_id,
+                group_id=auth.role,
+                team_id=auth.team_id,
+            )
+        except (OSError, RuntimeError, HTTPException) as exc:
+            enqueue_error = f"failed to enqueue ingestion: {exc}"
+            async with UnitOfWork() as uow:
+                row = (await uow.session.exec(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                )).first()
+                if row is not None:
+                    row.analysis_state = AnalysisState.FAILED.value
+                    row.analysis_state_message = enqueue_error
+                    uow.session.add(row)
+                    await uow.session.commit()
+
+        return DataEnvelope(
+            data={
+                "target_id": target_id,
+                "uploaded_filename": file.filename,
+                "uploaded_sha256": digest,
+                "apk_path": str(apk_path.resolve()),
+                "bytes_written": bytes_written,
+                "enqueue_error": enqueue_error,
             },
         )
 
