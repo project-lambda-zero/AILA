@@ -2079,6 +2079,38 @@ a:hover {
 @utility grid-cols-key-value { grid-template-columns: max-content 1fr; }
 
 /* =====================================================================
+   TOUCH TARGET — extend the click area to WCAG 2.5.5 (44×44 CSS px)
+   without changing the visible button. The `::after` pseudo-element is
+   absolutely positioned, centred on the host, and sized to `max(100%,
+   44px)` in both axes — a host that is already ≥ 44 px keeps its own
+   bounds, and a host smaller than that grows its hit area to 44×44 while
+   the visible chrome stays put. The pseudo is transparent (no background,
+   no border) so it never paints, but Chromium and Firefox both honour
+   pointer-events on absolutely-positioned ::after siblings; a click that
+   lands inside the extension forwards to the host button just as if it
+   had landed on the visible glyph. Apply this to compact inline buttons
+   (chip removers, dense table action icons, copy-id glyphs) where
+   physically growing the host to 44 px would break the layout. For
+   standalone icon buttons (close, refresh) prefer enlarging the host
+   directly with `size-11` / `h-11 w-11` so screen readers and hover
+   feedback report the full target size.
+   ===================================================================== */
+
+@utility touch-target {
+  position: relative;
+  &::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+  }
+}
+
+/* =====================================================================
    AMBIENT DEPTH — soft radial-gradient mesh (A4)
    ---------------------------------------------------------------------
    Wrap a page-level surface in `.depth-mesh` to paint a faint
@@ -2518,6 +2550,11 @@ a:hover {
     2px 2px 0 #2f6fbf;
   animation: ps1-wobble 3.5s steps(3) infinite;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="ps1"] h1,
+  [data-theme="ps1"] h2 { animation: none; }
+}
 [data-theme="ps1"] h3 {
   font-family: var(--font-display);
   color: #2f6fbf;
@@ -2730,6 +2767,10 @@ a:hover {
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='50' height='50'><rect x='12' y='12' width='26' height='26' fill='rgba(255,255,255,0.04)' stroke='rgba(200,230,255,0.35)'/></svg>") 20px 130vh;
   background-repeat: repeat-x;
   animation: ps2-cubes-rise 24s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="ps2"] body::before { animation: none; }
 }
 [data-theme="ps2"] body::after {
   content: "";
@@ -2953,6 +2994,10 @@ a:hover {
       #04060a 0%, #06080d 50%, #0a0a0f 100%);
   background-attachment: fixed;
   animation: cyber-glitch-flicker 11s steps(100) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="cyberpunk-2077"] body { animation: none; }
 }
 [data-theme="cyberpunk-2077"] body::before {
   content: "";
@@ -3212,6 +3257,10 @@ a:hover {
   background-repeat: repeat;
   animation: matrix-rain 9s linear infinite;
   opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="matrix"] body::before { animation: none; }
 }
 [data-theme="matrix"] body::after {
   content: "";
@@ -4001,6 +4050,16 @@ a:hover {
           drop-shadow(0 2px 6px rgba(255, 95, 177, 0.3));
   animation: y2k-holo-shift 12s linear infinite;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="y2k-fever"] body,
+  [data-theme="y2k-fever"][data-mode="dark"] body,
+  [data-theme="y2k-fever"] .bg-surface::after,
+  [data-theme="y2k-fever"] .bg-card::after,
+  [data-theme="y2k-fever"] .bg-elevated::after,
+  [data-theme="y2k-fever"] h1,
+  [data-theme="y2k-fever"] h2 { animation: none; }
+}
 [data-theme="y2k-fever"] h3 {
   font-family: var(--font-display);
   color: #5fc0d6;
@@ -4396,6 +4455,10 @@ a:hover {
   background-repeat: repeat;
   animation: matrix-rain 7s linear infinite;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="matrix"] .login-left::after { animation: none; }
+}
 [data-theme="matrix"] .login-right {
   background: rgba(0, 8, 0, 0.96) !important;
   box-shadow: inset 2px 0 0 #00ff41 !important;
@@ -4479,6 +4542,11 @@ a:hover {
   -webkit-text-fill-color: transparent;
   font-family: var(--font-display);
   animation: y2k-holo-shift 12s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="y2k-fever"] .login-left,
+  [data-theme="y2k-fever"] .login-brand__wordmark { animation: none; }
 }
 
 /* Vendetta */

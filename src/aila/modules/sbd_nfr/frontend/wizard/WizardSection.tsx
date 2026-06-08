@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { motion } from "motion/react";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 
 import type {
   AnswerInput,
@@ -276,6 +277,7 @@ export function WizardSection({
   onPrev,
   onAssist,
 }: WizardSectionProps) {
+  const prefersReducedMotion = useReducedMotion();
   const section = schema.sections.find((s) => s.section_key === sectionKey);
 
   if (!section) {
@@ -310,10 +312,10 @@ export function WizardSection({
     <motion.div
       key={sectionKey}
       className={`flex flex-col gap-6${isSeverityHighRisk ? " animate-severity-pulse" : ""}`}
-      initial={{ opacity: 0, x: 20 }}
+      initial={{ opacity: 0, x: prefersReducedMotion ? 0 : 20 }}
       animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -20 }}
-      transition={{ duration: 0.22, ease: [0.25, 0.1, 0.25, 1] }}
+      exit={{ opacity: 0, x: prefersReducedMotion ? 0 : -20 }}
+      transition={{ duration: prefersReducedMotion ? 0 : 0.22, ease: [0.25, 0.1, 0.25, 1] }}
     >
       <header>
         <h2 className="font-display text-2xl font-bold text-text mb-2">{section.label}</h2>
