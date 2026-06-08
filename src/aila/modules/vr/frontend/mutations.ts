@@ -1039,6 +1039,17 @@ export function useRejectFuzzProposal(proposalId: string) {
 // investigation id — the row exists, the operator retries via
 // POST /vr/investigations/{id}/re-enqueue.
 
+/** Frontend-side estimate for the pre-confirm "expected spend" UI.
+ *  The backend is authoritative — `cost_budget_total_usd` in the
+ *  dispatch response carries the real total, computed from the live
+ *  catalog. These constants exist only so the operator sees a
+ *  reasonable number BEFORE clicking, without forcing a round-trip.
+ *  Keep them in sync with `child_budget_usd` in
+ *  `vr/api_router.py::dispatch_masvs_audit` and the L1 row count in
+ *  `vr/masvs/catalog.py`. */
+export const MASVS_DEFAULT_CHILD_BUDGET_USD = 50;
+export const MASVS_L1_CONTROL_COUNT_ESTIMATE = 46;
+
 export interface MasvsAuditDispatchResult {
   parent_investigation_id: string;
   /** One id per dispatched child investigation, in MASVS catalog order.
