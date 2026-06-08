@@ -2468,6 +2468,278 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
 )
 
 
+_RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
+    MasvsControl(
+        id="MSTG-RESILIENCE-1",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "The app detects, and responds to, the presence of a rooted or "
+            "jailbroken device by either alerting the user or terminating the app."
+        ),
+        description=(
+            "Root access lifts every Android sandbox boundary the app relies on: "
+            "/data/data/<package> becomes world-readable, the Keystore "
+            "implementation is replaceable by a hostile module, Frida / Xposed "
+            "gain process-injection capability, and any co-installed app gains "
+            "the ability to read this app's memory, snapshot its traffic, or "
+            "rewrite its dex / native libs on disk. A high-risk app (banking, "
+            "healthcare, identity) is expected to detect this state through "
+            "filesystem markers (su binary, Superuser.apk, Magisk manager "
+            "package), mount-flag scans of /proc/mounts, package-manager "
+            "queries for known rooting toolchains, and a remote attestation "
+            "(Play Integrity / SafetyNet Attestation) signal. The verification "
+            "target is that the release build references at least one root "
+            "signal AND a real response path that activates when the signal "
+            "trips — a logout, a refused transaction, an exit — rather than a "
+            "Log.d and a swallow."
+        ),
+        verification_steps=(
+            "Search for filesystem root markers: File.exists checks against "
+            "/system/xbin/su, /sbin/su, /system/bin/su, /system/app/Superuser.apk, "
+            "/system/app/SuperSU.apk, /data/local/xbin/su, "
+            "/system/etc/init.d/99SuperSUDaemon; mount-flag scans reading "
+            "/proc/mounts looking for `rw,` on /system; PackageManager queries "
+            "for com.koushikdutta.superuser, eu.chainfire.supersu, "
+            "com.topjohnwu.magisk. Absence of every marker check is a finding.",
+            "Search for Play Integrity / SafetyNet Attestation usage: "
+            "IntegrityManager.requestIntegrityToken or "
+            "SafetyNetClient.attest. Confirm the verdict / decoded JWS is "
+            "checked against the expected ctsProfileMatch / basicIntegrity / "
+            "deviceRecognitionVerdict, and the result gates a sensitive "
+            "operation; absence of attestation or a verdict-discarded path is "
+            "a finding for any banking-style app.",
+            "For every detection signal, trace the boolean to its consumer "
+            "and confirm a non-trivial response: app exit (System.exit / "
+            "finishAffinity), refusal of login or transaction, server-side "
+            "alert. A signal that only writes Log.d / Timber.w and lets the "
+            "code continue is a finding — detection without response gives "
+            "the operator nothing.",
+        ),
+        relevant_apis=(
+            "com.google.android.play.core.integrity.IntegrityManager.requestIntegrityToken",
+            "com.google.android.gms.safetynet.SafetyNetClient.attest",
+            "com.scottyab.rootbeer.RootBeer.isRooted",
+            "java.io.File.exists",
+            "java.lang.Runtime.exec",
+            "android.os.Build.TAGS",
+            "android.content.pm.PackageManager.getPackageInfo",
+            "android.content.pm.PackageManager.getInstalledPackages",
+        ),
+        evidence_hints=(
+            "RootBeer",
+            "isRooted",
+            "/system/xbin/su",
+            "/system/bin/su",
+            "Superuser.apk",
+            "com.topjohnwu.magisk",
+            "eu.chainfire.supersu",
+            "SafetyNet",
+            "IntegrityManager",
+            "test-keys",
+            "Build.TAGS",
+            "/proc/mounts",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-2",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "The app prevents debugging and/or detects, and responds to, a "
+            "debugger being attached. All available debugging protocols must be "
+            "covered."
+        ),
+        description=(
+            "Android exposes multiple independent debugging channels: JDWP at "
+            "the Java layer (gated by android:debuggable in the manifest and "
+            "ApplicationInfo.FLAG_DEBUGGABLE at runtime), ptrace at the native "
+            "layer (any process with the same UID can attach unless "
+            "PTRACE_TRACEME blocks it), and JNI / inferior-process inspection "
+            "through /proc/<pid>/mem. A release build that closes JDWP via the "
+            "manifest still leaves native ptrace open, and vice versa — every "
+            "channel must be covered. The verification target is that "
+            "android:debuggable is false in the release manifest, that the "
+            "Java code checks Debug.isDebuggerConnected before sensitive "
+            "operations, that shipped native libraries install a "
+            "PTRACE_TRACEME anti-attach guard, and that TracerPid in "
+            "/proc/self/status is read periodically with a response path that "
+            "trips when a non-zero value is observed."
+        ),
+        verification_steps=(
+            "Inspect AndroidManifest.xml for android:debuggable on the "
+            "<application> tag — a release build with debuggable=\"true\" is "
+            "a finding regardless of detection logic, because it grants JDWP "
+            "to any host running `adb`. Cross-check ApplicationInfo flags at "
+            "runtime if the manifest is ambiguous.",
+            "Search for Java-side debugger checks: Debug.isDebuggerConnected, "
+            "Debug.waitingForDebugger, ApplicationInfo.flags & "
+            "ApplicationInfo.FLAG_DEBUGGABLE. Confirm at least one fires "
+            "before login / transaction and that its boolean reaches a "
+            "real-response path (exit, refused operation), not a swallowed "
+            "Log call.",
+            "Inspect every shipped .so for native anti-debug: ptrace("
+            "PTRACE_TRACEME, 0, 0, 0) called early in JNI_OnLoad or library "
+            "constructors; periodic /proc/self/status reads parsing the "
+            "TracerPid: line and reacting on non-zero. Absence of any native "
+            "anti-debug on a high-risk build is a finding for this control.",
+        ),
+        relevant_apis=(
+            "android.os.Debug.isDebuggerConnected",
+            "android.os.Debug.waitingForDebugger",
+            "android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE",
+            "android.content.pm.ApplicationInfo.flags",
+            "ptrace",
+            "PTRACE_TRACEME",
+            "/proc/self/status",
+            "JNI_OnLoad",
+        ),
+        evidence_hints=(
+            "isDebuggerConnected",
+            "waitingForDebugger",
+            "FLAG_DEBUGGABLE",
+            "android:debuggable",
+            "ptrace",
+            "PTRACE_TRACEME",
+            "TracerPid",
+            "/proc/self/status",
+            "JNI_OnLoad",
+            "JDWP",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-3",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "The app detects, and responds to, tampering with executable files "
+            "and critical data within its own sandbox."
+        ),
+        description=(
+            "An installed APK can be unpacked, patched, re-signed with a "
+            "different developer certificate, and reinstalled — the OS will "
+            "accept the resigned build as a fresh first-install. A privileged "
+            "caller (root, a custom recovery, an OEM service running as system) "
+            "can rewrite files inside /data/data/<package> while the app is "
+            "stopped. Tamper detection compares runtime state against a "
+            "baseline known at build time: the SHA-256 of the signing "
+            "certificate matches a hard-coded constant, the bundled .so files "
+            "match their build-time digest, configuration files are unchanged. "
+            "The verification target is that the release build performs at "
+            "least one signature self-check at startup, that the check compares "
+            "against a baked-in constant (not a remote value), and that a "
+            "tamper signal triggers a non-trivial response — refuse to "
+            "launch, switch to a read-only mode, post a server alert."
+        ),
+        verification_steps=(
+            "Search for signature self-verification: "
+            "PackageManager.getPackageInfo(packageName, GET_SIGNATURES) on "
+            "API < 28 and GET_SIGNING_CERTIFICATES / "
+            "SigningInfo.getApkContentsSigners on API ≥ 28, followed by a "
+            "SHA-256 of the resulting byte[] compared to a constant. Flag if "
+            "the compared constant is read from a remote source or a writable "
+            "config — that defeats the purpose.",
+            "Inspect every shipped lib/<abi>/*.so for self-checksum routines "
+            "or a build-time hash recorded in the APK (e.g. an asset bundle) "
+            "that the JNI bridge verifies at System.loadLibrary time. Absence "
+            "of any native integrity check on a high-risk build is a finding.",
+            "Confirm a non-trivial response on tamper signal: System.exit, "
+            "refused login, downgrade to limited operation, server-side alert "
+            "via the analytics or telemetry pipeline. A tamper-signal path "
+            "that calls Log.d and returns is detection without response — "
+            "flag as a finding.",
+        ),
+        relevant_apis=(
+            "android.content.pm.PackageManager.getPackageInfo",
+            "android.content.pm.PackageInfo.signatures",
+            "android.content.pm.SigningInfo",
+            "android.content.pm.SigningInfo.getApkContentsSigners",
+            "android.content.pm.SigningInfo.getSigningCertificateHistory",
+            "java.security.MessageDigest.getInstance",
+            "java.util.zip.ZipFile",
+            "java.lang.System.loadLibrary",
+        ),
+        evidence_hints=(
+            "GET_SIGNATURES",
+            "GET_SIGNING_CERTIFICATES",
+            "PackageInfo.signatures",
+            "SigningInfo",
+            "getApkContentsSigners",
+            "SHA-256",
+            "signatureDigest",
+            "MessageDigest",
+            "loadLibrary",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-4",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "The app detects, and responds to, the presence of widely used "
+            "reverse engineering tools and frameworks on the device."
+        ),
+        description=(
+            "Frida (frida-server, frida-gadget), Xposed (de.robv.android.xposed), "
+            "Cydia Substrate, and similar dynamic-instrumentation frameworks "
+            "inject code into the target process so a researcher (or anyone "
+            "with physical access plus root) can read sensitive variables, "
+            "rewrite return values mid-call, or proxy crypto operations through "
+            "a logging hook. Detection methods scan /proc/self/maps for known "
+            "injected library names, query PackageManager for known framework "
+            "installer packages, look for the frida-server default port "
+            "(27042) being open on loopback, and watch Thread.getAllStackTraces "
+            "output for Frida-internal thread names (gum-js-loop, gmain, "
+            "linjector). The verification target is that the release build "
+            "carries at least one RE-tool detection signal with a real response "
+            "path, not a static-string match buried in dead code."
+        ),
+        verification_steps=(
+            "Search for /proc/self/maps scans: BufferedReader iterations "
+            "looking for substrings frida-, gum-js-loop, linjector, "
+            "xposedbridge, substrate. Absence of any /proc/self/maps "
+            "instrumentation-library scan on a high-risk build is a finding.",
+            "Search for PackageManager queries against known RE-tool packages: "
+            "de.robv.android.xposed.installer, com.saurik.substrate, "
+            "com.devadvance.rootcloak, com.formyhm.hideroot, "
+            "org.lsposed.manager. Confirm at least one query exists and its "
+            "result reaches a real-response path.",
+            "Inspect Thread.getAllStackTraces / ThreadGroup.enumerate "
+            "iterations for thread-name checks against gum-js-loop, gmain, "
+            "linjector; alternatively look for native code probing the "
+            "loopback 27042 port for an open frida-server listener. Confirm "
+            "the detection signal triggers exit, refused operation, or "
+            "server alert.",
+        ),
+        relevant_apis=(
+            "java.io.BufferedReader.readLine",
+            "android.content.pm.PackageManager.getInstalledApplications",
+            "android.content.pm.PackageManager.getInstalledPackages",
+            "android.content.pm.PackageManager.getPackageInfo",
+            "java.lang.Thread.getAllStackTraces",
+            "java.lang.ThreadGroup.enumerate",
+            "java.net.Socket",
+            "java.net.ServerSocket",
+            "java.lang.Runtime.exec",
+        ),
+        evidence_hints=(
+            "frida",
+            "frida-server",
+            "frida-gadget",
+            "gum-js-loop",
+            "linjector",
+            "de.robv.android.xposed",
+            "com.saurik.substrate",
+            "org.lsposed.manager",
+            "rootcloak",
+            "/proc/self/maps",
+            "27042",
+            "getAllStackTraces",
+        ),
+    ),
+)
+
+
 MASVS_CONTROLS: tuple[MasvsControl, ...] = (
     *_STORAGE_CONTROLS,
     *_CRYPTO_CONTROLS,
@@ -2475,4 +2747,5 @@ MASVS_CONTROLS: tuple[MasvsControl, ...] = (
     *_NETWORK_CONTROLS,
     *_PLATFORM_CONTROLS,
     *_CODE_CONTROLS,
+    *_RESILIENCE_CONTROLS,
 )
