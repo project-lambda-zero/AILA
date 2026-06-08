@@ -12,7 +12,9 @@
  */
 import { useState } from "react";
 
-import { Warning, CircleNotch, CloudArrowUp } from "@phosphor-icons/react";
+import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
+import { CircleNotch } from "@phosphor-icons/react/dist/csr/CircleNotch";
+import { CloudArrowUp } from "@phosphor-icons/react/dist/csr/CloudArrowUp";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 

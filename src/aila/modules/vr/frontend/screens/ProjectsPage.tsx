@@ -1,16 +1,14 @@
 import { useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import {
-  Plus,
-  MagnifyingGlass,
-  ArrowRight,
-  ShieldWarning,
-  Pulse,
-  Folder,
-  PaperPlaneTilt,
-  Warning,
-  CheckCircle,
-} from "@phosphor-icons/react";
+import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+import { ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
+import { ShieldWarning } from "@phosphor-icons/react/dist/csr/ShieldWarning";
+import { Pulse } from "@phosphor-icons/react/dist/csr/Pulse";
+import { Folder } from "@phosphor-icons/react/dist/csr/Folder";
+import { PaperPlaneTilt } from "@phosphor-icons/react/dist/csr/PaperPlaneTilt";
+import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
+import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";

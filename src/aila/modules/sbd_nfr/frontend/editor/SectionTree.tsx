@@ -16,13 +16,11 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  DotsSixVertical,
-  PencilSimple,
-  Check,
-  X,
-  Plus,
-} from "@phosphor-icons/react";
+import { DotsSixVertical } from "@phosphor-icons/react/dist/csr/DotsSixVertical";
+import { PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
+import { Check } from "@phosphor-icons/react/dist/csr/Check";
+import { X } from "@phosphor-icons/react/dist/csr/X";
+import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { EmptyState } from "@/components/aila/EmptyState";

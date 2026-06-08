@@ -1,24 +1,22 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import {
-  Plus,
-  MagnifyingGlass,
-  ArrowRight,
-  Briefcase,
-  Bug,
-  Lightning,
-  ShieldCheck,
-  Star,
-  X,
-  CaretLeft,
-  CaretRight,
-  GitBranch,
-  Funnel,
-  Calendar,
-  CaretDown,
-  CaretRight as CaretRightSmall,
-  type Icon,
-} from "@phosphor-icons/react";
+import type { Icon } from "@phosphor-icons/react/lib";
+import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+import { ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
+import { Briefcase } from "@phosphor-icons/react/dist/csr/Briefcase";
+import { Bug } from "@phosphor-icons/react/dist/csr/Bug";
+import { Lightning } from "@phosphor-icons/react/dist/csr/Lightning";
+import { ShieldCheck } from "@phosphor-icons/react/dist/csr/ShieldCheck";
+import { Star } from "@phosphor-icons/react/dist/csr/Star";
+import { X } from "@phosphor-icons/react/dist/csr/X";
+import { CaretLeft } from "@phosphor-icons/react/dist/csr/CaretLeft";
+import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
+import { Funnel } from "@phosphor-icons/react/dist/csr/Funnel";
+import { Calendar } from "@phosphor-icons/react/dist/csr/Calendar";
+import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
+import { CaretRight as CaretRightSmall } from "@phosphor-icons/react/dist/csr/CaretRight";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";

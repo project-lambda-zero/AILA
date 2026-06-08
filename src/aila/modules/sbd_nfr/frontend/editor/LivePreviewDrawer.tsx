@@ -1,6 +1,7 @@
 import { useState } from "react";
 
-import { ArrowCounterClockwise, Eye } from "@phosphor-icons/react";
+import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/csr/ArrowCounterClockwise";
+import { Eye } from "@phosphor-icons/react/dist/csr/Eye";
 
 import { Button } from "@/components/ui/button";
 import {

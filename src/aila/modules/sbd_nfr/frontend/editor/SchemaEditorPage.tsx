@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 
-import { Eye, CloudArrowUp, Warning } from "@phosphor-icons/react";
+import { Eye } from "@phosphor-icons/react/dist/csr/Eye";
+import { CloudArrowUp } from "@phosphor-icons/react/dist/csr/CloudArrowUp";
+import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 
 import { EmptyState } from "@/components/aila/EmptyState";
 import { AilaBadge } from "@/components/aila/AilaBadge";

@@ -1,4 +1,4 @@
-import { Detective } from "@phosphor-icons/react";
+import { Detective } from "@phosphor-icons/react/dist/csr/Detective";
 
 import type { NavContribution } from "@platform/extension-registry/types";
 
