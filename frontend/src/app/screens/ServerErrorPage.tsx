@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 
-import { WarningOctagon } from "@phosphor-icons/react";
+import { WarningOctagon } from "@phosphor-icons/react/dist/csr/WarningOctagon";
 
 interface ServerErrorPageProps {
   error?: Error;

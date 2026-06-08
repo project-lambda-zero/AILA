@@ -44,34 +44,32 @@ import { ChatPage } from "@platform/features/chat/ChatPage";
 import { SettingsPage } from "@platform/features/settings/SettingsPage";
 import { RadarPage } from "@platform/features/radar/RadarPage";
 import { VizPage } from "@platform/features/viz/VizPage";
-import {
-  House,
-  HardDrives,
-  Broadcast,
-  ChartLine,
-  Terminal,
-  ListChecks,
-  ChatCircleText,
-  BookOpen,
-  Users as UsersIcon,
-  Key,
-  ClipboardText,
-  Wrench,
-  GitBranch,
-  Robot,
-  GearSix,
-  Tag,
-  Heartbeat,
-  UsersThree,
-  BookmarkSimple,
-  Queue,
-  Skull,
-  Calendar,
-  CurrencyDollar,
-  Briefcase,
-  Monitor,
-  Warning,
-} from "@phosphor-icons/react";
+import { House } from "@phosphor-icons/react/dist/csr/House";
+import { HardDrives } from "@phosphor-icons/react/dist/csr/HardDrives";
+import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
+import { ChartLine } from "@phosphor-icons/react/dist/csr/ChartLine";
+import { Terminal } from "@phosphor-icons/react/dist/csr/Terminal";
+import { ListChecks } from "@phosphor-icons/react/dist/csr/ListChecks";
+import { ChatCircleText } from "@phosphor-icons/react/dist/csr/ChatCircleText";
+import { BookOpen } from "@phosphor-icons/react/dist/csr/BookOpen";
+import { Users as UsersIcon } from "@phosphor-icons/react/dist/csr/Users";
+import { Key } from "@phosphor-icons/react/dist/csr/Key";
+import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
+import { Wrench } from "@phosphor-icons/react/dist/csr/Wrench";
+import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
+import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
+import { GearSix } from "@phosphor-icons/react/dist/csr/GearSix";
+import { Tag } from "@phosphor-icons/react/dist/csr/Tag";
+import { Heartbeat } from "@phosphor-icons/react/dist/csr/Heartbeat";
+import { UsersThree } from "@phosphor-icons/react/dist/csr/UsersThree";
+import { BookmarkSimple } from "@phosphor-icons/react/dist/csr/BookmarkSimple";
+import { Queue } from "@phosphor-icons/react/dist/csr/Queue";
+import { Skull } from "@phosphor-icons/react/dist/csr/Skull";
+import { Calendar } from "@phosphor-icons/react/dist/csr/Calendar";
+import { CurrencyDollar } from "@phosphor-icons/react/dist/csr/CurrencyDollar";
+import { Briefcase } from "@phosphor-icons/react/dist/csr/Briefcase";
+import { Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
+import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 
 // C2: CrashNow is a DEV-only test crash component. In production builds we
 // never reference the module so Vite tree-shakes it out of the bundle.

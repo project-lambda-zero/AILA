@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 
-import { ShieldSlash } from "@phosphor-icons/react";
+import { ShieldSlash } from "@phosphor-icons/react/dist/csr/ShieldSlash";
 
 /**
  * 403 ACCESS DENIED — cyberpunk forbidden page (D-16).

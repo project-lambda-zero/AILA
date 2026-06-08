@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 
-import { WifiSlash } from "@phosphor-icons/react";
+import { WifiSlash } from "@phosphor-icons/react/dist/csr/WifiSlash";
 
 /**
  * 404 SIGNAL LOST — cyberpunk not-found page (D-16).

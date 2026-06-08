@@ -1,5 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react"
-import { Shield, Lock, Scan } from "@phosphor-icons/react"
+import { Shield } from "@phosphor-icons/react/dist/csr/Shield"
+import { Lock } from "@phosphor-icons/react/dist/csr/Lock"
+import { Scan } from "@phosphor-icons/react/dist/csr/Scan"
 
 import { AilaCard } from "./AilaCard"
 import { AilaBadge } from "./AilaBadge"

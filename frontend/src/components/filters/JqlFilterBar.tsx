@@ -20,7 +20,9 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { X, Funnel, MagnifyingGlass } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/csr/X";
+import { Funnel } from "@phosphor-icons/react/dist/csr/Funnel";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 import { useSearchParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
