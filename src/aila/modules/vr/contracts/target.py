@@ -45,7 +45,6 @@ class TargetKind(StrEnum):
     PROTOCOL_CAPTURE = "protocol_capture"
     CRASH_INPUT = "crash_input"
     PATCH_DIFF = "patch_diff"
-    APK = "apk"
     ANDROID_APK = "android_apk"
     IPA = "ipa"
     JAR = "jar"

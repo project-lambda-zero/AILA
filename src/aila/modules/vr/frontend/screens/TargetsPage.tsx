@@ -12,29 +12,99 @@ import {
   useCreateTarget,
   useDeleteTarget,
   useRefreshTargetSource,
+  useUploadApkTarget,
+  useUploadArtifactByTargetId,
 } from "../mutations";
 import { useTargets, useWorkspaces } from "../queries";
 import type { AnalysisState, TargetKind, TargetStatus, VRTargetSummary } from "../types";
 
-// Per-kind descriptor templates. Operator only provides what they
-// actually know — repo URL, file path, version, arch. Backend
-// (TargetAnalysisService) handles all MCP-internal ids transparently.
-const DESCRIPTOR_TEMPLATES: Record<TargetKind, string> = {
-  native_binary: '{"binary_path": "/path/on/workstation"}',
-  source_repo: '{"repo_url": "https://github.com/owner/repo", "ref": "main"}',
-  cve: '{"cve_id": "CVE-YYYY-NNNN"}',
-  protocol_capture: '{"pcap_path": "/path/to/capture.pcap", "protocol": "http"}',
-  crash_input: '{"crash_input_path": "/path/to/input.bin"}',
-  patch_diff: '{"vulnerable_ref": "abc123", "patched_ref": "def456", "repo_url": "https://github.com/owner/repo"}',
-  apk: '{"apk_path": "/path/to/app.apk"}',
-  android_apk: '{"apk_path": "/path/to/app.apk"}',
-  ipa: '{"ipa_path": "/path/to/app.ipa"}',
-  jar: '{"jar_path": "/path/to/app.jar"}',
-  dotnet_assembly: '{"dll_path": "/path/to/assembly.dll"}',
-  kernel_image: '{"image_path": "/path/vmlinuz", "kernel_version": "6.10", "arch": "x86_64"}',
-  kernel_module: '{"ko_path": "/path/buggy.ko", "module_name": "buggy"}',
-  hypervisor_image: '{"binary_path": "/usr/bin/qemu-system-x86_64", "hypervisor_kind": "qemu", "version": "9.1.0"}',
+// Per-kind input-field schema. Each field becomes a labeled <input>
+// in the create form; values get assembled into the descriptor JSON
+// the backend expects. android_apk has no fields here — it uses the
+// multipart upload-apk endpoint with a file picker, handled separately.
+// Per-kind input-field schema. Each field is either a labeled <input>
+// (type="text") or a <input type="file"> file picker. The submit
+// handler assembles text fields into the descriptor JSON; file fields
+// are POSTed via a follow-up call to the matching upload endpoint
+// (android_apk -> /targets/upload-apk in one shot, every other binary
+// kind -> create-then-upload via POST /targets + POST /targets/{id}/upload).
+interface DescriptorField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  required?: boolean;
+  type: "text" | "file";
+  accept?: string;  // for type=file: HTML accept attribute
+}
+
+const DESCRIPTOR_SCHEMA: Record<TargetKind, DescriptorField[]> = {
+  // Binary kinds: file picker is the primary input. No more
+  // server-side path text boxes — the operator never knew what
+  // paths exist on the backend filesystem.
+  native_binary: [
+    { key: "file", label: "Binary file", type: "file", required: true },
+  ],
+  // android_apk: file picker only; routed through the dedicated
+  // /targets/upload-apk endpoint that fires the 5-stage pipeline.
+  android_apk: [
+    { key: "file", label: "APK file", type: "file", required: true,
+      accept: ".apk,application/vnd.android.package-archive" },
+  ],
+  ipa: [
+    { key: "file", label: "IPA file", type: "file", required: true,
+      accept: ".ipa" },
+  ],
+  jar: [
+    { key: "file", label: "JAR file", type: "file", required: true,
+      accept: ".jar" },
+  ],
+  dotnet_assembly: [
+    { key: "file", label: "DLL / .NET assembly", type: "file", required: true,
+      accept: ".dll,.exe" },
+  ],
+  kernel_image: [
+    { key: "file", label: "Kernel image (vmlinuz / bzImage)", type: "file", required: true },
+    { key: "kernel_version", label: "Kernel version", placeholder: "6.10", type: "text" },
+    { key: "arch", label: "Arch", placeholder: "x86_64", type: "text" },
+  ],
+  kernel_module: [
+    { key: "file", label: "Kernel module (.ko)", type: "file", required: true,
+      accept: ".ko" },
+    { key: "module_name", label: "Module name", placeholder: "buggy", type: "text" },
+  ],
+  hypervisor_image: [
+    { key: "file", label: "Hypervisor binary", type: "file", required: true },
+    { key: "hypervisor_kind", label: "Hypervisor kind", placeholder: "qemu", type: "text" },
+    { key: "version", label: "Version", placeholder: "9.1.0", type: "text" },
+  ],
+  protocol_capture: [
+    { key: "file", label: "PCAP file", type: "file", required: true,
+      accept: ".pcap,.pcapng" },
+    { key: "protocol", label: "Protocol", placeholder: "http", type: "text" },
+  ],
+  crash_input: [
+    { key: "file", label: "Crash input file", type: "file", required: true },
+  ],
+  // URL-based kinds: text only.
+  source_repo: [
+    { key: "repo_url", label: "Repo URL", placeholder: "https://github.com/owner/repo", type: "text", required: true },
+    { key: "ref", label: "Ref", placeholder: "main", type: "text" },
+  ],
+  cve: [
+    { key: "cve_id", label: "CVE ID", placeholder: "CVE-YYYY-NNNN", type: "text", required: true },
+  ],
+  patch_diff: [
+    { key: "repo_url", label: "Repo URL", placeholder: "https://github.com/owner/repo", type: "text", required: true },
+    { key: "vulnerable_ref", label: "Vulnerable ref", placeholder: "abc123", type: "text", required: true },
+    { key: "patched_ref", label: "Patched ref", placeholder: "def456", type: "text", required: true },
+  ],
 };
+
+// Helper: file-required kinds (use 2-step create-then-upload OR
+// dedicated upload-apk endpoint).
+function kindRequiresFile(kind: TargetKind): boolean {
+  return DESCRIPTOR_SCHEMA[kind].some((f) => f.type === "file");
+}
 
 const TARGET_KINDS: TargetKind[] = [
   "native_binary",
@@ -43,7 +113,6 @@ const TARGET_KINDS: TargetKind[] = [
   "protocol_capture",
   "crash_input",
   "patch_diff",
-  "apk",
   "android_apk",
   "ipa",
   "jar",
@@ -133,15 +202,57 @@ export function TargetsPage() {
   });
 
   const createMut = useCreateTarget();
+  const uploadApkMut = useUploadApkTarget();
+  const uploadArtifactMut = useUploadArtifactByTargetId();
   const deleteMut = useDeleteTarget();
   const [showForm, setShowForm] = useState(false);
   const [formWorkspaceId, setFormWorkspaceId] = useState("");
   const [formDisplayName, setFormDisplayName] = useState("");
-  const [formKind, setFormKind] = useState<TargetKind>("native_binary");
-  const [formPrimaryLanguage, setFormPrimaryLanguage] = useState("");
-  const [formDescriptorJson, setFormDescriptorJson] = useState(
-    '{"binary_path": "/path/on/workstation"}',
-  );
+  const [formKind, setFormKind] = useState<TargetKind>("source_repo");
+  // Per-text-field descriptor values, keyed by the field's `key`.
+  // Reset on kind change. The submit handler assembles them into the
+  // descriptor object that the backend expects.
+  const [descriptorValues, setDescriptorValues] = useState<Record<string, string>>({});
+  // Single shared file-picker state (each kind has at most one file
+  // field; kind change resets it).
+  const [pickedFile, setPickedFile] = useState<File | null>(null);
+  // Chained-upload progress message when create→upload runs.
+  const [chainMessage, setChainMessage] = useState<string | null>(null);
+
+  // Helper: assemble the descriptor object from per-TEXT-field values,
+  // dropping empty strings so the backend's strict descriptor shape
+  // doesn't reject them as "unexpected empty string". File fields are
+  // NOT included here — they're posted to the matching upload endpoint
+  // in the submit handler.
+  function assembleDescriptor(): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const field of DESCRIPTOR_SCHEMA[formKind]) {
+      if (field.type !== "text") continue;
+      const v = (descriptorValues[field.key] ?? "").trim();
+      if (v) out[field.key] = v;
+    }
+    return out;
+  }
+
+  // Validation: all required fields filled? Required file fields require
+  // pickedFile; required text fields require a non-empty trimmed value.
+  function descriptorValid(): boolean {
+    return DESCRIPTOR_SCHEMA[formKind]
+      .filter((f) => f.required)
+      .every((f) =>
+        f.type === "file"
+          ? pickedFile !== null
+          : (descriptorValues[f.key] ?? "").trim().length > 0,
+      );
+  }
+
+  function resetForm() {
+    setShowForm(false);
+    setFormDisplayName("");
+    setDescriptorValues({});
+    setPickedFile(null);
+    setChainMessage(null);
+  }
 
   const targets = result?.data ?? [];
 
@@ -160,51 +271,47 @@ export function TargetsPage() {
       </div>
 
       {showForm && workspaces.length > 0 && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-          Create target
-        </h2>
-        <p className="text-xs text-text-muted mb-3">
-          descriptor is kind-specific JSON.
-          <br /><strong>native_binary</strong>: <code>{`{"binary_path": "/path/on/workstation"}`}</code>
-          <br /><strong>source_repo</strong>: <code>{`{"repo_url": "https://github.com/owner/repo", "ref": "main"}`}</code>
-          <br /><strong>kernel_image</strong>: <code>{`{"image_path": "/path/vmlinuz", "kernel_version": "6.10", "arch": "x86_64"}`}</code>
-          <br /><strong>kernel_module</strong>: <code>{`{"ko_path": "/path/buggy.ko", "module_name": "buggy"}`}</code>
-          <br /><strong>hypervisor_image</strong>: <code>{`{"binary_path": "/path/qemu-system-x86_64", "hypervisor_kind": "qemu", "version": "9.1.0"}`}</code>
-          <br /><strong>android_apk</strong>: <code>{`{"apk_path": "/path/to/app.apk"}`}</code> — staged ingestion: apktool → jadx → androguard (+ MobSF if configured)
-          <br /><em>Analysis runs automatically after create. No manual MCP wiring.</em>
-        </p>
-        <div className="space-y-2">
-          <select
-            value={formWorkspaceId}
-            onChange={(e) => setFormWorkspaceId(e.target.value)}
-            aria-label="Workspace"
-            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
-          >
-            <option value="">— select workspace —</option>
-            {workspaces.map((ws) => (
-              <option key={ws.id} value={ws.id}>
-                {ws.name} ({ws.slug})
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            value={formDisplayName}
-            onChange={(e) => setFormDisplayName(e.target.value)}
-            placeholder="Display name (e.g. 'V8 d8 (chromium 148)')"
-            aria-label="Display name"
-            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-          />
-          <div className="flex gap-2">
+        <AilaCard techBorder glow>
+          <h2 className="text-sm font-semibold text-foreground mb-2">
+            Create target
+          </h2>
+          <p className="text-xs text-text-muted mb-3">
+            Fill the kind-specific fields below. Backend handles all
+            MCP-internal IDs transparently. Analysis runs automatically
+            after create.
+          </p>
+          <div className="space-y-2">
+            <select
+              value={formWorkspaceId}
+              onChange={(e) => setFormWorkspaceId(e.target.value)}
+              aria-label="Workspace"
+              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
+            >
+              <option value="">— select workspace —</option>
+              {workspaces.map((ws) => (
+                <option key={ws.id} value={ws.id}>
+                  {ws.name} ({ws.slug})
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              value={formDisplayName}
+              onChange={(e) => setFormDisplayName(e.target.value)}
+              placeholder="Display name"
+              aria-label="Display name"
+              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+            />
             <select
               value={formKind}
               onChange={(e) => {
                 const newKind = e.target.value as TargetKind;
                 setFormKind(newKind);
-                setFormDescriptorJson(DESCRIPTOR_TEMPLATES[newKind]);
+                setDescriptorValues({});
+                setPickedFile(null);
               }}
               aria-label="Target kind"
-              className="px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
+              className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
             >
               {TARGET_KINDS.map((k) => (
                 <option key={k} value={k}>
@@ -212,65 +319,171 @@ export function TargetsPage() {
                 </option>
               ))}
             </select>
-            <input
-              type="text"
-              value={formPrimaryLanguage}
-              onChange={(e) => setFormPrimaryLanguage(e.target.value)}
-              placeholder="primary_language (c / c++ / rust / go / javascript / java / kotlin / python / …)"
-              aria-label="Primary language"
-              className="flex-1 px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-            />
-          </div>
-          <textarea
-            value={formDescriptorJson}
-            onChange={(e) => setFormDescriptorJson(e.target.value)}
-            placeholder='descriptor JSON, e.g. {"binary_path": "/var/lib/aila/uploads/d8"}'
-            rows={3}
-            aria-label="Descriptor JSON"
-            className="w-full px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-          />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={
-                !formWorkspaceId ||
-                !formDisplayName.trim() ||
-                createMut.isPending
-              }
-              onClick={() => {
-                let descriptor: Record<string, unknown> = {};
-                if (formDescriptorJson.trim()) {
-                  try {
-                    descriptor = JSON.parse(formDescriptorJson);
-                  } catch {
-                    alert("descriptor JSON is invalid — fix or leave empty");
+
+            {/* Schema-driven field rendering: file picker for type=file,
+                text input for type=text. Per-kind labels and accept
+                hints come from DESCRIPTOR_SCHEMA. No raw paths anywhere. */}
+            <div className="grid grid-cols-1 gap-2">
+              {DESCRIPTOR_SCHEMA[formKind].map((field) => {
+                const labelText = (
+                  <label
+                    htmlFor={`descriptor-${field.key}`}
+                    className="block text-xs text-text-muted"
+                  >
+                    {field.label}
+                    {field.required && <span className="text-critical"> *</span>}
+                  </label>
+                );
+                if (field.type === "file") {
+                  return (
+                    <div key={field.key} className="space-y-1">
+                      {labelText}
+                      <input
+                        id={`descriptor-${field.key}`}
+                        type="file"
+                        accept={field.accept}
+                        onChange={(e) =>
+                          setPickedFile(e.target.files?.[0] ?? null)
+                        }
+                        aria-label={field.label}
+                        className="w-full text-xs text-text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-sm file:bg-accent file:text-white hover:file:bg-accent/90 file:cursor-pointer"
+                      />
+                      {pickedFile && (
+                        <p className="text-xs text-text-muted">
+                          {pickedFile.name} (
+                          {(pickedFile.size / (1024 * 1024)).toFixed(1)} MB)
+                        </p>
+                      )}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={field.key} className="space-y-1">
+                    {labelText}
+                    <input
+                      id={`descriptor-${field.key}`}
+                      type="text"
+                      value={descriptorValues[field.key] ?? ""}
+                      onChange={(e) =>
+                        setDescriptorValues((prev) => ({
+                          ...prev,
+                          [field.key]: e.target.value,
+                        }))
+                      }
+                      placeholder={field.placeholder}
+                      aria-label={field.label}
+                      className="w-full px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+
+            {formKind === "android_apk" && (
+              <p className="text-xs text-text-muted">
+                Backend pipeline: APK_DECODE → JADX_DECOMPILE →
+                INDEX_DECOMPILED → STATIC_SUMMARY → MOBSF_SCAN.
+              </p>
+            )}
+
+            {chainMessage && (
+              <p className="text-xs text-accent">{chainMessage}</p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={
+                  !formWorkspaceId ||
+                  !formDisplayName.trim() ||
+                  !descriptorValid() ||
+                  createMut.isPending ||
+                  uploadApkMut.isPending ||
+                  uploadArtifactMut.isPending
+                }
+                onClick={async () => {
+                  // android_apk: dedicated single-shot multipart endpoint.
+                  if (formKind === "android_apk") {
+                    if (!pickedFile) return;
+                    uploadApkMut.mutate(
+                      {
+                        workspace_id: formWorkspaceId,
+                        display_name: formDisplayName.trim(),
+                        file: pickedFile,
+                      },
+                      {
+                        onSuccess: (result) => {
+                          resetForm();
+                          navigate(`/vr/targets/${result.data.id}`);
+                        },
+                      },
+                    );
                     return;
                   }
-                }
-                createMut.mutate(
-                  {
-                    workspace_id: formWorkspaceId,
-                    display_name: formDisplayName.trim(),
-                    kind: formKind,
-                    descriptor,
-                    primary_language: formPrimaryLanguage.trim() || undefined,
-                  },
-                  {
-                    onSuccess: (result) => {
-                      setShowForm(false);
-                      setFormDisplayName("");
-                      setFormPrimaryLanguage("");
-                      navigate(`/vr/targets/${result.data.id}`);
-                    },
-                  },
-                );
-              }}
-              className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
-            >
-              {createMut.isPending ? "Creating…" : "Create target"}
-            </button>
+
+                  // URL-only kinds (source_repo / cve / patch_diff): single
+                  // POST /vr/targets with descriptor.
+                  if (!kindRequiresFile(formKind)) {
+                    createMut.mutate(
+                      {
+                        workspace_id: formWorkspaceId,
+                        display_name: formDisplayName.trim(),
+                        kind: formKind,
+                        descriptor: assembleDescriptor(),
+                      },
+                      {
+                        onSuccess: (result) => {
+                          resetForm();
+                          navigate(`/vr/targets/${result.data.id}`);
+                        },
+                      },
+                    );
+                    return;
+                  }
+
+                  // Binary kinds with file: create-then-upload chain.
+                  if (!pickedFile) return;
+                  setChainMessage("Creating target…");
+                  try {
+                    const createResult = await createMut.mutateAsync({
+                      workspace_id: formWorkspaceId,
+                      display_name: formDisplayName.trim(),
+                      kind: formKind,
+                      descriptor: assembleDescriptor(),
+                    });
+                    const targetId = createResult.data.id;
+                    setChainMessage(
+                      `Uploading ${pickedFile.name} (${(pickedFile.size / (1024 * 1024)).toFixed(1)} MB)…`,
+                    );
+                    await uploadArtifactMut.mutateAsync({
+                      target_id: targetId,
+                      file: pickedFile,
+                    });
+                    resetForm();
+                    navigate(`/vr/targets/${targetId}`);
+                  } catch (err) {
+                    setChainMessage(
+                      `Failed: ${err instanceof Error ? err.message : String(err)}`,
+                    );
+                  }
+                }}
+                className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+              >
+                {uploadApkMut.isPending
+                  ? "Uploading APK…"
+                  : uploadArtifactMut.isPending
+                    ? "Uploading…"
+                    : createMut.isPending
+                      ? "Creating…"
+                      : formKind === "android_apk"
+                        ? "Upload APK"
+                        : kindRequiresFile(formKind)
+                          ? "Create + upload"
+                          : "Create target"}
+              </button>
+            </div>
           </div>
-        </div></AilaCard>
+        </AilaCard>
       )}
 
       <AilaCard  techBorder glow><div className="flex items-center gap-2">
@@ -428,7 +641,6 @@ function RefreshSourceButton({
 
   const title = !eligible
     ? kind === "native_binary" ||
-      kind === "apk" ||
       kind === "ipa" ||
       kind === "jar" ||
       kind === "dotnet_assembly" ||

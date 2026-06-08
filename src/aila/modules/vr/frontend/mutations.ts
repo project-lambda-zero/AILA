@@ -381,6 +381,71 @@ export function useCreateTarget() {
   });
 }
 
+/** Multipart POST to /vr/targets/upload-apk — creates a new
+ * `android_apk` target with the uploaded .apk file. Backend:
+ *  1. validates workspace ownership
+ *  2. content-addresses the bytes (SHA-256) to
+ *     `~/.android-mcp/uploads/<team>/<sha>.apk`
+ *  3. creates a VRTargetRecord with kind=android_apk
+ *  4. auto-enqueues the five-stage ingestion
+ *     (APK_DECODE -> JADX_DECOMPILE -> INDEX_DECOMPILED ->
+ *      STATIC_SUMMARY -> MOBSF_SCAN). */
+export function useUploadApkTarget() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: {
+      workspace_id: string;
+      display_name: string;
+      file: File;
+    }) => {
+      const fd = new FormData();
+      fd.append("workspace_id", args.workspace_id);
+      fd.append("display_name", args.display_name);
+      fd.append("file", args.file, args.file.name);
+      return await authorizedRequestJson<Envelope<VRTargetSummary>>(
+        "/vr/targets/upload-apk",
+        { method: "POST", body: fd },
+      );
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "targets"] });
+      toast.success(
+        `APK upload accepted: ${result.data.display_name}. Ingestion (5 stages) running in background.`,
+      );
+    },
+    onError: (err: Error) => {
+      toast.error(`APK upload failed: ${err.message}`);
+    },
+  });
+}
+
+/** Multipart POST to /vr/targets/{id}/upload — uploads a binary file
+ * to an existing target (native_binary / kernel_image / kernel_module /
+ * hypervisor_image / ipa / jar / dotnet_assembly). For android_apk use
+ * `useUploadApkTarget` instead (different endpoint, different lifecycle).
+ * Backend streams the bytes through to IDA-MCP and stores the returned
+ * binary handle in the target. Re-triggers analysis. */
+export function useUploadArtifactByTargetId() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { target_id: string; file: File }) => {
+      const fd = new FormData();
+      fd.append("file", args.file, args.file.name);
+      return await authorizedRequestJson<Envelope<Record<string, unknown>>>(
+        `/vr/targets/${encodeURIComponent(args.target_id)}/upload`,
+        { method: "POST", body: fd },
+      );
+    },
+    onSuccess: (_result, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "targets"] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "target", vars.target_id] });
+    },
+    onError: (err: Error) => {
+      toast.error(`Upload failed: ${err.message}`);
+    },
+  });
+}
+
 export function useRankTarget(targetId: string) {
   const queryClient = useQueryClient();
   return useMutation({

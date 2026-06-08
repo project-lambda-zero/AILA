@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func as sa_func
+from sqlalchemy import text as sa_text
 from sqlmodel import select
 
 from aila.api.limiter import limiter
@@ -124,7 +125,7 @@ def _infer_target_kind(spec: Any) -> TargetKind:
         return TargetKind.SOURCE_REPO
     fmt = spec.target_format.value if spec.target_format else None
     if fmt == "apk":
-        return TargetKind.APK
+        return TargetKind.ANDROID_APK
     if fmt == "ipa":
         return TargetKind.IPA
     if fmt == "jar":
@@ -1857,7 +1858,14 @@ def create_vr_router() -> APIRouter:
     @router.delete(
         "/targets/{target_id}",
         status_code=status.HTTP_204_NO_CONTENT,
-        summary="Delete a target (refuses if any investigations reference it).",
+        summary=(
+            "Delete a target. Refuses with 409 if any investigations or "
+            "findings reference it. Cascade-deletes stub/log dependents "
+            "(vr_projects, vr_target_tag_index, vr_investigation_targets, "
+            "vr_mcp_call_log, vr_fuzz_campaign_proposals) in the same "
+            "transaction so a stale operator-created project stub does not "
+            "block the delete with an FK violation."
+        ),
     )
     @limiter.limit("10/minute")
     async def delete_target(
@@ -1866,7 +1874,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> Response:
         del request
-        from .db_models import VRInvestigationRecord, VRTargetRecord
+        from .db_models import VRFindingRecord, VRInvestigationRecord, VRTargetRecord
 
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
@@ -1880,6 +1888,10 @@ def create_vr_router() -> APIRouter:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Target {target_id} not found.",
                 )
+
+            # Refuse on real content. A target with investigations or
+            # findings is load-bearing; cascading those silently would
+            # destroy evidence.
             inv_count = (await uow.session.exec(
                 select(sa_func.count())
                 .select_from(VRInvestigationRecord)
@@ -1893,6 +1905,49 @@ def create_vr_router() -> APIRouter:
                         "Archive or delete them first."
                     ),
                 )
+            finding_count = (await uow.session.exec(
+                select(sa_func.count())
+                .select_from(VRFindingRecord)
+                .where(VRFindingRecord.target_id == target_id),
+            )).one()
+            if int(finding_count) > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Target {target_id} has {int(finding_count)} finding(s). "
+                        "Retract or move them before deleting the target."
+                    ),
+                )
+
+            # Cascade stub + log dependents. None of these tables hold
+            # evidence — vr_projects is operator-created scaffolding,
+            # vr_target_tag_index is denormalized tag lookup,
+            # vr_investigation_targets is a join row (already guarded
+            # by the inv_count check above), vr_mcp_call_log is historical
+            # audit trail keyed by target, and vr_fuzz_campaign_proposals
+            # are auto-generated. Same transaction so partial failure
+            # rolls back. Tables that don't exist on this deployment are
+            # tolerated (the audit_log + fuzz tables are newer).
+            for stub_table in (
+                "vr_projects",
+                "vr_target_tag_index",
+                "vr_investigation_targets",
+                "vr_mcp_call_log",
+                "vr_fuzz_campaign_proposals",
+            ):
+                try:
+                    await uow.session.execute(
+                        sa_text(f"DELETE FROM {stub_table} WHERE target_id = :tid"),
+                        {"tid": target_id},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # If a deployment lacks one of these tables, log + continue.
+                    # The final target delete will surface any real FK still binding.
+                    _log.warning(
+                        "delete_target: cascade cleanup of %s skipped (%s: %s)",
+                        stub_table, type(exc).__name__, str(exc)[:120],
+                    )
+
             await uow.session.delete(row)
             await uow.session.commit()
 
@@ -2326,9 +2381,13 @@ def create_vr_router() -> APIRouter:
         from .workflow.task import run_target_analysis
 
         # 1) Resolve target + verify kind is uploadable.
+        # android_apk is NOT in this set — it has its dedicated multipart
+        # endpoint POST /vr/targets/upload-apk that runs the four-stage
+        # ingestion pipeline. This legacy upload path handles raw binary
+        # kinds only.
         upload_kinds = {
             "native_binary", "kernel_image", "kernel_module",
-            "hypervisor_image", "apk", "ipa", "jar", "dotnet_assembly",
+            "hypervisor_image", "ipa", "jar", "dotnet_assembly",
         }
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
