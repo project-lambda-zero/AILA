@@ -52,7 +52,7 @@
     "ast-v8-to-istanbul": "1.0.0",
     "asynckit": "0.4.0",
     "axe-core": "4.11.2",
-    "axios": "1.15.0",
+    "axios": "1.16.0",
     "babel-jest": "30.3.0",
     "babel-plugin-istanbul": "7.0.1",
     "babel-plugin-jest-hoist": "30.3.0",
