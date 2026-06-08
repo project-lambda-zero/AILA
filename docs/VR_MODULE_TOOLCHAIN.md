@@ -30,12 +30,13 @@ Layer 0: Target Environment
 
 ## What VR actually drives today
 
-AILA's VR module reaches the layers above through two HTTP MCP servers and one in-process retriever, mediated by the module's bridge tools (`src/aila/modules/vr/tools/audit_mcp_bridge.py`, `ida_bridge.py`).
+AILA's VR module reaches the layers above through three HTTP MCP servers and one in-process retriever, mediated by the module's bridge tools (`src/aila/modules/vr/tools/audit_mcp_bridge.py`, `ida_bridge.py`, `android_mcp_bridge.py`).
 
 | Server | Port | Surface | Owner |
 |---|---|---|---|
 | **audit-mcp** | 18822 | 58 tools: source graph (Trailmark) + semantic search (semble) + SARIF correlation | source-code targets |
 | **ida-headless-mcp** | 18821 | 81 tools: Hex-Rays + miasm + CAPA + symbolic / SMT (binbit) | binary targets |
+| **android-mcp** | 18823 | 13 tool wrappers (apktool / jadx / androguard / MobSF / drozer / qark / AndroBugs / LIEF / YARA / apksigner / objection / frida / adb) + 4 composite handlers (`verify_capabilities`, `classify_behavior`, `compute_risk_score`, `find_secrets`) | Android APK targets |
 | **semble** | embedded inside audit-mcp | Model2Vec + BM25 + RRF code-chunk retriever | semantic search backend |
 
 The bridges sit between the LLM action layer and the HTTP transport. They are the only places in the VR module that touch the MCP servers. Behaviors that matter for the loop:
@@ -48,18 +49,30 @@ The bridges sit between the LLM action layer and the HTTP transport. They are th
 - **Lazy pre-warm fan-out.** When `AUDIT_MCP_WORKERS > 1` and a new `index_id` lands its first call, the bridge fires 16 cheap parallel requests so round-robin distribution warms each uvicorn worker's TypeResolver + semble + engine caches once. Skipped on `AUDIT_MCP_WORKERS=1` (the Windows reality).
 - **`read_lines` — bridge-side virtual tool.** No upstream MCP endpoint. The bridge resolves `index_id → root_path` via `/tools/list_indexes` and slices the file from disk. Use when an indexer returned a stale or wrong slice (`read_function` returning a file header, `search_constants` returning 0) and you need verbatim source.
 - **IDA mutations.** Mutating IDA tools (`rename_function`, `rename_variable`, `set_comment`, `set_function_type`, `patch_bytes`, `patch_cff`, ...) return a `ticket_id` and apply asynchronously; the bridge polls `poll_mutation` for completion.
+- **android-mcp bridge — deliberately slim.** No schema-driven kwarg validation, no pre-warm fan-out, no kwarg alias map, no virtual tools. The four ingestion stages (`APK_DECODE` / `JADX_DECOMPILE` / `STATIC_SUMMARY` / `MOBSF_SCAN`) call a small fixed set of actions with known parameters. Transport errors surface as `{"status": "error", "error": "..."}` so callers can branch on one uniform shape. `ANDROID_MCP_TIMEOUT` (default 1800 s) is the absolute network ceiling; the per-stage `StageTracker` timeouts in `services/stage_tracker.py` (APK_DECODE 600 s, JADX_DECOMPILE 900 s, STATIC_SUMMARY 300 s, MOBSF_SCAN 1800 s) are the actual per-stage budgets.
 
 Operators and embedded harnesses can reach audit-mcp's HTTP API directly when they want a one-shot query (e.g. `mcp__audit_mcp_*` MCP tools exposed to outer agent harnesses). Inside AILA, the bridges are the canonical path — they carry the validation, dedup, pre-warm, and survey-streak logic the loop needs.
 
 ### Target ingestion stages
 
-VR target onboarding (after a `source_repo` or binary upload lands) runs a three-stage pipeline. Each stage has its own row in `vr_target_analysis_stages` (migration `060_vr_target_analysis_stages`) with `status`, `attempts`, `started_at`, `completed_at`, and `error`:
+VR target onboarding runs through `aila.modules.vr.services.target_analysis.TargetAnalysisService.analyze()`, which routes by `TargetKind` to one of two staged pipelines. Each stage has its own row in the target's `analysis_stages_json` JSON (migration `060_vr_target_analysis_stages`) with `state`, `attempts`, `started_at`, `completed_at`, and `error`. Stages that don't apply to the target's kind are pre-marked `DONE` (skipped) so `roll_up_overall_state` can converge on `READY` without inventing a kind-aware rollup.
+
+**Source-repo / binary pipeline** — every kind except `android_apk`: `source_repo`, `native_binary`, `apk` (legacy native APK kind routed to IDA), `ipa`, `jar`, `dotnet_assembly`, `kernel_image`, `kernel_module`, `hypervisor_image`, plus the descriptor-only kinds (`cve`, `protocol_capture`, `crash_input`, `patch_diff` — these pre-skip `INGESTION` via `_NO_INGEST_KINDS`):
 
 | Stage | What runs |
 |---|---|
 | `INGESTION` | audit-mcp `clone_repo` + `index_codebase`, or IDA `open_binary`. Polls until ready. |
 | `CAPABILITY_PROFILE` | semble warm-up + per-language tool catalog projection; populates the suppression set above |
 | `FUNCTION_RANKING` | `fuzzing_targets` ranking with per-language thresholds; persists ranked function index for the agent prompt |
+
+**Android-APK pipeline** — `android_apk` kind only (PRD §C-20):
+
+| Stage | What runs |
+|---|---|
+| `APK_DECODE` | android-mcp `apktool_decode` — resource + AndroidManifest + smali decode. Persists `mcp_handles_json.android_mcp_decoded_dir`. |
+| `JADX_DECOMPILE` | android-mcp `jadx_decompile` — dex-to-Java decompilation. Persists `mcp_handles_json.android_mcp_decompiled_dir`. |
+| `STATIC_SUMMARY` | android-mcp `androguard_summary` — package name, permissions, intent filters, signing certs. Persists `mcp_handles_json.android_mcp_static_summary`; `android_mcp_package_name` surfaces in the target row for the UI's display label. |
+| `MOBSF_SCAN` | android-mcp `mobsf_scan` — static-only MobSF scan. Gated on `MOBSF_API_KEY` on the AILA host; when unset the stage records `{"skipped": true}` and transitions `DONE` so the rollup still converges. Persists `mcp_handles_json.android_mcp_mobsf_scan`. |
 
 `aila.modules.vr.services.stage_tracker` owns idempotency, `RUNNING`-timeout reaping (separate `aila.modules.vr.services.target_analysis` reaper), and serialized commits. Operator-driven resume:
 

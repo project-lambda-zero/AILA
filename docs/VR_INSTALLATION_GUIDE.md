@@ -20,6 +20,7 @@ Complete setup guide for the AILA Vulnerability Research module. Covers infrastr
 |---|---|---|
 | **audit-mcp** | Source code indexing, semantic search, function reading | `http://127.0.0.1:18822` |
 | **ida-headless-mcp** | Binary decompilation, function analysis (optional — only for binary targets) | `http://127.0.0.1:18821` |
+| **android-mcp** | Android APK audit: apktool, jadx, androguard, MobSF, signing checks, native-lib hardening (optional — only for `android_apk` targets) | `http://127.0.0.1:18823` |
 
 **LLM provider (at least one required):**
 - OpenAI API (GPT-4o, GPT-4o-mini)
@@ -152,7 +153,41 @@ pip install -e .
 
 Requires a licensed IDA Pro installation.
 
-### 3.3 MCP environment variables
+### 3.3 android-mcp (optional — for Android APK targets)
+
+Only needed if you analyze Android APKs (target kind `android_apk`). The
+server wraps apktool / jadx / androguard / MobSF / drozer / qark /
+AndroBugs / LIEF / YARA / apksigner / objection / frida / adb plus four
+composite handlers (`verify_capabilities`, `classify_behavior`,
+`compute_risk_score`, `find_secrets`) behind one HTTP surface.
+
+```bash
+cd ..
+git clone <your-android-mcp-repo-url> android-mcp
+cd android-mcp
+pip install -e ".[dev]"
+```
+
+OS prerequisites the server shells out to (install only what you need —
+each tool wrapper degrades to "binary not found" cleanly):
+
+| Wrapper | OS prereq | Notes |
+|---|---|---|
+| apktool | `apktool` on PATH | Resource + AndroidManifest + smali decode |
+| jadx | `jadx-cli` on PATH | Dex-to-Java decompilation |
+| androguard | pip `androguard >= 4.0` | Bundled via android-mcp's `pyproject.toml` |
+| MobSF | external MobSF server + `MOBSF_API_KEY` | Optional; static-only scan, gated on env var |
+| drozer | `drozer` on PATH | Component-permission audit |
+| qark | pip `qark` | Quick Android Review Kit static rules |
+| AndroBugs | `ANDROBUGS_HOME` env pointing at the checkout | Vector-ID-based scanner |
+| LIEF | pip `lief >= 0.16` | Native `*.so` hardening flags |
+| yara | pip `yara-python >= 4.5` | Runs the bundled `android_basic.yar` ruleset over the jadx tree |
+| apksigner | `apksigner` on PATH (Android build-tools) | APK Signature Scheme v1/v2/v3/v3.1 verification |
+| objection | pip `objection` | Frida-gadget injection + REPL drive |
+| frida | pip `frida >= 16` | Device-side `frida-server` is the operator's responsibility |
+| adb | `adb` on PATH (Android platform-tools) | Devices, install, logcat, dumpsys |
+
+### 3.4 MCP environment variables
 
 ```env
 # audit-mcp (HTTP server, default :18822)
@@ -179,6 +214,32 @@ AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S=7200
 # ida-headless-mcp (optional, HTTP server, default :18821)
 IDA_HEADLESS_URL=http://127.0.0.1:18821
 IDA_HEADLESS_TIMEOUT=120
+
+# android-mcp (optional, HTTP server, default :18823)
+ANDROID_MCP_URL=http://127.0.0.1:18823
+# Absolute network ceiling for one bridge HTTP call (default 1800s).
+# Per-stage StageTracker timeouts (APK_DECODE 600s, JADX_DECOMPILE 900s,
+# STATIC_SUMMARY 300s, MOBSF_SCAN 1800s) are tighter — the bridge ceiling
+# is only the absolute network cap, not the per-stage budget.
+ANDROID_MCP_TIMEOUT=1800
+# Override the default APK upload root (defaults to ~/.android-mcp/uploads).
+# Each team's APKs land under <root>/<team_id>/<sha>.apk (admin auth
+# stages under <root>/shared/<sha>.apk).
+# ANDROID_MCP_UPLOAD_DIR=/var/lib/android-mcp/uploads
+# MobSF static-scan API key. Set on the AILA host to enable the
+# MOBSF_SCAN stage. Unset → the stage records {"skipped": true} and
+# transitions DONE so the rollup still converges.
+# MOBSF_API_KEY=...
+# android-mcp server-side: per-tool concurrency cap. Mirrors audit-mcp's
+# pattern. e.g. ANDROID_MCP_TOOL_CAP_JADX_DECOMPILE=4. See
+# `GET http://127.0.0.1:18823/runtime` for live caps.
+# ANDROID_MCP_TOOL_CAP_<TOOLNAME>=<int>
+# android-mcp server-side: per-tool wall-clock timeout. e.g.
+# ANDROID_MCP_TIMEOUT_MOBSF_SCAN=3600.
+# ANDROID_MCP_TIMEOUT_<TOOLNAME>=<seconds>
+# android-mcp server-side: workdir root for decoded / decompiled APK
+# trees and composite report dumps (default ~/.android-mcp/work).
+# ANDROID_MCP_WORKDIR=/var/lib/android-mcp/work
 ```
 
 The audit-mcp `/runtime` endpoint returns live `{dedup: {inflight, hits, misses}, semaphores: {<tool>: {cap, available}}, thread_pool_limit}`. When agents complain "audit_mcp slow", read it first — `available: 0` on a tool is the bottleneck; bump its `AUDIT_MCP_TOOL_CAP_<TOOL>` cap. High `hits` with low `misses` means sibling branches are deduping the same call, which is the design.
@@ -202,6 +263,11 @@ This starts all services:
 - AILA workers (one per queue: default, vr, vulnerability, forensics, sbd_nfr)
 - AILA frontend (Vite dev server, port 3000)
 
+`start.sh` does **not** currently spawn android-mcp — the operator
+launches it in its own terminal (`python -m android_mcp --mode http
+--port 18823`) when Android APK targets are in play. Source-repo and
+binary investigations don't need it running.
+
 ### Option B: Manual (separate terminals)
 
 ```bash
@@ -217,6 +283,10 @@ python -m aila worker -q vr
 
 # Terminal 4: Frontend
 pnpm dev
+
+# Terminal 5 (optional, only for android_apk targets): android-mcp
+cd ../android-mcp
+python -m android_mcp --mode http --port 18823
 ```
 
 ### Verify services
@@ -230,6 +300,7 @@ Or manually:
 ```bash
 curl http://localhost:8000/health          # Backend
 curl http://localhost:18822/health         # audit-mcp
+curl http://localhost:18823/health         # android-mcp (if launched)
 curl http://localhost:3000                 # Frontend
 ```
 
@@ -305,6 +376,13 @@ The investigation detail page shows:
 | `AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S` | `7200` | Hard ceiling for semble cold-build subprocess |
 | `IDA_HEADLESS_URL` | `http://127.0.0.1:18821` | ida-headless-mcp server URL |
 | `IDA_HEADLESS_TIMEOUT` | `120` | Timeout for IDA tool calls (seconds) |
+| `ANDROID_MCP_URL` | `http://127.0.0.1:18823` | android-mcp server URL |
+| `ANDROID_MCP_TIMEOUT` | `1800` | Absolute network ceiling per bridge HTTP call (seconds); per-stage StageTracker timeouts apply tighter caps |
+| `ANDROID_MCP_UPLOAD_DIR` | `~/.android-mcp/uploads` | APK upload root; per-team subdir `<root>/<team_id>/<sha>.apk` |
+| `MOBSF_API_KEY` | _(unset)_ | Gates the `MOBSF_SCAN` stage. Absent → stage skipped, rollup still converges |
+| `ANDROID_MCP_TOOL_CAP_<NAME>` | per-tool default | android-mcp server-side per-tool concurrency cap; mirrors audit-mcp pattern |
+| `ANDROID_MCP_TIMEOUT_<NAME>` | per-tool default | android-mcp server-side per-tool wall-clock cap (seconds) |
+| `ANDROID_MCP_WORKDIR` | `~/.android-mcp/work` | android-mcp server-side workdir for decoded / decompiled trees and composite reports |
 | `AILA_LLM_MAX_RETRIES` | `100` | LLM call retries on 429 / 502 / 503 errors |
 | `AILA_LLM_RETRY_BASE_DELAY_S` | `1.0` | First retry backoff (seconds) |
 | `AILA_LLM_RETRY_MAX_DELAY_S` | `30.0` | Max retry backoff cap (seconds) |
@@ -382,6 +460,7 @@ conn.close()
                     │  6 branches    tool calls      findings     │
                     │  (H/N/M/Y/R/W) (audit-mcp)    patterns     │
                     │                (ida-headless)  disclosures  │
+                    │                (android-mcp)                 │
                     └──────────────────────────────────────────────┘
 ```
 
@@ -521,14 +600,16 @@ python -m aila worker -q vr
 │  │       │                                            │  │
 │  │  ┌────┴─────────────────────────┐                  │  │
 │  │  │ MCP Bridges (tool dispatch)  │                  │  │
-│  │  └────┬──────────────┬──────────┘                  │  │
-│  └───────┼──────────────┼────────────────────────────┘  │
-└──────────┼──────────────┼────────────────────────────────┘
-           │              │
-     ┌─────┴─────┐  ┌─────┴──────────┐
-     │ audit-mcp │  │ ida-headless   │
-     │ (source)  │  │ (binary, opt.) │
-     └───────────┘  └────────────────┘
+│  │  └─┬──────────┬─────────┬───────┘                  │  │
+│  └────┼──────────┼─────────┼──────────────────────────┘  │
+└───────┼──────────┼─────────┼─────────────────────────────┘
+        │          │         │
+   ┌────┴────┐ ┌───┴──────┐ ┌┴───────────┐
+   │audit-mcp│ │ida-head- │ │android-mcp │
+   │(source) │ │less      │ │(APK, opt.) │
+   │         │ │(binary,  │ │            │
+   │         │ │ opt.)    │ │            │
+   └─────────┘ └──────────┘ └────────────┘
 ```
 
 ---
