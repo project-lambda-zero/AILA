@@ -28,10 +28,16 @@ from .base import (
     AdapterFn,
     AdapterResult,
 )
-from .known_tools import AUDIT_MCP_TOOLS, IDA_HEADLESS_TOOLS, KNOWN_TOOLS
+from .known_tools import (
+    ANDROID_MCP_TOOLS,
+    AUDIT_MCP_TOOLS,
+    IDA_HEADLESS_TOOLS,
+    KNOWN_TOOLS,
+)
 from .registry import get_adapter, registered_tools, specialized_tools
 
 __all__ = [
+    "ANDROID_MCP_TOOLS",
     "AUDIT_MCP_TOOLS",
     "AdapterContext",
     "AdapterFn",

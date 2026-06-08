@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 
 from aila.modules.vr.agents.mcp_adapters import (
+    ANDROID_MCP_TOOLS,
     AUDIT_MCP_TOOLS,
     IDA_HEADLESS_TOOLS,
     KNOWN_TOOLS,
@@ -47,7 +48,7 @@ from aila.modules.vr.agents.mcp_adapters.ida_headless import (
     adapt_xrefs_from,
     adapt_xrefs_to,
 )
-from aila.modules.vr.agents.tool_executor import _parse_command
+from aila.modules.vr.agents.tool_executor import ToolExecutor, _parse_command
 from aila.modules.vr.contracts import PayloadKind
 
 
@@ -72,8 +73,10 @@ class TestRegistry:
         # Every server in KNOWN_TOOLS has tools registered
         assert "ida_headless" in KNOWN_TOOLS
         assert "audit_mcp" in KNOWN_TOOLS
+        assert "android_mcp" in KNOWN_TOOLS
         assert len(IDA_HEADLESS_TOOLS) >= 80
         assert len(AUDIT_MCP_TOOLS) >= 50
+        assert len(ANDROID_MCP_TOOLS) >= 22
 
     def test_registered_tools_includes_all_known(self) -> None:
         tools = set(registered_tools())
@@ -81,6 +84,8 @@ class TestRegistry:
             assert f"ida_headless.{name}" in tools
         for name in AUDIT_MCP_TOOLS:
             assert f"audit_mcp.{name}" in tools
+        for name in ANDROID_MCP_TOOLS:
+            assert f"android_mcp.{name}" in tools
 
     def test_every_known_tool_resolves_to_some_adapter(self) -> None:
         # The point of KNOWN_TOOLS: every entry must be callable, either
@@ -113,6 +118,99 @@ class TestRegistry:
         assert "ida_headless.list_binaries" not in spec
         assert "audit_mcp.cache_stats" not in spec
 
+
+# ----------------------------------------------------------------------
+# F-1 android_mcp dispatch wiring (ToolExecutor + KNOWN_TOOLS + parser)
+# ----------------------------------------------------------------------
+
+
+class TestAndroidMcpDispatch:
+    """Cover the F-1 wiring: an investigation against an ``android_apk``
+    target must be able to issue ``tool_run`` commands of the form
+    ``android_mcp.<tool>`` and have them reach the ``AndroidMcpBridgeTool``.
+
+    These tests are intentionally DB-free. They cover the three failure
+    modes the old code-path produced silently:
+
+      1. ``get_adapter("android_mcp", "<known>")`` returned ``None`` —
+         the executor would emit "no tool 'android_mcp.<x>'" before
+         dispatch.
+      2. ``ToolExecutor.__init__`` did not accept an ``android_mcp``
+         parameter and ``self._bridges`` had no ``"android_mcp"`` key —
+         the executor would emit "No bridge configured for MCP server
+         'android_mcp'" at the bridge lookup step.
+      3. The ``_parse_command`` JSON parser rejected the dotted tool id
+         — same failure mode as (1) one step earlier.
+    """
+
+    def test_android_mcp_known_tools_resolve_to_generic_adapter(self) -> None:
+        # Every documented android-mcp tool must produce a non-None
+        # adapter so the executor's get_adapter() lookup succeeds.
+        for tool in ANDROID_MCP_TOOLS:
+            adapter = get_adapter("android_mcp", tool)
+            assert adapter is not None, f"no adapter for android_mcp.{tool}"
+            # No specialized adapters registered yet; everything falls
+            # through to adapt_generic. When the next iteration adds a
+            # specialized adapter this assertion changes, not the wiring.
+            assert adapter is adapt_generic
+
+    def test_android_mcp_unknown_tool_returns_none(self) -> None:
+        # Loud failure for hallucinated tool names — the executor uses
+        # this to surface "no such tool" instead of a silent 404.
+        assert get_adapter("android_mcp", "bogus_handler") is None
+
+    def test_androguard_summary_parses_as_android_mcp_call(self) -> None:
+        command = json.dumps({
+            "tool": "android_mcp.androguard_summary",
+            "args": {"apk_path": "/tmp/sample.apk"},
+        })
+        parsed = _parse_command(command)
+        assert parsed is not None
+        tool_id, args = parsed
+        assert tool_id == "android_mcp.androguard_summary"
+        server_id, _, tool_name = tool_id.partition(".")
+        assert server_id == "android_mcp"
+        assert tool_name == "androguard_summary"
+        assert args == {"apk_path": "/tmp/sample.apk"}
+
+    def test_tool_executor_registers_android_mcp_bridge(self) -> None:
+        # The bridge lookup in ToolExecutor.execute() reads
+        # self._bridges[server_id]; this test ensures the constructor
+        # actually wires android_mcp into that dict, which is the
+        # mechanical contract F-1 establishes.
+
+
+        class _FakeBridge:
+            name = "fake"
+
+            async def forward(self, action: str | None = None, **kwargs):
+                return {"status": "ready", "action": action, "kwargs": kwargs}
+
+        ida = _FakeBridge()
+        audit = _FakeBridge()
+        android = _FakeBridge()
+        executor = ToolExecutor(ida=ida, audit_mcp=audit, android_mcp=android)
+        # The private dict is the dispatch surface inside execute(); a
+        # KeyError here at runtime would surface as the "No bridge
+        # configured" string the engine sees in its next turn.
+        assert executor._bridges["ida_headless"] is ida
+        assert executor._bridges["audit_mcp"] is audit
+        assert executor._bridges["android_mcp"] is android
+
+    def test_android_mcp_composite_handlers_registered(self) -> None:
+        # The composite layer (verify_capabilities / classify_behavior /
+        # compute_risk_score / find_secrets) is what VR personas mostly
+        # call. They must be present even though the same names also
+        # appear on the ida_headless surface — KNOWN_TOOLS is keyed by
+        # server_id so collisions resolve by server.
+        for composite in (
+            "verify_capabilities",
+            "classify_behavior",
+            "compute_risk_score",
+            "find_secrets",
+        ):
+            assert composite in ANDROID_MCP_TOOLS
+            assert get_adapter("android_mcp", composite) is adapt_generic
 
 # ----------------------------------------------------------------------
 # Generic fallback
