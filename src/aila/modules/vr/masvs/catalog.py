@@ -440,6 +440,320 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
 )
 
 
+_CRYPTO_CONTROLS: tuple[MasvsControl, ...] = (
+    MasvsControl(
+        id="MSTG-CRYPTO-1",
+        group=MasvsGroup.CRYPTO,
+        level=MasvsLevel.L1,
+        title=(
+            "The app does not rely on symmetric cryptography with hardcoded keys as a sole "
+            "method of encryption."
+        ),
+        description=(
+            "A symmetric key embedded in the APK — as a string literal in dex, a byte array "
+            "constant in a native library, a resource file, or a BuildConfig field — is "
+            "recoverable by anyone who can read the file off the device or pull it from any "
+            "app store mirror. Once recovered, the key decrypts every payload the app has "
+            "ever produced under it, including data exfiltrated from backups or transit "
+            "captures. Symmetric keys protecting sensitive data must therefore derive from a "
+            "Keystore-resident master key, from a user-supplied passphrase passed through "
+            "PBKDF2 / Argon2 with a per-install random salt, or from a server-issued "
+            "per-session key — never from a constant baked into the binary."
+        ),
+        verification_steps=(
+            "Enumerate every javax.crypto.spec.SecretKeySpec / IvParameterSpec / PBEKeySpec "
+            "/ SecretKey instantiation and capture the byte source feeding the constructor "
+            "(string literal, hex constant, BuildConfig field, resource read, JNI call, "
+            "Keystore alias, network response).",
+            "For every key whose source is a constant inside the APK, classify the data it "
+            "protects (token, payment data, session secret, local DB row, settings blob) and "
+            "flag the call site as a finding when the data classification is sensitive.",
+            "For keys derived from a passphrase, confirm a per-install random salt is used "
+            "(SecureRandom-generated, persisted out-of-band from the ciphertext) and that "
+            "the KDF is PBKDF2 with iteration count at or above 10000 or a memory-hard "
+            "alternative (scrypt, Argon2).",
+        ),
+        relevant_apis=(
+            "javax.crypto.spec.SecretKeySpec",
+            "javax.crypto.spec.IvParameterSpec",
+            "javax.crypto.spec.PBEKeySpec",
+            "javax.crypto.SecretKey",
+            "javax.crypto.Cipher.init",
+            "javax.crypto.SecretKeyFactory.generateSecret",
+            "java.security.KeyStore.getKey",
+            "android.security.keystore.KeyGenParameterSpec",
+        ),
+        evidence_hints=(
+            "SecretKeySpec",
+            "PBEKeySpec",
+            "Cipher.getInstance",
+            "Cipher.init",
+            "new String(",
+            "getBytes()",
+            "BuildConfig.",
+            "AES",
+            "HmacSHA",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CRYPTO-2",
+        group=MasvsGroup.CRYPTO,
+        level=MasvsLevel.L1,
+        title="The app uses proven implementations of cryptographic primitives.",
+        description=(
+            "Hand-rolled cryptography — XOR loops, bespoke S-box substitutions, custom "
+            "stream-cipher constructions, reimplemented hash functions — historically "
+            "introduces side-channel and bias defects that the audited primitives in the "
+            "JCA, Conscrypt, Tink, and Bouncy Castle do not have. The verification target "
+            "is that every cryptographic operation routes through a reviewed provider "
+            "(AndroidOpenSSL / Conscrypt / BC / SunJCE / Tink) and that any class whose "
+            "name or shape resembles a cryptographic primitive is in fact a thin wrapper "
+            "around such a provider, not an independent implementation."
+        ),
+        verification_steps=(
+            "List every javax.crypto.* / java.security.* call site and confirm the provider "
+            "resolution lands on a reviewed provider (AndroidOpenSSL, Conscrypt, Bouncy "
+            "Castle, SunJCE, Tink) rather than a custom Provider subclass.",
+            "Enumerate classes whose names contain Cipher / Crypt / Hash / Digest / Encrypt "
+            "/ Decrypt / AES / RSA but are not part of a known dependency, and inspect "
+            "their bodies for bitwise loops (XOR, ROT, S-box lookups) that indicate an "
+            "in-tree cryptographic implementation.",
+            "For every Security.addProvider / Security.insertProviderAt call, verify the "
+            "added Provider is a reviewed third-party package — raise a finding against "
+            "any locally-defined Provider that injects custom Cipher / MessageDigest / Mac "
+            "SPIs.",
+        ),
+        relevant_apis=(
+            "javax.crypto.Cipher.getInstance",
+            "java.security.MessageDigest.getInstance",
+            "javax.crypto.Mac.getInstance",
+            "javax.crypto.KeyGenerator.getInstance",
+            "java.security.Provider",
+            "java.security.Security.addProvider",
+            "java.security.Security.insertProviderAt",
+            "org.bouncycastle.jce.provider.BouncyCastleProvider",
+        ),
+        evidence_hints=(
+            "Cipher.getInstance",
+            "MessageDigest.getInstance",
+            "Mac.getInstance",
+            "addProvider",
+            "BouncyCastleProvider",
+            "Conscrypt",
+            "extends Provider",
+            "implements Cipher",
+            "^ 0x",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CRYPTO-3",
+        group=MasvsGroup.CRYPTO,
+        level=MasvsLevel.L1,
+        title=(
+            "The app uses cryptographic primitives that are appropriate for the particular "
+            "use-case, configured with parameters that adhere to industry best practices."
+        ),
+        description=(
+            "Selecting AES is necessary but not sufficient — the mode of operation, IV "
+            "discipline, padding, key length, and authenticated-encryption choice "
+            "determine whether the construction is sound. AES/ECB leaks plaintext "
+            "structure. AES/CBC without an accompanying MAC accepts ciphertext "
+            "modifications. AES/GCM with a reused (key, IV) pair loses both confidentiality "
+            "and authenticity. PBKDF2 with low iteration count or a constant salt collapses "
+            "to a dictionary lookup. The verification target is that every primitive choice "
+            "and parameter set holds up against the current NIST / ECRYPT / OWASP guidance "
+            "for the use-case in question."
+        ),
+        verification_steps=(
+            "For every Cipher.getInstance(…) call, capture the transformation string and "
+            "flag any mode of ECB, CBC without an accompanying MAC, or stream cipher reused "
+            "across messages.",
+            "For every AES/GCM call site, trace the IV / nonce source — confirm it is drawn "
+            "from SecureRandom per encryption (or is a monotonically-incrementing counter "
+            "under a single-writer guarantee) rather than zeroed, constant, or reused across "
+            "messages.",
+            "For every PBEKeySpec / SecretKeyFactory.PBKDF2WithHmacSHA* call, capture "
+            "iterationCount and salt source — flag iterationCount below 10000 (legacy "
+            "minimum) and any salt that is a constant, the username, or shared across "
+            "users.",
+        ),
+        relevant_apis=(
+            "javax.crypto.Cipher.getInstance",
+            "javax.crypto.spec.IvParameterSpec",
+            "javax.crypto.spec.GCMParameterSpec",
+            "javax.crypto.spec.PBEKeySpec",
+            "javax.crypto.SecretKeyFactory.getInstance",
+            "java.security.SecureRandom.nextBytes",
+            "android.security.keystore.KeyGenParameterSpec.Builder",
+            "android.security.keystore.KeyProperties.BLOCK_MODE_GCM",
+        ),
+        evidence_hints=(
+            "AES/ECB",
+            "AES/CBC",
+            "AES/GCM",
+            "DES/",
+            "GCMParameterSpec",
+            "IvParameterSpec",
+            "PBEKeySpec",
+            "PBKDF2WithHmac",
+            "iterationCount",
+            "BLOCK_MODE",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CRYPTO-4",
+        group=MasvsGroup.CRYPTO,
+        level=MasvsLevel.L1,
+        title=(
+            "The app does not use cryptographic protocols or algorithms that are widely "
+            "considered deprecated for security purposes."
+        ),
+        description=(
+            "MD5 and SHA-1 are broken against collision resistance and must not appear in "
+            "any security-relevant context (signature verification, certificate pinning, "
+            "integrity checks, password storage). DES, 3DES, RC4, and RC2 fall below the "
+            "112-bit security floor most regulators require. SSLv3 / TLSv1.0 / TLSv1.1 are "
+            "decommissioned. Findings here apply when a deprecated primitive is reachable "
+            "from a security-relevant code path — non-security uses (content-addressable "
+            "caches keyed by MD5, file deduplication) are out of scope and should be "
+            "tagged not_applicable."
+        ),
+        verification_steps=(
+            "Search every MessageDigest.getInstance / Mac.getInstance / Cipher.getInstance "
+            "call site for the deprecated set — MD5, MD2, SHA-1, SHA1, DES, DESede, 3DES, "
+            "RC4, RC2, Blowfish — and capture each match's surrounding context.",
+            "For every match, classify the use as security-relevant (token derivation, "
+            "signature verification, password hash, integrity check, TLS pinning hash) or "
+            "non-security (cache key, file dedupe, content hash for analytics) and raise a "
+            "finding only on the security-relevant subset.",
+            "Inspect every SSLContext.getInstance / SSLSocketFactory configuration for "
+            "explicit enablement of SSLv3 / TLSv1.0 / TLSv1.1, and inspect "
+            "network_security_config.xml for protocol overrides that re-enable a "
+            "deprecated TLS version.",
+        ),
+        relevant_apis=(
+            "java.security.MessageDigest.getInstance",
+            "javax.crypto.Mac.getInstance",
+            "javax.crypto.Cipher.getInstance",
+            "javax.net.ssl.SSLContext.getInstance",
+            "javax.net.ssl.SSLSocket.setEnabledProtocols",
+            "okhttp3.ConnectionSpec.Builder.tlsVersions",
+            "okhttp3.TlsVersion",
+        ),
+        evidence_hints=(
+            "MD5",
+            "SHA-1",
+            "SHA1",
+            "DES",
+            "DESede",
+            "3DES",
+            "RC4",
+            "Blowfish",
+            "TLSv1",
+            "SSLv3",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CRYPTO-5",
+        group=MasvsGroup.CRYPTO,
+        level=MasvsLevel.L1,
+        title="The app does not re-use the same cryptographic key for multiple purposes.",
+        description=(
+            "Reusing a single symmetric key for encryption and authentication, for two "
+            "independent encryption channels, or for both data-at-rest and data-in-transit "
+            "couples the security of those purposes together — a flaw in one operation "
+            "lowers the security of every other operation under the same key. The "
+            "verification target is that every distinct cryptographic purpose binds to a "
+            "distinct key, ideally derived from a single root key via HKDF with a "
+            "purpose-specific info parameter, or via separate KeyGenerator runs."
+        ),
+        verification_steps=(
+            "Enumerate every javax.crypto.SecretKey / KeyStore.Entry obtained in the code "
+            "base, capturing the alias / variable name and every call site that uses it "
+            "(Cipher.init, Mac.init, Signature.initSign, KeyAgreement).",
+            "Build the matrix of (key, purpose) pairs and flag any key reused across two "
+            "distinct security-relevant purposes (encryption + MAC, two unrelated "
+            "encryption channels, both at-rest and in-transit, both signing and key "
+            "wrapping).",
+            "Where a single root key is intentionally shared, verify per-purpose subkey "
+            "derivation through HKDF (javax.crypto.KeyGenerator with an HKDF transformation, "
+            "Tink's HKDF, or BC's HKDFBytesGenerator) with a purpose-specific info "
+            "parameter that distinguishes the use.",
+        ),
+        relevant_apis=(
+            "java.security.KeyStore.getKey",
+            "java.security.KeyStore.getEntry",
+            "javax.crypto.SecretKey",
+            "javax.crypto.Mac.init",
+            "javax.crypto.Cipher.init",
+            "java.security.Signature.initSign",
+            "javax.crypto.KeyGenerator.generateKey",
+            "org.bouncycastle.crypto.generators.HKDFBytesGenerator",
+        ),
+        evidence_hints=(
+            "KeyStore.getKey",
+            "KeyStore.getEntry",
+            "KeyGenerator.generateKey",
+            "Cipher.init",
+            "Mac.init",
+            "HKDF",
+            "deriveKey",
+            "info=",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CRYPTO-6",
+        group=MasvsGroup.CRYPTO,
+        level=MasvsLevel.L1,
+        title=(
+            "All random values are generated using a sufficiently secure random number "
+            "generator."
+        ),
+        description=(
+            "java.util.Random and Math.random are linear congruential generators whose "
+            "next output is predictable from a small handful of prior outputs — they must "
+            "not produce security-relevant values (session ids, nonces, OTPs, salts, IVs, "
+            "key material, CSRF tokens). java.security.SecureRandom routed through the "
+            "AndroidOpenSSL / Conscrypt provider draws from /dev/urandom and is the "
+            "correct primitive. Seeding SecureRandom with a constant or with a "
+            "known-low-entropy value (System.currentTimeMillis, the device id) "
+            "neutralises the upgrade and re-introduces the predictability defect."
+        ),
+        verification_steps=(
+            "Enumerate every java.util.Random / Math.random / ThreadLocalRandom call site "
+            "and capture what each random value is used for (UI animation jitter, retry "
+            "backoff, security-relevant token, IV, salt, key generation).",
+            "Flag any security-relevant value (nonce, salt, IV, session id, OTP, CSRF "
+            "token, key bytes) produced by a non-SecureRandom source as a finding.",
+            "For every SecureRandom usage, verify no SecureRandom.setSeed(…) call feeds a "
+            "constant, a low-entropy clock value, or a device identifier — any such call "
+            "neutralises the generator and must be removed.",
+        ),
+        relevant_apis=(
+            "java.security.SecureRandom",
+            "java.security.SecureRandom.nextBytes",
+            "java.security.SecureRandom.getInstanceStrong",
+            "java.util.Random",
+            "java.util.concurrent.ThreadLocalRandom",
+            "java.lang.Math.random",
+            "kotlin.random.Random",
+        ),
+        evidence_hints=(
+            "SecureRandom",
+            "getInstanceStrong",
+            "setSeed",
+            "java.util.Random",
+            "Math.random",
+            "ThreadLocalRandom",
+            "kotlin.random.Random",
+            "nextBytes",
+            "nextInt",
+        ),
+    ),
+)
+
+
 MASVS_CONTROLS: tuple[MasvsControl, ...] = (
     *_STORAGE_CONTROLS,
+    *_CRYPTO_CONTROLS,
 )
