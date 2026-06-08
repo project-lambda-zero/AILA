@@ -309,6 +309,8 @@ export function ProjectsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* sr-only section heading bridges PageShell h1 → ProjectCard h3s for screen readers. */}
+      <h2 className="sr-only">Projects list</h2>
       {/* ── KPI hero strip ───────────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiTile

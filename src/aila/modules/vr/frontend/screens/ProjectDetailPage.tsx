@@ -569,6 +569,8 @@ export function ProjectDetailPage() {
 
   return (
     <div className="space-y-4">
+      {/* sr-only section heading bridges PageShell h1 → tab/card h3s for screen readers. */}
+      <h2 className="sr-only">Project sections</h2>
       <div className="flex flex-wrap items-center gap-3 justify-between">
         <DeleteButton
           id={project.id}

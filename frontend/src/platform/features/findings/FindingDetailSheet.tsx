@@ -58,9 +58,9 @@ function scoreColor(score: number): string {
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <h4 className="font-mono text-[10px] uppercase tracking-widest text-text-muted mb-2">
+    <h3 className="font-mono text-[10px] uppercase tracking-widest text-text-muted mb-2">
       {children}
-    </h4>
+    </h3>
   );
 }
 

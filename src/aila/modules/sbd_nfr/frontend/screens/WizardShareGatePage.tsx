@@ -198,9 +198,9 @@ export function WizardShareGatePage() {
       <div className="min-h-screen bg-base p-8">
         <div className={GATE_CARD}>
           <div className="text-accent text-center mb-4">AILA</div>
-          <h1 className="font-display text-xl font-bold text-text text-center mb-2">
+          <h2 className="font-display text-xl font-bold text-text text-center mb-2">
             Invalid Share Link
-          </h1>
+          </h2>
           <p className="text-sm text-text-muted text-center mb-6">
             This share link is incomplete or has expired. Please request a new one from the
             assessment owner.
@@ -250,9 +250,9 @@ export function WizardShareGatePage() {
     <div className="min-h-screen bg-base p-8">
       <div className={GATE_CARD}>
         <div className="text-accent text-center mb-4">AILA</div>
-        <h1 className="font-display text-xl font-bold text-text text-center mb-2">
+        <h2 className="font-display text-xl font-bold text-text text-center mb-2">
           You've been invited to contribute to an NFR assessment
-        </h1>
+        </h2>
         <p className="text-sm text-text-muted text-center mb-6">
           Enter your name and email to access the assessment questions.
         </p>

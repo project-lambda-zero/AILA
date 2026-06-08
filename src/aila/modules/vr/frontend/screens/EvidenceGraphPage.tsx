@@ -128,6 +128,8 @@ export function EvidenceGraphPage() {
 
   return (
     <div className="space-y-3">
+      {/* sr-only section heading bridges PageShell h1 → rail card h3s for screen readers. */}
+      <h2 className="sr-only">Evidence graph</h2>
 
       <ServerSnapshotStatus investigationId={investigationId} />
 
