@@ -46,6 +46,7 @@ class TargetKind(StrEnum):
     CRASH_INPUT = "crash_input"
     PATCH_DIFF = "patch_diff"
     APK = "apk"
+    ANDROID_APK = "android_apk"
     IPA = "ipa"
     JAR = "jar"
     DOTNET_ASSEMBLY = "dotnet_assembly"
