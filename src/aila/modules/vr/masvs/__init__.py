@@ -10,10 +10,12 @@ from __future__ import annotations
 
 from aila.modules.vr.masvs.catalog import MASVS_CONTROLS
 from aila.modules.vr.masvs.models import MasvsControl, MasvsGroup, MasvsLevel
+from aila.modules.vr.masvs.seed import MasvsSeedBuilder
 
 __all__ = [
     "MASVS_CONTROLS",
     "MasvsControl",
     "MasvsGroup",
     "MasvsLevel",
+    "MasvsSeedBuilder",
 ]
