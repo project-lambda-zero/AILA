@@ -300,7 +300,7 @@ function ThemePreview({ theme }: { theme: Theme }) {
             className="text-[9px]"
             style={{
               color: "#00f0ff",
-              fontFamily: "Space Grotesk, sans-serif",
+              fontFamily: "Bricolage Grotesque, sans-serif",
               textShadow: "0 0 4px rgba(0,240,255,0.6)",
             }}
           >
