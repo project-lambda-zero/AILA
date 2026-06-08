@@ -39,6 +39,7 @@ class TestInvestigationEnums:
     def test_kind_values(self) -> None:
         assert {m.value for m in InvestigationKind} == {
             "discovery", "variant_hunt", "triage", "n_day", "audit",
+            "masvs_audit",
         }
 
     def test_status_values(self) -> None:

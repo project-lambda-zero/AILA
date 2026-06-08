@@ -30,13 +30,23 @@ __all__ = [
 
 
 class InvestigationKind(StrEnum):
-    """What kind of investigation this is (drives default strategy + budget)."""
+    """What kind of investigation this is.
+
+    DISCOVERY/VARIANT_HUNT/TRIAGE/N_DAY/AUDIT drive default strategy +
+    budget through ``_KIND_DEFAULT_STRATEGY``. MASVS_AUDIT is a
+    batch-orchestration tag carried only by the parent investigation in
+    a MASVS audit — its children are regular ``AUDIT`` investigations
+    that run the standard vuln_researcher dispatch unchanged. The
+    parent's ``strategy_family`` is set explicitly by the MASVS
+    dispatcher; it never resolves through the default-strategy map.
+    """
 
     DISCOVERY = "discovery"
     VARIANT_HUNT = "variant_hunt"
     TRIAGE = "triage"
     N_DAY = "n_day"
     AUDIT = "audit"
+    MASVS_AUDIT = "masvs_audit"
 
 
 class InvestigationStatus(StrEnum):
