@@ -166,6 +166,11 @@ async def test_dispatch_creates_parent_and_one_child_per_l1_control(
     assert len(payload["child_investigation_ids"]) == len(expected_ids)
     assert payload["masvs_spec_version"] == CATALOG_VERSION
     assert payload["cost_budget_total_usd"] == pytest.approx(50.0 * len(expected_ids))
+    assert payload["idempotent_reuse"] is False, (
+        "D-3: a fresh dispatch should report idempotent_reuse=False; "
+        "reuse=True is reserved for the branch where the dispatcher "
+        "matched an existing active parent."
+    )
     # async_client sets app.state.platform = None (see tests/api/conftest.py)
     # which makes the D-2 ARQ submission step fail with 503 for every
     # child. Records still commit, errors surface in the response, and
@@ -387,3 +392,162 @@ async def test_dispatch_returns_404_for_unknown_target(
         headers=_auth(admin_token),
     )
     assert resp.status_code == 404, resp.text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_is_idempotent_on_same_catalog_version(
+    async_client: AsyncClient,
+    admin_token: str,
+    test_db: None,
+) -> None:
+    """D-3: a second dispatch against the same target + same catalog
+    version returns the existing active parent verbatim, with HTTP 200
+    and ``idempotent_reuse=True``. No fresh parent or sibling children
+    are materialized, and the response carries the original child id
+    set in catalog order.
+    """
+    del test_db
+    target_id = await _insert_android_apk_target(
+        slug="d3-idempotent", with_static_summary=True,
+    )
+
+    first = await async_client.post(
+        f"/vr/targets/{target_id}/masvs-audit",
+        headers=_auth(admin_token),
+    )
+    assert first.status_code == 201, first.text
+    first_payload = first.json()["data"]
+    assert first_payload["idempotent_reuse"] is False
+
+    parent_id = first_payload["parent_investigation_id"]
+    child_ids = first_payload["child_investigation_ids"]
+
+    second = await async_client.post(
+        f"/vr/targets/{target_id}/masvs-audit",
+        headers=_auth(admin_token),
+    )
+    assert second.status_code == 200, (
+        f"D-3: a same-target / same-catalog re-dispatch should return "
+        f"HTTP 200 (idempotent reuse) instead of 201 (fresh create); "
+        f"got {second.status_code}: {second.text}"
+    )
+    second_payload = second.json()["data"]
+    assert second_payload["idempotent_reuse"] is True, (
+        "D-3: the second dispatch should report idempotent_reuse=True; "
+        f"got {second_payload['idempotent_reuse']!r}."
+    )
+    assert second_payload["parent_investigation_id"] == parent_id, (
+        "D-3: idempotent reuse should return the SAME parent id, not "
+        "a fresh one."
+    )
+    assert second_payload["child_investigation_ids"] == child_ids, (
+        "D-3: idempotent reuse should return the SAME child ids in the "
+        "SAME order as the original dispatch."
+    )
+    assert second_payload["total_controls"] == first_payload["total_controls"]
+    assert second_payload["masvs_spec_version"] == CATALOG_VERSION
+    assert second_payload["cost_budget_total_usd"] == pytest.approx(
+        first_payload["cost_budget_total_usd"],
+    )
+    assert second_payload["enqueue_errors"] == {}, (
+        "D-3: idempotent reuse does NOT re-touch the ARQ queue, so "
+        "enqueue_errors must always be empty on the reuse branch — "
+        "operators retry individual stuck children via /re-enqueue."
+    )
+
+    # Verify the DB did not double — still exactly 1 parent + N children
+    # for this target, not 2 parents + 2N children.
+    async with UnitOfWork() as uow:
+        parents = (await uow.session.exec(
+            select(VRInvestigationRecord)
+            .where(VRInvestigationRecord.target_id == target_id)
+            .where(
+                VRInvestigationRecord.kind
+                == InvestigationKind.MASVS_AUDIT.value,
+            ),
+        )).all()
+        assert len(parents) == 1, (
+            f"D-3: a re-dispatch must not create a second masvs_audit "
+            f"parent; found {len(parents)} parents on target {target_id}."
+        )
+
+        children = (await uow.session.exec(
+            select(VRInvestigationRecord)
+            .where(
+                VRInvestigationRecord.parent_investigation_id == parent_id,
+            ),
+        )).all()
+        assert len(children) == len(child_ids), (
+            f"D-3: a re-dispatch must not create additional children; "
+            f"expected {len(child_ids)} on parent {parent_id}, found "
+            f"{len(children)}."
+        )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_re_dispatches_when_existing_parent_is_terminal(
+    async_client: AsyncClient,
+    admin_token: str,
+    test_db: None,
+) -> None:
+    """D-3: a parent in a terminal status (COMPLETED / FAILED /
+    ABANDONED) does NOT block a fresh dispatch. The operator
+    deliberately re-runs an audit after a previous batch finished and
+    expects a fresh parent + child set against the current target
+    state.
+    """
+    del test_db
+    target_id = await _insert_android_apk_target(
+        slug="d3-terminal-reruns", with_static_summary=True,
+    )
+
+    first = await async_client.post(
+        f"/vr/targets/{target_id}/masvs-audit",
+        headers=_auth(admin_token),
+    )
+    assert first.status_code == 201, first.text
+    original_parent_id = first.json()["data"]["parent_investigation_id"]
+
+    # Mark the original parent COMPLETED so the next call hits the
+    # "no active match" branch of D-3 and dispatches a fresh batch.
+    async with UnitOfWork() as uow:
+        parent = (await uow.session.exec(
+            select(VRInvestigationRecord)
+            .where(VRInvestigationRecord.id == original_parent_id),
+        )).one()
+        parent.status = InvestigationStatus.COMPLETED.value
+        uow.session.add(parent)
+        await uow.session.commit()
+
+    second = await async_client.post(
+        f"/vr/targets/{target_id}/masvs-audit",
+        headers=_auth(admin_token),
+    )
+    assert second.status_code == 201, (
+        f"D-3: a terminal previous parent must not block a fresh "
+        f"dispatch; got status {second.status_code} (the idempotency "
+        f"check matched a row it should have skipped): {second.text}"
+    )
+    second_payload = second.json()["data"]
+    assert second_payload["idempotent_reuse"] is False
+    assert second_payload["parent_investigation_id"] != original_parent_id, (
+        "D-3: a fresh dispatch after a terminal previous parent must "
+        "return a NEW parent id, not the terminal one."
+    )
+
+    # Both parents now coexist on the target — the terminal one and
+    # the fresh active one. That is the expected post-condition.
+    async with UnitOfWork() as uow:
+        parents = (await uow.session.exec(
+            select(VRInvestigationRecord)
+            .where(VRInvestigationRecord.target_id == target_id)
+            .where(
+                VRInvestigationRecord.kind
+                == InvestigationKind.MASVS_AUDIT.value,
+            ),
+        )).all()
+        assert len(parents) == 2, (
+            f"D-3: expected 1 terminal + 1 fresh masvs_audit parent "
+            f"after the re-dispatch; found {len(parents)} on target "
+            f"{target_id}."
+        )

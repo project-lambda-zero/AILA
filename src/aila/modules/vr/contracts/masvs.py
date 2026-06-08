@@ -262,6 +262,29 @@ class MasvsAuditDispatchResponse(BaseModel):
             "``POST /vr/investigations/{id}/re-enqueue`` to retry that "
             "child without re-dispatching the whole audit. Failures are "
             "captured (not raised) so a transient queue outage on one "
-            "child does not roll back the parent + sibling children."
+            "child does not roll back the parent + sibling children. "
+            "Always empty on an idempotent reuse "
+            "(``idempotent_reuse=True``): the dispatcher does not "
+            "re-submit children whose ARQ task was already queued by "
+            "the original call — operators retry individual children "
+            "via ``/re-enqueue`` instead."
+        ),
+    )
+    idempotent_reuse: bool = Field(
+        default=False,
+        description=(
+            "``True`` when the dispatcher matched an existing active "
+            "parent investigation (same target, same "
+            ":data:`aila.modules.vr.masvs.CATALOG_VERSION`, and parent "
+            "status not yet in a terminal state) and returned that "
+            "parent's ids verbatim instead of fanning out a fresh batch "
+            "(D-3). The endpoint returns HTTP 200 in that branch and "
+            "201 on a fresh dispatch, so clients can distinguish the "
+            "two outcomes via either the response status or this field. "
+            "An audit that has already reached a terminal status "
+            "(COMPLETED / FAILED / ABANDONED) does NOT block a new "
+            "dispatch: an operator deliberately re-running an audit "
+            "expects fresh child investigations against the latest "
+            "target state."
         ),
     )

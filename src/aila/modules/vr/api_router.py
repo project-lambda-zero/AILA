@@ -2756,6 +2756,7 @@ def create_vr_router() -> APIRouter:
     async def dispatch_masvs_audit(
         request: Request,
         target_id: str,
+        response: Response,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[MasvsAuditDispatchResponse]:
         """Fan one MASVS audit out into per-control child investigations.
@@ -2773,9 +2774,16 @@ def create_vr_router() -> APIRouter:
         back the records — the operator can retry an individual child
         via ``POST /vr/investigations/{id}/re-enqueue``.
 
-        Idempotency (same target + same catalog version returns the
-        existing parent) lands in D-3. Until then a second call
-        materializes a second parent + N more children.
+        Idempotency (D-3): when the target already has an active MASVS
+        audit parent (``kind=masvs_audit``, status in CREATED / RUNNING /
+        PAUSED) whose catalog version matches the current
+        :data:`aila.modules.vr.masvs.CATALOG_VERSION`, the endpoint
+        returns that parent's ids verbatim with ``idempotent_reuse=True``
+        and HTTP 200 — no second parent or sibling children are
+        materialized, and the ARQ queue is not re-touched. A parent in
+        a terminal status (COMPLETED / FAILED / ABANDONED) does NOT
+        block a fresh dispatch: an operator deliberately re-running an
+        audit expects a new batch against the latest target state.
         """
         import json as _json
 
@@ -2832,6 +2840,88 @@ def create_vr_router() -> APIRouter:
                         "STATIC_SUMMARY ingestion stage; the MASVS "
                         "dispatcher needs the package / version / "
                         "decompiled-index cells before fanning out."
+                    ),
+                )
+
+            # D-3 idempotency: same target + same catalog version with
+            # an existing parent in a non-terminal status returns that
+            # parent verbatim, with response status 200 and
+            # ``idempotent_reuse=True`` so the client can distinguish a
+            # reuse from a fresh dispatch. The catalog-version match
+            # parses each candidate's secondary_target_refs_json rather
+            # than running a JSON-shaped LIKE — secondary_target_refs_json
+            # is a Text column on every backend, and the candidate set
+            # per (target, kind, active status) is tiny (typically 0 or
+            # 1). Terminal parents (COMPLETED / FAILED / ABANDONED) are
+            # excluded so an operator can re-run an audit after the
+            # previous batch finished.
+            _active_parent_statuses = (
+                InvestigationStatus.CREATED.value,
+                InvestigationStatus.RUNNING.value,
+                InvestigationStatus.PAUSED.value,
+            )
+            candidate_parents = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord)
+                    .where(VRInvestigationRecord.target_id == target.id)
+                    .where(
+                        VRInvestigationRecord.kind
+                        == InvestigationKind.MASVS_AUDIT.value,
+                    )
+                    .where(
+                        VRInvestigationRecord.parent_investigation_id.is_(
+                            None,
+                        ),
+                    )
+                    .where(
+                        VRInvestigationRecord.status.in_(
+                            _active_parent_statuses,
+                        ),
+                    )
+                    .order_by(VRInvestigationRecord.created_at.desc()),
+                    VRInvestigationRecord, auth,
+                ),
+            )).all()
+            existing_parent: VRInvestigationRecord | None = None
+            for candidate in candidate_parents:
+                try:
+                    refs = _json.loads(
+                        candidate.secondary_target_refs_json or "[]",
+                    )
+                except ValueError:
+                    continue
+                if not isinstance(refs, list):
+                    continue
+                for ref in refs:
+                    if (
+                        isinstance(ref, dict)
+                        and ref.get("masvs_spec_version") == CATALOG_VERSION
+                    ):
+                        existing_parent = candidate
+                        break
+                if existing_parent is not None:
+                    break
+            if existing_parent is not None:
+                existing_children = (await uow.session.exec(
+                    select(VRInvestigationRecord)
+                    .where(
+                        VRInvestigationRecord.parent_investigation_id
+                        == existing_parent.id,
+                    )
+                    .order_by(VRInvestigationRecord.created_at.asc()),
+                )).all()
+                response.status_code = status.HTTP_200_OK
+                return DataEnvelope(
+                    data=MasvsAuditDispatchResponse(
+                        parent_investigation_id=existing_parent.id,
+                        child_investigation_ids=[
+                            c.id for c in existing_children
+                        ],
+                        total_controls=len(existing_children),
+                        masvs_spec_version=CATALOG_VERSION,
+                        cost_budget_total_usd=existing_parent.cost_budget_usd,
+                        enqueue_errors={},
+                        idempotent_reuse=True,
                     ),
                 )
 
