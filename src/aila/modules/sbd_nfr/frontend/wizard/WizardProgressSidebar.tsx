@@ -66,8 +66,8 @@ export function WizardProgressSidebar({
             <div className="flex items-center gap-2">
               <div className="flex-1 h-0.5 bg-border rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-accent rounded-full transition-[width] duration-200"
-                  style={{ width: `${pct}%` }}
+                  className="h-full bg-accent rounded-full"
+                  style={{ width: `${pct}%`, transition: "width 200ms" }}
                 />
               </div>
               {isComplete ? (

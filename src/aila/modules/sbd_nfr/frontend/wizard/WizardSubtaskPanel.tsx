@@ -89,9 +89,9 @@ const CELL_BASE =
   "flex flex-col items-center gap-1 p-2 rounded-md cursor-pointer transition-colors hover:bg-elevated";
 
 const CELL_BORDER: Record<IconState, string> = {
-  triggered: "border border-[color:var(--color-accent)]/30",
-  uncertain: "border border-[color:var(--color-medium)]/30",
-  not_triggered: "border border-[color:var(--color-critical)]/30",
+  triggered: "border border-accent/30",
+  uncertain: "border border-medium/30",
+  not_triggered: "border border-critical/30",
   inactive: "border border-transparent",
 };
 

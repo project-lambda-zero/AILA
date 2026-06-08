@@ -186,7 +186,7 @@ function RecordTable({
                   {expanded && (
                     <tr className="bg-black/40 border-t border-border/30">
                       <td colSpan={cols.length + 1} className="px-3 py-2">
-                        <dl className="grid grid-cols-[min-content_1fr] gap-x-4 gap-y-1 text-xs">
+                        <dl className="grid gap-x-4 gap-y-1 text-xs" style={{ gridTemplateColumns: "min-content 1fr" }}>
                           {Object.entries(rec).map(([k, v]) => (
                             <div key={k} className="contents">
                               <dt className="text-text-muted whitespace-nowrap">{k}</dt>

@@ -181,7 +181,7 @@ function FindingRow({
               <div className="text-3xs font-mono text-red-300/70 mb-1 uppercase tracking-wide">
                 Exact parameters
               </div>
-              <dl className="grid grid-cols-[min-content_1fr] gap-x-3 gap-y-1 text-xs font-mono">
+              <dl className="grid gap-x-3 gap-y-1 text-xs font-mono" style={{ gridTemplateColumns: "min-content 1fr" }}>
                 {commandFields.map(([k, v]) => (
                   <div key={k} className="contents">
                     <dt className="text-red-300/80">{k}</dt>

@@ -99,7 +99,8 @@ function KindIcon({ kind }: { kind: TargetKind }) {
   if (kind === "android_apk") {
     return (
       <DeviceMobile
-        className="inline-block h-3.5 w-3.5 mr-1.5 text-text-muted align-[-2px]"
+        className="inline-block h-3.5 w-3.5 mr-1.5 text-text-muted"
+        style={{ verticalAlign: -2 }}
         weight="duotone"
         aria-label="Android APK"
       />

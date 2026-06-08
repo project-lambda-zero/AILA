@@ -30,7 +30,7 @@ function itemState(
 const ITEM_BASE = "px-3 py-2 rounded-md";
 const ITEM_VARIANTS: Record<ItemState, string> = {
   active: "bg-accent-muted border-l-2 border-accent",
-  visited: "border-l-2 border-[color:var(--color-accent)]/40",
+  visited: "border-l-2 border-accent/40",
   upcoming: "border-l-2 border-transparent",
 };
 
