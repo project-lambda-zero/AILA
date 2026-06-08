@@ -34,8 +34,26 @@ from __future__ import annotations
 from aila.modules.vr.masvs.models import MasvsControl, MasvsGroup, MasvsLevel
 
 __all__ = [
+    "CATALOG_VERSION",
     "MASVS_CONTROLS",
 ]
+
+
+# Catalog spec version pinned on every MASVS audit parent investigation.
+# Bumped together with any catalog-content change (new control, edited
+# evidence_hints, retired control). Historical audits keep their
+# original version on the parent's secondary_target_refs_json so the
+# PDF report can label which catalog produced each verdict — later
+# edits to this file never silently invalidate a shipped report.
+#
+# Current value pairs the v1.4.2 MSTG ids that populate STORAGE / CRYPTO
+# / AUTH / NETWORK / PLATFORM / CODE / RESILIENCE with the v2.1.0
+# PRIVACY group (the only group v1.4.2 omits). The ``-aila`` suffix
+# marks this as AILA's compiled snapshot rather than the verbatim OWASP
+# release, so a future iteration that lifts PRIVACY into a v2.1.0
+# wholesale rewrite can bump the suffix without colliding with an
+# upstream tag.
+CATALOG_VERSION: str = "1.4.2-aila"
 
 
 _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (

@@ -15,11 +15,12 @@ aggregator at :mod:`aila.modules.vr.reporting.masvs_report` reaches
 """
 from __future__ import annotations
 
-from aila.modules.vr.masvs.catalog import MASVS_CONTROLS
+from aila.modules.vr.masvs.catalog import CATALOG_VERSION, MASVS_CONTROLS
 from aila.modules.vr.masvs.models import MasvsControl, MasvsGroup, MasvsLevel
 from aila.modules.vr.masvs.seed import MasvsSeedBuilder
 
 __all__ = [
+    "CATALOG_VERSION",
     "MASVS_CONTROLS",
     "MasvsControl",
     "MasvsGroup",

@@ -53,6 +53,7 @@ from .contracts import (
     InvestigationKind,
     InvestigationPauseReason,
     InvestigationStatus,
+    MasvsAuditDispatchResponse,
     OperatorIntent,
     OutcomeConfidence,
     OutcomeDispatchStatus,
@@ -2732,6 +2733,188 @@ def create_vr_router() -> APIRouter:
                 "bytes_written": bytes_written,
                 "enqueue_error": enqueue_error,
             },
+        )
+
+    @router.post(
+        "/targets/{target_id}/masvs-audit",
+        response_model=DataEnvelope[MasvsAuditDispatchResponse],
+        status_code=status.HTTP_201_CREATED,
+        summary=(
+            "Dispatch an OWASP MASVS audit against an android_apk target. "
+            "Creates one parent VRInvestigation (kind=masvs_audit) + one "
+            "child VRInvestigation per L1 control (kind=audit, "
+            "parent_investigation_id pointing at the parent). Each child "
+            "carries a verification prompt built from the catalog entry "
+            "plus the parent target's apk_overview. Child task submission "
+            "to the vr ARQ queue lands in D-2; this endpoint only "
+            "materializes the records."
+        ),
+    )
+    @limiter.limit("6/minute")
+    async def dispatch_masvs_audit(
+        request: Request,
+        target_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[MasvsAuditDispatchResponse]:
+        """Fan one MASVS audit out into per-control child investigations.
+
+        Refuses with 409 when the target is not an ``android_apk`` or
+        when ``STATIC_SUMMARY`` has not yet populated
+        ``apk_overview.static_summary`` — the per-control prompt builder
+        needs at least the package name / version / decompiled-index id
+        cells for a useful scout brief.
+
+        Idempotency (same target + same catalog version returns the
+        existing parent) lands in D-3. Until then a second call
+        materializes a second parent + N more children.
+        """
+        del request
+        import json as _json
+
+        from aila.modules.vr.masvs import (
+            CATALOG_VERSION,
+            MASVS_CONTROLS,
+            MasvsLevel,
+            MasvsSeedBuilder,
+        )
+
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationRecord,
+            VRTargetRecord,
+        )
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            if target is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Target {target_id} not found or not owned by your team."
+                    ),
+                )
+            if target.kind != TargetKind.ANDROID_APK.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Target {target_id} kind is {target.kind!r}; MASVS "
+                        "audit applies to android_apk targets only."
+                    ),
+                )
+
+            target_summary = _target_summary(target)
+            apk_overview = target_summary.apk_overview
+            static_summary: dict[str, Any] = {}
+            if isinstance(apk_overview, dict):
+                maybe_static = apk_overview.get("static_summary")
+                if isinstance(maybe_static, dict):
+                    static_summary = maybe_static
+            if not static_summary:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Target {target_id} has not completed the "
+                        "STATIC_SUMMARY ingestion stage; the MASVS "
+                        "dispatcher needs the package / version / "
+                        "decompiled-index cells before fanning out."
+                    ),
+                )
+
+            l1_controls = tuple(
+                c for c in MASVS_CONTROLS if c.level == MasvsLevel.L1
+            )
+            if not l1_controls:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=(
+                        "MASVS catalog has zero L1 controls; refusing to "
+                        "dispatch an empty audit. Check "
+                        "aila.modules.vr.masvs.catalog.MASVS_CONTROLS."
+                    ),
+                )
+
+            package_label = static_summary.get("package")
+            if not isinstance(package_label, str) or not package_label.strip():
+                package_label = target.display_name
+            child_budget_usd = 50.0
+            total_budget_usd = child_budget_usd * len(l1_controls)
+
+            parent = VRInvestigationRecord(
+                target_id=target.id,
+                team_id=auth.team_id,
+                secondary_target_refs_json=_json.dumps(
+                    [{"masvs_spec_version": CATALOG_VERSION}],
+                ),
+                kind=InvestigationKind.MASVS_AUDIT.value,
+                title=f"MASVS audit: {package_label}",
+                initial_question=(
+                    f"MASVS audit batch parent — {len(l1_controls)} child "
+                    "investigations dispatched, one per OWASP MASVS L1 "
+                    f"control (catalog {CATALOG_VERSION}). See child "
+                    "investigations for per-control evidence and verdicts."
+                ),
+                status=InvestigationStatus.CREATED.value,
+                auto_pilot=False,
+                strategy_family="vulnerability_research.masvs_audit",
+                cost_budget_usd=total_budget_usd,
+            )
+            uow.session.add(parent)
+            await uow.session.flush()
+
+            child_ids: list[str] = []
+            for control in l1_controls:
+                child_title = f"MASVS {control.id}: {control.title[:200]}"
+                child_question = MasvsSeedBuilder.build(
+                    control,
+                    apk_overview if isinstance(apk_overview, dict) else None,
+                )
+                child = VRInvestigationRecord(
+                    target_id=target.id,
+                    team_id=auth.team_id,
+                    parent_investigation_id=parent.id,
+                    secondary_target_refs_json=_json.dumps([
+                        {
+                            "masvs_control_id": control.id,
+                            "masvs_spec_version": CATALOG_VERSION,
+                        },
+                    ]),
+                    kind=InvestigationKind.AUDIT.value,
+                    title=child_title[:255],
+                    initial_question=child_question,
+                    status=InvestigationStatus.CREATED.value,
+                    auto_pilot=True,
+                    strategy_family=_KIND_DEFAULT_STRATEGY[
+                        InvestigationKind.AUDIT
+                    ],
+                    cost_budget_usd=child_budget_usd,
+                )
+                uow.session.add(child)
+                await uow.session.flush()
+                child_ids.append(child.id)
+
+                primary_branch = VRInvestigationBranchRecord(
+                    investigation_id=child.id,
+                    status=BranchStatus.ACTIVE.value,
+                    fork_reason="primary",
+                )
+                uow.session.add(primary_branch)
+
+            await uow.session.commit()
+            await uow.session.refresh(parent)
+
+        return DataEnvelope(
+            data=MasvsAuditDispatchResponse(
+                parent_investigation_id=parent.id,
+                child_investigation_ids=child_ids,
+                total_controls=len(l1_controls),
+                masvs_spec_version=CATALOG_VERSION,
+                cost_budget_total_usd=total_budget_usd,
+            ),
         )
 
     # ── Investigations (M3.R-1 schema, D-43, D-49/D-50) ───────────────

@@ -90,6 +90,7 @@ from .investigation_target import (
 )
 from .masvs import (
     MasvsAuditAggregate,
+    MasvsAuditDispatchResponse,
     MasvsControlVerdict,
     MasvsVerdict,
 )
@@ -180,6 +181,7 @@ __all__ = [
     "VRInvestigationTargetDetach",
     "VRInvestigationTargetSummary",
     "MasvsAuditAggregate",
+    "MasvsAuditDispatchResponse",
     "MasvsControlVerdict",
     "MasvsVerdict",
     "MitigationFlags",
