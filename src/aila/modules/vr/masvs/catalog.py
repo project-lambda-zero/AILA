@@ -2740,6 +2740,350 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
 )
 
 
+_PRIVACY_CONTROLS: tuple[MasvsControl, ...] = (
+    MasvsControl(
+        id="MASVS-PRIVACY-1",
+        group=MasvsGroup.PRIVACY,
+        level=MasvsLevel.L1,
+        title=(
+            "The app minimizes access to sensitive data and resources."
+        ),
+        description=(
+            "Permissions and the platform APIs they gate are the boundary that "
+            "decides what a compromised module — a third-party SDK, a "
+            "WebView-loaded marketing page, a deep-link handler that took a "
+            "crafted intent — can reach. Every permission the manifest "
+            "declares but the app never exercises is residual blast radius "
+            "for free; every dangerous permission requested without a runtime "
+            "prompt at the moment of need trains the user to accept future "
+            "prompts blindly; every use of an over-broad permission "
+            "(ACCESS_FINE_LOCATION when COARSE is enough, persistent CAMERA "
+            "when ACTION_IMAGE_CAPTURE picks up a one-shot intent) lets the "
+            "app collect strictly more than the feature requires. The "
+            "verification target is that the release manifest's "
+            "<uses-permission> list is a strict subset of what reachable code "
+            "actually needs, that every dangerous permission goes through "
+            "ContextCompat.checkSelfPermission + "
+            "ActivityCompat.requestPermissions at the call site that needs "
+            "it, and that no permission is declared for a code path that the "
+            "release build has stripped via ProGuard / R8."
+        ),
+        verification_steps=(
+            "Enumerate every <uses-permission> entry in AndroidManifest.xml "
+            "and cross-reference each against actual callers in the "
+            "decompiled tree (Manifest.permission.<NAME> string literal, "
+            "checkSelfPermission(<NAME>) call site, requestPermissions "
+            "array containing it). Flag any permission declared in the "
+            "manifest with zero non-test caller references — that is "
+            "residual blast radius left over from a removed feature.",
+            "For every dangerous permission (READ_CONTACTS, "
+            "ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, READ_PHONE_STATE, "
+            "RECORD_AUDIO, CAMERA, READ_EXTERNAL_STORAGE, READ_SMS, "
+            "READ_CALL_LOG, READ_CALENDAR, BODY_SENSORS), trace the call "
+            "site that consumes the corresponding platform API and confirm "
+            "a ContextCompat.checkSelfPermission gate plus an "
+            "ActivityCompat.requestPermissions prompt fires immediately "
+            "before the protected call, not at app launch and not pre-"
+            "emptively in a splash screen. A pre-emptive bundled request "
+            "is a finding because it severs the prompt from the user-"
+            "visible feature it gates.",
+            "Search for over-broad permission patterns: "
+            "ACCESS_FINE_LOCATION where the feature only needs city-level "
+            "(use ACCESS_COARSE_LOCATION); manifest CAMERA where the only "
+            "consumer launches ACTION_IMAGE_CAPTURE / "
+            "ACTION_VIDEO_CAPTURE (the system camera handles the "
+            "permission via the intent contract, the app does not need its "
+            "own); manifest READ_EXTERNAL_STORAGE where the only consumer "
+            "uses ACTION_OPEN_DOCUMENT / ACTION_GET_CONTENT (the Storage "
+            "Access Framework returns a content:// URI without the "
+            "permission). Each is a finding.",
+        ),
+        relevant_apis=(
+            "androidx.core.app.ActivityCompat.requestPermissions",
+            "androidx.core.content.ContextCompat.checkSelfPermission",
+            "android.content.pm.PackageManager.checkPermission",
+            "android.Manifest.permission.READ_CONTACTS",
+            "android.Manifest.permission.ACCESS_FINE_LOCATION",
+            "android.Manifest.permission.ACCESS_COARSE_LOCATION",
+            "android.Manifest.permission.READ_PHONE_STATE",
+            "android.Manifest.permission.RECORD_AUDIO",
+            "android.Manifest.permission.CAMERA",
+            "android.Manifest.permission.READ_EXTERNAL_STORAGE",
+            "android.content.Intent.ACTION_IMAGE_CAPTURE",
+            "android.content.Intent.ACTION_OPEN_DOCUMENT",
+        ),
+        evidence_hints=(
+            "uses-permission",
+            "checkSelfPermission",
+            "requestPermissions",
+            "READ_CONTACTS",
+            "ACCESS_FINE_LOCATION",
+            "ACCESS_COARSE_LOCATION",
+            "READ_PHONE_STATE",
+            "RECORD_AUDIO",
+            "READ_EXTERNAL_STORAGE",
+            "ACTION_IMAGE_CAPTURE",
+            "ACTION_OPEN_DOCUMENT",
+        ),
+    ),
+    MasvsControl(
+        id="MASVS-PRIVACY-2",
+        group=MasvsGroup.PRIVACY,
+        level=MasvsLevel.L1,
+        title=(
+            "The app prevents identification of the user through "
+            "persistent device identifiers."
+        ),
+        description=(
+            "Persistent device identifiers — IMEI, IMSI, ICCID, hardware "
+            "MAC, Build.SERIAL, ANDROID_ID — survive app uninstall and "
+            "reinstall, span apps signed by different keys, and on older "
+            "Android versions are readable by any process holding "
+            "READ_PHONE_STATE. An app that collects one or more of them, "
+            "ships them to a backend, and joins them across sessions has "
+            "built a cross-install user identity the user cannot reset. "
+            "The current Google Play policy steers apps toward the "
+            "advertising id (AdvertisingIdClient) for non-essential "
+            "tracking and a per-app-instance resettable id for everything "
+            "else; even the advertising id must honor the "
+            "isLimitAdTrackingEnabled flag and must not be retained when "
+            "the user has opted out. The verification target is that the "
+            "release build does not call the persistent-identifier APIs "
+            "at all unless a specific feature (carrier auth, IMSI-based "
+            "SIM-swap detection) documents the need, and that any "
+            "advertising-id consumer respects the limit-ad-tracking signal."
+        ),
+        verification_steps=(
+            "Search for retrievals of persistent telephony identifiers — "
+            "TelephonyManager.getDeviceId, getImei, getMeid, "
+            "getSubscriberId, getSimSerialNumber. Each is a finding "
+            "unless the surrounding code documents a carrier-auth or "
+            "SIM-swap-detection use case AND the retrieved value never "
+            "reaches an analytics or marketing pipeline.",
+            "Search for Settings.Secure.ANDROID_ID and Build.SERIAL "
+            "reads. ANDROID_ID is per-signing-key per-user since API 26 "
+            "but still survives uninstall within the same signing key; "
+            "treat it as a finding when it reaches an analytics call, a "
+            "user identifier field in a backend payload, or a "
+            "fingerprint-style hash. Build.SERIAL returns UNKNOWN on "
+            "API 26+ but legacy reads on older targets are still in "
+            "scope.",
+            "Search for hardware MAC reads via WifiInfo.getMacAddress, "
+            "BluetoothAdapter.getAddress, or NetworkInterface enumeration "
+            "looking for wlan0 / eth0. Modern Android randomizes these "
+            "but legacy code paths still find them — flag any value that "
+            "reaches a network call or a SharedPreferences write.",
+            "Search for AdvertisingIdClient.getAdvertisingIdInfo usage "
+            "and confirm the consumer checks "
+            "AdvertisingIdClient.Info.isLimitAdTrackingEnabled() AND "
+            "returns early / clears the cached id when it returns true. "
+            "A call that ignores the flag, or that falls back to "
+            "ANDROID_ID when the flag is set, is a finding.",
+        ),
+        relevant_apis=(
+            "android.telephony.TelephonyManager.getDeviceId",
+            "android.telephony.TelephonyManager.getImei",
+            "android.telephony.TelephonyManager.getMeid",
+            "android.telephony.TelephonyManager.getSubscriberId",
+            "android.telephony.TelephonyManager.getSimSerialNumber",
+            "android.provider.Settings.Secure.ANDROID_ID",
+            "android.os.Build.SERIAL",
+            "android.net.wifi.WifiInfo.getMacAddress",
+            "android.bluetooth.BluetoothAdapter.getAddress",
+            "java.net.NetworkInterface.getHardwareAddress",
+            "com.google.android.gms.ads.identifier.AdvertisingIdClient",
+            "com.google.android.gms.ads.identifier.AdvertisingIdClient.Info.isLimitAdTrackingEnabled",
+        ),
+        evidence_hints=(
+            "getDeviceId",
+            "getImei",
+            "getMeid",
+            "getSubscriberId",
+            "getSimSerialNumber",
+            "ANDROID_ID",
+            "Build.SERIAL",
+            "getMacAddress",
+            "getHardwareAddress",
+            "AdvertisingIdClient",
+            "isLimitAdTrackingEnabled",
+            "READ_PHONE_STATE",
+        ),
+    ),
+    MasvsControl(
+        id="MASVS-PRIVACY-3",
+        group=MasvsGroup.PRIVACY,
+        level=MasvsLevel.L1,
+        title=(
+            "The app is transparent about the personal data it collects, "
+            "the third parties it shares it with, and the purposes it "
+            "uses it for."
+        ),
+        description=(
+            "Transparency means a user can, without launching the app, "
+            "find out which categories of personal data the app gathers, "
+            "where each category goes, and why. The Play Store Data "
+            "Safety form is one half of this; the in-app privacy notice "
+            "(a link reachable from the about screen, a first-launch "
+            "disclosure dialog, a settings entry) is the other. An app "
+            "that ships a Firebase Analytics, Crashlytics, AppsFlyer, or "
+            "AdMob SDK without disclosing it has lied to the user about "
+            "what is happening on their device. The verification target "
+            "is that every third-party SDK the build statically links is "
+            "named in the in-app privacy notice / Data Safety entry, "
+            "that a privacy-policy URL is reachable from a static "
+            "settings screen, and that any silent auto-backup of "
+            "sensitive data into the user's Google account is either "
+            "disclosed or excluded via dataExtractionRules / "
+            "fullBackupContent."
+        ),
+        verification_steps=(
+            "Search the resource bundle (strings.xml, asset HTML) and "
+            "the AndroidManifest <meta-data> tags for a reachable "
+            "privacy-policy URL — common patterns: a string resource "
+            "named privacy_policy / privacyPolicy / privacy_url, a "
+            "TextView setText reference, an Intent.ACTION_VIEW with a "
+            "Uri pointing at /privacy / /legal / /privacy-policy. "
+            "Absence of any reachable URL is a finding for any app "
+            "shipping to Play (Play policy requires it).",
+            "Enumerate every statically-linked third-party SDK by "
+            "scanning the package list for known prefixes — "
+            "com.google.firebase.analytics, com.google.firebase."
+            "crashlytics, com.mixpanel, com.amplitude, com.appsflyer, "
+            "io.branch.referral, io.sentry, com.bugsnag, "
+            "com.facebook.appevents, com.adjust.sdk, com.singular, "
+            "com.google.android.gms.ads. For each, confirm an initialization "
+            "call site (FirebaseAnalytics.getInstance, Sentry.init, "
+            "AppsFlyerLib.getInstance().start) AND its presence in the "
+            "in-app privacy notice strings; an undisclosed analytics "
+            "or ads SDK is a finding.",
+            "Inspect AndroidManifest.xml <application> for "
+            "android:allowBackup, android:dataExtractionRules (API 31+), "
+            "and android:fullBackupContent. allowBackup=\"true\" without "
+            "an explicit dataExtractionRules / fullBackupContent file "
+            "uploads the entire app-private storage to the user's "
+            "Google Drive on cloud-backup; for an app handling tokens "
+            "or PII this is a finding unless the user is informed and a "
+            "<cloud-backup> / <full-backup-content> rule excludes the "
+            "sensitive paths.",
+        ),
+        relevant_apis=(
+            "android.app.Application.onCreate",
+            "android.content.Intent.ACTION_VIEW",
+            "com.google.firebase.analytics.FirebaseAnalytics.getInstance",
+            "com.google.firebase.crashlytics.FirebaseCrashlytics.getInstance",
+            "io.sentry.Sentry.init",
+            "com.appsflyer.AppsFlyerLib.start",
+            "com.adjust.sdk.Adjust.onCreate",
+            "com.mixpanel.android.mpmetrics.MixpanelAPI.getInstance",
+            "com.amplitude.android.Amplitude",
+        ),
+        evidence_hints=(
+            "privacy_policy",
+            "privacyPolicy",
+            "privacy_url",
+            "/privacy",
+            "FirebaseAnalytics",
+            "Crashlytics",
+            "Mixpanel",
+            "Amplitude",
+            "AppsFlyer",
+            "Branch",
+            "Sentry",
+            "Bugsnag",
+            "com.adjust.sdk",
+            "allowBackup",
+            "dataExtractionRules",
+            "fullBackupContent",
+        ),
+    ),
+    MasvsControl(
+        id="MASVS-PRIVACY-4",
+        group=MasvsGroup.PRIVACY,
+        level=MasvsLevel.L1,
+        title=(
+            "The app gives the user control over their personal data — "
+            "access, deletion, and withdrawal of consent."
+        ),
+        description=(
+            "Control means the user can, from inside the app, see what "
+            "the app has stored about them, remove it, and revoke any "
+            "consent they previously gave to non-essential data "
+            "collection. The Play Store account-deletion policy "
+            "(effective 2024) requires every app that supports account "
+            "creation to also support in-app account deletion plus a "
+            "URL-reachable deletion path for users who have already "
+            "uninstalled. GDPR adds a right of access and the right to "
+            "withdraw consent at any time; CCPA / CPRA adds a "
+            "Do-Not-Sell signal. The verification target is that the "
+            "release build exposes (a) a user-initiated delete-account "
+            "flow that wipes the local cache and POSTs to a server-side "
+            "delete endpoint, (b) per-SDK opt-out toggles for analytics "
+            "and crash reporting that actually flip the SDK's enabled "
+            "flag (not just a SharedPreferences boolean), and (c) a "
+            "GDPR / CCPA consent gate that defers SDK initialization "
+            "until consent is recorded."
+        ),
+        verification_steps=(
+            "Search for an in-app account-deletion flow: a "
+            "TextView / Button referencing a delete_account / "
+            "deleteAccount / close_account resource string, a Retrofit / "
+            "OkHttp DELETE call against /users/me or /account, plus a "
+            "local wipe via SharedPreferences.Editor.clear, "
+            "Context.deleteDatabase, AccountManager.removeAccount, and "
+            "WorkManager.cancelAllWork. Absence of any in-app deletion "
+            "path on an app that supports account creation is a finding "
+            "under Play policy.",
+            "Search for analytics / crash-reporting opt-out toggles "
+            "wired to real SDK calls — "
+            "FirebaseAnalytics.setAnalyticsCollectionEnabled(false), "
+            "FirebaseCrashlytics.setCrashlyticsCollectionEnabled(false), "
+            "AppsFlyerLib.stop(true), Mixpanel.optOutTracking. A "
+            "settings toggle that only writes a SharedPreferences "
+            "boolean without reaching the SDK is a finding because the "
+            "SDK continues collecting until the next app launch.",
+            "Search for a consent-management gate that runs before any "
+            "non-essential SDK initialization — Google UMP "
+            "ConsentInformation.requestConsentInfoUpdate + ConsentForm, "
+            "a custom GDPR / CCPA banner that stores the choice and a "
+            "conditional branch in Application.onCreate / "
+            "MainActivity.onCreate that defers SDK init when consent is "
+            "missing. SDK initialization unconditional in Application."
+            "onCreate, with no preceding consent check, is a finding "
+            "for any app shipping to EU / UK / California users.",
+        ),
+        relevant_apis=(
+            "com.google.firebase.analytics.FirebaseAnalytics.setAnalyticsCollectionEnabled",
+            "com.google.firebase.crashlytics.FirebaseCrashlytics.setCrashlyticsCollectionEnabled",
+            "com.appsflyer.AppsFlyerLib.stop",
+            "com.mixpanel.android.mpmetrics.MixpanelAPI.optOutTracking",
+            "com.google.android.ump.ConsentInformation.requestConsentInfoUpdate",
+            "com.google.android.ump.ConsentForm.show",
+            "android.content.SharedPreferences.Editor.clear",
+            "android.content.Context.deleteDatabase",
+            "android.accounts.AccountManager.removeAccount",
+            "androidx.work.WorkManager.cancelAllWork",
+        ),
+        evidence_hints=(
+            "delete_account",
+            "deleteAccount",
+            "close_account",
+            "setAnalyticsCollectionEnabled",
+            "setCrashlyticsCollectionEnabled",
+            "optOutTracking",
+            "ConsentInformation",
+            "ConsentForm",
+            "requestConsentInfoUpdate",
+            "GDPR",
+            "CCPA",
+            "UMP",
+            "removeAccount",
+            "Editor.clear",
+            "deleteDatabase",
+        ),
+    ),
+)
+
+
 MASVS_CONTROLS: tuple[MasvsControl, ...] = (
     *_STORAGE_CONTROLS,
     *_CRYPTO_CONTROLS,
@@ -2748,4 +3092,5 @@ MASVS_CONTROLS: tuple[MasvsControl, ...] = (
     *_PLATFORM_CONTROLS,
     *_CODE_CONTROLS,
     *_RESILIENCE_CONTROLS,
+    *_PRIVACY_CONTROLS,
 )
