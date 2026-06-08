@@ -13,6 +13,7 @@
 import * as React from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 
+import { useThemeChartColors } from "@platform/features/viz/chartColors";
 import type { TopologyNode } from "./types";
 
 interface RadarNodeData {
@@ -36,6 +37,7 @@ export const RadarNode: React.FC<NodeProps> = ({ data, selected }) => {
   const { node, fillColor, dominantSeverity } = data as unknown as RadarNodeData;
   const isStale = node.is_stale;
   const severitySummary = formatSeveritySummary(node.severity_counts);
+  const colors = useThemeChartColors();
 
   const circleSize = 60; // radius equivalent — total node is 120x120
   const nodeSize = 120;
@@ -78,7 +80,7 @@ export const RadarNode: React.FC<NodeProps> = ({ data, selected }) => {
             cy={nodeSize / 2}
             r={circleSize / 2 + 4}
             fill="none"
-            stroke="var(--color-border)"
+            stroke={colors.border}
             strokeWidth={1.5}
             strokeDasharray="4 4"
           />
@@ -90,7 +92,7 @@ export const RadarNode: React.FC<NodeProps> = ({ data, selected }) => {
           cy={nodeSize / 2}
           r={circleSize / 2}
           fill={fillColor}
-          stroke={selected ? "var(--color-accent)" : fillColor}
+          stroke={selected ? colors.accent : fillColor}
           strokeWidth={selected ? 2 : 1}
           fillOpacity={isStale ? 0.5 : 0.85}
         />

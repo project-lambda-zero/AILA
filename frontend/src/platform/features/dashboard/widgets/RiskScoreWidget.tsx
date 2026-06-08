@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { useThemeChartColors } from "@platform/features/viz/chartColors";
 import { useDashboardData } from "../hooks/useDashboardData";
 
 // SVG gauge constants
@@ -10,10 +11,10 @@ const R = 50;
 const STROKE_WIDTH = 8;
 const CIRCUMFERENCE = 2 * Math.PI * R; // ~314.16
 
-function scoreColor(score: number): string {
-  if (score > 7) return "var(--color-critical)";
-  if (score >= 5) return "var(--color-high)";
-  return "var(--color-accent)";
+function scoreColorKey(score: number): "critical" | "high" | "accent" {
+  if (score > 7) return "critical";
+  if (score >= 5) return "high";
+  return "accent";
 }
 
 function formatTimestamp(isoString: string): string {
@@ -41,6 +42,7 @@ function formatTimestamp(isoString: string): string {
  */
 export function RiskScoreWidget() {
   const { data, isLoading, isError, error } = useDashboardData();
+  const colors = useThemeChartColors();
 
   if (isLoading) {
     return (
@@ -70,7 +72,7 @@ export function RiskScoreWidget() {
   }
 
   const score = data.risk_score;
-  const arcColor = scoreColor(score);
+  const arcColor = colors[scoreColorKey(score)];
   // Offset: full offset = no arc visible; 0 = full arc
   const dashOffset = CIRCUMFERENCE * (1 - score / 10);
 
@@ -89,7 +91,7 @@ export function RiskScoreWidget() {
           cy={CY}
           r={R}
           fill="none"
-          stroke="var(--color-border)"
+          stroke={colors.border}
           strokeWidth={STROKE_WIDTH}
         />
         {/* Foreground arc — starts from top (rotate -90deg) */}
