@@ -1,7 +1,9 @@
-"""D-1 — ``POST /vr/targets/{target_id}/masvs-audit`` materializes records.
+"""D-1 + D-2 — ``POST /vr/targets/{target_id}/masvs-audit`` materializes
+records and submits each child to the ``vr`` ARQ queue.
 
-Smoke coverage for the batch dispatcher endpoint added by D-1. The test
-asserts the invariants the downstream tasks D-2 / D-3 / R-1 rely on:
+Smoke coverage for the batch dispatcher endpoint that D-1 stood up and
+D-2 wired to ``run_vr_investigate``. The test asserts the invariants
+the downstream tasks D-3 / R-1 rely on:
 
 1. **Parent invariant** — exactly one ``VRInvestigationRecord`` with
    ``kind=masvs_audit`` is created per call. ``parent_investigation_id``
@@ -21,10 +23,21 @@ asserts the invariants the downstream tasks D-2 / D-3 / R-1 rely on:
 
 3. **Response invariants** — the JSON envelope carries the parent id,
    one child id per L1 control in catalog order, the catalog version,
-   and the summed child budget. No ARQ submission happens in D-1 —
-   that lands in D-2 — so child rows sit in ``CREATED`` status.
+   the summed child budget, and ``enqueue_errors`` (D-2). Child rows
+   stay in ``CREATED`` status until the worker picks the task up.
 
-4. **Refusal invariants** — non-android_apk targets and android_apk
+4. **D-2 success path** — when the task queue is reachable, every
+   child id lands in the ``vr`` queue via ``run_vr_investigate`` with
+   ``kwargs={"investigation_id": <child_id>}`` and ``enqueue_errors``
+   is empty.
+
+5. **D-2 failure path** — when the task queue is unavailable (the
+   ``app.state.platform = None`` baseline the test fixture sets),
+   every child id surfaces in ``enqueue_errors`` with the
+   service-unavailable detail. The records are still committed so the
+   operator can retry via ``POST /vr/investigations/{id}/re-enqueue``.
+
+6. **Refusal invariants** — non-android_apk targets and android_apk
    targets without a populated ``static_summary`` are rejected with
    409 (not 500, not a silent half-dispatch).
 """
@@ -153,6 +166,25 @@ async def test_dispatch_creates_parent_and_one_child_per_l1_control(
     assert len(payload["child_investigation_ids"]) == len(expected_ids)
     assert payload["masvs_spec_version"] == CATALOG_VERSION
     assert payload["cost_budget_total_usd"] == pytest.approx(50.0 * len(expected_ids))
+    # async_client sets app.state.platform = None (see tests/api/conftest.py)
+    # which makes the D-2 ARQ submission step fail with 503 for every
+    # child. Records still commit, errors surface in the response, and
+    # the operator can /re-enqueue any child. The D-2 success path is
+    # exercised by test_dispatch_submits_each_child_to_vr_queue below.
+    enqueue_errors = payload["enqueue_errors"]
+    assert isinstance(enqueue_errors, dict)
+    assert set(enqueue_errors) == set(payload["child_investigation_ids"]), (
+        "D-2 should record one enqueue_errors entry per failed child; "
+        "found a mismatch between child_investigation_ids and the "
+        "enqueue_errors keyset."
+    )
+    for cid, err in enqueue_errors.items():
+        assert "task queue unavailable" in err, (
+            f"Child {cid}: expected the 503 platform-unavailable "
+            f"message, got {err!r}. If get_task_queue's failure "
+            "wording changed, update this assertion together with the "
+            "endpoint's error string."
+        )
 
     parent_id = payload["parent_investigation_id"]
     child_ids = payload["child_investigation_ids"]
@@ -214,6 +246,91 @@ async def test_dispatch_creates_parent_and_one_child_per_l1_control(
             assert primary_branch.fork_reason == "primary"
 
         assert seen_control_ids == set(expected_ids)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_submits_each_child_to_vr_queue(
+    async_client: AsyncClient,
+    admin_token: str,
+    test_db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D-2 success path: every child id is submitted to the ``vr`` queue.
+
+    Monkey-patches :func:`aila.api.deps.get_task_queue` to return an
+    :class:`AsyncMock` so the endpoint runs the full submit loop without
+    needing a live platform. Asserts:
+
+    1. ``enqueue_errors`` is empty (no submit failed).
+    2. ``task_queue.submit`` was awaited exactly once per L1 control.
+    3. Every submit call carries ``track="vr"``, ``fn=run_vr_investigate``,
+       and ``kwargs={"investigation_id": <one of the child ids>}``.
+    4. The set of investigation ids the dispatcher submitted equals
+       the set returned in the response — no child is silently dropped.
+    """
+    del test_db
+
+    import aila.api.deps as deps_module
+    from aila.modules.vr.workflow.task import run_vr_investigate
+
+    submit_calls: list[dict[str, Any]] = []
+
+    class _StubQueue:
+        async def submit(self, **kwargs: Any) -> None:
+            submit_calls.append(kwargs)
+
+    stub_queue = _StubQueue()
+
+    def _stub_get_task_queue(module_id: str, request: Any) -> Any:
+        del request
+        assert module_id == "vr", (
+            f"MASVS dispatcher should request the 'vr' queue, "
+            f"got {module_id!r}"
+        )
+        return stub_queue
+
+    monkeypatch.setattr(deps_module, "get_task_queue", _stub_get_task_queue)
+
+    target_id = await _insert_android_apk_target(
+        slug="d2-submits", with_static_summary=True,
+    )
+    resp = await async_client.post(
+        f"/vr/targets/{target_id}/masvs-audit",
+        headers=_auth(admin_token),
+    )
+    assert resp.status_code == 201, resp.text
+    payload = resp.json()["data"]
+
+    child_ids = payload["child_investigation_ids"]
+    assert payload["enqueue_errors"] == {}, (
+        f"D-2 should report zero submit failures when the queue is "
+        f"reachable; got {payload['enqueue_errors']!r}"
+    )
+
+    assert len(submit_calls) == len(child_ids), (
+        f"D-2 should submit one ARQ task per L1 control "
+        f"({len(child_ids)} expected); saw {len(submit_calls)} submit "
+        f"calls"
+    )
+
+    submitted_inv_ids: list[str] = []
+    for call in submit_calls:
+        assert call["track"] == "vr"
+        assert call["fn"] is run_vr_investigate, (
+            f"D-2 must submit run_vr_investigate (same code path as a "
+            f"one-off /vr/investigations dispatch); saw {call['fn']!r}"
+        )
+        assert set(call["kwargs"]) == {"investigation_id"}, (
+            f"D-2 kwargs must be {{'investigation_id': <id>}} only; "
+            f"saw {call['kwargs']!r}"
+        )
+        submitted_inv_ids.append(call["kwargs"]["investigation_id"])
+
+    assert set(submitted_inv_ids) == set(child_ids), (
+        "Set of investigation ids submitted to the queue diverged from "
+        "the response's child_investigation_ids — D-2 dropped or "
+        "duplicated a child."
+    )
 
 
 @pytest.mark.asyncio
