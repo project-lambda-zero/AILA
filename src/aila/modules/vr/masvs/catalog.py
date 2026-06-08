@@ -1171,8 +1171,197 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
 )
 
 
+_NETWORK_CONTROLS: tuple[MasvsControl, ...] = (
+    MasvsControl(
+        id="MSTG-NETWORK-1",
+        group=MasvsGroup.NETWORK,
+        level=MasvsLevel.L1,
+        title=(
+            "Data is encrypted on the network using TLS. The secure channel is used "
+            "consistently throughout the app."
+        ),
+        description=(
+            "Every request the app issues over the network — REST calls, WebView page "
+            "loads, WebSocket connections, gRPC channels, file downloads, analytics "
+            "beacons — must travel over TLS. Cleartext requests expose payloads to "
+            "anyone on the same network segment (a coffee-shop wifi, a captive "
+            "portal, a compromised corporate proxy) and to anyone with administrative "
+            "access to a TLS-terminating intermediate. The verification target is "
+            "that no production endpoint is reached over http:// or ws://, that "
+            "AndroidManifest.xml denies cleartext globally on API ≥ 28 "
+            "(usesCleartextTraffic=false or absent), and that no module installs an "
+            "all-accepting TrustManager or a null-checking HostnameVerifier that "
+            "silently downgrades an https:// URL to an unauthenticated channel."
+        ),
+        verification_steps=(
+            "Enumerate every network call site (OkHttp / Retrofit / "
+            "HttpURLConnection / WebView.loadUrl / WebSocket / Volley / gRPC "
+            "ManagedChannel) and record the scheme used; flag any literal http:// "
+            "or ws:// URL that is not a localhost loopback or a test fixture.",
+            "Inspect AndroidManifest.xml for android:usesCleartextTraffic (must be "
+            "false or absent on API ≥ 28) and parse res/xml/network_security_config.xml "
+            "for <base-config cleartextTrafficPermitted=\"true\"> or any "
+            "<domain-config cleartextTrafficPermitted=\"true\"> override, flagging "
+            "each.",
+            "Search for code that downgrades the channel by overriding the "
+            "HostnameVerifier to return true unconditionally or by installing an "
+            "X509TrustManager whose checkServerTrusted body is empty — both convert "
+            "an https:// URL into an authenticated-in-name-only channel.",
+        ),
+        relevant_apis=(
+            "okhttp3.OkHttpClient.Builder.connectionSpecs",
+            "okhttp3.ConnectionSpec.MODERN_TLS",
+            "okhttp3.ConnectionSpec.CLEARTEXT",
+            "javax.net.ssl.HttpsURLConnection",
+            "java.net.HttpURLConnection",
+            "android.webkit.WebView.loadUrl",
+            "okhttp3.WebSocket",
+            "io.grpc.ManagedChannelBuilder.usePlaintext",
+        ),
+        evidence_hints=(
+            "http://",
+            "ws://",
+            "cleartextTrafficPermitted",
+            "usesCleartextTraffic",
+            "CLEARTEXT",
+            "MODERN_TLS",
+            "network_security_config",
+            "loadUrl",
+            "usePlaintext",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-NETWORK-2",
+        group=MasvsGroup.NETWORK,
+        level=MasvsLevel.L1,
+        title=(
+            "The TLS settings are in line with current best practices, or as close as "
+            "possible if the mobile operating system does not support the recommended "
+            "standards."
+        ),
+        description=(
+            "TLS protocol and cipher suite selection determines what an on-path "
+            "observer can do with captured traffic. SSLv3 and TLS 1.0 / 1.1 carry "
+            "documented weaknesses (BEAST, POODLE, downgrade prefixes); NULL and "
+            "EXPORT ciphers omit confidentiality; RC4 and CBC-mode-without-AEAD "
+            "suites lack the integrity guarantees current OWASP guidance requires. "
+            "The verification target is that every SSLContext, OkHttp ConnectionSpec, "
+            "and network_security_config protocol allowlist starts at TLS 1.2 "
+            "(TLSv1.3 preferred), that cipher suites are restricted to AEAD families "
+            "(GCM, CHACHA20-POLY1305) with forward-secrecy key exchange "
+            "(ECDHE / DHE), and that no per-domain override loosens this for a "
+            "marketing subdomain or a legacy partner endpoint."
+        ),
+        verification_steps=(
+            "Inspect every SSLContext construction (SSLContext.getInstance) and "
+            "SSLSocket configuration (setEnabledProtocols / setEnabledCipherSuites); "
+            "flag any explicit \"TLS\" / \"SSL\" / \"TLSv1\" / \"TLSv1.1\" protocol "
+            "name or any cipher suite containing NULL / RC4 / 3DES / EXPORT / anon.",
+            "Inspect OkHttp ConnectionSpec definitions; confirm the app uses "
+            "ConnectionSpec.MODERN_TLS or ConnectionSpec.RESTRICTED_TLS and not a "
+            "hand-rolled ConnectionSpec.Builder that re-adds deprecated TLS "
+            "versions or cipher suites for compatibility with a stated legacy "
+            "server.",
+            "Parse res/xml/network_security_config.xml for <network-security-config> "
+            "<base-config> / <domain-config> entries with explicit <protocol> or "
+            "trust-anchors lowering the minimum below TLSv1.2; flag every "
+            "domain-specific override that loosens the base policy.",
+        ),
+        relevant_apis=(
+            "okhttp3.ConnectionSpec.Builder.tlsVersions",
+            "okhttp3.ConnectionSpec.Builder.cipherSuites",
+            "okhttp3.TlsVersion.TLS_1_2",
+            "okhttp3.TlsVersion.TLS_1_3",
+            "javax.net.ssl.SSLContext.getInstance",
+            "javax.net.ssl.SSLSocket.setEnabledProtocols",
+            "javax.net.ssl.SSLSocket.setEnabledCipherSuites",
+            "javax.net.ssl.SSLParameters.setProtocols",
+        ),
+        evidence_hints=(
+            "TLSv1.0",
+            "TLSv1.1",
+            "SSLv3",
+            "TLS_1_0",
+            "TLS_1_1",
+            "MODERN_TLS",
+            "RESTRICTED_TLS",
+            "setEnabledProtocols",
+            "cipherSuites",
+            "SSLContext.getInstance",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-NETWORK-3",
+        group=MasvsGroup.NETWORK,
+        level=MasvsLevel.L1,
+        title=(
+            "The app verifies the X.509 certificate of the remote endpoint when the "
+            "secure channel is established. Only certificates signed by a trusted CA "
+            "are accepted."
+        ),
+        description=(
+            "A TLS handshake authenticates the server only if the client validates "
+            "the server's certificate against a trusted CA set AND confirms the "
+            "certificate's subject matches the hostname being contacted. Either "
+            "check disabled means the encrypted channel terminates at whoever is "
+            "closest on the network path with a self-signed cert (a corporate "
+            "TLS-terminating proxy, a developer running mitmproxy or Burp Suite for "
+            "testing, a network operator with an inspection appliance) — "
+            "confidentiality and integrity flow to that intermediary, not the "
+            "intended server. The verification target is that every X509TrustManager "
+            "implementation rejects unknown CAs (no empty checkServerTrusted, no "
+            "catch-then-ignore of CertificateException), that every HostnameVerifier "
+            "enforces the SAN / CN match (no return-true bodies, no ALLOW_ALL "
+            "constants from Apache HttpClient, no NoopHostnameVerifier), and that "
+            "the release-build network_security_config does not include "
+            "user-installed CAs in its trust-anchors set."
+        ),
+        verification_steps=(
+            "Search for X509TrustManager implementations and inspect each "
+            "checkServerTrusted method; flag any empty body, any catch-then-ignore "
+            "of CertificateException, and any caller that passes a null or "
+            "all-trusting TrustManager[] array to SSLContext.init.",
+            "Search for HostnameVerifier implementations and inspect each verify "
+            "method; flag any return true with no hostname check, any caller "
+            "installing HttpsURLConnection.setDefaultHostnameVerifier with "
+            "ALLOW_ALL_HOSTNAME_VERIFIER, and any OkHttpClient.Builder."
+            "hostnameVerifier set to a NoopHostnameVerifier or a lambda that "
+            "ignores its arguments.",
+            "Parse res/xml/network_security_config.xml for <trust-anchors> "
+            "entries; confirm <certificates src=\"user\"/> appears ONLY inside "
+            "<debug-overrides> (release builds must not trust user-installed CAs), "
+            "and confirm no <domain-config> override adds a private CA for a "
+            "third-party domain that should be served from the public WebPKI.",
+        ),
+        relevant_apis=(
+            "javax.net.ssl.X509TrustManager.checkServerTrusted",
+            "javax.net.ssl.HostnameVerifier.verify",
+            "javax.net.ssl.SSLContext.init",
+            "javax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier",
+            "okhttp3.OkHttpClient.Builder.hostnameVerifier",
+            "okhttp3.OkHttpClient.Builder.sslSocketFactory",
+            "org.apache.http.conn.ssl.NoopHostnameVerifier",
+            "org.apache.http.conn.ssl.SSLConnectionSocketFactory",
+        ),
+        evidence_hints=(
+            "checkServerTrusted",
+            "X509TrustManager",
+            "HostnameVerifier",
+            "ALLOW_ALL_HOSTNAME_VERIFIER",
+            "NoopHostnameVerifier",
+            "TrustManager[]",
+            "trust-anchors",
+            "debug-overrides",
+            "src=\"user\"",
+            "SSLContext.init",
+        ),
+    ),
+)
+
+
 MASVS_CONTROLS: tuple[MasvsControl, ...] = (
     *_STORAGE_CONTROLS,
     *_CRYPTO_CONTROLS,
     *_AUTH_CONTROLS,
+    *_NETWORK_CONTROLS,
 )
