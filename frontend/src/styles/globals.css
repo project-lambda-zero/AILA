@@ -139,7 +139,7 @@
   --popover: #12122a;
   --popover-foreground: #f4f0ff;
   --primary: #ff2d95;
-  --primary-foreground: #ffffff;
+  --primary-foreground: #1f1f1f;   /* WCAG: dark text on pink — keeps the neon brand for the fill */
   --secondary: #1a1a3e;
   --secondary-foreground: #f4f0ff;
   --muted: #1a1a3e;
@@ -198,7 +198,7 @@
   --ring: #0891b2;
 
   --color-focus-ring: #0891b2;
-  --color-badge-text: #1a0a2e;
+  --color-badge-text: #e8e7ea;     /* WCAG: light badge text on hot-pink accent */
 
   --glow-strength: 0.25;
 }
@@ -376,7 +376,7 @@
   --color-text-peach: #c47a50;
 
   --color-focus-ring: #2972b6;
-  --color-badge-text: #0a2133;
+  --color-badge-text: #f5f6f7;     /* WCAG: light badge text on Vista-blue accent */
 
   /* Aero era chicklet corners */
   --radius-sm: 6px;
@@ -449,7 +449,7 @@
   --sidebar-background: rgba(10, 34, 53, 0.78);
 
   --color-focus-ring: #2aa5e6;
-  --color-badge-text: #041526;
+  --color-badge-text: #f5f6f6;     /* WCAG: light badge text on Vista-blue accent (dark mode) */
 }
 
 /* =====================================================================
@@ -2228,12 +2228,12 @@ a:hover {
   --color-border: #7f7e7a;
   --color-border-hover: #2f6fbf;
 
-  --color-accent: #2f6fbf;         /* PS logo blue */
+  --color-accent: #2e6dbb;         /* PS logo blue (WCAG-nudged from #2f6fbf for 3:1 on light gray) */
   --color-accent-muted: #cedae9;
 
   --color-ps1-red: #e41e26;
   --color-ps1-green: #00a651;
-  --color-ps1-blue: #2f6fbf;
+  --color-ps1-blue: #2e6dbb;
   --color-ps1-yellow: #f9b528;
 
   --color-peach: #f9b528;
@@ -2246,10 +2246,10 @@ a:hover {
   --color-low: #7f7e7a;
 
   --color-text: #1a1a1a;
-  --color-text-muted: #5a5a56;
+  --color-text-muted: #53534f;     /* WCAG: darkened from #5a5a56 for 4.5:1 on light-gray base */
 
-  --color-focus-ring: #2f6fbf;
-  --color-badge-text: #0a0a0a;
+  --color-focus-ring: #2e6dbb;
+  --color-badge-text: #f5f5f5;     /* WCAG: light badge text on blue accent */
 
   --radius-sm: 0px;
   --radius-md: 0px;
@@ -2269,11 +2269,11 @@ a:hover {
   --secondary: #9a9996;
   --secondary-foreground: #1a1a1a;
   --muted: #b0aeaa;
-  --muted-foreground: #5a5a56;
+  --muted-foreground: #41413e;     /* WCAG: darkened for 4.5:1 on muted-bg */
   --destructive: #e41e26;
   --border: #7f7e7a;
   --input: #7f7e7a;
-  --ring: #2f6fbf;
+  --ring: #2e6dbb;
   --radius: 0;
 
   --sidebar-background: #9a9996;
@@ -2305,7 +2305,7 @@ a:hover {
   --border: #3a3a55;
   --input: #3a3a55;
   --sidebar-background: #14142a;
-  --color-badge-text: #0a0a0f;
+  --color-badge-text: #f5f5f5;     /* WCAG: light badge text on blue accent */
 }
 
 @keyframes ps1-boot-flash {
@@ -2588,6 +2588,11 @@ a:hover {
   --input: #b9c9df;
   --sidebar-background: #ffffff;
   --color-badge-text: #0a1628;
+  /* WCAG: ps2-default cyan accent (#4fd8ff) fails 3:1 on near-white surfaces;
+     darken to a deeper cyan for light mode only. */
+  --color-accent: #348fa8;
+  --color-focus-ring: #348fa8;
+  --ring: #348fa8;
 }
 
 @keyframes ps2-cubes-rise {
@@ -2819,6 +2824,10 @@ a:hover {
   --input: #a7a077;
   --sidebar-background: #fffce4;
   --color-badge-text: #1a1805;
+  /* WCAG: yellow neon accent fails 3:1 on cream base; darken in light mode only */
+  --color-accent: #928a06;
+  --color-focus-ring: #928a06;
+  --ring: #928a06;
 }
 
 @keyframes cyber-glitch-flicker {
@@ -3064,7 +3073,13 @@ a:hover {
   --border: #7fbe91;
   --input: #7fbe91;
   --sidebar-background: #ffffff;
-  --color-badge-text: #042210;
+  --color-badge-text: #010804;
+  /* WCAG: matrix-default left --color-elevated dark (#081808); the actual
+     .bg-elevated rule for light mode renders white, so align the token. */
+  --color-elevated: #ffffff;
+  /* WCAG: neon-green focus ring fails 3:1 on near-white surfaces; darken in light mode. */
+  --color-focus-ring: #00a32a;
+  --ring: #00a32a;
 }
 
 @keyframes matrix-rain {
@@ -3225,7 +3240,7 @@ a:hover {
   --color-border: #c9ddd7;
   --color-border-hover: #4fa8b0;
 
-  --color-accent: #4fa8b0;          /* dome-water teal */
+  --color-accent: #47979e;          /* dome-water teal (WCAG-darkened from #4fa8b0 for 3:1) */
   --color-accent-muted: #dceef0;
 
   --color-peach: #f4b38a;
@@ -3240,8 +3255,8 @@ a:hover {
   --color-text: #2a3b40;
   --color-text-muted: #5e6f73;
 
-  --color-focus-ring: #4fa8b0;
-  --color-badge-text: #2a3b40;
+  --color-focus-ring: #47979e;
+  --color-badge-text: #1c272a;     /* WCAG: deeper darken to clear 4.5:1 on darkened teal accent */
 
   --radius-sm: 3px;
   --radius-md: 5px;
@@ -3257,7 +3272,7 @@ a:hover {
   --popover: #fffdf4;
   --popover-foreground: #2a3b40;
   --primary: #4fa8b0;
-  --primary-foreground: #fffdf4;
+  --primary-foreground: #333331;    /* dark text on teal button — WCAG 4.5:1 */
   --secondary: #dceef0;
   --secondary-foreground: #2a3b40;
   --muted: #e5f0ed;
@@ -3265,7 +3280,7 @@ a:hover {
   --destructive: #b23a3a;
   --border: #c9ddd7;
   --input: #c9ddd7;
-  --ring: #4fa8b0;
+  --ring: #47979e;
   --radius: 0.375rem;
 
   --sidebar-background: rgba(255, 253, 244, 0.72);
@@ -3508,7 +3523,16 @@ a:hover {
   --border: #9b9da3;
   --input: #9b9da3;
   --sidebar-background: #ebecee;
-  --color-badge-text: #151619;
+  --color-badge-text: #0f1012;     /* WCAG: deeper darken to clear 4.5:1 on darkened amber accent */
+  /* WCAG: half-life-1-default left --color-elevated dark (#22232a); the
+     light-mode .bg-elevated rule renders a #f0f1f3 → #e1e2e5 gradient, so
+     align the token to the lighter endpoint. */
+  --color-elevated: #e8e9eb;
+  /* WCAG: orange accent (#f9a31b) fails 3:1 on the gray base/surface;
+     darken to a deeper amber for the light mode only. */
+  --color-accent: #a96f12;
+  --color-focus-ring: #a96f12;
+  --ring: #a96f12;
 }
 
 [data-theme="half-life-1"] body {
@@ -3670,7 +3694,7 @@ a:hover {
   --color-border: #a8d6f0;
   --color-border-hover: #ff5fb1;
 
-  --color-accent: #ff5fb1;
+  --color-accent: #e6569f;          /* hot pink (WCAG-darkened from #ff5fb1 for 3:1 on near-white) */
   --color-accent-muted: #ffe1f2;
   --color-y2k-blueberry: #5fc0d6;
   --color-y2k-lime: #baff3d;
@@ -3688,7 +3712,7 @@ a:hover {
   --color-text: #1e1240;
   --color-text-muted: #55477e;
 
-  --color-focus-ring: #ff5fb1;
+  --color-focus-ring: #e6569f;
   --color-badge-text: #1e1240;
 
   --radius-sm: 12px;
@@ -3705,7 +3729,7 @@ a:hover {
   --popover: #ffffff;
   --popover-foreground: #1e1240;
   --primary: #ff5fb1;
-  --primary-foreground: #ffffff;
+  --primary-foreground: #333333;    /* WCAG: dark text on pink — keeps the neon brand for the fill */
   --secondary: #d6f0ff;
   --secondary-foreground: #1e1240;
   --muted: #edf8ff;
@@ -3713,7 +3737,7 @@ a:hover {
   --destructive: #ff2768;
   --border: #a8d6f0;
   --input: #a8d6f0;
-  --ring: #ff5fb1;
+  --ring: #e6569f;
   --radius: 1.125rem;
 
   --sidebar-background: rgba(255, 255, 255, 0.55);
@@ -3952,7 +3976,7 @@ a:hover {
   --color-text-muted: #8e8377;
 
   --color-focus-ring: #d80e1d;
-  --color-badge-text: #07040a;
+  --color-badge-text: #f0f0f0;     /* WCAG: light badge text on blood-red accent */
 
   --radius-sm: 0;
   --radius-md: 1px;
@@ -3968,7 +3992,7 @@ a:hover {
   --popover: #140a0d;
   --popover-foreground: #eae2d5;
   --primary: #d80e1d;
-  --primary-foreground: #eae2d5;
+  --primary-foreground: #f2ede5;   /* WCAG: lightened from #eae2d5 for 4.5:1 on red button */
   --secondary: #140a0d;
   --secondary-foreground: #eae2d5;
   --muted: #0d0609;
@@ -4008,7 +4032,7 @@ a:hover {
   --border: #b8a586;
   --input: #b8a586;
   --sidebar-background: #f7f0de;
-  --color-badge-text: #1a0608;
+  --color-badge-text: #f1f0f0;     /* WCAG: light badge text on red accent (light mode) */
 }
 
 [data-theme="vendetta"] body {
