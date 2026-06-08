@@ -96,14 +96,14 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
           <AilaBadge severity={severity} size="sm">
             {lead.score.toFixed(0)}
           </AilaBadge>
-          <span className="text-[10px] text-text-muted font-medium uppercase tracking-wide">
+          <span className="text-3xs text-text-muted font-medium uppercase tracking-wide">
             {scoreBucket(lead.score)}
           </span>
-          <span className="text-text-muted font-mono text-[11px] ml-auto shrink-0">
+          <span className="text-text-muted font-mono text-2xs ml-auto shrink-0">
             {typeLabel}
           </span>
           {lead.source_tool && (
-            <span className="text-text-muted text-[10px] shrink-0">
+            <span className="text-text-muted text-3xs shrink-0">
               via {lead.source_tool}
             </span>
           )}
@@ -120,7 +120,7 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
             {parsed.meta.map((m, i) => (
               <span
                 key={i}
-                className="px-1.5 py-0.5 text-[10px] rounded bg-surface-secondary text-text-muted font-mono"
+                className="px-1.5 py-0.5 text-3xs rounded bg-surface-secondary text-text-muted font-mono"
               >
                 {m}
               </span>
@@ -132,7 +132,7 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
           <button
             type="button"
             onClick={() => setOpen((p) => !p)}
-            className="text-[11px] text-primary hover:underline pt-0.5"
+            className="text-2xs text-primary hover:underline pt-0.5"
             aria-expanded={open}
           >
             {open ? "Hide details ▾" : "Show details ▸"}
@@ -144,7 +144,7 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
         <div className="border-t border-border bg-black/10 px-3 py-2.5 space-y-2">
           {parsed.question && (
             <div>
-              <div className="text-[10px] font-mono text-text-muted uppercase tracking-wide mb-0.5">
+              <div className="text-3xs font-mono text-text-muted uppercase tracking-wide mb-0.5">
                 Question
               </div>
               <div className="text-foreground leading-relaxed whitespace-pre-wrap">
@@ -154,7 +154,7 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
           )}
           {parsed.answer && (
             <div>
-              <div className="text-[10px] font-mono text-text-muted uppercase tracking-wide mb-0.5">
+              <div className="text-3xs font-mono text-text-muted uppercase tracking-wide mb-0.5">
                 Answer
               </div>
               <div className="text-foreground leading-relaxed whitespace-pre-wrap">
@@ -164,17 +164,17 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
           )}
           {evidence.length > 0 && (
             <div>
-              <div className="text-[10px] font-mono text-text-muted uppercase tracking-wide mb-1">
+              <div className="text-3xs font-mono text-text-muted uppercase tracking-wide mb-1">
                 Evidence ({evidence.length})
               </div>
               <ul className="space-y-1.5">
                 {evidence.map((e, i) => (
                   <li
                     key={i}
-                    className="font-mono text-[11px] leading-relaxed border-l-2 border-border-muted pl-2"
+                    className="font-mono text-2xs leading-relaxed border-l-2 border-border-muted pl-2"
                   >
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="px-1.5 py-0.5 rounded bg-surface-secondary text-foreground text-[10px] shrink-0">
+                      <span className="px-1.5 py-0.5 rounded bg-surface-secondary text-foreground text-3xs shrink-0">
                         {e.keyword}
                       </span>
                       <span className="text-text-muted">{e.path}</span>
@@ -189,7 +189,7 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
           )}
           {parsed.iocSummaries.length > 0 && (
             <div>
-              <div className="text-[10px] font-mono text-text-muted uppercase tracking-wide mb-0.5">
+              <div className="text-3xs font-mono text-text-muted uppercase tracking-wide mb-0.5">
                 IOC rollups
               </div>
               <ul className="space-y-0.5 text-foreground">
@@ -203,21 +203,21 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
           )}
           {(lead.related_artifact_ids?.length ?? 0) > 0 && (
             <div>
-              <div className="text-[10px] font-mono text-text-muted uppercase tracking-wide mb-0.5">
+              <div className="text-3xs font-mono text-text-muted uppercase tracking-wide mb-0.5">
                 Related artefacts
               </div>
               <div className="flex flex-wrap gap-1">
                 {(lead.related_artifact_ids ?? []).slice(0, 8).map((id) => (
                   <span
                     key={id}
-                    className="px-1.5 py-0.5 text-[10px] rounded bg-surface-secondary text-text-muted font-mono"
+                    className="px-1.5 py-0.5 text-3xs rounded bg-surface-secondary text-text-muted font-mono"
                     title={id}
                   >
                     {id.slice(0, 8)}
                   </span>
                 ))}
                 {(lead.related_artifact_ids?.length ?? 0) > 8 && (
-                  <span className="text-text-muted text-[10px]">
+                  <span className="text-text-muted text-3xs">
                     +{(lead.related_artifact_ids?.length ?? 0) - 8} more
                   </span>
                 )}

@@ -72,8 +72,8 @@ export function NewProjectPage() {
           }}
         />
         <p
-          className="text-[11px] uppercase tracking-[0.32em] text-text-muted"
-          style={{ fontFamily: "var(--font-mono)" }}
+          className="text-2xs uppercase text-text-muted"
+          style={{ fontFamily: "var(--font-mono)", letterSpacing: "0.32em" }}
         >
           // forensics / new case init
         </p>
@@ -182,7 +182,7 @@ export function NewProjectPage() {
                   }`}
                 >
                   <span className="block text-sm font-semibold">{k.label}</span>
-                  <span className="block text-[11px] text-text-muted mt-0.5">{k.hint}</span>
+                  <span className="block text-2xs text-text-muted mt-0.5">{k.hint}</span>
                 </button>
               ))}
             </div>

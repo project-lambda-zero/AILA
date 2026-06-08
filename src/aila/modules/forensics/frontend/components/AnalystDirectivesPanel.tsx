@@ -213,7 +213,7 @@ function DirectiveGroup({
   const visible = compact ? items.slice(-5).reverse() : [...items].reverse();
   return (
     <div>
-      <div className="text-[11px] uppercase tracking-wide text-text-muted mb-1">
+      <div className="text-2xs uppercase tracking-wide text-text-muted mb-1">
         {label}
       </div>
       <ul className="space-y-1">
@@ -229,7 +229,7 @@ function DirectiveGroup({
               <p className="whitespace-pre-wrap break-words text-foreground">
                 {d.text}
               </p>
-              <p className="text-[11px] text-text-muted mt-0.5">
+              <p className="text-2xs text-text-muted mt-0.5">
                 {d.created_by ? `${d.created_by} · ` : ""}
                 {formatStamp(d.created_at)}
               </p>

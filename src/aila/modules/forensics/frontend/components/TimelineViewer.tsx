@@ -110,18 +110,21 @@ function InspectRow({
   const rows = flattenScalars(payload ?? {}).slice(0, 60);
   if (rows.length === 0) {
     return (
-      <div className="px-3 py-2 text-[11px] text-text-muted">
+      <div className="px-3 py-2 text-2xs text-text-muted">
         No structured fields available for this entry.
       </div>
     );
   }
   return (
     <div className="px-3 py-2 bg-black/20 border-t border-border">
-      <table className="w-full text-[11px]">
+      <table className="w-full text-2xs">
         <tbody>
           {rows.map((r, i) => (
             <tr key={i} className="align-top">
-              <td className="pr-3 py-0.5 font-mono text-text-muted whitespace-nowrap max-w-[220px] truncate">
+              <td
+                className="pr-3 py-0.5 font-mono text-text-muted whitespace-nowrap truncate"
+                style={{ maxWidth: 220 }}
+              >
                 {r.key}
               </td>
               <td className="py-0.5 font-mono text-foreground break-all">
@@ -198,7 +201,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
           <button
             type="button"
             onClick={() => setSourceFilter(null)}
-            className={`px-2.5 py-1 text-[10px] rounded-full font-medium ${
+            className={`px-2.5 py-1 text-3xs rounded-full font-medium ${
               !sourceFilter
                 ? "bg-primary text-white"
                 : "bg-surface-secondary text-text-muted hover:text-foreground"
@@ -211,7 +214,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
               key={src}
               type="button"
               onClick={() => setSourceFilter(sourceFilter === src ? null : src)}
-              className={`px-2.5 py-1 text-[10px] rounded-full font-medium ${
+              className={`px-2.5 py-1 text-3xs rounded-full font-medium ${
                 sourceFilter === src
                   ? "bg-primary text-white"
                   : SOURCE_COLORS[src] || SOURCE_COLORS.unknown
@@ -243,7 +246,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
           </AilaCard>
         ) : (
           <div className="border border-border rounded-lg overflow-hidden bg-surface text-foreground">
-            <div className="overflow-y-auto max-h-[500px]">
+            <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
               <table className="w-full text-xs">
                 <thead className="bg-surface-secondary sticky top-0 z-10">
                   <tr>
@@ -268,7 +271,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                               <span>{entry.timestamp}</span>
                               {originBadge && (
                                 <span
-                                  className={`px-1 py-0 rounded text-[9px] font-medium ${originBadge.tone}`}
+                                  className={`px-1 py-0 rounded text-4xs font-medium ${originBadge.tone}`}
                                   title={`timestamp source: ${entry.timestamp_origin}`}
                                 >
                                   {originBadge.text}
@@ -279,13 +282,13 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                           <td className="px-3 py-1.5 align-top">
                             <div className="flex items-center gap-1">
                               <span
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${colorClass}`}
+                                className={`px-1.5 py-0.5 rounded text-3xs font-medium ${colorClass}`}
                               >
                                 {entry.source}
                               </span>
                               {entry.source_investigation_id && (
                                 <span
-                                  className="px-1 py-0 rounded text-[9px] font-medium bg-emerald-500/20 text-emerald-300"
+                                  className="px-1 py-0 rounded text-4xs font-medium bg-emerald-500/20 text-emerald-300"
                                   title={`from investigation ${entry.source_investigation_id.slice(0, 8)}`}
                                 >
                                   I
@@ -311,7 +314,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                                     curr === rowKey ? null : rowKey,
                                   )
                                 }
-                                className="shrink-0 text-[10px] text-text-muted hover:text-foreground underline decoration-dotted"
+                                className="shrink-0 text-3xs text-text-muted hover:text-foreground underline decoration-dotted"
                                 aria-expanded={isOpen}
                               >
                                 {isOpen ? "hide" : "inspect"}
@@ -357,7 +360,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
           </AilaCard>
         ) : (
           <div className="border border-border rounded-lg overflow-hidden bg-surface text-foreground">
-            <div className="overflow-y-auto max-h-[500px]">
+            <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
               <table className="w-full text-xs">
                 <thead className="bg-surface-secondary sticky top-0 z-10">
                   <tr>
@@ -379,13 +382,13 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                           <td className="px-3 py-1.5 align-top">
                             <div className="flex items-center gap-1">
                               <span
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${colorClass}`}
+                                className={`px-1.5 py-0.5 rounded text-3xs font-medium ${colorClass}`}
                               >
                                 {occ.source}
                               </span>
                               {occ.source_investigation_id && (
                                 <span
-                                  className="px-1 py-0 rounded text-[9px] font-medium bg-emerald-500/20 text-emerald-300"
+                                  className="px-1 py-0 rounded text-4xs font-medium bg-emerald-500/20 text-emerald-300"
                                   title={`from investigation ${occ.source_investigation_id.slice(0, 8)}`}
                                 >
                                   I
@@ -411,7 +414,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                                     curr === rowKey ? null : rowKey,
                                   )
                                 }
-                                className="shrink-0 text-[10px] text-text-muted hover:text-foreground underline decoration-dotted"
+                                className="shrink-0 text-3xs text-text-muted hover:text-foreground underline decoration-dotted"
                                 aria-expanded={isOpen}
                               >
                                 {isOpen ? "hide" : "inspect"}

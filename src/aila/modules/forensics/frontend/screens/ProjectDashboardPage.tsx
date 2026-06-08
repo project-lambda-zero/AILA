@@ -332,7 +332,7 @@ function FullAnalysisButton({ projectId }: { projectId: string }) {
     </div>
     {taskId && (
       <div className="mt-3 space-y-1">
-        <div className="flex items-center gap-2 text-[10px] text-text-muted font-mono">
+        <div className="flex items-center gap-2 text-3xs text-text-muted font-mono">
           <span className={`inline-block w-1.5 h-1.5 rounded-full ${
             status === "streaming" ? "bg-amber-400 animate-pulse"
             : status === "done" ? "bg-green-400"
@@ -340,7 +340,7 @@ function FullAnalysisButton({ projectId }: { projectId: string }) {
           }`} />
           <span>task:{taskId.slice(0, 8)} · {status} · {events.length} event(s)</span>
         </div>
-        <div className="max-h-64 overflow-y-auto rounded border border-border bg-black/30 p-2 font-mono text-[10px] space-y-0.5">
+        <div className="max-h-64 overflow-y-auto rounded border border-border bg-black/30 p-2 font-mono text-3xs space-y-0.5">
           {events.length === 0 && <p className="text-text-muted italic">Waiting for first event…</p>}
           {events.map((ev, i) => {
             const stage = ev.stage ?? "event";
@@ -446,7 +446,7 @@ function RawDirectoryNotice() {
           ask questions directly and the investigator will read files off the analyzer.
         </p>
       </div>
-      <span className="shrink-0 px-2 py-0.5 text-[11px] rounded border border-border text-text-muted">
+      <span className="shrink-0 px-2 py-0.5 text-2xs rounded border border-border text-text-muted">
         raw_directory
       </span>
     </div></AilaCard>
@@ -465,7 +465,7 @@ function InvestigationsTab({
   const isRaw = projectKind === "raw_directory";
 
   return (
-    <div className="space-y-4 bg-surface text-foreground p-4 rounded-[var(--radius-md)] border border-border">
+    <div className="space-y-4 bg-surface text-foreground p-4 rounded-md border border-border">
       <AnalystDirectivesPanel projectId={projectId} compact />
       {isRaw ? (
         <FetchRawFilePanel projectId={projectId} compact />
@@ -575,7 +575,7 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
                   <span className="text-text-muted shrink-0">{e.version}</span>
                 )}
                 {e.install_method && e.install_method !== "pre_installed" && (
-                  <span className="text-accent shrink-0 text-[10px]">[{e.install_method}]</span>
+                  <span className="text-accent shrink-0 text-3xs">[{e.install_method}]</span>
                 )}
               </div>
               {e.required && e.status === "missing" && (
@@ -604,18 +604,18 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
                 stage === "heartbeat" ? "text-text-muted/60" :
                 "text-text-muted";
               return (
-                <div key={i} className="px-2 py-1 text-[10px] font-mono border-b border-border/40 last:border-b-0">
+                <div key={i} className="px-2 py-1 text-3xs font-mono border-b border-border/40 last:border-b-0">
                   <span className={`${color} font-semibold`}>[{stage}]</span>
                   {e.tool && <span className="text-foreground ml-2">{e.tool}</span>}
                   {e.message && <span className="text-text-muted ml-2">— {e.message}</span>}
                   {e.command && (
-                    <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all">$ {e.command}</div>
+                    <div className="text-text-muted/70 text-4xs ml-6 mt-0.5 break-all">$ {e.command}</div>
                   )}
                   {e.error && (
-                    <div className="text-red-300/80 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
+                    <div className="text-red-300/80 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
                   )}
                   {e.output_tail && (
-                    <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.output_tail}</div>
+                    <div className="text-text-muted/70 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.output_tail}</div>
                   )}
                 </div>
               );
@@ -682,7 +682,7 @@ export function ProjectDashboardPage() {
   }
 
   return (
-    <div className="space-y-4 bg-surface text-foreground p-4 rounded-[var(--radius-md)] border border-border">
+    <div className="space-y-4 bg-surface text-foreground p-4 rounded-md border border-border">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1 min-w-0">

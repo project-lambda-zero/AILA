@@ -140,7 +140,7 @@ export function SolidEvidencePanel({ projectId }: Props) {
                 <td className="px-3 py-2 text-xs text-text-muted">
                   <div>{formatStamp(r.tagged_at)}</div>
                   {r.tagged_by && (
-                    <div className="font-mono text-[11px]">{r.tagged_by}</div>
+                    <div className="font-mono text-2xs">{r.tagged_by}</div>
                   )}
                 </td>
                 <td className="px-3 py-2 text-xs">

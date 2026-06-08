@@ -2011,6 +2011,30 @@ a:hover {
 }
 
 /* =====================================================================
+   SUB-XS TEXT SIZES — E27a follow-on
+   Tailwind v4 ships text-xs at 12px. The forensics / vr / sbd_nfr
+   dense-data surfaces (timeline rows, finding badges, registry
+   tables) reach for 9–11px metadata text and previously wrote it
+   as text-[9px] / text-[10px] / text-[11px] arbitrary classes.
+   These named utilities keep the same scale extension and stay
+   theme-invariant. Only font-size is set (matching the arbitrary
+   form); line-height is inherited from the parent so existing
+   layout doesn't shift.
+   ===================================================================== */
+
+@utility text-2xs {
+  font-size: 11px;
+}
+
+@utility text-3xs {
+  font-size: 10px;
+}
+
+@utility text-4xs {
+  font-size: 9px;
+}
+
+/* =====================================================================
    UTILITIES — loading skeleton, focus ring, severity pulse
    ===================================================================== */
 

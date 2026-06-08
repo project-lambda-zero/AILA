@@ -591,7 +591,7 @@ export function InvestigationDetailPage() {
 
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-1 flex-1 min-w-[16rem]">
+        <div className="space-y-1 flex-1" style={{ minWidth: "16rem" }}>
           <p className="text-sm text-text-muted font-mono">{investigation.question}</p>
           <div className="flex gap-4 text-xs text-text-muted">
             <span>
@@ -669,7 +669,10 @@ export function InvestigationDetailPage() {
               />
               <span className="font-mono">{feedStatus}</span>
             </div>
-            <div className="rounded-md border border-border bg-surface font-mono text-xs overflow-y-auto max-h-[28rem] p-3 space-y-1">
+            <div
+              className="rounded-md border border-border bg-surface font-mono text-xs overflow-y-auto p-3 space-y-1"
+              style={{ maxHeight: "28rem" }}
+            >
               {liveEvents.length === 0 && (
                 <p className="text-text-muted">Waiting for events…</p>
               )}
@@ -734,56 +737,59 @@ export function InvestigationDetailPage() {
                       <span className="text-foreground break-all">{ev.message ?? ""}</span>
                     </div>
                     {path && (
-                      <div className="pl-14 text-[10px] text-text-muted break-all">↳ {path}</div>
+                      <div className="pl-14 text-3xs text-text-muted break-all">↳ {path}</div>
                     )}
                     {err && (
-                      <div className="pl-14 text-[10px] text-red-300/80 break-all whitespace-pre-wrap">✗ {err}</div>
+                      <div className="pl-14 text-3xs text-red-300/80 break-all whitespace-pre-wrap">✗ {err}</div>
                     )}
                     {reasoning && (
                       <details className="pl-14 mt-0.5" open>
-                        <summary className="cursor-pointer text-[10px] text-text-muted/80 hover:text-foreground">
+                        <summary className="cursor-pointer text-3xs text-text-muted/80 hover:text-foreground">
                           reasoning ({reasoning.length} chars)
                         </summary>
-                        <div className="mt-1 text-[11px] text-text-muted whitespace-pre-wrap italic bg-black/20 border border-border rounded px-2 py-1">
+                        <div className="mt-1 text-2xs text-text-muted whitespace-pre-wrap italic bg-black/20 border border-border rounded px-2 py-1">
                           {reasoning}
                         </div>
                       </details>
                     )}
                     {command && (
                       <details className="pl-14 mt-1">
-                        <summary className="cursor-pointer text-[10px] text-amber-400/80 hover:text-amber-300">
+                        <summary className="cursor-pointer text-3xs text-amber-400/80 hover:text-amber-300">
                           shell command ({command.length} chars) — click to expand
                         </summary>
-                        <pre className="mt-1 text-[11px] bg-black/40 border border-amber-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
+                        <pre className="mt-1 text-2xs bg-black/40 border border-amber-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
                           {command}
                         </pre>
                       </details>
                     )}
                     {script && (
                       <details className="pl-14 mt-1">
-                        <summary className="cursor-pointer text-[10px] text-amber-400/80 hover:text-amber-300">
+                        <summary className="cursor-pointer text-3xs text-amber-400/80 hover:text-amber-300">
                           python script ({script.length} chars) — click to expand
                         </summary>
-                        <pre className="mt-1 text-[11px] bg-black/40 border border-amber-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
+                        <pre className="mt-1 text-2xs bg-black/40 border border-amber-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
                           {script}
                         </pre>
                       </details>
                     )}
                     {(stdout || stderr) && (
                       <details className="pl-14 mt-1" open>
-                        <summary className="cursor-pointer text-[10px] text-green-400/80 hover:text-green-300">
+                        <summary className="cursor-pointer text-3xs text-green-400/80 hover:text-green-300">
                           output {exitCode !== undefined ? `(exit=${exitCode})` : ""}
                           {stdoutBytes !== undefined && stdout && stdoutBytes > stdout.length
                             ? ` — showing last ${stdout.length.toLocaleString()} of ${stdoutBytes.toLocaleString()} bytes`
                             : stdout ? ` — ${stdout.length.toLocaleString()} bytes` : ""}
                         </summary>
                         {stdout && (
-                          <pre className="mt-1 text-[11px] bg-black/40 border border-green-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-green-200 max-h-[32rem] overflow-auto">
+                          <pre
+                            className="mt-1 text-2xs bg-black/40 border border-green-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-green-200 overflow-auto"
+                            style={{ maxHeight: "32rem" }}
+                          >
                             {stdout}
                           </pre>
                         )}
                         {stderr && (
-                          <pre className="mt-1 text-[11px] bg-black/40 border border-red-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-red-200 max-h-80 overflow-auto">
+                          <pre className="mt-1 text-2xs bg-black/40 border border-red-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-red-200 max-h-80 overflow-auto">
                             {stderr}
                           </pre>
                         )}

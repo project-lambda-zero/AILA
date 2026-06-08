@@ -174,13 +174,13 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
       {/* Most common file types */}
       {mimeCounts.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-text-muted mr-1">
+          <span className="text-2xs text-text-muted mr-1">
             Most common types:
           </span>
           <button
             type="button"
             onClick={() => setMimeFilter(null)}
-            className={`px-2 py-0.5 text-[11px] rounded-full font-medium ${
+            className={`px-2 py-0.5 text-2xs rounded-full font-medium ${
               mimeFilter === null
                 ? "bg-primary text-white"
                 : "bg-surface-secondary text-text-muted hover:text-foreground"
@@ -197,7 +197,7 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
                   curr === mc.mime_type ? null : mc.mime_type,
                 )
               }
-              className={`px-2 py-0.5 text-[11px] rounded-full font-mono ${
+              className={`px-2 py-0.5 text-2xs rounded-full font-mono ${
                 mimeFilter === mc.mime_type
                   ? "bg-primary text-white"
                   : "bg-surface-secondary text-text-muted hover:text-foreground"
@@ -221,7 +221,7 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
 
       {/* Table */}
       <div className="border border-border rounded-lg bg-surface text-foreground overflow-hidden">
-        <div className="overflow-y-auto max-h-[500px]">
+        <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
           <table className="w-full text-xs">
             <thead className="bg-surface-secondary sticky top-0 z-10">
               <tr>

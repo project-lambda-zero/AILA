@@ -208,7 +208,7 @@ export function ReadinessStreamPanel({
               <span className="text-foreground truncate">{e.tool}</span>
               {e.version && <span className="text-text-muted shrink-0">{e.version}</span>}
               {e.install_method && e.install_method !== "pre_installed" && (
-                <span className="text-accent shrink-0 text-[10px]">[{e.install_method}]</span>
+                <span className="text-accent shrink-0 text-3xs">[{e.install_method}]</span>
               )}
             </div>
             {e.required && e.status === "missing" && (
@@ -242,18 +242,18 @@ export function ReadinessStreamPanel({
                 ? "text-text-muted/60"
                 : "text-text-muted";
             return (
-              <div key={i} className="px-2 py-1 text-[10px] font-mono border-b border-border/40 last:border-b-0">
+              <div key={i} className="px-2 py-1 text-3xs font-mono border-b border-border/40 last:border-b-0">
                 <span className={`${color} font-semibold`}>[{stage}]</span>
                 {e.tool && <span className="text-foreground ml-2">{e.tool}</span>}
                 {e.message && <span className="text-text-muted ml-2">— {e.message}</span>}
                 {e.command && (
-                  <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all">$ {e.command}</div>
+                  <div className="text-text-muted/70 text-4xs ml-6 mt-0.5 break-all">$ {e.command}</div>
                 )}
                 {e.error && (
-                  <div className="text-red-300/80 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
+                  <div className="text-red-300/80 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
                 )}
                 {e.output_tail && (
-                  <div className="text-text-muted/70 text-[9px] ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.output_tail}</div>
+                  <div className="text-text-muted/70 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.output_tail}</div>
                 )}
               </div>
             );

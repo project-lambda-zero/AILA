@@ -68,7 +68,7 @@ export function FetchRawFilePanel({ projectId, compact = false }: Props) {
       </select>
     
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] text-text-muted">
+        <p className="text-2xs text-text-muted">
           Directories are zipped on the analyzer and shipped as
           <code className="font-mono mx-1">&lt;name&gt;.zip</code>.
           {selected ? ` Selected: ${selected.evidence_type}.` : ""}

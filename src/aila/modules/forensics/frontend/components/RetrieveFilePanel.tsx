@@ -89,7 +89,7 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
       )}
     
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] text-text-muted">
+        <p className="text-2xs text-text-muted">
           Paste the full in-image path — file or directory. Directories
           are zipped on the analyzer and shipped as
           <code className="font-mono mx-1">&lt;name&gt;.zip</code>.
