@@ -176,6 +176,7 @@ export interface VRTargetSummary {
   kind: TargetKind;
   descriptor: Record<string, unknown>;
   uploaded_filename?: string | null;
+  android_package_name?: string | null;
   primary_language?: string | null;
   secondary_languages: string[];
   status: TargetStatus;

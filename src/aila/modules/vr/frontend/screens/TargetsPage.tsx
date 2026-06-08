@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { ArrowsClockwise } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
+import { DeviceMobile } from "@phosphor-icons/react/dist/csr/DeviceMobile";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
@@ -13,7 +14,7 @@ import {
   useRefreshTargetSource,
 } from "../mutations";
 import { useTargets, useWorkspaces } from "../queries";
-import type { AnalysisState, TargetKind, TargetStatus } from "../types";
+import type { AnalysisState, TargetKind, TargetStatus, VRTargetSummary } from "../types";
 
 // Per-kind descriptor templates. Operator only provides what they
 // actually know — repo URL, file path, version, arch. Backend
@@ -43,6 +44,7 @@ const TARGET_KINDS: TargetKind[] = [
   "crash_input",
   "patch_diff",
   "apk",
+  "android_apk",
   "ipa",
   "jar",
   "dotnet_assembly",
@@ -87,6 +89,36 @@ function formatDate(value?: string | null): string {
   } catch {
     return value;
   }
+}
+
+// Per-kind icon glyph. Empty for kinds without a curated icon — keeps
+// the column compact rather than padding every row with a default
+// shape. `android_apk` is the first kind with its own icon; future
+// kinds can extend this map without growing the row signature.
+function KindIcon({ kind }: { kind: TargetKind }) {
+  if (kind === "android_apk") {
+    return (
+      <DeviceMobile
+        className="inline-block h-3.5 w-3.5 mr-1.5 text-text-muted align-[-2px]"
+        weight="duotone"
+        aria-label="Android APK"
+      />
+    );
+  }
+  return null;
+}
+
+// Row label resolver. For `android_apk` targets, once STATIC_SUMMARY
+// completes the androguard-discovered package name is the most useful
+// identifier (`com.vodafone.selfservis` beats whatever the operator
+// typed for `display_name`). Falls back to `display_name` for every
+// other kind, and for `android_apk` rows whose static summary hasn't
+// landed yet.
+function targetRowLabel(t: VRTargetSummary): string {
+  if (t.kind === "android_apk" && t.android_package_name) {
+    return t.android_package_name;
+  }
+  return t.display_name;
 }
 
 export function TargetsPage() {
@@ -137,6 +169,7 @@ export function TargetsPage() {
           <br /><strong>kernel_image</strong>: <code>{`{"image_path": "/path/vmlinuz", "kernel_version": "6.10", "arch": "x86_64"}`}</code>
           <br /><strong>kernel_module</strong>: <code>{`{"ko_path": "/path/buggy.ko", "module_name": "buggy"}`}</code>
           <br /><strong>hypervisor_image</strong>: <code>{`{"binary_path": "/path/qemu-system-x86_64", "hypervisor_kind": "qemu", "version": "9.1.0"}`}</code>
+          <br /><strong>android_apk</strong>: <code>{`{"apk_path": "/path/to/app.apk"}`}</code> — staged ingestion: apktool → jadx → androguard (+ MobSF if configured)
           <br /><em>Analysis runs automatically after create. No manual MCP wiring.</em>
         </p>
         <div className="space-y-2">
@@ -291,9 +324,10 @@ export function TargetsPage() {
                 className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
               >
                 <td className="px-4 py-2 font-semibold text-foreground">
-                  {t.display_name}
+                  {targetRowLabel(t)}
                 </td>
                 <td className="px-4 py-2 font-mono text-xs text-text-muted">
+                  <KindIcon kind={t.kind} />
                   {t.kind}
                 </td>
                 <td className="px-4 py-2 font-mono text-xs text-text-muted">

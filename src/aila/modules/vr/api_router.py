@@ -408,7 +408,12 @@ def _target_summary(record: Any) -> VRTargetSummary:
     uploaded_filename = handles.get("uploaded_filename")
     if not isinstance(uploaded_filename, str):
         uploaded_filename = None
-
+    # PRD §C-21: surface the androguard-discovered package name so the
+    # TargetsPage row label can fall back to it once STATIC_SUMMARY
+    # finishes. Storage shape set by services/target_analysis._android_static_summary.
+    android_package_name = handles.get("android_mcp_package_name")
+    if not isinstance(android_package_name, str) or not android_package_name:
+        android_package_name = None
     # Project per-stage analysis status (migration 060) so UI shows
     # a stage breakdown alongside the rolled-up analysis_state.
     stages_payload: dict[str, Any] | None = None
@@ -425,6 +430,7 @@ def _target_summary(record: Any) -> VRTargetSummary:
         kind=TargetKind(record.kind),
         descriptor=_json.loads(record.descriptor_json or "{}"),
         uploaded_filename=uploaded_filename,
+        android_package_name=android_package_name,
         primary_language=record.primary_language,
         secondary_languages=_json.loads(record.secondary_languages_json or "[]"),
         status=TargetStatus(record.status),
