@@ -42,11 +42,29 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
         }
       }}
     >
+      {/*
+        Skip-to-main-content link (B8). First focusable element in the
+        DOM so a keyboard user lands here on initial Tab. Visually
+        hidden until focused (sr-only → focus:not-sr-only). The href
+        target — <main id="main" tabIndex={-1}> below — is made
+        programmatically focusable so activation moves focus into the
+        content region, not just the scroll position.
+      */}
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded-md focus:border focus:border-border focus:bg-elevated focus:px-4 focus:py-2 focus:font-sans focus:text-sm focus:font-medium focus:text-text focus:shadow-lg"
+      >
+        Skip to main content
+      </a>
       <AppSidebar moduleSpecs={moduleSpecs} />
       <SidebarInset>
         <AppHeader />
         <OfflineBanner />
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6">
+        <main
+          id="main"
+          tabIndex={-1}
+          className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 focus:outline-none focus-visible:outline-none"
+        >
           {children}
         </main>
       </SidebarInset>
