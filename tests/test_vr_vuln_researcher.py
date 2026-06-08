@@ -9,10 +9,12 @@ state machine (M3.R-7) is wired.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from aila.modules.vr.agents.vuln_researcher import (
+    HonestVulnResearcher,
     _applicable_servers_for_kind,
     _decision_to_message_payload,
     _decode_case_state,
@@ -24,6 +26,7 @@ from aila.modules.vr.agents.vuln_researcher import (
     _outcome_payload,
     _render_available_tools_section,
     _render_operator_messages_section,
+    _render_target_snapshot_section,
     _terminal_outcome_kind,
     _to_outcome_confidence,
 )
@@ -552,3 +555,158 @@ class TestMcpFamilyRuleForKind:
         rule = _mcp_family_rule_for_kind("apk", {"binary_id": "b_xyz"})
         assert "ida_headless" in rule
         assert "android_mcp" not in rule
+
+
+class TestSnapshotTargetAndroidApk:
+    """F-4: ``_snapshot_target`` must surface the APK path under the
+    handle key the F-2 RULE line and the renderer both expect, even
+    for rows ingested before the F-4 commit landed.
+    """
+
+    def _build_target(
+        self,
+        *,
+        kind: str,
+        descriptor: dict | None = None,
+        handles: dict | None = None,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            id="t-1",
+            kind=kind,
+            display_name="Yanimda",
+            primary_language="java",
+            secondary_languages_json="[]",
+            analysis_state="ready",
+            analysis_state_message=None,
+            descriptor_json=json.dumps(descriptor or {}),
+            capability_profile_json="{}",
+            mcp_handles_json=json.dumps(handles or {}),
+        )
+
+    def test_android_apk_synthesizes_apk_path_into_handles(self) -> None:
+        target = self._build_target(
+            kind="android_apk",
+            descriptor={"apk_path": "/work/yanimda.apk"},
+            handles={"audit_mcp_decompiled_index_id": "idx-abc123"},
+        )
+
+        snap = HonestVulnResearcher._snapshot_target(target)  # noqa: SLF001
+
+        # apk_path projected onto the F-2 handle key the RULE line reads.
+        assert snap["mcp_handles"]["android_mcp_apk_path"] == "/work/yanimda.apk"
+        # F-3 handle flows through verbatim.
+        assert snap["mcp_handles"]["audit_mcp_decompiled_index_id"] == "idx-abc123"
+
+    def test_existing_apk_path_handle_is_not_overwritten(self) -> None:
+        target = self._build_target(
+            kind="android_apk",
+            descriptor={"apk_path": "/from/descriptor.apk"},
+            handles={"android_mcp_apk_path": "/already/in/handles.apk"},
+        )
+
+        snap = HonestVulnResearcher._snapshot_target(target)  # noqa: SLF001
+
+        # Descriptor never clobbers an already-persisted handle value.
+        assert snap["mcp_handles"]["android_mcp_apk_path"] == "/already/in/handles.apk"
+
+    def test_non_android_kinds_get_no_synthesis(self) -> None:
+        target = self._build_target(
+            kind="source_repo",
+            descriptor={"apk_path": "/should/not/leak.apk"},
+            handles={"audit_mcp_index_id": "idx-zzz"},
+        )
+
+        snap = HonestVulnResearcher._snapshot_target(target)  # noqa: SLF001
+
+        # apk_path from descriptor must NOT bleed into handles for
+        # other kinds — the synthesis is gated on kind == android_apk.
+        assert "android_mcp_apk_path" not in snap["mcp_handles"]
+
+    def test_android_apk_with_missing_descriptor_apk_path_is_noop(self) -> None:
+        # If the descriptor invariant is broken (no apk_path), the
+        # snapshot returns cleanly without inventing a handle.
+        target = self._build_target(
+            kind="android_apk",
+            descriptor={},
+            handles={"audit_mcp_decompiled_index_id": "idx-1"},
+        )
+
+        snap = HonestVulnResearcher._snapshot_target(target)  # noqa: SLF001
+
+        assert "android_mcp_apk_path" not in snap["mcp_handles"]
+
+
+class TestRenderTargetSnapshotSectionAndroidApk:
+    """F-4: end-to-end smoke — the rendered snapshot text for an
+    android_apk target must surface both the apk_path and the
+    decompiled audit-mcp index id so the agent prompt grounds on
+    both bridges.
+    """
+
+    def test_renders_both_apk_path_and_decompiled_index_id(self) -> None:
+        snapshot = {
+            "id": "t-1",
+            "kind": "android_apk",
+            "display_name": "com.vodafone.selfservis",
+            "primary_language": "java",
+            "secondary_languages": [],
+            "analysis_state": "ready",
+            "analysis_state_message": "",
+            "descriptor": {"apk_path": "/work/yanimda.apk"},
+            "applicable_mcp_servers": ["audit_mcp", "android_mcp"],
+            "applicable_fuzzing_engines": [],
+            "applicable_strategies": [],
+            "functions_of_interest": [],
+            "attack_surface": [],
+            "mitigations": {},
+            "mcp_handles": {
+                "android_mcp_apk_path": "/work/yanimda.apk",
+                "audit_mcp_decompiled_index_id": "idx-abc123",
+                "audit_mcp_decompiled_indexed_at": "2026-06-08T10:00:00+00:00",
+                "android_mcp_package_name": "com.vodafone.selfservis",
+            },
+        }
+
+        rendered = _render_target_snapshot_section(snapshot)
+
+        # The acceptance test from IMPLEMENTATION_PLAN.md F-4.3:
+        # both handle values must appear verbatim in the prompt.
+        assert "android_mcp_apk_path=/work/yanimda.apk" in rendered
+        assert "audit_mcp_decompiled_index_id=idx-abc123" in rendered
+        # The F-2 RULE line names both bridges with the concrete ids.
+        assert "idx-abc123" in rendered
+        assert "/work/yanimda.apk" in rendered
+        # The audit_mcp_-prefixed timestamp must not be filtered out.
+        assert "audit_mcp_decompiled_indexed_at=" in rendered
+
+    def test_audit_mcp_handles_are_never_filtered_by_kind(self) -> None:
+        # Defensive guard: the renderer's mcp_handles loop is
+        # unfiltered. If a future refactor swaps it for an allowlist,
+        # this test catches the regression by holding the line that
+        # `audit_mcp_*` keys must keep flowing through for
+        # `android_apk` targets specifically.
+        snapshot = {
+            "id": "t-1",
+            "kind": "android_apk",
+            "display_name": "x",
+            "primary_language": "java",
+            "secondary_languages": [],
+            "analysis_state": "ready",
+            "analysis_state_message": "",
+            "descriptor": {"apk_path": "/x.apk"},
+            "applicable_mcp_servers": [],
+            "applicable_fuzzing_engines": [],
+            "applicable_strategies": [],
+            "functions_of_interest": [],
+            "attack_surface": [],
+            "mitigations": {},
+            "mcp_handles": {
+                "audit_mcp_decompiled_index_id": "idx-zzz",
+                "audit_mcp_decompiled_indexed_at": "2026-06-08T11:00:00+00:00",
+            },
+        }
+
+        rendered = _render_target_snapshot_section(snapshot)
+
+        assert "audit_mcp_decompiled_index_id=idx-zzz" in rendered
+        assert "audit_mcp_decompiled_indexed_at=2026-06-08T11:00:00+00:00" in rendered
