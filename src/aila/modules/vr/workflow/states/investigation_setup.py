@@ -62,6 +62,19 @@ _DEAD_BRANCH_STATUSES: frozenset[str] = frozenset({
     BranchStatus.ABANDONED.value,
 })
 
+# Investigation statuses that block the run loop. The status flip near
+# the top of state_investigation_setup is unconditional and would
+# bypass any PAUSED / COMPLETED / FAILED state set after the ARQ task
+# was enqueued (operator pauses + cap_exceeded sweeps both land in
+# this window). Without this guard, a paused investigation's pending
+# ARQ task wakes up, flips status back to RUNNING, runs the full turn
+# loop, and the operator's pause is silently undone.
+_STATUS_LOCKED: frozenset[str] = frozenset({
+    InvestigationStatus.PAUSED.value,
+    InvestigationStatus.COMPLETED.value,
+    InvestigationStatus.FAILED.value,
+})
+
 
 async def state_investigation_setup(input: dict[str, Any], services: Any) -> StateResult:
     """Validate + mark RUNNING. Returns input + resolved branch_id.
@@ -113,20 +126,9 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 f"investigation_setup: investigation {investigation_id} not found",
             )
 
-        # Honor operator pause + terminal investigation states. The
-        # status flip at line 244 below is unconditional and would
-        # bypass any PAUSED / COMPLETED / FAILED state set after the
-        # ARQ task was enqueued (operator pauses + cap_exceeded sweeps
-        # both land in this window). Without this guard, a paused
-        # investigation's pending ARQ task wakes up, flips status back
-        # to RUNNING, runs the full turn loop, and the operator's
-        # pause is silently undone. Surface this loudly so the operator
-        # can see WHY their pause held.
-        _STATUS_LOCKED = {
-            InvestigationStatus.PAUSED.value,
-            InvestigationStatus.COMPLETED.value,
-            InvestigationStatus.FAILED.value,
-        }
+        # Honor operator pause + terminal investigation states. See
+        # _STATUS_LOCKED at module top for the comment block; surface
+        # the skip loudly so the operator can see WHY their pause held.
         if inv.status in _STATUS_LOCKED:
             await uow.commit()  # flush nothing; release UoW cleanly
             _log.info(

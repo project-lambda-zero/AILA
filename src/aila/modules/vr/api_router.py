@@ -609,6 +609,18 @@ def _outcome_summary(record: Any) -> VROutcomeSummary:
     )
 
 
+# Default strategy_family per InvestigationKind. Used both at create-time
+# (when the operator omits strategy_family) and on /re-enqueue with an
+# explicit kind change so strategy_family always tracks kind's default.
+_KIND_DEFAULT_STRATEGY: dict[InvestigationKind, str] = {
+    InvestigationKind.DISCOVERY:    "vulnerability_research.discovery_research",
+    InvestigationKind.VARIANT_HUNT: "vulnerability_research.variant_hunt",
+    InvestigationKind.TRIAGE:       "vulnerability_research.triage",
+    InvestigationKind.N_DAY:        "vulnerability_research.nday",
+    InvestigationKind.AUDIT:        "vulnerability_research.audit",
+}
+
+
 def create_vr_router() -> APIRouter:
     """Construct and return the VR module APIRouter."""
     router = APIRouter(tags=["vr"])
@@ -3553,14 +3565,6 @@ def create_vr_router() -> APIRouter:
         """
         model_config = ConfigDict(extra="forbid")
         kind: InvestigationKind | None = Field(default=None)
-
-    _KIND_DEFAULT_STRATEGY: dict[InvestigationKind, str] = {
-        InvestigationKind.DISCOVERY:     "vulnerability_research.discovery_research",
-        InvestigationKind.VARIANT_HUNT:  "vulnerability_research.variant_hunt",
-        InvestigationKind.TRIAGE:        "vulnerability_research.triage",
-        InvestigationKind.N_DAY:         "vulnerability_research.nday",
-        InvestigationKind.AUDIT:         "vulnerability_research.audit",
-    }
 
     @router.post(
         "/investigations/{investigation_id}/re-enqueue",

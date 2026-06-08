@@ -68,6 +68,11 @@ __all__ = [
 # uclouvain/openjpeg as its own target" rather than "read this function".
 _DROP_CATEGORIES: frozenset[str] = frozenset({"test_payload", "generated_code"})
 
+# Sample size per attack-surface kind when rendering. The kind summary
+# is unbounded; per-kind entry lists are capped at this width so the
+# agent sees diversity without paying for 5,000 bullets.
+_PER_KIND_PREVIEW = 8
+
 _VENDORED_DIR_SEGMENTS: frozenset[str] = frozenset({
     "third_party", "third-party", "vendor", "extern", "external",
     "node_modules",
@@ -373,9 +378,6 @@ def adapt_attack_surface(
     for e in entries:
         by_kind.setdefault(e.get("kind") or "unknown", []).append(e)
 
-    # Render: kind summary first, then a sample of entries per kind so
-    # the agent sees diversity without paying for 5,000 bullets.
-    PER_KIND_PREVIEW = 8
     sections: list[str] = [
         f"attack_surface: {len(entries)} entry point(s) across "
         f"{len(by_kind)} kind(s) — "
@@ -390,7 +392,7 @@ def adapt_attack_surface(
         sections.append(
             f"  trust: {dict(trust.most_common())}  asset: {dict(asset.most_common())}"
         )
-        for e in kentries[:PER_KIND_PREVIEW]:
+        for e in kentries[:_PER_KIND_PREVIEW]:
             node_id = e.get("node_id") or e.get("name") or e.get("symbol") or "<?>"
             desc = (e.get("description") or "").strip()
             tl = e.get("trust_level") or ""
@@ -402,8 +404,8 @@ def adapt_attack_surface(
             if desc:
                 line += f" — {desc[:120]}"
             sections.append(line)
-        if len(kentries) > PER_KIND_PREVIEW:
-            sections.append(f"  ... and {len(kentries) - PER_KIND_PREVIEW} more {kind} entries")
+        if len(kentries) > _PER_KIND_PREVIEW:
+            sections.append(f"  ... and {len(kentries) - _PER_KIND_PREVIEW} more {kind} entries")
 
     obs_value = "\n".join(sections)
 

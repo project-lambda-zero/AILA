@@ -489,9 +489,9 @@ class TaskQueue:
         seconds in the future. Used by the per-investigation backpressure
         gate to avoid one investigation monopolising the worker pool.
         """
-        from arq.connections import RedisSettings, create_pool
         from datetime import timedelta  # noqa: PLC0415
 
+        from arq.connections import RedisSettings, create_pool  # noqa: PLC0415
         pool = None
         try:
             settings = RedisSettings.from_dsn(redis_url)
