@@ -26,6 +26,7 @@ const DESCRIPTOR_TEMPLATES: Record<TargetKind, string> = {
   crash_input: '{"crash_input_path": "/path/to/input.bin"}',
   patch_diff: '{"vulnerable_ref": "abc123", "patched_ref": "def456", "repo_url": "https://github.com/owner/repo"}',
   apk: '{"apk_path": "/path/to/app.apk"}',
+  android_apk: '{"apk_path": "/path/to/app.apk"}',
   ipa: '{"ipa_path": "/path/to/app.ipa"}',
   jar: '{"jar_path": "/path/to/app.jar"}',
   dotnet_assembly: '{"dll_path": "/path/to/assembly.dll"}',

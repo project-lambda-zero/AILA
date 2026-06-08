@@ -140,6 +140,7 @@ export type TargetKind =
   | "crash_input"
   | "patch_diff"
   | "apk"
+  | "android_apk"
   | "ipa"
   | "jar"
   | "dotnet_assembly"
