@@ -44,6 +44,17 @@ const ailaCardVariants = cva(
 
 export type AilaCardVariants = VariantProps<typeof ailaCardVariants>
 
+/**
+ * Visual decorations layered on the card surface. Each decoration is
+ * orthogonal — pass any combination (`["glass", "corners", "glow"]`).
+ *
+ * - `glass` — 10px backdrop blur + theme-tinted gradient fill
+ * - `corners` — L-shaped accent brackets in all four corners
+ * - `tech-border` — animated 1px accent hairline along the top edge
+ * - `glow` — soft accent-coloured shadow on hover
+ */
+export type AilaCardDecoration = "glass" | "corners" | "tech-border" | "glow"
+
 export interface AilaCardProps
   extends React.HTMLAttributes<HTMLDivElement>,
     AilaCardVariants {
@@ -58,29 +69,52 @@ export interface AilaCardProps
    */
   delay?: number
   /**
-   * Glassmorphic surface — 10px backdrop blur + theme-colored gradient
-   * fill. Reads through to whatever's behind the card (sidebar, page
-   * background, particle background on login). Opt-in; pages with
-   * dense data tables behind cards should leave this off.
+   * Visual decorations to layer on the card surface. Canonical API as
+   * of D21 — replaces the four legacy boolean props below. Order is
+   * irrelevant; the component dedupes internally.
+   */
+  decorations?: readonly AilaCardDecoration[]
+  /**
+   * @deprecated Use `decorations={["glass", ...]}` instead. Removed in
+   * the next iteration after D21.
    */
   glass?: boolean
   /**
-   * L-shaped accent brackets in the four corners of the card. Uses
-   * --color-accent at 50% opacity. Pure decoration — purely opt-in;
-   * great on hero/landing cards, distracting on grids.
+   * @deprecated Use `decorations={["corners", ...]}` instead. Removed in
+   * the next iteration after D21.
    */
   cornerAccents?: boolean
   /**
-   * Animated gradient hairline along the top edge of the card
-   * (transparent → accent → transparent). 1px tall. Sits below the
-   * border so it doesn't fight the card's existing border colour.
+   * @deprecated Use `decorations={["tech-border", ...]}` instead. Removed
+   * in the next iteration after D21.
    */
   techBorder?: boolean
   /**
-   * On hover, projects a soft accent-coloured glow (no extra radius
-   * change). Stacks with `variant="interactive"`'s border-hover.
+   * @deprecated Use `decorations={["glow", ...]}` instead. Removed in
+   * the next iteration after D21.
    */
   glow?: boolean
+}
+
+// One-time per-session warning when any deprecated boolean prop is
+// passed in. Dev-only — production builds elide the `console.warn`.
+type DeprecatedDecorationFlag = "glass" | "cornerAccents" | "techBorder" | "glow"
+const deprecatedDecoSeen: Record<DeprecatedDecorationFlag, boolean> = {
+  glass: false,
+  cornerAccents: false,
+  techBorder: false,
+  glow: false,
+}
+function warnDeprecatedDecoration(prop: DeprecatedDecorationFlag, replacement: AilaCardDecoration) {
+  if (deprecatedDecoSeen[prop]) return
+  deprecatedDecoSeen[prop] = true
+  if (typeof process !== "undefined" && process.env && process.env.NODE_ENV === "production") return
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[AilaCard] \`${prop}\` boolean prop is deprecated; use ` +
+      `\`decorations={[${JSON.stringify(replacement)}]}\` instead. ` +
+      `Will be removed next iteration.`,
+  )
 }
 
 /**
@@ -96,7 +130,9 @@ export interface AilaCardProps
  *
  * @example
  * ```tsx
- * <AilaCard variant="interactive" padding="lg" animate delay={0.1}>
+ * <AilaCard variant="interactive" padding="lg" animate delay={0.1}
+ *   decorations={["tech-border", "glow"]}
+ * >
  *   <h2>CVE-2024-1234</h2>
  * </AilaCard>
  * ```
@@ -107,10 +143,11 @@ function AilaCard({
   padding,
   animate = false,
   delay = 0,
-  glass = false,
-  cornerAccents = false,
-  techBorder = false,
-  glow = false,
+  decorations,
+  glass,
+  cornerAccents,
+  techBorder,
+  glow,
   children,
   ...props
 }: AilaCardProps) {
@@ -118,20 +155,44 @@ function AilaCard({
   const ref = React.useRef<HTMLDivElement>(null)
   const inView = useInView(ref, { once: true, margin: "0px 0px -40px 0px" })
 
+  // Fold the deprecated boolean flags into the canonical decoration set,
+  // warning once per session per deprecated prop in dev.
+  const effective = new Set<AilaCardDecoration>(decorations ?? [])
+  if (glass) {
+    effective.add("glass")
+    warnDeprecatedDecoration("glass", "glass")
+  }
+  if (cornerAccents) {
+    effective.add("corners")
+    warnDeprecatedDecoration("cornerAccents", "corners")
+  }
+  if (techBorder) {
+    effective.add("tech-border")
+    warnDeprecatedDecoration("techBorder", "tech-border")
+  }
+  if (glow) {
+    effective.add("glow")
+    warnDeprecatedDecoration("glow", "glow")
+  }
+  const hasGlass = effective.has("glass")
+  const hasCorners = effective.has("corners")
+  const hasTechBorder = effective.has("tech-border")
+  const hasGlow = effective.has("glow")
+
   // Decoration layer adds `relative` positioning when any accent is on,
   // so the absolute-positioned brackets / tech-border anchor correctly.
-  const hasDecoration = cornerAccents || techBorder
+  const hasAbsoluteDecoration = hasCorners || hasTechBorder
   const baseClass = cn(
     ailaCardVariants({ variant, padding }),
-    hasDecoration && "relative",
-    glass && [
+    hasAbsoluteDecoration && "relative",
+    hasGlass && [
       "backdrop-blur-[10px]",
       // Theme-tinted glass: surface base with subtle gradient lift.
       // Uses --color-surface for the tint so the card auto-adapts to
       // synthwave / vaporwave / aero / ps2 / cyberpunk palettes.
       "bg-[linear-gradient(180deg,color-mix(in_srgb,var(--color-surface)_95%,transparent)_0%,color-mix(in_srgb,var(--color-surface)_98%,transparent)_100%)]",
     ],
-    glow && "transition-shadow hover:shadow-[0_0_15px_color-mix(in_srgb,var(--color-accent)_30%,transparent)]",
+    hasGlow && "transition-shadow hover:shadow-[0_0_15px_color-mix(in_srgb,var(--color-accent)_30%,transparent)]",
     className,
   )
 
@@ -139,7 +200,7 @@ function AilaCard({
   // card's 4px radius (D-05) on the inner corner. Each corner gets only
   // the 2 borders forming the L.
   const cornerColor = "color-mix(in srgb, var(--color-accent) 50%, transparent)"
-  const corners = cornerAccents ? (
+  const corners = hasCorners ? (
     <>
       <span
         aria-hidden
@@ -166,7 +227,7 @@ function AilaCard({
 
   // 1px tech-border hairline along the top edge:
   // transparent → accent@50% → transparent.
-  const techHairline = techBorder ? (
+  const techHairline = hasTechBorder ? (
     <span
       aria-hidden
       className="pointer-events-none absolute inset-x-0 top-0 h-px"
@@ -176,7 +237,7 @@ function AilaCard({
     />
   ) : null
 
-  const decorations = (cornerAccents || techBorder) ? (
+  const decorationLayer = hasAbsoluteDecoration ? (
     <>
       {techHairline}
       {corners}
@@ -186,7 +247,7 @@ function AilaCard({
   if (!animate) {
     return (
       <div ref={ref} className={baseClass} {...props}>
-        {decorations}
+        {decorationLayer}
         {children}
       </div>
     )
@@ -209,7 +270,7 @@ function AilaCard({
       }}
       {...(props as React.ComponentPropsWithoutRef<typeof motion.div>)}
     >
-      {decorations}
+      {decorationLayer}
       {children}
     </motion.div>
   )
