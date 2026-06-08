@@ -955,7 +955,7 @@ export function InvestigationDetailPage() {
               </p>
             </AilaCard>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-2 scroll-virtual">
               {filtered.map((m, i) => (
                 <TurnCard key={m.id} message={m} index={i} persona={branchPersonaMap.get(m.branch_id) ?? null} />
               ))}
@@ -1083,7 +1083,7 @@ export function InvestigationDetailPage() {
               }
               return (
                 <>
-                  <ul className="space-y-1.5">
+                  <ul className="space-y-1.5 scroll-virtual-row">
                     {activeBranches.map((b) => {
                       const statusMeta = BRANCH_STATUS_META[b.status] ?? _BRANCH_STATUS_FALLBACK;
                       const pm = personaMeta(b.persona_voice);

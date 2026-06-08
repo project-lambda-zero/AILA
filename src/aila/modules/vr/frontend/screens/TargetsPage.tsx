@@ -316,7 +316,7 @@ export function TargetsPage() {
               <th className="px-2 py-2"></th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="scroll-virtual-row">
             {targets.map((t) => (
               <tr
                 key={t.id}

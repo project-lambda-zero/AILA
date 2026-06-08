@@ -2111,6 +2111,43 @@ a:hover {
 }
 
 /* =====================================================================
+   CONTENT VISIBILITY — incremental render skip for long-scroll lists (C20)
+   ---------------------------------------------------------------------
+   `content-visibility: auto` lets the browser skip layout + paint for
+   off-screen children of the marked container, cutting TBT on the busy
+   investigation detail page when 50–1000 turn cards, table rows, or
+   list items accumulate. Applied to immediate children via `& > *`,
+   not the host, so each row is its own skip unit — a parent-level
+   `content-visibility: auto` would be all-or-nothing per container,
+   defeating the point on a long list that scrolls within itself.
+
+   `contain-intrinsic-size: auto <size>` gives the browser an initial
+   height estimate so the scrollbar doesn't lurch on first render, then
+   replaces the estimate with the actual measured size the next time the
+   row falls off-screen and back on.
+
+   `scroll-virtual` — `480px` estimate for medium-tall items
+   (`<TurnCard>` articles, mixed-height list rows). Apply to the
+   message timeline wrapper.
+   `scroll-virtual-row` — `56px` estimate for dense table rows / compact
+   list items. Apply to `<tbody>` wrappers + tight `<ul>` lists.
+   ===================================================================== */
+
+@utility scroll-virtual {
+  & > * {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 480px;
+  }
+}
+
+@utility scroll-virtual-row {
+  & > * {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 56px;
+  }
+}
+
+/* =====================================================================
    AMBIENT DEPTH — soft radial-gradient mesh (A4)
    ---------------------------------------------------------------------
    Wrap a page-level surface in `.depth-mesh` to paint a faint

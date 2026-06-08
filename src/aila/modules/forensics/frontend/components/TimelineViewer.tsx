@@ -257,7 +257,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                     <th className="text-left px-3 py-2 text-text-muted font-medium">Description</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="scroll-virtual-row">
                   {filteredEntries.slice(0, 1000).map((entry, i) => {
                     const colorClass =
                       SOURCE_COLORS[entry.source] || SOURCE_COLORS.unknown;
@@ -371,7 +371,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                     <th className="text-left px-3 py-2 text-text-muted font-medium w-44">Recorded</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="scroll-virtual-row">
                   {filteredOcc.slice(0, 1000).map((occ, i) => {
                     const colorClass =
                       SOURCE_COLORS[occ.source] || SOURCE_COLORS.unknown;
