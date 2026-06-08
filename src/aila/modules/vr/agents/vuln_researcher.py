@@ -796,6 +796,20 @@ class HonestVulnResearcher:
             secondary = json.loads(target.secondary_languages_json or "[]")
         except (ValueError, TypeError):
             secondary = []
+        # F-4: android_apk targets carry their APK path in the
+        # descriptor (set by POST /vr/targets/upload-apk). The F-2
+        # RULE line and the renderer's mcp_handles loop both read
+        # `handles["android_mcp_apk_path"]`, so surface it under that
+        # key here. Synthesizing at snapshot-build time covers rows
+        # ingested before this commit without requiring a stage
+        # re-run, and keeps the on-disk handles dict as a pure record
+        # of stage outputs (apk_path is a descriptor echo, not a
+        # stage output).
+        kind_str = str(target.kind or "").lower()
+        if kind_str == "android_apk" and not handles.get("android_mcp_apk_path"):
+            apk_path = descriptor.get("apk_path")
+            if isinstance(apk_path, str) and apk_path:
+                handles["android_mcp_apk_path"] = apk_path
         return {
             "id": target.id,
             "kind": target.kind,
