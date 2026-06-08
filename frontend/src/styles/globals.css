@@ -1668,10 +1668,15 @@ a:hover {
   transition: border-color 150ms, box-shadow 150ms;
 }
 
-.login-field__input:focus {
+.login-field__input:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+  border-color: var(--color-accent, currentColor);
+}
+
+.login-field__input:focus:not(:focus-visible) {
   outline: none;
   border-color: var(--color-accent, currentColor);
-  box-shadow: 0 0 0 3px var(--color-accent-soft, rgba(255, 255, 255, 0.1));
 }
 
 .login-divider {

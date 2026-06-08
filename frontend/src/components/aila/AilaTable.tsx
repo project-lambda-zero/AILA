@@ -207,7 +207,7 @@ function AilaTableHeader({ className }: AilaTableHeaderProps) {
             className={cn(
               "w-full rounded-[2px] border border-border bg-base px-2.5 py-1",
               "font-mono text-text text-sm placeholder:text-text-muted",
-              "outline-none focus:border-border-hover",
+              "focus:border-border-hover",
               "transition-colors duration-100"
             )}
           />
@@ -301,7 +301,8 @@ function AilaTableBody({ className, emptyState }: AilaTableBodyProps) {
                   data-testid="aila-table-row"
                   className={cn(
                     "border-b border-border hover:bg-elevated/50 transition-colors duration-100 last:border-0",
-                    interactive && "cursor-pointer focus:outline focus:outline-2 focus:outline-accent",
+                    interactive &&
+                      "cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2",
                   )}
                   onClick={interactive ? handleActivate : undefined}
                   onKeyDown={
@@ -380,7 +381,7 @@ function AilaTablePagination({ className, pageSizeOptions = [10, 25, 50] }: Aila
           onChange={(e) => table.setPageSize(Number(e.target.value))}
           className={cn(
             "rounded-[2px] border border-border bg-base font-mono text-xs text-text",
-            "px-1.5 py-0.5 outline-none cursor-pointer",
+            "px-1.5 py-0.5 cursor-pointer",
             "hover:border-border-hover transition-colors duration-100"
           )}
         >
