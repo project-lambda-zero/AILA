@@ -13,8 +13,11 @@ import {
 import { DeleteButton } from "../components/DeleteButton";
 import { UploadDropzone } from "../components/UploadDropzone";
 import {
+  MASVS_DEFAULT_CHILD_BUDGET_USD,
+  MASVS_L1_CONTROL_COUNT_ESTIMATE,
   useAnalyzeTarget,
   useDeleteTarget,
+  useMasvsAudit,
   useRankTarget,
   useUploadTargetArtifact,
 } from "../mutations";
@@ -721,6 +724,75 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
   );
 }
 
+/** D-4b dispatcher card. Appears on android_apk targets once the
+ * STATIC_SUMMARY ingestion stage has populated `apk_overview` with
+ * a non-empty static_summary dict (the same gate the backend
+ * enforces in `vr/api_router.py::dispatch_masvs_audit`).
+ *
+ * The button shows the estimated total spend (≈ N × per-child
+ * budget) before confirming so the operator knows what they're
+ * committing to. The dispatcher is idempotent — re-clicking with
+ * an active parent for the same catalog version returns the
+ * existing ids verbatim. */
+function MasvsAuditCard({
+  targetId,
+  packageLabel,
+}: {
+  targetId: string;
+  packageLabel: string | null;
+}) {
+  const masvsMut = useMasvsAudit(targetId);
+  const estimatedTotal =
+    MASVS_DEFAULT_CHILD_BUDGET_USD * MASVS_L1_CONTROL_COUNT_ESTIMATE;
+  const packageDisplay = packageLabel ?? "this APK";
+
+  const handleClick = () => {
+    const ok = window.confirm(
+      `Dispatch OWASP MASVS L1 audit against ${packageDisplay}?\n\n` +
+        `≈ ${MASVS_L1_CONTROL_COUNT_ESTIMATE} child investigations, ` +
+        `~$${MASVS_DEFAULT_CHILD_BUDGET_USD} budget each ` +
+        `(~$${estimatedTotal} total expected spend).\n\n` +
+        "Each child runs the full vuln_researcher scout / critic / " +
+        "verifier chain. The dispatcher is idempotent — re-clicking " +
+        "with an active audit for this catalog version returns the " +
+        "existing parent without re-dispatching.",
+    );
+    if (!ok) return;
+    masvsMut.mutate();
+  };
+
+  return (
+    <AilaCard techBorder glow>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">
+            MASVS audit
+          </h2>
+          <p className="text-xs text-text-muted mt-1">
+            Run a full OWASP MASVS L1 audit against this APK. Fans
+            out ≈ {MASVS_L1_CONTROL_COUNT_ESTIMATE} parallel child
+            investigations (one per L1 control), each driving the
+            standard vuln_researcher workflow against the
+            jadx-decompiled tree. Estimated total spend ≈ $
+            {estimatedTotal} (~${MASVS_DEFAULT_CHILD_BUDGET_USD}
+            per child × {MASVS_L1_CONTROL_COUNT_ESTIMATE} controls).
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={masvsMut.isPending}
+          className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 shrink-0"
+        >
+          {masvsMut.isPending
+            ? "Dispatching…"
+            : `Run MASVS audit (~$${estimatedTotal})`}
+        </button>
+      </div>
+    </AilaCard>
+  );
+}
+
 export function TargetDetailPage() {
   const { targetId } = useParams<{ targetId: string }>();
   const tid = targetId ?? "";
@@ -949,6 +1021,24 @@ export function TargetDetailPage() {
           the 5-stage pipeline progresses. */}
       {target.kind === "android_apk" && target.apk_overview && (
         <AndroidApkOverview overview={target.apk_overview} />
+      )}
+
+      {/* D-4b "Run MASVS audit" dispatcher. Gated to APK targets whose
+          ingestion pipeline has reached STATIC_SUMMARY (matches the
+          backend's own precondition in dispatch_masvs_audit). The
+          card itself displays the spend estimate; clicking opens a
+          confirm with the same number for the operator to commit. */}
+      {target.kind === "android_apk"
+        && target.apk_overview?.static_summary
+        && Object.keys(target.apk_overview.static_summary).length > 0 && (
+        <MasvsAuditCard
+          targetId={target.id}
+          packageLabel={
+            typeof target.apk_overview.static_summary.package === "string"
+              ? (target.apk_overview.static_summary.package as string)
+              : target.android_package_name ?? null
+          }
+        />
       )}
 
       {/* Mitigations — uses shared MitigationsRibbon (§1.4 promise) */}
