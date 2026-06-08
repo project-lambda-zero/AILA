@@ -252,7 +252,7 @@
     "hasown": "2.0.2",
     "headers-polyfill": "4.0.3",
     "homedir-polyfill": "1.0.3",
-    "hono": "4.12.12",
+    "hono": "4.12.21",
     "html-encoding-sniffer": "6.0.0",
     "html-escaper": "2.0.2",
     "html2canvas": "1.4.1",
