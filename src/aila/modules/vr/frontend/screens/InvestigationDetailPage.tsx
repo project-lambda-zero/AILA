@@ -896,7 +896,7 @@ export function InvestigationDetailPage() {
                 )}
               </span>
               <label
-                className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border cursor-pointer transition-colors ${
+                className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border cursor-pointer transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2 ${
                   liveTail
                     ? "bg-accent/15 border-accent/50 text-foreground"
                     : "bg-elevated/60 border-border-default/60 text-text-muted hover:border-accent/40"
