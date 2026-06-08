@@ -86,7 +86,7 @@ function stateLabel(state: IconState): string {
 // ──────────────────────────────────────────────────────────────────────────────
 
 const CELL_BASE =
-  "flex flex-col items-center gap-1 p-2 rounded-[var(--radius-md)] cursor-pointer transition-colors hover:bg-elevated";
+  "flex flex-col items-center gap-1 p-2 rounded-md cursor-pointer transition-colors hover:bg-elevated";
 
 const CELL_BORDER: Record<IconState, string> = {
   triggered: "border border-[color:var(--color-accent)]/30",
@@ -96,7 +96,7 @@ const CELL_BORDER: Record<IconState, string> = {
 };
 
 const ABBREV_BASE =
-  "w-8 h-8 rounded-[var(--radius-sm)] flex items-center justify-center font-mono text-xs font-bold";
+  "w-8 h-8 rounded-sm flex items-center justify-center font-mono text-xs font-bold";
 
 const ABBREV_VARIANT: Record<IconState, string> = {
   triggered: "bg-accent text-badge-text",
@@ -148,10 +148,10 @@ function IconCell({ entry, isAnimating }: IconCellProps) {
       type="button"
     >
       <span className={`${ABBREV_BASE} ${ABBREV_VARIANT[state]}`}>{abbrev}</span>
-      <span className="text-[10px] text-text truncate max-w-[60px] text-center">
+      <span className="text-3xs text-text truncate text-center" style={{ maxWidth: 60 }}>
         {component.label}
       </span>
-      <span className="text-[9px] text-text-muted">{label}</span>
+      <span className="text-4xs text-text-muted">{label}</span>
     </button>
   );
 }
@@ -268,7 +268,8 @@ interface IconOverlayProps {
 function IconOverlay({ entries, animatingKeys, sessionStatus, onClose }: IconOverlayProps) {
   return (
     <div
-      className="fixed inset-x-0 bottom-0 z-50 bg-elevated border-t border-border p-4 max-h-[60vh] overflow-y-auto"
+      className="fixed inset-x-0 bottom-0 z-50 bg-elevated border-t border-border p-4 overflow-y-auto"
+      style={{ maxHeight: "60vh" }}
       role="dialog"
       aria-modal="true"
       aria-label="Sub-task components"
@@ -421,7 +422,7 @@ export function WizardSubtaskPanel({ sessionId, sessionStatus, answersMap }: Wiz
       {isResolving && <ResolvingBanner />}
       {isFailed && (
         <div
-          className="text-sm text-critical p-3 rounded-[var(--radius-md)] bg-critical/10 border border-critical/30"
+          className="text-sm text-critical p-3 rounded-md bg-critical/10 border border-critical/30"
           role="alert"
         >
           Resolution failed. Please try again.

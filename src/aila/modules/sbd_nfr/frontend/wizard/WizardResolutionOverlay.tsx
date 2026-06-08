@@ -77,7 +77,7 @@ export function WizardResolutionOverlay({
       aria-modal="true"
       aria-label="Analyzing assessment"
     >
-      <div className="bg-elevated border border-border rounded-[var(--radius-lg)] p-8 max-w-sm text-center flex flex-col items-center gap-4">
+      <div className="bg-elevated border border-border rounded-lg p-8 max-w-sm text-center flex flex-col items-center gap-4">
         <h2 className="font-display text-lg font-bold text-text">Analyzing your assessment...</h2>
 
         {!isFailed && !isCompleted && (

@@ -31,34 +31,34 @@ function WizardSkeleton() {
       >
         <aside className="border-r border-border overflow-y-auto p-4 bg-surface">
           <div
-            className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+            className="animate-pulse bg-surface rounded-md"
             style={{ height: 18, width: "60%", marginBottom: 16, borderRadius: 4 }}
           />
           {[1, 2, 3, 4, 5].map((i) => (
             <div
               key={i}
-              className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+              className="animate-pulse bg-surface rounded-md"
               style={{ height: 36, marginBottom: 8, borderRadius: 6 }}
             />
           ))}
         </aside>
         <main className="overflow-y-auto p-7 flex flex-col">
           <div
-            className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+            className="animate-pulse bg-surface rounded-md"
             style={{ height: 28, width: "50%", marginBottom: 16, borderRadius: 4 }}
           />
           <div
-            className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+            className="animate-pulse bg-surface rounded-md"
             style={{ height: 16, width: "80%", marginBottom: 32, borderRadius: 4 }}
           />
           {[1, 2, 3].map((i) => (
             <div key={i} style={{ marginBottom: 24 }}>
               <div
-                className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+                className="animate-pulse bg-surface rounded-md"
                 style={{ height: 16, width: "40%", marginBottom: 10, borderRadius: 4 }}
               />
               <div
-                className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+                className="animate-pulse bg-surface rounded-md"
                 style={{ height: 48, width: "100%", borderRadius: 6 }}
               />
             </div>
@@ -66,13 +66,13 @@ function WizardSkeleton() {
         </main>
         <aside className="border-l border-border overflow-y-auto p-4 bg-surface">
           <div
-            className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+            className="animate-pulse bg-surface rounded-md"
             style={{ height: 18, width: "60%", marginBottom: 16, borderRadius: 4 }}
           />
           {[1, 2, 3].map((i) => (
             <div
               key={i}
-              className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+              className="animate-pulse bg-surface rounded-md"
               style={{ height: 56, marginBottom: 8, borderRadius: 8 }}
             />
           ))}
@@ -242,7 +242,7 @@ export function WizardPage() {
         content={
           <>
             {schemaDrifted && (
-              <div className="rounded-[var(--radius-md)] border border-accent bg-accent-muted p-3 text-sm text-accent mb-4" role="alert">
+              <div className="rounded-md border border-accent bg-accent-muted p-3 text-sm text-accent mb-4" role="alert">
                 Schema updated since you started. Your answers are preserved — continue with the original questions.
               </div>
             )}

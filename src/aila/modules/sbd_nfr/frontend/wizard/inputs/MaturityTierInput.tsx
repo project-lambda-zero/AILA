@@ -25,7 +25,7 @@ export function MaturityTierInput({ options, value, onChange, name }: MaturityTi
               key={option.value}
               type="button"
               className={[
-                "flex-1 flex flex-col items-center gap-1 p-2 rounded-[var(--radius-md)] border bg-transparent cursor-pointer transition-colors",
+                "flex-1 flex flex-col items-center gap-1 p-2 rounded-md border bg-transparent cursor-pointer transition-colors",
                 isActive ? "border-accent bg-accent-muted" : "border-border",
               ]
                 .filter(Boolean)
@@ -40,7 +40,7 @@ export function MaturityTierInput({ options, value, onChange, name }: MaturityTi
                 {option.value}
               </span>
               <span
-                className={`font-sans text-[10px] text-center ${isActive ? "text-accent" : "text-text-muted"}`}
+                className={`font-sans text-3xs text-center ${isActive ? "text-accent" : "text-text-muted"}`}
               >
                 {option.label}
               </span>
@@ -49,10 +49,10 @@ export function MaturityTierInput({ options, value, onChange, name }: MaturityTi
         })}
       </div>
 
-      <div className="p-2.5 rounded-[var(--radius-md)] bg-elevated border border-border text-sm text-text-muted">
+      <div className="p-2.5 rounded-md bg-elevated border border-border text-sm text-text-muted">
         {selectedOption ? (
           <>
-            <div className="font-mono text-[10px] text-accent uppercase tracking-wider mb-1">
+            <div className="font-mono text-3xs text-accent uppercase tracking-wider mb-1">
               Level {selectedOption.value}: {selectedOption.label}
             </div>
             {selectedOption.description && <p>{selectedOption.description}</p>}

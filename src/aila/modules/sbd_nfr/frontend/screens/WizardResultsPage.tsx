@@ -65,7 +65,7 @@ function ComponentCard({ comp }: ComponentCardProps) {
   return (
     <div
       className={cn(
-        "rounded-[var(--radius-md)] border bg-surface p-4 flex flex-col gap-2",
+        "rounded-md border bg-surface p-4 flex flex-col gap-2",
         cardBorderFor(cls),
       )}
     >
@@ -148,14 +148,14 @@ function DownloadButton({ label, artifact, sessionId }: DownloadButtonProps) {
 function ResultsSkeleton() {
   return (
     <div className="min-h-screen bg-base p-8 font-sans">
-      <div className="animate-pulse bg-surface rounded-[var(--radius-md)] h-7 w-2/5 mb-4" />
-      <div className="animate-pulse bg-surface rounded-[var(--radius-md)] h-4 w-3/5 mb-8" />
-      <div className="animate-pulse bg-surface rounded-[var(--radius-md)] h-20 mb-8" />
+      <div className="animate-pulse bg-surface rounded-md h-7 w-2/5 mb-4" />
+      <div className="animate-pulse bg-surface rounded-md h-4 w-3/5 mb-8" />
+      <div className="animate-pulse bg-surface rounded-md h-20 mb-8" />
       <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
-            className="animate-pulse bg-surface rounded-[var(--radius-md)] h-24"
+            className="animate-pulse bg-surface rounded-md h-24"
           />
         ))}
       </div>
@@ -285,7 +285,7 @@ export function WizardResultsPage() {
       {/* Executive summary */}
       {resolution.executive_summary && (
         <section
-          className="rounded-[var(--radius-md)] border border-border bg-surface p-4 mb-8"
+          className="rounded-md border border-border bg-surface p-4 mb-8"
           aria-label="Executive summary"
         >
           <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-2">

@@ -139,7 +139,8 @@ function HelpModalDialog({
       }}
     >
       <div
-        className="bg-elevated border border-border rounded-[var(--radius-lg)] p-5 max-w-md w-full max-h-[80vh] overflow-y-auto"
+        className="bg-elevated border border-border rounded-lg p-5 max-w-md w-full overflow-y-auto"
+        style={{ maxHeight: "80vh" }}
         ref={dialogRef}
       >
         <div className="flex items-center justify-between mb-4">
@@ -161,7 +162,7 @@ function HelpModalDialog({
               <button
                 key={tab.key}
                 className={[
-                  "px-3 py-1.5 rounded-[var(--radius-sm)] font-mono text-xs cursor-pointer transition-colors hover:bg-surface",
+                  "px-3 py-1.5 rounded-sm font-mono text-xs cursor-pointer transition-colors hover:bg-surface",
                   activeTab === tab.key
                     ? "bg-accent-muted text-accent"
                     : "text-text-muted",

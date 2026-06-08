@@ -64,17 +64,17 @@ function ReviewSkeleton() {
   return (
     <div className="architect-review">
       <div className="architect-review__header">
-        <div className="animate-pulse bg-surface rounded-[var(--radius-md)]" style={{ height: 28, width: "40%", marginBottom: 10 }} />
-        <div className="animate-pulse bg-surface rounded-[var(--radius-md)]" style={{ height: 16, width: "25%" }} />
+        <div className="animate-pulse bg-surface rounded-md" style={{ height: 28, width: "40%", marginBottom: 10 }} />
+        <div className="animate-pulse bg-surface rounded-md" style={{ height: 16, width: "25%" }} />
       </div>
       <div className="architect-review__body">
         <div className="architect-review__answers">
           {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="animate-pulse bg-surface rounded-[var(--radius-md)]" style={{ height: 48, marginBottom: 8, borderRadius: 4 }} />
+            <div key={i} className="animate-pulse bg-surface rounded-md" style={{ height: 48, marginBottom: 8, borderRadius: 4 }} />
           ))}
         </div>
         <div className="architect-review__panel">
-          <div className="animate-pulse bg-surface rounded-[var(--radius-md)]" style={{ height: 200, borderRadius: 4 }} />
+          <div className="animate-pulse bg-surface rounded-md" style={{ height: 200, borderRadius: 4 }} />
         </div>
       </div>
     </div>
@@ -155,7 +155,7 @@ function ArchitectNotesField({ sessionId, initialNotes }: ArchitectNotesProps) {
       </label>
       <textarea
         id="architect-notes-input"
-        className="w-full p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text text-sm resize-y"
+        className="w-full p-2.5 rounded-md border border-border bg-surface text-text text-sm resize-y"
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
         onBlur={handleBlur}

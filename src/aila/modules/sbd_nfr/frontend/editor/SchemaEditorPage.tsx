@@ -71,7 +71,7 @@ export function SchemaEditorPage() {
     <div className="flex flex-col gap-6 min-h-screen bg-base p-4 lg:p-6">
       <AilaCard variant="elevated" padding="lg" className="bg-elevated border-border" techBorder glow><div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
         <div className="space-y-3">
-          <p className="font-mono text-xs uppercase tracking-[0.3em] text-text-muted">Blueprint Schema Studio</p>
+          <p className="font-mono text-xs uppercase text-text-muted" style={{ letterSpacing: "0.3em" }}>Blueprint Schema Studio</p>
           <div className="flex flex-wrap items-center gap-2">
             {version !== undefined && <AilaBadge severity="medium" size="sm">Schema v{version}</AilaBadge>}
             {versionQuery.data?.published_at === null && <AilaBadge severity="high" size="sm">Draft</AilaBadge>}
@@ -103,7 +103,7 @@ export function SchemaEditorPage() {
               {version !== undefined ? `Publish v${version + 1}` : "Publish"}
             </Button>
           </div>
-          <p className="font-mono text-[11px] text-text-muted">
+          <p className="font-mono text-2xs text-text-muted">
             {versionQuery.data?.published_at
               ? `Published ${new Date(versionQuery.data.published_at).toLocaleDateString()}`
               : "Draft changes are local until you publish a new schema version."}
@@ -126,7 +126,7 @@ export function SchemaEditorPage() {
           </TabsList>
           <TabsContent value="editor" className="mt-0">
             {schemaTreeQuery.isPending && (
-              <div className="flex h-[400px] items-center justify-center rounded-[6px] border border-border bg-base">
+              <div className="flex items-center justify-center border border-border bg-base" style={{ height: 400, borderRadius: 6 }}>
                 <p className="animate-pulse font-mono text-sm text-text-muted">Loading blueprint canvas…</p>
               </div>
             )}

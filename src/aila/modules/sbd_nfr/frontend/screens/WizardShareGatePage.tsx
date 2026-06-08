@@ -76,13 +76,13 @@ function ContributorWizard({ sessionId, shareAuth }: ContributorWizardProps) {
         <div className={SHELL_GRID}>
           <div className={SHELL_LEFT}>
             <div
-              className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+              className="animate-pulse bg-surface rounded-md"
               style={{ height: 18, width: "60%", margin: "20px 16px 12px" }}
             />
           </div>
           <div className={SHELL_CENTER}>
             <div
-              className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+              className="animate-pulse bg-surface rounded-md"
               style={{ height: 28, width: "50%", margin: "32px 0 16px" }}
             />
           </div>
@@ -177,8 +177,8 @@ function ContributorWizard({ sessionId, shareAuth }: ContributorWizardProps) {
 // No ProtectedRoute — the route has no minRole (already configured in routes.tsx).
 // ──────────────────────────────────────────────────────────────────────────────
 
-const GATE_CARD = "max-w-sm mx-auto mt-16 p-6 rounded-[var(--radius-lg)] border border-border bg-elevated";
-const GATE_INPUT = "w-full p-2.5 rounded-[var(--radius-md)] border bg-surface text-text text-sm";
+const GATE_CARD = "max-w-sm mx-auto mt-16 p-6 rounded-lg border border-border bg-elevated";
+const GATE_INPUT = "w-full p-2.5 rounded-md border bg-surface text-text text-sm";
 
 export function WizardShareGatePage() {
   const [searchParams] = useSearchParams();

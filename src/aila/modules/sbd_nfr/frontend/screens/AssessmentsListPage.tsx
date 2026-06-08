@@ -89,19 +89,19 @@ function relativeTime(isoDate: string): string {
 function SessionCardSkeleton() {
   return (
     <AilaCard variant="default" padding="md" techBorder glow><div
-      className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+      className="animate-pulse bg-surface rounded-md"
       style={{ height: 18, width: "60%", marginBottom: 10 }}
     />
     <div
-      className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+      className="animate-pulse bg-surface rounded-md"
       style={{ height: 14, width: "30%", marginBottom: 14 }}
     />
     <div
-      className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+      className="animate-pulse bg-surface rounded-md"
       style={{ height: 6, width: "100%", borderRadius: 3, marginBottom: 10 }}
     />
     <div
-      className="animate-pulse bg-surface rounded-[var(--radius-md)]"
+      className="animate-pulse bg-surface rounded-md"
       style={{ height: 12, width: "45%" }}
     /></AilaCard>
   );
@@ -188,7 +188,7 @@ function SessionCard({
             {session.tags.slice(0, 4).map((tag) => (
               <span
                 key={tag}
-                className="inline-flex items-center px-2 py-0.5 rounded-[var(--radius-sm)] bg-elevated text-text-muted text-xs"
+                className="inline-flex items-center px-2 py-0.5 rounded-sm bg-elevated text-text-muted text-xs"
               >
                 {tag}
               </span>
@@ -330,7 +330,7 @@ function CreateSessionModal({ onClose, firstSectionKey }: CreateModalProps) {
       aria-modal
       aria-label="New Assessment"
     >
-      <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-[var(--radius-lg)] border border-border bg-surface">
+      <div className="w-full max-w-md overflow-y-auto rounded-lg border border-border bg-surface" style={{ maxHeight: "90vh" }}>
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="font-display text-lg text-text">New Assessment</h2>
           <button
@@ -351,7 +351,7 @@ function CreateSessionModal({ onClose, firstSectionKey }: CreateModalProps) {
           <label className="flex flex-col gap-1 text-xs font-medium text-text-muted">
             Project name <span className="text-critical">*</span>
             <input
-              className="w-full p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
+              className="w-full p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
               type="text"
               value={form.project_name}
               onChange={(e) => set("project_name", e.target.value)}
@@ -362,7 +362,7 @@ function CreateSessionModal({ onClose, firstSectionKey }: CreateModalProps) {
           <label className="flex flex-col gap-1 text-xs font-medium text-text-muted">
             Description
             <textarea
-              className="w-full p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
+              className="w-full p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
               value={form.description ?? ""}
               onChange={(e) => set("description", e.target.value || null)}
               maxLength={1000}
@@ -372,7 +372,7 @@ function CreateSessionModal({ onClose, firstSectionKey }: CreateModalProps) {
           <label className="flex flex-col gap-1 text-xs font-medium text-text-muted">
             Requestor name <span className="text-critical">*</span>
             <input
-              className="w-full p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
+              className="w-full p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
               type="text"
               value={form.requestor_name}
               onChange={(e) => set("requestor_name", e.target.value)}
@@ -383,7 +383,7 @@ function CreateSessionModal({ onClose, firstSectionKey }: CreateModalProps) {
           <label className="flex flex-col gap-1 text-xs font-medium text-text-muted">
             Requestor email <span className="text-critical">*</span>
             <input
-              className="w-full p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
+              className="w-full p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
               type="email"
               value={form.requestor_email}
               onChange={(e) => set("requestor_email", e.target.value)}
@@ -394,7 +394,7 @@ function CreateSessionModal({ onClose, firstSectionKey }: CreateModalProps) {
           <label className="flex flex-col gap-1 text-xs font-medium text-text-muted">
             Business unit
             <input
-              className="w-full p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
+              className="w-full p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
               type="text"
               value={form.business_unit ?? ""}
               onChange={(e) => set("business_unit", e.target.value || null)}
@@ -513,7 +513,8 @@ export function AssessmentsListPage() {
 
       <AilaCard variant="default" padding="md" techBorder glow><div className="flex flex-wrap items-end gap-3">
         <input
-          className="flex-1 min-w-[12rem] p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
+          className="flex-1 p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
+          style={{ minWidth: "12rem" }}
           type="search"
           placeholder="Search assessments..."
           aria-label="Search assessments"
@@ -523,7 +524,7 @@ export function AssessmentsListPage() {
         <label className="flex flex-col gap-1 text-xs font-medium text-text-muted">
           Status
           <select
-            className="p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
+            className="p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
           >
@@ -537,7 +538,8 @@ export function AssessmentsListPage() {
 
       <div className="flex flex-wrap items-end gap-3">
         <input
-          className="flex-1 min-w-[12rem] p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
+          className="flex-1 p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
+          style={{ minWidth: "12rem" }}
           type="search"
           placeholder="Search assessments..."
           aria-label="Search assessments"
@@ -547,7 +549,7 @@ export function AssessmentsListPage() {
         <label className="flex flex-col gap-1 text-xs font-medium text-text-muted">
           Status
           <select
-            className="p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm"
+            className="p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
           >

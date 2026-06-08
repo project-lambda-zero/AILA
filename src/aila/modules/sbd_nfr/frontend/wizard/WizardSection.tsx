@@ -169,7 +169,7 @@ function QuestionInput({ question, answersMap, subtaskLookup, onAnswer, onAssist
   const showDetails = detailsOpen && hasDetailContent;
 
   return (
-    <div className="rounded-[var(--radius-md)] border border-border bg-surface p-5 mb-5" data-question-id={question.id}>
+    <div className="rounded-md border border-border bg-surface p-5 mb-5" data-question-id={question.id}>
       <div className="flex items-start justify-between gap-3 mb-3">
         <label className="font-sans text-sm font-semibold text-text block" htmlFor={question.id}>
           {question.label}
@@ -187,7 +187,7 @@ function QuestionInput({ question, answersMap, subtaskLookup, onAnswer, onAssist
           )}
           {onAssist && (
             <button
-              className="text-xs font-mono px-2 py-1 rounded-[var(--radius-sm)] border border-accent/30 text-accent cursor-pointer transition-colors hover:bg-accent-muted"
+              className="text-xs font-mono px-2 py-1 rounded-sm border border-accent/30 text-accent cursor-pointer transition-colors hover:bg-accent-muted"
               type="button"
               onClick={() => onAssist(question)}
               aria-label={`Ask AI about: ${question.label}`}
@@ -210,40 +210,40 @@ function QuestionInput({ question, answersMap, subtaskLookup, onAnswer, onAssist
         >
           {showDetails ? "Hide details" : "Details"}
           {triggeredSubtasks.length > 0 && !showDetails && (
-            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-accent text-badge-text text-[9px] font-bold">{triggeredSubtasks.length}</span>
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-accent text-badge-text text-4xs font-bold">{triggeredSubtasks.length}</span>
           )}
         </button>
       )}
       {showDetails && (
-        <div className="mt-3 p-3 rounded-[var(--radius-md)] bg-elevated border border-border flex flex-col gap-3" role="region" aria-label="Question details">
+        <div className="mt-3 p-3 rounded-md bg-elevated border border-border flex flex-col gap-3" role="region" aria-label="Question details">
           {question.help_text && (
             <div>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-accent mb-1 block">Help</span>
+              <span className="font-mono text-3xs uppercase tracking-wider text-accent mb-1 block">Help</span>
               <p className="text-sm text-text-muted leading-relaxed">{question.help_text}</p>
             </div>
           )}
           {question.guideline && (
             <div>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-accent mb-1 block">Guideline</span>
+              <span className="font-mono text-3xs uppercase tracking-wider text-accent mb-1 block">Guideline</span>
               <p className="text-sm text-text-muted leading-relaxed">{question.guideline}</p>
             </div>
           )}
           {question.instruction && (
             <div>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-accent mb-1 block">Instruction</span>
+              <span className="font-mono text-3xs uppercase tracking-wider text-accent mb-1 block">Instruction</span>
               <p className="text-sm text-text-muted leading-relaxed">{question.instruction}</p>
             </div>
           )}
           {triggeredSubtasks.length > 0 && (
             <div>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-accent mb-1 block">
+              <span className="font-mono text-3xs uppercase tracking-wider text-accent mb-1 block">
                 Triggered components ({triggeredSubtasks.length})
               </span>
               <ul className="list-none p-0 m-0 flex flex-col gap-1">
                 {triggeredSubtasks.map((comp) => (
                   <li key={comp.key} className="flex items-center justify-between gap-2 text-sm">
                     <span className="text-text">{comp.label}</span>
-                    <span className="text-[10px] font-mono text-text-muted uppercase">{comp.category}</span>
+                    <span className="text-3xs font-mono text-text-muted uppercase">{comp.category}</span>
                   </li>
                 ))}
               </ul>

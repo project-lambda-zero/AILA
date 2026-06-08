@@ -6,9 +6,9 @@ export interface TextInputProps {
 }
 
 const INPUT_CLS =
-  "w-full p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm resize-y";
+  "w-full p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm resize-y";
 const COUNT_CLS =
-  "absolute bottom-2 right-3 font-mono text-[10px] text-text-muted";
+  "absolute bottom-2 right-3 font-mono text-3xs text-text-muted";
 
 export function TextInput({ value, onChange, maxLength, multiline }: TextInputProps) {
   if (multiline) {

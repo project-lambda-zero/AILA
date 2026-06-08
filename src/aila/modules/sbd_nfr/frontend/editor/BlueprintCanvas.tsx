@@ -69,8 +69,9 @@ function SectionHeaderNode({ data }: NodeProps) {
 
   return (
     <div
-      className="flex items-center gap-3 rounded-[6px] border border-accent/25 px-5 py-3"
+      className="flex items-center gap-3 border border-accent/25 px-5 py-3"
       style={{
+        borderRadius: 6,
         minWidth: COL_W * COLS + X_PAD,
         background: "linear-gradient(90deg, var(--color-accent-muted), transparent 55%)",
       }}
@@ -80,7 +81,7 @@ function SectionHeaderNode({ data }: NodeProps) {
         style={{ background: "var(--color-accent)" }}
       />
       <span className="font-mono text-base font-bold text-text">{label}</span>
-      <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.2em] text-text-muted">
+      <span className="ml-auto font-mono text-3xs uppercase tracking-cyber text-text-muted">
         {sectionKey}
       </span>
       <AilaBadge severity="info" size="sm">
@@ -102,7 +103,7 @@ function SubgroupLabelNode({ data }: NodeProps) {
 
   return (
     <div
-      className="flex items-center gap-2 rounded-[4px] border border-border bg-surface px-3 py-1.5"
+      className="flex items-center gap-2 rounded-sharp-md border border-border bg-surface px-3 py-1.5"
       style={{ minWidth: COL_W * COLS + X_PAD - 20 }}
     >
       <span
@@ -110,7 +111,7 @@ function SubgroupLabelNode({ data }: NodeProps) {
         style={{ background: "var(--color-accent)" }}
       />
       <span className="font-mono text-xs font-medium text-text">{label}</span>
-      <span className="ml-auto font-mono text-[9px] text-text-muted">{subgroupKey}</span>
+      <span className="ml-auto font-mono text-4xs text-text-muted">{subgroupKey}</span>
     </div>
   );
 }
@@ -138,7 +139,7 @@ function QuestionNodeRenderer({ data }: NodeProps) {
       onClick={() => {
         if (questionId && subgroupId) onEditQuestion(questionId, subgroupId);
       }}
-      className="group relative cursor-pointer rounded-[4px] border border-border bg-elevated px-3.5 py-3 transition-colors duration-150 hover:border-border-hover"
+      className="group relative cursor-pointer rounded-sharp-md border border-border bg-elevated px-3.5 py-3 transition-colors duration-150 hover:border-border-hover"
       style={{ width: COL_W - 24 }}
     >
       <Handle
@@ -185,7 +186,7 @@ function QuestionNodeRenderer({ data }: NodeProps) {
             {mappingCount} map
           </AilaBadge>
         )}
-        <span className="font-mono text-[9px] text-text-muted">{questionType}</span>
+        <span className="font-mono text-4xs text-text-muted">{questionType}</span>
       </div>
     </div>
   );

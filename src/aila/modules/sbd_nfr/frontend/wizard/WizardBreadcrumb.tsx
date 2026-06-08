@@ -27,7 +27,7 @@ function itemState(
   return "upcoming";
 }
 
-const ITEM_BASE = "px-3 py-2 rounded-[var(--radius-md)]";
+const ITEM_BASE = "px-3 py-2 rounded-md";
 const ITEM_VARIANTS: Record<ItemState, string> = {
   active: "bg-accent-muted border-l-2 border-accent",
   visited: "border-l-2 border-[color:var(--color-accent)]/40",
@@ -44,7 +44,7 @@ export function WizardBreadcrumb({
   return (
     <nav className="flex flex-col" aria-label="Assessment sections">
       {projectName && (
-        <div className="font-mono text-[10px] text-text-muted uppercase tracking-wider px-3 pb-2 mb-2 border-b border-border truncate">
+        <div className="font-mono text-3xs text-text-muted uppercase tracking-wider px-3 pb-2 mb-2 border-b border-border truncate">
           {projectName}
         </div>
       )}
@@ -84,7 +84,7 @@ export function WizardBreadcrumb({
                 <span className={labelClass}>{section.label}</span>
                 {progress && (
                   <span
-                    className="font-mono text-[10px] text-text-muted ml-auto"
+                    className="font-mono text-3xs text-text-muted ml-auto"
                     aria-label={`${progress.answered_count} of ${progress.visible_count} answered`}
                   >
                     {progress.answered_count}/{progress.visible_count}

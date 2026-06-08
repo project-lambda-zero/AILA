@@ -221,7 +221,7 @@ function ComparisonView({ sessionIdA, sessionIdB }: ComparisonViewProps) {
     return (
       <div className="compare-page">
         {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="animate-pulse bg-surface rounded-[var(--radius-md)]" style={{ height: 48, marginBottom: 8 }} />
+          <div key={i} className="animate-pulse bg-surface rounded-md" style={{ height: 48, marginBottom: 8 }} />
         ))}
       </div>
     );
