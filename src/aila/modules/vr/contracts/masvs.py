@@ -193,11 +193,12 @@ class MasvsAuditDispatchResponse(BaseModel):
     catalog-author order within each group) so the frontend can render a
     deterministic per-control progress table without re-sorting.
 
-    The ARQ dispatch itself lands in D-2 — this response signals that
-    every row exists in the database; the children sit in
-    :attr:`InvestigationStatus.CREATED` until a future task submission
-    flips them to :attr:`InvestigationStatus.RUNNING`. Operators polling
-    against this response should not assume scout turns have started.
+    Once D-2 has wired ARQ submission, every child id in
+    ``child_investigation_ids`` is either pending in the ``vr`` queue or
+    listed in ``enqueue_errors`` with the underlying submit failure. In
+    both cases the row exists in the database and the operator can
+    ``POST /vr/investigations/{id}/re-enqueue`` to retry an individual
+    child without re-running the whole dispatcher.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -249,5 +250,18 @@ class MasvsAuditDispatchResponse(BaseModel):
             "Recorded on the parent so the operator sees total expected "
             "spend in one place before deciding whether to abandon the "
             "audit (D-5)."
+        ),
+    )
+    enqueue_errors: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Per-child submit failures keyed by child investigation id "
+            "(D-2). An empty dict means every child landed in the ``vr`` "
+            "ARQ queue. A populated entry means the row was created but "
+            "no task was enqueued — the operator can call "
+            "``POST /vr/investigations/{id}/re-enqueue`` to retry that "
+            "child without re-dispatching the whole audit. Failures are "
+            "captured (not raised) so a transient queue outage on one "
+            "child does not roll back the parent + sibling children."
         ),
     )

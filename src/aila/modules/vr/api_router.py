@@ -2745,9 +2745,11 @@ def create_vr_router() -> APIRouter:
             "child VRInvestigation per L1 control (kind=audit, "
             "parent_investigation_id pointing at the parent). Each child "
             "carries a verification prompt built from the catalog entry "
-            "plus the parent target's apk_overview. Child task submission "
-            "to the vr ARQ queue lands in D-2; this endpoint only "
-            "materializes the records."
+            "plus the parent target's apk_overview, and is submitted to "
+            "the vr ARQ queue via the existing run_vr_investigate task "
+            "(D-2). Per-child submit failures land in enqueue_errors so "
+            "a transient queue outage on one child does not roll back "
+            "the parent + sibling rows."
         ),
     )
     @limiter.limit("6/minute")
@@ -2764,13 +2766,20 @@ def create_vr_router() -> APIRouter:
         needs at least the package name / version / decompiled-index id
         cells for a useful scout brief.
 
+        Per-child ARQ submission (D-2) runs in a best-effort loop after
+        the parent + children commit: each child id either lands in the
+        ``vr`` queue via ``run_vr_investigate`` or surfaces in the
+        response's ``enqueue_errors`` map. Partial failures do NOT roll
+        back the records — the operator can retry an individual child
+        via ``POST /vr/investigations/{id}/re-enqueue``.
+
         Idempotency (same target + same catalog version returns the
         existing parent) lands in D-3. Until then a second call
         materializes a second parent + N more children.
         """
-        del request
         import json as _json
 
+        from aila.api.deps import get_task_queue
         from aila.modules.vr.masvs import (
             CATALOG_VERSION,
             MASVS_CONTROLS,
@@ -2783,6 +2792,7 @@ def create_vr_router() -> APIRouter:
             VRInvestigationRecord,
             VRTargetRecord,
         )
+        from .workflow.task import run_vr_investigate
 
         async with UnitOfWork() as uow:
             target = (await uow.session.exec(
@@ -2907,6 +2917,45 @@ def create_vr_router() -> APIRouter:
             await uow.session.commit()
             await uow.session.refresh(parent)
 
+        # D-2: submit each child to the vr ARQ queue via the existing
+        # run_vr_investigate task — same code path as a one-off
+        # /vr/investigations dispatch. The full scout / critic / verifier
+        # chain then runs against each child with the standard
+        # android_apk tool surface (android_mcp + audit_mcp against the
+        # jadx-decompiled index). Submission happens AFTER the commit so
+        # the worker can always find the row; a transient queue outage
+        # leaves the children in CREATED status with a captured error
+        # rather than rolling back the parent + sibling rows.
+        enqueue_errors: dict[str, str] = {}
+        try:
+            task_queue = get_task_queue("vr", request)
+        except HTTPException as exc:
+            err_msg = f"task queue unavailable: {exc.detail}"
+            _log.warning(
+                "MASVS audit %s could not acquire the vr task queue: %s; "
+                "all %d children remain in CREATED status awaiting "
+                "/re-enqueue.", parent.id, exc.detail, len(child_ids),
+            )
+            enqueue_errors = {cid: err_msg for cid in child_ids}
+        else:
+            for cid in child_ids:
+                try:
+                    await task_queue.submit(
+                        track="vr",
+                        fn=run_vr_investigate,
+                        kwargs={"investigation_id": cid},
+                        user_id=auth.user_id,
+                        group_id=auth.role,
+                        team_id=auth.team_id,
+                    )
+                except (OSError, RuntimeError, HTTPException) as exc:
+                    err_msg = f"failed to enqueue: {exc}"
+                    enqueue_errors[cid] = err_msg
+                    _log.warning(
+                        "MASVS audit %s child %s failed to enqueue: %s",
+                        parent.id, cid, exc,
+                    )
+
         return DataEnvelope(
             data=MasvsAuditDispatchResponse(
                 parent_investigation_id=parent.id,
@@ -2914,6 +2963,7 @@ def create_vr_router() -> APIRouter:
                 total_controls=len(l1_controls),
                 masvs_spec_version=CATALOG_VERSION,
                 cost_budget_total_usd=total_budget_usd,
+                enqueue_errors=enqueue_errors,
             ),
         )
 
