@@ -35,6 +35,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
 )
+from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
 from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
 from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.contracts._common import utc_now
@@ -60,7 +61,8 @@ class ToolExecutionResult:
 
 
 class ToolExecutor:
-    """Per-investigation tool dispatcher. Injects the two MCP bridges.
+    """Per-investigation tool dispatcher. Injects the three MCP bridges
+    (ida_headless, audit_mcp, android_mcp).
 
     Tests can construct with fake bridges that have a ``.forward(action, **kwargs)``
     method returning a canned dict.
@@ -80,10 +82,12 @@ class ToolExecutor:
         self,
         ida: IDABridgeTool | Any,
         audit_mcp: AuditMcpBridgeTool | Any,
+        android_mcp: AndroidMcpBridgeTool | Any,
     ) -> None:
         self._bridges: dict[str, Any] = {
             "ida_headless": ida,
             "audit_mcp": audit_mcp,
+            "android_mcp": android_mcp,
         }
         # Per-process cache: investigation_id -> resolved audit_mcp index_id
         # (or empty string when the investigation's target has no source

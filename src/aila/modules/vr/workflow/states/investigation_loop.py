@@ -25,6 +25,7 @@ from aila.modules.vr.agents import (
 from aila.modules.vr.agents.tool_executor import ToolExecutor
 from aila.modules.vr.contracts.investigation import InvestigationStatus
 from aila.modules.vr.db_models import VRInvestigationRecord
+from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
 from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
 from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.services.reasoning import CyberReasoningEngine
@@ -82,6 +83,7 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
     executor = ToolExecutor(
         ida=IDABridgeTool(),
         audit_mcp=AuditMcpBridgeTool(),
+        android_mcp=AndroidMcpBridgeTool(),
     )
 
     last_turn_idx = 0

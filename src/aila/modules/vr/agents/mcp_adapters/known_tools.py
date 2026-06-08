@@ -3,6 +3,7 @@
 Derived directly from:
   - ida_headless_mcp server (81 tools as of 2026-05-14)
   - audit_mcp server (54 tools as of 2026-05-14)
+  - android_mcp server (24 tools as of 2026-06-08)
 
 Reasons to enumerate explicitly rather than auto-discover at runtime:
   1. Unknown tool names should fail loud — typos in engine output, not
@@ -20,6 +21,7 @@ a tool_run command.
 from __future__ import annotations
 
 __all__ = [
+    "ANDROID_MCP_TOOLS",
     "AUDIT_MCP_TOOLS",
     "IDA_HEADLESS_TOOLS",
     "KNOWN_TOOLS",
@@ -201,10 +203,51 @@ AUDIT_MCP_TOOLS: frozenset[str] = frozenset({
 })
 
 
+ANDROID_MCP_TOOLS: frozenset[str] = frozenset({
+    # APK unpacking / decompilation
+    "apktool_decode",
+    "jadx_decompile",
+    # androguard static analysis
+    "androguard_summary",
+    # MobSF orchestration
+    "mobsf_scan",
+    # Signing-scheme verification
+    "verify_apk_signing",
+    # Component / permission auditing
+    "drozer_scan_apk",
+    # Static rule scanners
+    "qark_scan",
+    "androbugs_scan",
+    # Native shared-object analysis
+    "analyze_native_libs",
+    # YARA over decompiled tree
+    "yara_scan_dir",
+    # Frida-driven runtime helpers (operator runs frida-server externally)
+    "frida_list_running_devices",
+    "frida_dump_process_modules",
+    "frida_attach_and_trace_calls",
+    # Objection (gadget injection + exploration REPL)
+    "objection_patch_apk",
+    "objection_explore",
+    # adb facade
+    "adb_devices",
+    "adb_install",
+    "adb_uninstall",
+    "adb_logcat_capture",
+    "adb_dumpsys",
+    # Composite handlers — mirror audit-mcp's higher-level layer
+    "verify_capabilities",
+    "classify_behavior",
+    "compute_risk_score",
+    "find_secrets",
+})
+
+
 # Indexed by server_id used by the bridge dispatch.
 KNOWN_TOOLS: dict[str, frozenset[str]] = {
     "ida_headless": IDA_HEADLESS_TOOLS,
     "audit_mcp": AUDIT_MCP_TOOLS,
+    "android_mcp": ANDROID_MCP_TOOLS,
 }
 
 
