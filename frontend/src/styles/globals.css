@@ -3412,11 +3412,11 @@ a:hover {
 
 [data-theme="half-life-1"] {
   /* Per-theme typography — Black Ops One (industrial stenciled
-     hazard-bay signage), Roboto Mono throughout the rest (1998
+     hazard-bay signage), Share Tech Mono throughout the rest (1998
      Black Mesa terminal aesthetic). */
   --font-display: "Black Ops One", "Impact", sans-serif;
-  --font-sans: "Roboto Mono", "Consolas", monospace;
-  --font-mono: "Roboto Mono", "Consolas", monospace;
+  --font-sans: "Share Tech Mono", "Consolas", monospace;
+  --font-mono: "Share Tech Mono", "Consolas", monospace;
 
   --color-base: #0f1012;
   --color-surface: #1a1b1f;
@@ -3448,7 +3448,7 @@ a:hover {
   --radius-lg: 3px;
 
   --font-display: "Black Ops One", "Impact", sans-serif;
-  --font-sans: "Roboto Mono", "Consolas", monospace;
+  --font-sans: "Share Tech Mono", "Consolas", monospace;
 
   --background: #0f1012;
   --foreground: #e7e8ec;
