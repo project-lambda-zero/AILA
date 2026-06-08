@@ -342,9 +342,23 @@ export function TargetsPage() {
                         id={`descriptor-${field.key}`}
                         type="file"
                         accept={field.accept}
-                        onChange={(e) =>
-                          setPickedFile(e.target.files?.[0] ?? null)
-                        }
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] ?? null;
+                          setPickedFile(f);
+                          // Auto-route: a .apk picked into any binary-kind
+                          // slot is almost always a misclick. Force-switch
+                          // to android_apk so the 5-stage pipeline fires
+                          // instead of IDA grinding through a ZIP and
+                          // returning "no parser-sink callsites".
+                          if (
+                            f &&
+                            formKind !== "android_apk" &&
+                            f.name.toLowerCase().endsWith(".apk")
+                          ) {
+                            setFormKind("android_apk");
+                            setDescriptorValues({});
+                          }
+                        }}
                         aria-label={field.label}
                         className="w-full text-xs text-text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-sm file:bg-accent file:text-white hover:file:bg-accent/90 file:cursor-pointer"
                       />

@@ -415,6 +415,35 @@ def _target_summary(record: Any) -> VRTargetSummary:
     android_package_name = handles.get("android_mcp_package_name")
     if not isinstance(android_package_name, str) or not android_package_name:
         android_package_name = None
+
+    # APK-specific projection. Per VRTargetSummary.apk_overview: rolls up
+    # every key the 5-stage android pipeline writes into mcp_handles_json
+    # so the TargetDetailPage Android section has a single dict to render.
+    # Kept None when the target isn't android_apk OR no handle yet — the
+    # frontend treats None as "section not applicable / not ready".
+    apk_overview: dict[str, Any] | None = None
+    if record.kind == TargetKind.ANDROID_APK.value:
+        # Pull each handle if present. Order mirrors the pipeline so an
+        # operator can see how far the chain has progressed.
+        overview: dict[str, Any] = {}
+        for handle_key, out_key in (
+            ("android_mcp_apk_sha256", "sha256"),
+            ("android_mcp_decoded_dir", "decoded_dir"),
+            ("android_mcp_manifest_path", "manifest_path"),
+            ("android_mcp_decompiled_dir", "decompiled_dir"),
+            ("android_mcp_jadx_root", "jadx_root"),
+            ("android_mcp_jadx_class_count", "jadx_class_count"),
+            ("audit_mcp_decompiled_index_id", "audit_mcp_index_id"),
+            ("audit_mcp_decompiled_indexed_at", "audit_mcp_indexed_at"),
+            ("android_mcp_static_summary", "static_summary"),
+            ("android_mcp_mobsf_scan", "mobsf_scan"),
+        ):
+            value = handles.get(handle_key)
+            if value is not None:
+                overview[out_key] = value
+        if overview:
+            apk_overview = overview
+
     # Project per-stage analysis status (migration 060) so UI shows
     # a stage breakdown alongside the rolled-up analysis_state.
     stages_payload: dict[str, Any] | None = None
@@ -432,6 +461,7 @@ def _target_summary(record: Any) -> VRTargetSummary:
         descriptor=_json.loads(record.descriptor_json or "{}"),
         uploaded_filename=uploaded_filename,
         android_package_name=android_package_name,
+        apk_overview=apk_overview,
         primary_language=record.primary_language,
         secondary_languages=_json.loads(record.secondary_languages_json or "[]"),
         status=TargetStatus(record.status),

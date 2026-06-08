@@ -26,6 +26,7 @@ import {
 import { Link } from "react-router";
 import type {
   AnalysisState,
+  ApkOverview,
   TargetKind,
   TargetStatus,
 } from "../types";
@@ -449,6 +450,277 @@ function NotesTab({ targetId }: { targetId: string }) {
   );
 }
 
+/** Per-bucket renderer for the apk_overview projection. The static
+ * summary and mobsf scan are passed-through dicts from androguard +
+ * MobSF; we read only the keys we recognise and defensively skip
+ * anything else so an upstream tool version bump doesn't crash the
+ * page.
+ */
+function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
+  const summary = (overview.static_summary ?? {}) as Record<string, unknown>;
+  const mobsf = (overview.mobsf_scan ?? {}) as Record<string, unknown>;
+
+  const asStringArray = (v: unknown): string[] => {
+    if (!Array.isArray(v)) return [];
+    return v.filter((x): x is string => typeof x === "string");
+  };
+  const asString = (v: unknown): string | null =>
+    typeof v === "string" && v.length > 0 ? v : null;
+  const asNumber = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+
+  const pkg = asString(summary.package);
+  const versionName = asString(summary.version_name);
+  const versionCode = asNumber(summary.version_code);
+  const minSdk = asNumber(summary.min_sdk);
+  const targetSdk = asNumber(summary.target_sdk);
+  const permissions = asStringArray(summary.permissions);
+  const dangerousPerms = asStringArray(
+    (summary.dangerous_permissions ?? summary.permissions_dangerous) as unknown,
+  );
+  const activities = asStringArray(
+    (summary.exported_activities ?? summary.activities) as unknown,
+  );
+  const services = asStringArray(
+    (summary.exported_services ?? summary.services) as unknown,
+  );
+  const receivers = asStringArray(
+    (summary.exported_receivers ?? summary.receivers) as unknown,
+  );
+  const providers = asStringArray(
+    (summary.exported_providers ?? summary.providers) as unknown,
+  );
+  const nativeLibs = asStringArray(
+    (summary.native_libs ?? summary.native_libraries ?? summary.so_files) as unknown,
+  );
+  const certificates = Array.isArray(summary.certificates)
+    ? (summary.certificates as Array<Record<string, unknown>>)
+    : [];
+  const signingScheme = asString(summary.signing_scheme);
+
+  const mobsfSkipped = mobsf.skipped === true;
+  const mobsfReason = asString(mobsf.reason);
+
+  return (
+    <AilaCard techBorder glow>
+      <h2 className="text-sm font-semibold text-foreground mb-3">
+        Android APK
+      </h2>
+
+      {/* Package metadata block. Two-column grid keeps scan-the-list ergonomic
+          for the operator. Hyphen renders when androguard didn't surface a
+          field (older APK or pipeline incomplete). */}
+      <dl className="grid grid-cols-2 gap-3 text-sm mb-4">
+        <div>
+          <dt className="text-text-muted text-xs">Package</dt>
+          <dd className="font-mono text-xs">{pkg ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-text-muted text-xs">Version</dt>
+          <dd className="font-mono text-xs">
+            {versionName ?? "—"}
+            {versionCode != null && ` (${versionCode})`}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-text-muted text-xs">SDK range</dt>
+          <dd className="font-mono text-xs">
+            {minSdk != null ? `min ${minSdk}` : "—"}
+            {targetSdk != null ? ` · target ${targetSdk}` : ""}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-text-muted text-xs">Signing scheme</dt>
+          <dd className="font-mono text-xs">{signingScheme ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-text-muted text-xs">SHA-256</dt>
+          <dd className="font-mono text-[10px] break-all">
+            {overview.sha256 ?? "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-text-muted text-xs">Jadx classes</dt>
+          <dd className="font-mono text-xs">
+            {overview.jadx_class_count?.toLocaleString() ?? "—"}
+          </dd>
+        </div>
+      </dl>
+
+      {/* Native libraries — single most-asked APK question (".so files").
+          Surfaced prominently because operator's complaint specifically
+          named these. */}
+      {nativeLibs.length > 0 && (
+        <div className="mb-4">
+          <h3 className="text-xs font-semibold text-foreground mb-1">
+            Native libraries ({nativeLibs.length})
+          </h3>
+          <ul className="text-xs font-mono text-text-muted space-y-0.5 max-h-40 overflow-y-auto">
+            {nativeLibs.map((lib) => (
+              <li key={lib}>{lib}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Permissions — dangerous called out separately. */}
+      {permissions.length > 0 && (
+        <div className="mb-4">
+          <h3 className="text-xs font-semibold text-foreground mb-1">
+            Permissions ({permissions.length})
+            {dangerousPerms.length > 0 && (
+              <span className="ml-2 text-critical">
+                {dangerousPerms.length} dangerous
+              </span>
+            )}
+          </h3>
+          <details>
+            <summary className="text-xs text-text-muted cursor-pointer">
+              show list
+            </summary>
+            <ul className="text-xs font-mono text-text-muted space-y-0.5 mt-2 max-h-60 overflow-y-auto">
+              {permissions.map((p) => (
+                <li
+                  key={p}
+                  className={
+                    dangerousPerms.includes(p) ? "text-critical" : undefined
+                  }
+                >
+                  {p}
+                </li>
+              ))}
+            </ul>
+          </details>
+        </div>
+      )}
+
+      {/* Exported components — attack surface, by definition. */}
+      {(activities.length + services.length + receivers.length + providers.length) > 0 && (
+        <div className="mb-4">
+          <h3 className="text-xs font-semibold text-foreground mb-1">
+            Exported components
+          </h3>
+          <dl className="grid grid-cols-4 gap-2 text-xs">
+            <div>
+              <dt className="text-text-muted">Activities</dt>
+              <dd className="font-mono">{activities.length}</dd>
+            </div>
+            <div>
+              <dt className="text-text-muted">Services</dt>
+              <dd className="font-mono">{services.length}</dd>
+            </div>
+            <div>
+              <dt className="text-text-muted">Receivers</dt>
+              <dd className="font-mono">{receivers.length}</dd>
+            </div>
+            <div>
+              <dt className="text-text-muted">Providers</dt>
+              <dd className="font-mono">{providers.length}</dd>
+            </div>
+          </dl>
+        </div>
+      )}
+
+      {/* Certificates — signing identity. SHA-1 / SHA-256 fingerprints +
+          subject DN are the fields operators actually compare. */}
+      {certificates.length > 0 && (
+        <div className="mb-4">
+          <h3 className="text-xs font-semibold text-foreground mb-1">
+            Certificates ({certificates.length})
+          </h3>
+          <ul className="text-xs space-y-2">
+            {certificates.map((cert, idx) => (
+              <li
+                key={`${(cert.sha256 as string) ?? idx}`}
+                className="border-l-2 border-border-default pl-2"
+              >
+                <div className="font-mono text-foreground">
+                  {(cert.subject as string) ?? (cert.issuer as string) ?? "—"}
+                </div>
+                {cert.sha256 != null && (
+                  <div className="font-mono text-[10px] text-text-muted break-all">
+                    SHA-256 {String(cert.sha256)}
+                  </div>
+                )}
+                {cert.sha1 != null && (
+                  <div className="font-mono text-[10px] text-text-muted break-all">
+                    SHA-1 {String(cert.sha1)}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Backend handles — operator-facing path strings. Useful for
+          spelunking via the audit-mcp index id or running ad-hoc
+          jadx-tree queries from a shell. */}
+      <div className="mb-3">
+        <h3 className="text-xs font-semibold text-foreground mb-1">
+          Backend handles
+        </h3>
+        <dl className="grid grid-cols-1 gap-1 text-xs">
+          {overview.decoded_dir && (
+            <div className="flex gap-2">
+              <dt className="text-text-muted shrink-0">apktool</dt>
+              <dd className="font-mono text-[10px] break-all">
+                {overview.decoded_dir}
+              </dd>
+            </div>
+          )}
+          {overview.decompiled_dir && (
+            <div className="flex gap-2">
+              <dt className="text-text-muted shrink-0">jadx</dt>
+              <dd className="font-mono text-[10px] break-all">
+                {overview.decompiled_dir}
+              </dd>
+            </div>
+          )}
+          {overview.manifest_path && (
+            <div className="flex gap-2">
+              <dt className="text-text-muted shrink-0">manifest</dt>
+              <dd className="font-mono text-[10px] break-all">
+                {overview.manifest_path}
+              </dd>
+            </div>
+          )}
+          {overview.audit_mcp_index_id && (
+            <div className="flex gap-2">
+              <dt className="text-text-muted shrink-0">audit_mcp idx</dt>
+              <dd className="font-mono text-[10px] break-all">
+                {overview.audit_mcp_index_id}
+              </dd>
+            </div>
+          )}
+        </dl>
+      </div>
+
+      {/* MobSF block. Two states: ran and produced issues, or skipped
+          (no API key). */}
+      <div>
+        <h3 className="text-xs font-semibold text-foreground mb-1">MobSF</h3>
+        {mobsfSkipped ? (
+          <p className="text-xs text-text-muted">
+            Skipped: {mobsfReason ?? "MOBSF_API_KEY not set on the AILA host"}.
+          </p>
+        ) : Object.keys(mobsf).length === 0 ? (
+          <p className="text-xs text-text-muted">Not run.</p>
+        ) : (
+          <details>
+            <summary className="text-xs text-text-muted cursor-pointer">
+              show raw scan
+            </summary>
+            <pre className="text-[10px] font-mono text-text-muted whitespace-pre-wrap overflow-x-auto mt-2 max-h-60 overflow-y-auto">
+              {JSON.stringify(mobsf, null, 2)}
+            </pre>
+          </details>
+        )}
+      </div>
+    </AilaCard>
+  );
+}
+
 export function TargetDetailPage() {
   const { targetId } = useParams<{ targetId: string }>();
   const tid = targetId ?? "";
@@ -670,6 +942,14 @@ export function TargetDetailPage() {
           </div>
         </dl>
       )}</AilaCard>
+
+      {/* Android APK overview — only shown for android_apk targets that
+          have at least one stage handle. Each section inside the card
+          gates on its own data, so the operator sees what's ready as
+          the 5-stage pipeline progresses. */}
+      {target.kind === "android_apk" && target.apk_overview && (
+        <AndroidApkOverview overview={target.apk_overview} />
+      )}
 
       {/* Mitigations — uses shared MitigationsRibbon (§1.4 promise) */}
       {target.analysis_state === "ready" && (
