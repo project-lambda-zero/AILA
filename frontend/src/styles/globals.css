@@ -43,7 +43,9 @@
    ===================================================================== */
 
 /* =====================================================================
-   SELF-HOSTED FONTS — Syne (display), Space Grotesk (body), Fira Code (mono)
+   SELF-HOSTED FONTS — Syne (display) + Fira Code (mono).
+   Body sans (Bricolage Grotesque) loads via the Google Fonts <link>
+   in index.html — already preconnected.
    ===================================================================== */
 
 @font-face {
@@ -54,13 +56,6 @@
   font-display: swap;
 }
 
-@font-face {
-  font-family: "Space Grotesk";
-  src: url("/fonts/SpaceGrotesk-Variable.woff2") format("woff2");
-  font-weight: 400 700;
-  font-style: normal;
-  font-display: swap;
-}
 
 @font-face {
   font-family: "Fira Code";
@@ -76,7 +71,7 @@
 
 :root {
   --font-display: "Syne", system-ui, sans-serif;
-  --font-sans: "Space Grotesk", system-ui, sans-serif;
+  --font-sans: "Bricolage Grotesque", system-ui, sans-serif;
   --font-mono: "Fira Code", ui-monospace, "Cascadia Code", monospace;
 
   /* STATUS tokens (Phase 176a-02) — theme-neutral defaults, kept unchanged */
@@ -219,7 +214,7 @@
 
 [data-theme="vaporwave"] {
   /* Win95/98 desktop palette — teal desktop, gray dialogs, navy title bars */
-  /* Win95 system fonts — NOT Syne/Space Grotesk */
+  /* Win95 system fonts — NOT the default Syne/Bricolage stack */
   --font-display: "Tahoma", "MS Sans Serif", system-ui, sans-serif;
   --font-sans: "Tahoma", "MS Sans Serif", system-ui, sans-serif;
   --font-mono: "Fixedsys", "Terminal", "Courier New", monospace;
@@ -1470,7 +1465,7 @@ a:hover {
 [data-theme="vaporwave"] .vw-jp,
 [data-theme="vaporwave"] [data-vaporwave="jp"] {
   font-family: "MS PGothic", "Noto Sans JP", "Hiragino Kaku Gothic Pro",
-    "Yu Gothic", "Meiryo", "Space Grotesk", system-ui, sans-serif;
+    "Yu Gothic", "Meiryo", "Bricolage Grotesque", system-ui, sans-serif;
 }
 
 [data-theme="vaporwave"] .vw-hotpink,
@@ -1624,7 +1619,7 @@ a:hover {
 }
 
 .login-brand__tagline {
-  font-family: var(--font-sans, "Space Grotesk", sans-serif);
+  font-family: var(--font-sans, "Bricolage Grotesque", sans-serif);
   font-size: 0.875rem;
   letter-spacing: 0.2em;
   text-transform: uppercase;
