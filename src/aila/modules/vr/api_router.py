@@ -2081,9 +2081,13 @@ def create_vr_router() -> APIRouter:
         response_model=DataEnvelope[dict],
         status_code=status.HTTP_200_OK,
         summary=(
-            "Pull the latest upstream git for a target's audit-mcp index "
-            "and rebuild it when the HEAD SHA changed. Idempotent when "
-            "the upstream did not move (returns status=current)."
+            "Re-run a target's ingestion. Git-backed kinds "
+            "(source_repo / patch_diff / cve) hit audit-mcp's "
+            "refresh_index — idempotent when upstream did not "
+            "move (returns status=current). android_apk targets "
+            "reset every applicable APK stage to PENDING and "
+            "re-enqueue the staged-analysis worker (returns "
+            "status=rebuilding)."
         ),
     )
     @limiter.limit("10/minute")
@@ -2093,12 +2097,22 @@ def create_vr_router() -> APIRouter:
         force: bool = False,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[dict]:
-        """Refresh a single target's source clone + audit-mcp index.
+        """Refresh a single target's ingestion artifacts.
 
-        The target must already carry an ``audit_mcp_index_id`` handle
-        (i.e. INGESTION has completed at least once). Calling refresh
+        Git-backed kinds (source_repo / patch_diff / cve) must
+        already carry an ``audit_mcp_index_id`` handle (i.e.
+        INGESTION has completed at least once). Calling refresh
         on a never-indexed target returns 409 with a hint to run
         analysis first.
+
+        For ``kind=android_apk`` targets the call resets every
+        applicable APK stage (APK_DECODE / JADX_DECOMPILE /
+        INDEX_DECOMPILED / STATIC_SUMMARY / MOBSF_SCAN) back to
+        PENDING — leaving any stage currently RUNNING untouched so
+        the reaper owns it — and re-enqueues
+        ``run_target_analysis`` on the vr worker queue. The
+        response carries ``status="rebuilding"`` with the count of
+        stages reset and the new task_id.
         """
         import json as _json
 
@@ -2123,9 +2137,78 @@ def create_vr_router() -> APIRouter:
                 handles = _json.loads(row.mcp_handles_json or "{}")
             except (ValueError, TypeError):
                 handles = {}
+            try:
+                descriptor = _json.loads(row.descriptor_json or "{}")
+            except (ValueError, TypeError):
+                descriptor = {}
             index_id = (handles.get("audit_mcp_index_id") or "").strip()
             display_name = row.display_name
+            kind_str = row.kind
+            analysis_stages_json = row.analysis_stages_json
 
+        # Android APK targets follow a different ingestion path (no
+        # audit-mcp refresh_index involved). Reset every applicable
+        # APK stage back to PENDING — leaving RUNNING stages alone so
+        # we don't race a live worker — and re-enqueue
+        # ``run_target_analysis`` on the vr worker queue.
+        if kind_str == TargetKind.ANDROID_APK.value:
+            from aila.api.deps import get_task_queue
+            from aila.modules.vr.contracts.target_stages import StageName, StageState
+            from aila.modules.vr.services.stage_tracker import (
+                parse_stages,
+                save_target_stages,
+            )
+
+            from .workflow.task import run_target_analysis
+
+            stages = parse_stages(analysis_stages_json)
+            android_stage_names = (
+                StageName.APK_DECODE,
+                StageName.JADX_DECOMPILE,
+                StageName.INDEX_DECOMPILED,
+                StageName.STATIC_SUMMARY,
+                StageName.MOBSF_SCAN,
+            )
+            reset_count = 0
+            for stage_name in android_stage_names:
+                status_obj = stages.get(stage_name)
+                if status_obj.state == StageState.RUNNING:
+                    continue
+                status_obj.state = StageState.PENDING
+                status_obj.error = None
+                status_obj.started_at = None
+                status_obj.completed_at = None
+                stages.set(stage_name, status_obj)
+                reset_count += 1
+            await save_target_stages(target_id, stages)
+
+            task_queue = get_task_queue("vr", request)
+            handle = await task_queue.submit(
+                track="vr",
+                fn=run_target_analysis,
+                kwargs={"target_id": target_id},
+                user_id=auth.user_id,
+                group_id=auth.role,
+                team_id=auth.team_id,
+            )
+            apk_path = descriptor.get("apk_path")
+            root_path = (
+                apk_path
+                if isinstance(apk_path, str) and apk_path
+                else None
+            )
+            return DataEnvelope(data={
+                "target_id": target_id,
+                "display_name": display_name,
+                "status": "rebuilding",
+                "old_sha": None,
+                "new_sha": None,
+                "index_id": "",
+                "forced": bool(force),
+                "root_path": root_path,
+                "stages_reset": reset_count,
+                "task_id": handle.task_id,
+            })
         if not index_id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

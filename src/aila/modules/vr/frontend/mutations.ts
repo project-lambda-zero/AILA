@@ -420,20 +420,28 @@ export function useAnalyzeTarget(targetId: string) {
 export interface RefreshSourceResult {
   target_id: string;
   display_name: string;
-  /** `current` (no upstream change), `refreshing` (rebuild started),
-   *  `error` (audit-mcp surfaced an error). */
-  status: "current" | "refreshing" | "error" | string;
+  /** `current` (no upstream change), `refreshing` (audit-mcp rebuild
+   *  started), `rebuilding` (android_apk staged-analysis re-enqueued),
+   *  `error` (an MCP surfaced an error). */
+  status: "current" | "refreshing" | "rebuilding" | "error" | string;
   old_sha: string | null;
   new_sha: string | null;
   index_id: string;
   forced: boolean;
   root_path: string | null;
+  /** Only set on android_apk refreshes: count of stages reset back to
+   *  PENDING by the backend before re-enqueueing run_target_analysis. */
+  stages_reset?: number;
+  /** Only set on android_apk refreshes: the new run_target_analysis
+   *  task id enqueued on the vr worker queue. */
+  task_id?: string;
 }
 
-/** Pull the latest upstream git for a target's audit-mcp index and
- * rebuild when the HEAD SHA changed. Idempotent when upstream did not
- * move (returns status=current). Backend bridges to audit-mcp's
- * refresh_index tool. */
+/** Re-run a target's ingestion. Git-backed kinds hit audit-mcp's
+ * refresh_index (idempotent when upstream did not move, returns
+ * status=current). android_apk kinds reset the staged-analysis
+ * checkpoints and re-enqueue the worker (returns status=rebuilding).
+ */
 export function useRefreshTargetSource(targetId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -457,6 +465,13 @@ export function useRefreshTargetSource(targetId: string) {
         const newS = (r.new_sha ?? "?").slice(0, 8);
         toast.success(
           `Refreshing ${r.display_name}: ${oldS} → ${newS}`,
+        );
+      } else if (r.status === "rebuilding") {
+        const n = r.stages_reset ?? 0;
+        toast.success(
+          n > 0
+            ? `Re-running ${r.display_name}: ${n} stage${n === 1 ? "" : "s"} reset`
+            : `Re-running ${r.display_name}: staged analysis re-enqueued`,
         );
       } else {
         toast.success(`Refresh status: ${r.status}`);
