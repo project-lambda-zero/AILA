@@ -211,8 +211,9 @@ export function SystemDetailPage() {
                   >
                     <div className="grid grid-cols-2 gap-2">
                       <div className="flex flex-col gap-1">
-                        <label className="font-mono text-xs text-text-muted">Name</label>
+                        <label htmlFor="system-edit-name" className="font-mono text-xs text-text-muted">Name</label>
                         <Input
+                          id="system-edit-name"
                           value={editValue?.name ?? ""}
                           onChange={(e) =>
                             setEditDraft((cur) => ({ ...(cur ?? normalizeSystemForm(system)), name: e.target.value }))
@@ -220,8 +221,9 @@ export function SystemDetailPage() {
                         />
                       </div>
                       <div className="flex flex-col gap-1">
-                        <label className="font-mono text-xs text-text-muted">Host</label>
+                        <label htmlFor="system-edit-host" className="font-mono text-xs text-text-muted">Host</label>
                         <Input
+                          id="system-edit-host"
                           value={editValue?.host ?? ""}
                           onChange={(e) =>
                             setEditDraft((cur) => ({ ...(cur ?? normalizeSystemForm(system)), host: e.target.value }))
@@ -229,8 +231,9 @@ export function SystemDetailPage() {
                         />
                       </div>
                       <div className="flex flex-col gap-1">
-                        <label className="font-mono text-xs text-text-muted">Username</label>
+                        <label htmlFor="system-edit-username" className="font-mono text-xs text-text-muted">Username</label>
                         <Input
+                          id="system-edit-username"
                           value={editValue?.username ?? ""}
                           onChange={(e) =>
                             setEditDraft((cur) => ({ ...(cur ?? normalizeSystemForm(system)), username: e.target.value }))
@@ -238,8 +241,9 @@ export function SystemDetailPage() {
                         />
                       </div>
                       <div className="flex flex-col gap-1">
-                        <label className="font-mono text-xs text-text-muted">Port</label>
+                        <label htmlFor="system-edit-port" className="font-mono text-xs text-text-muted">Port</label>
                         <Input
+                          id="system-edit-port"
                           type="number"
                           min={1}
                           max={65535}

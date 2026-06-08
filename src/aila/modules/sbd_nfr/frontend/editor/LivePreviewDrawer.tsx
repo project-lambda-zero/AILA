@@ -108,6 +108,7 @@ function AnswerInput({ question, value, onChange }: AnswerInputProps) {
 
   return (
     <Input
+      aria-label={question.label}
       type="text"
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value)}

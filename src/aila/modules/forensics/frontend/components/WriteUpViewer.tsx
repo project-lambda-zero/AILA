@@ -99,6 +99,7 @@ export function WriteUpViewer({ projectId }: { projectId: string }) {
             {writeups.length === 1 ? "" : "s"}
           </span>
           <input
+            aria-label="Filter write-ups"
             type="search"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}

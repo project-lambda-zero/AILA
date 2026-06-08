@@ -299,6 +299,7 @@ export function SystemCSVImport({ open, onOpenChange }: SystemCSVImportProps) {
             )}
           </div>
           <input
+            aria-label="Choose CSV file"
             ref={fileInputRef}
             type="file"
             accept=".csv"

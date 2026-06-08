@@ -205,6 +205,7 @@ function CyberSelect({
   disabled?: boolean;
 }) {
   return (
+    // audit: see FieldRow htmlFor wiring at L632-633 (DependencyPicker uses id="dep-question")
     <select
       id={id}
       value={value}
@@ -288,12 +289,14 @@ function OptionsEditor({ questionId, localOptions, onChange }: OptionsEditorProp
             {idx + 1}.
           </span>
           <input
+            aria-label={`Option ${idx + 1} value`}
             value={opt.value}
             onChange={(e) => updateOption(opt.tempId, "value", e.target.value)}
             placeholder="value"
             className="w-24 flex-shrink-0 rounded-sharp border border-amber-500/20 bg-sbd-input px-1.5 py-1 font-mono text-xs text-amber-100 outline-none focus:border-amber-500/60"
           />
           <input
+            aria-label={`Option ${idx + 1} label`}
             value={opt.label}
             onChange={(e) => updateOption(opt.tempId, "label", e.target.value)}
             placeholder="label"

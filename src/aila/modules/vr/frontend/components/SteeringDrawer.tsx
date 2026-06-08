@@ -150,6 +150,7 @@ export function SteeringDrawer({
               onChange={(e) => setContextText(e.target.value)}
               placeholder="e.g. 'try the JSPI base address path' or 'H4 is wrong — the leak is not reliable.'"
               rows={4}
+              aria-label="Steering context"
               className="w-full px-2 py-1.5 text-xs font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
             />
             <div className="flex items-center gap-2 mt-2">
@@ -158,6 +159,7 @@ export function SteeringDrawer({
                 onChange={(e) =>
                   setContextIntent(e.target.value as OperatorIntent)
                 }
+                aria-label="Context intent"
                 className="px-2 py-1 text-xs font-mono rounded-md bg-surface border border-border-default"
               >
                 <option value="steering">steering</option>

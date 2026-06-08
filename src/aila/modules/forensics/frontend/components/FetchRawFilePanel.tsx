@@ -51,6 +51,7 @@ export function FetchRawFilePanel({ projectId, compact = false }: Props) {
     
     <form onSubmit={onSubmit} className="space-y-2">
       <select
+        aria-label="Select evidence source"
         value={evidenceId}
         onChange={(e) => setEvidenceId(e.target.value)}
         disabled={fetchMut.isPending || items.length === 0}

@@ -115,6 +115,7 @@ function RecordTable({
     <div className="space-y-2 text-sm">
       <div className="flex items-center gap-3">
         <input
+          aria-label="Filter artifacts by name"
           type="text"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -504,6 +505,7 @@ export function ArtifactExplorer({ projectId }: { projectId: string }) {
             ))}
           </div>
           <select
+            aria-label="Filter by family"
             value={familyFilter}
             onChange={(e) => setFamilyFilter(e.target.value)}
             className="text-xs px-2 py-1 rounded-md border border-border bg-surface text-foreground"

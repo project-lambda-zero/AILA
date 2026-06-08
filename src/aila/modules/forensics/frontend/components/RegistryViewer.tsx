@@ -154,6 +154,7 @@ function RegistryTable({ rows }: { rows: Record<string, unknown>[] }) {
     <div>
       <div className="px-3 py-2 border-b border-border bg-surface-secondary/50">
         <input
+          aria-label="Search registry data"
           type="text"
           placeholder="Search registry data..."
           value={filterText}

@@ -3,6 +3,7 @@ export interface TextInputProps {
   onChange: (value: string) => void;
   maxLength?: number;
   multiline?: boolean;
+  id?: string;
 }
 
 const INPUT_CLS =
@@ -10,11 +11,12 @@ const INPUT_CLS =
 const COUNT_CLS =
   "absolute bottom-2 right-3 font-mono text-3xs text-text-muted";
 
-export function TextInput({ value, onChange, maxLength, multiline }: TextInputProps) {
+export function TextInput({ value, onChange, maxLength, multiline, id }: TextInputProps) {
   if (multiline) {
     return (
       <div className="relative mt-2">
         <textarea
+          id={id}
           className={INPUT_CLS}
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -33,6 +35,7 @@ export function TextInput({ value, onChange, maxLength, multiline }: TextInputPr
   return (
     <div className="relative mt-2">
       <input
+        id={id}
         className={INPUT_CLS}
         type="text"
         value={value}

@@ -140,6 +140,7 @@ function ServerCard({ server }: { server: McpServerSummary }) {
             value={draftUrl}
             onChange={(e) => setDraftUrl(e.target.value)}
             placeholder="https://workstation.local:18822"
+            aria-label="MCP server URL"
             className="flex-1 px-3 py-1.5 text-xs font-mono rounded-md bg-surface border border-border-default focus:outline-none focus:border-accent"
           />
           <button

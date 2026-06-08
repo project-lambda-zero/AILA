@@ -389,10 +389,11 @@ function StartInvestigationForm({ projectId }: { projectId: string }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3 p-4 border border-border rounded-md bg-surface">
-      <label className="block text-sm font-medium text-foreground">
+      <label htmlFor="pd-question" className="block text-sm font-medium text-foreground">
         Investigation question
       </label>
       <textarea
+        id="pd-question"
         value={question}
         onChange={(e) => setQuestion(e.target.value)}
         placeholder="Ask a question about the evidence"
@@ -401,8 +402,9 @@ function StartInvestigationForm({ projectId }: { projectId: string }) {
         autoFocus
       />
       <div className="flex items-center gap-3">
-        <label className="text-xs text-text-muted whitespace-nowrap">Max attempts</label>
+        <label htmlFor="pd-max-attempts" className="text-xs text-text-muted whitespace-nowrap">Max attempts</label>
         <input
+          id="pd-max-attempts"
           type="number"
           min={1}
           max={20}

@@ -115,8 +115,9 @@ export function NewProjectPage() {
       {step === "select" && (
         <AilaCard  techBorder glow><div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-foreground mb-1">Project Name</label>
+            <label htmlFor="nproj-name" className="block text-sm font-medium text-foreground mb-1">Project Name</label>
             <input
+              id="nproj-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -130,8 +131,9 @@ export function NewProjectPage() {
           </div>
         
           <div>
-            <label className="block text-sm font-medium text-foreground mb-1">Description</label>
+            <label htmlFor="nproj-description" className="block text-sm font-medium text-foreground mb-1">Description</label>
             <textarea
+              id="nproj-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Brief description of the investigation..."
@@ -141,11 +143,12 @@ export function NewProjectPage() {
           </div>
         
           <div>
-            <label className="block text-sm font-medium text-foreground mb-1">Analyzer Machine</label>
+            <label htmlFor="nproj-system" className="block text-sm font-medium text-foreground mb-1">Analyzer Machine</label>
             {systemsLoading ? (
               <LoadingSkeleton size="sm" width="full" />
             ) : (
               <select
+                id="nproj-system"
                 value={systemId ?? ""}
                 onChange={(e) => setSystemId(e.target.value ? Number(e.target.value) : null)}
                 onBlur={() => setTouched((t) => ({ ...t, systemId: true }))}
@@ -227,8 +230,9 @@ export function NewProjectPage() {
           </div>
         
           <div>
-            <label className="block text-sm font-medium text-foreground mb-1">Evidence Directory</label>
+            <label htmlFor="nproj-evidence-dir" className="block text-sm font-medium text-foreground mb-1">Evidence Directory</label>
             <input
+              id="nproj-evidence-dir"
               type="text"
               value={evidenceDir}
               onChange={(e) => setEvidenceDir(e.target.value)}

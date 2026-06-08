@@ -174,6 +174,7 @@ export function RadarToolbar({
           className="absolute left-2 text-muted-foreground pointer-events-none"
         />
         <Input
+          aria-label="Search systems"
           type="text"
           placeholder="Search systems..."
           value={filter.search}

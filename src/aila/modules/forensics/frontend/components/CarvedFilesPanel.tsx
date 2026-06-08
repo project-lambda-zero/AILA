@@ -212,6 +212,7 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
 
       {/* Filter */}
       <input
+        aria-label="Search carved files"
         type="search"
         value={filterText}
         onChange={(e) => setFilterText(e.target.value)}

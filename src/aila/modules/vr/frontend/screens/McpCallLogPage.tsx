@@ -29,6 +29,7 @@ export function McpCallLogPage() {
         <select
           value={serverFilter}
           onChange={(e) => setServerFilter(e.target.value)}
+          aria-label="Filter by MCP server"
           className="px-2 py-1 text-xs rounded-md bg-surface border border-border-default"
         >
           <option value="">all</option>
@@ -39,6 +40,7 @@ export function McpCallLogPage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
+          aria-label="Filter by status"
           className="px-2 py-1 text-xs rounded-md bg-surface border border-border-default"
         >
           <option value="">all</option>

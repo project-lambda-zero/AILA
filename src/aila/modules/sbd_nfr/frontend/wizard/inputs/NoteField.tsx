@@ -29,6 +29,7 @@ export function NoteField({ value, onChange }: NoteFieldProps) {
       {expanded && (
         <div className="mt-2">
           <textarea
+            aria-label="Note for this question"
             className="w-full p-2 rounded-md border border-border bg-surface text-text text-sm resize-y"
             style={{ minHeight: 60 }}
             value={value ?? ""}

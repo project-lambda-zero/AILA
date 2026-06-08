@@ -285,6 +285,7 @@ export function DeadLetterPage() {
           Track Filter
         </p>
         <input
+          aria-label="Track filter"
           className="mt-2 w-full h-8 rounded-[2px] border border-border bg-base px-2.5 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors"
           type="text"
           value={trackFilter}

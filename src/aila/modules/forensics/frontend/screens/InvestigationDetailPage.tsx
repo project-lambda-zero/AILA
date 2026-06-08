@@ -436,10 +436,11 @@ function InvestigationControls({
           </p>
           {answerCandidates.length > 1 && (
             <div className="space-y-1">
-              <label className="text-xs font-mono text-text-muted">
+              <label htmlFor="tag-answer-select" className="text-xs font-mono text-text-muted">
                 Which answer?
               </label>
               <select
+                id="tag-answer-select"
                 className="w-full bg-surface border border-border rounded px-2 py-1 text-sm text-foreground"
                 value={selectedAnswerId}
                 onChange={(e) => setSelectedAnswerId(e.target.value)}
@@ -455,10 +456,11 @@ function InvestigationControls({
             </div>
           )}
           <div className="space-y-1">
-            <label className="text-xs font-mono text-text-muted">
+            <label htmlFor="tag-notes" className="text-xs font-mono text-text-muted">
               Notes (optional)
             </label>
             <Textarea
+              id="tag-notes"
               rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}

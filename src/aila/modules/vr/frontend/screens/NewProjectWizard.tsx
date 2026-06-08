@@ -148,8 +148,9 @@ export function NewProjectWizard() {
           Step 1 — Target intake
         </h2>
         <div className="space-y-3 text-sm">
-          <Field label="Workspace">
+          <Field label="Workspace" htmlFor="npw-workspace">
             <select
+              id="npw-workspace"
               value={workspaceId}
               onChange={(e) => setWorkspaceId(e.target.value)}
               className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border-default"
@@ -183,8 +184,9 @@ export function NewProjectWizard() {
             </div>
           </Field>
         
-          <Field label="Target class">
+          <Field label="Target class" htmlFor="npw-target-class">
             <select
+              id="npw-target-class"
               value={targetClass}
               onChange={(e) => setTargetClass(e.target.value as TargetClass)}
               className="px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
@@ -209,8 +211,9 @@ export function NewProjectWizard() {
           {/* Source-specific fields */}
           {inputSource === "git_repo" && (
             <>
-              <Field label="Repo URL">
+              <Field label="Repo URL" htmlFor="npw-repo-url">
                 <input
+                  id="npw-repo-url"
                   type="text"
                   value={repoUrl}
                   onChange={(e) => setRepoUrl(e.target.value)}
@@ -219,8 +222,9 @@ export function NewProjectWizard() {
                 />
               </Field>
               <div className="grid grid-cols-2 gap-2">
-                <Field label="Vulnerable ref (optional)">
+                <Field label="Vulnerable ref (optional)" htmlFor="npw-vulnerable-ref">
                   <input
+                    id="npw-vulnerable-ref"
                     type="text"
                     value={vulnerableRef}
                     onChange={(e) => setVulnerableRef(e.target.value)}
@@ -228,8 +232,9 @@ export function NewProjectWizard() {
                     className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
                   />
                 </Field>
-                <Field label="Patched ref (optional)">
+                <Field label="Patched ref (optional)" htmlFor="npw-patched-ref">
                   <input
+                    id="npw-patched-ref"
                     type="text"
                     value={patchedRef}
                     onChange={(e) => setPatchedRef(e.target.value)}
@@ -242,8 +247,9 @@ export function NewProjectWizard() {
           )}
         
           {inputSource === "http_url" && (
-            <Field label="Download URL">
+            <Field label="Download URL" htmlFor="npw-download-url">
               <input
+                id="npw-download-url"
                 type="text"
                 value={downloadUrl}
                 onChange={(e) => setDownloadUrl(e.target.value)}
@@ -364,8 +370,9 @@ export function NewProjectWizard() {
           Step 3 — Scope + authorisation
         </h2>
         <div className="space-y-3 text-sm">
-          <Field label="Project name">
+          <Field label="Project name" htmlFor="npw-name">
             <input
+              id="npw-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -374,8 +381,9 @@ export function NewProjectWizard() {
             />
           </Field>
         
-          <Field label="CVE ID (optional)">
+          <Field label="CVE ID (optional)" htmlFor="npw-cve">
             <input
+              id="npw-cve"
               type="text"
               value={cveId}
               onChange={(e) => setCveId(e.target.value)}
@@ -384,8 +392,9 @@ export function NewProjectWizard() {
             />
           </Field>
         
-          <Field label="Scope / context notes">
+          <Field label="Scope / context notes" htmlFor="npw-notes">
             <textarea
+              id="npw-notes"
               value={contextNotes}
               onChange={(e) => setContextNotes(e.target.value)}
               rows={4}
@@ -441,14 +450,16 @@ export function NewProjectWizard() {
 
 function Field({
   label,
+  htmlFor,
   children,
 }: {
   label: string;
+  htmlFor?: string;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <label className="block text-xs text-text-muted mb-1">{label}</label>
+      <label htmlFor={htmlFor} className="block text-xs text-text-muted mb-1">{label}</label>
       {children}
     </div>
   );

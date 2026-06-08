@@ -137,6 +137,7 @@ function EditRowForm({ entry, onSave, onCancel, isPending }: EditRowFormProps) {
     >
       <div className="flex flex-col gap-1 min-w-[140px]">
         <Input
+          aria-label="Config value"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           className="font-mono text-xs h-7 px-2"
@@ -148,6 +149,7 @@ function EditRowForm({ entry, onSave, onCancel, isPending }: EditRowFormProps) {
       </div>
 
       <select
+        aria-label="Value type"
         value={valueType}
         onChange={(e) =>
           setValueType(e.target.value as ConfigUpdateRequest["value_type"])

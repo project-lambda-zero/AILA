@@ -239,6 +239,7 @@ function Composer({
   return (
     <div className="flex flex-col gap-2 border-t border-border bg-surface p-3">
       <Textarea
+        aria-label="Message composer"
         ref={textareaRef}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}

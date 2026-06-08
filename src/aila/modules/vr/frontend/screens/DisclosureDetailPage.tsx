@@ -129,6 +129,7 @@ export function DisclosureDetailPage() {
               }
             }}
             placeholder="e.g. CVE-2026-NNNN or VRP-XXXX"
+            aria-label="Vendor reference"
             className="ml-2 px-2 py-1 text-xs font-mono rounded-md bg-surface border border-border-default"
           />
         </div>
@@ -144,6 +145,7 @@ export function DisclosureDetailPage() {
               }
             }}
             placeholder="0"
+            aria-label="Bounty awarded (USD)"
             className="ml-2 px-2 py-1 w-32 text-xs font-mono rounded-md bg-surface border border-border-default"
           />
         </div>

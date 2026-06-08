@@ -200,6 +200,7 @@ function AilaTableHeader({ className }: AilaTableHeaderProps) {
       {enableFiltering && (
         <div className="px-4 py-2 border-b border-border">
           <input
+            aria-label="Filter table rows"
             value={filterValue}
             onChange={(e) => setFilterValue(e.target.value)}
             placeholder="Filter..."
@@ -374,6 +375,7 @@ function AilaTablePagination({ className, pageSizeOptions = [10, 25, 50] }: Aila
       <div className="flex items-center gap-2">
         <span className="font-mono text-xs text-text-muted">Rows</span>
         <select
+          aria-label="Rows per page"
           value={pageSize}
           onChange={(e) => table.setPageSize(Number(e.target.value))}
           className={cn(

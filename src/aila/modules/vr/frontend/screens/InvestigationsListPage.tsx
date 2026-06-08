@@ -646,6 +646,7 @@ export function InvestigationsListPage() {
               value={formTitle}
               onChange={(e) => setFormTitle(e.target.value)}
               placeholder="Title (e.g. 'Audit V8 InferMaps for missing alias check')"
+              aria-label="Investigation title"
               className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
             />
             <textarea
@@ -653,6 +654,7 @@ export function InvestigationsListPage() {
               onChange={(e) => setFormQuestion(e.target.value)}
               placeholder="Initial question — what are you asking the engine to investigate?"
               rows={3}
+              aria-label="Initial question"
               className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
             />
             {(() => {
@@ -689,6 +691,7 @@ export function InvestigationsListPage() {
                 <select
                   value={formTargetId}
                   onChange={(e) => setFormTargetId(e.target.value)}
+                  aria-label="Target"
                   className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
                 >
                   <option value="">— Pick a target —</option>
@@ -716,6 +719,7 @@ export function InvestigationsListPage() {
                 onChange={(e) =>
                   setFormKind(e.target.value as InvestigationKind)
                 }
+                aria-label="Investigation kind"
                 className="px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
               >
                 <option value="discovery">discovery</option>
@@ -734,6 +738,7 @@ export function InvestigationsListPage() {
                   min="0"
                   value={formBudget}
                   onChange={(e) => setFormBudget(e.target.value)}
+                  aria-label="Budget USD"
                   className="w-20 px-1 text-sm font-mono bg-transparent border-0 focus:outline-none"
                 />
               </div>
@@ -864,6 +869,7 @@ export function InvestigationsListPage() {
               resetToFirstPage();
             }}
             placeholder="Search title (ILIKE)…"
+            aria-label="Search investigations"
             className="w-full pl-9 pr-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
           />
         </div>
