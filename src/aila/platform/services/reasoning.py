@@ -24,6 +24,21 @@ from aila.platform.llm.client import AilaLLMClient
 __all__ = ["CyberReasoningEngine"]
 
 
+# Namespace prefixes the agent must not write to. Tool/directive keys
+# carry external-source metadata that the agent must not overwrite,
+# rename, or shadow via self-set observables.
+_TOOL_PREFIXES: tuple[str, ...] = (
+    "audit_mcp:", "audit_mcp.",
+    "ida_headless:", "ida_headless.",
+    "_directive.",
+)
+
+# Hard cap on agent-self-set observable keys across all turns. Anything
+# past this point gets LRU-evicted by insertion order; tool/directive
+# keys are preserved by the partition in render_case_model and live
+# separately from this cap.
+_MAX_AGENT_KEYS_TOTAL: int = 50
+
 _DOMAIN_PROFILES: dict[str, ReasoningDomainProfile] = {
     "forensics": ReasoningDomainProfile(
         domain_id="forensics",
@@ -243,14 +258,12 @@ class CyberReasoningEngine:
         #       oldest by dict-insertion order; tool + directive keys
         #       are NEVER evicted (they're preserved by the partition
         #       in render_case_model and live separately from the cap).
-        TOOL_PREFIXES = ("audit_mcp:", "audit_mcp.", "ida_headless:", "ida_headless.", "_directive.")
-        MAX_AGENT_KEYS_TOTAL = 50
         accepted = 0
         for k, v in decision.observables.items():
             key = str(k).strip()
             if not key:
                 continue
-            if any(key.startswith(p) for p in TOOL_PREFIXES):
+            if any(key.startswith(p) for p in _TOOL_PREFIXES):
                 # Don't let the agent overwrite or shadow tool/directive keys.
                 continue
             if accepted >= 10:
@@ -260,10 +273,10 @@ class CyberReasoningEngine:
         # Enforce total-cap on agent-set keys.
         agent_keys = [
             k for k in observables
-            if not any(k.startswith(p) for p in TOOL_PREFIXES)
+            if not any(k.startswith(p) for p in _TOOL_PREFIXES)
         ]
-        if len(agent_keys) > MAX_AGENT_KEYS_TOTAL:
-            evict_n = len(agent_keys) - MAX_AGENT_KEYS_TOTAL
+        if len(agent_keys) > _MAX_AGENT_KEYS_TOTAL:
+            evict_n = len(agent_keys) - _MAX_AGENT_KEYS_TOTAL
             for k in agent_keys[:evict_n]:
                 observables.pop(k, None)
 

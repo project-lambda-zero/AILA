@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time as _time_mod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -213,11 +214,9 @@ class LLMResponse:
 #   AILA_LLM_MAX_RETRIES        — attempts cap (default 100)
 #   AILA_LLM_RETRY_BASE_DELAY_S — first-attempt backoff seconds (default 1.0)
 #   AILA_LLM_RETRY_MAX_DELAY_S  — per-attempt backoff cap seconds (default 30)
-import os as _retry_os
-
-_MAX_RETRIES = max(1, int(_retry_os.environ.get("AILA_LLM_MAX_RETRIES", "100")))
-_RETRY_BASE_DELAY = max(0.1, float(_retry_os.environ.get("AILA_LLM_RETRY_BASE_DELAY_S", "1.0")))
-_RETRY_MAX_DELAY = max(_RETRY_BASE_DELAY, float(_retry_os.environ.get("AILA_LLM_RETRY_MAX_DELAY_S", "30.0")))
+_MAX_RETRIES = max(1, int(os.environ.get("AILA_LLM_MAX_RETRIES", "100")))
+_RETRY_BASE_DELAY = max(0.1, float(os.environ.get("AILA_LLM_RETRY_BASE_DELAY_S", "1.0")))
+_RETRY_MAX_DELAY = max(_RETRY_BASE_DELAY, float(os.environ.get("AILA_LLM_RETRY_MAX_DELAY_S", "30.0")))
 
 
 class AilaLLMClient:

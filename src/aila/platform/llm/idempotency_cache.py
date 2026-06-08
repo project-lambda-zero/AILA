@@ -32,12 +32,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import DateTime, Index
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlmodel import Field, SQLModel, select
+from sqlmodel import Field, SQLModel, delete, select
 
 from aila.platform.contracts._common import utc_now
 
@@ -138,7 +138,6 @@ async def store_response(
     """
     if not request_key:
         return
-    from datetime import timedelta
 
     now = utc_now()
     expires = now + timedelta(days=ttl_days)
@@ -182,8 +181,6 @@ async def purge_expired(session: Any) -> int:
 
     Intended for a periodic cron sweep; not wired by this module.
     """
-    from sqlmodel import delete
-
     try:
         result = await session.execute(
             delete(LLMIdempotencyCache).where(

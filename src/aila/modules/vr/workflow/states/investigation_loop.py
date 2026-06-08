@@ -14,6 +14,7 @@ investigation COMPLETED — that's emit's job.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from sqlmodel import select as _select
@@ -42,9 +43,7 @@ _log = logging.getLogger(__name__)
 # overall branch.turn_count hits _OVERALL_TURN_CAP. Configurable via
 # env so an operator running a deep variant chase can extend without
 # a code change.
-import os as _os
-
-_DEFAULT_MAX_TURNS = int(_os.environ.get("VR_MAX_TURNS_PER_TASK", "70"))
+_DEFAULT_MAX_TURNS = int(os.environ.get("VR_MAX_TURNS_PER_TASK", "70"))
 
 
 async def _investigation_status(investigation_id: str) -> str | None:
