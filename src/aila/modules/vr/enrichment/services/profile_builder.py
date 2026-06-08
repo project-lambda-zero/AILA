@@ -63,6 +63,7 @@ _APPLICABLE_MCP_BY_KIND: dict[str, list[str]] = {
     TargetKind.NATIVE_BINARY.value:   ["ida_headless", "audit_mcp"],
     TargetKind.SOURCE_REPO.value:     ["audit_mcp"],
     TargetKind.APK.value:             ["ida_headless"],
+    TargetKind.ANDROID_APK.value:     ["android_mcp", "audit_mcp"],
     TargetKind.IPA.value:             ["ida_headless"],
     TargetKind.JAR.value:             ["ida_headless", "audit_mcp"],
     TargetKind.DOTNET_ASSEMBLY.value: ["ida_headless"],
