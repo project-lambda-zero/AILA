@@ -81,7 +81,7 @@ function InlineLabel({ value, onSave, className }: InlineLabelProps) {
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={handleKey}
-          className="rounded-[2px] border border-amber-500/40 bg-[#1a1a1a] px-1.5 py-0.5 font-mono text-sm text-amber-100 outline-none focus:border-amber-500"
+          className="rounded-sharp border border-amber-500/40 bg-sbd-input px-1.5 py-0.5 font-mono text-sm text-amber-100 outline-none focus:border-amber-500"
         />
         <button
           type="button"
@@ -126,7 +126,7 @@ function QuestionChip({ question, onEdit }: { question: QuestionFlat; onEdit: (q
       type="button"
       onClick={() => onEdit(question)}
       aria-label={`Edit question: ${question.label}`}
-      className="group flex w-full items-start gap-3 rounded-xl border border-amber-500/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01))] px-3 py-3 text-left transition hover:border-amber-400/30 hover:bg-[#171717]"
+      className="group flex w-full items-start gap-3 rounded-xl border border-amber-500/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01))] px-3 py-3 text-left transition hover:border-amber-400/30 hover:bg-sbd-card"
     >
       <div className="mt-0.5 h-2.5 w-2.5 rounded-full bg-amber-400/70 shadow-[0_0_10px_rgba(245,158,11,0.35)]" />
       <div className="min-w-0 flex-1 space-y-2">
@@ -141,7 +141,7 @@ function QuestionChip({ question, onEdit }: { question: QuestionFlat; onEdit: (q
           <AilaBadge severity={answerTypeSeverity(question.answer_type)} size="sm">{question.answer_type}</AilaBadge>
           {hasLogic && <AilaBadge severity="medium" size="sm">logic</AilaBadge>}
           {mappingCount > 0 && <AilaBadge severity="info" size="sm">{mappingCount} links</AilaBadge>}
-          <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-amber-500/35">{question.question_type}</span>
+          <span className="font-mono text-2xs uppercase text-amber-500/35" style={{ letterSpacing: "0.18em" }}>{question.question_type}</span>
         </div>
       </div>
     </button>
@@ -165,7 +165,7 @@ function SubgroupRow({ subgroup, onEditQuestion, onAddQuestion, onLabelSave }: S
   };
 
   return (
-    <div ref={setNodeRef} style={style} className="flex flex-col gap-2 rounded-[14px] border border-amber-500/10 bg-[#111111] p-3">
+    <div ref={setNodeRef} style={{ ...style, borderRadius: 14, backgroundColor: "#111111" }} className="flex flex-col gap-2 border border-amber-500/10 p-3">
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -181,13 +181,13 @@ function SubgroupRow({ subgroup, onEditQuestion, onAddQuestion, onLabelSave }: S
           onSave={(label) => onLabelSave(subgroup.id, label)}
           className="flex-1 font-mono text-xs font-medium text-amber-300/80"
         />
-        <span className="font-mono text-[10px] text-amber-500/40 border border-amber-500/20 px-1 rounded-[2px]">
+        <span className="font-mono text-3xs text-amber-500/40 border border-amber-500/20 px-1 rounded-sharp">
           {subgroup.subgroup_key}
         </span>
       </div>
 
       <div className="pl-5">
-        <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-amber-500/35">
+        <div className="mb-2 flex items-center gap-2 text-2xs uppercase text-amber-500/35" style={{ letterSpacing: "0.18em" }}>
           <span>{subgroup.questions.length} questions</span>
         </div>
         {subgroup.questions.length > 0 && (
@@ -211,7 +211,8 @@ function SubgroupRow({ subgroup, onEditQuestion, onAddQuestion, onLabelSave }: S
           type="button"
           aria-label={`Add question to ${subgroup.label}`}
           onClick={() => onAddQuestion(subgroup.id)}
-          className="flex items-center gap-1 rounded-full border border-amber-500/20 bg-[#161616] px-3 py-1.5 font-mono text-xs text-amber-200/75 transition hover:border-amber-400/35 hover:text-amber-100"
+          className="flex items-center gap-1 rounded-full border border-amber-500/20 px-3 py-1.5 font-mono text-xs text-amber-200/75 transition hover:border-amber-400/35 hover:text-amber-100"
+          style={{ backgroundColor: "#161616" }}
         >
           <Plus size={12} weight="bold" />
           Add question
@@ -257,7 +258,7 @@ function SectionRow({
   ) + (section.depends_on_question_id || section.condition_expr_json ? 1 : 0);
 
   return (
-    <div ref={setNodeRef} style={style} className="flex flex-col gap-3 rounded-[18px] border border-amber-500/20 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))] p-4 shadow-[0_12px_28px_rgba(0,0,0,0.22)]">
+    <div ref={setNodeRef} style={{ ...style, borderRadius: 18 }} className="flex flex-col gap-3 border border-amber-500/20 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))] p-4 shadow-[0_12px_28px_rgba(0,0,0,0.22)]">
       <div className="flex items-start gap-3">
         <button
           type="button"
@@ -286,7 +287,7 @@ function SectionRow({
               <AilaBadge severity="info" size="sm">{section.subgroups.length} lanes</AilaBadge>
               <AilaBadge severity="info" size="sm">{questionCount} questions</AilaBadge>
               {logicCount > 0 && <AilaBadge severity="medium" size="sm">{logicCount} logic links</AilaBadge>}
-              <span className="rounded-full border border-amber-500/20 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.2em] text-amber-500/45">{section.section_key}</span>
+              <span className="rounded-full border border-amber-500/20 px-3 py-1 font-mono text-2xs uppercase tracking-cyber text-amber-500/45">{section.section_key}</span>
             </div>
           </div>
 

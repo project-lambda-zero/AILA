@@ -91,7 +91,7 @@ export function PublishVersionDialog({
   return (
     <Dialog open={open} onOpenChange={(v) => !v && handleCancel()}>
       <DialogContent
-        className="bg-[#1a1a1a] border border-amber-500/30 text-amber-100 sm:max-w-[520px]"
+        className="bg-sbd-input border border-amber-500/30 text-amber-100 sm:max-w-lg"
       >
         <DialogHeader>
           <DialogTitle className="font-mono text-amber-300 text-lg">
@@ -103,7 +103,7 @@ export function PublishVersionDialog({
         </DialogHeader>
 
         {/* Pinned session warning */}
-        <div className="flex items-start gap-3 rounded-[2px] border border-amber-500/40 bg-amber-500/15 p-3">
+        <div className="flex items-start gap-3 rounded-sharp border border-amber-500/40 bg-amber-500/15 p-3">
           <Warning
             className="mt-0.5 h-5 w-5 shrink-0 text-amber-400"
             weight="fill"
@@ -129,7 +129,7 @@ export function PublishVersionDialog({
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             disabled={mutation.isPending}
-            className="resize-none bg-[#131313] border-amber-500/20 text-amber-100 placeholder:text-amber-500/40 focus-visible:ring-amber-500/40 font-mono text-sm"
+            className="resize-none bg-sbd-base border-amber-500/20 text-amber-100 placeholder:text-amber-500/40 focus-visible:ring-amber-500/40 font-mono text-sm"
           />
         </div>
 
@@ -147,7 +147,8 @@ export function PublishVersionDialog({
             type="button"
             disabled={mutation.isPending}
             onClick={() => void handlePublish()}
-            className="font-mono text-xs bg-amber-500 hover:bg-amber-400 text-[#131313] font-semibold min-w-[140px]"
+            className="font-mono text-xs bg-amber-500 hover:bg-amber-400 text-sbd-base font-semibold"
+            style={{ minWidth: 140 }}
           >
             {mutation.isPending ? (
               <>

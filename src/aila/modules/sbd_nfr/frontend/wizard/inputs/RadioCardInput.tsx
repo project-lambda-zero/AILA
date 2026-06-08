@@ -22,7 +22,7 @@ export function RadioCardInput({ options, value, onChange, name }: RadioCardInpu
           <label
             key={option.value}
             className={[
-              "flex items-start gap-3 p-3 rounded-[var(--radius-md)] border bg-transparent cursor-pointer transition-colors hover:bg-elevated",
+              "flex items-start gap-3 p-3 rounded-md border bg-transparent cursor-pointer transition-colors hover:bg-elevated",
               isSelected ? "border-accent bg-accent-muted" : "border-border",
             ]
               .filter(Boolean)

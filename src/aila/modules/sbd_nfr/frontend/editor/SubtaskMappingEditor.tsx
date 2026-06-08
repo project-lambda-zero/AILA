@@ -127,7 +127,7 @@ function SubtaskRow({ component, mappingCount, isSelected, onSelect }: SubtaskRo
         "w-full text-left px-3 py-2.5 flex flex-col gap-1 transition-colors cursor-pointer",
         isSelected
           ? "bg-amber-500/10 border-l-2 border-amber-400"
-          : "border-l-2 border-transparent hover:bg-[#222]",
+          : "border-l-2 border-transparent hover:bg-sbd-hover",
       ].join(" ")}
     >
       <div className="flex items-center gap-2">
@@ -137,7 +137,7 @@ function SubtaskRow({ component, mappingCount, isSelected, onSelect }: SubtaskRo
         <span className="font-mono text-sm text-white truncate">{component.label}</span>
       </div>
       <div className="flex items-center gap-2 pl-6">
-        <Badge variant="outline" className="text-[10px] text-amber-400/80 border-amber-400/30">
+        <Badge variant="outline" className="text-3xs text-amber-400/80 border-amber-400/30">
           {component.category}
         </Badge>
         <CoverageChip count={mappingCount} />
@@ -164,7 +164,7 @@ function MappedQuestionRow({ mapping, question, onRemove, isRemoving }: MappedQu
       <div className="flex flex-col gap-0.5 min-w-0">
         <span className="font-mono text-sm text-white truncate">{label}</span>
         {question && (
-          <span className="font-mono text-[11px] text-amber-400/60">{question.answer_type}</span>
+          <span className="font-mono text-2xs text-amber-400/60">{question.answer_type}</span>
         )}
       </div>
       <Button
@@ -194,17 +194,17 @@ interface PickerQuestionRowProps {
 
 function PickerQuestionRow({ question, breadcrumb, onAdd, isAdding }: PickerQuestionRowProps) {
   return (
-    <div className="flex items-start justify-between gap-2 px-3 py-2 border-b border-amber-500/10 last:border-0 hover:bg-[#222] transition-colors">
+    <div className="flex items-start justify-between gap-2 px-3 py-2 border-b border-amber-500/10 last:border-0 hover:bg-sbd-hover transition-colors">
       <div className="flex flex-col gap-0.5 min-w-0">
         <span className="font-mono text-sm text-white/90 truncate">{question.label}</span>
         <div className="flex items-center gap-1.5">
           <Badge
             variant="outline"
-            className="text-[10px] text-amber-400/70 border-amber-400/20 shrink-0"
+            className="text-3xs text-amber-400/70 border-amber-400/20 shrink-0"
           >
             {question.answer_type}
           </Badge>
-          <span className="font-mono text-[10px] text-white/40 truncate">{breadcrumb}</span>
+          <span className="font-mono text-3xs text-white/40 truncate">{breadcrumb}</span>
         </div>
       </div>
       <Button
@@ -232,7 +232,7 @@ interface CoverageFooterProps {
 function CoverageFooter({ count }: CoverageFooterProps) {
   if (count >= 2) {
     return (
-      <div className="px-4 py-2 border-t border-amber-500/20 bg-[#131313]">
+      <div className="px-4 py-2 border-t border-amber-500/20 bg-sbd-base">
         <p className="font-mono text-xs text-amber-400">
           Coverage: {count} questions mapped (sufficient)
         </p>
@@ -240,7 +240,7 @@ function CoverageFooter({ count }: CoverageFooterProps) {
     );
   }
   return (
-    <div className="px-4 py-2 border-t border-red-500/30 bg-[#131313]">
+    <div className="px-4 py-2 border-t border-red-500/30 bg-sbd-base">
       <p className="font-mono text-xs text-red-400 font-bold">
         Coverage: {count} questions mapped{" "}
         <span className="text-red-300">(minimum 2 required)</span>
@@ -328,8 +328,8 @@ function RightPanel({
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Current mappings */}
-      <div className="flex flex-col flex-shrink-0 max-h-[40%]">
-        <div className="px-4 py-2 border-b border-amber-500/20 bg-[#1a1a1a]">
+      <div className="flex flex-col flex-shrink-0" style={{ maxHeight: "40%" }}>
+        <div className="px-4 py-2 border-b border-amber-500/20 bg-sbd-input">
           <p className="font-mono text-xs text-amber-400/70 uppercase tracking-wider">
             Mapped questions
           </p>
@@ -339,7 +339,7 @@ function RightPanel({
             <p className="font-mono text-xs text-white/40">No questions mapped yet</p>
           </div>
         ) : (
-          <ScrollArea className="flex-1 max-h-[150px]">
+          <ScrollArea className="flex-1" style={{ maxHeight: 150 }}>
             {currentMappings.map((m) => (
               <MappedQuestionRow
                 key={m.id}
@@ -355,7 +355,7 @@ function RightPanel({
 
       {/* Question picker */}
       <div className="flex flex-col flex-1 min-h-0">
-        <div className="px-4 py-2 border-t border-b border-amber-500/20 bg-[#1a1a1a] flex items-center gap-2">
+        <div className="px-4 py-2 border-t border-b border-amber-500/20 bg-sbd-input flex items-center gap-2">
           <MagnifyingGlass className="h-3.5 w-3.5 text-amber-400/60 shrink-0" />
           <input
             type="text"
@@ -437,7 +437,7 @@ export function SubtaskMappingEditor() {
 
   if (isLoading) {
     return (
-      <div className="flex h-64 items-center justify-center bg-[#131313]">
+      <div className="flex h-64 items-center justify-center bg-sbd-base">
         <p className="font-mono text-sm text-amber-400/60 animate-pulse">
           Loading schema data...
         </p>
@@ -447,7 +447,7 @@ export function SubtaskMappingEditor() {
 
   if (errorComponents) {
     return (
-      <div className="flex h-64 items-center justify-center bg-[#131313]">
+      <div className="flex h-64 items-center justify-center bg-sbd-base">
         <p className="font-mono text-sm text-red-400">Failed to load subtask components</p>
       </div>
     );
@@ -481,9 +481,9 @@ export function SubtaskMappingEditor() {
   }
 
   return (
-    <div className="flex h-full min-h-[500px] bg-[#131313] rounded-lg border border-amber-500/20 overflow-hidden">
+    <div className="flex h-full bg-sbd-base rounded-lg border border-amber-500/20 overflow-hidden" style={{ minHeight: 500 }}>
       {/* Left column — subtask list */}
-      <div className="w-64 flex-shrink-0 border-r border-amber-500/20 bg-[#1a1a1a] overflow-y-auto">
+      <div className="w-64 flex-shrink-0 border-r border-amber-500/20 bg-sbd-input overflow-y-auto">
         <div className="px-3 py-2 border-b border-amber-500/20">
           <p className="font-mono text-xs text-amber-400/70 uppercase tracking-wider">
             Subtask components

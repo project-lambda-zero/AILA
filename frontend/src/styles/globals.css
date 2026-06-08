@@ -2035,6 +2035,29 @@ a:hover {
 }
 
 /* =====================================================================
+   SBD_NFR TERMINAL SURFACE SCALE — E27b follow-on
+   The sbd_nfr amber-on-near-black aesthetic deliberately ignores the
+   theme tokens (--color-base / --color-surface / --color-elevated)
+   which shift across the 12 themes. These four shades form the fixed
+   surface ladder used by drawers, workspace cards, section panels,
+   and input fields regardless of active theme. `text-sbd-base` paints
+   the matching dark foreground for amber-fill buttons.
+   ===================================================================== */
+
+@utility bg-sbd-base   { background-color: #131313; }
+@utility text-sbd-base { color:            #131313; }
+@utility bg-sbd-panel  { background-color: #141414; }
+@utility bg-sbd-card   { background-color: #171717; }
+@utility bg-sbd-input  { background-color: #1a1a1a; }
+@utility bg-sbd-hover  { background-color: #222222; }
+
+/* Cyber-tracking — 0.2em letter-spacing for the all-caps mono labels
+   used across sbd_nfr / vr surfaces. Tailwind v4's `tracking-widest`
+   is 0.1em; this widens it for the typewriter-meta aesthetic. */
+
+@utility tracking-cyber { letter-spacing: 0.2em; }
+
+/* =====================================================================
    UTILITIES — loading skeleton, focus ring, severity pulse
    ===================================================================== */
 

@@ -25,7 +25,7 @@ export function WizardProgressSidebar({
     <nav aria-label="Wizard section navigation" className="flex flex-col gap-1">
       {projectName && (
         <p
-          className="font-mono text-[10px] text-text-muted uppercase tracking-wider px-2 pb-3 mb-2 border-b border-border truncate"
+          className="font-mono text-3xs text-text-muted uppercase tracking-wider px-2 pb-3 mb-2 border-b border-border truncate"
           title={projectName}
         >
           {projectName}
@@ -41,7 +41,7 @@ export function WizardProgressSidebar({
         const isComplete = pct === 100 && visibleCount > 0;
 
         const buttonClass = [
-          "w-full flex flex-col gap-2 px-3 py-2.5 rounded-[var(--radius-md)] border-l-2 transition-colors text-left",
+          "w-full flex flex-col gap-2 px-3 py-2.5 rounded-md border-l-2 transition-colors text-left",
           isActive
             ? "border-accent bg-accent-muted"
             : isComplete
@@ -71,11 +71,11 @@ export function WizardProgressSidebar({
                 />
               </div>
               {isComplete ? (
-                <span className="text-[11px] text-accent" aria-hidden="true">
+                <span className="text-2xs text-accent" aria-hidden="true">
                   ✓
                 </span>
               ) : (
-                <span className="font-mono text-[10px] text-text-muted">{pct}%</span>
+                <span className="font-mono text-3xs text-text-muted">{pct}%</span>
               )}
             </div>
           </button>

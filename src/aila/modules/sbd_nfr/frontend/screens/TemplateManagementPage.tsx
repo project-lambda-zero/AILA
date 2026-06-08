@@ -62,7 +62,7 @@ function SaveAsTemplateDialog({ sessionId, onClose }: SaveAsTemplateDialogProps)
         <input
           id="template-name-input"
           type="text"
-          className="w-full p-2.5 rounded-[var(--radius-md)] border border-border bg-surface text-text font-sans text-sm template-dialog__input"
+          className="w-full p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm template-dialog__input"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Standard Security Assessment"
@@ -185,7 +185,7 @@ export function TemplateManagementPage() {
       {templateQuery.isLoading && (
         <div className="template-page__loading">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="animate-pulse bg-surface rounded-[var(--radius-md)]" style={{ height: 120, marginBottom: 12, borderRadius: 4 }} />
+            <div key={i} className="animate-pulse bg-surface rounded-md" style={{ height: 120, marginBottom: 12, borderRadius: 4 }} />
           ))}
         </div>
       )}

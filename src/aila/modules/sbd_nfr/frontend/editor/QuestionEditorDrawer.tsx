@@ -210,7 +210,7 @@ function CyberSelect({
       value={value}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-[2px] border border-amber-500/20 bg-[#1a1a1a] px-2.5 py-1.5 font-mono text-sm text-amber-100 outline-none focus:border-amber-500/60 transition-colors disabled:opacity-50"
+      className="w-full rounded-sharp border border-amber-500/20 bg-sbd-input px-2.5 py-1.5 font-mono text-sm text-amber-100 outline-none focus:border-amber-500/60 transition-colors disabled:opacity-50"
     >
       {children}
     </select>
@@ -275,7 +275,7 @@ function OptionsEditor({ questionId, localOptions, onChange }: OptionsEditorProp
         <button
           type="button"
           onClick={addOption}
-          className="flex items-center gap-1 font-mono text-xs text-amber-500/60 hover:text-amber-400 border border-amber-500/20 hover:border-amber-500/40 rounded-[2px] px-2 py-0.5 transition-colors"
+          className="flex items-center gap-1 font-mono text-xs text-amber-500/60 hover:text-amber-400 border border-amber-500/20 hover:border-amber-500/40 rounded-sharp px-2 py-0.5 transition-colors"
         >
           <Plus size={11} weight="bold" />
           Add option
@@ -291,13 +291,13 @@ function OptionsEditor({ questionId, localOptions, onChange }: OptionsEditorProp
             value={opt.value}
             onChange={(e) => updateOption(opt.tempId, "value", e.target.value)}
             placeholder="value"
-            className="w-24 flex-shrink-0 rounded-[2px] border border-amber-500/20 bg-[#1a1a1a] px-1.5 py-1 font-mono text-xs text-amber-100 outline-none focus:border-amber-500/60"
+            className="w-24 flex-shrink-0 rounded-sharp border border-amber-500/20 bg-sbd-input px-1.5 py-1 font-mono text-xs text-amber-100 outline-none focus:border-amber-500/60"
           />
           <input
             value={opt.label}
             onChange={(e) => updateOption(opt.tempId, "label", e.target.value)}
             placeholder="label"
-            className="flex-1 rounded-[2px] border border-amber-500/20 bg-[#1a1a1a] px-1.5 py-1 font-mono text-xs text-amber-100 outline-none focus:border-amber-500/60"
+            className="flex-1 rounded-sharp border border-amber-500/20 bg-sbd-input px-1.5 py-1 font-mono text-xs text-amber-100 outline-none focus:border-amber-500/60"
           />
           <button
             type="button"
@@ -494,7 +494,7 @@ export function QuestionEditorDrawer({
     <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <SheetContent
         side="right"
-        className="w-full sm:max-w-lg bg-[#131313] border-l border-amber-500/20 overflow-y-auto"
+        className="w-full sm:max-w-lg bg-sbd-base border-l border-amber-500/20 overflow-y-auto"
         showCloseButton
       >
         <SheetHeader className="px-0 pb-4 border-b border-amber-500/10">
@@ -506,10 +506,10 @@ export function QuestionEditorDrawer({
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-5 py-4">
           {!isEdit && (
-            <div className="rounded-[8px] border border-amber-500/15 bg-amber-500/5 p-3">
+            <div className="border border-amber-500/15 bg-amber-500/5 p-3" style={{ borderRadius: 8 }}>
               <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-amber-400/80">Suggested questions</span>
-                <span className="font-mono text-[10px] text-amber-500/40">Click to prefill</span>
+                <span className="font-mono text-2xs uppercase tracking-cyber text-amber-400/80">Suggested questions</span>
+                <span className="font-mono text-3xs text-amber-500/40">Click to prefill</span>
               </div>
               <div className="flex flex-wrap gap-2">
                 {suggestedTemplates.map((template) => (
@@ -517,7 +517,8 @@ export function QuestionEditorDrawer({
                     key={template.label}
                     type="button"
                     onClick={() => applySuggestedTemplate(template)}
-                    className="rounded-full border border-amber-500/20 bg-[#161616] px-3 py-1.5 text-left text-xs text-amber-100/75 transition hover:border-amber-400/40 hover:text-amber-100"
+                    className="rounded-full border border-amber-500/20 px-3 py-1.5 text-left text-xs text-amber-100/75 transition hover:border-amber-400/40 hover:text-amber-100"
+                    style={{ backgroundColor: "#161616" }}
                   >
                     {template.label}
                   </button>
@@ -533,7 +534,7 @@ export function QuestionEditorDrawer({
               onChange={(e) => update("label", e.target.value)}
               placeholder="Enter question label"
               required
-              className="font-mono text-sm bg-[#1a1a1a] border-amber-500/20 text-amber-100 focus-visible:border-amber-500/60"
+              className="font-mono text-sm bg-sbd-input border-amber-500/20 text-amber-100 focus-visible:border-amber-500/60"
             />
           </FieldRow>
 
@@ -584,7 +585,7 @@ export function QuestionEditorDrawer({
               onChange={(e) => update("instruction", e.target.value)}
               rows={2}
               placeholder="Optional instruction text"
-              className="w-full rounded-[2px] border border-amber-500/20 bg-[#1a1a1a] px-2.5 py-1.5 font-mono text-sm text-amber-100 outline-none focus:border-amber-500/60 resize-y transition-colors"
+              className="w-full rounded-sharp border border-amber-500/20 bg-sbd-input px-2.5 py-1.5 font-mono text-sm text-amber-100 outline-none focus:border-amber-500/60 resize-y transition-colors"
             />
           </FieldRow>
 
@@ -596,7 +597,7 @@ export function QuestionEditorDrawer({
               onChange={(e) => update("guideline", e.target.value)}
               rows={2}
               placeholder="Optional guideline text"
-              className="w-full rounded-[2px] border border-amber-500/20 bg-[#1a1a1a] px-2.5 py-1.5 font-mono text-sm text-amber-100 outline-none focus:border-amber-500/60 resize-y transition-colors"
+              className="w-full rounded-sharp border border-amber-500/20 bg-sbd-input px-2.5 py-1.5 font-mono text-sm text-amber-100 outline-none focus:border-amber-500/60 resize-y transition-colors"
             />
           </FieldRow>
 
@@ -618,7 +619,7 @@ export function QuestionEditorDrawer({
           </div>
 
           {/* 8. Conditional dependency section */}
-          <div className="flex flex-col gap-3 rounded-[2px] border border-amber-500/10 p-3">
+          <div className="flex flex-col gap-3 rounded-sharp border border-amber-500/10 p-3">
             <button
               type="button"
               onClick={() => setShowConditional((v) => !v)}
@@ -645,7 +646,7 @@ export function QuestionEditorDrawer({
                       update("expected_when", e.target.value || null)
                     }
                     placeholder="e.g. yes or true"
-                    className="font-mono text-sm bg-[#1a1a1a] border-amber-500/20 text-amber-100 focus-visible:border-amber-500/60"
+                    className="font-mono text-sm bg-sbd-input border-amber-500/20 text-amber-100 focus-visible:border-amber-500/60"
                   />
                 </FieldRow>
 
@@ -659,7 +660,7 @@ export function QuestionEditorDrawer({
                     }
                     rows={3}
                     placeholder={`{"op":"AND","conditions":[...]}`}
-                    className="w-full rounded-[2px] border border-amber-500/20 bg-[#1a1a1a] px-2.5 py-1.5 font-mono text-xs text-amber-100/80 outline-none focus:border-amber-500/60 resize-y transition-colors"
+                    className="w-full rounded-sharp border border-amber-500/20 bg-sbd-input px-2.5 py-1.5 font-mono text-xs text-amber-100/80 outline-none focus:border-amber-500/60 resize-y transition-colors"
                   />
                 </FieldRow>
               </div>
@@ -668,7 +669,7 @@ export function QuestionEditorDrawer({
 
           {/* 10. Options list — shown only for single_choice */}
           {form.answer_type === "single_choice" && (
-            <div className="rounded-[2px] border border-amber-500/10 p-3">
+            <div className="rounded-sharp border border-amber-500/10 p-3">
               <OptionsEditor
                 questionId={question?.id}
                 localOptions={localOptions}
@@ -682,7 +683,7 @@ export function QuestionEditorDrawer({
               <Button
                 type="submit"
                 disabled={isPending}
-                className="flex-1 bg-amber-500 hover:bg-amber-400 text-[#131313] font-mono font-semibold"
+                className="flex-1 bg-amber-500 hover:bg-amber-400 text-sbd-base font-mono font-semibold"
               >
                 {isPending ? "Saving…" : isEdit ? "Save Changes" : "Create Question"}
               </Button>

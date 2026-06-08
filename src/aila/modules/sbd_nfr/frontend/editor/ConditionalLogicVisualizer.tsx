@@ -53,8 +53,8 @@ function RootNode({ data }: NodeProps) {
 function ScopeNode({ data }: NodeProps) {
   const d = data as { label?: string; answerId?: string };
   return (
-    <div className="rounded-[var(--radius-md)] border border-accent/60 bg-surface px-3 py-2 shadow max-w-[180px]">
-      <p className="font-mono text-[10px] text-accent uppercase tracking-wider mb-0.5">Scope Q</p>
+    <div className="rounded-md border border-accent/60 bg-surface px-3 py-2 shadow" style={{ maxWidth: 180 }}>
+      <p className="font-mono text-3xs text-accent uppercase tracking-wider mb-0.5">Scope Q</p>
       <p className="font-mono text-xs text-text leading-tight">{d.label ?? "Question"}</p>
     </div>
   );
@@ -63,13 +63,13 @@ function ScopeNode({ data }: NodeProps) {
 function SectionNode({ data }: NodeProps) {
   const d = data as { label?: string; sectionKey?: string };
   return (
-    <div className="rounded-[var(--radius-md)] border-l-2 border-l-lavender border border-border bg-surface px-3 py-2 shadow max-w-[200px]">
-      <p className="font-mono text-[10px] text-lavender uppercase tracking-wider mb-0.5">Section</p>
+    <div className="rounded-md border-l-2 border-l-lavender border border-border bg-surface px-3 py-2 shadow" style={{ maxWidth: 200 }}>
+      <p className="font-mono text-3xs text-lavender uppercase tracking-wider mb-0.5">Section</p>
       <p className="font-mono text-xs text-text leading-tight">{d.label ?? "Section"}</p>
       {d.sectionKey && (
         <Badge
           variant="outline"
-          className="mt-1 text-[9px] border-lavender/30 text-lavender"
+          className="mt-1 text-4xs border-lavender/30 text-lavender"
         >
           {d.sectionKey}
         </Badge>
@@ -81,8 +81,8 @@ function SectionNode({ data }: NodeProps) {
 function CondNode({ data }: NodeProps) {
   const d = data as { label?: string };
   return (
-    <div className="rounded-[var(--radius-md)] border border-dashed border-accent/50 bg-surface px-3 py-2 shadow max-w-[180px]">
-      <p className="font-mono text-[10px] text-accent/60 uppercase tracking-wider mb-0.5">Conditional Q</p>
+    <div className="rounded-md border border-dashed border-accent/50 bg-surface px-3 py-2 shadow" style={{ maxWidth: 180 }}>
+      <p className="font-mono text-3xs text-accent/60 uppercase tracking-wider mb-0.5">Conditional Q</p>
       <p className="font-mono text-xs text-text/90 leading-tight">{d.label ?? "Question"}</p>
     </div>
   );
@@ -206,20 +206,20 @@ interface SelectedNodeData {
 
 function InfoPanel({ nodeData }: { nodeData: SelectedNodeData }) {
   return (
-    <div className="absolute bottom-4 left-4 z-10 rounded-[var(--radius-md)] border border-border bg-base/95 px-4 py-3 shadow-lg max-w-[240px]">
-      <p className="font-mono text-[10px] text-accent/70 uppercase tracking-wider mb-1">
+    <div className="absolute bottom-4 left-4 z-10 rounded-md border border-border bg-base/95 px-4 py-3 shadow-lg" style={{ maxWidth: 240 }}>
+      <p className="font-mono text-3xs text-accent/70 uppercase tracking-wider mb-1">
         Selected node
       </p>
       <p className="font-mono text-sm text-text font-medium leading-snug">
         {nodeData.label ?? nodeData.id}
       </p>
       {(nodeData.sectionKey ?? nodeData.questionId ?? nodeData.answerId) && (
-        <p className="font-mono text-[11px] text-text-muted mt-1">
+        <p className="font-mono text-2xs text-text-muted mt-1">
           key: {nodeData.sectionKey ?? nodeData.questionId ?? nodeData.answerId}
         </p>
       )}
       {nodeData.expectedWhen && (
-        <p className="font-mono text-[11px] text-accent/70 mt-0.5">
+        <p className="font-mono text-2xs text-accent/70 mt-0.5">
           when: {nodeData.expectedWhen}
         </p>
       )}
@@ -287,7 +287,7 @@ export function ConditionalLogicVisualizer() {
 
   if (isLoading) {
     return (
-      <div style={{ height: 600 }} className="flex items-center justify-center bg-base rounded-[var(--radius-md)] border border-border">
+      <div style={{ height: 600 }} className="flex items-center justify-center bg-base rounded-md border border-border">
         <p className="font-mono text-sm text-text-muted animate-pulse">
           Building conditional logic graph...
         </p>

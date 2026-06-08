@@ -29,7 +29,8 @@ export function NoteField({ value, onChange }: NoteFieldProps) {
       {expanded && (
         <div className="mt-2">
           <textarea
-            className="w-full p-2 rounded-[var(--radius-md)] border border-border bg-surface text-text text-sm resize-y min-h-[60px]"
+            className="w-full p-2 rounded-md border border-border bg-surface text-text text-sm resize-y"
+            style={{ minHeight: 60 }}
             value={value ?? ""}
             onChange={(e) => onChange(e.target.value)}
             placeholder="Add a note for this question…"

@@ -165,10 +165,10 @@ export function ReportPreviewPage() {
   if (sessionQuery.isLoading || resolutionQuery.isLoading) {
     return (
       <div className="report-preview">
-        <div className="animate-pulse bg-surface rounded-[var(--radius-md)]" style={{ height: 32, width: "40%", marginBottom: 16 }} />
-        <div className="animate-pulse bg-surface rounded-[var(--radius-md)]" style={{ height: 16, width: "25%", marginBottom: 32 }} />
+        <div className="animate-pulse bg-surface rounded-md" style={{ height: 32, width: "40%", marginBottom: 16 }} />
+        <div className="animate-pulse bg-surface rounded-md" style={{ height: 16, width: "25%", marginBottom: 32 }} />
         {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="animate-pulse bg-surface rounded-[var(--radius-md)]" style={{ height: 72, marginBottom: 8, borderRadius: 4 }} />
+          <div key={i} className="animate-pulse bg-surface rounded-md" style={{ height: 72, marginBottom: 8, borderRadius: 4 }} />
         ))}
       </div>
     );
@@ -265,7 +265,7 @@ export function ReportPreviewPage() {
       <div className="report-preview__integrity">
         <h2 className="report-preview__section-title">Report Integrity</h2>
         {hashQuery.isLoading ? (
-          <div className="animate-pulse bg-surface rounded-[var(--radius-md)]" style={{ height: 40, width: "80%" }} />
+          <div className="animate-pulse bg-surface rounded-md" style={{ height: 40, width: "80%" }} />
         ) : hashQuery.data?.status === "available" ? (
           <div className="report-hash-block">
             <p className="report-hash-block__label">SHA-256 Digest</p>

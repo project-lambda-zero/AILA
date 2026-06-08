@@ -10,7 +10,7 @@ function WorkspaceSkeleton() {
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {Array.from({ length: 6 }).map((_, index) => (
-        <div key={index} className="animate-pulse bg-surface rounded-[var(--radius-md)]" style={{ height: 136, borderRadius: 10 }} />
+        <div key={index} className="animate-pulse bg-surface rounded-md" style={{ height: 136, borderRadius: 10 }} />
       ))}
     </div>
   );
@@ -36,10 +36,10 @@ export function SbdNfrWorkspacePage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="rounded-2xl border border-amber-500/20 bg-[#141414] p-6 text-amber-50 shadow-[0_0_0_1px_rgba(245,158,11,0.05)]">
+      <section className="rounded-2xl border border-amber-500/20 bg-sbd-panel p-6 text-amber-50 shadow-[0_0_0_1px_rgba(245,158,11,0.05)]">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-3">
-            <p className="font-mono text-xs uppercase tracking-[0.3em] text-amber-500/70">Secure by Design NFR</p>
+            <p className="font-mono text-xs uppercase text-amber-500/70" style={{ letterSpacing: "0.3em" }}>Secure by Design NFR</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Link className={buttonVariants({ variant: "default" })} to="/assessments">
@@ -55,23 +55,23 @@ export function SbdNfrWorkspacePage() {
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <article className="rounded-xl border border-amber-500/10 bg-[#171717] p-4">
-          <p className="font-mono text-xs uppercase tracking-[0.28em] text-amber-500/60">Schema Version</p>
+        <article className="rounded-xl border border-amber-500/10 bg-sbd-card p-4">
+          <p className="font-mono text-xs uppercase text-amber-500/60" style={{ letterSpacing: "0.28em" }}>Schema Version</p>
           <div className="mt-3 flex items-center gap-3">
             <strong className="text-2xl text-amber-100">{schemaVersion ?? "—"}</strong>
             {schemaVersion !== undefined && <AilaBadge severity="medium">v{schemaVersion}</AilaBadge>}
           </div>
         </article>
-        <article className="rounded-xl border border-amber-500/10 bg-[#171717] p-4">
-          <p className="font-mono text-xs uppercase tracking-[0.28em] text-amber-500/60">Sessions</p>
+        <article className="rounded-xl border border-amber-500/10 bg-sbd-card p-4">
+          <p className="font-mono text-xs uppercase text-amber-500/60" style={{ letterSpacing: "0.28em" }}>Sessions</p>
           <strong className="mt-3 block text-2xl text-amber-100">{sessions.length}</strong>
         </article>
-        <article className="rounded-xl border border-amber-500/10 bg-[#171717] p-4">
-          <p className="font-mono text-xs uppercase tracking-[0.28em] text-amber-500/60">Active Work</p>
+        <article className="rounded-xl border border-amber-500/10 bg-sbd-card p-4">
+          <p className="font-mono text-xs uppercase text-amber-500/60" style={{ letterSpacing: "0.28em" }}>Active Work</p>
           <strong className="mt-3 block text-2xl text-amber-100">{activeSessions.length}</strong>
         </article>
-        <article className="rounded-xl border border-amber-500/10 bg-[#171717] p-4">
-          <p className="font-mono text-xs uppercase tracking-[0.28em] text-amber-500/60">Review Queue</p>
+        <article className="rounded-xl border border-amber-500/10 bg-sbd-card p-4">
+          <p className="font-mono text-xs uppercase text-amber-500/60" style={{ letterSpacing: "0.28em" }}>Review Queue</p>
           <strong className="mt-3 block text-2xl text-amber-100">{reviewSessions.length}</strong>
         </article>
       </section>
@@ -80,7 +80,7 @@ export function SbdNfrWorkspacePage() {
         <WorkspaceSkeleton />
       ) : (
         <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <section className="rounded-2xl border border-amber-500/10 bg-[#171717] p-5">
+          <section className="rounded-2xl border border-amber-500/10 bg-sbd-card p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-amber-100">Recent assessments</h2>
@@ -91,7 +91,7 @@ export function SbdNfrWorkspacePage() {
               </Link>
             </div>
             {sessions.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-amber-500/20 bg-[#141414] p-5 text-sm text-amber-100/60">
+              <div className="rounded-xl border border-dashed border-amber-500/20 bg-sbd-panel p-5 text-sm text-amber-100/60">
                 No assessment sessions yet. Start one from the assessments page.
               </div>
             ) : (
@@ -99,7 +99,7 @@ export function SbdNfrWorkspacePage() {
                 {sessions.slice(0, 6).map((session) => {
                   const destination = assessmentStatusDestination(session.id, session.status, firstSectionKey);
                   return (
-                    <div key={session.id} className="rounded-xl border border-amber-500/10 bg-[#141414] p-4">
+                    <div key={session.id} className="rounded-xl border border-amber-500/10 bg-sbd-panel p-4">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <p className="font-medium text-amber-100">{session.project_name}</p>
@@ -124,12 +124,12 @@ export function SbdNfrWorkspacePage() {
             )}
           </section>
 
-          <section className="rounded-2xl border border-amber-500/10 bg-[#171717] p-5">
+          <section className="rounded-2xl border border-amber-500/10 bg-sbd-card p-5">
             <h2 className="text-lg font-semibold text-amber-100">Admin editor</h2>
             <p className="mt-1 text-sm text-amber-100/60">
               Maintain sections, subgroups, questions, mappings, and conditional logic from the schema editor.
             </p>
-            <div className="mt-4 rounded-xl border border-dashed border-amber-500/20 bg-[#141414] p-4 text-sm text-amber-100/70">
+            <div className="mt-4 rounded-xl border border-dashed border-amber-500/20 bg-sbd-panel p-4 text-sm text-amber-100/70">
               <ul className="space-y-2">
                 <li>• Drag to reorder sections and subgroups</li>
                 <li>• Edit question labels, answer type, help text, and dependency rules</li>
@@ -142,7 +142,7 @@ export function SbdNfrWorkspacePage() {
                   Launch Editor
                 </Link>
               ) : (
-                <div className="rounded-lg border border-amber-500/15 bg-[#141414] px-3 py-2 text-xs text-amber-100/60">
+                <div className="rounded-lg border border-amber-500/15 bg-sbd-panel px-3 py-2 text-xs text-amber-100/60">
                   Schema editing is admin-only.
                 </div>
               )}

@@ -49,7 +49,7 @@ function AnswerInput({ question, value, onChange }: AnswerInputProps) {
             onClick={() => onChange(opt)}
             className={
               value === opt
-                ? "bg-amber-500 hover:bg-amber-400 text-[#131313] font-semibold font-mono text-xs"
+                ? "bg-amber-500 hover:bg-amber-400 text-sbd-base font-semibold font-mono text-xs"
                 : "border-amber-500/30 text-amber-400 hover:bg-amber-500/10 font-mono text-xs"
             }
           >
@@ -72,8 +72,8 @@ function AnswerInput({ question, value, onChange }: AnswerInputProps) {
             onClick={() => onChange(tier)}
             className={
               value === tier
-                ? "bg-amber-500 hover:bg-amber-400 text-[#131313] font-semibold font-mono text-xs min-w-[36px]"
-                : "border-amber-500/30 text-amber-400 hover:bg-amber-500/10 font-mono text-xs min-w-[36px]"
+                ? "bg-amber-500 hover:bg-amber-400 text-sbd-base font-semibold font-mono text-xs min-w-9"
+                : "border-amber-500/30 text-amber-400 hover:bg-amber-500/10 font-mono text-xs min-w-9"
             }
           >
             {tier}
@@ -112,7 +112,7 @@ function AnswerInput({ question, value, onChange }: AnswerInputProps) {
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder="Type an answer…"
-      className="bg-[#131313] border-amber-500/20 text-amber-100 placeholder:text-amber-500/40 focus-visible:ring-amber-500/40 font-mono text-sm h-8"
+      className="bg-sbd-base border-amber-500/20 text-amber-100 placeholder:text-amber-500/40 focus-visible:ring-amber-500/40 font-mono text-sm h-8"
     />
   );
 }
@@ -127,13 +127,13 @@ function QuestionPreviewCard({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-2 rounded-[2px] border border-amber-500/10 bg-[#1a1a1a] p-3">
+    <div className="flex flex-col gap-2 rounded-sharp border border-amber-500/10 bg-sbd-input p-3">
       <div className="flex items-start gap-2">
-        <span className="mt-0.5 shrink-0 rounded-[2px] border border-amber-500/30 bg-amber-500/10 px-1 py-0.5 font-mono text-[10px] text-amber-500 uppercase">
+        <span className="mt-0.5 shrink-0 rounded-sharp border border-amber-500/30 bg-amber-500/10 px-1 py-0.5 font-mono text-3xs text-amber-500 uppercase">
           {question.answer_type}
         </span>
         {question.question_type === "scope" && (
-          <span className="mt-0.5 shrink-0 rounded-[2px] border border-cyan-500/30 bg-cyan-500/10 px-1 py-0.5 font-mono text-[10px] text-cyan-400 uppercase">
+          <span className="mt-0.5 shrink-0 rounded-sharp border border-cyan-500/30 bg-cyan-500/10 px-1 py-0.5 font-mono text-3xs text-cyan-400 uppercase">
             scope
           </span>
         )}
@@ -184,7 +184,7 @@ export function LivePreviewDrawer({ open, onClose }: LivePreviewDrawerProps) {
     <Sheet open={open} onOpenChange={(visible) => !visible && onClose()}>
       <SheetContent
         side="right"
-        className="w-full max-w-5xl bg-[#131313] border-l border-amber-500/20 p-0 flex flex-col"
+        className="w-full max-w-5xl bg-sbd-base border-l border-amber-500/20 p-0 flex flex-col"
       >
         <SheetHeader className="flex-none border-b border-amber-500/20 px-6 py-4">
           <div className="flex items-center justify-between gap-4">
@@ -193,7 +193,7 @@ export function LivePreviewDrawer({ open, onClose }: LivePreviewDrawerProps) {
               <SheetTitle className="font-mono text-amber-300 text-base">
                 Live Preview — Draft Schema
               </SheetTitle>
-              <span className="rounded-[2px] border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-400 uppercase tracking-wide">
+              <span className="rounded-sharp border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 font-mono text-3xs font-semibold text-amber-400 uppercase tracking-wide">
                 PREVIEW ONLY — no session created
               </span>
             </div>
@@ -227,8 +227,8 @@ export function LivePreviewDrawer({ open, onClose }: LivePreviewDrawerProps) {
 
         {!isLoading && sections.length > 0 && (
           <div className="flex flex-1 min-h-0 overflow-hidden">
-            <nav className="w-64 shrink-0 overflow-y-auto border-r border-amber-500/20 bg-[#1a1a1a] py-3">
-              <p className="px-4 pb-2 font-mono text-[10px] uppercase tracking-wide text-amber-500/50">
+            <nav className="w-64 shrink-0 overflow-y-auto border-r border-amber-500/20 bg-sbd-input py-3">
+              <p className="px-4 pb-2 font-mono text-3xs uppercase tracking-wide text-amber-500/50">
                 Sections
               </p>
               {visibleSections.map((section) => {
@@ -253,7 +253,7 @@ export function LivePreviewDrawer({ open, onClose }: LivePreviewDrawerProps) {
                     ].join(" ")}>
                       {section.label}
                     </p>
-                    <p className="font-mono text-[10px] text-amber-500/40 mt-0.5">
+                    <p className="font-mono text-3xs text-amber-500/40 mt-0.5">
                       {answered}/{questions.length} answered
                     </p>
                   </button>
@@ -262,13 +262,13 @@ export function LivePreviewDrawer({ open, onClose }: LivePreviewDrawerProps) {
 
               {hiddenSections.length > 0 && (
                 <>
-                  <p className="px-4 pt-3 pb-1 font-mono text-[10px] uppercase tracking-wide text-amber-500/30">
+                  <p className="px-4 pt-3 pb-1 font-mono text-3xs uppercase tracking-wide text-amber-500/30">
                     Conditional (hidden)
                   </p>
                   {hiddenSections.map((section) => (
                     <div key={section.id} className="w-full px-4 py-2 border-l-2 border-transparent">
                       <p className="font-mono text-xs text-amber-500/30 truncate">{section.label}</p>
-                      <p className="font-mono text-[10px] text-amber-500/20 mt-0.5 italic">(hidden — answer triggers)</p>
+                      <p className="font-mono text-3xs text-amber-500/20 mt-0.5 italic">(hidden — answer triggers)</p>
                     </div>
                   ))}
                 </>

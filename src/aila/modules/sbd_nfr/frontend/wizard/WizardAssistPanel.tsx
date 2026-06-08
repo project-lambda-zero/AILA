@@ -26,7 +26,8 @@ export interface WizardAssistPanelProps {
 // Privacy: T-137-15 — chat history is local state only, cleared on close.
 // ──────────────────────────────────────────────────────────────────────────────
 
-const MESSAGE_BASE = "max-w-[85%] rounded-[var(--radius-md)] px-3 py-2 text-sm";
+const MESSAGE_BASE = "rounded-md px-3 py-2 text-sm";
+const MESSAGE_STYLE = { maxWidth: "85%" } as const;
 const MESSAGE_USER = "self-end bg-accent text-badge-text";
 const MESSAGE_ASSISTANT = "self-start bg-surface text-text";
 
@@ -123,12 +124,13 @@ export function WizardAssistPanel({
           <div
             key={i}
             className={`${MESSAGE_BASE} ${msg.role === "user" ? MESSAGE_USER : MESSAGE_ASSISTANT}`}
+            style={MESSAGE_STYLE}
           >
             {msg.content}
           </div>
         ))}
         {isPending && (
-          <div className={`${MESSAGE_BASE} ${MESSAGE_ASSISTANT} opacity-60`}>
+          <div className={`${MESSAGE_BASE} ${MESSAGE_ASSISTANT} opacity-60`} style={MESSAGE_STYLE}>
             <span className="inline-block animate-pulse" aria-label="AI is thinking">
               ···
             </span>
@@ -143,7 +145,7 @@ export function WizardAssistPanel({
       {/* Input area */}
       <div className="p-3 border-t border-border flex gap-2">
         <input
-          className="flex-1 p-2 rounded-[var(--radius-md)] border border-border bg-surface text-text text-sm"
+          className="flex-1 p-2 rounded-md border border-border bg-surface text-text text-sm"
           type="text"
           placeholder="Ask a question..."
           value={inputValue}
@@ -154,7 +156,7 @@ export function WizardAssistPanel({
           maxLength={2000}
         />
         <button
-          className="px-3 py-2 rounded-[var(--radius-md)] bg-accent text-badge-text font-semibold text-sm disabled:opacity-40"
+          className="px-3 py-2 rounded-md bg-accent text-badge-text font-semibold text-sm disabled:opacity-40"
           type="button"
           onClick={() => void handleSend()}
           disabled={isPending || !inputValue.trim()}
