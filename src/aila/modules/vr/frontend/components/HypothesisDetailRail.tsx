@@ -185,7 +185,7 @@ export function HypothesisDetailRail({
         >
           <Chevron open={state.railOpen} />
           <span>Hypotheses</span>
-          <span className="text-[10px] text-text-muted font-mono font-normal">
+          <span className="text-3xs text-text-muted font-mono font-normal">
             ({items.length}
             {items.length > 0 ? (
               <>
@@ -201,7 +201,7 @@ export function HypothesisDetailRail({
           <button
             type="button"
             onClick={allExpanded ? collapseAll : expandAll}
-            className="text-[10px] text-text-muted hover:text-text-accent font-mono transition-colors"
+            className="text-3xs text-text-muted hover:text-text-accent font-mono transition-colors"
             title={allExpanded ? "Collapse every hypothesis row" : "Expand every hypothesis row"}
           >
             {allExpanded ? "collapse all" : "expand all"}
@@ -240,7 +240,7 @@ function Chevron({ open }: { open: boolean }) {
   return (
     <span
       aria-hidden="true"
-      className="inline-block w-3 text-text-muted font-mono text-[10px] leading-none transition-transform"
+      className="inline-block w-3 text-text-muted font-mono text-3xs leading-none transition-transform"
       style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
     >
       ▶
@@ -309,7 +309,7 @@ function HypothesisRow({
             </p>
           ) : null}
           {(h.live_in_branches.length > 0 || h.rejected_in_branches.length > 0) ? (
-            <div className="flex flex-wrap gap-2 mt-1 text-[10px] text-text-muted font-mono">
+            <div className="flex flex-wrap gap-2 mt-1 text-3xs text-text-muted font-mono">
               {h.live_in_branches.length > 0 ? (
                 <span>live on {h.live_in_branches.length} branch(es)</span>
               ) : null}

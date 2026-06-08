@@ -2,10 +2,10 @@
  *  Green = connected, amber = reconnecting, red = disconnected. */
 export type LiveStatus = "connected" | "reconnecting" | "disconnected";
 
-const TONE: Record<LiveStatus, string> = {
-  connected: "bg-green-500 shadow-green-500/50",
-  reconnecting: "bg-amber-500 shadow-amber-500/50 animate-pulse",
-  disconnected: "bg-red-500 shadow-red-500/50",
+const TONE: Record<LiveStatus, { color: string; pulse: boolean }> = {
+  connected:    { color: "#22c55e", pulse: false }, // green-500
+  reconnecting: { color: "#f59e0b", pulse: true },  // amber-500
+  disconnected: { color: "#ef4444", pulse: false }, // red-500
 };
 
 const LABEL: Record<LiveStatus, string> = {
@@ -21,10 +21,15 @@ export function LiveDot({
   status: LiveStatus;
   showLabel?: boolean;
 }) {
+  const tone = TONE[status];
   return (
-    <span className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wide">
+    <span className="inline-flex items-center gap-1.5 text-3xs font-mono uppercase tracking-wide">
       <span
-        className={`w-1.5 h-1.5 rounded-full shadow-[0_0_4px] ${TONE[status]}`}
+        className={`w-1.5 h-1.5 rounded-full ${tone.pulse ? "animate-pulse" : ""}`}
+        style={{
+          backgroundColor: tone.color,
+          boxShadow: `0 0 4px ${tone.color}80`,
+        }}
       />
       {showLabel && (
         <span className="text-text-muted">{LABEL[status]}</span>

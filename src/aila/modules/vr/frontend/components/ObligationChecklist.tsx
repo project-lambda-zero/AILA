@@ -117,7 +117,7 @@ export function ObligationChecklist({
                   {o.severity}
                 </AilaBadge>
                 {o.state === "waived" && o.waive_reason && (
-                  <span className="text-[10px] text-text-muted italic">
+                  <span className="text-3xs text-text-muted italic">
                     waived: {o.waive_reason}
                   </span>
                 )}
@@ -125,7 +125,7 @@ export function ObligationChecklist({
               {o.evidence_ref && (
                 <a
                   href={o.evidence_ref}
-                  className="text-[10px] font-mono text-text-muted hover:text-foreground hover:underline"
+                  className="text-3xs font-mono text-text-muted hover:text-foreground hover:underline"
                 >
                   ↪ evidence
                 </a>

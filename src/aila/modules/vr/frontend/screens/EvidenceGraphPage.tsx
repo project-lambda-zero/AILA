@@ -132,7 +132,7 @@ export function EvidenceGraphPage() {
       <ServerSnapshotStatus investigationId={investigationId} />
 
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-rail gap-3">
         <EvidenceGraph
           nodes={nodes}
           edges={edges}
@@ -170,11 +170,11 @@ export function EvidenceGraphPage() {
               <p className="font-mono text-foreground break-all">
                 {selected.label}
               </p>
-              <p className="text-[10px] text-text-muted font-mono break-all">
+              <p className="text-3xs text-text-muted font-mono break-all">
                 id: {selected.id}
               </p>
               {selected.meta && (
-                <pre className="text-[10px] font-mono text-text-muted whitespace-pre-wrap max-h-60 overflow-y-auto">
+                <pre className="text-3xs font-mono text-text-muted whitespace-pre-wrap max-h-60 overflow-y-auto">
                   {JSON.stringify(selected.meta, null, 2)}
                 </pre>
               )}
@@ -186,7 +186,7 @@ export function EvidenceGraphPage() {
                     href={url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-[10px] text-accent hover:underline mt-1 inline-block"
+                    className="text-3xs text-accent hover:underline mt-1 inline-block"
                   >
                     open {selected.kind} page in new tab →
                   </a>
@@ -195,7 +195,7 @@ export function EvidenceGraphPage() {
               {selected.kind === "obligation" && (
                 <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40">
                   <AilaBadge severity="info" size="sm">operator-only</AilaBadge>
-                  <p className="text-[10px] text-text-muted mt-1">
+                  <p className="text-3xs text-text-muted mt-1">
                     "Manually close" — backend pending.
                   </p>
                 </div>
@@ -293,13 +293,13 @@ function ServerSnapshotStatus({
               : "server layout in use"}
         </AilaBadge>
         {data && (
-          <span className="text-[10px] text-text-muted ml-2 font-mono">
+          <span className="text-3xs text-text-muted ml-2 font-mono">
             layout={data.data.layout} · {data.data.nodes.length} nodes ·{" "}
             {data.data.edges.length} edges
           </span>
         )}
       </div>
-      <p className="text-[10px] text-text-muted">
+      <p className="text-3xs text-text-muted">
         Coordinates come from the backend so they stay stable across
         operators + sessions. The picker below only matters when the
         backend snapshot isn't available.

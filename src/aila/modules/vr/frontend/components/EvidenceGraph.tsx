@@ -300,12 +300,12 @@ export function EvidenceGraph({
                 aria-label={`${n.kind} ${n.label}${n.state ? ` (${n.state})` : ""}`}
                 role="article"
               >
-                <div className="text-[10px] uppercase opacity-70">{n.kind}</div>
-                <div className="text-xs font-mono truncate max-w-[180px]">
+                <div className="text-3xs uppercase opacity-70">{n.kind}</div>
+                <div className="text-xs font-mono truncate" style={{ maxWidth: 180 }}>
                   {n.label}
                 </div>
                 {n.state && (
-                  <div className="text-[10px] opacity-80 mt-1">{n.state}</div>
+                  <div className="text-3xs opacity-80 mt-1">{n.state}</div>
                 )}
               </div>
             ),
@@ -433,7 +433,7 @@ export function EvidenceGraph({
       </div>
 
       {/* Legend */}
-      <div className="flex items-center gap-2 flex-wrap text-[10px] text-text-muted">
+      <div className="flex items-center gap-2 flex-wrap text-3xs text-text-muted">
         <span>Legend:</span>
         {(Object.keys(NODE_TONE) as GraphNodeKind[]).map((k) => {
           const tone = NODE_TONE[k];

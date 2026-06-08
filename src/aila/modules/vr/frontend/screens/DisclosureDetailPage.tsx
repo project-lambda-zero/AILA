@@ -389,7 +389,7 @@ export function DisclosureDetailPage() {
           />
         )}
       </ol>
-      <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40 text-[10px] text-text-muted">
+      <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40 text-3xs text-text-muted">
         Per-transition rows (who advanced status / when / why) require a
         VRDisclosureTransitionRecord on the backend. Currently only
         first + most-recent transitions render.
@@ -417,7 +417,7 @@ function TimelineRow({
             {time ? new Date(time).toLocaleString() : "—"}
           </span>
         </div>
-        {note && <p className="text-text-muted text-[10px] mt-0.5">{note}</p>}
+        {note && <p className="text-text-muted text-3xs mt-0.5">{note}</p>}
       </div>
     </li>
   );
@@ -454,7 +454,7 @@ function DisclosureSectionsEditor({
         <h2 className="text-sm font-semibold text-foreground">
           Structured advisory editor
         </h2>
-        <p className="text-[10px] text-text-muted mt-0.5">
+        <p className="text-3xs text-text-muted mt-0.5">
           Save replaces the body; Regenerate refills every section
           from the finding ({regeneratedAt
             ? `last regenerated ${new Date(regeneratedAt).toLocaleString()}`

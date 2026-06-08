@@ -2056,6 +2056,22 @@ a:hover {
    is 0.1em; this widens it for the typewriter-meta aesthetic. */
 
 @utility tracking-cyber { letter-spacing: 0.2em; }
+@utility tracking-cyber-sm { letter-spacing: 0.14em; }
+
+/* =====================================================================
+   RESPONSIVE GRID UTILITIES — variant-aware via @utility.
+   `grid-cols-rail` produces `grid-template-columns: 1fr 280px;` for the
+   evidence-graph two-column layout (content + 280px right rail), used
+   only at the lg breakpoint via `lg:grid-cols-rail`.
+   ===================================================================== */
+
+@utility grid-cols-rail { grid-template-columns: 1fr 280px; }
+
+/* `grid-cols-key-value` produces a static `max-content 1fr` 2-column
+   layout used by deliberation/argument lists where the key is auto-sized
+   to its content and the value fills the remainder. */
+
+@utility grid-cols-key-value { grid-template-columns: max-content 1fr; }
 
 /* =====================================================================
    UTILITIES — loading skeleton, focus ring, severity pulse

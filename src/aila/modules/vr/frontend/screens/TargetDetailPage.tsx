@@ -311,20 +311,20 @@ function HypothesesTab({ targetId }: { targetId: string }) {
                   {r.state}
                 </AilaBadge>
               </td>
-              <td className="px-3 py-2 min-w-0 max-w-[260px]">
+              <td className="px-3 py-2 min-w-0" style={{ maxWidth: 260 }}>
                 <Link
                   to={`/vr/investigations/${r.investigation_id}`}
                   className="text-foreground hover:underline break-words text-xs"
                 >
                   {r.investigation_title}
                 </Link>
-                <div className="text-[10px] font-mono text-text-muted mt-0.5">
+                <div className="text-3xs font-mono text-text-muted mt-0.5">
                   {r.investigation_kind} · {r.investigation_status}
                 </div>
               </td>
               <td className="px-3 py-2 min-w-0 break-words">
                 <div className="text-foreground">{r.claim}</div>
-                <div className="text-[10px] font-mono text-text-muted mt-0.5">
+                <div className="text-3xs font-mono text-text-muted mt-0.5">
                   {r.id}
                 </div>
               </td>
@@ -440,7 +440,7 @@ function NotesTab({ targetId }: { targetId: string }) {
       placeholder="Free-text notes about this target. Stays in your browser until the backend per-target notes API ships."
       className="w-full px-3 py-2 text-sm font-mono rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
     />
-    <p className="text-[10px] text-text-muted mt-1">
+    <p className="text-3xs text-text-muted mt-1">
       Saved locally in your browser ({savedAt ?? "not saved yet"}). Spec §1.4
       wants project-scoped sync — backend pending.
     </p></AilaCard>

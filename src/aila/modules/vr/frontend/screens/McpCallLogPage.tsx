@@ -111,7 +111,7 @@ export function McpCallLogPage() {
                   <td className="px-2 py-1 font-mono text-right text-text-muted">
                     {r.latency_ms != null ? `${r.latency_ms}ms` : "—"}
                   </td>
-                  <td className="px-2 py-1 font-mono text-text-danger truncate max-w-[28ch]" title={r.error_excerpt ?? ""}>
+                  <td className="px-2 py-1 font-mono text-text-danger truncate" style={{ maxWidth: "28ch" }} title={r.error_excerpt ?? ""}>
                     {r.error_excerpt ?? ""}
                   </td>
                 </tr>

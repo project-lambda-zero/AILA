@@ -50,7 +50,7 @@ export function NdayStageView({ stages }: { stages: ReadonlyArray<StageData> }) 
           <div className="flex items-start gap-3">
             <div
               className={
-                "w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border-2 relative z-10 bg-base " +
+                "w-6 h-6 rounded-full flex items-center justify-center text-3xs font-bold border-2 relative z-10 bg-base " +
                 (stage.status === "complete"
                   ? "border-green-500 text-green-500"
                   : stage.status === "failed"
@@ -83,7 +83,7 @@ export function NdayStageView({ stages }: { stages: ReadonlyArray<StageData> }) 
                           stage.onRewind!();
                         }
                       }}
-                      className="text-[10px] font-mono px-2 py-0.5 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                      className="text-3xs font-mono px-2 py-0.5 rounded bg-surface border border-border-default hover:bg-surface-hover"
                     >
                       ↶ rewind
                     </button>

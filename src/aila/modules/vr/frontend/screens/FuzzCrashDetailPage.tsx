@@ -231,7 +231,7 @@ export function FuzzCrashDetailPage() {
           </li>
         )}
       </ol>
-      <p className="mt-2 text-[10px] text-text-muted">
+      <p className="mt-2 text-3xs text-text-muted">
         Per-turn reasoning rows (decompile_function / data_flow_trace /
         hypothesis_create / exploitability_assess from §2.4) still
         require a crash → reasoning-turn join table — backend pending.

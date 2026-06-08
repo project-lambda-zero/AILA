@@ -263,7 +263,7 @@ export function NewProjectWizard() {
                     : "drop a .elf / .exe / .apk / .ipa / .so / .o"
                 }
               />
-              <p className="text-[10px] text-text-muted mt-1">
+              <p className="text-3xs text-text-muted mt-1">
                 The file streams to the IDA MCP after the project
                 is created (the upload happens during step 3 submit).
                 Drop again to replace.
@@ -466,7 +466,7 @@ function WizardStepper({ step }: { step: Step }) {
           <li key={label} className="flex items-center flex-1 last:flex-initial gap-2">
             <div
               className={
-                "w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border-2 " +
+                "w-6 h-6 rounded-full flex items-center justify-center text-3xs font-bold border-2 " +
                 (active
                   ? "bg-accent border-accent text-white"
                   : done

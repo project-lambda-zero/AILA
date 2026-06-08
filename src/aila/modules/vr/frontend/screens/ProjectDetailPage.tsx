@@ -288,7 +288,7 @@ function OverviewTab({
           </ul>
         )}
         {activeInvs.length > 0 && (
-          <p className="text-[10px] text-text-muted mt-2">
+          <p className="text-3xs text-text-muted mt-2">
             {activeInvs.length} active
           </p>
         )}</AilaCard>
@@ -622,7 +622,7 @@ function RecentReasoningRollup({
       </h3>
       <Link
         to={`/vr/investigations/${investigationId}`}
-        className="text-[10px] text-accent hover:underline"
+        className="text-3xs text-accent hover:underline"
       >
         full timeline →
       </Link>
@@ -676,7 +676,7 @@ function EventRow({
       <span className="w-2 h-2 rounded-full bg-accent mt-1.5 flex-shrink-0" />
       <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
         <span className="font-mono text-foreground truncate">{label}</span>
-        <span className="text-text-muted text-[10px] whitespace-nowrap">
+        <span className="text-text-muted text-3xs whitespace-nowrap">
           {time ? new Date(time).toLocaleString() : "—"}
         </span>
       </div>
@@ -703,7 +703,7 @@ function WorkstationHeartbeatCard({
         </h3>
         <AilaBadge severity="info" size="sm">none assigned</AilaBadge>
       </div>
-      <p className="text-[10px] text-text-muted mt-2">
+      <p className="text-3xs text-text-muted mt-2">
         The project did not pick an analysis system. Edit the
         project to attach one (project create → step 2 wizard).
       </p></AilaCard>
@@ -731,7 +731,7 @@ function WorkstationHeartbeatCard({
       >
         {sys ? `${sys.name} (${sys.host})` : `system #${systemId}`}
       </AilaBadge>
-      <span className="text-[10px] text-text-muted ml-auto">
+      <span className="text-3xs text-text-muted ml-auto">
         {isLoading
           ? "probing…"
           : heartbeat

@@ -56,7 +56,7 @@ export function WorkflowStepper({
         const isComplete = isDone || (currentIdx >= 0 && i < currentIdx);
         const isPending = !isComplete && !isCurrent && !isFailed;
 
-        let circleClasses = "w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border ";
+        let circleClasses = "w-6 h-6 rounded-full flex items-center justify-center text-3xs font-bold border ";
         let labelClasses = "text-xs ";
         let connectorClasses = "h-px flex-1 ";
 

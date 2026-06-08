@@ -191,7 +191,7 @@ function InvestigationCard({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 min-w-0">
           <span
-            className="text-[14px] font-medium text-foreground truncate"
+            className="text-sm font-medium text-foreground truncate"
             title={inv.title}
           >
             {inv.title}
@@ -205,7 +205,7 @@ function InvestigationCard({
             />
           )}
           <span
-            className="hidden sm:inline shrink-0 px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider text-text-muted"
+            className="hidden sm:inline shrink-0 px-1.5 py-0.5 rounded text-4xs font-mono uppercase tracking-wider text-text-muted"
             style={{
               border:
                 "1px solid color-mix(in srgb, var(--color-text-muted) 25%, transparent)",
@@ -214,7 +214,7 @@ function InvestigationCard({
             {inv.kind}
           </span>
           <span
-            className="hidden md:inline shrink-0 text-[10px] font-mono uppercase tracking-wider"
+            className="hidden md:inline shrink-0 text-3xs font-mono uppercase tracking-wider"
             style={{ color: dotColor }}
           >
             {inv.pause_reason ? `${inv.status}:${inv.pause_reason}` : inv.status}
@@ -227,14 +227,14 @@ function InvestigationCard({
           </span>
         </div>
         <div
-          className="mt-0.5 text-[11px] font-mono text-text-muted truncate"
+          className="mt-0.5 text-2xs font-mono text-text-muted truncate"
           title={targetName}
         >
           target: {targetName}
         </div>
         {inv.primary_outcome_verdict_head && (
           <div
-            className="mt-0.5 text-[12px] truncate"
+            className="mt-0.5 text-xs truncate"
             style={{ color: verdictColor }}
             title={inv.primary_outcome_verdict_head}
           >
@@ -247,7 +247,7 @@ function InvestigationCard({
       <div className="flex items-center gap-3 shrink-0">
         {hasFindings && (
           <span
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold"
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-mono font-semibold"
             title={`${findingsCount} linked findings`}
             style={{
               background: "color-mix(in srgb, #97dbbe 14%, transparent)",
@@ -278,7 +278,7 @@ function InvestigationCard({
           </AilaBadge>
         )}
         <span
-          className="text-[11px] font-mono text-text-muted whitespace-nowrap w-16 text-right"
+          className="text-2xs font-mono text-text-muted whitespace-nowrap w-16 text-right"
           title={inv.created_at ?? ""}
         >
           {relativeTime(inv.created_at)}
@@ -346,7 +346,7 @@ function StatusPill({
       key={id || "all"}
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono rounded-md border uppercase tracking-wider transition-colors"
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-2xs font-mono rounded-md border uppercase tracking-wider transition-colors"
       style={
         active
           ? {
@@ -370,7 +370,7 @@ function StatusPill({
       {label}
       {typeof count === "number" && (
         <span
-          className="font-mono text-[10px]"
+          className="font-mono text-3xs"
           style={{ color: active ? color : "var(--color-text-muted)" }}
         >
           {count}
@@ -614,7 +614,7 @@ export function InvestigationsListPage() {
               </>
             )}
           </div>
-          <span className="text-[11px] font-mono text-text-muted">
+          <span className="text-2xs font-mono text-text-muted">
             {kpis.totalMessages.toLocaleString()} total turns
           </span>
         </div>
@@ -849,7 +849,7 @@ export function InvestigationsListPage() {
 
       {/* Secondary filter bar */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[220px] max-w-md">
+        <div className="relative flex-1 max-w-md" style={{ minWidth: 220 }}>
           <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted pointer-events-none" />
           <input
             type="search"
@@ -986,7 +986,7 @@ export function InvestigationsListPage() {
             clear
           </button>
         )}
-        <span className="text-[11px] font-mono text-text-muted ml-auto">
+        <span className="text-2xs font-mono text-text-muted ml-auto">
           {sorted.length}
           <span className="text-text-muted/50"> / {totalRaw}</span>
         </span>
@@ -1065,19 +1065,20 @@ export function InvestigationsListPage() {
                     <CaretDown className="h-3.5 w-3.5 text-text-muted" />
                   )}
                   <span
-                    className="font-mono text-[10px] uppercase tracking-[0.18em] text-text-muted shrink-0"
+                    className="font-mono text-3xs uppercase text-text-muted shrink-0"
+                    style={{ letterSpacing: "0.18em" }}
                   >
                     target
                   </span>
-                  <span className="text-[13px] font-semibold text-foreground truncate">
+                  <span className="font-semibold text-foreground truncate" style={{ fontSize: 13 }}>
                     {targetName}
                   </span>
                   {targetKind && (
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-text-muted">
+                    <span className="text-3xs font-mono uppercase tracking-wider text-text-muted">
                       · {targetKind}
                     </span>
                   )}
-                  <span className="text-[10px] font-mono text-text-muted">
+                  <span className="text-3xs font-mono text-text-muted">
                     · {items.length} investigation
                     {items.length === 1 ? "" : "s"}
                   </span>

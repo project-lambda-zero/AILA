@@ -44,7 +44,7 @@ export function CVSSCalculator({
           <p className="text-xs text-text-muted">
             <strong>CVSS v4.0 calculator — backend pending.</strong>
           </p>
-          <p className="text-[10px] text-text-muted mt-2">
+          <p className="text-3xs text-text-muted mt-2">
             v4.0 introduces 11 base metrics + threat + environmental +
             supplemental groups + a fundamentally different score
             formula. The spec calls for both v3.1 + v4.0 because some
@@ -53,7 +53,7 @@ export function CVSSCalculator({
             specification-document §7 computation; tracked as a
             v0.6 follow-up.
           </p>
-          <p className="text-[10px] text-text-muted mt-2 font-mono">
+          <p className="text-3xs text-text-muted mt-2 font-mono">
             Use v3.1 above to produce a vector now.
           </p>
         </div>
@@ -96,7 +96,7 @@ export function CVSSCalculator({
 
       <div className="pt-3 border-t border-border-default flex items-center gap-2 flex-wrap">
         <CVSSBadge score={score} vector={vector} />
-        <code className="text-[10px] font-mono text-text-muted break-all">
+        <code className="text-3xs font-mono text-text-muted break-all">
           {vector || "fill all 8 metrics →"}
         </code>
         <AilaBadge severity="info" size="sm">

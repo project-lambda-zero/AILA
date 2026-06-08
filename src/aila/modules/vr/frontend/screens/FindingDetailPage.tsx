@@ -163,7 +163,7 @@ export function FindingDetailPage() {
       <p className="font-mono text-sm text-foreground">
         {f.vulnerable_function || "—"}
       </p>
-      <p className="text-[10px] text-text-muted mt-1">
+      <p className="text-3xs text-text-muted mt-1">
         Decompiled source rendering pending — open the function in IDA on the
         research workstation to view pseudocode.
       </p></AilaCard>
@@ -209,21 +209,21 @@ export function FindingDetailPage() {
                 onClick={() => {
                   void navigator.clipboard?.writeText(f.poc?.code ?? "");
                 }}
-                className="px-2 py-0.5 text-[10px] font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
+                className="px-2 py-0.5 text-3xs font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
               >
                 Copy
               </button>
               <button
                 type="button"
                 onClick={downloadPoC}
-                className="px-2 py-0.5 text-[10px] font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
+                className="px-2 py-0.5 text-3xs font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
                 title={`Download ${pocFileName}`}
               >
                 Download
               </button>
               <Link
                 to={`/vr/projects/${projectId}/findings/${findingId}/exploit`}
-                className="px-2 py-0.5 text-[10px] font-mono rounded bg-accent text-white hover:bg-accent/90"
+                className="px-2 py-0.5 text-3xs font-mono rounded bg-accent text-white hover:bg-accent/90"
               >
                 Open in editor →
               </Link>
@@ -243,7 +243,7 @@ export function FindingDetailPage() {
       {/* 6 — ASAN report */}
       <AilaCard  techBorder glow><Section title="ASAN report" />
       {f.poc?.asan_report ? (
-        <pre className="text-[11px] font-mono p-3 rounded bg-surface border border-border-default overflow-x-auto whitespace-pre max-h-96 overflow-y-auto">
+        <pre className="text-2xs font-mono p-3 rounded bg-surface border border-border-default overflow-x-auto whitespace-pre max-h-96 overflow-y-auto">
           {f.poc.asan_report}
         </pre>
       ) : (
@@ -342,7 +342,7 @@ export function FindingDetailPage() {
           </dd>
         </div>
       </dl>
-      <p className="text-[10px] text-text-muted mt-3">
+      <p className="text-3xs text-text-muted mt-3">
         Inline editing of these fields ships in the Advisory Editor (Tier 2).
         For now use PATCH{" "}
         <code>/vr/projects/{projectId}/findings/{findingId}/disclosure</code>.
@@ -371,7 +371,7 @@ export function FindingDetailPage() {
         emptyHint="No obligation API yet — see Tier 2 of docs/VR_FRONTEND_GAP_AUDIT.md."
       /></AilaCard>
 
-      <p className="text-[10px] text-text-muted text-center">
+      <p className="text-3xs text-text-muted text-center">
         <button
           type="button"
           onClick={() => navigate(-1)}
@@ -411,10 +411,10 @@ function PendingBackend({
       <AilaBadge severity="info" size="sm">
         backend pending
       </AilaBadge>
-      <p className="text-[10px] font-mono text-text-muted mt-1">
+      <p className="text-3xs font-mono text-text-muted mt-1">
         Missing field: <code>{field}</code>
       </p>
-      <p className="text-[10px] text-text-muted mt-1">{hint}</p>
+      <p className="text-3xs text-text-muted mt-1">{hint}</p>
     </div>
   );
 }

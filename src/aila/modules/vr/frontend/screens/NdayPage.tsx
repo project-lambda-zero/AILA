@@ -87,7 +87,7 @@ export function NdayPage() {
             {primaryFinding.root_cause}
           </p>
           {primaryFinding.vulnerable_function && (
-            <p className="text-[10px] text-text-muted mt-1 font-mono">
+            <p className="text-3xs text-text-muted mt-1 font-mono">
               Function: {primaryFinding.vulnerable_function}
             </p>
           )}
@@ -166,7 +166,7 @@ export function NdayPage() {
       <AilaCard className="border-dashed" techBorder glow><AilaBadge severity="info" size="sm">
         synthesised view
       </AilaBadge>
-      <p className="text-[10px] text-text-muted mt-1">
+      <p className="text-3xs text-text-muted mt-1">
         Per §1.11: each stage state is inferred from project + finding data.
         Real stage tracking (rewind / per-stage operator notes / BinDiff
         score / commit hash) is backend pending.

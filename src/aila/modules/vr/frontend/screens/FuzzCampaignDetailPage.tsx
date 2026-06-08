@@ -179,7 +179,7 @@ export function FuzzCampaignDetailPage() {
         </div>
       </div>
       {campaign.remote_pid && (
-        <p className="text-[10px] text-text-muted font-mono mb-2">
+        <p className="text-3xs text-text-muted font-mono mb-2">
           remote_pid={campaign.remote_pid}
           {campaign.remote_corpus_dir
             ? ` · corpus=${campaign.remote_corpus_dir}`
@@ -222,7 +222,7 @@ export function FuzzCampaignDetailPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
           <h3 className="text-xs font-semibold text-foreground">Rebuild harness</h3>
-          <p className="text-[10px] text-text-muted mt-1">
+          <p className="text-3xs text-text-muted mt-1">
             Re-runs harness generation with the last spec. Spec §1.5
             calls for this to be invokable from this drawer without
             leaving the page. POST /vr/fuzz/campaigns/{cid}/rebuild
@@ -238,12 +238,12 @@ export function FuzzCampaignDetailPage() {
         </div>
         <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
           <h3 className="text-xs font-semibold text-foreground">Tune</h3>
-          <p className="text-[10px] text-text-muted mt-1">
+          <p className="text-3xs text-text-muted mt-1">
             Adjust timeout / dictionary / mutation rate. Reads
             engine_config + strategy_config from the current campaign;
             PATCH endpoint pending.
           </p>
-          <dl className="mt-2 text-[10px] font-mono grid grid-cols-2 gap-1 text-text-muted">
+          <dl className="mt-2 text-3xs font-mono grid grid-cols-2 gap-1 text-text-muted">
             <dt>engine_config</dt>
             <dd className="truncate">
               {Object.keys(campaign.engine_config).length} keys
@@ -373,7 +373,7 @@ export function FuzzCampaignDetailPage() {
         <AilaBadge severity="info" size="sm">
           backend pending
         </AilaBadge>
-        <p className="text-[10px] text-text-muted mt-2">
+        <p className="text-3xs text-text-muted mt-2">
           Spec calls for per-instance CPU / memory / disk-write-rate polled
           from the workstation every 10 s.{" "}
           {campaign.analysis_system_id
@@ -388,7 +388,7 @@ export function FuzzCampaignDetailPage() {
           Crashes ({filteredCrashes.length}
           {filteredCrashes.length !== crashes.length && ` of ${crashes.length}`})
         </h2>
-        <div className="flex items-center gap-1 flex-wrap text-[10px]">
+        <div className="flex items-center gap-1 flex-wrap text-3xs">
           <span className="text-text-muted">Show:</span>
           {(["all", "exploitable", "unique-stack", "untriaged"] as const).map((chip) => (
             <button
@@ -498,7 +498,7 @@ function CoverageChart({ campaignId }: { campaignId: string }) {
         size="sm"
         ariaLabel="Coverage percent over time"
       />
-      <p className="text-[10px] text-text-muted font-mono">
+      <p className="text-3xs text-text-muted font-mono">
         {series.length} samples · latest: {points.at(-1)?.coverage_pct ?? 0}% cov
         · {points.at(-1)?.corpus_size ?? 0} corpus
         · {points.at(-1)?.execs_per_sec?.toFixed(0) ?? 0} exec/s

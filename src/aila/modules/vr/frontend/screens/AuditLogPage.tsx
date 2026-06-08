@@ -49,7 +49,7 @@ export function AuditLogPage() {
       <AilaCard className="border-dashed" techBorder glow><AilaBadge severity="info" size="sm">
         backend pending
       </AilaBadge>
-      <p className="text-[10px] text-text-muted mt-1">
+      <p className="text-3xs text-text-muted mt-1">
         A dedicated VRAuditEventRecord table (operator action /
         actor_id / target / details / timestamp) isn't on the
         schema yet. v0.5 surfaces what's queryable today: operator-
@@ -135,7 +135,7 @@ export function AuditLogPage() {
                 >
                   {e.label}
                 </Link>
-                <span className="text-text-muted text-[10px] ml-2">
+                <span className="text-text-muted text-3xs ml-2">
                   {e.time
                     ? new Date(e.time).toLocaleString()
                     : "—"}
