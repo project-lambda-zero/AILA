@@ -16,17 +16,15 @@
  * shadcn Button, phosphor icons, Tailwind utilities (per feedback_design_taste).
  */
 import { useQuery } from "@tanstack/react-query";
-import {
-  HeartbeatIcon,
-  ArrowClockwise,
-  Database,
-  CloudArrowDown,
-  Cpu,
-  HardDrives,
-  Plugs,
-  Graph,
-  Stack,
-} from "@phosphor-icons/react";
+import { HeartbeatIcon } from "@phosphor-icons/react/dist/csr/Heartbeat";
+import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
+import { Database } from "@phosphor-icons/react/dist/csr/Database";
+import { CloudArrowDown } from "@phosphor-icons/react/dist/csr/CloudArrowDown";
+import { Cpu } from "@phosphor-icons/react/dist/csr/Cpu";
+import { HardDrives } from "@phosphor-icons/react/dist/csr/HardDrives";
+import { Plugs } from "@phosphor-icons/react/dist/csr/Plugs";
+import { Graph } from "@phosphor-icons/react/dist/csr/Graph";
+import { Stack } from "@phosphor-icons/react/dist/csr/Stack";
 import type { ComponentType } from "react";
 
 import { AilaCard } from "@/components/aila/AilaCard";

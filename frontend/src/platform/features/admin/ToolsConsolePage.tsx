@@ -11,7 +11,10 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Wrench, Lock, MagnifyingGlass, ArrowClockwise } from "@phosphor-icons/react";
+import { Wrench } from "@phosphor-icons/react/dist/csr/Wrench";
+import { Lock } from "@phosphor-icons/react/dist/csr/Lock";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";

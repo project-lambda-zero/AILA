@@ -8,7 +8,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { UsersThree, Plus } from "@phosphor-icons/react";
+import { UsersThree } from "@phosphor-icons/react/dist/csr/UsersThree";
+import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
 import { useNavigate } from "react-router";
 
 import { AilaCard } from "@/components/aila/AilaCard";

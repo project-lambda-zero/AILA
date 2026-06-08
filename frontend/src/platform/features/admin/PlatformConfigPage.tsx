@@ -11,7 +11,10 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { GearSix, Pencil, X, Check } from "@phosphor-icons/react";
+import { GearSix } from "@phosphor-icons/react/dist/csr/GearSix";
+import { Pencil } from "@phosphor-icons/react/dist/csr/Pencil";
+import { X } from "@phosphor-icons/react/dist/csr/X";
+import { Check } from "@phosphor-icons/react/dist/csr/Check";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";

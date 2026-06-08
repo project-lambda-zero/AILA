@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
-import { Tag as TagIcon, Plus, Trash } from "@phosphor-icons/react";
+import { Tag as TagIcon } from "@phosphor-icons/react/dist/csr/Tag";
+import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";

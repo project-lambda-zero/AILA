@@ -10,12 +10,10 @@
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  CurrencyDollar,
-  TrendUp,
-  TrendDown,
-  ChartLineUp,
-} from "@phosphor-icons/react";
+import { CurrencyDollar } from "@phosphor-icons/react/dist/csr/CurrencyDollar";
+import { TrendUp } from "@phosphor-icons/react/dist/csr/TrendUp";
+import { TrendDown } from "@phosphor-icons/react/dist/csr/TrendDown";
+import { ChartLineUp } from "@phosphor-icons/react/dist/csr/ChartLineUp";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";

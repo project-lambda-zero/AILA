@@ -11,7 +11,10 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
 import { useNavigate, useParams } from "react-router";
-import { UserPlus, Trash, PencilSimple, ArrowLeft } from "@phosphor-icons/react";
+import { UserPlus } from "@phosphor-icons/react/dist/csr/UserPlus";
+import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
+import { PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
+import { ArrowLeft } from "@phosphor-icons/react/dist/csr/ArrowLeft";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";

@@ -13,12 +13,10 @@
  */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowsCounterClockwise,
-  Pause,
-  Queue,
-  Skull,
-} from "@phosphor-icons/react";
+import { ArrowsCounterClockwise } from "@phosphor-icons/react/dist/csr/ArrowsCounterClockwise";
+import { Pause } from "@phosphor-icons/react/dist/csr/Pause";
+import { Queue } from "@phosphor-icons/react/dist/csr/Queue";
+import { Skull } from "@phosphor-icons/react/dist/csr/Skull";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";

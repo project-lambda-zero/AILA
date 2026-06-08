@@ -18,7 +18,10 @@
 
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { GitBranch, ArrowClockwise, Copy, Check } from "@phosphor-icons/react";
+import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
+import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
+import { Copy } from "@phosphor-icons/react/dist/csr/Copy";
+import { Check } from "@phosphor-icons/react/dist/csr/Check";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";

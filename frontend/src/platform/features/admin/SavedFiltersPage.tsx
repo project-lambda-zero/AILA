@@ -8,7 +8,10 @@
  */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookmarkSimple, PencilSimple, Plus, Trash } from "@phosphor-icons/react";
+import { BookmarkSimple } from "@phosphor-icons/react/dist/csr/BookmarkSimple";
+import { PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
+import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";

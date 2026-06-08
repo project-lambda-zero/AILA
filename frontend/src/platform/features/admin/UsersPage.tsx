@@ -11,7 +11,8 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { Users, UserPlus } from "@phosphor-icons/react";
+import { Users } from "@phosphor-icons/react/dist/csr/Users";
+import { UserPlus } from "@phosphor-icons/react/dist/csr/UserPlus";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";

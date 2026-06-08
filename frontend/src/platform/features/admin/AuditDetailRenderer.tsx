@@ -18,7 +18,8 @@
  * Tailwind utilities) are used -- no new CSS classes are introduced.
  */
 import { useState, useCallback } from "react";
-import { Copy, Check } from "@phosphor-icons/react";
+import { Copy } from "@phosphor-icons/react/dist/csr/Copy";
+import { Check } from "@phosphor-icons/react/dist/csr/Check";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { Button } from "@/components/ui/button";

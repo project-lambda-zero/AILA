@@ -12,11 +12,9 @@
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Briefcase,
-  FilePdf,
-  FileArrowDown,
-} from "@phosphor-icons/react";
+import { Briefcase } from "@phosphor-icons/react/dist/csr/Briefcase";
+import { FilePdf } from "@phosphor-icons/react/dist/csr/FilePdf";
+import { FileArrowDown } from "@phosphor-icons/react/dist/csr/FileArrowDown";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";

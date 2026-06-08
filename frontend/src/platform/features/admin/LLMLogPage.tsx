@@ -14,13 +14,11 @@ import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import {
-  Robot,
-  Coins,
-  ArrowClockwise,
-  ArrowSquareOut,
-  X as XIcon,
-} from "@phosphor-icons/react";
+import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
+import { Coins } from "@phosphor-icons/react/dist/csr/Coins";
+import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
+import { ArrowSquareOut } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
+import { X as XIcon } from "@phosphor-icons/react/dist/csr/X";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";

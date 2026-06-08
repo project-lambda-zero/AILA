@@ -1,13 +1,11 @@
-import {
-  Shield,
-  ArrowSquareOut,
-  Warning,
-  CheckCircle,
-  Lightbulb,
-  Wrench,
-  Question,
-  Tag,
-} from "@phosphor-icons/react";
+import { Shield } from "@phosphor-icons/react/dist/csr/Shield";
+import { ArrowSquareOut } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
+import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
+import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { Lightbulb } from "@phosphor-icons/react/dist/csr/Lightbulb";
+import { Wrench } from "@phosphor-icons/react/dist/csr/Wrench";
+import { Question } from "@phosphor-icons/react/dist/csr/Question";
+import { Tag } from "@phosphor-icons/react/dist/csr/Tag";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
