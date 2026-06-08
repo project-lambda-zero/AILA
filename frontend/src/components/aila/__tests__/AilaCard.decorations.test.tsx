@@ -67,9 +67,9 @@ describe("AilaCard decorations", () => {
         body
       </AilaCard>,
     );
-    const allCalls = warnSpy.mock.calls.map((c) => String(c[0] ?? ""));
+    const allCalls = warnSpy.mock.calls.map((c: unknown[]) => String(c[0] ?? ""));
     for (const prop of ["glass", "cornerAccents", "techBorder", "glow"]) {
-      const hits = allCalls.filter((m) => m.includes(`\`${prop}\``));
+      const hits = allCalls.filter((m: string) => m.includes(`\`${prop}\``));
       // Either 1 (first observation of this flag) or 0 (an earlier
       // suite already warned). The contract is "at most once per
       // session" — either outcome is acceptable here as long as it's
