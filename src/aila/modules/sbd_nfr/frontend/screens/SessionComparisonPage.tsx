@@ -98,7 +98,7 @@ function SessionSelector({ onSelect }: SessionSelectorProps) {
 
   return (
     <div className="compare-selector">
-      <h1 className="compare-selector__title">Compare Assessments</h1>
+      <h2 className="compare-selector__title">Compare Assessments</h2>
       <p className="compare-selector__hint">Select two assessed sessions to compare their component classifications.</p>
 
       {listQuery.isLoading && (
@@ -274,7 +274,7 @@ function ComparisonView({ sessionIdA, sessionIdB }: ComparisonViewProps) {
       {/* Header */}
       <div className="compare-page__header">
         <div className="compare-page__header-col">
-          <h1 className="compare-page__project">{sessionA.project_name}</h1>
+          <h2 className="compare-page__project">{sessionA.project_name}</h2>
           <p className="compare-page__meta">
             {sessionA.requestor_name}
             {sessionA.business_unit ? ` · ${sessionA.business_unit}` : ""}
@@ -283,7 +283,7 @@ function ComparisonView({ sessionIdA, sessionIdB }: ComparisonViewProps) {
         </div>
         <div className="compare-page__vs" aria-hidden>vs</div>
         <div className="compare-page__header-col compare-page__header-col--right">
-          <h1 className="compare-page__project">{sessionB.project_name}</h1>
+          <h2 className="compare-page__project">{sessionB.project_name}</h2>
           <p className="compare-page__meta">
             {sessionB.requestor_name}
             {sessionB.business_unit ? ` · ${sessionB.business_unit}` : ""}

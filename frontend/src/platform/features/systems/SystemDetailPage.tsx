@@ -121,6 +121,8 @@ export function SystemDetailPage() {
 
   return (
     <div className="flex flex-col gap-6 p-4 lg:p-6">
+      {/* sr-only section heading bridges PageShell h1 → card h3s for screen readers. */}
+      <h2 className="sr-only">System overview</h2>
       {/* Header — back-button only; title is rendered by PageShell */}
       <div className="flex items-center gap-3">
         <Link to="/systems">

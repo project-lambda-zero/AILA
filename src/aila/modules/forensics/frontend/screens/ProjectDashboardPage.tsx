@@ -685,6 +685,8 @@ export function ProjectDashboardPage() {
 
   return (
     <div className="space-y-4 bg-surface text-foreground p-4 rounded-md border border-border">
+      {/* sr-only section heading bridges PageShell h1 → tab/card h3s for screen readers. */}
+      <h2 className="sr-only">Project dashboard</h2>
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1 min-w-0">
