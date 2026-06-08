@@ -62,7 +62,6 @@ _log = logging.getLogger(__name__)
 _APPLICABLE_MCP_BY_KIND: dict[str, list[str]] = {
     TargetKind.NATIVE_BINARY.value:   ["ida_headless", "audit_mcp"],
     TargetKind.SOURCE_REPO.value:     ["audit_mcp"],
-    TargetKind.APK.value:             ["ida_headless"],
     TargetKind.ANDROID_APK.value:     ["android_mcp", "audit_mcp"],
     TargetKind.IPA.value:             ["ida_headless"],
     TargetKind.JAR.value:             ["ida_headless", "audit_mcp"],
@@ -95,8 +94,8 @@ _APPLICABLE_FUZZING_ENGINES: dict[tuple[str, str], list[str]] = {
     (TargetKind.SOURCE_REPO.value, "python"):       ["atheris"],
     (TargetKind.SOURCE_REPO.value, "javascript"):   ["fuzzilli_v8", "jsfuzz"],
     (TargetKind.SOURCE_REPO.value, "node"):         ["jsfuzz"],
-    (TargetKind.APK.value, "kotlin"):               ["jazzer"],
-    (TargetKind.APK.value, "java"):                 ["jazzer"],
+    (TargetKind.ANDROID_APK.value, "kotlin"):       ["jazzer"],
+    (TargetKind.ANDROID_APK.value, "java"):         ["jazzer"],
     (TargetKind.JAR.value, "java"):                 ["jazzer"],
     (TargetKind.JAR.value, "kotlin"):               ["jazzer"],
 
@@ -109,8 +108,9 @@ _APPLICABLE_FUZZING_ENGINES: dict[tuple[str, str], list[str]] = {
     (TargetKind.IPA.value, "swift"):                ["libfuzzer-swift"],
     (TargetKind.IPA.value, "objc"):                 ["libfuzzer"],
     # Android extension — libFuzzer-Android for native libs in APK
-    (TargetKind.APK.value, "c++"):                  ["libfuzzer-android"],
-    (TargetKind.APK.value, "c"):                    ["libfuzzer-android"],
+    # Android extension — libFuzzer-Android for native libs in APK
+    (TargetKind.ANDROID_APK.value, "c++"):          ["libfuzzer-android"],
+    (TargetKind.ANDROID_APK.value, "c"):            ["libfuzzer-android"],
     # .NET — sharpfuzz coverage-guided fuzzer
     (TargetKind.DOTNET_ASSEMBLY.value, "c#"):       ["sharpfuzz"],
     (TargetKind.DOTNET_ASSEMBLY.value, "f#"):       ["sharpfuzz"],
@@ -136,7 +136,7 @@ _DEFAULT_REASONING_STRATEGY: dict[tuple[str, str], str] = {
     (TargetKind.SOURCE_REPO.value, "python"):       "vulnerability_research.source_audit",
     (TargetKind.SOURCE_REPO.value, "java"):         "vulnerability_research.source_audit",
     (TargetKind.SOURCE_REPO.value, "kotlin"):       "vulnerability_research.source_audit",
-    (TargetKind.APK.value, "*"):                    "vulnerability_research.discovery_research",
+    (TargetKind.ANDROID_APK.value, "*"):            "vulnerability_research.discovery_research",
     (TargetKind.IPA.value, "*"):                    "vulnerability_research.discovery_research",
     (TargetKind.DOTNET_ASSEMBLY.value, "*"):        "vulnerability_research.discovery_research",
     # v0.5 GA-56 — kernel-first audit; fuzz invoked from narrowed surface
@@ -151,7 +151,7 @@ _DEFAULT_REASONING_STRATEGY: dict[tuple[str, str], str] = {
 _DEFAULT_DISCLOSURE_TRACKS: dict[str, list[str]] = {
     TargetKind.NATIVE_BINARY.value:   ["vendor_direct", "blog_post"],
     TargetKind.SOURCE_REPO.value:     ["cna_github_gsa", "vendor_direct", "blog_post"],
-    TargetKind.APK.value:             ["vendor_direct", "blog_post"],
+    TargetKind.ANDROID_APK.value:     ["vendor_direct", "blog_post"],
     TargetKind.IPA.value:             ["apple_security", "blog_post"],
     TargetKind.JAR.value:             ["vendor_direct", "blog_post"],
     TargetKind.DOTNET_ASSEMBLY.value: ["msrc", "vendor_direct", "blog_post"],
@@ -189,7 +189,7 @@ _DEFAULT_PATTERN_KINDS = [
 _DEFAULT_COST_USD: dict[str, float] = {
     TargetKind.NATIVE_BINARY.value:   30.0,
     TargetKind.SOURCE_REPO.value:     20.0,
-    TargetKind.APK.value:             25.0,
+    TargetKind.ANDROID_APK.value:     25.0,
     TargetKind.IPA.value:             25.0,
     TargetKind.JAR.value:             20.0,
     TargetKind.DOTNET_ASSEMBLY.value: 25.0,
@@ -258,7 +258,7 @@ class CapabilityProfileBuilder:
                     signals = await self._gather_source_signals(handles)
                 elif kind_str in {
                     TargetKind.NATIVE_BINARY.value,
-                    TargetKind.APK.value,
+                    TargetKind.ANDROID_APK.value,
                     TargetKind.IPA.value,
                     TargetKind.JAR.value,
                     TargetKind.DOTNET_ASSEMBLY.value,

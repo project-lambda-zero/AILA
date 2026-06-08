@@ -62,12 +62,14 @@ function analysisLabel(state: AnalysisState, kind: TargetKind): string {
     kind === "kernel_image" ||
     kind === "kernel_module" ||
     kind === "hypervisor_image" ||
-    kind === "apk" ||
     kind === "ipa" ||
     kind === "jar" ||
     kind === "dotnet_assembly"
   ) {
     return "Uploading + analyzing in IDA…";
+  }
+  if (kind === "android_apk") {
+    return "APK_DECODE → JADX_DECOMPILE → INDEX_DECOMPILED → STATIC_SUMMARY → MOBSF_SCAN…";
   }
   return "Uploading + analyzing…";
 }
@@ -86,7 +88,6 @@ const UPLOAD_KINDS = new Set<TargetKind>([
   "kernel_image",
   "kernel_module",
   "hypervisor_image",
-  "apk",
   "ipa",
   "jar",
   "dotnet_assembly",

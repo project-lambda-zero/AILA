@@ -445,10 +445,19 @@ def create_app() -> FastAPI:
             )
 
     # STRESS-12: Reject oversized request bodies before they reach application code.
-    # Content-Length > 10MB (10_485_760 bytes) returns 413 with ErrorResponse envelope.
-    # Registered after _catch_unhandled_exceptions so it runs before it (Starlette
-    # middleware stack is LIFO — last registered runs first).
-    _max_body_bytes = 10 * 1024 * 1024  # 10 MB
+    # Default 200 MB (covers the largest realistic APK; APKs are 30-150 MB typical).
+    # Operator can tune via `AILA_MAX_REQUEST_BYTES` env var when forensics dumps,
+    # binary uploads, or LLM transcripts need a different ceiling.
+    # Returns 413 with ErrorResponse envelope. Registered after
+    # _catch_unhandled_exceptions so it runs before it (Starlette middleware
+    # stack is LIFO — last registered runs first).
+    import os as _os
+    _default_max_body = 200 * 1024 * 1024  # 200 MB
+    try:
+        _max_body_bytes = int(_os.environ.get("AILA_MAX_REQUEST_BYTES", str(_default_max_body)))
+    except ValueError:
+        _max_body_bytes = _default_max_body
+    _max_body_mb = _max_body_bytes // (1024 * 1024)
 
     @application.middleware("http")
     async def _reject_oversized_requests(request: Request, call_next):  # type: ignore[misc]
@@ -459,7 +468,7 @@ def create_app() -> FastAPI:
                     return JSONResponse(
                         status_code=413,
                         content={
-                            "detail": "Request body too large (max 10MB)",
+                            "detail": f"Request body too large (max {_max_body_mb}MB)",
                             "code": "PAYLOAD_TOO_LARGE",
                             "errors": None,
                         },

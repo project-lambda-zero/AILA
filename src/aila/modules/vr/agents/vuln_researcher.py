@@ -1642,7 +1642,7 @@ def _mcp_family_rule_for_kind(
             )
         return "RULE: " + " ".join(parts)
     if k in {
-        "native_binary", "apk", "ipa", "jar", "dotnet_assembly",
+        "native_binary", "ipa", "jar", "dotnet_assembly",
         "kernel_image", "kernel_module", "hypervisor_image",
     }:
         bid = handles.get("binary_id")
@@ -2038,7 +2038,7 @@ def _render_active_directives_section(case_state: ReasoningCaseState) -> str:
 
 _SOURCE_REPO_KINDS = frozenset({"source_repo"})
 _BINARY_KINDS = frozenset({
-    "native_binary", "apk", "ipa", "jar", "dotnet_assembly",
+    "native_binary", "ipa", "jar", "dotnet_assembly",
     "kernel_image", "kernel_module", "hypervisor_image",
 })
 # F-2: android_apk targets need BOTH bridges — android_mcp for the

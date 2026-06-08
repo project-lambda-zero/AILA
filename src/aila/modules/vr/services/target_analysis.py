@@ -294,7 +294,6 @@ class TargetAnalysisService:
                     TargetKind.KERNEL_IMAGE,
                     TargetKind.KERNEL_MODULE,
                     TargetKind.HYPERVISOR_IMAGE,
-                    TargetKind.APK,
                     TargetKind.IPA,
                     TargetKind.JAR,
                     TargetKind.DOTNET_ASSEMBLY,

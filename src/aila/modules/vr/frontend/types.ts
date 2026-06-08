@@ -139,7 +139,6 @@ export type TargetKind =
   | "protocol_capture"
   | "crash_input"
   | "patch_diff"
-  | "apk"
   | "android_apk"
   | "ipa"
   | "jar"
