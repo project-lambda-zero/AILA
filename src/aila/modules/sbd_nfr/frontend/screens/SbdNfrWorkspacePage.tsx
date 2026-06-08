@@ -36,7 +36,7 @@ export function SbdNfrWorkspacePage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="rounded-2xl border border-amber-500/20 bg-sbd-panel p-6 text-amber-50 shadow-[0_0_0_1px_rgba(245,158,11,0.05)]">
+      <section className="rounded-2xl border border-amber-500/20 bg-sbd-panel p-6 text-amber-50" style={{ boxShadow: "0 0 0 1px rgba(245,158,11,0.05)" }}>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-3">
             <p className="font-mono text-xs uppercase text-amber-500/70" style={{ letterSpacing: "0.3em" }}>Secure by Design NFR</p>
@@ -79,8 +79,8 @@ export function SbdNfrWorkspacePage() {
       {schemaQuery.isLoading || sessionsQuery.isLoading ? (
         <WorkspaceSkeleton />
       ) : (
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <section className="rounded-2xl border border-amber-500/10 bg-sbd-card p-5">
+        <div className="grid gap-6 xl:grid-cols-5">
+          <section className="rounded-2xl border border-amber-500/10 bg-sbd-card p-5 xl:col-span-3">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-amber-100">Recent assessments</h2>
@@ -124,7 +124,7 @@ export function SbdNfrWorkspacePage() {
             )}
           </section>
 
-          <section className="rounded-2xl border border-amber-500/10 bg-sbd-card p-5">
+          <section className="rounded-2xl border border-amber-500/10 bg-sbd-card p-5 xl:col-span-2">
             <h2 className="text-lg font-semibold text-amber-100">Admin editor</h2>
             <p className="mt-1 text-sm text-amber-100/60">
               Maintain sections, subgroups, questions, mappings, and conditional logic from the schema editor.

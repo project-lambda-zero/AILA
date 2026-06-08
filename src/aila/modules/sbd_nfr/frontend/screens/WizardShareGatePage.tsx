@@ -45,7 +45,8 @@ interface ContributorWizardProps {
   shareAuth: ShareAuth;
 }
 
-const SHELL_GRID = "grid grid-cols-[260px_1fr_280px] flex-1 overflow-hidden";
+const SHELL_GRID = "grid flex-1 overflow-hidden";
+const SHELL_GRID_STYLE = { gridTemplateColumns: "260px 1fr 280px" };
 const SHELL_LEFT = "border-r border-border overflow-y-auto p-4 bg-surface";
 const SHELL_CENTER = "overflow-y-auto p-7 flex flex-col";
 const SHELL_RIGHT = "border-l border-border overflow-y-auto p-4 bg-surface";
@@ -73,7 +74,7 @@ function ContributorWizard({ sessionId, shareAuth }: ContributorWizardProps) {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-base flex flex-col">
-        <div className={SHELL_GRID}>
+        <div className={SHELL_GRID} style={SHELL_GRID_STYLE}>
           <div className={SHELL_LEFT}>
             <div
               className="animate-pulse bg-surface rounded-md"
@@ -138,7 +139,7 @@ function ContributorWizard({ sessionId, shareAuth }: ContributorWizardProps) {
         </span>
       </div>
 
-      <div className={SHELL_GRID}>
+      <div className={SHELL_GRID} style={SHELL_GRID_STYLE}>
         {/* Column 1: breadcrumb */}
         <div className={SHELL_LEFT}>
           <WizardBreadcrumb

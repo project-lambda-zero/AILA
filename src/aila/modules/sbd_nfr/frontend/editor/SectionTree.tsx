@@ -127,9 +127,10 @@ function QuestionChip({ question, onEdit }: { question: QuestionFlat; onEdit: (q
       type="button"
       onClick={() => onEdit(question)}
       aria-label={`Edit question: ${question.label}`}
-      className="group flex w-full items-start gap-3 rounded-xl border border-amber-500/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01))] px-3 py-3 text-left transition hover:border-amber-400/30 hover:bg-sbd-card"
+      className="group flex w-full items-start gap-3 rounded-xl border border-amber-500/10 px-3 py-3 text-left transition hover:border-amber-400/30 hover:bg-sbd-card"
+      style={{ background: "linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01))" }}
     >
-      <div className="mt-0.5 h-2.5 w-2.5 rounded-full bg-amber-400/70 shadow-[0_0_10px_rgba(245,158,11,0.35)]" />
+      <div className="mt-0.5 h-2.5 w-2.5 rounded-full bg-amber-400/70" style={{ boxShadow: "0 0 10px rgba(245,158,11,0.35)" }} />
       <div className="min-w-0 flex-1 space-y-2">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -259,7 +260,7 @@ function SectionRow({
   ) + (section.depends_on_question_id || section.condition_expr_json ? 1 : 0);
 
   return (
-    <div ref={setNodeRef} style={{ ...style, borderRadius: 18 }} className="flex flex-col gap-3 border border-amber-500/20 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))] p-4 shadow-[0_12px_28px_rgba(0,0,0,0.22)]">
+    <div ref={setNodeRef} style={{ ...style, borderRadius: 18, background: "linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))", boxShadow: "0 12px 28px rgba(0,0,0,0.22)" }} className="flex flex-col gap-3 border border-amber-500/20 p-4">
       <div className="flex items-start gap-3">
         <button
           type="button"

@@ -151,7 +151,7 @@ function ResultsSkeleton() {
       <div className="animate-pulse bg-surface rounded-md h-7 w-2/5 mb-4" />
       <div className="animate-pulse bg-surface rounded-md h-4 w-3/5 mb-8" />
       <div className="animate-pulse bg-surface rounded-md h-20 mb-8" />
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
@@ -300,7 +300,7 @@ export function WizardResultsPage() {
         <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-4">
           Component Classifications ({sortedComponents.length})
         </h2>
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
           {sortedComponents.map((comp) => (
             <ComponentCard key={comp.subtask_key} comp={comp} />
           ))}
