@@ -18,7 +18,11 @@ hits when a child timed out before emitting anything.
 """
 from __future__ import annotations
 
-from aila.modules.vr.contracts.masvs import MasvsControlVerdict, MasvsVerdict
+from aila.modules.vr.contracts.masvs import (
+    MasvsControlVerdict,
+    MasvsEvidenceLocation,
+    MasvsVerdict,
+)
 from aila.modules.vr.contracts.outcome import (
     OutcomeConfidence,
     OutcomeKind,
@@ -467,3 +471,274 @@ def test_verdict_carries_control_id_and_investigation_id_verbatim() -> None:
     assert v.control_id == control.id
     assert v.child_investigation_id == "inv-child-7"
     assert v.primary_outcome_id == outcome.id
+
+
+# --- Evidence locations extraction (R-2b) ---------------------------------
+
+
+def test_evidence_locations_populated_from_affected_components() -> None:
+    """Happy path — ``payload['affected_components']`` becomes a list of
+    :class:`MasvsEvidenceLocation` entries on the returned verdict, in
+    input order, with file/function preserved verbatim.
+    """
+    control = _first_l1()
+    outcome = _outcome(
+        outcome_kind=OutcomeKind.DIRECT_FINDING,
+        payload={
+            "verifier_report": {"verdict": "confirmed", "confidence": 0.9},
+            "affected_components": [
+                {
+                    "file": "sources/com/example/login/LoginActivity.java",
+                    "function": "onCreate",
+                },
+                {
+                    "file": "sources/com/example/login/CredentialStore.java",
+                    "function": "persistToken",
+                },
+            ],
+        },
+    )
+
+    v = child_outcome_to_verdict(
+        outcome, control, child_investigation_id="inv-child-7",
+    )
+
+    assert v.verdict == MasvsVerdict.FINDING
+    assert v.evidence_locations == [
+        MasvsEvidenceLocation(
+            file="sources/com/example/login/LoginActivity.java",
+            function="onCreate",
+        ),
+        MasvsEvidenceLocation(
+            file="sources/com/example/login/CredentialStore.java",
+            function="persistToken",
+        ),
+    ]
+
+
+def test_evidence_locations_empty_when_payload_omits_field() -> None:
+    """Missing ``affected_components`` key → empty list (not a crash)."""
+    control = _first_l1()
+    outcome = _outcome(
+        outcome_kind=OutcomeKind.DIRECT_FINDING,
+        payload={"verifier_report": {"verdict": "confirmed", "confidence": 0.9}},
+    )
+
+    v = child_outcome_to_verdict(
+        outcome, control, child_investigation_id="inv-child-7",
+    )
+
+    assert v.evidence_locations == []
+
+
+def test_evidence_locations_empty_when_outcome_is_none() -> None:
+    """No primary outcome → empty list (the no_primary_outcome branch
+    never reads a payload because there isn't one).
+    """
+    control = _first_l1()
+
+    v = child_outcome_to_verdict(
+        None, control, child_investigation_id="inv-child-7",
+    )
+
+    assert v.verdict == MasvsVerdict.INCONCLUSIVE
+    assert v.reason == "no_primary_outcome"
+    assert v.evidence_locations == []
+
+
+def test_evidence_locations_skips_non_dict_entries() -> None:
+    """Mixed list of strings / None / dicts — only dicts survive."""
+    control = _first_l1()
+    outcome = _outcome(
+        outcome_kind=OutcomeKind.DIRECT_FINDING,
+        payload={
+            "verifier_report": {"verdict": "confirmed", "confidence": 0.9},
+            "affected_components": [
+                "src/foo.java",
+                None,
+                123,
+                {"file": "src/bar.java", "function": "doThing"},
+            ],
+        },
+    )
+
+    v = child_outcome_to_verdict(
+        outcome, control, child_investigation_id="inv-child-7",
+    )
+
+    assert v.evidence_locations == [
+        MasvsEvidenceLocation(file="src/bar.java", function="doThing"),
+    ]
+
+
+def test_evidence_locations_skips_entries_missing_file_or_function() -> None:
+    """Half-populated dicts and empty strings are dropped — the
+    contract's ``min_length=1`` on both fields would reject them at
+    construction otherwise.
+    """
+    control = _first_l1()
+    outcome = _outcome(
+        outcome_kind=OutcomeKind.DIRECT_FINDING,
+        payload={
+            "verifier_report": {"verdict": "confirmed", "confidence": 0.9},
+            "affected_components": [
+                {"file": "src/foo.java"},                       # no function
+                {"function": "doThing"},                         # no file
+                {"file": "", "function": "doThing"},             # empty file
+                {"file": "src/bar.java", "function": ""},        # empty function
+                {"file": "  ", "function": "doThing"},           # whitespace-only
+                {"file": "src/ok.java", "function": "real"},
+            ],
+        },
+    )
+
+    v = child_outcome_to_verdict(
+        outcome, control, child_investigation_id="inv-child-7",
+    )
+
+    assert v.evidence_locations == [
+        MasvsEvidenceLocation(file="src/ok.java", function="real"),
+    ]
+
+
+def test_evidence_locations_trims_whitespace_around_strings() -> None:
+    """Surrounding whitespace is stripped; the inner content is kept
+    verbatim (the spaces inside a path or a method-with-generics stay).
+    """
+    control = _first_l1()
+    outcome = _outcome(
+        outcome_kind=OutcomeKind.DIRECT_FINDING,
+        payload={
+            "verifier_report": {"verdict": "confirmed", "confidence": 0.9},
+            "affected_components": [
+                {
+                    "file": "  sources/com/example/Login.java  ",
+                    "function": "\tonCreate\n",
+                },
+            ],
+        },
+    )
+
+    v = child_outcome_to_verdict(
+        outcome, control, child_investigation_id="inv-child-7",
+    )
+
+    assert v.evidence_locations == [
+        MasvsEvidenceLocation(
+            file="sources/com/example/Login.java",
+            function="onCreate",
+        ),
+    ]
+
+
+def test_evidence_locations_capped_at_extraction_limit() -> None:
+    """A pathological 1000-entry list never lands more than the mapper's
+    internal cap on the verdict. The cap is private; assert the
+    invariant rather than the exact number.
+    """
+    control = _first_l1()
+    bulk = [
+        {"file": f"src/f{i}.java", "function": f"m{i}"}
+        for i in range(1000)
+    ]
+    outcome = _outcome(
+        outcome_kind=OutcomeKind.DIRECT_FINDING,
+        payload={
+            "verifier_report": {"verdict": "confirmed", "confidence": 0.9},
+            "affected_components": bulk,
+        },
+    )
+
+    v = child_outcome_to_verdict(
+        outcome, control, child_investigation_id="inv-child-7",
+    )
+
+    # Cap must keep the rendered PDF bounded; the exact ceiling is an
+    # implementation detail of ``_EVIDENCE_LOCATION_CAP`` but it MUST
+    # be strictly less than the input length and at most the contract's
+    # ``max_length=64`` field bound.
+    assert 0 < len(v.evidence_locations) < 1000
+    assert len(v.evidence_locations) <= 64
+    # Prefix is preserved — the cap drops the tail, not random entries.
+    assert v.evidence_locations[0] == MasvsEvidenceLocation(
+        file="src/f0.java", function="m0",
+    )
+
+
+def test_evidence_locations_populated_for_refuted_verdict() -> None:
+    """The auditor may list ``affected_components`` on a refuted
+    outcome ("I checked these and found nothing"). The mapper surfaces
+    those locations under the NO_FINDING verdict so the PDF can still
+    show what was inspected.
+    """
+    control = _first_l1()
+    outcome = _outcome(
+        outcome_kind=OutcomeKind.DIRECT_FINDING,
+        payload={
+            "verifier_report": {"verdict": "refuted", "confidence": 0.7},
+            "affected_components": [
+                {"file": "src/safe.java", "function": "checked"},
+            ],
+        },
+    )
+
+    v = child_outcome_to_verdict(
+        outcome, control, child_investigation_id="inv-child-7",
+    )
+
+    assert v.verdict == MasvsVerdict.NO_FINDING
+    assert v.evidence_locations == [
+        MasvsEvidenceLocation(file="src/safe.java", function="checked"),
+    ]
+
+
+def test_evidence_locations_populated_for_not_applicable_verdict() -> None:
+    """The not_applicable branch wins ordering but still surfaces
+    locations the auditor listed (e.g. "checked these native libs, app
+    ships none — not applicable").
+    """
+    control = _first_l1()
+    outcome = _outcome(
+        outcome_kind=OutcomeKind.ASSESSMENT_REPORT,
+        payload={
+            "not_applicable": True,
+            "affected_components": [
+                {"file": "lib/arm64-v8a/libnative.so", "function": "init"},
+            ],
+        },
+    )
+
+    v = child_outcome_to_verdict(
+        outcome, control, child_investigation_id="inv-child-7",
+    )
+
+    assert v.verdict == MasvsVerdict.NOT_APPLICABLE
+    assert v.evidence_locations == [
+        MasvsEvidenceLocation(
+            file="lib/arm64-v8a/libnative.so", function="init",
+        ),
+    ]
+
+
+def test_evidence_locations_empty_when_payload_value_is_not_a_list() -> None:
+    """Defensive — a payload that puts a dict / string / None at
+    ``affected_components`` (malformed agent output) must not crash."""
+    control = _first_l1()
+    for malformed in ({"file": "x"}, "not-a-list", 42, None):
+        outcome = _outcome(
+            outcome_kind=OutcomeKind.DIRECT_FINDING,
+            payload={
+                "verifier_report": {
+                    "verdict": "confirmed", "confidence": 0.9,
+                },
+                "affected_components": malformed,
+            },
+        )
+
+        v = child_outcome_to_verdict(
+            outcome, control, child_investigation_id="inv-child-7",
+        )
+
+        assert v.evidence_locations == [], (
+            f"expected empty list for malformed payload {malformed!r}"
+        )

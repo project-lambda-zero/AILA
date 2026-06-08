@@ -95,6 +95,7 @@ from aila.modules.vr.reporting.pdf_report import (
     _FG_TEXT,
     _FONT_BODY,
     _FONT_BODY_BOLD,
+    _FONT_MONO,
     _append_section_h1,
     _build_styles,
     _draw_footer,
@@ -383,6 +384,25 @@ _VERDICT_DISPLAY_ORDER: tuple[MasvsVerdict, ...] = (
 _GROUP_HEADING: dict[MasvsGroup, str] = {
     group: f"MASVS-{group.value}" for group in MasvsGroup
 }
+
+
+# Catalog lookup keyed by control id. The aggregator only emits verdicts
+# whose ``control_id`` was already resolved from this catalog, so a
+# missing id at render time means the catalog moved on after the audit
+# was dispatched. The renderer falls back to a minimal subsection
+# (id-only header, no description, no verification steps) rather than
+# raising — partial fidelity beats refusing to render.
+_CATALOG_BY_ID: dict[str, MasvsControl] = {
+    control.id: control for control in MASVS_CONTROLS
+}
+
+
+# Path template the per-control footer prints so an operator can paste
+# the child investigation page into their AILA host. The renderer is
+# host-agnostic (the PDF travels off-host); the path mirrors the
+# frontend route at :file:`src/aila/modules/vr/frontend/routes.tsx`
+# (``id: vr.investigation-detail``).
+_INVESTIGATION_PATH_TEMPLATE: str = "/vr/investigations/{investigation_id}"
 
 
 class _BookmarkFlowable(Flowable):
@@ -752,7 +772,175 @@ def _append_group_sections(
         group_table.setStyle(TableStyle(cmds))
         group_table.hAlign = "LEFT"
         story.append(KeepTogether(group_table))
-        story.append(Spacer(1, 0.15 * inch))
+        for verdict in verdicts:
+            _append_control_subsection(
+                story,
+                verdict,
+                _CATALOG_BY_ID.get(verdict.control_id),
+                styles,
+            )
+
+
+def _append_control_subsection(
+    story: list[Any],
+    verdict: MasvsControlVerdict,
+    control: MasvsControl | None,
+    styles: dict[str, ParagraphStyle],
+) -> None:
+    """Per-control subsection body — title bar / description / evidence /
+    verification steps / child investigation link.
+
+    The title bar is a single-row colored table (verdict color
+    background, control id + spec title on the left, verdict label
+    badge + confidence on the right). The body reuses the standard
+    :class:`ParagraphStyle` set so the section reads as a continuation
+    of the executive summary's prose, not a separate report.
+
+    Layout (one per control inside a group section):
+
+    - **Title bar** — colored by verdict; one row carrying control id,
+      control title, verdict label, confidence percent.
+    - **Description** — the spec text the audit ran against (from
+      :attr:`MasvsControl.description`).
+    - **Affected components** — verbatim ``{file, function}`` list the
+      auditor cited in its primary outcome's
+      ``payload['affected_components']``. Empty for inconclusive
+      verdicts where no primary outcome was emitted.
+    - **Verification & remediation** — bulleted
+      :attr:`MasvsControl.verification_steps`. The same steps describe
+      both how a compliant app looks and what a non-compliant one
+      needs to fix, so the section header doubles up on the wording.
+    - **Footer** — child investigation id + the operator-facing path
+      (matches :file:`src/aila/modules/vr/frontend/routes.tsx`
+      ``vr.investigation-detail`` route) + inconclusive reason when
+      :attr:`MasvsControlVerdict.reason` is set.
+
+    When ``control`` is ``None`` (catalog moved on after dispatch),
+    the renderer emits the title bar + a one-line note and skips the
+    description / verification block — partial fidelity beats refusing
+    to render the verdict.
+    """
+    verdict_color = _VERDICT_COLOR[verdict.verdict]
+    verdict_label = _VERDICT_LABEL[verdict.verdict]
+    confidence_pct = int(round(verdict.confidence * 100))
+    title_text = (
+        control.title if control is not None else "(not in current catalog)"
+    )
+
+    title_cell = Paragraph(
+        f"<font color='#121212' size='9'><b>"
+        f"{_escape_for_paragraph(verdict.control_id)}</b></font>"
+        f"<br/>"
+        f"<font color='#121212' size='12'><b>"
+        f"{_escape_for_paragraph(title_text)}</b></font>",
+        styles["body"],
+    )
+    badge_cell = Paragraph(
+        f"<para alignment='center'>"
+        f"<font color='#121212' size='8'><b>VERDICT</b></font><br/>"
+        f"<font color='#121212' size='11'><b>"
+        f"{_escape_for_paragraph(verdict_label)}</b></font><br/>"
+        f"<font color='#121212' size='8'>{confidence_pct}% confidence</font>"
+        f"</para>",
+        styles["body"],
+    )
+    title_table = Table(
+        [[title_cell, badge_cell]],
+        colWidths=[4.7 * inch, 1.5 * inch],
+    )
+    title_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), verdict_color),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LINEAFTER", (0, 0), (0, 0), 0.5, colors.HexColor("#121212")),
+    ]))
+    title_table.hAlign = "LEFT"
+    story.append(KeepTogether([Spacer(1, 0.18 * inch), title_table]))
+
+    if control is not None and control.description.strip():
+        story.append(Paragraph(
+            _escape_for_paragraph(control.description),
+            styles["body"],
+        ))
+
+    if verdict.evidence_locations:
+        story.append(Paragraph(
+            "<font color='#f0a8c7'><b>AFFECTED COMPONENTS</b></font>",
+            styles["meta"],
+        ))
+        ev_rows: list[list[Any]] = [
+            [
+                Paragraph(
+                    f"<font name='{_FONT_MONO}' size='8'>"
+                    f"{_escape_for_paragraph(loc.file)}</font>",
+                    styles["body"],
+                ),
+                Paragraph(
+                    f"<font name='{_FONT_MONO}' size='8'>"
+                    f"{_escape_for_paragraph(loc.function)}</font>",
+                    styles["body"],
+                ),
+            ]
+            for loc in verdict.evidence_locations
+        ]
+        # File column gets the bulk of the row width — Android jadx
+        # output paths frequently run to 50+ chars and wrapping them
+        # mid-token makes the basename unreadable. Function column
+        # holds a short identifier (rare > 30 chars) so the narrower
+        # column is fine. At 8pt Courier (≈4.8pt / char) the file
+        # column fits ~96 chars without wrapping, which covers the
+        # typical jadx package depth of ``sources/<reverse-domain>/
+        # <feature>/<class>.java``.
+        ev_table = Table(ev_rows, colWidths=[4.8 * inch, 1.4 * inch])
+        ev_table.setStyle(TableStyle([
+            ("FONT", (0, 0), (-1, -1), _FONT_MONO, 8),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("BACKGROUND", (0, 0), (-1, -1), _BG_SURFACE),
+            ("BOX", (0, 0), (-1, -1), 0.25, _BG_BORDER),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, _BG_BORDER),
+        ]))
+        ev_table.hAlign = "LEFT"
+        story.append(ev_table)
+
+    if control is not None and control.verification_steps:
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(Paragraph(
+            "<font color='#f0a8c7'><b>VERIFICATION &amp; REMEDIATION</b></font>",
+            styles["meta"],
+        ))
+        for step in control.verification_steps:
+            story.append(Paragraph(
+                f"&bull;&nbsp; {_escape_for_paragraph(step)}",
+                styles["body"],
+            ))
+
+    path_str = _INVESTIGATION_PATH_TEMPLATE.format(
+        investigation_id=verdict.child_investigation_id,
+    )
+    footer_parts: list[str] = [
+        f"Child investigation: <font name='{_FONT_MONO}'>"
+        f"{_escape_for_paragraph(verdict.child_investigation_id)}</font>",
+        f"Path: <font name='{_FONT_MONO}'>"
+        f"{_escape_for_paragraph(path_str)}</font>",
+    ]
+    if verdict.reason:
+        footer_parts.append(
+            f"Reason: <font name='{_FONT_MONO}'>"
+            f"{_escape_for_paragraph(verdict.reason)}</font>",
+        )
+    story.append(Spacer(1, 0.05 * inch))
+    story.append(Paragraph(
+        " &nbsp;|&nbsp; ".join(footer_parts),
+        styles["meta"],
+    ))
 
 
 def build_pdf(

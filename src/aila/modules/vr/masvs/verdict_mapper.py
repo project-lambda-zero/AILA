@@ -36,7 +36,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from aila.modules.vr.contracts.masvs import MasvsControlVerdict, MasvsVerdict
+from aila.modules.vr.contracts.masvs import (
+    MasvsControlVerdict,
+    MasvsEvidenceLocation,
+    MasvsVerdict,
+)
 from aila.modules.vr.contracts.outcome import (
     OutcomeConfidence,
     OutcomeKind,
@@ -105,6 +109,7 @@ def child_outcome_to_verdict(
         )
 
     payload: dict[str, Any] = outcome.payload or {}
+    evidence_locations = _extract_evidence_locations(payload)
     verifier_verdict, verifier_conf = _extract_verifier_signal(payload)
     numeric_conf = (
         verifier_conf
@@ -123,6 +128,7 @@ def child_outcome_to_verdict(
             child_investigation_id=child_investigation_id,
             primary_outcome_id=outcome.id,
             reason=None,
+            evidence_locations=evidence_locations,
         )
 
     # Branch 2 — refuted. Either the claim verifier emitted it on a
@@ -136,6 +142,7 @@ def child_outcome_to_verdict(
             child_investigation_id=child_investigation_id,
             primary_outcome_id=outcome.id,
             reason=None,
+            evidence_locations=evidence_locations,
         )
 
     # Branch 3 — direct_finding above the confidence floor.
@@ -148,6 +155,7 @@ def child_outcome_to_verdict(
                 child_investigation_id=child_investigation_id,
                 primary_outcome_id=outcome.id,
                 reason=f"verifier_inconclusive_conf_{numeric_conf:.2f}",
+                evidence_locations=evidence_locations,
             )
         if numeric_conf >= _FINDING_CONFIDENCE_FLOOR:
             return MasvsControlVerdict(
@@ -157,6 +165,7 @@ def child_outcome_to_verdict(
                 child_investigation_id=child_investigation_id,
                 primary_outcome_id=outcome.id,
                 reason=None,
+                evidence_locations=evidence_locations,
             )
         return MasvsControlVerdict(
             control_id=control.id,
@@ -165,6 +174,7 @@ def child_outcome_to_verdict(
             child_investigation_id=child_investigation_id,
             primary_outcome_id=outcome.id,
             reason=f"direct_finding_low_confidence_{numeric_conf:.2f}",
+            evidence_locations=evidence_locations,
         )
 
     # Branch 4 — fallthrough. Carry the underlying outcome_kind so the
@@ -178,6 +188,7 @@ def child_outcome_to_verdict(
         child_investigation_id=child_investigation_id,
         primary_outcome_id=outcome.id,
         reason=f"outcome_kind={outcome.outcome_kind.value}",
+        evidence_locations=evidence_locations,
     )
 
 
@@ -263,3 +274,63 @@ def _has_not_applicable_tag(payload: dict[str, Any]) -> bool:
                 return True
 
     return False
+
+
+# Hard cap on entries copied to a verdict — keeps the PDF table bounded
+# and matches the spirit of the per-investigation pdf_report's
+# ``affected_components[:8]`` slice for audit-mcp resolution. The
+# verdict-level cap is larger because the MASVS PDF only renders the
+# location strings (no source-body fetch), so a complex audit's full
+# component chain is worth preserving up to the contract's
+# ``max_length=64`` field bound.
+_EVIDENCE_LOCATION_CAP: int = 32
+
+
+def _extract_evidence_locations(
+    payload: dict[str, Any],
+) -> list[MasvsEvidenceLocation]:
+    """Read ``payload['affected_components']`` defensively.
+
+    Per ``vr/agents/prompts/system_audit.md``, every DIRECT_FINDING
+    submit carries an ``affected_components: [{file, function}, ...]``
+    list — the canonical evidence shape the per-investigation
+    ``pdf_report`` also consumes. The MASVS verdict mapper surfaces
+    these as :class:`MasvsEvidenceLocation` entries on the returned
+    verdict so the PDF renderer can print "what the auditor cited"
+    under each control without re-walking the outcome row.
+
+    Defensive parsing:
+
+    - Non-list payload → empty list.
+    - Entries that are not dicts → skipped.
+    - Dicts missing a non-empty ``file`` or ``function`` → skipped.
+    - Whitespace trimmed; the contract's ``min_length=1`` would
+      reject a trimmed-empty value otherwise.
+    - Capped at :data:`_EVIDENCE_LOCATION_CAP` entries so a malformed
+      payload listing thousands of components cannot bloat the PDF.
+
+    The mapper never fabricates locations — when the payload omits
+    the field or every entry is malformed, an empty list is the
+    correct, honest output.
+    """
+    raw = payload.get("affected_components")
+    if not isinstance(raw, list):
+        return []
+    locations: list[MasvsEvidenceLocation] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        file_value = entry.get("file")
+        function_value = entry.get("function")
+        if not isinstance(file_value, str) or not isinstance(function_value, str):
+            continue
+        file_text = file_value.strip()
+        function_text = function_value.strip()
+        if not file_text or not function_text:
+            continue
+        locations.append(
+            MasvsEvidenceLocation(file=file_text, function=function_text),
+        )
+        if len(locations) >= _EVIDENCE_LOCATION_CAP:
+            break
+    return locations
