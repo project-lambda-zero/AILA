@@ -1,6 +1,6 @@
 """MASVS audit aggregation + PDF rendering for the vr module.
 
-R-1 (this commit) — :func:`collect_findings`. Walks every child
+R-1 — :func:`collect_findings`. Walks every child
 investigation under a MASVS audit parent, projects each child's primary
 outcome through the S-4 mapping rule
 (:func:`aila.modules.vr.masvs.verdict_mapper.child_outcome_to_verdict`),
@@ -10,7 +10,13 @@ summary counts. The output is the
 the PDF renderer (R-2) and the
 ``GET /vr/targets/{id}/masvs-report`` payload (R-3).
 
-R-2 / R-3 / R-4 land in later iterations.
+R-2a (this commit) — :func:`build_pdf`. Renders a
+:class:`MasvsAuditAggregate` as a self-contained PDF document:
+cover page (APK identity + audit metadata), executive-summary
+count table, and one section per MASVS group with PDF outline
+bookmarks driving the TOC. R-2b lands the per-control
+subsection bodies (evidence excerpts + remediation prose); R-3
+wires the download endpoint; R-4 adds the operator button.
 
 Design notes
 ------------
@@ -37,10 +43,29 @@ Design notes
 """
 from __future__ import annotations
 
+import io
 import json
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any
 
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import LETTER
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import (
+    BaseDocTemplate,
+    Flowable,
+    Frame,
+    KeepTogether,
+    PageBreak,
+    PageTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+)
 from sqlmodel import select
 
 from aila.modules.vr.contracts import InvestigationKind
@@ -55,6 +80,7 @@ from aila.modules.vr.contracts.outcome import (
     OutcomeKind,
     VROutcomeSummary,
 )
+from aila.modules.vr.contracts.target import VRTargetSummary
 from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
@@ -62,9 +88,21 @@ from aila.modules.vr.db_models import (
 from aila.modules.vr.masvs.catalog import CATALOG_VERSION, MASVS_CONTROLS
 from aila.modules.vr.masvs.models import MasvsControl, MasvsGroup
 from aila.modules.vr.masvs.verdict_mapper import child_outcome_to_verdict
+from aila.modules.vr.reporting.pdf_report import (
+    _BG_BORDER,
+    _BG_SURFACE,
+    _FG_MUTED,
+    _FG_TEXT,
+    _FONT_BODY,
+    _FONT_BODY_BOLD,
+    _append_section_h1,
+    _build_styles,
+    _draw_footer,
+    _escape_for_paragraph,
+)
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["collect_findings"]
+__all__ = ["build_pdf", "collect_findings"]
 
 _log = logging.getLogger(__name__)
 
@@ -281,3 +319,518 @@ async def collect_findings(parent_id: str) -> MasvsAuditAggregate:
         by_group=by_group,
         summary_counts=summary_counts,
     )
+
+# ──────────────────────────────────────────────────────────────────────
+# R-2a — PDF rendering
+# ──────────────────────────────────────────────────────────────────────
+#
+# Visual identity (palette, fonts, page chrome) is shared with
+# :mod:`aila.modules.vr.reporting.pdf_report` so a MASVS audit report
+# sits next to a one-shot investigation report in the operator's
+# downloads folder without looking like it came from a different
+# product. The shared bits are imported privately at module top so
+# the per-investigation renderer stays the canonical owner.
+#
+# Layout (R-2a scaffolding):
+#
+#   Page 1   Cover — title, overall posture badge, APK identity
+#            table (package / version / SHA-256 / MASVS catalog /
+#            audit window / generated date), bookmark "Cover".
+#   Page 2+  Executive summary — interpretive paragraph + four-cell
+#            count grid (FINDING / NO_FINDING / NOT_APPLICABLE /
+#            INCONCLUSIVE). Bookmark "Executive summary".
+#   Page 2+  One section per non-empty MASVS group, in canonical
+#            :class:`MasvsGroup` order: heading + a per-control
+#            row table (id, title, verdict badge, confidence).
+#            Each section emits a PDF outline bookmark so the
+#            viewer renders a TOC sidebar. R-2b will append the
+#            per-control subsection bodies inside each group.
+
+
+# Verdict → pastel cell color (placed on the dark page surface, with
+# black text on the cell so badge contrast holds up even when the
+# reader prints the PDF on a monochrome printer — the text reads
+# either way).
+_VERDICT_COLOR: dict[MasvsVerdict, colors.Color] = {
+    MasvsVerdict.FINDING: colors.HexColor("#ff5f87"),         # alert pink
+    MasvsVerdict.NO_FINDING: colors.HexColor("#97dbbe"),      # mint
+    MasvsVerdict.NOT_APPLICABLE: colors.HexColor("#aac8e0"),  # muted blue
+    MasvsVerdict.INCONCLUSIVE: colors.HexColor("#d7afd7"),    # orchid
+}
+
+# Verdict → uppercase label used on badges and in count headers. Kept
+# stable so a screen reader / text extraction always lands on the same
+# strings regardless of source code value names.
+_VERDICT_LABEL: dict[MasvsVerdict, str] = {
+    MasvsVerdict.FINDING: "FINDING",
+    MasvsVerdict.NO_FINDING: "NO FINDING",
+    MasvsVerdict.NOT_APPLICABLE: "NOT APPLICABLE",
+    MasvsVerdict.INCONCLUSIVE: "INCONCLUSIVE",
+}
+
+# Display order for the executive-summary count grid and the per-row
+# legend. FINDING leads — the report's job is to surface compliance
+# gaps first, then everything else in decreasing audit signal.
+_VERDICT_DISPLAY_ORDER: tuple[MasvsVerdict, ...] = (
+    MasvsVerdict.FINDING,
+    MasvsVerdict.NO_FINDING,
+    MasvsVerdict.NOT_APPLICABLE,
+    MasvsVerdict.INCONCLUSIVE,
+)
+
+# Group → human-readable section heading. The enum value is the wire
+# token (e.g. "STORAGE"); the spec-facing heading is "MASVS-STORAGE".
+_GROUP_HEADING: dict[MasvsGroup, str] = {
+    group: f"MASVS-{group.value}" for group in MasvsGroup
+}
+
+
+class _BookmarkFlowable(Flowable):
+    """Zero-height flowable that emits a PDF outline entry at its
+    paint location.
+
+    ReportLab's outline / bookmark API is canvas-level, not story-level.
+    To anchor a TOC entry to "the point a section heading lands on a
+    page" we drop one of these into the flow right before the heading.
+    PDF viewers (Acrobat, Preview, Edge, Firefox) render the resulting
+    outline as a TOC sidebar — operators jump from "Executive summary"
+    to "MASVS-CRYPTO" without scrolling 30 pages.
+    """
+
+    def __init__(self, key: str, title: str, level: int = 0) -> None:
+        super().__init__()
+        self._key = key
+        self._title = title
+        self._level = level
+
+    def wrap(self, _avail_w: float, _avail_h: float) -> tuple[float, float]:
+        return (0.0, 0.0)
+
+    def draw(self) -> None:
+        canv = self.canv
+        canv.bookmarkPage(self._key)
+        canv.addOutlineEntry(self._title, self._key, level=self._level, closed=False)
+
+
+def _coerce_str(value: Any) -> str:
+    """Render an arbitrary cell from ``apk_overview.static_summary`` as
+    a plain trimmed string. Used by the cover-page identity table so
+    integer SDK versions / list-shaped certificates / None values all
+    render predictably without raising.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
+def _format_sha256(value: Any) -> str:
+    """Render an APK SHA-256 in groups of 8 hex chars for readability
+    on the cover page. Falls back to the raw stringification when the
+    input is not a 64-char hex string.
+    """
+    text = _coerce_str(value).lower()
+    if len(text) == 64 and all(c in "0123456789abcdef" for c in text):
+        return " ".join(text[i : i + 8] for i in range(0, 64, 8))
+    return text
+
+
+def _overall_posture(
+    summary_counts: Mapping[MasvsVerdict, int],
+) -> tuple[str, colors.Color]:
+    """Pick the cover-page posture badge from the summary counts.
+
+    Priority is FINDING (any) → INCONCLUSIVE (any, no findings) → CLEAN
+    (everything resolved without findings). The label is what the
+    operator sees in inch-tall text on page 1; the color matches the
+    dominant verdict's pastel cell color so the cover ties visually to
+    the per-group sections.
+    """
+    findings = summary_counts.get(MasvsVerdict.FINDING, 0)
+    if findings > 0:
+        word = "FINDING" if findings == 1 else "FINDINGS"
+        return (f"{findings} {word}", _VERDICT_COLOR[MasvsVerdict.FINDING])
+    inconclusive = summary_counts.get(MasvsVerdict.INCONCLUSIVE, 0)
+    if inconclusive > 0:
+        return (
+            "AUDIT IN PROGRESS"
+            if summary_counts.get(MasvsVerdict.NO_FINDING, 0) == 0
+            and summary_counts.get(MasvsVerdict.NOT_APPLICABLE, 0) == 0
+            else "PARTIAL — INCONCLUSIVE CONTROLS REMAIN",
+            _VERDICT_COLOR[MasvsVerdict.INCONCLUSIVE],
+        )
+    return ("NO COMPLIANCE GAPS DETECTED", _VERDICT_COLOR[MasvsVerdict.NO_FINDING])
+
+
+def _append_cover(
+    story: list[Any],
+    aggregate: MasvsAuditAggregate,
+    target: VRTargetSummary,
+    static_summary: Mapping[str, Any],
+    styles: dict[str, ParagraphStyle],
+) -> None:
+    """Cover page — title, posture badge, APK identity meta-table.
+
+    Mirrors the per-investigation cover layout in :mod:`pdf_report` so
+    the two reports share visual identity. The posture badge collapses
+    the full per-verdict count down to a single operator-facing word
+    ("4 FINDINGS" / "NO COMPLIANCE GAPS DETECTED" / etc.); the count
+    grid lives in the executive summary one page later.
+    """
+    apk_overview = target.apk_overview or {}
+
+    title_text = "OWASP MASVS Audit Report"
+    subtitle_text = target.display_name or (
+        target.android_package_name or "Android APK"
+    )
+
+    story.append(_BookmarkFlowable("masvs-cover", "Cover", level=0))
+    story.append(Spacer(1, 0.5 * inch))
+    story.append(Paragraph(_escape_for_paragraph(title_text), styles["cover_title"]))
+    story.append(Paragraph(_escape_for_paragraph(subtitle_text), styles["cover_subtitle"]))
+    story.append(Spacer(1, 0.25 * inch))
+
+    posture_label, posture_color = _overall_posture(aggregate.summary_counts)
+    posture_table = Table(
+        [[Paragraph(
+            f"<para alignment='center' leading='28'>"
+            f"<font color='#121212' size='10'><b>OVERALL POSTURE</b></font><br/>"
+            f"<font color='#121212' size='22'><b>"
+            f"{_escape_for_paragraph(posture_label)}</b></font>"
+            f"</para>",
+            styles["body"],
+        )]],
+        colWidths=[4.4 * inch],
+    )
+    posture_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), posture_color),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    posture_table.hAlign = "CENTER"
+    story.append(posture_table)
+    story.append(Spacer(1, 0.25 * inch))
+
+    package_name = (
+        _coerce_str(static_summary.get("package"))
+        or _coerce_str(target.android_package_name)
+        or "(unknown)"
+    )
+    version_name = _coerce_str(static_summary.get("version_name")) or "(unknown)"
+    version_code = _coerce_str(static_summary.get("version_code"))
+    if version_code:
+        version_display = f"{version_name} (code {version_code})"
+    else:
+        version_display = version_name
+    sha_display = _format_sha256(apk_overview.get("sha256")) or "(unknown)"
+    audited_at = aggregate.generated_at.strftime("%Y-%m-%d %H:%M UTC")
+
+    cover_meta: list[tuple[str, str]] = [
+        ("APK display name", target.display_name or "(unknown)"),
+        ("Package", package_name),
+        ("Version", version_display),
+        ("SHA-256", sha_display),
+        ("MASVS catalog", aggregate.masvs_spec_version),
+        ("Controls audited", str(len(aggregate.verdicts))),
+        ("Parent investigation", aggregate.parent_id),
+        ("Report generated", audited_at),
+    ]
+    min_sdk = _coerce_str(static_summary.get("min_sdk"))
+    target_sdk = _coerce_str(static_summary.get("target_sdk"))
+    if min_sdk or target_sdk:
+        cover_meta.insert(
+            4,
+            ("SDK range", f"min {min_sdk or '?'} → target {target_sdk or '?'}"),
+        )
+
+    body_style = styles["body"]
+    meta_rows = [
+        [
+            Paragraph(
+                f"<font color='#808080'>{_escape_for_paragraph(label)}</font>",
+                body_style,
+            ),
+            Paragraph(_escape_for_paragraph(value), body_style),
+        ]
+        for label, value in cover_meta
+    ]
+    meta_table = Table(meta_rows, colWidths=[1.7 * inch, 4.5 * inch])
+    meta_table.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, -1), _FONT_BODY, 9),
+        ("TEXTCOLOR", (0, 0), (0, -1), _FG_MUTED),
+        ("TEXTCOLOR", (1, 0), (1, -1), _FG_TEXT),
+        ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+        ("ALIGN", (1, 0), (1, -1), "LEFT"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("BACKGROUND", (0, 0), (-1, -1), _BG_SURFACE),
+        ("LINEAFTER", (0, 0), (0, -1), 0.5, _BG_BORDER),
+        ("BOX", (0, 0), (-1, -1), 0.5, _BG_BORDER),
+    ]))
+    meta_table.hAlign = "CENTER"
+    story.append(meta_table)
+
+
+def _append_executive_summary(
+    story: list[Any],
+    aggregate: MasvsAuditAggregate,
+    styles: dict[str, ParagraphStyle],
+) -> None:
+    """Executive summary — interpretive sentence + four-cell count grid.
+
+    The sentence reads naturally so the lead can paste it into an email
+    without polishing ("3 findings, 2 inconclusive across 46 controls
+    audited under MASVS 1.4.2-aila."). The grid below restates the
+    same numbers in a denser visual that survives black-and-white
+    printing.
+    """
+    story.append(_BookmarkFlowable("masvs-executive-summary", "Executive summary", level=0))
+    _append_section_h1(story, "Executive Summary", styles)
+
+    counts = aggregate.summary_counts
+    total = len(aggregate.verdicts)
+    findings = counts.get(MasvsVerdict.FINDING, 0)
+    no_finding = counts.get(MasvsVerdict.NO_FINDING, 0)
+    not_applicable = counts.get(MasvsVerdict.NOT_APPLICABLE, 0)
+    inconclusive = counts.get(MasvsVerdict.INCONCLUSIVE, 0)
+
+    if total == 0:
+        opening = (
+            "No controls have terminal verdicts yet — every child "
+            "investigation is still in flight or has produced no "
+            "primary outcome."
+        )
+    else:
+        opening = (
+            f"<b>{findings}</b> {'finding' if findings == 1 else 'findings'}, "
+            f"<b>{no_finding}</b> no-finding, "
+            f"<b>{not_applicable}</b> not-applicable, "
+            f"<b>{inconclusive}</b> inconclusive across "
+            f"<b>{total}</b> controls audited under "
+            f"MASVS {_escape_for_paragraph(aggregate.masvs_spec_version)}."
+        )
+    story.append(Paragraph(opening, styles["body"]))
+    story.append(Spacer(1, 0.1 * inch))
+
+    header_cells = [
+        Paragraph(
+            f"<font color='#121212' size='9'><b>"
+            f"{_VERDICT_LABEL[v]}</b></font>",
+            styles["body"],
+        )
+        for v in _VERDICT_DISPLAY_ORDER
+    ]
+    body_cells = [
+        Paragraph(
+            f"<font color='#ffd7af'><b><font size='16'>"
+            f"{counts.get(v, 0)}</font></b></font>",
+            styles["body"],
+        )
+        for v in _VERDICT_DISPLAY_ORDER
+    ]
+    grid = Table(
+        [header_cells, body_cells],
+        colWidths=[1.55 * inch] * len(_VERDICT_DISPLAY_ORDER),
+    )
+    style_cmds: list[tuple[Any, ...]] = [
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("BACKGROUND", (0, 1), (-1, 1), _BG_SURFACE),
+        ("BOX", (0, 0), (-1, -1), 0.5, _BG_BORDER),
+    ]
+    for col_index, verdict in enumerate(_VERDICT_DISPLAY_ORDER):
+        style_cmds.append((
+            "BACKGROUND", (col_index, 0), (col_index, 0),
+            _VERDICT_COLOR[verdict],
+        ))
+    grid.setStyle(TableStyle(style_cmds))
+    grid.hAlign = "CENTER"
+    story.append(grid)
+    story.append(Spacer(1, 0.2 * inch))
+
+
+def _bookmark_key_for_group(group: MasvsGroup) -> str:
+    """Stable bookmark id used both as the PDF outline anchor and as
+    the named-destination string a future "click TOC entry" link
+    would point at.
+    """
+    return f"masvs-group-{group.value.lower()}"
+
+
+def _append_group_sections(
+    story: list[Any],
+    aggregate: MasvsAuditAggregate,
+    styles: dict[str, ParagraphStyle],
+) -> None:
+    """One section per non-empty MASVS group, in canonical order.
+
+    The section header (h1) is the spec-facing label (``MASVS-CRYPTO``)
+    and emits a PDF outline bookmark so the viewer renders it as a TOC
+    entry. Each row beneath is one control — id, title, verdict badge,
+    confidence — enough scaffolding that R-2b can drop the per-control
+    body (evidence excerpts + remediation prose) directly below this
+    row without restructuring.
+    """
+    for group in MasvsGroup:
+        verdicts = aggregate.by_group.get(group, [])
+        if not verdicts:
+            continue
+
+        heading = _GROUP_HEADING[group]
+        story.append(PageBreak())
+        story.append(_BookmarkFlowable(
+            _bookmark_key_for_group(group),
+            heading,
+            level=0,
+        ))
+        _append_section_h1(story, heading, styles)
+
+        header_row: list[Any] = [
+            Paragraph(
+                "<font color='#97dbbe'><b>CONTROL</b></font>",
+                styles["body"],
+            ),
+            Paragraph(
+                "<font color='#97dbbe'><b>VERDICT</b></font>",
+                styles["body"],
+            ),
+            Paragraph(
+                "<font color='#97dbbe'><b>CONFIDENCE</b></font>",
+                styles["body"],
+            ),
+        ]
+        rows: list[list[Any]] = [header_row]
+        for verdict in verdicts:
+            verdict_label = _VERDICT_LABEL[verdict.verdict]
+            confidence_pct = int(round(verdict.confidence * 100))
+            rows.append([
+                Paragraph(
+                    f"<font name='{_FONT_BODY_BOLD}'>"
+                    f"{_escape_for_paragraph(verdict.control_id)}"
+                    f"</font>",
+                    styles["body"],
+                ),
+                Paragraph(
+                    f"<font color='#121212'><b>"
+                    f"{_escape_for_paragraph(verdict_label)}</b></font>",
+                    styles["body"],
+                ),
+                Paragraph(
+                    f"{confidence_pct}%",
+                    styles["body"],
+                ),
+            ])
+
+        group_table = Table(rows, colWidths=[2.0 * inch, 2.2 * inch, 1.4 * inch])
+        cmds: list[tuple[Any, ...]] = [
+            ("FONT", (0, 0), (-1, -1), _FONT_BODY, 10),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (0, -1), "LEFT"),
+            ("ALIGN", (1, 0), (1, -1), "CENTER"),
+            ("ALIGN", (2, 0), (2, -1), "CENTER"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("BACKGROUND", (0, 0), (-1, 0), _BG_SURFACE),
+            ("BOX", (0, 0), (-1, -1), 0.5, _BG_BORDER),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, _BG_BORDER),
+        ]
+        for row_index, verdict in enumerate(verdicts, start=1):
+            cmds.append((
+                "BACKGROUND", (1, row_index), (1, row_index),
+                _VERDICT_COLOR[verdict.verdict],
+            ))
+        group_table.setStyle(TableStyle(cmds))
+        group_table.hAlign = "LEFT"
+        story.append(KeepTogether(group_table))
+        story.append(Spacer(1, 0.15 * inch))
+
+
+def build_pdf(
+    aggregate: MasvsAuditAggregate,
+    target: VRTargetSummary,
+) -> bytes:
+    """Render a :class:`MasvsAuditAggregate` as a PDF byte string.
+
+    R-2a scaffolding — cover page, executive summary count grid, and
+    one section per non-empty MASVS group with PDF outline bookmarks
+    driving the TOC sidebar. R-2b appends per-control subsection bodies
+    (verdict badge + evidence excerpts + remediation prose) inside each
+    group section without restructuring the existing scaffolding.
+
+    The render is purely structural — it never invents verdicts. Every
+    table row and badge traces back to a real
+    :class:`MasvsControlVerdict` in ``aggregate.verdicts``, which itself
+    cites a real child investigation outcome.
+
+    :param aggregate: Output of :func:`collect_findings` for a MASVS
+        audit parent. Partial aggregates (children still in flight) are
+        valid — the renderer reports whatever verdicts are resolvable.
+    :param target: Read-only target projection supplying the cover
+        page's APK identity (display name, package, version, SHA-256).
+    :returns: Bytes of a self-contained PDF document. Caller streams
+        them directly to the operator via the R-3 download endpoint.
+    """
+    apk_overview = target.apk_overview or {}
+    static_summary: Mapping[str, Any] = {}
+    if isinstance(apk_overview, Mapping):
+        maybe_static = apk_overview.get("static_summary")
+        if isinstance(maybe_static, Mapping):
+            static_summary = maybe_static
+
+    buf = io.BytesIO()
+    margin = 0.75 * inch
+    frame = Frame(
+        margin, margin,
+        LETTER[0] - 2 * margin, LETTER[1] - 2 * margin,
+        id="body",
+        leftPadding=0, rightPadding=0,
+        topPadding=12, bottomPadding=6,
+    )
+
+    # ``_draw_footer`` paints the dark page background as its first
+    # action (see ``aila.modules.vr.reporting.pdf_report``), so a plain
+    # ``PageTemplate`` with ``onPage=_draw_footer`` produces the same
+    # dark canvas + cream footer chrome without subclassing — the
+    # ``beforeDrawPage`` override only matters when the background is
+    # not also painted by ``onPage``.
+    package_for_title = (
+        _coerce_str(static_summary.get("package"))
+        or _coerce_str(target.android_package_name)
+        or target.display_name
+        or "android-apk"
+    )
+    doc = BaseDocTemplate(
+        buf,
+        pagesize=LETTER,
+        leftMargin=margin,
+        rightMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
+        title=f"MASVS audit — {package_for_title}",
+        author="AILA Vulnerability Research",
+        subject=f"OWASP MASVS audit report (catalog {aggregate.masvs_spec_version})",
+    )
+    doc.addPageTemplates([
+        PageTemplate(id="dark", frames=[frame], onPage=_draw_footer),
+    ])
+
+    styles = _build_styles()
+    story: list[Any] = []
+
+    _append_cover(story, aggregate, target, static_summary, styles)
+    story.append(PageBreak())
+    _append_executive_summary(story, aggregate, styles)
+    _append_group_sections(story, aggregate, styles)
+
+    doc.build(story)
+    return buf.getvalue()
