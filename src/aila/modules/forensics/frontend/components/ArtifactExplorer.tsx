@@ -127,7 +127,10 @@ function RecordTable({
           {filtered.length > MAX_ROWS ? ` (showing first ${MAX_ROWS})` : ""}
         </span>
       </div>
-      <div className={`overflow-auto rounded border border-border ${fullscreen ? "max-h-[70vh]" : "max-h-[32rem]"}`}>
+      <div
+        className="overflow-auto rounded border border-border"
+        style={{ maxHeight: fullscreen ? "70vh" : "32rem" }}
+      >
         <table className="min-w-full text-xs font-mono">
           <thead className="bg-surface-secondary sticky top-0 z-10">
             <tr>
@@ -161,13 +164,14 @@ function RecordTable({
                     {cols.map((c) => (
                       <td
                         key={c}
-                        className="px-2 py-1.5 text-foreground align-top break-words max-w-[28rem]"
+                        className="px-2 py-1.5 text-foreground align-top break-words"
+                        style={{ maxWidth: "28rem" }}
                       >
                         {c === "suspicious_reasons" && Array.isArray(rec[c]) ? (
                           (rec[c] as string[]).map((r, j) => (
                             <span
                               key={j}
-                              className="inline-block mr-1 mb-0.5 px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 text-[10px]"
+                              className="inline-block mr-1 mb-0.5 px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 text-3xs"
                             >
                               {r}
                             </span>
@@ -272,7 +276,10 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
       {records.length > 0 ? (
         <RecordTable records={records} fullscreen={fullscreen} />
       ) : rawOutput ? (
-        <pre className="text-xs font-mono whitespace-pre-wrap text-foreground bg-black/30 p-3 rounded border border-border max-h-[32rem] overflow-auto">
+        <pre
+          className="text-xs font-mono whitespace-pre-wrap text-foreground bg-black/30 p-3 rounded border border-border overflow-auto"
+          style={{ maxHeight: "32rem" }}
+        >
           {rawOutput}
         </pre>
       ) : structuredEntries.length > 0 || nestedObservables ? (
@@ -424,7 +431,8 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
           onClick={() => setFullscreen(false)}
         >
           <div
-            className="bg-surface border border-border rounded-lg w-full max-w-7xl max-h-[90vh] flex flex-col"
+            className="bg-surface border border-border rounded-lg w-full max-w-7xl flex flex-col"
+            style={{ maxHeight: "90vh" }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">

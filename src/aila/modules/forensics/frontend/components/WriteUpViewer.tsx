@@ -217,7 +217,7 @@ function WriteUpCard({
               </h3>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1">
                 {investigation ? (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-text-muted">
+                  <span className="inline-flex items-center gap-1.5 text-2xs text-text-muted">
                     <AilaBadge severity="info" size="sm">
                       I
                     </AilaBadge>
@@ -229,7 +229,7 @@ function WriteUpCard({
                     </span>
                   </span>
                 ) : writeup.investigation_id ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] text-text-muted">
+                  <span className="inline-flex items-center gap-1 text-2xs text-text-muted">
                     <AilaBadge severity="info" size="sm">
                       I
                     </AilaBadge>
@@ -241,17 +241,17 @@ function WriteUpCard({
                     </span>
                   </span>
                 ) : (
-                  <span className="text-[11px] text-text-muted italic">
+                  <span className="text-2xs text-text-muted italic">
                     Project-wide write-up (no single investigation)
                   </span>
                 )}
                 {writeup.created_at && (
-                  <span className="text-[11px] text-text-muted">
+                  <span className="text-2xs text-text-muted">
                     {stamp(writeup.created_at)}
                   </span>
                 )}
                 {writeup.artifacts_referenced.length > 0 && (
-                  <span className="text-[11px] text-text-muted">
+                  <span className="text-2xs text-text-muted">
                     {writeup.artifacts_referenced.length} artifact ref
                     {writeup.artifacts_referenced.length === 1 ? "" : "s"}
                   </span>
@@ -276,7 +276,7 @@ function WriteUpCard({
           </Button>
           {confirmDelete ? (
             <div className="flex items-center gap-1">
-              <span className="text-[11px] text-text-muted">Delete?</span>
+              <span className="text-2xs text-text-muted">Delete?</span>
               <Button
                 size="sm"
                 variant="secondary"
@@ -316,7 +316,7 @@ function WriteUpCard({
         <div className="space-y-3 pl-5 border-l-2 border-border/60">
           {writeup.methodology && (
             <div className="rounded-md bg-surface-secondary px-3 py-2">
-              <h4 className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1">
+              <h4 className="text-2xs font-medium text-text-muted uppercase tracking-wide mb-1">
                 Methodology
               </h4>
               <p className="text-xs text-foreground whitespace-pre-wrap">
@@ -334,13 +334,13 @@ function WriteUpCard({
     
           {writeup.artifacts_referenced.length > 0 && (
             <div className="flex flex-wrap items-center gap-1 pt-2 border-t border-border/60">
-              <span className="text-[11px] text-text-muted mr-1">
+              <span className="text-2xs text-text-muted mr-1">
                 Referenced artifacts:
               </span>
               {writeup.artifacts_referenced.map((id) => (
                 <span
                   key={id}
-                  className="px-1.5 py-0.5 text-[11px] bg-surface-secondary rounded font-mono text-text-muted"
+                  className="px-1.5 py-0.5 text-2xs bg-surface-secondary rounded font-mono text-text-muted"
                   title={id}
                 >
                   {id.slice(0, 8)}
@@ -457,7 +457,7 @@ function inline(text: string): string {
   return text
     .replace(
       /`([^`]+)`/g,
-      '<code class="px-1 py-0.5 bg-surface-secondary rounded text-[11px] font-mono">$1</code>',
+      '<code class="px-1 py-0.5 bg-surface-secondary rounded text-2xs font-mono">$1</code>',
     )
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")

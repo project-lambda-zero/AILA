@@ -66,7 +66,7 @@ function SortHeader({
     >
       <span className="inline-flex items-center gap-1">
         {label}
-        <span className="text-[9px] opacity-70">{arrow}</span>
+        <span className="text-4xs opacity-70">{arrow}</span>
       </span>
     </th>
   );
@@ -178,7 +178,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
         <button
           type="button"
           onClick={() => setTypeFilter(null)}
-          className={`px-2.5 py-1 text-[10px] rounded-full font-medium ${
+          className={`px-2.5 py-1 text-3xs rounded-full font-medium ${
             !typeFilter
               ? "bg-primary text-white"
               : "bg-surface-secondary text-text-muted hover:text-foreground"
@@ -191,7 +191,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
             key={t}
             type="button"
             onClick={() => setTypeFilter(typeFilter === t ? null : t)}
-            className={`px-2.5 py-1 text-[10px] rounded-full font-medium ${
+            className={`px-2.5 py-1 text-3xs rounded-full font-medium ${
               typeFilter === t
                 ? "bg-primary text-white"
                 : TYPE_TONE[t] || TYPE_TONE.unknown
@@ -211,7 +211,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
         </AilaCard>
       ) : (
         <div className="border border-border rounded-lg bg-surface text-foreground overflow-hidden">
-          <div className="overflow-y-auto max-h-[620px]">
+          <div className="overflow-y-auto" style={{ maxHeight: 620 }}>
             <table className="w-full text-xs">
               <thead className="bg-surface-secondary sticky top-0 z-10">
                 <tr>
@@ -274,7 +274,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
                       </td>
                       <td className="px-3 py-1.5 align-top">
                         <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap ${tone}`}
+                          className={`px-1.5 py-0.5 rounded text-3xs font-medium whitespace-nowrap ${tone}`}
                         >
                           {type.replace(/_/g, " ")}
                         </span>

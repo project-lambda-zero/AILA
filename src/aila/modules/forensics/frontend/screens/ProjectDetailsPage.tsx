@@ -52,7 +52,7 @@ export function ProjectDetailsPage() {
   }
 
   return (
-    <div className="space-y-4 bg-surface text-foreground p-4 rounded-[var(--radius-md)] border border-border">
+    <div className="space-y-4 bg-surface text-foreground p-4 rounded-md border border-border">
       <div className="flex items-center justify-between">
         <button
           type="button"

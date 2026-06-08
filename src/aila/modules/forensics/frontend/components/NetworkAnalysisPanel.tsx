@@ -81,7 +81,7 @@ const ipFlag = (ip: unknown, isInternal: unknown): React.ReactNode => {
   return (
     <span>
       <span className="font-mono">{txt}</span>
-      <span className={`ml-2 text-[10px] uppercase tracking-wide ${cls}`}>{label}</span>
+      <span className={`ml-2 text-3xs uppercase tracking-wide ${cls}`}>{label}</span>
     </span>
   );
 };
@@ -96,7 +96,7 @@ const classificationBadge = (v: unknown): React.ReactNode => {
   };
   const cls = map[k] ?? map.common;
   return (
-    <span className={`inline-block px-2 py-0.5 text-[10px] font-semibold uppercase rounded border ${cls}`}>
+    <span className={`inline-block px-2 py-0.5 text-3xs font-semibold uppercase rounded border ${cls}`}>
       {k}
     </span>
   );
@@ -111,7 +111,7 @@ const severityBadge = (s: string): React.ReactNode => {
   };
   const cls = map[s] ?? map.info;
   return (
-    <span className={`inline-block px-2 py-0.5 text-[10px] font-semibold uppercase rounded border ${cls}`}>
+    <span className={`inline-block px-2 py-0.5 text-3xs font-semibold uppercase rounded border ${cls}`}>
       {s}
     </span>
   );
@@ -141,7 +141,7 @@ const COLS_SESSIONS: ColumnDef[] = [
   {
     key: "is_long_lived",
     header: "Flag",
-    render: (r) => (r.is_long_lived ? <span className="text-amber-700 text-[10px] font-semibold uppercase">long-lived</span> : ""),
+    render: (r) => (r.is_long_lived ? <span className="text-amber-700 text-3xs font-semibold uppercase">long-lived</span> : ""),
   },
 ];
 
@@ -169,7 +169,7 @@ const COLS_HTTP_REQ: ColumnDef[] = [
     render: (r) => {
       const ua = String(r.user_agent ?? "");
       return (
-        <span className="truncate inline-block max-w-[360px]" title={ua}>
+        <span className="truncate inline-block" style={{ maxWidth: 360 }} title={ua}>
           {ua || <span className="text-text-muted italic">(empty)</span>}
         </span>
       );
@@ -180,7 +180,7 @@ const COLS_HTTP_REQ: ColumnDef[] = [
     header: "UA flag",
     render: (r) =>
       r.is_suspicious_ua ? (
-        <span className="text-rose-700 text-[10px] font-semibold uppercase">{String(r.ua_tag ?? "sus")}</span>
+        <span className="text-rose-700 text-3xs font-semibold uppercase">{String(r.ua_tag ?? "sus")}</span>
       ) : (
         ""
       ),
@@ -218,7 +218,7 @@ const COLS_UA: ColumnDef[] = [
   {
     key: "is_suspicious",
     header: "Flag",
-    render: (r) => (r.is_suspicious ? <span className="text-rose-700 text-[10px] font-semibold uppercase">{String(r.tag ?? "sus")}</span> : ""),
+    render: (r) => (r.is_suspicious ? <span className="text-rose-700 text-3xs font-semibold uppercase">{String(r.tag ?? "sus")}</span> : ""),
   },
 ];
 
@@ -263,7 +263,7 @@ const COLS_BEACONS: ColumnDef[] = [
   {
     key: "constant_size",
     header: "Const size",
-    render: (r) => (r.constant_size ? <span className="text-rose-700 text-[10px] font-semibold uppercase">yes</span> : ""),
+    render: (r) => (r.constant_size ? <span className="text-rose-700 text-3xs font-semibold uppercase">yes</span> : ""),
   },
 ];
 
@@ -417,7 +417,7 @@ function StatsBar({ stats }: { stats: NetworkAnalysis["stats"] }) {
     <div className="flex gap-6 border border-border rounded-md px-4 py-3 bg-surface-secondary/40 mb-3">
       {items.map((it) => (
         <div key={it.label}>
-          <div className="text-[10px] uppercase tracking-wide text-text-muted font-medium">{it.label}</div>
+          <div className="text-3xs uppercase tracking-wide text-text-muted font-medium">{it.label}</div>
           <div className="font-mono text-sm font-semibold text-foreground">{it.value}</div>
         </div>
       ))}
@@ -524,11 +524,11 @@ function DataTable({
           onChange={(e) => setFilterText(e.target.value)}
           className="w-full max-w-xs px-2.5 py-1 text-xs rounded border border-border bg-surface text-foreground placeholder:text-text-muted focus:outline-none focus:border-primary"
         />
-        <span className="text-[10px] text-text-muted">
+        <span className="text-3xs text-text-muted">
           {sorted.length} of {rows.length} rows
         </span>
       </div>
-      <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+      <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 600 }}>
         <table className="w-full text-xs">
           <thead className="bg-surface-secondary sticky top-0 z-10">
             <tr>
@@ -574,7 +574,7 @@ function DataTable({
         </table>
       </div>
       {sorted.length > 1000 && (
-        <div className="px-3 py-2 text-[10px] text-text-muted border-t border-border bg-surface-secondary/50">
+        <div className="px-3 py-2 text-3xs text-text-muted border-t border-border bg-surface-secondary/50">
           Showing 1000 of {sorted.length} rows. Filter to narrow.
         </div>
       )}
@@ -641,7 +641,7 @@ export function NetworkAnalysisPanel({ projectId }: { projectId: string }) {
               <span>{tab.label}</span>
               {count > 0 && (
                 <span
-                  className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  className={`ml-1 px-1.5 py-0.5 rounded-full text-3xs font-bold ${
                     isActive ? "bg-primary/10 text-primary" : "bg-surface-secondary text-text-muted"
                   }`}
                 >

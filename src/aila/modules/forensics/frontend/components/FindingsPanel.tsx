@@ -146,17 +146,17 @@ function FindingRow({
         aria-expanded={expanded}
         className="w-full px-4 py-2.5 flex items-center gap-3 text-left hover:bg-red-950/40 transition-colors"
       >
-        <span className="text-[10px] font-mono text-red-300/80 shrink-0 w-6">#{index + 1}</span>
+        <span className="text-3xs font-mono text-red-300/80 shrink-0 w-6">#{index + 1}</span>
         <span className="text-xs font-mono text-red-300/70 shrink-0 select-none">
           {expanded ? "▾" : "▸"}
         </span>
         <h4 className="text-sm font-semibold text-foreground flex-1 truncate">{n.title}</h4>
         {occ > 1 && (
-          <span className="shrink-0 px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 text-[10px] font-mono">
+          <span className="shrink-0 px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 text-3xs font-mono">
             ×{occ}
           </span>
         )}
-        <span className="shrink-0 text-[10px] font-mono text-red-300/70">
+        <span className="shrink-0 text-3xs font-mono text-red-300/70">
           {f.suspicious_reasons.length} reason{f.suspicious_reasons.length === 1 ? "" : "s"}
         </span>
       </button>
@@ -169,7 +169,7 @@ function FindingRow({
             {f.suspicious_reasons.map((r, j) => (
               <span
                 key={j}
-                className="px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 text-[10px] font-mono"
+                className="px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 text-3xs font-mono"
               >
                 {r}
               </span>
@@ -178,7 +178,7 @@ function FindingRow({
 
           {commandFields.length > 0 && (
             <div className="rounded border border-red-900/30 bg-black/30 p-2">
-              <div className="text-[10px] font-mono text-red-300/70 mb-1 uppercase tracking-wide">
+              <div className="text-3xs font-mono text-red-300/70 mb-1 uppercase tracking-wide">
                 Exact parameters
               </div>
               <dl className="grid grid-cols-[min-content_1fr] gap-x-3 gap-y-1 text-xs font-mono">
@@ -194,17 +194,17 @@ function FindingRow({
 
           {f.raw_record && (
             <details className="rounded border border-red-900/30 bg-black/30">
-              <summary className="cursor-pointer px-2 py-1 text-[10px] font-mono text-red-300/70 uppercase tracking-wide hover:text-red-200">
+              <summary className="cursor-pointer px-2 py-1 text-3xs font-mono text-red-300/70 uppercase tracking-wide hover:text-red-200">
                 Full raw record
               </summary>
-              <pre className="p-2 text-[11px] font-mono text-foreground/80 overflow-x-auto max-h-96">
+              <pre className="p-2 text-2xs font-mono text-foreground/80 overflow-x-auto max-h-96">
                 {JSON.stringify(f.raw_record, null, 2)}
               </pre>
             </details>
           )}
 
           <div className="flex items-center justify-between gap-2">
-            <div className="flex gap-2 text-[10px] font-mono text-red-300/60">
+            <div className="flex gap-2 text-3xs font-mono text-red-300/60">
               <span>family: {f.artifact_family}</span>
               <span>·</span>
               <span>type: {f.artifact_type}</span>
@@ -218,7 +218,7 @@ function FindingRow({
             <Button
               size="sm"
               variant="outline"
-              className="h-7 px-2 text-[10px] border-amber-600 text-amber-400 hover:bg-amber-950/30"
+              className="h-7 px-2 text-3xs border-amber-600 text-amber-400 hover:bg-amber-950/30"
               disabled={suppress.isPending || !f.fingerprint}
               onClick={() => {
                 if (!f.fingerprint) return;
@@ -310,14 +310,14 @@ export function FindingsPanel({ projectId }: { projectId: string }) {
             <button
               type="button"
               onClick={toggleAll}
-              className="text-[10px] font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
+              className="text-3xs font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
             >
               {expandAll ? "collapse all" : "expand all"}
             </button>
             <button
               type="button"
               onClick={() => downloadFindings(findings, projectId)}
-              className="text-[10px] font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
+              className="text-3xs font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
               title="Download all findings as JSON"
             >
               download json

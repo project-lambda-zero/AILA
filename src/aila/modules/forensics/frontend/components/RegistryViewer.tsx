@@ -105,7 +105,7 @@ export function RegistryViewer({ projectId }: { projectId: string }) {
               <span>{tab.icon}</span>
               <span>{tab.label}</span>
               {count > 0 && (
-                <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                <span className={`ml-1 px-1.5 py-0.5 rounded-full text-3xs font-bold ${
                   activeTab === tab.id
                     ? "bg-primary/10 text-primary"
                     : "bg-surface-secondary text-text-muted"
@@ -160,11 +160,11 @@ function RegistryTable({ rows }: { rows: Record<string, unknown>[] }) {
           onChange={(e) => setFilterText(e.target.value)}
           className="w-full max-w-xs px-2.5 py-1 text-xs rounded border border-border bg-surface text-foreground placeholder:text-text-muted focus:outline-none focus:border-primary"
         />
-        <span className="ml-3 text-[10px] text-text-muted">
+        <span className="ml-3 text-3xs text-text-muted">
           {filtered.length} of {rows.length} entries
         </span>
       </div>
-      <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+      <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 600 }}>
         <table className="w-full text-xs">
           <thead className="bg-surface-secondary sticky top-0 z-10">
             <tr>
@@ -198,7 +198,7 @@ function RegistryTable({ rows }: { rows: Record<string, unknown>[] }) {
                 {expandedRow === i && (
                   <tr key={`${i}-detail`} className="border-t border-border/50">
                     <td colSpan={columns.length + 1} className="px-4 py-3 bg-surface-secondary/20">
-                      <pre className="text-[10px] font-mono text-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+                      <pre className="text-3xs font-mono text-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
                         {JSON.stringify(row, null, 2)}
                       </pre>
                     </td>
