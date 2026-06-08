@@ -155,6 +155,25 @@ class VRTargetSummary(BaseModel):
             "label once it is populated."
         ),
     )
+    apk_overview: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "For kind=android_apk only. Projected from mcp_handles_json "
+            "after the 5-stage pipeline completes (APK_DECODE → JADX_DECOMPILE "
+            "→ INDEX_DECOMPILED → STATIC_SUMMARY → MOBSF_SCAN). Keys:\n"
+            "  - sha256, decoded_dir, manifest_path (APK_DECODE)\n"
+            "  - decompiled_dir, jadx_root, jadx_class_count (JADX_DECOMPILE)\n"
+            "  - audit_mcp_index_id, audit_mcp_indexed_at (INDEX_DECOMPILED)\n"
+            "  - static_summary {package, version_name, version_code,\n"
+            "    min_sdk, target_sdk, permissions, exported_*, native_libs,\n"
+            "    certificates, signing_scheme, ...} (STATIC_SUMMARY)\n"
+            "  - mobsf_scan {issues, severity, ...} OR {skipped, reason}\n"
+            "    (MOBSF_SCAN)\n"
+            "None when kind != android_apk OR the pipeline hasn't progressed "
+            "far enough to write any handles. Frontend renders an "
+            "Android APK overview card from this projection."
+        ),
+    )
     primary_language: str | None = None
     secondary_languages: list[str] = Field(default_factory=list)
     status: TargetStatus

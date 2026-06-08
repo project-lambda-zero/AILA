@@ -168,6 +168,25 @@ export interface VRTargetCreate {
   tags?: string[];
 }
 
+/** APK-specific projection from mcp_handles_json. Each field is
+ * optional because the pipeline writes them in stages — the operator
+ * sees what's ready as it appears. `static_summary` and `mobsf_scan`
+ * are passed through as opaque records because both vary by
+ * androguard/MobSF version and the renderer reads only the keys it
+ * recognises (defensive parsing). */
+export interface ApkOverview {
+  sha256?: string;
+  decoded_dir?: string;
+  manifest_path?: string;
+  decompiled_dir?: string;
+  jadx_root?: string;
+  jadx_class_count?: number;
+  audit_mcp_index_id?: string;
+  audit_mcp_indexed_at?: string;
+  static_summary?: Record<string, unknown>;
+  mobsf_scan?: Record<string, unknown>;
+}
+
 export interface VRTargetSummary {
   id: string;
   workspace_id: string;
@@ -176,6 +195,11 @@ export interface VRTargetSummary {
   descriptor: Record<string, unknown>;
   uploaded_filename?: string | null;
   android_package_name?: string | null;
+  /** APK-specific projection from mcp_handles_json. Populated as the
+   * 5-stage pipeline progresses (APK_DECODE → JADX_DECOMPILE →
+   * INDEX_DECOMPILED → STATIC_SUMMARY → MOBSF_SCAN). Null for
+   * non-APK kinds and before the first stage writes anything. */
+  apk_overview?: ApkOverview | null;
   primary_language?: string | null;
   secondary_languages: string[];
   status: TargetStatus;
