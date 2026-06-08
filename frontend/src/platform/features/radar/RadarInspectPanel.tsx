@@ -13,18 +13,24 @@
  */
 import * as React from "react";
 import { X as CloseIcon } from "@phosphor-icons/react/dist/csr/X";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";
+import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { formatRelativeTime } from "@platform/features/systems/api";
 import type { TopologyNode } from "./types";
+
+/**
+ * The severity pie chart lives in a separate module so recharts can be
+ * chunk-split out of the root entry (C17). RadarInspectPanel is itself
+ * imported synchronously by RadarPage; deferring the pie keeps recharts
+ * out of the eager dependency graph until a node is actually inspected.
+ */
+const RadarSeverityPieView = React.lazy(() =>
+  import("./RadarSeverityPie.view").then((m) => ({
+    default: m.RadarSeverityPieView,
+  })),
+);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -55,19 +61,6 @@ function buildSeveritySlices(counts: TopologyNode["severity_counts"]): SeverityS
     { name: "Low", value: counts.low, fill: "var(--color-low)" },
   ].filter((s) => s.value > 0);
 }
-
-// ---------------------------------------------------------------------------
-// Tooltip style
-// ---------------------------------------------------------------------------
-
-const TOOLTIP_STYLE: React.CSSProperties = {
-  backgroundColor: "var(--color-elevated)",
-  border: "1px solid var(--color-border)",
-  borderRadius: "4px",
-  fontFamily: "var(--font-mono, monospace)",
-  fontSize: "11px",
-  color: "var(--color-text)",
-};
 
 // ---------------------------------------------------------------------------
 // Section heading
@@ -149,24 +142,17 @@ export function RadarInspectPanel({ node, open, onClose }: RadarInspectPanelProp
                 {hasSeverityData ? (
                   <>
                     <div className="h-40">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={severitySlices}
-                            dataKey="value"
-                            nameKey="name"
-                            cx="50%"
-                            cy="50%"
-                            outerRadius="70%"
-                            strokeWidth={0}
-                          >
-                            {severitySlices.map((slice) => (
-                              <Cell key={slice.name} fill={slice.fill} />
-                            ))}
-                          </Pie>
-                          <Tooltip contentStyle={TOOLTIP_STYLE} />
-                        </PieChart>
-                      </ResponsiveContainer>
+                      <React.Suspense
+                        fallback={
+                          <LoadingSkeleton
+                            size="full"
+                            width="full"
+                            className="h-full"
+                          />
+                        }
+                      >
+                        <RadarSeverityPieView slices={severitySlices} />
+                      </React.Suspense>
                     </div>
                     <div className="flex justify-center gap-3 mt-2 font-mono text-[10px]">
                       <span style={{ color: "var(--color-critical)" }}>

@@ -59,7 +59,12 @@ function manualChunks(id: string): string | undefined {
   if (!id.includes("node_modules")) {
     return undefined;
   }
-  if (/[\\/]node_modules[\\/](react|react-dom|scheduler|react-is)[\\/]/.test(id)) {
+  // clsx/cva/tailwind-merge are tiny (~25 KB combined) and pulled in by
+  // every component via the `cn()` helper. Putting them in vendor-react
+  // (eager-loaded) prevents the root entry from statically importing
+  // them from vendor-recharts — which would force the 430 KB recharts
+  // chunk on every route, defeating C17's lazy boundaries.
+  if (/[\\/]node_modules[\\/](react|react-dom|scheduler|react-is|clsx|class-variance-authority|tailwind-merge)[\\/]/.test(id)) {
     return "vendor-react";
   }
   if (/[\\/]node_modules[\\/]react-router[\\/]/.test(id)) {

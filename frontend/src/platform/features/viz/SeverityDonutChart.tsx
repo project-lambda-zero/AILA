@@ -2,50 +2,30 @@
  * SeverityDonutChart — VIZ-01.
  *
  * Donut chart showing severity distribution from real findings facet data.
- * Uses Recharts PieChart directly (not AilaChart) to support innerRadius.
- * Falls back to an empty state when facets are absent or all-zero.
+ * The recharts-using JSX lives in ./SeverityDonutChart.view and is
+ * loaded lazily (C17) so the recharts vendor chunk stays out of the
+ * root entry. Falls back to an empty state when facets are absent or
+ * all-zero, and to a skeleton while data is in flight.
  */
 import * as React from "react";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from "recharts";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+
 import { useFindingsFacets } from "./useFindingsFacets";
 import { ChartExportButton } from "./ChartExportButton";
 import { useThemeChartColors } from "./chartColors";
 
-// ---------------------------------------------------------------------------
-// Tooltip style
-// ---------------------------------------------------------------------------
-
-const TOOLTIP_STYLE: React.CSSProperties = {
-  backgroundColor: "var(--color-elevated)",
-  border: "1px solid var(--color-border)",
-  borderRadius: "4px",
-  fontFamily: "var(--font-mono, monospace)",
-  fontSize: "11px",
-  color: "var(--color-text)",
-};
-
-// ---------------------------------------------------------------------------
-// Props
-// ---------------------------------------------------------------------------
+const SeverityDonutChartView = React.lazy(() =>
+  import("./SeverityDonutChart.view").then((m) => ({
+    default: m.SeverityDonutChartView,
+  })),
+);
 
 interface SeverityDonutChartProps {
   className?: string;
   exportRef?: React.RefObject<HTMLDivElement | null>;
 }
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export function SeverityDonutChart({ className, exportRef }: SeverityDonutChartProps) {
   const internalRef = React.useRef<HTMLDivElement>(null);
@@ -99,31 +79,9 @@ export function SeverityDonutChart({ className, exportRef }: SeverityDonutChartP
       ) : (
         <>
           <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={slices}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius="40%"
-                  outerRadius="70%"
-                  strokeWidth={0}
-                >
-                  {slices.map((slice) => (
-                    <Cell key={slice.name} fill={slice.fill} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={TOOLTIP_STYLE} />
-                <Legend
-                  wrapperStyle={{
-                    fontFamily: "var(--font-mono, monospace)",
-                    fontSize: 11,
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+            <React.Suspense fallback={<LoadingSkeleton size="full" width="full" className="h-full" />}>
+              <SeverityDonutChartView slices={slices} />
+            </React.Suspense>
           </div>
           <p className="font-mono text-xs text-muted-foreground text-center mt-1">
             {total} total findings
