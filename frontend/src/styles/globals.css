@@ -1994,6 +1994,23 @@ a:hover {
 }
 
 /* =====================================================================
+   THEME-INVARIANT SHARP RADII — Phase 176 follow-on (E27d)
+   Most themes override --radius-sm / --radius-md to fit their era
+   (Win95 = 0, frutiger-aero = 10px, y2k-plus = 18px). When a UI
+   surface needs a CRT-flat 2px or 4px regardless of theme — wrapper
+   borders, neutral filter pills, dropzones — use these named
+   utilities instead of the now-banned arbitrary values.
+   ===================================================================== */
+
+@utility rounded-sharp {
+  border-radius: 2px;
+}
+
+@utility rounded-sharp-md {
+  border-radius: 4px;
+}
+
+/* =====================================================================
    UTILITIES — loading skeleton, focus ring, severity pulse
    ===================================================================== */
 
