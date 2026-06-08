@@ -88,6 +88,11 @@ from .investigation_target import (
     VRInvestigationTargetDetach,
     VRInvestigationTargetSummary,
 )
+from .masvs import (
+    MasvsAuditAggregate,
+    MasvsControlVerdict,
+    MasvsVerdict,
+)
 from .message import (
     OperatorIntent,
     PayloadKind,
@@ -174,6 +179,9 @@ __all__ = [
     "VRInvestigationTargetAttach",
     "VRInvestigationTargetDetach",
     "VRInvestigationTargetSummary",
+    "MasvsAuditAggregate",
+    "MasvsControlVerdict",
+    "MasvsVerdict",
     "MitigationFlags",
     "OperatorIntent",
     "OutcomeConfidence",
