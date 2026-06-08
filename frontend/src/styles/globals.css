@@ -4582,6 +4582,29 @@ a:hover {
   --color-focus-ring: #ff5f87;
   --color-accent-soft: rgba(255, 95, 135, 0.18);
 
+  /* shadcn/ui token mapping — without these, Tailwind utilities like
+     `bg-primary` / `bg-destructive` / `bg-card` fall back to the :root
+     (synthwave) defaults and paint #ff2d95 magenta instead of this
+     theme's #ff5f87 hot pink. Mirrors the half-life-1 and y2k-fever
+     mapping shape so the audit stays trivial across themes. */
+  --background: #121212;
+  --foreground: #ffd7af;
+  --card: #1c1a18;
+  --card-foreground: #ffd7af;
+  --popover: #26221f;
+  --popover-foreground: #ffd7af;
+  --primary: #ff5f87;
+  --primary-foreground: #121212;     /* WCAG: charcoal text on hot pink — 5.93:1, passes AA */
+  --secondary: #26221f;
+  --secondary-foreground: #ffd7af;
+  --muted: #1c1a18;
+  --muted-foreground: #af8c6c;
+  --destructive: #ff5f87;
+  --border: #3c3836;
+  --input: #3c3836;
+  --ring: #ff5f87;
+  --radius: 0.375rem;
+
   /* Sidebar uses the elevated charcoal so it sits a hair above the
      base without competing with the cards. */
   --sidebar-background: var(--color-elevated);
