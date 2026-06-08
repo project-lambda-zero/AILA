@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Plus } from "lucide-react";
-import { SquaresFour } from "@phosphor-icons/react";
+import { SquaresFour } from "@phosphor-icons/react/dist/csr/SquaresFour";
 
 import { Button } from "@/components/ui/button";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";

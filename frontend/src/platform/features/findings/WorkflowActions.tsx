@@ -13,7 +13,7 @@
  *   POST /findings/{id}/transition
  */
 import { useState } from "react";
-import { ArrowRight } from "@phosphor-icons/react";
+import { ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { Button } from "@/components/ui/button";

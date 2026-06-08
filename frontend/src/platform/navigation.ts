@@ -1,30 +1,28 @@
-import {
-  Bug as BugIcon,
-  BookOpen as BookOpenIcon,
-  ChatCircleDots as ChatCircleDotsIcon,
-  ClipboardText as ClipboardTextIcon,
-  Desktop as DesktopIcon,
-  GearSix as GearSixIcon,
-  GitBranch as GitBranchIcon,
-  Heartbeat as HeartbeatIcon,
-  House as HouseIcon,
-  type Icon,
-  Key as KeyIcon,
-  ListChecks as ListChecksIcon,
-  Robot as RobotIcon,
-  ShieldCheck as ShieldCheckIcon,
-  Users as UsersIcon,
-  Tag as TagIcon,
-  UsersThree as UsersThreeIcon,
-  Wrench as WrenchIcon,
-  BookmarkSimple as BookmarkSimpleIcon,
-  Queue as QueueIcon,
-  Skull as SkullIcon,
-  ArrowsClockwise as ArrowsClockwiseIcon,
-  Calendar as CalendarIcon,
-  CurrencyDollar as CurrencyDollarIcon,
-  Briefcase as BriefcaseIcon,
-} from "@phosphor-icons/react";
+import type { Icon } from "@phosphor-icons/react/lib";
+import { Bug as BugIcon } from "@phosphor-icons/react/dist/csr/Bug";
+import { BookOpen as BookOpenIcon } from "@phosphor-icons/react/dist/csr/BookOpen";
+import { ChatCircleDots as ChatCircleDotsIcon } from "@phosphor-icons/react/dist/csr/ChatCircleDots";
+import { ClipboardText as ClipboardTextIcon } from "@phosphor-icons/react/dist/csr/ClipboardText";
+import { Desktop as DesktopIcon } from "@phosphor-icons/react/dist/csr/Desktop";
+import { GearSix as GearSixIcon } from "@phosphor-icons/react/dist/csr/GearSix";
+import { GitBranch as GitBranchIcon } from "@phosphor-icons/react/dist/csr/GitBranch";
+import { Heartbeat as HeartbeatIcon } from "@phosphor-icons/react/dist/csr/Heartbeat";
+import { House as HouseIcon } from "@phosphor-icons/react/dist/csr/House";
+import { Key as KeyIcon } from "@phosphor-icons/react/dist/csr/Key";
+import { ListChecks as ListChecksIcon } from "@phosphor-icons/react/dist/csr/ListChecks";
+import { Robot as RobotIcon } from "@phosphor-icons/react/dist/csr/Robot";
+import { ShieldCheck as ShieldCheckIcon } from "@phosphor-icons/react/dist/csr/ShieldCheck";
+import { Users as UsersIcon } from "@phosphor-icons/react/dist/csr/Users";
+import { Tag as TagIcon } from "@phosphor-icons/react/dist/csr/Tag";
+import { UsersThree as UsersThreeIcon } from "@phosphor-icons/react/dist/csr/UsersThree";
+import { Wrench as WrenchIcon } from "@phosphor-icons/react/dist/csr/Wrench";
+import { BookmarkSimple as BookmarkSimpleIcon } from "@phosphor-icons/react/dist/csr/BookmarkSimple";
+import { Queue as QueueIcon } from "@phosphor-icons/react/dist/csr/Queue";
+import { Skull as SkullIcon } from "@phosphor-icons/react/dist/csr/Skull";
+import { ArrowsClockwise as ArrowsClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
+import { Calendar as CalendarIcon } from "@phosphor-icons/react/dist/csr/Calendar";
+import { CurrencyDollar as CurrencyDollarIcon } from "@phosphor-icons/react/dist/csr/CurrencyDollar";
+import { Briefcase as BriefcaseIcon } from "@phosphor-icons/react/dist/csr/Briefcase";
 
 import type { AppRole } from "@platform/auth/roles";
 import type { ModuleFrontendSpec, NavContribution } from "@platform/extension-registry/types";

@@ -12,7 +12,7 @@
  * Follows the same fixed-panel pattern as FindingDetailPanel (Phase 143).
  */
 import * as React from "react";
-import { X as CloseIcon } from "@phosphor-icons/react";
+import { X as CloseIcon } from "@phosphor-icons/react/dist/csr/X";
 import {
   PieChart,
   Pie,

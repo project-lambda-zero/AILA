@@ -1,5 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Monitor, Globe, Clock, ShieldWarning } from "@phosphor-icons/react";
+import { Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
+import { Globe } from "@phosphor-icons/react/dist/csr/Globe";
+import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
+import { ShieldWarning } from "@phosphor-icons/react/dist/csr/ShieldWarning";
 
 import { fetchSessions, revokeSession, type SessionRecord } from "./api";
 import { Badge } from "@/components/ui/badge";

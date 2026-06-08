@@ -9,7 +9,7 @@
  * - Node count display (filtered / total)
  */
 import * as React from "react";
-import { MagnifyingGlass as SearchIcon } from "@phosphor-icons/react";
+import { MagnifyingGlass as SearchIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 
 import { Input } from "@/components/ui/input";
 import {

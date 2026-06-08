@@ -10,14 +10,12 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
-import {
-  ChatCircleDots,
-  Plus,
-  PaperPlaneRight,
-  Robot,
-  User as UserIcon,
-  Warning,
-} from "@phosphor-icons/react";
+import { ChatCircleDots } from "@phosphor-icons/react/dist/csr/ChatCircleDots";
+import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { PaperPlaneRight } from "@phosphor-icons/react/dist/csr/PaperPlaneRight";
+import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
+import { User as UserIcon } from "@phosphor-icons/react/dist/csr/User";
+import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";

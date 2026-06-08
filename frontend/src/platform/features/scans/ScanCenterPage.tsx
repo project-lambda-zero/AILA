@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { Crosshair, Play } from "@phosphor-icons/react";
+import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
+import { Play } from "@phosphor-icons/react/dist/csr/Play";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge, type TaskStatus as BadgeTaskStatus } from "@/components/aila/AilaBadge";

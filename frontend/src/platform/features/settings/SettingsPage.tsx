@@ -1,5 +1,11 @@
 import { Link } from "react-router";
-import { User, Monitor, Info, ArrowRight, Palette, Sun, Moon } from "@phosphor-icons/react";
+import { User } from "@phosphor-icons/react/dist/csr/User";
+import { Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
+import { Info } from "@phosphor-icons/react/dist/csr/Info";
+import { ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
+import { Palette } from "@phosphor-icons/react/dist/csr/Palette";
+import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
+import { Moon } from "@phosphor-icons/react/dist/csr/Moon";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { useTheme, type Theme } from "@/providers/ThemeProvider";

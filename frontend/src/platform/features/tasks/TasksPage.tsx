@@ -1,5 +1,5 @@
 import { useNavigate, useSearchParams } from "react-router";
-import { ClipboardText } from "@phosphor-icons/react";
+import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge, type TaskStatus as BadgeTaskStatus } from "@/components/aila/AilaBadge";

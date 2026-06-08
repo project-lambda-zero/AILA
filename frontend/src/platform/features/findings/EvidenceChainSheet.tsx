@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { TreeStructure } from "@phosphor-icons/react";
+import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
 
 import { Button } from "@/components/ui/button";
 import {

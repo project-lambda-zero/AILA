@@ -11,7 +11,10 @@
 import { useState, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { Download, ArrowClockwise, ClipboardText, X as XIcon } from "@phosphor-icons/react";
+import { Download } from "@phosphor-icons/react/dist/csr/Download";
+import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
+import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
+import { X as XIcon } from "@phosphor-icons/react/dist/csr/X";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";
