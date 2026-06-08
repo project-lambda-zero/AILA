@@ -26,18 +26,26 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any
 
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.target import TargetKind
-from aila.modules.vr.contracts.target_stages import StageName
+from aila.modules.vr.contracts.target_stages import (
+    StageName,
+    StageState,
+    StageStatus,
+)
 from aila.modules.vr.db_models import VRTargetRecord
 from aila.modules.vr.services.stage_tracker import (
     StageAlreadyDoneError,
     StageInFlightError,
     StageTracker,
+    load_target_stages,
+    save_target_stages,
 )
+from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
 from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
 from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.contracts._common import utc_now
@@ -170,6 +178,33 @@ _NO_INGEST_KINDS: frozenset[TargetKind] = frozenset({
     TargetKind.PATCH_DIFF,
 })
 
+# Per-kind applicable stage sets (PRD §C-20). Source-repo / binary /
+# no-ingest kinds run the legacy INGESTION / CAPABILITY_PROFILE /
+# FUNCTION_RANKING trio. Android APKs run the four android-mcp stages
+# instead. Stages NOT in the kind's applicable set are pre-marked
+# DONE-skipped by ``_skip_inapplicable_stages`` at analyze() entry,
+# so ``roll_up_overall_state`` (which requires every stage at DONE
+# before returning READY) converges once the applicable subset runs.
+_LEGACY_STAGES: frozenset[StageName] = frozenset({
+    StageName.INGESTION,
+    StageName.CAPABILITY_PROFILE,
+    StageName.FUNCTION_RANKING,
+})
+_ANDROID_STAGES: frozenset[StageName] = frozenset({
+    StageName.APK_DECODE,
+    StageName.JADX_DECOMPILE,
+    StageName.STATIC_SUMMARY,
+    StageName.MOBSF_SCAN,
+})
+
+
+def _applicable_stages_for(kind: TargetKind) -> frozenset[StageName]:
+    """Return the stage set that applies to a given target kind."""
+    if kind == TargetKind.ANDROID_APK:
+        return _ANDROID_STAGES
+    return _LEGACY_STAGES
+
+
 class TargetAnalysisError(Exception):
     """Raised when ingestion cannot proceed (bad descriptor, MCP unreachable)."""
 
@@ -181,32 +216,63 @@ class TargetAnalysisService:
         self,
         ida: IDABridgeTool | Any | None = None,
         audit_mcp: AuditMcpBridgeTool | Any | None = None,
+        android_mcp: AndroidMcpBridgeTool | Any | None = None,
     ) -> None:
         self._ida = ida or IDABridgeTool()
         self._audit_mcp = audit_mcp or AuditMcpBridgeTool()
+        self._android_mcp = android_mcp or AndroidMcpBridgeTool()
 
     async def analyze(self, target_id: str) -> None:
-        """Run the ingestion stage for one target.
+        """Run the ingestion stage(s) for one target.
 
-        Uses StageTracker so:
-          - Re-running an already-ingested target is a no-op (idempotent).
-          - Concurrent invocations on the same row refuse the second
-            one (StageInFlightError) rather than racing.
-          - On any uncaught exception the stage is marked FAILED with
-            the error message; the operator can resume via
-            POST /vr/targets/:id/resume-analysis.
-          - The 4-hour timeout (matching _POLL_TIMEOUT_SECONDS) is set
-            on the tracker so the periodic reaper doesn't pre-empt a
-            legitimately long monorepo ingest.
+        Dispatches by target kind:
+
+        * ``android_apk`` → drives the four android-mcp stages
+          (APK_DECODE / JADX_DECOMPILE / STATIC_SUMMARY / MOBSF_SCAN)
+          sequentially, each under its own StageTracker. See
+          :meth:`_analyze_android_apk`.
+        * All other kinds → run the legacy INGESTION stage (clone /
+          upload / index via audit-mcp or ida-headless-mcp).
+
+        Stages that don't apply to the kind are pre-marked DONE-skipped
+        at entry so ``roll_up_overall_state`` converges on READY once
+        the applicable stages all finish. Idempotent: stages already
+        DONE / RUNNING / FAILED are left alone.
+
+        Wraps the per-stage work in StageTracker so:
+
+        * Re-running an already-ingested target is a no-op.
+        * Concurrent invocations on the same row refuse the second one
+          (StageInFlightError) rather than racing.
+        * On any uncaught exception the stage is marked FAILED with
+          the error message; the operator can resume via
+          POST /vr/targets/:id/resume-analysis.
         """
+        target = await self._load(target_id)
+        kind = TargetKind(target.kind)
+        applicable = _applicable_stages_for(kind)
+
+        # Pre-mark inapplicable stages as DONE-skipped so the rollup
+        # converges once the applicable stages complete. This is
+        # idempotent — only touches stages still at PENDING with
+        # attempts == 0 (i.e. untouched on a fresh target row).
+        await self._skip_inapplicable_stages(target_id, applicable)
+
+        if kind == TargetKind.ANDROID_APK:
+            await self._analyze_android_apk(target_id)
+            return
+
+        # Legacy INGESTION flow — source_repo / binary kinds / CVE etc.
         try:
             async with StageTracker(
                 target_id,
                 StageName.INGESTION,
                 stage_timeout_s=_POLL_TIMEOUT_SECONDS,
             ) as tracker:
+                # Re-read inside the tracker — the row may have changed
+                # between the dispatch-time load above and the tracker
+                # taking ownership.
                 target = await self._load(target_id)
-                kind = TargetKind(target.kind)
                 descriptor = json.loads(target.descriptor_json or "{}")
                 current_handles = json.loads(target.mcp_handles_json or "{}")
 
@@ -259,6 +325,258 @@ class TargetAnalysisService:
         except StageInFlightError:
             _log.info("vr.target_analysis: target %s ingestion in flight — skip", target_id)
             return
+
+    # ─── stage gating ───────────────────────────────────────────────────
+
+    async def _skip_inapplicable_stages(
+        self,
+        target_id: str,
+        applicable: frozenset[StageName],
+    ) -> None:
+        """Mark stages NOT in ``applicable`` as DONE if still untouched.
+
+        ``roll_up_overall_state`` requires every StageName entry to be
+        DONE before returning READY. Targets only run a subset of stages
+        relevant to their kind, so the inapplicable ones get marked
+        DONE-skipped here. Idempotent: only stages currently at PENDING
+        with ``attempts == 0`` are mutated; anything already DONE /
+        RUNNING / FAILED is left alone so a real failure can never be
+        masked by this helper.
+
+        Skipped stages carry ``started_at=None`` and ``attempts=0`` so
+        operators can distinguish them from stages that genuinely ran.
+        """
+        stages = await load_target_stages(target_id)
+        now = utc_now()
+        mutated = False
+        for stage_name, status in stages.all_stages():
+            if stage_name in applicable:
+                continue
+            if status.state != StageState.PENDING or status.attempts != 0:
+                continue
+            stages.set(stage_name, StageStatus(
+                state=StageState.DONE,
+                started_at=None,
+                completed_at=now,
+                attempts=0,
+                error=None,
+            ))
+            mutated = True
+        if mutated:
+            await save_target_stages(target_id, stages)
+
+    # ─── android_apk staged ingestion (PRD §C-20) ──────────────────────
+
+    async def _analyze_android_apk(self, target_id: str) -> None:
+        """Drive the four android-mcp ingestion stages sequentially.
+
+        APK_DECODE → JADX_DECOMPILE → STATIC_SUMMARY → MOBSF_SCAN. Each
+        runs under its own StageTracker so the operator can resume any
+        single failed stage via POST /vr/targets/:id/resume-analysis
+        without re-running the ones that already succeeded.
+
+        Outputs accumulate into ``mcp_handles_json`` across stages so
+        downstream consumers (VR personas, refresh-source button) read
+        a single coherent handles dict instead of stitching together
+        per-stage scratch files.
+
+        Stops the chain on the first hard failure — the failing stage
+        is left at FAILED state by its tracker, downstream stages stay
+        at PENDING until the operator resumes. A stage already DONE
+        on a re-run is logged and the chain proceeds (idempotent).
+        """
+        await self._run_android_stage(
+            target_id, StageName.APK_DECODE, self._android_apk_decode,
+        )
+        await self._run_android_stage(
+            target_id, StageName.JADX_DECOMPILE, self._android_jadx_decompile,
+        )
+        await self._run_android_stage(
+            target_id, StageName.STATIC_SUMMARY, self._android_static_summary,
+        )
+        await self._run_android_stage(
+            target_id, StageName.MOBSF_SCAN, self._android_mobsf_scan,
+        )
+
+    async def _run_android_stage(
+        self,
+        target_id: str,
+        stage: StageName,
+        worker: Any,
+    ) -> None:
+        """Wrap one android stage in a StageTracker.
+
+        The ``worker`` callable receives ``(target_id, descriptor,
+        current_handles, tracker)`` and is responsible for calling
+        ``tracker.record_output(...)`` with the accumulated
+        ``mcp_handles_json``. Raises ``TargetAnalysisError`` on hard
+        failure; the tracker captures it as FAILED and re-raises so
+        the chain stops.
+        """
+        try:
+            async with StageTracker(target_id, stage) as tracker:
+                target = await self._load(target_id)
+                descriptor = json.loads(target.descriptor_json or "{}")
+                current_handles = json.loads(target.mcp_handles_json or "{}")
+                await worker(target_id, descriptor, current_handles, tracker)
+        except StageAlreadyDoneError:
+            _log.info(
+                "vr.target_analysis: target %s stage %s already done — skip",
+                target_id, stage.value,
+            )
+        except StageInFlightError:
+            _log.info(
+                "vr.target_analysis: target %s stage %s in flight — stop chain",
+                target_id, stage.value,
+            )
+            raise
+
+    def _resolve_apk_path(self, descriptor: dict[str, Any]) -> str:
+        """Pull the APK path from the descriptor for an android_apk target."""
+        apk_path = descriptor.get("apk_path")
+        if not isinstance(apk_path, str) or not apk_path:
+            raise TargetAnalysisError(
+                "android_apk target requires apk_path in descriptor "
+                "(set by POST /vr/targets/upload-apk)",
+            )
+        return apk_path
+
+    async def _android_apk_decode(
+        self,
+        target_id: str,
+        descriptor: dict[str, Any],
+        current_handles: dict[str, Any],
+        tracker: StageTracker,
+    ) -> None:
+        apk_path = self._resolve_apk_path(descriptor)
+        resp = await self._android_mcp.forward(
+            action="apktool_decode", apk_path=apk_path,
+        )
+        if not isinstance(resp, dict) or resp.get("status") == "error":
+            err = resp.get("error") if isinstance(resp, dict) else resp
+            raise TargetAnalysisError(
+                f"android-mcp.apktool_decode failed: {err}",
+            )
+        output_dir = resp.get("output_dir")
+        if not output_dir:
+            raise TargetAnalysisError(
+                f"android-mcp.apktool_decode returned no output_dir: {resp!r}",
+            )
+        current_handles["android_mcp_decoded_dir"] = output_dir
+        if resp.get("apk_sha256"):
+            current_handles["android_mcp_apk_sha256"] = resp["apk_sha256"]
+        if resp.get("manifest_path"):
+            current_handles["android_mcp_manifest_path"] = resp["manifest_path"]
+        tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+        _log.info(
+            "vr.android.apk_decode target=%s output_dir=%s",
+            target_id, output_dir,
+        )
+
+    async def _android_jadx_decompile(
+        self,
+        target_id: str,
+        descriptor: dict[str, Any],
+        current_handles: dict[str, Any],
+        tracker: StageTracker,
+    ) -> None:
+        apk_path = self._resolve_apk_path(descriptor)
+        resp = await self._android_mcp.forward(
+            action="jadx_decompile", apk_path=apk_path,
+        )
+        if not isinstance(resp, dict) or resp.get("status") == "error":
+            err = resp.get("error") if isinstance(resp, dict) else resp
+            raise TargetAnalysisError(
+                f"android-mcp.jadx_decompile failed: {err}",
+            )
+        # jadx returns either ``sources_dir`` (preferred — the parent of
+        # the per-class trees) or ``output_dir`` (root). Persist both
+        # when present so downstream YARA / find_secrets can pick.
+        sources_dir = resp.get("sources_dir") or resp.get("output_dir")
+        if not sources_dir:
+            raise TargetAnalysisError(
+                f"android-mcp.jadx_decompile returned no sources_dir / output_dir: {resp!r}",
+            )
+        current_handles["android_mcp_decompiled_dir"] = sources_dir
+        if resp.get("output_dir") and resp.get("output_dir") != sources_dir:
+            current_handles["android_mcp_jadx_root"] = resp["output_dir"]
+        if isinstance(resp.get("class_count"), int):
+            current_handles["android_mcp_jadx_class_count"] = resp["class_count"]
+        tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+        _log.info(
+            "vr.android.jadx_decompile target=%s sources_dir=%s classes=%s",
+            target_id, sources_dir, resp.get("class_count"),
+        )
+
+    async def _android_static_summary(
+        self,
+        target_id: str,
+        descriptor: dict[str, Any],
+        current_handles: dict[str, Any],
+        tracker: StageTracker,
+    ) -> None:
+        apk_path = self._resolve_apk_path(descriptor)
+        resp = await self._android_mcp.forward(
+            action="androguard_summary", apk_path=apk_path,
+        )
+        if not isinstance(resp, dict) or resp.get("status") == "error":
+            err = resp.get("error") if isinstance(resp, dict) else resp
+            raise TargetAnalysisError(
+                f"android-mcp.androguard_summary failed: {err}",
+            )
+        # The full androguard summary (package, permissions, certs,
+        # exported components) is small enough to embed verbatim — no
+        # paths to chase, downstream personas read it inline.
+        current_handles["android_mcp_static_summary"] = resp
+        package = resp.get("package")
+        if isinstance(package, str) and package:
+            # Mirror the existing uploaded_filename pattern so the
+            # frontend display name can fall back to the package id
+            # once STATIC_SUMMARY completes (PRD §C-21).
+            current_handles["android_mcp_package_name"] = package
+        tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+        _log.info(
+            "vr.android.static_summary target=%s package=%s permissions=%d",
+            target_id, package,
+            len(resp.get("permissions") or []),
+        )
+
+    async def _android_mobsf_scan(
+        self,
+        target_id: str,
+        descriptor: dict[str, Any],
+        current_handles: dict[str, Any],
+        tracker: StageTracker,
+    ) -> None:
+        """MobSF static scan. Skipped when MOBSF_API_KEY is unset."""
+        mobsf_api_key = os.environ.get("MOBSF_API_KEY", "").strip()
+        if not mobsf_api_key:
+            _log.info(
+                "vr.android.mobsf_scan target=%s skipped (MOBSF_API_KEY unset)",
+                target_id,
+            )
+            current_handles["android_mcp_mobsf_scan"] = {
+                "skipped": True,
+                "reason": "MOBSF_API_KEY env var not set on the AILA host",
+            }
+            tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+            return
+
+        apk_path = self._resolve_apk_path(descriptor)
+        resp = await self._android_mcp.forward(
+            action="mobsf_scan", apk_path=apk_path,
+        )
+        if not isinstance(resp, dict) or resp.get("status") == "error":
+            err = resp.get("error") if isinstance(resp, dict) else resp
+            raise TargetAnalysisError(
+                f"android-mcp.mobsf_scan failed: {err}",
+            )
+        current_handles["android_mcp_mobsf_scan"] = resp
+        tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+        _log.info(
+            "vr.android.mobsf_scan target=%s scan_hash=%s",
+            target_id, resp.get("_scan_hash"),
+        )
 
     # ─── per-kind ingestion ─────────────────────────────────────────────
 

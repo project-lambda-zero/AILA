@@ -87,6 +87,15 @@ _DEFAULT_TIMEOUTS: dict[StageName, float] = {
     StageName.INGESTION: 14400.0,
     StageName.CAPABILITY_PROFILE: 1800.0,
     StageName.FUNCTION_RANKING: 1800.0,  # 30 min  covers cold-CSR firefox-scale rank + retry slack
+    # Android stages — PRD §C-20. Numbers sized for the operator-
+    # observable upper bound of each tool: apktool on a 200 MB APK
+    # ~5 min; jadx on the same ~15 min; androguard summary always
+    # under 1 min; MobSF static scan can run 10-30 min depending on
+    # the rule set and the APK's library count.
+    StageName.APK_DECODE: 600.0,
+    StageName.JADX_DECOMPILE: 900.0,
+    StageName.STATIC_SUMMARY: 300.0,
+    StageName.MOBSF_SCAN: 1800.0,
 }
 
 

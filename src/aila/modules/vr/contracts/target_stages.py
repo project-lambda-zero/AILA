@@ -42,7 +42,9 @@ __all__ = [
 
 
 class StageName(StrEnum):
-    """Three independent stages of target analysis pipeline.
+    """Per-target analysis stages.
+
+    Source-repo / native-binary kinds use the legacy three:
 
     INGESTION: TargetAnalysisService — clone/upload + index registration
                with the right MCP, populates `mcp_handles_json`.
@@ -53,14 +55,37 @@ class StageName(StrEnum):
                ida_headless.assess_exploitability and persist a ranked
                function list under `capability_profile.function_ranking`.
 
-    Stages run sequentially in this order. CAPABILITY_PROFILE depends
-    on INGESTION (needs mcp_handles_json populated). FUNCTION_RANKING
-    depends on INGESTION (needs index_id) but NOT on CAPABILITY_PROFILE.
+    `android_apk` targets (PRD §C-20) drive a separate four-stage
+    pipeline through android-mcp instead:
+
+    APK_DECODE: apktool — resource + AndroidManifest + smali decode.
+                Persists `mcp_handles_json.android_mcp_decoded_dir`.
+    JADX_DECOMPILE: jadx — dex-to-Java decompilation. Persists
+                `mcp_handles_json.android_mcp_decompiled_dir`.
+    STATIC_SUMMARY: androguard `androguard_summary` — package name,
+                permissions, intent filters, signing certs. Persists
+                `mcp_handles_json.android_mcp_static_summary`.
+    MOBSF_SCAN: MobSF static-only scan via `mobsf_scan`. Gated on
+                `MOBSF_API_KEY` env var presence; when absent the stage
+                records `{"skipped": true}` and transitions DONE so
+                rollup converges. Persists
+                `mcp_handles_json.android_mcp_mobsf_scan`.
+
+    Legacy stages run sequentially in `INGESTION → CAPABILITY_PROFILE /
+    FUNCTION_RANKING` order. Android stages run sequentially in
+    `APK_DECODE → JADX_DECOMPILE → STATIC_SUMMARY → MOBSF_SCAN` order.
+    Stages that don't apply to the target's kind are pre-marked DONE by
+    `TargetAnalysisService.analyze()` so `roll_up_overall_state` can
+    still converge on READY without inventing a kind-aware rollup.
     """
 
     INGESTION = "ingestion"
     CAPABILITY_PROFILE = "capability_profile"
     FUNCTION_RANKING = "function_ranking"
+    APK_DECODE = "apk_decode"
+    JADX_DECOMPILE = "jadx_decompile"
+    STATIC_SUMMARY = "static_summary"
+    MOBSF_SCAN = "mobsf_scan"
 
 
 class StageState(StrEnum):
@@ -109,6 +134,10 @@ class TargetAnalysisStages(BaseModel):
     ingestion: StageStatus = Field(default_factory=StageStatus)
     capability_profile: StageStatus = Field(default_factory=StageStatus)
     function_ranking: StageStatus = Field(default_factory=StageStatus)
+    apk_decode: StageStatus = Field(default_factory=StageStatus)
+    jadx_decompile: StageStatus = Field(default_factory=StageStatus)
+    static_summary: StageStatus = Field(default_factory=StageStatus)
+    mobsf_scan: StageStatus = Field(default_factory=StageStatus)
 
     def get(self, stage: StageName) -> StageStatus:
         return getattr(self, stage.value)
