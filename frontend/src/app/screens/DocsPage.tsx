@@ -11,10 +11,7 @@ export function DocsPage() {
   return (
     <div className="mx-auto max-w-3xl p-4 sm:p-6">
       <header className="mb-4">
-        <h1 className="font-mono text-xl font-semibold text-foreground">
-          Operator Docs
-        </h1>
-        <p className="mt-1 font-mono text-sm text-text-muted">
+        <p className="font-mono text-sm text-text-muted">
           A short guide to what each sidebar item does and how to get work
           done. Follow the five sections below in order if this is your first
           time in the console.
