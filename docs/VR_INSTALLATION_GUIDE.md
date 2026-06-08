@@ -219,7 +219,7 @@ IDA_HEADLESS_TIMEOUT=120
 ANDROID_MCP_URL=http://127.0.0.1:18823
 # Absolute network ceiling for one bridge HTTP call (default 1800s).
 # Per-stage StageTracker timeouts (APK_DECODE 600s, JADX_DECOMPILE 900s,
-# STATIC_SUMMARY 300s, MOBSF_SCAN 1800s) are tighter — the bridge ceiling
+# INDEX_DECOMPILED 3600s, STATIC_SUMMARY 300s, MOBSF_SCAN 1800s) are tighter — the bridge ceiling
 # is only the absolute network cap, not the per-stage budget.
 ANDROID_MCP_TIMEOUT=1800
 # Override the default APK upload root (defaults to ~/.android-mcp/uploads).
