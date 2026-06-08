@@ -146,7 +146,7 @@ export function DashboardPage() {
   );
   useUpdatePageHeader({ actions: headerActions });
   return (
-    <div className="space-y-4">
+    <div className="depth-mesh space-y-4">
       {/* Loading state */}
       {isLoading && (
         <div className="p-4">
