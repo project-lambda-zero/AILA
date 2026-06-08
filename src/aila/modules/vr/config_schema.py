@@ -91,6 +91,15 @@ class VRConfigSchema(BaseModel):
             "workstation that owns the IDA license + GPU."
         ),
     )
+    android_mcp_url: str = Field(
+        default="http://127.0.0.1:18823",
+        description=(
+            "Base URL for the android-mcp Android APK audit server. The "
+            "platform delegates ALL apktool/jadx/androguard/MobSF work to "
+            "this server (D-33). Point at the workstation that owns the "
+            "Android SDK build-tools + MobSF instance."
+        ),
+    )
 
 
 VR_DEFAULTS = VRConfigSchema()

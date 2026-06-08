@@ -60,6 +60,18 @@ MCP_SERVERS: tuple[dict[str, str], ...] = (
         "config_key": "ida_headless_url",
         "default_url": "http://127.0.0.1:18821",
     },
+    {
+        "id": "android_mcp",
+        "name": "android-mcp",
+        "description": (
+            "Android APK audit MCP. Owns apktool/jadx decoding, androguard "
+            "static analysis, MobSF scanning, signing-scheme verification, "
+            "native-lib hardening, and composite mobile risk scoring."
+        ),
+        "env_var": "ANDROID_MCP_URL",
+        "config_key": "android_mcp_url",
+        "default_url": "http://127.0.0.1:18823",
+    },
 )
 
 
