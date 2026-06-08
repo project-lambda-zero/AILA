@@ -1,4 +1,4 @@
-import { Question } from "@phosphor-icons/react";
+import { Question } from "@phosphor-icons/react/dist/csr/Question";
 import {
   Tooltip,
   TooltipContent,

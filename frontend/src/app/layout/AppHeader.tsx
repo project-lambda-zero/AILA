@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Link, matchRoutes, useLocation, useMatches } from "react-router";
-import { MagnifyingGlass } from "@phosphor-icons/react";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 
 import { routeObjects } from "@/app/router";
 import {

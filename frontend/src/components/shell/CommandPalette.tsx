@@ -1,21 +1,19 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Desktop,
-  Bug,
-  ShieldWarning,
-  ClipboardText,
-  ArrowSquareOut,
-  ClockCounterClockwise,
-  MagnifyingGlass,
-  Crosshair,
-  Gauge,
-  ChartBar,
-  Key,
-  FileText,
-  X,
-} from "@phosphor-icons/react";
+import { Desktop } from "@phosphor-icons/react/dist/csr/Desktop";
+import { Bug } from "@phosphor-icons/react/dist/csr/Bug";
+import { ShieldWarning } from "@phosphor-icons/react/dist/csr/ShieldWarning";
+import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
+import { ArrowSquareOut } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
+import { ClockCounterClockwise } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
+import { Gauge } from "@phosphor-icons/react/dist/csr/Gauge";
+import { ChartBar } from "@phosphor-icons/react/dist/csr/ChartBar";
+import { Key } from "@phosphor-icons/react/dist/csr/Key";
+import { FileText } from "@phosphor-icons/react/dist/csr/FileText";
+import { X } from "@phosphor-icons/react/dist/csr/X";
 
 import {
   Command,

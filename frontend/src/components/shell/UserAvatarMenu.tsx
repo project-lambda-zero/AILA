@@ -1,5 +1,9 @@
 import { useNavigate } from "react-router";
-import { Palette, SignOut, User, Sun, Moon } from "@phosphor-icons/react";
+import { Palette } from "@phosphor-icons/react/dist/csr/Palette";
+import { SignOut } from "@phosphor-icons/react/dist/csr/SignOut";
+import { User } from "@phosphor-icons/react/dist/csr/User";
+import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
+import { Moon } from "@phosphor-icons/react/dist/csr/Moon";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { useTheme } from "@/providers/ThemeProvider";

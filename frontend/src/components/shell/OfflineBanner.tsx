@@ -1,4 +1,4 @@
-import { WifiSlash } from "@phosphor-icons/react";
+import { WifiSlash } from "@phosphor-icons/react/dist/csr/WifiSlash";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 // ---------------------------------------------------------------------------

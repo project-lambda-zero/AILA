@@ -16,7 +16,8 @@
  */
 import { useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check } from "@phosphor-icons/react";
+import { Bell } from "@phosphor-icons/react/dist/csr/Bell";
+import { Check } from "@phosphor-icons/react/dist/csr/Check";
 
 import { authorizedRequestJson } from "@platform/api/http";
 import { Button } from "@/components/ui/button";

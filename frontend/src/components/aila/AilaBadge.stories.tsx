@@ -1,5 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react"
-import { ShieldWarning, Bug, Warning, ShieldCheck, ShieldSlash } from "@phosphor-icons/react"
+import { ShieldWarning } from "@phosphor-icons/react/dist/csr/ShieldWarning"
+import { Bug } from "@phosphor-icons/react/dist/csr/Bug"
+import { Warning } from "@phosphor-icons/react/dist/csr/Warning"
+import { ShieldCheck } from "@phosphor-icons/react/dist/csr/ShieldCheck"
+import { ShieldSlash } from "@phosphor-icons/react/dist/csr/ShieldSlash"
 
 import { AilaBadge } from "./AilaBadge"
 
