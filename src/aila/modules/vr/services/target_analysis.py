@@ -193,6 +193,7 @@ _LEGACY_STAGES: frozenset[StageName] = frozenset({
 _ANDROID_STAGES: frozenset[StageName] = frozenset({
     StageName.APK_DECODE,
     StageName.JADX_DECOMPILE,
+    StageName.INDEX_DECOMPILED,
     StageName.STATIC_SUMMARY,
     StageName.MOBSF_SCAN,
 })
@@ -368,12 +369,21 @@ class TargetAnalysisService:
     # ─── android_apk staged ingestion (PRD §C-20) ──────────────────────
 
     async def _analyze_android_apk(self, target_id: str) -> None:
-        """Drive the four android-mcp ingestion stages sequentially.
+        """Drive the android-mcp + audit-mcp ingestion stages sequentially.
 
-        APK_DECODE → JADX_DECOMPILE → STATIC_SUMMARY → MOBSF_SCAN. Each
-        runs under its own StageTracker so the operator can resume any
-        single failed stage via POST /vr/targets/:id/resume-analysis
-        without re-running the ones that already succeeded.
+        APK_DECODE → JADX_DECOMPILE → INDEX_DECOMPILED → STATIC_SUMMARY
+        → MOBSF_SCAN. Each runs under its own StageTracker so the
+        operator can resume any single failed stage via
+        POST /vr/targets/:id/resume-analysis without re-running the
+        ones that already succeeded.
+
+        INDEX_DECOMPILED hands the jadx Java tree to audit-mcp's
+        ``index_codebase`` so VR personas auditing an APK get the same
+        Trailmark/Semble surface they get against source-repo targets
+        (semantic_search, callers_of, read_function over decompiled
+        Java methods). The audit-mcp index_id flows through
+        ``mcp_handles_json.audit_mcp_decompiled_index_id`` to the
+        agent prompt's target snapshot (F-4).
 
         Outputs accumulate into ``mcp_handles_json`` across stages so
         downstream consumers (VR personas, refresh-source button) read
@@ -390,6 +400,9 @@ class TargetAnalysisService:
         )
         await self._run_android_stage(
             target_id, StageName.JADX_DECOMPILE, self._android_jadx_decompile,
+        )
+        await self._run_android_stage(
+            target_id, StageName.INDEX_DECOMPILED, self._android_index_decompiled,
         )
         await self._run_android_stage(
             target_id, StageName.STATIC_SUMMARY, self._android_static_summary,
@@ -506,6 +519,79 @@ class TargetAnalysisService:
         _log.info(
             "vr.android.jadx_decompile target=%s sources_dir=%s classes=%s",
             target_id, sources_dir, resp.get("class_count"),
+        )
+
+    async def _android_index_decompiled(
+        self,
+        target_id: str,
+        descriptor: dict[str, Any],
+        current_handles: dict[str, Any],
+        tracker: StageTracker,
+    ) -> None:
+        """Hand the jadx Java tree to audit-mcp's ``index_codebase``.
+
+        Reads ``android_mcp_decompiled_dir`` (written by JADX_DECOMPILE)
+        out of the current handles, kicks off
+        ``audit_mcp.index_codebase(path=<dir>, language="java")``,
+        polls until READY via the existing ``_poll_audit_mcp`` helper,
+        and writes ``audit_mcp_decompiled_index_id`` +
+        ``audit_mcp_decompiled_indexed_at`` into ``mcp_handles_json``.
+
+        After this stage runs, VR personas auditing an APK target get
+        the same source-graph surface (``semantic_search``,
+        ``callers_of``, ``read_function``) as personas auditing
+        source-repo targets — they just point at the Java methods
+        recovered by jadx instead of the original handwritten source.
+
+        Soft-skips when JADX_DECOMPILE didn't write a decompiled dir
+        (operator may have force-marked JADX_DECOMPILE DONE on a
+        bad APK). Records ``{"skipped": "no jadx output"}`` instead of
+        raising so the chain proceeds to STATIC_SUMMARY.
+        """
+        # Validate the descriptor invariant up-front: every android_apk
+        # target carries apk_path in its descriptor (POST /vr/targets/
+        # upload-apk writes it). Failing fast here gives a clearer
+        # error than letting audit-mcp reject a stray call later.
+        apk_path = self._resolve_apk_path(descriptor)
+
+        decompiled_dir = current_handles.get("android_mcp_decompiled_dir")
+        if not isinstance(decompiled_dir, str) or not decompiled_dir:
+            current_handles["audit_mcp_decompiled_index"] = {
+                "skipped": "no jadx output",
+            }
+            tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+            _log.warning(
+                "vr.android.index_decompiled target=%s apk=%s skipped — "
+                "no android_mcp_decompiled_dir in handles",
+                target_id, apk_path,
+            )
+            return
+
+        kickoff = await self._audit_mcp.forward(
+            action="index_codebase", path=decompiled_dir, language="java",
+        )
+        if not isinstance(kickoff, dict) or kickoff.get("status") == "error":
+            err = kickoff.get("error") if isinstance(kickoff, dict) else kickoff
+            raise TargetAnalysisError(
+                f"audit_mcp.index_codebase (decompiled) failed: {err}",
+            )
+        index_id = (
+            kickoff.get("index_id")
+            or (kickoff.get("data") or {}).get("index_id")
+        )
+        if not index_id:
+            raise TargetAnalysisError(
+                f"audit_mcp.index_codebase returned no index_id: {kickoff!r}",
+            )
+
+        await self._poll_audit_mcp(index_id)
+
+        current_handles["audit_mcp_decompiled_index_id"] = index_id
+        current_handles["audit_mcp_decompiled_indexed_at"] = utc_now().isoformat()
+        tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+        _log.info(
+            "vr.android.index_decompiled target=%s apk=%s index_id=%s path=%s",
+            target_id, apk_path, index_id, decompiled_dir,
         )
 
     async def _android_static_summary(

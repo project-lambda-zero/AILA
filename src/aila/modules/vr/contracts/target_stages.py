@@ -62,6 +62,13 @@ class StageName(StrEnum):
                 Persists `mcp_handles_json.android_mcp_decoded_dir`.
     JADX_DECOMPILE: jadx — dex-to-Java decompilation. Persists
                 `mcp_handles_json.android_mcp_decompiled_dir`.
+    INDEX_DECOMPILED: audit-mcp `index_codebase` over the jadx output —
+                gives VR personas the same Trailmark/Semble surface
+                (`semantic_search`, `callers_of`, `read_function`)
+                they get against source-repo targets, but rooted at
+                the decompiled Java tree. Persists
+                `mcp_handles_json.audit_mcp_decompiled_index_id` and
+                `mcp_handles_json.audit_mcp_decompiled_indexed_at`.
     STATIC_SUMMARY: androguard `androguard_summary` — package name,
                 permissions, intent filters, signing certs. Persists
                 `mcp_handles_json.android_mcp_static_summary`.
@@ -73,10 +80,11 @@ class StageName(StrEnum):
 
     Legacy stages run sequentially in `INGESTION → CAPABILITY_PROFILE /
     FUNCTION_RANKING` order. Android stages run sequentially in
-    `APK_DECODE → JADX_DECOMPILE → STATIC_SUMMARY → MOBSF_SCAN` order.
-    Stages that don't apply to the target's kind are pre-marked DONE by
-    `TargetAnalysisService.analyze()` so `roll_up_overall_state` can
-    still converge on READY without inventing a kind-aware rollup.
+    `APK_DECODE → JADX_DECOMPILE → INDEX_DECOMPILED → STATIC_SUMMARY →
+    MOBSF_SCAN` order. Stages that don't apply to the target's kind
+    are pre-marked DONE by `TargetAnalysisService.analyze()` so
+    `roll_up_overall_state` can still converge on READY without
+    inventing a kind-aware rollup.
     """
 
     INGESTION = "ingestion"
@@ -84,6 +92,7 @@ class StageName(StrEnum):
     FUNCTION_RANKING = "function_ranking"
     APK_DECODE = "apk_decode"
     JADX_DECOMPILE = "jadx_decompile"
+    INDEX_DECOMPILED = "index_decompiled"
     STATIC_SUMMARY = "static_summary"
     MOBSF_SCAN = "mobsf_scan"
 
@@ -136,6 +145,7 @@ class TargetAnalysisStages(BaseModel):
     function_ranking: StageStatus = Field(default_factory=StageStatus)
     apk_decode: StageStatus = Field(default_factory=StageStatus)
     jadx_decompile: StageStatus = Field(default_factory=StageStatus)
+    index_decompiled: StageStatus = Field(default_factory=StageStatus)
     static_summary: StageStatus = Field(default_factory=StageStatus)
     mobsf_scan: StageStatus = Field(default_factory=StageStatus)
 
