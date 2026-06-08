@@ -1884,10 +1884,595 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
 )
 
 
+_CODE_CONTROLS: tuple[MasvsControl, ...] = (
+    MasvsControl(
+        id="MSTG-CODE-1",
+        group=MasvsGroup.CODE,
+        level=MasvsLevel.L1,
+        title=(
+            "The app is signed and provisioned with a valid certificate, of which "
+            "the private key is properly protected."
+        ),
+        description=(
+            "Production Android distribution binds every install to a signing "
+            "certificate: PackageManager validates the certificate on first install, "
+            "rejects any subsequent update signed by a different identity, and gates "
+            "signature / signatureOrSystem IPC permissions on the requesting app "
+            "carrying the same signer. A release build signed with the Android "
+            "debug keystore (CN=Android Debug, O=Android, C=US) carries no "
+            "developer-identity guarantee, lets any debug-signed build claim the "
+            "same signature-protected IPC surface, and tells the Play Store the "
+            "upload is not a real release. The verification target is that the "
+            "shipped APK is signed under the v2 / v3 signature scheme with a "
+            "non-debug certificate, that the signing key is held under Play App "
+            "Signing or an equivalent custody process documented for the team, "
+            "and that no runtime code path silently accepts a foreign signer on "
+            "update or IPC."
+        ),
+        verification_steps=(
+            "Inspect META-INF/ for the CERT.RSA / CERT.SF pair plus the "
+            "v2 / v3 / v4 signature blocks in the APK (the .SF MANIFEST "
+            "header should reference SHA-256, not the v1 SHA1-only style); "
+            "confirm the certificate Subject DN is not "
+            "\"CN=Android Debug, O=Android, C=US\" and that v1-only signing "
+            "is not in use against an Android 7.0+ target.",
+            "Inspect AndroidManifest.xml for android:debuggable=\"true\" on "
+            "the <application> tag and for android:testOnly=\"true\"; either "
+            "marker on a build labelled release is a signing / build-flag "
+            "failure mode that lets any debugger or `adb install -t` foreign "
+            "build land on a user device.",
+            "Search the code for PackageInfo.signatures / SigningInfo "
+            "consumers and flag any path that calls them only to log the "
+            "result instead of comparing the byte sequence to a known signer "
+            "constant — signature checks that never assert are noise the "
+            "build can still ship without enforcement.",
+        ),
+        relevant_apis=(
+            "android.content.pm.PackageManager.getPackageInfo",
+            "android.content.pm.PackageInfo.signatures",
+            "android.content.pm.PackageInfo.signingInfo",
+            "android.content.pm.SigningInfo.getApkContentsSigners",
+            "android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES",
+            "android.content.pm.PackageManager.GET_SIGNATURES",
+            "android.content.pm.PackageManager.checkSignatures",
+            "java.security.cert.X509Certificate",
+            "java.security.MessageDigest",
+        ),
+        evidence_hints=(
+            "META-INF/CERT.RSA",
+            "android:debuggable",
+            "android:testOnly",
+            "getPackageInfo",
+            "GET_SIGNING_CERTIFICATES",
+            "GET_SIGNATURES",
+            "signingInfo",
+            "checkSignatures",
+            "Android Debug",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CODE-2",
+        group=MasvsGroup.CODE,
+        level=MasvsLevel.L1,
+        title=(
+            "The app has been built in release mode, with settings appropriate "
+            "for a release build (e.g. non-debuggable)."
+        ),
+        description=(
+            "Android release builds are expected to ship with build flags that "
+            "deny runtime instrumentation: android:debuggable=false (the default "
+            "when omitted), JNI / Java debugging closed, the Application's "
+            "FLAG_DEBUGGABLE manifest bit clear, Crashlytics / Logcat verbose "
+            "channels muted, and Gradle's minify / shrink / proguard passes "
+            "active on the release variant. A debuggable release lets any "
+            "process with android.permission.SET_DEBUG_APP — or any local "
+            "user with adb — attach jdwp, dump heap state, set breakpoints, "
+            "and walk the stack of the production app, which trivially "
+            "exposes keys, tokens, and user data the app handles in memory. "
+            "The verification target is that the shipped variant has "
+            "debuggable=false on the manifest, that the Gradle release "
+            "variant has buildTypes.release { minifyEnabled true; "
+            "shrinkResources true } applied, and that no per-flavour override "
+            "re-enables debug paths for the release SKU."
+        ),
+        verification_steps=(
+            "Inspect AndroidManifest.xml for android:debuggable on the "
+            "<application> tag — explicit `true` is a fail; `false` or "
+            "absent is the documented default. Cross-check ApplicationInfo "
+            "FLAG_DEBUGGABLE reads at runtime: any code that branches on "
+            "the flag being set indicates the build expects to be "
+            "debuggable, which a release should never be.",
+            "Inspect the Gradle build configuration (app/build.gradle or "
+            "build.gradle.kts) for the release buildType: it should set "
+            "minifyEnabled true, shrinkResources true, and a proguard / "
+            "R8 rule file. Any release variant that disables minify or "
+            "sets debuggable=true is a build-flag fail; record the source "
+            "line.",
+            "Search the decompiled tree for BuildConfig.DEBUG branches and "
+            "for any feature gated on a runtime debug flag; flag any "
+            "branch that exposes user data, keys, or test endpoints when "
+            "DEBUG is true, since accidental release builds with DEBUG=true "
+            "(a common Gradle misconfiguration) would expose those paths.",
+        ),
+        relevant_apis=(
+            "android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE",
+            "android.content.pm.ApplicationInfo.flags",
+            "android.os.Debug.isDebuggerConnected",
+            "android.os.Debug.waitForDebugger",
+            "android.os.StrictMode",
+        ),
+        evidence_hints=(
+            "android:debuggable",
+            "FLAG_DEBUGGABLE",
+            "isDebuggerConnected",
+            "waitForDebugger",
+            "BuildConfig.DEBUG",
+            "minifyEnabled",
+            "shrinkResources",
+            "buildTypes",
+            "proguard",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CODE-3",
+        group=MasvsGroup.CODE,
+        level=MasvsLevel.L1,
+        title="Debugging symbols have been removed from native binaries.",
+        description=(
+            "Android APKs that ship native libraries (.so files under "
+            "lib/<abi>/) frequently retain the original symbol table and "
+            "DWARF debug sections from the NDK build. A symbolicated .so "
+            "lets a security researcher (or anyone with a hex editor and "
+            "an objdump) walk every function name, line-number mapping, "
+            "and local-variable layout the developer wrote — turning the "
+            "lib's protections (custom obfuscation, root checks, integrity "
+            "checks) into a glossary. The verification target is that "
+            "every shipped .so is stripped of .symtab, .debug_*, and "
+            ".strtab sections, that the build uses an NDK toolchain "
+            "configuration that strips by default, and that any kept "
+            "symbol set is intentional (e.g. JNI exports the Java loader "
+            "needs) rather than a leftover from a debug build."
+        ),
+        verification_steps=(
+            "Enumerate every lib/<abi>/*.so the APK ships and inspect "
+            "each with objdump / readelf / llvm-objdump: confirm there is "
+            "no .debug_info / .debug_line / .debug_str / .symtab "
+            "non-empty section; the only kept symbol table should be "
+            ".dynsym (required for JNI exports and dlopen).",
+            "If the APK ships no native code (no lib/ directory in the "
+            "APK), the control is not applicable — record N/A with the "
+            "absence as the evidence.",
+            "If kept symbols are required (e.g. JNI_OnLoad, "
+            "Java_<pkg>_<class>_<method>), confirm only those symbols are "
+            "in .dynsym and that the Gradle / CMakeLists.txt build sets "
+            "-fvisibility=hidden plus an explicit __attribute__"
+            "((visibility(\"default\"))) on the exported set, so internal "
+            "helpers do not leak.",
+        ),
+        relevant_apis=(
+            "System.loadLibrary",
+            "System.load",
+            "Runtime.getRuntime().loadLibrary",
+            "java.lang.Runtime.load",
+            "android.os.Build.SUPPORTED_ABIS",
+        ),
+        evidence_hints=(
+            "lib/arm64-v8a",
+            "lib/armeabi-v7a",
+            "lib/x86_64",
+            ".so",
+            "loadLibrary",
+            "JNI_OnLoad",
+            ".debug_info",
+            ".symtab",
+            "fvisibility",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CODE-4",
+        group=MasvsGroup.CODE,
+        level=MasvsLevel.L1,
+        title=(
+            "Debugging code and developer assistance code (e.g. test code, "
+            "backdoors, hidden settings) have been removed. The app does not "
+            "log verbose errors or debugging messages."
+        ),
+        description=(
+            "Release builds frequently retain code that exists only to make "
+            "development cheap: hidden activities reachable by long-pressing "
+            "the version label, debug menus gated by a hardcoded secret PIN, "
+            "test endpoints in the network layer toggled by a shared-prefs "
+            "key, Log.d / Log.v calls that print API responses and bearer "
+            "tokens, Crashlytics breadcrumbs containing PII, and StrictMode "
+            "developer-only checks. Any of these paths is a feature the "
+            "release ships, not a debug aid — a research team or anyone with "
+            "access to the binary will find the hidden activity name in the "
+            "manifest and the secret PIN string in the code, and the verbose "
+            "log lines surface in logcat or in crash-reporter consoles where "
+            "they were never meant. The verification target is that the "
+            "release build has no hidden-activity entry points, no debug-PIN "
+            "branches, no test endpoints in the production network "
+            "configuration, and no Log.{v,d,i} call sites that print "
+            "secrets, tokens, request bodies, or PII."
+        ),
+        verification_steps=(
+            "Inspect AndroidManifest.xml for activities, services, and "
+            "receivers tagged with android:exported=\"true\" and a name "
+            "like *Debug*, *Test*, *Hidden*, *Internal*, *Dev*; flag any "
+            "exported developer-only entry point that ships in the "
+            "release manifest. Also flag activities with an "
+            "<intent-filter> for actions like ACTION_VIEW with a debug "
+            "scheme (e.g. `appdebug://`).",
+            "Search the decompiled tree for Log.v / Log.d / Log.i / "
+            "Log.println calls and for System.out.println — note every "
+            "call that prints a Throwable, a network response body, an "
+            "auth header, a token, a session id, a user id, or any field "
+            "annotated @SensitiveData. Confirm the release build's "
+            "ProGuard / R8 config has -assumenosideeffects "
+            "class android.util.Log { ... } stripping these.",
+            "Search for hardcoded backdoor patterns: string equality "
+            "comparisons against literals like \"123456\", \"qwerty\", "
+            "\"masterkey\", developer email addresses, or "
+            "shared-preferences keys named `internal_*` / `debug_*` / "
+            "`override_*` that flip behaviour when set. Flag every "
+            "branch gated on a constant the operator did not document.",
+        ),
+        relevant_apis=(
+            "android.util.Log",
+            "java.lang.System.out",
+            "java.lang.System.err",
+            "android.os.StrictMode",
+            "com.google.firebase.crashlytics.FirebaseCrashlytics.log",
+            "android.content.SharedPreferences",
+            "android.content.pm.PackageManager.queryIntentActivities",
+        ),
+        evidence_hints=(
+            "Log.d(",
+            "Log.v(",
+            "Log.i(",
+            "System.out.println",
+            "BuildConfig.DEBUG",
+            "DebugActivity",
+            "TestActivity",
+            "internal_",
+            "debug_",
+            "assumenosideeffects",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CODE-5",
+        group=MasvsGroup.CODE,
+        level=MasvsLevel.L1,
+        title=(
+            "All third-party components used by the mobile app, such as "
+            "libraries and frameworks, are identified, and checked for "
+            "known vulnerabilities."
+        ),
+        description=(
+            "A modern Android APK pulls in tens to hundreds of transitive "
+            "Gradle dependencies, each carrying its own bug history. A "
+            "single outdated OkHttp ships with the OkHttp HeaderInjection "
+            "CVE; a single outdated Bouncy Castle ships with key-recovery "
+            "issues that nullify the app's crypto controls; a single "
+            "outdated AndroidX library carries content-provider permission "
+            "bypass fixes the app silently misses. The verification target "
+            "is that the team maintains an inventory of every direct and "
+            "transitive dependency the release ships (a CycloneDX / SPDX "
+            "SBOM produced by the build), that the inventory is reconciled "
+            "against a vulnerability feed (OSS Index, GitHub Advisory "
+            "Database, OSV) on every release, and that no dependency in "
+            "the final APK carries an unpatched CVE with a public exploit."
+        ),
+        verification_steps=(
+            "Recover the dependency set from the APK: every `classes*.dex` "
+            "package prefix that is not the app's own package id is a "
+            "third-party library. Cross-reference against META-INF/*.version "
+            "files (Kotlin / AndroidX leave version markers), the "
+            "META-INF/MANIFEST.MF Implementation-Title / Implementation-"
+            "Version pairs, and any embedded library-name string constants "
+            "(\"OkHttp/4.10.0\", \"Retrofit2/2.9.0\").",
+            "For every identified component + version pair, query the "
+            "OSV.dev / GitHub Advisory Database / NVD feeds and record "
+            "every advisory whose affected range matches the shipped "
+            "version. Flag every advisory with CVSS ≥ 7.0 or with a "
+            "public PoC as a finding, regardless of whether the app "
+            "exercises the affected code path (the app's reachability "
+            "guarantee can change with a patch).",
+            "Inspect the build configuration for evidence of an SBOM step "
+            "(cyclonedx-gradle-plugin, dependency-check-gradle, "
+            "`./gradlew dependencyUpdates`) and a vulnerability gate in "
+            "CI. Absence of a documented SBOM-on-release process is "
+            "itself a control failure — even if today's snapshot is "
+            "clean, the team has no mechanism to notice tomorrow's CVE.",
+        ),
+        relevant_apis=(
+            "java.lang.Package.getImplementationVersion",
+            "java.lang.Package.getName",
+            "okhttp3.OkHttp.VERSION",
+            "kotlin.KotlinVersion",
+            "retrofit2.BuildConfig",
+        ),
+        evidence_hints=(
+            "META-INF/MANIFEST.MF",
+            "Implementation-Version",
+            "kotlin-stdlib",
+            "androidx.",
+            "okhttp3",
+            "retrofit2",
+            "com.google.gson",
+            "io.reactivex",
+            "cyclonedx",
+            "dependencyCheck",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CODE-6",
+        group=MasvsGroup.CODE,
+        level=MasvsLevel.L1,
+        title="The app catches and handles possible exceptions.",
+        description=(
+            "Java / Kotlin code that lets a checked or runtime exception "
+            "propagate to the framework's uncaught-exception handler "
+            "produces a process crash, a logcat stack trace, and (when "
+            "Crashlytics or an equivalent is configured) an outbound "
+            "report containing local-variable values, request bodies, "
+            "and database row contents at the failure site. A crash is "
+            "also a denial-of-service vector — any external untrusted "
+            "caller that can drive the app into a crash path (a "
+            "malformed deep link, an oversized Intent extra, a "
+            "NumberFormatException from a manipulated query parameter) "
+            "can keep the app unusable. The verification target is that "
+            "every external boundary (IPC entry point, network response "
+            "decoder, user-input parser) catches the specific exceptions "
+            "its operations can throw, that catches do not swallow the "
+            "exception silently (no `catch (Exception e) {}` empty "
+            "bodies), and that catch bodies do not log secrets or PII "
+            "while handling the failure."
+        ),
+        verification_steps=(
+            "Search the decompiled tree for `catch (Exception` and "
+            "`catch (Throwable` blocks and inspect each body: an empty "
+            "body, a body that only re-prints the trace to logcat, or a "
+            "body that returns a default value without a security "
+            "decision is a silent-swallow. Flag every silent-swallow "
+            "in a path that handles authentication, authorization, "
+            "cryptographic verification, or session lifecycle.",
+            "For every Activity / BroadcastReceiver / Service entry "
+            "point that reads Intent extras, confirm extras are parsed "
+            "with typed accessors (getStringExtra / getIntExtra) inside "
+            "a try / catch that converts the failure into a "
+            "user-visible error or a safe default — not a process "
+            "crash that surfaces a stack trace to the caller of "
+            "startActivity.",
+            "Inspect the Application's uncaught-exception handler (if "
+            "configured) and any Crashlytics setup: confirm crash "
+            "reports do not include PII or secrets in the breadcrumb "
+            "log (FirebaseCrashlytics.log calls with token / "
+            "user-id / password material in the format string).",
+        ),
+        relevant_apis=(
+            "java.lang.Thread.UncaughtExceptionHandler",
+            "java.lang.Thread.setDefaultUncaughtExceptionHandler",
+            "java.lang.Throwable.printStackTrace",
+            "android.util.Log.getStackTraceString",
+            "com.google.firebase.crashlytics.FirebaseCrashlytics.recordException",
+            "kotlin.runCatching",
+            "kotlinx.coroutines.CoroutineExceptionHandler",
+        ),
+        evidence_hints=(
+            "catch (Exception",
+            "catch (Throwable",
+            "printStackTrace",
+            "getStackTraceString",
+            "UncaughtExceptionHandler",
+            "recordException",
+            "runCatching",
+            "CoroutineExceptionHandler",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CODE-7",
+        group=MasvsGroup.CODE,
+        level=MasvsLevel.L1,
+        title="Error handling logic in security controls denies access by default.",
+        description=(
+            "Security controls — authentication checks, authorization "
+            "gates, signature verifications, certificate validators — "
+            "must fail closed: when the check cannot reach a definitive "
+            "positive result, the path denies the operation. A control "
+            "that returns `true` from its catch block (\"the network "
+            "call failed, assume the user is authorized\") or that "
+            "defaults a `Boolean?` to true when the upstream returns "
+            "null is a fail-open control, equivalent to no control. "
+            "The verification target is that every security boundary "
+            "has an explicit deny default: catch blocks return false / "
+            "throw / call the deny handler; null / empty / unparseable "
+            "responses route to deny; default switch arms in "
+            "permission decisions choose deny over allow."
+        ),
+        verification_steps=(
+            "Identify every method whose name or body signals an "
+            "authorization decision (isAuthorized, canAccess, "
+            "verifySignature, validateToken, checkPermission) and "
+            "inspect each catch / null-branch / default-arm: confirm "
+            "the failure path returns false / throws SecurityException / "
+            "routes to a deny handler. Flag every path that returns "
+            "true / unit / a happy-default on failure.",
+            "Inspect every certificate / signature validator "
+            "(X509TrustManager.checkServerTrusted overrides, "
+            "Signature.verify call sites, JWS / JWT validation) and "
+            "confirm a thrown exception from the underlying provider "
+            "is treated as a verification failure, not as a benign "
+            "exception the caller can swallow.",
+            "Inspect every server-response decoder that drives a "
+            "permission decision: an HTTP 5xx or a JSON parse failure "
+            "must route to deny, not to a cached-positive answer. "
+            "Flag any code that on a network failure replays the last "
+            "successful authorization result without a freshness "
+            "check.",
+        ),
+        relevant_apis=(
+            "java.lang.SecurityException",
+            "javax.net.ssl.X509TrustManager.checkServerTrusted",
+            "java.security.cert.CertPathValidator",
+            "java.security.Signature.verify",
+            "android.content.pm.PackageManager.checkPermission",
+            "androidx.biometric.BiometricPrompt.AuthenticationCallback",
+        ),
+        evidence_hints=(
+            "catch (Exception",
+            "return true",
+            "isAuthorized",
+            "canAccess",
+            "checkServerTrusted",
+            "SecurityException",
+            "checkPermission",
+            "default:",
+            "?: true",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CODE-8",
+        group=MasvsGroup.CODE,
+        level=MasvsLevel.L1,
+        title=(
+            "In unmanaged code, memory is allocated, freed and used securely."
+        ),
+        description=(
+            "An APK that ships native code (NDK-built .so files under "
+            "lib/<abi>/, or Rust / C++ libraries loaded via System."
+            "loadLibrary) carries the full set of C/C++ memory-safety "
+            "risks: stack and heap buffer overflows, use-after-free, "
+            "double-free, integer overflow into allocation sizes, "
+            "off-by-one writes, and uninitialized reads. Memory issues "
+            "in the native layer turn into RCE / code-execution / "
+            "data-leak primitives that the JVM's bytecode-level "
+            "guarantees cannot contain. If the APK has no native code, "
+            "the control is not applicable for this build. The "
+            "verification target is that every native call site that "
+            "takes a length, offset, or buffer-derived size from the "
+            "Java side is bounds-checked at the JNI boundary, that the "
+            "native build enables -fstack-protector-strong / "
+            "-D_FORTIFY_SOURCE=2 / -fsanitize=safe-stack, and that the "
+            "release shipped through a fuzzer pass over the JNI entry "
+            "points."
+        ),
+        verification_steps=(
+            "List every native library the APK ships (lib/<abi>/*.so). "
+            "If none, mark N/A. For each, inspect the JNI registration "
+            "table (RegisterNatives calls and Java_<pkg>_<class>_<method> "
+            "exported symbols) and identify every entry point that "
+            "takes a byte[], String, or ByteBuffer plus a length / "
+            "offset from the Java side.",
+            "Confirm each JNI entry point validates the Java-supplied "
+            "length against the actual array length via "
+            "GetArrayLength / GetDirectBufferCapacity before passing "
+            "the size to memcpy / memmove / strcpy / sprintf in the "
+            "C/C++ body. Flag any call site that trusts a Java-side "
+            "length without re-checking it native-side.",
+            "Inspect the native build configuration (CMakeLists.txt, "
+            "Android.mk, build.gradle.kts cmake { cppFlags }) for "
+            "stack protectors (-fstack-protector-strong), fortified "
+            "libc (-D_FORTIFY_SOURCE=2), control-flow integrity "
+            "(-fsanitize=cfi when LTO is enabled), and AddressSanitizer "
+            "during fuzzing. Absence of any of these is a finding for "
+            "an APK that ships native code.",
+        ),
+        relevant_apis=(
+            "java.lang.System.loadLibrary",
+            "java.lang.System.load",
+            "jni.h::RegisterNatives",
+            "jni.h::GetArrayLength",
+            "jni.h::GetByteArrayElements",
+            "jni.h::GetDirectBufferCapacity",
+            "jni.h::ReleaseByteArrayElements",
+        ),
+        evidence_hints=(
+            "lib/arm64-v8a",
+            ".so",
+            "JNI_OnLoad",
+            "RegisterNatives",
+            "GetByteArrayElements",
+            "GetArrayLength",
+            "fstack-protector",
+            "FORTIFY_SOURCE",
+            "fsanitize",
+            "memcpy",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-CODE-9",
+        group=MasvsGroup.CODE,
+        level=MasvsLevel.L1,
+        title=(
+            "Free security features offered by the toolchain, such as byte "
+            "code minification, stack protection, PIE support, and automatic "
+            "reference counting are activated."
+        ),
+        description=(
+            "The Android toolchain ships free-of-cost defensive features "
+            "the build is expected to turn on for release variants: R8 "
+            "(or ProGuard) for bytecode shrink / obfuscate / optimize, "
+            "resource shrinking for dead-resource removal, "
+            "android:extractNativeLibs=\"false\" so .so files run from "
+            "the APK without a writable on-disk copy, "
+            "android:allowBackup=\"false\" so adb backup cannot exfiltrate "
+            "the app's private data dir, android:usesCleartextTraffic=\"false\" "
+            "as a network-stack default-deny, and PIE / RELRO / NX / "
+            "stack-canary flags on every shipped .so. The verification "
+            "target is that the release variant has these flags / "
+            "settings active and that no per-flavour override silently "
+            "disables them for the shipping SKU."
+        ),
+        verification_steps=(
+            "Inspect the Gradle release buildType for minifyEnabled true, "
+            "shrinkResources true, and the proguardFiles / R8 rules path; "
+            "absence of any of these is a finding. Cross-check the "
+            "decompiled bytecode: heavily-obfuscated method / class names "
+            "(a / b / c, or alphabet-soup) plus stripped line numbers "
+            "indicate R8 ran; clear method names indicate it did not.",
+            "Inspect AndroidManifest.xml for "
+            "android:allowBackup, android:extractNativeLibs, "
+            "android:usesCleartextTraffic, android:networkSecurityConfig — "
+            "the release should set allowBackup=\"false\", "
+            "extractNativeLibs=\"false\", usesCleartextTraffic=\"false\", "
+            "and reference a network_security_config.xml that denies "
+            "cleartext by default. Flag every explicit `true` on the "
+            "permissive flags.",
+            "For every shipped lib/<abi>/*.so, inspect ELF flags via "
+            "checksec / readelf -d / readelf -l: confirm PIE (Type: "
+            "DYN), NX (GNU_STACK without PF_X), RELRO (GNU_RELRO present, "
+            "BIND_NOW preferred), stack canaries (__stack_chk_fail "
+            "symbol referenced), and no executable, writable segments. "
+            "Record every shipped library that misses any of these.",
+        ),
+        relevant_apis=(
+            "android.app.Application",
+            "android.content.pm.ApplicationInfo.flags",
+            "android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP",
+            "android.content.pm.ApplicationInfo.FLAG_EXTRACT_NATIVE_LIBS",
+        ),
+        evidence_hints=(
+            "android:allowBackup",
+            "android:extractNativeLibs",
+            "android:networkSecurityConfig",
+            "android:usesCleartextTraffic",
+            "minifyEnabled",
+            "shrinkResources",
+            "proguardFiles",
+            "__stack_chk_fail",
+            "GNU_RELRO",
+            "BIND_NOW",
+        ),
+    ),
+)
+
+
 MASVS_CONTROLS: tuple[MasvsControl, ...] = (
     *_STORAGE_CONTROLS,
     *_CRYPTO_CONTROLS,
     *_AUTH_CONTROLS,
     *_NETWORK_CONTROLS,
     *_PLATFORM_CONTROLS,
+    *_CODE_CONTROLS,
 )
