@@ -150,7 +150,6 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 .where(inv.parent_investigation_id == parent_id)
                 .where(inv.status.in_((
                     InvestigationStatus.RUNNING.value,
-                    InvestigationStatus.QUEUED.value,
                     InvestigationStatus.PAUSED.value,
                 ))),
             )
