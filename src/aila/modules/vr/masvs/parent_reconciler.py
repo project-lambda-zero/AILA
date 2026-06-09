@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import timedelta
 
 from sqlalchemy import func, select, update
 from sqlalchemy.sql.functions import coalesce
@@ -652,6 +653,89 @@ async def _close_rejected_outcomes(uow: UnitOfWork) -> int:
         await uow.commit()
     return closed
 
+async def _abandon_stale_branches(uow: UnitOfWork) -> int:
+    """Abandon active branches that have stopped making progress.
+
+    Two failure modes observed in production:
+      1. ``turn_count=0`` since the dispatcher created the branch hours
+         ago — the first turn never queued (lost task, dead worker,
+         dependency wait that never resolved). These are dead from
+         birth.
+      2. ``turn_count>=1`` but ``updated_at`` is many hours old — the
+         agent made some progress, then the task chain broke (auto-
+         steering operator message logged but no engine reply, ARQ
+         orphan, OmniRoute crash). The branch sits ``status=active`` so
+         it blocks the parent investigation from auto-completing in
+         ``_check_terminal_status``.
+
+    Thresholds (tunable via env):
+      ``VR_STALE_BRANCH_FROZEN_MIN`` (default 30): minutes of inactivity
+        before a branch with ``turn_count < 5`` is abandoned. These
+        never really started; short timeout is safe.
+      ``VR_STALE_BRANCH_HALTED_MIN`` (default 120): minutes of
+        inactivity before a branch with ``turn_count >= 5`` is
+        abandoned. They made real progress; give them longer in case
+        the agent comes back.
+
+    A healthy active branch writes ``updated_at`` every tool call
+    (every few seconds during a turn), so 30 min of inactivity is
+    already a strong signal of failure. Abandoned branches get
+    ``closed_reason='stale_no_progress_<frozen|halted>_<min>min'`` so
+    the operator can grep the audit trail.
+
+    Returns the count of branches abandoned this tick.
+    """
+    from aila.modules.vr.db_models import (  # noqa: PLC0415
+        VRInvestigationBranchRecord,
+    )
+
+    frozen_min = int(os.environ.get("VR_STALE_BRANCH_FROZEN_MIN", "30"))
+    halted_min = int(os.environ.get("VR_STALE_BRANCH_HALTED_MIN", "120"))
+    branch = VRInvestigationBranchRecord
+    now = utc_now()
+    frozen_cutoff = now - timedelta(minutes=frozen_min)
+    halted_cutoff = now - timedelta(minutes=halted_min)
+
+    # 1. Frozen-from-birth: turn_count < 5 + idle >= frozen_min.
+    frozen_result = await uow.session.exec(
+        update(branch)
+        .where(branch.status == BranchStatus.ACTIVE.value)
+        .where(branch.turn_count < 5)
+        .where(branch.updated_at < frozen_cutoff)
+        .values(
+            status=BranchStatus.ABANDONED.value,
+            closed_reason=f"stale_no_progress_frozen_{frozen_min}min",
+            closed_at=now,
+            updated_at=now,
+        ),
+    )
+    frozen_count = getattr(frozen_result, "rowcount", 0) or 0
+
+    # 2. Halted-after-progress: turn_count >= 5 + idle >= halted_min.
+    halted_result = await uow.session.exec(
+        update(branch)
+        .where(branch.status == BranchStatus.ACTIVE.value)
+        .where(branch.turn_count >= 5)
+        .where(branch.updated_at < halted_cutoff)
+        .values(
+            status=BranchStatus.ABANDONED.value,
+            closed_reason=f"stale_no_progress_halted_{halted_min}min",
+            closed_at=now,
+            updated_at=now,
+        ),
+    )
+    halted_count = getattr(halted_result, "rowcount", 0) or 0
+
+    total = frozen_count + halted_count
+    if total:
+        await uow.commit()
+        _log.info(
+            "stale_branches_abandoned frozen=%d halted=%d total=%d",
+            frozen_count, halted_count, total,
+        )
+    return total
+
+
 
 
 async def sweep_masvs_audit_parents() -> dict[str, int]:
@@ -695,6 +779,12 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         except Exception as exc:  # noqa: BLE001
             _log.warning("masvs reconciler: rejected-close failed: %s", exc, exc_info=True)
             rejected_closed = 0  # noqa: F841
+        # 5. Abandon active branches that stopped making progress.
+        try:
+            stale = await _abandon_stale_branches(uow)  # noqa: F841
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("masvs reconciler: stale-branch abandon failed: %s", exc, exc_info=True)
+            stale = 0  # noqa: F841
         # Candidate parents: kind=masvs_audit, parent_investigation_id
         # IS NULL (true batch root), status in {CREATED, RUNNING}. PAUSED
         # parents are intentionally excluded so an operator who paused
