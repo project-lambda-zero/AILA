@@ -116,17 +116,25 @@ async def _fetch_audit_mcp_signatures() -> str:
     an empty string so the verifier falls back on the LLM's prior
     knowledge of audit-mcp instead of crashing.
     """
-    import urllib.request  # noqa: PLC0415
+    import httpx  # noqa: PLC0415
 
     bridge = AuditMcpBridgeTool()
     try:
         base_url = await bridge._resolve_base_url()
     except (OSError, RuntimeError):
         return ""
+    # Async HTTP — was urllib.request.urlopen() which is fully sync and
+    # blocks the asyncio loop for the call duration. With audit-mcp's
+    # /tools serializing 60+ tool schemas the call takes 1-5s; that
+    # blocked the WHOLE backend (every other request in flight)
+    # whenever a claim verification fired. Switching to httpx.AsyncClient
+    # keeps the loop responsive — other requests interleave during the
+    # round-trip.
     try:
-        with urllib.request.urlopen(f"{base_url}/tools", timeout=5) as r:
-            raw = json.loads(r.read().decode())
-    except (OSError, ValueError, TimeoutError):
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{base_url}/tools")
+        raw = resp.json()
+    except (httpx.HTTPError, ValueError):
         return ""
     tools = raw.get("tools", raw) if isinstance(raw, dict) else raw
     if not isinstance(tools, list):

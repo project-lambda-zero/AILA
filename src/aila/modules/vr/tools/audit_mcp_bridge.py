@@ -19,6 +19,7 @@ with ``action='poll_task'`` until ``status='ready'`` — see
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -830,20 +831,23 @@ class AuditMcpBridgeTool(Tool):
                 "status": "error",
                 "error": f"read_lines: file_path escapes index root: {file_path}",
             }
-        if not abs_path.is_file():
-            # jadx APK decompilation emits .java only. Agent occasionally
-            # guesses .kt because the original codebase is Kotlin (the
-            # class names hint at it). Try the obvious extension swap
-            # before failing — saves the agent a follow-up turn.
+        # is_file() and the actual file read both touch the disk. Run
+        # them in a worker thread so the asyncio event loop doesn't
+        # block on multi-MB jadx-decompiled Java files. Observed:
+        # without this, the backend periodically froze for 1-3 seconds
+        # at a time when MASVS workers fanned 5+ children all calling
+        # read_lines on a 5 MB BillingRepository.java in parallel.
+        if not await asyncio.to_thread(abs_path.is_file):
             swap_path: Path | None = None
             if abs_path.suffix == ".kt":
                 swap_path = abs_path.with_suffix(".java")
             elif abs_path.suffix == ".java":
                 swap_path = abs_path.with_suffix(".kt")
-            if swap_path is not None and swap_path.is_file():
-                # Resolved to a real file under root — proceed with the
-                # swapped path but echo the original file_path in the
-                # response so the caller knows what was tried.
+            swap_exists = bool(
+                swap_path is not None
+                and await asyncio.to_thread(swap_path.is_file),
+            )
+            if swap_path is not None and swap_exists:
                 logging.getLogger(__name__).info(
                     "read_lines EXT_FALLBACK %s → %s",
                     abs_path.name, swap_path.name,
@@ -862,9 +866,12 @@ class AuditMcpBridgeTool(Tool):
                     ),
                 }
 
+        def _read_all_lines(path: Path) -> list[str]:
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                return f.readlines()
+
         try:
-            with abs_path.open("r", encoding="utf-8", errors="replace") as f:
-                all_lines = f.readlines()
+            all_lines = await asyncio.to_thread(_read_all_lines, abs_path)
         except OSError as exc:
             return {"status": "error", "error": f"read_lines: read failed: {exc}"}
 
