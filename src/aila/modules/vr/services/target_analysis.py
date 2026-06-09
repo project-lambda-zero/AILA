@@ -462,8 +462,14 @@ class TargetAnalysisService:
         tracker: StageTracker,
     ) -> None:
         apk_path = self._resolve_apk_path(descriptor)
+        # force=True so a retried stage doesn't trip apktool's
+        # "destination directory already exists" check against a partial
+        # output from a prior failed attempt. Retry SHOULD be idempotent;
+        # the workspace dir is content-addressed by sha (apktool-<sha[:16]>)
+        # so overwriting is the correct behavior. Without this, every
+        # retry after a single failure perma-fails until manual cleanup.
         resp = await self._android_mcp.forward(
-            action="apktool_decode", apk_path=apk_path,
+            action="apktool_decode", apk_path=apk_path, force=True,
         )
         if not isinstance(resp, dict) or resp.get("status") == "error":
             err = resp.get("error") if isinstance(resp, dict) else resp
