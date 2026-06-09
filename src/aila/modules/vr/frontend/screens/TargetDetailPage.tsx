@@ -22,10 +22,14 @@ import {
   useUploadTargetArtifact,
 } from "../mutations";
 import {
+  useInvestigationsForTarget,
   useTarget,
   useTargetHypotheses,
   useWorkspaces,
 } from "../queries";
+import { requestBlob } from "@platform/api/http";
+import { saveBlobResponse } from "@platform/api/download";
+import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
 import { Link } from "react-router";
 import type {
   AnalysisState,
@@ -793,6 +797,173 @@ function MasvsAuditCard({
   );
 }
 
+/** R-4 report-download card. Sibling of MasvsAuditCard: appears once
+ * the operator has dispatched a MASVS audit for this target. The
+ * dispatcher (D-1) creates one parent VRInvestigation with
+ * kind=masvs_audit and N children with parent_investigation_id
+ * pointing at it; the parent transitions to COMPLETED only once
+ * every child reaches a terminal state (D-5 reconciler).
+ *
+ * The PDF endpoint (R-3) accepts partial aggregates — children
+ * still in flight render as INCONCLUSIVE rows so the operator can
+ * hand the CISO a checkpoint copy without waiting for the full
+ * ~60min batch. Following that, the button enables once at least
+ * one child has reached a terminal state and stays enabled for the
+ * rest of the audit lifetime. If no terminal children exist yet,
+ * the button stays disabled with a tooltip explaining why.
+ *
+ * No new mutation hook — the download is a one-shot read-only side
+ * effect that bypasses React Query (matches ExportReportButton).
+ *
+ * Note: VRInvestigationSummary.kind is currently typed as the
+ * pre-MASVS union (discovery | variant_hunt | triage | n_day |
+ * audit) in `types.ts`. The runtime payload now also carries
+ * "masvs_audit" for parent records — the `as string` cast below
+ * acknowledges that drift without expanding the type system in
+ * this iteration. Update `InvestigationKind` when U-1 / U-2 land,
+ * which will need the narrowing anyway. */
+function MasvsReportCard({
+  targetId,
+  packageLabel,
+}: {
+  targetId: string;
+  packageLabel: string | null;
+}) {
+  const { data: investigationsResult, isLoading } =
+    useInvestigationsForTarget(targetId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const investigations = investigationsResult?.data ?? [];
+
+  // Pick the most recent MASVS_AUDIT parent for this target. The
+  // dispatcher is idempotent on (target, catalog_version) for ACTIVE
+  // parents (D-3) — once that parent reaches a terminal state the
+  // operator can fire a fresh batch, so we sort created_at desc and
+  // pick the head. created_at is an ISO-8601 string from the wire so
+  // localeCompare orders it chronologically without parsing dates.
+  const masvsParents = investigations
+    .filter(
+      (inv) =>
+        (inv.kind as string) === "masvs_audit" &&
+        inv.parent_investigation_id == null,
+    )
+    .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+  const parent = masvsParents[0] ?? null;
+
+  // No parent means the operator hasn't dispatched yet — surface
+  // nothing here so the MasvsAuditCard above is the only CTA. The
+  // download card appears the moment a parent row exists, even
+  // before any child has finished, so the operator sees the
+  // disabled control with a clear "waiting on children" status.
+  if (isLoading || parent == null) return null;
+
+  const children = investigations.filter(
+    (inv) => inv.parent_investigation_id === parent.id,
+  );
+  // VRInvestigation terminal statuses per types.ts InvestigationStatus.
+  // R-3 docstring confirms the PDF tolerates non-terminal children —
+  // they render as INCONCLUSIVE rows in the per-control table.
+  const terminalChildren = children.filter(
+    (c) =>
+      c.status === "completed" ||
+      c.status === "failed" ||
+      c.status === "abandoned",
+  );
+  const totalChildren = children.length;
+  const terminalCount = terminalChildren.length;
+  const allTerminal = totalChildren > 0 && terminalCount === totalChildren;
+  const canDownload = terminalCount > 0;
+
+  async function handleClick() {
+    if (parent == null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const token = await getAuthTokenStandalone();
+      // Cache-buster query param: backend sets Cache-Control:
+      // no-store but entries already in the browser disk cache from
+      // earlier visits would otherwise survive. ts changes per
+      // click so each request hits a unique URL.
+      const params = new URLSearchParams({
+        audit_id: parent.id,
+        ts: String(Date.now()),
+      });
+      const payload = await requestBlob(
+        `/vr/targets/${encodeURIComponent(targetId)}/masvs-report?${params.toString()}`,
+        { method: "GET", token },
+      );
+      // Filename fallback — the backend's Content-Disposition is
+      // authoritative when present (masvs_<pkg>_<YYYYMMDD>.pdf per
+      // R-3's _masvs_report_filename). The fallback covers the
+      // unlikely case where the header is dropped by a proxy.
+      const safePackage = (packageLabel ?? "android-apk")
+        .replace(/[^a-zA-Z0-9_-]+/g, "_")
+        .slice(0, 80);
+      const fallback = `masvs_${safePackage}_${parent.id.slice(0, 8)}.pdf`;
+      saveBlobResponse(payload, payload.fileName ?? fallback);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg.slice(0, 200));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const buttonLabel = busy
+    ? "Downloading…"
+    : allTerminal
+      ? "Download MASVS report"
+      : `Download partial report (${terminalCount}/${totalChildren})`;
+  const buttonTitle = canDownload
+    ? allTerminal
+      ? "Download the full PDF aggregate"
+      : "Download a partial PDF — children still running render as INCONCLUSIVE"
+    : "Disabled until at least one child investigation reaches a terminal state";
+
+  return (
+    <AilaCard techBorder glow>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">
+            MASVS report
+          </h2>
+          <p className="text-xs text-text-muted mt-1">
+            ReportLab PDF aggregating every child investigation
+            outcome through the S-4 verdict mapper, grouped by MASVS
+            control group with per-control evidence excerpts. Children
+            still in flight render as INCONCLUSIVE rows — partial
+            reports are valid handoffs for an interim checkpoint.
+          </p>
+          <p className="text-xs text-text-muted mt-2 font-mono">
+            {terminalCount} / {totalChildren} child investigation
+            {totalChildren === 1 ? "" : "s"} terminal
+            {allTerminal
+              ? " · all complete"
+              : totalChildren === 0
+                ? " · waiting on dispatch"
+                : " · in progress"}
+          </p>
+          {error && (
+            <p className="text-xs text-text-danger mt-2 break-all">
+              {error}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={!canDownload || busy}
+          title={buttonTitle}
+          className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 shrink-0"
+        >
+          {buttonLabel}
+        </button>
+      </div>
+    </AilaCard>
+  );
+}
+
 export function TargetDetailPage() {
   const { targetId } = useParams<{ targetId: string }>();
   const tid = targetId ?? "";
@@ -1032,6 +1203,27 @@ export function TargetDetailPage() {
         && target.apk_overview?.static_summary
         && Object.keys(target.apk_overview.static_summary).length > 0 && (
         <MasvsAuditCard
+          targetId={target.id}
+          packageLabel={
+            typeof target.apk_overview.static_summary.package === "string"
+              ? (target.apk_overview.static_summary.package as string)
+              : target.android_package_name ?? null
+          }
+        />
+      )}
+
+      {/* R-4 "Download MASVS report" card. Gated identically to the
+          dispatcher above so the report card only ever shows up for
+          APK targets whose ingestion has reached STATIC_SUMMARY.
+          The card itself self-hides until a parent masvs_audit
+          investigation exists for this target, so on a fresh APK
+          only the dispatcher above renders. Disabled until at least
+          one child reaches a terminal state (partial reports are
+          valid per R-3). */}
+      {target.kind === "android_apk"
+        && target.apk_overview?.static_summary
+        && Object.keys(target.apk_overview.static_summary).length > 0 && (
+        <MasvsReportCard
           targetId={target.id}
           packageLabel={
             typeof target.apk_overview.static_summary.package === "string"
