@@ -3068,6 +3068,30 @@ def create_vr_router() -> APIRouter:
         # the worker can always find the row; a transient queue outage
         # leaves the children in CREATED status with a captured error
         # rather than rolling back the parent + sibling rows.
+        # APK MASVS audits are throttled: fan-out of N=46 children all
+        # streaming through OmniRoute simultaneously was OOM-ing the
+        # local LLM proxy (~9.7 GB available, Node default heap ~4 GB,
+        # each agent's streaming buffers add up). Operator-tunable batch
+        # size keeps only MASVS_AUDIT_BATCH_SIZE children in flight at
+        # any given moment for android_apk targets; the masvs parent
+        # reconciler enqueues the next batch when slots free up.
+        #
+        # Source-repo / cve / patch-diff targets continue to fan-out-all
+        # because their per-child LLM cost is small enough to not strain
+        # the proxy (no jadx graph traversal, no 64K-token contexts).
+        # Operator-tunable batch size; deferred import per file convention.
+        import os as _os  # noqa: PLC0415
+        try:
+            _batch_size_raw = int(
+                _os.environ.get("MASVS_AUDIT_BATCH_SIZE", "5"),
+            )
+        except ValueError:
+            _batch_size_raw = 5
+        masvs_batch_size = max(1, min(_batch_size_raw, len(child_ids)))
+        is_apk = target.kind == TargetKind.ANDROID_APK.value
+        initial_batch = child_ids[:masvs_batch_size] if is_apk else child_ids
+        deferred = child_ids[masvs_batch_size:] if is_apk else []
+
         enqueue_errors: dict[str, str] = {}
         try:
             task_queue = get_task_queue("vr", request)
@@ -3080,7 +3104,7 @@ def create_vr_router() -> APIRouter:
             )
             enqueue_errors = {cid: err_msg for cid in child_ids}
         else:
-            for cid in child_ids:
+            for cid in initial_batch:
                 try:
                     await task_queue.submit(
                         track="vr",
@@ -3097,6 +3121,14 @@ def create_vr_router() -> APIRouter:
                         "MASVS audit %s child %s failed to enqueue: %s",
                         parent.id, cid, exc,
                     )
+            if deferred:
+                _log.info(
+                    "MASVS audit %s (APK) batched: enqueued %d/%d children, "
+                    "%d deferred (parent reconciler will enqueue as slots free). "
+                    "batch_size=%d via MASVS_AUDIT_BATCH_SIZE env.",
+                    parent.id, len(initial_batch), len(child_ids),
+                    len(deferred), masvs_batch_size,
+                )
 
         return DataEnvelope(
             data=MasvsAuditDispatchResponse(
