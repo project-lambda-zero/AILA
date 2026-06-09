@@ -78,6 +78,27 @@ def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Pipeline-only tools — the 5-stage target ingestion (APK_DECODE,
+# JADX_DECOMPILE, INDEX_DECOMPILED, STATIC_SUMMARY, MOBSF_SCAN) runs
+# these ONCE at target create time via TargetAnalysisService. By the
+# time an investigation turn fires, the results live in
+# vr_targets._mcp_handles_json + the audit_mcp index id, queryable via
+# cheap read tools. Letting the agent re-invoke them is:
+#   - wasteful (re-decoding the same APK every time)
+#   - error-prone (apktool refuses to overwrite without -f; mobsf has
+#     to re-upload + re-scan; jadx burns minutes per call)
+#   - off-policy (mobsf output must never reach prompts per operator)
+#
+# Hidden from the agent-visible catalog. TargetAnalysisService still
+# calls them directly via bridge.forward(action=...) — the denylist is
+# only applied in list_tool_specs() (what the prompt builder pulls).
+_PIPELINE_ONLY_TOOLS: frozenset[str] = frozenset((
+    "apktool_decode",
+    "jadx_decompile",
+    "mobsf_scan",
+))
+
+
 class AndroidMcpBridgeTool(Tool):
     """HTTP bridge for android-mcp.
 
@@ -313,12 +334,19 @@ class AndroidMcpBridgeTool(Tool):
             )
             self.__class__._SPEC_CACHE = []
             return []
+        # Drop pipeline-only tools BEFORE caching so every consumer of
+        # the cache (prompt builder, agent dispatcher, status UI) sees
+        # the agent-safe subset. The pipeline still calls these via
+        # bridge.forward directly, which bypasses the catalog.
         self.__class__._SPEC_CACHE = [
-            _compact_spec(t) for t in raw if isinstance(t, dict)
+            _compact_spec(t) for t in raw
+            if isinstance(t, dict)
+            and t.get("name") not in _PIPELINE_ONLY_TOOLS
         ]
         _log.info(
-            "android_mcp_bridge: catalog loaded — %d tools",
+            "android_mcp_bridge: catalog loaded — %d tools (%d hidden as pipeline-only)",
             len(self.__class__._SPEC_CACHE),
+            sum(1 for t in raw if isinstance(t, dict) and t.get("name") in _PIPELINE_ONLY_TOOLS),
         )
         return self.__class__._SPEC_CACHE
 
