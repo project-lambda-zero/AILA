@@ -826,6 +826,44 @@ class HonestVulnResearcher:
             apk_path = descriptor.get("apk_path")
             if isinstance(apk_path, str) and apk_path:
                 handles["android_mcp_apk_path"] = apk_path
+        # Trim massive android-mcp handles before they leak into every
+        # LLM prompt. Pre-fix: android_mcp_mobsf_scan = 7MB, static_summary
+        # = 34KB; per-turn snap=7MB blew past every reasonable model
+        # context window. Replace with operator-facing summaries; the
+        # raw blobs stay in the DB for direct query.
+        if kind_str == "android_apk":
+            mobsf_full = handles.get("android_mcp_mobsf_scan")
+            if isinstance(mobsf_full, dict) and mobsf_full:
+                if mobsf_full.get("skipped"):
+                    handles["android_mcp_mobsf_scan"] = {
+                        "skipped": True,
+                        "reason": mobsf_full.get("reason", ""),
+                    }
+                else:
+                    buckets = {"high": 0, "warning": 0, "info": 0, "good": 0, "secure": 0}
+                    for section_key in ("code_analysis", "manifest_analysis", "android_api", "network_security"):
+                        section = mobsf_full.get(section_key)
+                        if isinstance(section, dict):
+                            for finding in section.values():
+                                if isinstance(finding, dict):
+                                    sev = (finding.get("severity") or finding.get("status") or "").lower()
+                                    if sev in buckets:
+                                        buckets[sev] += 1
+                    handles["android_mcp_mobsf_scan"] = {
+                        "security_score": mobsf_full.get("security_score"),
+                        "findings_by_severity": buckets,
+                    }
+            static_full = handles.get("android_mcp_static_summary")
+            if isinstance(static_full, dict) and static_full:
+                digest = {}
+                for k in ("package", "version_name", "version_code", "min_sdk", "target_sdk", "signing_scheme"):
+                    if static_full.get(k) is not None:
+                        digest[k] = static_full[k]
+                for k in ("permissions", "dangerous_permissions", "exported_activities", "exported_services", "exported_receivers", "exported_providers", "native_libs", "certificates"):
+                    v = static_full.get(k)
+                    if isinstance(v, list):
+                        digest[f"{k}_count"] = len(v)
+                handles["android_mcp_static_summary"] = digest
         return {
             "id": target.id,
             "kind": target.kind,
