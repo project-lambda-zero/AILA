@@ -653,6 +653,57 @@ _KIND_DEFAULT_STRATEGY: dict[InvestigationKind, str] = {
 }
 
 
+def _sanitize_filename_part(text: str, *, fallback: str) -> str:
+    """Fold a free-form label into a Content-Disposition-safe slug.
+
+    Keeps ASCII alnum plus ``.``, ``_``, ``-`` (the package-id alphabet
+    plus the two delimiters operators expect in filenames); every other
+    byte folds to ``_``. Strips leading / trailing punctuation so a
+    package like ``..weird.`` doesn't generate a hidden file on
+    Unix, and caps the slug at 64 chars so the header stays small.
+    Returns ``fallback`` when the input is empty or sanitises to the
+    empty string.
+    """
+    if not text:
+        return fallback
+    out_chars = [
+        ch if (ch.isascii() and (ch.isalnum() or ch in "._-")) else "_"
+        for ch in text
+    ]
+    cleaned = "".join(out_chars).strip("._-")
+    if not cleaned:
+        return fallback
+    return cleaned[:64]
+
+
+def _masvs_report_filename(
+    target_summary: VRTargetSummary,
+    generated_at_yyyymmdd: str,
+) -> str:
+    """Build the MASVS report download filename per PRD R-3.
+
+    Format: ``masvs_<package>_<YYYYMMDD>.pdf``. The package label falls
+    back through ``apk_overview.static_summary.package`` →
+    ``android_package_name`` → the sentinel ``android-apk`` so a target
+    that somehow lost its package label still gets a stable filename
+    rather than a header the browser refuses to parse.
+    """
+    package_label: str = ""
+    overview = target_summary.apk_overview
+    if isinstance(overview, dict):
+        static_summary = overview.get("static_summary")
+        if isinstance(static_summary, dict):
+            maybe_pkg = static_summary.get("package")
+            if isinstance(maybe_pkg, str):
+                package_label = maybe_pkg.strip()
+    if not package_label and target_summary.android_package_name:
+        package_label = target_summary.android_package_name.strip()
+    sanitized = _sanitize_filename_part(
+        package_label, fallback="android-apk",
+    )
+    return f"masvs_{sanitized}_{generated_at_yyyymmdd}.pdf"
+
+
 def create_vr_router() -> APIRouter:
     """Construct and return the VR module APIRouter."""
     router = APIRouter(tags=["vr"])
@@ -3055,6 +3106,158 @@ def create_vr_router() -> APIRouter:
                 cost_budget_total_usd=total_budget_usd,
                 enqueue_errors=enqueue_errors,
             ),
+        )
+
+    @router.get(
+        "/targets/{target_id}/masvs-report",
+        summary=(
+            "Download the MASVS audit report PDF for one parent "
+            "investigation. Aggregates every child outcome through the "
+            "S-4 verdict mapper, renders the per-group ReportLab PDF "
+            "(cover + executive summary + per-control subsections), "
+            "and streams it back with Content-Type application/pdf and "
+            "Content-Disposition attachment. Partial reports are "
+            "valid — children still in flight render as INCONCLUSIVE "
+            "rows so an operator can hand the CISO a checkpoint copy "
+            "without waiting for the full ~60min batch."
+        ),
+        response_class=Response,
+        responses={
+            200: {
+                "description": "PDF report ready for download.",
+                "content": {
+                    "application/pdf": {
+                        "schema": {"type": "string", "format": "binary"},
+                    },
+                },
+            },
+        },
+    )
+    @limiter.limit("10/minute")
+    async def export_masvs_report(
+        request: Request,
+        target_id: str,
+        audit_id: str = Query(
+            ...,
+            description=(
+                "Parent VRInvestigation id (kind=masvs_audit) returned "
+                "by POST /vr/targets/{target_id}/masvs-audit."
+            ),
+        ),
+        auth: AuthContext = Depends(require_auth),
+    ) -> Response:
+        """Stream the MASVS audit PDF for ``audit_id`` under ``target_id``.
+
+        Refuses with:
+
+        * **404** when the target is not visible to the caller's team,
+          when the parent investigation does not exist, or when it
+          exists but points at a different target (a defensive guard so
+          an operator with cross-target audit ids can't accidentally
+          download a report under the wrong target context).
+        * **409** when the parent exists but its ``kind`` is not
+          ``masvs_audit``. The renderer is specific to MASVS batches —
+          a one-off audit investigation has its own
+          ``GET /investigations/{id}/report.pdf`` route.
+
+        The PDF is rendered synchronously via ReportLab; the render is
+        pushed onto a worker thread via :func:`asyncio.to_thread` so a
+        large aggregate (~46 L1 controls plus subsections) doesn't
+        block the event loop while reportlab walks the flow.
+        """
+        del request
+
+        from aila.modules.vr.reporting.masvs_report import (
+            build_pdf,
+            collect_findings,
+        )
+
+        from .db_models import VRInvestigationRecord, VRTargetRecord
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(
+                        VRTargetRecord.id == target_id,
+                    ),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            if target is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Target {target_id} not found or not owned "
+                        "by your team."
+                    ),
+                )
+            parent = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == audit_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                ),
+            )).first()
+            if parent is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"MASVS audit {audit_id} not found or not "
+                        "owned by your team."
+                    ),
+                )
+            if parent.kind != InvestigationKind.MASVS_AUDIT.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Investigation {audit_id} kind={parent.kind!r}; "
+                        "MASVS report requires a parent investigation "
+                        "with kind='masvs_audit'."
+                    ),
+                )
+            if parent.target_id != target_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"MASVS audit {audit_id} does not belong to "
+                        f"target {target_id}."
+                    ),
+                )
+            target_summary = _target_summary(target)
+
+        try:
+            aggregate = await collect_findings(audit_id)
+        except ValueError as exc:
+            # collect_findings re-validates parent kind / existence; a
+            # race between the lookup above and the aggregate query
+            # (parent deleted mid-request) surfaces as 404 so the
+            # caller gets the same shape as the up-front guard.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
+
+        # build_pdf is sync (CPU-bound ReportLab render). The
+        # investigation-report endpoint follows the same pattern —
+        # render directly on the event loop. The aggregate is bounded
+        # (≤46 L1 verdicts), so the render stays well inside ASGI
+        # request-budget territory.
+        pdf_bytes = build_pdf(aggregate, target_summary)
+
+        filename = _masvs_report_filename(
+            target_summary,
+            aggregate.generated_at.strftime("%Y%m%d"),
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{filename}"'
+                ),
+                "Cache-Control": "no-store",
+            },
         )
 
     # ── Investigations (M3.R-1 schema, D-43, D-49/D-50) ───────────────
