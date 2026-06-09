@@ -826,33 +826,12 @@ class HonestVulnResearcher:
             apk_path = descriptor.get("apk_path")
             if isinstance(apk_path, str) and apk_path:
                 handles["android_mcp_apk_path"] = apk_path
-        # Trim massive android-mcp handles before they leak into every
-        # LLM prompt. Pre-fix: android_mcp_mobsf_scan = 7MB, static_summary
-        # = 34KB; per-turn snap=7MB blew past every reasonable model
-        # context window. Replace with operator-facing summaries; the
-        # raw blobs stay in the DB for direct query.
+        # Operator-mandated: MobSF output NEVER enters LLM prompts.
+        # Even the digest form is forbidden — agents should query
+        # android_mcp.mobsf_scan as a tool when they need it, not have
+        # it preloaded into context. Strip the key entirely.
         if kind_str == "android_apk":
-            mobsf_full = handles.get("android_mcp_mobsf_scan")
-            if isinstance(mobsf_full, dict) and mobsf_full:
-                if mobsf_full.get("skipped"):
-                    handles["android_mcp_mobsf_scan"] = {
-                        "skipped": True,
-                        "reason": mobsf_full.get("reason", ""),
-                    }
-                else:
-                    buckets = {"high": 0, "warning": 0, "info": 0, "good": 0, "secure": 0}
-                    for section_key in ("code_analysis", "manifest_analysis", "android_api", "network_security"):
-                        section = mobsf_full.get(section_key)
-                        if isinstance(section, dict):
-                            for finding in section.values():
-                                if isinstance(finding, dict):
-                                    sev = (finding.get("severity") or finding.get("status") or "").lower()
-                                    if sev in buckets:
-                                        buckets[sev] += 1
-                    handles["android_mcp_mobsf_scan"] = {
-                        "security_score": mobsf_full.get("security_score"),
-                        "findings_by_severity": buckets,
-                    }
+            handles.pop("android_mcp_mobsf_scan", None)
             static_full = handles.get("android_mcp_static_summary")
             if isinstance(static_full, dict) and static_full:
                 digest = {}
