@@ -831,14 +831,36 @@ class AuditMcpBridgeTool(Tool):
                 "error": f"read_lines: file_path escapes index root: {file_path}",
             }
         if not abs_path.is_file():
-            return {
-                "status": "error",
-                "error": (
-                    f"read_lines: file not found: {file_path} "
-                    f"(resolved to {abs_path}). Use semantic_search to "
-                    f"locate the correct path."
-                ),
-            }
+            # jadx APK decompilation emits .java only. Agent occasionally
+            # guesses .kt because the original codebase is Kotlin (the
+            # class names hint at it). Try the obvious extension swap
+            # before failing — saves the agent a follow-up turn.
+            swap_path: Path | None = None
+            if abs_path.suffix == ".kt":
+                swap_path = abs_path.with_suffix(".java")
+            elif abs_path.suffix == ".java":
+                swap_path = abs_path.with_suffix(".kt")
+            if swap_path is not None and swap_path.is_file():
+                # Resolved to a real file under root — proceed with the
+                # swapped path but echo the original file_path in the
+                # response so the caller knows what was tried.
+                logging.getLogger(__name__).info(
+                    "read_lines EXT_FALLBACK %s → %s",
+                    abs_path.name, swap_path.name,
+                )
+                abs_path = swap_path
+                file_path = file_path.rsplit(".", 1)[0] + abs_path.suffix
+            else:
+                return {
+                    "status": "error",
+                    "error": (
+                        f"read_lines: file not found: {file_path} "
+                        f"(resolved to {abs_path}). Use semantic_search to "
+                        f"locate the correct path. Note: jadx decompiles "
+                        f"APKs to .java only — .kt files do not exist in "
+                        f"the decompiled tree."
+                    ),
+                }
 
         try:
             with abs_path.open("r", encoding="utf-8", errors="replace") as f:
