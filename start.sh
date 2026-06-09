@@ -439,6 +439,24 @@ worker_count_for() {
 # WORKER_COUNT workers under indexed names. Idempotent: safe to run
 # on a host that's currently running legacy single-worker layout OR
 # the new indexed layout OR a mix.
+# Restart every worker in queue $1, idempotent regardless of pidfile
+# state. Three-phase kill mirroring restart_one's two-phase pattern:
+#   1. Tree-kill the legacy single-worker pidfile (worker-<q>.pid).
+#   2. Tree-kill every indexed pidfile (worker-<q>-1.pid ... -20.pid).
+#   3. Cmdline-sweep ANY surviving python.exe whose argv contains
+#      `aila worker -q <q>`. Workers have no port so kill_port_owner
+#      doesn't apply — kill_matching with a queue-anchored regex is
+#      the equivalent fallback for "pidfile vanished, real process
+#      still running stale code". Without this, restart_pool was
+#      pidfile-only: a missing pidfile silently no-op'd the kill loop,
+#      then spawn() layered fresh workers ON TOP of the orphans —
+#      producing N×2 (or worse) workers, half on the new code half on
+#      the old, racing each ARQ job. Same symptom as restart_one's
+#      stale uvicorn bug (commit c562074); same shape of fix.
+#
+# The regex word-boundaries the queue name (`-q vr($| )`) so `-q vr`
+# does NOT also match `-q vulnerability` / `-q vr_foo`. End-of-string
+# or space is the only legal trailer in our cmdline shape.
 restart_pool() {
   local q="$1"
   local n
@@ -451,6 +469,11 @@ restart_pool() {
   for ((i=1; i<=20; i++)); do
     [[ -f "$RUN_DIR/worker-$q-$i.pid" ]] && restart_one "worker-$q-$i"
   done
+  # Cmdline-sweep fallback (see header). Idempotent — no-op when the
+  # pidfile kills already cleared the process; fatal to orphans when
+  # they didn't.
+  kill_matching "python.exe" "aila worker -q ${q}(\$| )"
+  sleep 1
   # Spawn N fresh workers under indexed names.
   for ((i=1; i<=n; i++)); do
     spawn "worker-$q-$i" -m aila worker -q "$q"
