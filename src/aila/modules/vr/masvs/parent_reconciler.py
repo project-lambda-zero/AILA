@@ -52,7 +52,11 @@ from sqlalchemy import func, select, update
 from sqlalchemy.sql.functions import coalesce
 
 from aila.modules.vr._task_queue import default_task_queue
-from aila.modules.vr.contracts import InvestigationKind, InvestigationStatus
+from aila.modules.vr.contracts import (
+    BranchStatus,
+    InvestigationKind,
+    InvestigationStatus,
+)
 from aila.modules.vr.contracts.target import TargetKind
 from aila.modules.vr.db_models import VRInvestigationRecord, VRTargetRecord
 from aila.modules.vr.workflow.task import run_vr_investigate
@@ -222,14 +226,297 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
     return enqueued_total
 
 
+async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
+    """Force-close children whose total turn count across all branches
+    exceeds ``VR_INVESTIGATION_TOTAL_TURN_CAP`` (default 200).
+
+    Why: ``vuln_researcher``'s per-task ``max_turns`` (70) auto-re-enqueues
+    on overflow (``investigation_emit.py:181``), keeping branches alive
+    forever when no terminal_submit lands. Cost cap is broken
+    (``cost_actual_usd`` stays 0). Without a cumulative ceiling the audit
+    pipeline burns LLM tokens indefinitely on children that won't
+    naturally converge — operator's 4-of-5 stuck investigations on
+    MASVS audit 5d627a39 had 6 branches each pushing toward 70 turns
+    with zero terminal outcomes and re-enqueue waiting.
+
+    Algorithm: for every RUNNING child of a MASVS-kind parent (or
+    standalone running investigation), sum ``turn_count`` across all
+    its branches. If sum > cap:
+      - abandon every active branch with
+        ``closed_reason='exhausted_total_turn_cap'``;
+      - if the investigation has a draft primary outcome, leave it —
+        the inline ``evaluate_quorum`` call below hits
+        ``auto_approved_no_active_voters``
+        (``services/outcome_review.py:290-301``) and ships it;
+      - if NO draft, mark investigation ``status=completed`` with
+        ``pause_reason='exhausted_total_turn_cap'`` so the dashboard
+        shows the honest signal.
+
+    Returns the count of investigations force-closed this tick.
+    """
+    try:
+        cap = int(os.environ.get("VR_INVESTIGATION_TOTAL_TURN_CAP", "200"))
+    except ValueError:
+        cap = 200
+    cap = max(50, cap)  # floor so a typo doesn't kill everything
+
+    inv = VRInvestigationRecord
+    from aila.modules.vr.db_models import (  # noqa: PLC0415
+        VRInvestigationBranchRecord,
+    )
+
+    over_cap_rows = (
+        await uow.session.exec(
+            select(
+                inv.id,
+                func.coalesce(
+                    func.sum(VRInvestigationBranchRecord.turn_count), 0,
+                ).label("total_turns"),
+            )
+            .join(
+                VRInvestigationBranchRecord,
+                VRInvestigationBranchRecord.investigation_id == inv.id,
+                isouter=True,
+            )
+            .where(inv.parent_investigation_id.isnot(None))
+            .where(inv.status == InvestigationStatus.RUNNING.value)
+            .group_by(inv.id)
+            .having(
+                func.coalesce(
+                    func.sum(VRInvestigationBranchRecord.turn_count), 0,
+                ) > cap,
+            ),
+        )
+    ).all()
+
+    if not over_cap_rows:
+        return 0
+
+    force_closed = 0
+    for inv_id, total_turns in over_cap_rows:
+        await uow.session.exec(
+            update(VRInvestigationBranchRecord)
+            .where(VRInvestigationBranchRecord.investigation_id == inv_id)
+            .where(
+                VRInvestigationBranchRecord.status
+                == BranchStatus.ACTIVE.value,
+            )
+            .values(
+                status=BranchStatus.ABANDONED.value,
+                closed_reason=f"exhausted_total_turn_cap:total={total_turns}",
+                closed_at=utc_now(),
+                updated_at=utc_now(),
+            ),
+        )
+
+        target_inv = (
+            await uow.session.exec(
+                select(inv).where(inv.id == inv_id),
+            )
+        ).first()
+        has_draft = False
+        if target_inv and target_inv.primary_outcome_id:
+            from aila.modules.vr.db_models import (  # noqa: PLC0415
+                VRInvestigationOutcomeRecord,
+            )
+            o = (await uow.session.exec(
+                select(VRInvestigationOutcomeRecord).where(
+                    VRInvestigationOutcomeRecord.id
+                    == target_inv.primary_outcome_id,
+                ),
+            )).first()
+            if o and o.state == "draft":
+                has_draft = True
+
+        if not has_draft and target_inv:
+            target_inv.status = InvestigationStatus.COMPLETED.value
+            target_inv.pause_reason = (
+                f"exhausted_total_turn_cap:total_turns={total_turns}"
+            )
+            target_inv.stopped_at = utc_now()
+            target_inv.updated_at = utc_now()
+            uow.session.add(target_inv)
+
+        force_closed += 1
+        _log.warning(
+            "cumulative_turn_cap_hit inv=%s total_turns=%d cap=%d has_draft=%s",
+            inv_id, total_turns, cap, has_draft,
+        )
+
+    await uow.commit()
+
+    # Kick the quorum re-eval for any exhausted investigation that had
+    # a draft outcome so the auto_approved_no_active_voters branch fires
+    # this tick.
+    from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
+        evaluate_quorum,
+    )
+    for inv_id, _ in over_cap_rows:
+        target_inv = (
+            await uow.session.exec(
+                select(inv).where(inv.id == inv_id),
+            )
+        ).first()
+        if target_inv and target_inv.primary_outcome_id:
+            try:
+                await evaluate_quorum(target_inv.primary_outcome_id)
+            except (OSError, RuntimeError, ValueError) as exc:
+                _log.warning(
+                    "cumulative_turn_cap_hit inv=%s outcome=%s "
+                    "re-eval failed: %s",
+                    inv_id, target_inv.primary_outcome_id, exc,
+                )
+
+    return force_closed
+
+
+_MIN_DRAFT_AGE_TURNS = 8
+
+
+async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
+    """Inject mandatory-vote directive into branches that haven't voted
+    on a draft outcome older than ``_MIN_DRAFT_AGE_TURNS`` (= 8 turns).
+
+    The natural quorum path requires every active sibling to:
+      1. notice the draft directive in their prompt,
+      2. choose to interrupt their own audit, and
+      3. emit ``submit_outcome_review`` with vote=approve/reject.
+
+    Critic-persona branches (yuki / maddie) often skip step 2 — they
+    keep chasing their own hypothesis tree past 30+ turns, and the
+    draft sits without enough approves to reach quorum. Observed live
+    on ``0887ffe7`` / ``0afb0643`` / ``1ee0c949`` — 5 sibling branches
+    per investigation, ZERO votes cast on their respective drafts.
+
+    This escalator fires every reconciler tick (~once/minute). For
+    each draft older than the threshold:
+      - find every active non-proposer sibling that has NOT yet voted
+        (no row in ``vr_outcome_reviews`` for this branch+outcome);
+      - update each such branch's ``case_state_json`` to set
+        ``observables["_directive.mandatory_vote_now"]`` to the
+        escalation text;
+      - the directive renders into the next per-turn prompt
+        (``render_case_model``) and the agent's structured-output
+        schema makes ``submit_outcome_review`` the obvious action.
+
+    Returns the count of branches that received the directive this
+    tick. Idempotent: re-setting the same directive on the same branch
+    is a no-op for the agent (already sees it on next turn).
+    """
+    import json as _json_local  # noqa: PLC0415
+
+    from aila.modules.vr.db_models import (  # noqa: PLC0415
+        VRInvestigationBranchRecord,
+        VRInvestigationOutcomeRecord,
+    )
+    from aila.modules.vr.db_models.outcome_review import (  # noqa: PLC0415
+        VRInvestigationOutcomeReviewRecord,
+    )
+
+    inv = VRInvestigationRecord
+    out = VRInvestigationOutcomeRecord
+    branch = VRInvestigationBranchRecord
+    review = VRInvestigationOutcomeReviewRecord
+
+    # Find every running investigation with a draft primary outcome.
+    candidates = (
+        await uow.session.exec(
+            select(inv.id, inv.primary_outcome_id, out.branch_id)
+            .join(out, out.id == inv.primary_outcome_id)
+            .where(inv.status == InvestigationStatus.RUNNING.value)
+            .where(out.state == "draft"),
+        )
+    ).all()
+    if not candidates:
+        return 0
+
+    nudged = 0
+    for inv_id, outcome_id, proposer_branch_id in candidates:
+        # Compute draft age: max turn_count of any branch since the
+        # proposer's turn at submit. Cheap proxy: max(turn_count) on
+        # this investigation. If under threshold, skip.
+        max_turn = (
+            await uow.session.exec(
+                select(func.max(branch.turn_count))
+                .where(branch.investigation_id == inv_id),
+            )
+        ).first() or 0
+        if max_turn < _MIN_DRAFT_AGE_TURNS:
+            continue
+
+        # Active non-proposer branches that haven't voted on this outcome.
+        voter_branch_ids = (
+            await uow.session.exec(
+                select(review.reviewer_branch_id)
+                .where(review.outcome_id == outcome_id),
+            )
+        ).all()
+        voted = {str(b) for b in voter_branch_ids if b}
+        voted.add(str(proposer_branch_id))  # proposer never votes on own
+
+        stuck_branches = (
+            await uow.session.exec(
+                select(branch)
+                .where(branch.investigation_id == inv_id)
+                .where(branch.status == BranchStatus.ACTIVE.value),
+            )
+        ).all()
+
+        for b in stuck_branches:
+            if str(b.id) in voted:
+                continue
+            try:
+                state_obj = _json_local.loads(b.case_state_json or "{}")
+            except (ValueError, TypeError):
+                state_obj = {}
+            obs = state_obj.setdefault("observables", {})
+            already_set = obs.get("_directive.mandatory_vote_now")
+            directive = (
+                f"*** MANDATORY VOTE — DRAFT REVIEW BLOCKED YOUR AUDIT ***\n\n"
+                f"Outcome {outcome_id} has been awaiting your vote for "
+                f"{max_turn} turns. Your investigation pool now requires "
+                f"a quorum decision before any branch (including yours) "
+                f"can progress further.\n\n"
+                f"YOUR NEXT TURN MUST be action='submit_outcome_review' "
+                f"with one of:\n"
+                f"  - vote='approve' if the cited evidence holds up.\n"
+                f"  - vote='reject' if you have refuting evidence.\n"
+                f"  - vote='abstain' if you cannot resolve either way.\n\n"
+                f"Voting an abstain is valid and counts toward quorum "
+                f"closure — silence does not. Once 3 distinct siblings "
+                f"cast any combination of approve/reject/abstain, the "
+                f"outcome closes and all branches dispatch. Continuing "
+                f"your audit on a separate hypothesis is no longer "
+                f"productive; the parent batch is blocked on YOU."
+            )
+            if already_set == directive:
+                continue
+            obs["_directive.mandatory_vote_now"] = directive
+            b.case_state_json = _json_local.dumps(state_obj)
+            b.updated_at = utc_now()
+            uow.session.add(b)
+            nudged += 1
+
+    if nudged:
+        await uow.commit()
+        _log.info(
+            "masvs_stuck_drafts: nudged %d sibling branches into mandatory-vote",
+            nudged,
+        )
+
+    return nudged
+
+
 async def sweep_masvs_audit_parents() -> dict[str, int]:
     """Reconcile parent status for every active MASVS audit batch.
 
-    Returns a ``{"started": int, "completed": int}`` counter pair
-    naming the number of ``CREATED → RUNNING`` and
-    ``{CREATED, RUNNING} → COMPLETED`` transitions actually applied
-    in this sweep. Both counters are post-rowcount so a lost race
-    against a concurrent operator action does not inflate them.
+    Returns a ``{"started": int, "completed": int, "refilled": int,
+    "exhausted": int}`` counter pair naming the number of
+    ``CREATED → RUNNING`` and ``{CREATED, RUNNING} → COMPLETED``
+    transitions actually applied in this sweep. ``exhausted`` counts
+    investigations that hit the cumulative-turn cap. All counters are
+    post-rowcount so a lost race against a concurrent operator action
+    does not inflate them.
     """
     inv = VRInvestigationRecord
 
@@ -237,12 +524,14 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
     completed = 0
 
     async with UnitOfWork() as uow:
-        # Top up batch slots before the status-transition pass so a
-        # parent that just had a child reach terminal can immediately
-        # promote the next CREATED-virgin child in the same tick. The
-        # refill is APK-only (see docstring); other target kinds keep
-        # the fan-out-all behavior.
+        # 1. Top up APK batch slots before status transitions.
         refilled = await _refill_apk_batches(uow)
+        # 2. Enforce cumulative-turn cap (force-close exhausted children).
+        exhausted = await _enforce_total_turn_cap(uow)
+        # 3. Escalate stuck drafts (inject mandatory-vote directive on
+        #    sibling branches of long-pending draft outcomes so the
+        #    quorum mechanic actually resolves).
+        nudged = await _escalate_stuck_drafts(uow)  # noqa: F841
         # Candidate parents: kind=masvs_audit, parent_investigation_id
         # IS NULL (true batch root), status in {CREATED, RUNNING}. PAUSED
         # parents are intentionally excluded so an operator who paused
