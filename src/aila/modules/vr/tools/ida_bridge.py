@@ -295,19 +295,27 @@ class IDABridgeTool(Tool):
         """
         if not file_path:
             return {"status": "error", "error": "file_path is required for upload"}
-        from pathlib import Path
+        import asyncio  # noqa: PLC0415
+        from pathlib import Path  # noqa: PLC0415
         target = Path(file_path)
-        if not target.is_file():
+        # is_file() does a sync stat — wrap so we don't stall the loop
+        # when the file lives on a slow volume.
+        if not await asyncio.to_thread(target.is_file):
             return {"status": "error", "error": f"File not found: {file_path}"}
         base = await self._resolve_base_url()
         url = f"{base}/upload"
         try:
-            with target.open("rb") as fh:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.post(
-                        url,
-                        files={"file": (target.name, fh, "application/octet-stream")},
-                    )
+            # Read the full file into memory in a thread first, then
+            # ship it. Previous version opened the file handle on the
+            # main loop and held it through the async POST — for
+            # multi-GB binaries that meant slow disk reads happening
+            # synchronously between every chunk httpx sent.
+            file_bytes = await asyncio.to_thread(target.read_bytes)
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    url,
+                    files={"file": (target.name, file_bytes, "application/octet-stream")},
+                )
             return resp.json()
         except httpx.ConnectError:
             return {"status": "error", "error": f"Cannot reach {base}"}
