@@ -23,6 +23,7 @@ import {
 } from "../mutations";
 import {
   useInvestigationsForTarget,
+  useMasvsAuditAggregate,
   useTarget,
   useTargetHypotheses,
   useWorkspaces,
@@ -34,6 +35,8 @@ import { Link } from "react-router";
 import type {
   AnalysisState,
   ApkOverview,
+  MasvsControlVerdict,
+  MasvsVerdict,
   TargetKind,
   TargetStatus,
 } from "../types";
@@ -1170,6 +1173,240 @@ function MasvsReportCard({
   );
 }
 
+/** U-2 per-control table. Sibling of MasvsAuditCard / MasvsProgressCard
+ * / MasvsReportCard. Once a parent masvs_audit row exists for this
+ * target the card fetches the JSON aggregate from
+ * `GET /vr/targets/{id}/masvs-audit-aggregate?audit_id=<parent>` and
+ * renders one row per child investigation: control id, group, title,
+ * status, verdict + confidence (when terminal), and a link out to the
+ * child investigation detail page so the operator can drill into the
+ * underlying evidence + branch tree.
+ *
+ * The table self-hides until a parent exists (so a fresh APK only
+ * surfaces the dispatcher card above). Polling cadence (8s) matches
+ * the investigations list + progress card, so a child landing a new
+ * verdict appears within one tick.
+ *
+ * Resolution of the active parent mirrors MasvsReportCard /
+ * MasvsProgressCard verbatim: most-recent kind=masvs_audit parent
+ * for this target, picked by created_at desc (ISO-8601 strings sort
+ * correctly via localeCompare). The dispatcher is idempotent on the
+ * active parent (D-3), so under normal operation there is exactly
+ * one parent at a time.
+ */
+function MasvsControlTable({
+  targetId,
+  packageLabel,
+}: {
+  targetId: string;
+  packageLabel: string | null;
+}) {
+  const { data: investigationsResult, isLoading: isLoadingInvs } =
+    useInvestigationsForTarget(targetId);
+  const investigations = investigationsResult?.data ?? [];
+
+  const masvsParents = investigations
+    .filter(
+      (inv) =>
+        (inv.kind as string) === "masvs_audit" &&
+        inv.parent_investigation_id == null,
+    )
+    .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+  const parent = masvsParents[0] ?? null;
+
+  const {
+    data: aggregate,
+    isLoading: isLoadingAgg,
+    error: aggError,
+  } = useMasvsAuditAggregate(targetId, parent?.id ?? null);
+
+  if (isLoadingInvs || parent == null) return null;
+
+  // Cross-reference per-child status from the investigations list so
+  // the table can show a live status badge even when the aggregate
+  // omits an entry (e.g. a child whose secondary_target_refs_json
+  // failed to encode a masvs_control_id — server-side this surfaces
+  // as a logged warning and a missing verdict row).
+  const childById = new Map<string, (typeof investigations)[number]>();
+  for (const inv of investigations) {
+    if (inv.parent_investigation_id === parent.id) childById.set(inv.id, inv);
+  }
+  const totalChildren = childById.size;
+
+  const packageDisplay = packageLabel ?? "this APK";
+  const verdicts: MasvsControlVerdict[] = aggregate?.verdicts ?? [];
+
+  return (
+    <AilaCard techBorder glow>
+      <div className="space-y-3">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-semibold text-foreground">
+              MASVS controls · {packageDisplay}
+            </h2>
+            <p className="text-xs text-text-muted mt-1 font-mono break-all">
+              parent {parent.id.slice(0, 8)} · {totalChildren} child
+              investigation{totalChildren === 1 ? "" : "s"}
+              {aggregate?.masvs_spec_version
+                ? ` · catalog ${aggregate.masvs_spec_version}`
+                : ""}
+            </p>
+          </div>
+        </div>
+
+        {isLoadingAgg && verdicts.length === 0 ? (
+          <p className="text-xs text-text-muted">Loading aggregate…</p>
+        ) : aggError ? (
+          <p className="text-xs text-text-danger break-all">
+            Aggregate fetch failed:{" "}
+            {aggError instanceof Error
+              ? aggError.message.slice(0, 200)
+              : String(aggError).slice(0, 200)}
+          </p>
+        ) : verdicts.length === 0 ? (
+          <p className="text-xs text-text-muted">
+            No verdicts resolved yet — children still in CREATED /
+            RUNNING with no primary outcome. The table will populate
+            as each child reaches a terminal state.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border-default text-left text-text-muted">
+                  <th className="px-2 py-1 font-semibold">Control</th>
+                  <th className="px-2 py-1 font-semibold w-20">Group</th>
+                  <th className="px-2 py-1 font-semibold w-24">Status</th>
+                  <th className="px-2 py-1 font-semibold w-28">Verdict</th>
+                  <th className="px-2 py-1 font-semibold w-20 text-right">
+                    Confidence
+                  </th>
+                  <th className="px-2 py-1 font-semibold w-16 text-right">
+                    Link
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {verdicts.map((v) => {
+                  const child = childById.get(v.child_investigation_id);
+                  const childStatus = child?.status ?? "unknown";
+                  // Group prefix lives inside the control id —
+                  // ``MSTG-STORAGE-1`` → ``STORAGE``,
+                  // ``MASVS-PRIVACY-1`` → ``PRIVACY``. The aggregate's
+                  // ``by_group`` map carries the canonical mapping but
+                  // is keyed by group, not by control; recovering the
+                  // single-row group via id parsing avoids an O(N)
+                  // reverse lookup per row.
+                  const groupLabel = _extractGroupFromControlId(v.control_id);
+                  return (
+                    <tr
+                      key={v.child_investigation_id}
+                      className="border-b border-border-default last:border-b-0"
+                    >
+                      <td className="px-2 py-1 font-mono text-foreground break-all">
+                        {v.control_id}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-text-muted">
+                        {groupLabel}
+                      </td>
+                      <td className="px-2 py-1">
+                        <AilaBadge severity="info" size="sm">
+                          {childStatus}
+                        </AilaBadge>
+                      </td>
+                      <td className="px-2 py-1">
+                        <AilaBadge
+                          severity={_verdictSeverity(v.verdict)}
+                          size="sm"
+                        >
+                          {_verdictLabel(v.verdict)}
+                        </AilaBadge>
+                        {v.reason && v.verdict === "inconclusive" && (
+                          <span className="text-text-muted text-[10px] ml-1 font-mono">
+                            {v.reason}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-right text-foreground">
+                        {v.verdict === "inconclusive" && v.confidence === 0
+                          ? "—"
+                          : v.confidence.toFixed(2)}
+                      </td>
+                      <td className="px-2 py-1 text-right">
+                        <Link
+                          to={`/vr/investigations/${encodeURIComponent(
+                            v.child_investigation_id,
+                          )}`}
+                          className="text-accent hover:underline font-mono"
+                        >
+                          open
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {aggregate?.generated_at && (
+          <p className="text-xs text-text-muted font-mono">
+            generated_at:{" "}
+            {new Date(aggregate.generated_at).toLocaleString()}
+          </p>
+        )}
+      </div>
+    </AilaCard>
+  );
+}
+
+/** Recover the MASVS group token from a control id. Both legacy
+ * MASVS v1.4.2 ids (`MSTG-<GROUP>-N`) and v2.1.0 ids
+ * (`MASVS-<GROUP>-N`) share the same `-<GROUP>-` middle segment, so a
+ * single split rule handles both vintages. Returns "—" for ids the
+ * pattern can't parse (defensive — the catalog enforces the format
+ * but a stray entry shouldn't crash the table). */
+function _extractGroupFromControlId(controlId: string): string {
+  const parts = controlId.split("-");
+  return parts.length >= 2 ? parts[1] : "—";
+}
+
+/** Verdict → AilaBadge severity. FINDING is the audit signal worth
+ * flagging in red; INCONCLUSIVE warns; NO_FINDING is the
+ * compliance-clear baseline; NOT_APPLICABLE is purely informational. */
+function _verdictSeverity(
+  verdict: MasvsVerdict,
+): "critical" | "high" | "medium" | "low" | "info" {
+  switch (verdict) {
+    case "finding":
+      return "critical";
+    case "inconclusive":
+      return "medium";
+    case "no_finding":
+      return "low";
+    case "not_applicable":
+    default:
+      return "info";
+  }
+}
+
+/** Verdict → stable uppercase label so a screen reader / copy-paste
+ * always lands on the same string regardless of source enum value. */
+function _verdictLabel(verdict: MasvsVerdict): string {
+  switch (verdict) {
+    case "finding":
+      return "FINDING";
+    case "not_applicable":
+      return "N/A";
+    case "no_finding":
+      return "NO FINDING";
+    case "inconclusive":
+    default:
+      return "INCONCLUSIVE";
+  }
+}
+
 export function TargetDetailPage() {
   const { targetId } = useParams<{ targetId: string }>();
   const tid = targetId ?? "";
@@ -1449,6 +1686,26 @@ export function TargetDetailPage() {
         && target.apk_overview?.static_summary
         && Object.keys(target.apk_overview.static_summary).length > 0 && (
         <MasvsReportCard
+          targetId={target.id}
+          packageLabel={
+            typeof target.apk_overview.static_summary.package === "string"
+              ? (target.apk_overview.static_summary.package as string)
+              : target.android_package_name ?? null
+          }
+        />
+      )}
+
+      {/* U-2 per-control table. Same APK + STATIC_SUMMARY gate as
+          the dispatcher / progress / report cards above. The table
+          self-hides until a parent masvs_audit row exists, so on a
+          fresh APK only the dispatcher renders. Once a dispatch has
+          fired, the table surfaces one row per child investigation
+          (control id + group + status + verdict + confidence) with
+          a deep-link to the child's detail page. */}
+      {target.kind === "android_apk"
+        && target.apk_overview?.static_summary
+        && Object.keys(target.apk_overview.static_summary).length > 0 && (
+        <MasvsControlTable
           targetId={target.id}
           packageLabel={
             typeof target.apk_overview.static_summary.package === "string"

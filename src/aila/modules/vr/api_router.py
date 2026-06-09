@@ -53,6 +53,7 @@ from .contracts import (
     InvestigationKind,
     InvestigationPauseReason,
     InvestigationStatus,
+    MasvsAuditAggregate,
     MasvsAuditDispatchResponse,
     OperatorIntent,
     OutcomeConfidence,
@@ -3259,6 +3260,121 @@ def create_vr_router() -> APIRouter:
                 "Cache-Control": "no-store",
             },
         )
+
+    @router.get(
+        "/targets/{target_id}/masvs-audit-aggregate",
+        response_model=DataEnvelope[MasvsAuditAggregate],
+        summary=(
+            "Return the structured MASVS audit aggregate as JSON. "
+            "Drives the operator-facing per-control table (U-2): one "
+            "verdict row per child investigation, grouped by MASVS "
+            "control group, with verifier confidence and evidence "
+            "links. Same aggregation pipeline the PDF report uses — "
+            "partial aggregates are valid (children still in flight "
+            "render as INCONCLUSIVE)."
+        ),
+    )
+    @limiter.limit("30/minute")
+    async def get_masvs_audit_aggregate(
+        request: Request,
+        target_id: str,
+        audit_id: str = Query(
+            ...,
+            description=(
+                "Parent VRInvestigation id (kind=masvs_audit) returned "
+                "by POST /vr/targets/{target_id}/masvs-audit."
+            ),
+        ),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[MasvsAuditAggregate]:
+        """Return the JSON aggregate for ``audit_id`` under ``target_id``.
+
+        Refuses with the same shape as the PDF report endpoint so a
+        frontend can rely on consistent error semantics across the
+        two surfaces:
+
+        * **404** when the target is not visible to the caller's team,
+          when the parent investigation does not exist, or when it
+          exists but points at a different target (defensive guard
+          against pasted audit ids under the wrong target context).
+        * **409** when the parent exists but its ``kind`` is not
+          ``masvs_audit`` — the aggregator is specific to MASVS
+          batches.
+
+        Aggregation is forwarded to :func:`collect_findings`. The
+        endpoint does *not* materialize the PDF — clients that want
+        the PDF call ``GET /vr/targets/{id}/masvs-report`` instead.
+        """
+        del request
+
+        from aila.modules.vr.reporting.masvs_report import collect_findings
+
+        from .db_models import VRInvestigationRecord, VRTargetRecord
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(
+                        VRTargetRecord.id == target_id,
+                    ),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            if target is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Target {target_id} not found or not owned "
+                        "by your team."
+                    ),
+                )
+            parent = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == audit_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                ),
+            )).first()
+            if parent is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"MASVS audit {audit_id} not found or not "
+                        "owned by your team."
+                    ),
+                )
+            if parent.kind != InvestigationKind.MASVS_AUDIT.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Investigation {audit_id} kind={parent.kind!r}; "
+                        "MASVS aggregate requires a parent investigation "
+                        "with kind='masvs_audit'."
+                    ),
+                )
+            if parent.target_id != target_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"MASVS audit {audit_id} does not belong to "
+                        f"target {target_id}."
+                    ),
+                )
+
+        try:
+            aggregate = await collect_findings(audit_id)
+        except ValueError as exc:
+            # collect_findings re-validates parent kind / existence; a
+            # race between the lookup above and the aggregate query
+            # (parent deleted mid-request) surfaces as 404 so the
+            # caller gets the same shape as the up-front guard.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
+
+        return DataEnvelope(data=aggregate)
 
     # ── Investigations (M3.R-1 schema, D-43, D-49/D-50) ───────────────
 
