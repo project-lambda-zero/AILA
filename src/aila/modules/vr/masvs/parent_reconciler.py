@@ -702,7 +702,8 @@ async def _synthesize_no_finding_outcomes(uow: UnitOfWork) -> int:
                                 (
                                     BranchStatus.ABANDONED.value,
                                     BranchStatus.COMPLETED.value,
-                                    BranchStatus.FAILED.value,
+                                    BranchStatus.MERGED.value,
+                                    BranchStatus.PROMOTED.value,
                                 ),
                             )
                         ).cast(__import__("sqlalchemy").Integer),
