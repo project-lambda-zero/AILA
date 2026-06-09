@@ -137,9 +137,12 @@ class ToolExecutor:
                     '{\"tool\": \"audit_mcp.read_function\", \"args\": {\"name\": \"...\"}}\n'
                     "  (b) action=submit if you have enough evidence to "
                     "submit your findings.\n"
-                    "  (c) action=observe to reason without a tool call.\n\n"
-                    "Pick (c) if you are unsure — observe is always safe "
-                    "and lets you think before dispatching another tool."
+                    "  (c) action=reasoning to think without a tool call.\n\n"
+                    "Pick (c) if you are unsure — reasoning is always safe "
+                    "and lets you think before dispatching another tool. "
+                    "(There is NO 'observe' action — only tool_run / "
+                    "reasoning / submit / submit_outcome_review / "
+                    "script_execute.)"
                 )
             else:
                 err = (
@@ -147,7 +150,7 @@ class ToolExecutor:
                     "'tool' (e.g. 'server.tool_name') and 'args' dict. "
                     f"Got: {command_raw[:200]!r}. "
                     "If you don't have a specific tool query to make this "
-                    "turn, pick action=observe instead of action=tool_run."
+                    "turn, pick action=reasoning instead of action=tool_run."
                 )
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
