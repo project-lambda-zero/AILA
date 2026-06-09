@@ -569,26 +569,44 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
     if nudged:
         await uow.commit()
 
-    # Wake-enqueue: every tick, scan for active branches that hold the
-    # directive but might have no pending task. The auto-continue chain in
-    # investigation_emit only fires on (max_turns, researcher_error*) exit
-    # reasons; every other exit leaves the branch active-idle with no
-    # follow-up task. Without this wake, the directive sits in case_state
-    # unread.
-    # Idempotent: task_queue's input_hash dedup at queue.py:132-140 refuses
-    # a duplicate when a task is already in (queued, running, waiting).
+    # Wake-enqueue: every tick, scan for ANY active branch and try to
+    # re-submit run_vr_investigate. The auto-continue chain in
+    # investigation_emit only re-enqueues on (max_turns, researcher_error*)
+    # exit reasons. Every other exit (terminal_submit on a sibling,
+    # status_flipped, submit_outcome_review, default fallthrough)
+    # leaves the branch status=active with no follow-up task. Without
+    # this wake, the branch sits forever until step 5 abandons it as
+    # stale — which is correct as a last resort but wastes 30-120 min.
+    #
+    # Earlier iteration only fired for branches carrying
+    # _directive.mandatory_vote_now, but variant_hunt / audit
+    # investigations with NO outcome at all (no draft, no rejected
+    # primary) never get the directive — they just sat idle until
+    # step 5 ran. Now we wake EVERY active branch on a non-terminal
+    # investigation. Idempotent: task_queue input_hash dedup at
+    # queue.py:132-140 refuses a duplicate while a real task is in
+    # (queued, running, waiting). So this is at-most-once per minute
+    # per branch, and a no-op when the branch already has a live task.
     enqueued = 0
     from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
     from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
     q = default_task_queue()
-    directive_branches = (
+    wakeable = (
         await uow.session.exec(
             select(branch.id, branch.investigation_id)
+            .join(inv, inv.id == branch.investigation_id)
             .where(branch.status == BranchStatus.ACTIVE.value)
-            .where(branch.case_state_json.contains("_directive.mandatory_vote_now")),
+            .where(
+                inv.status.in_(
+                    (
+                        InvestigationStatus.RUNNING.value,
+                        InvestigationStatus.CREATED.value,
+                    ),
+                ),
+            ),
         )
     ).all()
-    for raw_row in directive_branches:
+    for raw_row in wakeable:
         r = raw_row if not hasattr(raw_row, "__getitem__") or isinstance(raw_row, str) else raw_row
         bid = str(r[0])
         inv_id_local = str(r[1])
