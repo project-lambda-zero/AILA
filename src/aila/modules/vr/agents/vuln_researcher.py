@@ -489,43 +489,44 @@ class HonestVulnResearcher:
                 turn_number=turn_number,
             )
 
-        # Empty-command coerce (Option C from the operator review): when
-        # decision.action == 'tool_run' but the command field is empty or
-        # whitespace, swap action to 'observe' before dispatch. Without
-        # this the tool_executor's malformed-command guard fires, writes
-        # an error message, and the agent often picks tool_run again next
-        # turn with the same empty command (the LLM's high-level intent
-        # was "do nothing this turn" but its structured-output default
-        # action stuck at tool_run). Burns the whole turn budget on
-        # malformed-loop cycles. Observed live on inv=30b4437c branch wei
-        # turns 26 + 29: empty command both times. Same shape on other
-        # investigations time to time per operator.
+        # Empty-command coerce: when decision.action == 'tool_run' but the
+        # command field is empty or whitespace, swap action to 'reasoning'
+        # (a no-op action that just writes a text message) before dispatch.
+        # The original version used "observe" — but "observe" is NOT a valid
+        # ReasoningAction Literal (Literal["script_execute","tool_run",
+        # "reasoning","submit","submit_outcome_review"]). Pydantic 2's
+        # model_copy doesn't reject invalid Literal updates loudly, so the
+        # assignment silently left action='tool_run', the empty command
+        # still hit the executor, and we burned the turn. Worse, every
+        # error message + prompt still suggested "action=observe" — telling
+        # the agent to pick an invalid value forever. Both fixed here.
         if (
             decision.action == "tool_run"
             and not (decision.command or "").strip()
             and not (decision.script_content or "").strip()
         ):
             _log.info(
-                "empty_tool_run COERCED→observe inv=%s branch=%s turn=%d "
+                "empty_tool_run COERCED→reasoning inv=%s branch=%s turn=%d "
                 "(action='tool_run' with empty command field)",
                 self.investigation_id, self.branch_id, turn_number,
             )
             case_state.observables["_directive.empty_tool_run_coerced"] = (
-                "*** EMPTY tool_run COERCED TO observe ***\n\n"
+                "*** EMPTY tool_run COERCED TO reasoning ***\n\n"
                 "Your prior turn emitted action='tool_run' but the "
                 "'command' field was empty. The engine treated it as "
-                "action='observe' so the turn could proceed. Next turn:\n"
+                "action='reasoning' so the turn could proceed. Next turn:\n"
                 "  - pick action='tool_run' ONLY if you have a concrete "
                 "tool query: {\"tool\": \"server.tool_name\", \"args\": {...}}.\n"
-                "  - pick action='observe' when reasoning without a tool.\n"
+                "  - pick action='reasoning' when thinking without a tool call.\n"
                 "  - pick action='submit' / 'submit_outcome_review' when "
                 "you have terminal evidence.\n\n"
-                "Empty tool_run is never the right action — observe is "
-                "always safe and lets you reason on the next turn without "
-                "burning a malformed-command guard."
+                "Valid actions: tool_run / reasoning / submit / "
+                "submit_outcome_review / script_execute. There is NO "
+                "'observe' action — that was a documentation bug. "
+                "Empty tool_run wastes a turn; use 'reasoning' to think."
             )
             decision = decision.model_copy(update={
-                "action": "observe",
+                "action": "reasoning",
                 "command": "",
                 "script_content": "",
             })
