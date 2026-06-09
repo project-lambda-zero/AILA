@@ -470,6 +470,25 @@ class HonestVulnResearcher:
                 turn_number=turn_number,
             )
 
+        # Reciprocal gate (Option B follow-up): if the agent emits
+        # submit_outcome_review for an outcome this branch ALREADY voted
+        # on, reject and steer back to investigation work. Without this
+        # gate the agent re-emits the same vote every turn (idempotent at
+        # the DB level via UNIQUE (outcome_id, branch_id) — so harmless
+        # — but burns the entire 70-turn budget on re-voting instead of
+        # adding to quorum or doing useful audit work). Observed live on
+        # investigation 30b4437c branch cee88f86 (yuki): turns 29-40 all
+        # re-voted approve on the same outcome 3acc6764.
+        if (
+            decision.action == "submit_outcome_review"
+            and decision.review_outcome_id
+        ):
+            decision = await self._maybe_reject_revote_when_already_voted(
+                decision=decision,
+                case_state=case_state,
+                turn_number=turn_number,
+            )
+
         if decision.action == "submit":
             decision = self._maybe_reject_submit_with_unresolved_hypotheses(
                 decision=decision,
@@ -1490,6 +1509,98 @@ class HonestVulnResearcher:
                 **(decision.payload or {}),
                 "_draft_pending_gate_rejected": True,
                 "_draft_pending_unvoted_count": len(pending),
+            },
+        })
+
+    async def _maybe_reject_revote_when_already_voted(
+        self,
+        *,
+        decision: Any,
+        case_state: Any,
+        turn_number: int,
+    ) -> Any:
+        """Reject submit_outcome_review when the branch already voted on this outcome.
+
+        Quorum is computed by counting DISTINCT branches that voted approve
+        on an outcome (vr_outcome_reviews has UNIQUE(outcome_id, branch_id)).
+        A branch's 2nd, 3rd, 4th vote on the same outcome is upserted into
+        the same row — they do NOT add to the approve count. Yet the agent
+        keeps emitting submit_outcome_review every turn it sees the draft
+        directive, burning the whole 70-turn budget on idempotent
+        re-votes. Observed on inv=30b4437c branch=cee88f86 (yuki): turns
+        29-40 all re-voted approve on outcome=3acc6764 while the draft
+        still needed one more approver to reach quorum_k=3.
+
+        Behavior: when a re-vote is detected, swap the action to tool_run
+        with an answer that explicitly tells the agent to stop reviewing
+        and resume audit work (or submit its own outcome if it has enough
+        independent evidence). Includes a directive observable so the next
+        prompt makes the same instruction visible to the agent.
+        """
+        from sqlmodel import select as _select_local  # noqa: PLC0415
+
+        from aila.modules.vr.db_models.outcome_review import (  # noqa: PLC0415
+            VRInvestigationOutcomeReviewRecord,
+        )
+
+        outcome_id = decision.review_outcome_id
+        async with UnitOfWork() as uow:
+            existing = (await uow.session.exec(
+                _select_local(VRInvestigationOutcomeReviewRecord)
+                .where(
+                    VRInvestigationOutcomeReviewRecord.outcome_id == outcome_id,
+                )
+                .where(
+                    VRInvestigationOutcomeReviewRecord.reviewer_branch_id
+                    == self.branch_id,
+                )
+                .limit(1),
+            )).first()
+
+        if existing is None:
+            # First vote — let it through.
+            return decision
+
+        _log.info(
+            "draft_revote REJECTED inv=%s branch=%s turn=%d outcome=%s "
+            "(prior vote=%s)",
+            self.investigation_id, self.branch_id, turn_number,
+            outcome_id, existing.vote,
+        )
+
+        directive = (
+            "*** ALREADY VOTED — STOP RE-EMITTING THE SAME REVIEW ***\n\n"
+            f"You already voted '{existing.vote}' on outcome {outcome_id} "
+            "on a prior turn. Re-emitting submit_outcome_review is a no-op "
+            "(unique constraint on outcome_id, branch_id — your vote is "
+            "already counted toward quorum).\n\n"
+            "Your next turn MUST be one of:\n"
+            "  - tool_run: continue investigating the MASVS control with "
+            "audit_mcp / android_mcp tools to gather additional evidence.\n"
+            "  - submit: if you have independent terminal evidence (a "
+            "finding the proposing branch missed, or a refutation), submit "
+            "your own outcome.\n\n"
+            "Do NOT re-emit submit_outcome_review for outcomes you have "
+            "already voted on. The quorum waits on UNVOTED siblings, "
+            "not on louder voices."
+        )
+        case_state.observables["_directive.already_voted_stop_reviewing"] = (
+            directive
+        )
+        rejected_text = (
+            "[ALREADY VOTED GATE: re-vote on outcome "
+            f"{outcome_id} blocked - see "
+            "_directive.already_voted_stop_reviewing]\n"
+            "Continue investigating with tools or submit your own outcome."
+        )
+        return decision.model_copy(update={
+            "action": "tool_run",
+            "command": "",
+            "answer": rejected_text,
+            "payload": {
+                **(decision.payload or {}),
+                "_already_voted_gate_rejected": True,
+                "_already_voted_outcome_id": outcome_id,
             },
         })
 
