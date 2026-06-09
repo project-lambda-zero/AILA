@@ -440,7 +440,7 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
             select(inv.id, inv.primary_outcome_id, out.branch_id)
             .join(out, out.id == inv.primary_outcome_id)
             .where(inv.status == InvestigationStatus.RUNNING.value)
-            .where(out.state == "draft"),
+            .where(out.state.in_(("draft", "rejected", "refuted"))),
         )
     ).all()
     if not candidates:
@@ -500,24 +500,64 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
                 state_obj = {}
             obs = state_obj.setdefault("observables", {})
             already_set = obs.get("_directive.mandatory_vote_now")
-            directive = (
-                f"*** MANDATORY VOTE — DRAFT REVIEW BLOCKED YOUR AUDIT ***\n\n"
-                f"Outcome {outcome_id} has been awaiting your vote for "
-                f"{max_turn} turns. Your investigation pool now requires "
-                f"a quorum decision before any branch (including yours) "
-                f"can progress further.\n\n"
-                f"YOUR NEXT TURN MUST be action='submit_outcome_review' "
-                f"with one of:\n"
-                f"  - vote='approve' if the cited evidence holds up.\n"
-                f"  - vote='reject' if you have refuting evidence.\n"
-                f"  - vote='abstain' if you cannot resolve either way.\n\n"
-                f"Voting an abstain is valid and counts toward quorum "
-                f"closure — silence does not. Once 3 distinct siblings "
-                f"cast any combination of approve/reject/abstain, the "
-                f"outcome closes and all branches dispatch. Continuing "
-                f"your audit on a separate hypothesis is no longer "
-                f"productive; the parent batch is blocked on YOU."
+            is_rejected = False  # decided per-loop below
+            # outcome_state captured from the join row — recompute via lookup
+            # to keep the directive text accurate (draft vs rejected).
+            # Cheap: 1 row hit per stuck branch, only when the directive
+            # actually needs to change.
+            outcome_state_row = (
+                await uow.session.exec(
+                    select(out.state).where(out.id == outcome_id),
+                )
+            ).first()
+            outcome_state = (
+                outcome_state_row[0]
+                if outcome_state_row is not None
+                and hasattr(outcome_state_row, "__getitem__")
+                and not isinstance(outcome_state_row, str)
+                else (outcome_state_row or "draft")
             )
+            is_rejected = outcome_state in ("rejected", "refuted")
+            if is_rejected:
+                directive = (
+                    f"*** MANDATORY VOTE — PRIMARY OUTCOME REJECTED ***\n\n"
+                    f"Outcome {outcome_id} has been REJECTED by a sibling "
+                    f"vote. Investigation cannot close until every active "
+                    f"branch records a vote (any of approve/reject/abstain "
+                    f"is valid — silence is not). You have been silent for "
+                    f"{max_turn} turns of the investigation lifetime.\n\n"
+                    f"YOUR NEXT TURN MUST be action='submit_outcome_review' "
+                    f"with one of:\n"
+                    f"  - vote='approve' if you DISAGREE with the rejection "
+                    f"(the finding is real and the rejection is wrong).\n"
+                    f"  - vote='reject' if you agree the finding is invalid.\n"
+                    f"  - vote='abstain' if you cannot evaluate the finding.\n\n"
+                    f"If you have a DIFFERENT vulnerability to propose, "
+                    f"emit action='submit' with your own finding INSTEAD "
+                    f"of voting — that creates a competing outcome the "
+                    f"siblings will then vote on. Otherwise, vote and "
+                    f"close out — your audit branch is blocking the parent "
+                    f"batch."
+                )
+            else:
+                directive = (
+                    f"*** MANDATORY VOTE — DRAFT REVIEW BLOCKED YOUR AUDIT ***\n\n"
+                    f"Outcome {outcome_id} has been awaiting your vote for "
+                    f"{max_turn} turns. Your investigation pool now requires "
+                    f"a quorum decision before any branch (including yours) "
+                    f"can progress further.\n\n"
+                    f"YOUR NEXT TURN MUST be action='submit_outcome_review' "
+                    f"with one of:\n"
+                    f"  - vote='approve' if the cited evidence holds up.\n"
+                    f"  - vote='reject' if you have refuting evidence.\n"
+                    f"  - vote='abstain' if you cannot resolve either way.\n\n"
+                    f"Voting an abstain is valid and counts toward quorum "
+                    f"closure — silence does not. Once 3 distinct siblings "
+                    f"cast any combination of approve/reject/abstain, the "
+                    f"outcome closes and all branches dispatch. Continuing "
+                    f"your audit on a separate hypothesis is no longer "
+                    f"productive; the parent batch is blocked on YOU."
+                )
             if already_set == directive:
                 continue
             obs["_directive.mandatory_vote_now"] = directive
