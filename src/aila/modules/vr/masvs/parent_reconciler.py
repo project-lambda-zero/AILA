@@ -534,6 +534,125 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
 
     return nudged
 
+async def _close_rejected_outcomes(uow: UnitOfWork) -> int:
+    """Force-close investigations whose primary outcome was REJECTED by quorum.
+
+    Mirror of the existing ``auto_approved_no_active_voters`` path in
+    ``services/outcome_review.py`` but for the rejection direction:
+    once ``evaluate_quorum`` flips an outcome ``draft → rejected``
+    (reject_count ≥ quorum_k), the investigation has no auto-close
+    path — it just sits at ``status=running`` waiting for some other
+    branch to propose an alternative outcome. In practice the other
+    branches are already deep in their own audits and rarely produce
+    a competing outcome, so the investigation runs forever.
+
+    Policy: when ``primary_outcome.state ∈ {rejected, refuted}`` AND
+    every active non-proposer branch has either voted on the rejected
+    outcome OR is itself abandoned/completed, the rejection is
+    effectively final. Mark the investigation ``completed`` with
+    ``pause_reason='operator'`` (closest valid enum value — the auto-
+    closer is operator-policy-driven, not a true pause), abandon any
+    remaining active branches with ``closed_reason='outcome_rejected
+    _by_quorum'`` so the audit trail is clear.
+
+    Returns the count of investigations closed this tick.
+    """
+    from aila.modules.vr.db_models import (  # noqa: PLC0415
+        VRInvestigationBranchRecord,
+        VRInvestigationOutcomeRecord,
+    )
+    from aila.modules.vr.db_models.outcome_review import (  # noqa: PLC0415
+        VRInvestigationOutcomeReviewRecord,
+    )
+
+    inv = VRInvestigationRecord
+    out = VRInvestigationOutcomeRecord
+    branch = VRInvestigationBranchRecord
+    review = VRInvestigationOutcomeReviewRecord
+
+    # Find running investigations whose primary outcome is rejected.
+    candidates = (
+        await uow.session.exec(
+            select(inv.id, inv.primary_outcome_id, out.branch_id)
+            .join(out, out.id == inv.primary_outcome_id)
+            .where(inv.status == InvestigationStatus.RUNNING.value)
+            .where(out.state.in_(("rejected", "refuted"))),
+        )
+    ).all()
+    if not candidates:
+        return 0
+
+    closed = 0
+    for inv_id, outcome_id, proposer_branch_id in candidates:
+        # Count active non-proposer branches that HAVEN'T voted yet.
+        # If any remain, leave the inv alone — they might propose an
+        # alternative outcome. If all have voted, the rejection is final.
+        voter_rows = (
+            await uow.session.exec(
+                select(review.reviewer_branch_id)
+                .where(review.outcome_id == outcome_id),
+            )
+        ).all()
+        voted: set[str] = set()
+        for r in voter_rows:
+            v = r[0] if hasattr(r, "__getitem__") and not isinstance(r, str) else r
+            if v:
+                voted.add(str(v))
+        voted.add(str(proposer_branch_id))
+
+        active_rows = (
+            await uow.session.exec(
+                select(branch.id)
+                .where(branch.investigation_id == inv_id)
+                .where(branch.status == BranchStatus.ACTIVE.value),
+            )
+        ).all()
+        active_ids: list[str] = []
+        for r in active_rows:
+            v = r[0] if hasattr(r, "__getitem__") and not isinstance(r, str) else r
+            if v:
+                active_ids.append(str(v))
+
+        unvoted_active = [bid for bid in active_ids if bid not in voted]
+        if unvoted_active:
+            # Leave it — they may still vote OR submit own outcome.
+            continue
+
+        # All non-proposer active branches voted (or none remain). Close.
+        await uow.session.exec(
+            update(branch)
+            .where(branch.investigation_id == inv_id)
+            .where(branch.status == BranchStatus.ACTIVE.value)
+            .values(
+                status=BranchStatus.ABANDONED.value,
+                closed_reason="outcome_rejected_by_quorum",
+                closed_at=utc_now(),
+                updated_at=utc_now(),
+            ),
+        )
+        target_inv = (
+            await uow.session.exec(
+                select(inv).where(inv.id == inv_id),
+            )
+        ).first()
+        if target_inv and not isinstance(target_inv, type(None)):
+            t = target_inv[0] if hasattr(target_inv, "__getitem__") and not isinstance(target_inv, str) else target_inv
+            t.status = InvestigationStatus.COMPLETED.value
+            t.pause_reason = "operator"  # closest valid enum value
+            t.stopped_at = utc_now()
+            t.updated_at = utc_now()
+            uow.session.add(t)
+            closed += 1
+            _log.info(
+                "rejected_outcome_closed inv=%s outcome=%s",
+                inv_id, outcome_id,
+            )
+
+    if closed:
+        await uow.commit()
+    return closed
+
+
 
 async def sweep_masvs_audit_parents() -> dict[str, int]:
     """Reconcile parent status for every active MASVS audit batch.
@@ -570,6 +689,12 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         except Exception as exc:  # noqa: BLE001
             _log.warning("masvs reconciler: stuck-draft escalation failed: %s", exc, exc_info=True)
             nudged = 0  # noqa: F841
+        # 4. Close investigations whose primary outcome was REJECTED.
+        try:
+            rejected_closed = await _close_rejected_outcomes(uow)  # noqa: F841
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("masvs reconciler: rejected-close failed: %s", exc, exc_info=True)
+            rejected_closed = 0  # noqa: F841
         # Candidate parents: kind=masvs_audit, parent_investigation_id
         # IS NULL (true batch root), status in {CREATED, RUNNING}. PAUSED
         # parents are intentionally excluded so an operator who paused
