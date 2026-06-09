@@ -566,11 +566,51 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
             uow.session.add(b)
             nudged += 1
 
+    enqueued = 0
     if nudged:
         await uow.commit()
+        # After writing directives, re-enqueue run_vr_investigate for
+        # branches whose auto-continue chain broke. The escalator's whole
+        # point is to push the agent into voting; if no task is scheduled
+        # to actually wake the agent, the directive sits in case_state
+        # forever, unread. Auto-continue gates on exit_reason in
+        # (max_turns, researcher_error*) — every other exit reason leaves
+        # the branch active-but-idle with no pending task. So we always
+        # try to enqueue here; task_queue's input_hash dedup at queue.py
+        # already prevents double-fire if a task is already queued/running.
+        from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
+        from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
+        q = default_task_queue()
+        # Re-fetch the branches we just nudged. Cheap: same set we read above,
+        # but read from DB now so we have fresh investigation_id linkage.
+        nudged_branches = (
+            await uow.session.exec(
+                select(branch.id, branch.investigation_id)
+                .where(branch.status == BranchStatus.ACTIVE.value)
+                .where(branch.case_state_json.contains("_directive.mandatory_vote_now")),
+            )
+        ).all()
+        for raw_row in nudged_branches:
+            r = raw_row if not hasattr(raw_row, "__getitem__") or isinstance(raw_row, str) else raw_row
+            bid = str(r[0])
+            inv_id_local = str(r[1])
+            try:
+                await q.submit(
+                    track="vr",
+                    fn=run_vr_investigate,
+                    kwargs={"investigation_id": inv_id_local, "branch_id": bid},
+                    user_id="system",
+                    group_id="vr_escalator_wake",
+                )
+                enqueued += 1
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "escalator wake-task submit failed branch=%s: %s",
+                    bid, exc,
+                )
         _log.info(
-            "masvs_stuck_drafts: nudged %d sibling branches into mandatory-vote",
-            nudged,
+            "masvs_stuck_drafts: nudged %d sibling branches into mandatory-vote (enqueued %d wake-tasks)",
+            nudged, enqueued,
         )
 
     return nudged
