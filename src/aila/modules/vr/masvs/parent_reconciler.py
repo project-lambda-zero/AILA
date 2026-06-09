@@ -814,6 +814,133 @@ async def _abandon_stale_branches(uow: UnitOfWork) -> int:
         )
     return total
 
+async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
+    """Reap zombie tasks and stale workflow_state_cursor rows.
+
+    Two coupled failure modes leave the queue silently jammed (D-283):
+
+    1. Zombie task: ``taskrecord.status='running'`` with
+       ``heartbeat_at`` older than ``VR_ZOMBIE_TASK_HEARTBEAT_MIN``
+       (default 10 min). Caused by worker crash mid-task,
+       OmniRoute retry-loop wedging the worker for hours, or any
+       hang the worker can't recover from. The TaskRecord row
+       stays at ``running`` indefinitely, and dedup at
+       queue.py:132-140 then refuses to re-enqueue the same
+       investigation+branch payload because there's still an
+       "in-flight" task — but no worker is actually working it.
+
+    2. Stale workflow_state_cursor: rows persist after the owning
+       task terminates abnormally. When a fresh task for the same
+       run_id starts, the workflow engine sees a stale cursor in
+       a transient state (``investigation_loop`` etc.) and
+       silently blocks. Observed live: 19 fresh tasks at 01:35:01
+       all stuck at first heartbeat for 10+ min because of 169
+       leftover cursors from a prior crash window.
+
+    This sweep:
+      (a) marks any vr-track task at ``status=running`` with
+          stale heartbeat as ``cancelled`` (frees dedup slot),
+      (b) deletes orphan cursors (no matching TaskRecord at all),
+      (c) deletes cursors whose TaskRecord is already terminal
+          (cancelled / done / failed / dead_letter),
+      (d) deletes cursors at the success terminal state
+          ``__succeeded__`` regardless of TaskRecord linkage
+          (the workflow engine itself never reads these again).
+
+    Active in-flight tasks (status IN queued/running/waiting with
+    fresh heartbeat) are left strictly alone. Only the explicitly
+    dead state gets reaped.
+
+    Returns ``{zombies_cancelled, cursors_purged}``.
+    """
+    from sqlalchemy import text  # noqa: PLC0415
+
+    heartbeat_min = int(os.environ.get("VR_ZOMBIE_TASK_HEARTBEAT_MIN", "10"))
+    batch_cap = int(os.environ.get("VR_CURSOR_CLEANUP_BATCH", "5000"))
+
+    # 1. Cancel zombie tasks: vr-track, status=running, heartbeat
+    #    older than threshold (also catches the case where
+    #    heartbeat is NULL but started_at is old — both indicate
+    #    a worker that never reported life).
+    zombie_sql = text(
+        """
+        UPDATE taskrecord
+        SET status = 'cancelled',
+            completed_at = NOW(),
+            updated_at = NOW(),
+            error = COALESCE(error, '') || ' [reaped by parent_reconciler: stale heartbeat]'
+        WHERE track = 'vr'
+          AND status = 'running'
+          AND COALESCE(heartbeat_at, started_at) < NOW() - (:mins || ' minutes')::interval
+        """,
+    )
+    zombie_result = await uow.session.exec(zombie_sql, params={"mins": str(heartbeat_min)})
+    zombies_cancelled = getattr(zombie_result, "rowcount", 0) or 0
+
+    # 2. Purge orphan cursors (no matching TaskRecord row at all).
+    #    Use NOT EXISTS to dodge a self-join cost on huge tables.
+    orphan_sql = text(
+        """
+        DELETE FROM workflow_state_cursor
+        WHERE run_id IN (
+            SELECT c.run_id FROM workflow_state_cursor c
+            WHERE NOT EXISTS (
+                SELECT 1 FROM taskrecord t WHERE t.id::text = c.run_id::text
+            )
+            LIMIT :cap
+        )
+        """,
+    )
+    orphan_result = await uow.session.exec(orphan_sql, params={"cap": batch_cap})
+    orphan_purged = getattr(orphan_result, "rowcount", 0) or 0
+
+    # 3. Purge cursors whose TaskRecord is terminal.
+    terminal_sql = text(
+        """
+        DELETE FROM workflow_state_cursor
+        WHERE run_id IN (
+            SELECT c.run_id FROM workflow_state_cursor c
+            JOIN taskrecord t ON t.id::text = c.run_id::text
+            WHERE t.status IN ('cancelled', 'done', 'failed', 'dead_letter')
+            LIMIT :cap
+        )
+        """,
+    )
+    terminal_result = await uow.session.exec(terminal_sql, params={"cap": batch_cap})
+    terminal_purged = getattr(terminal_result, "rowcount", 0) or 0
+
+    # 4. Purge __succeeded__ cursors — terminal in the workflow engine,
+    #    never re-read, just accumulate.
+    succeeded_sql = text(
+        """
+        DELETE FROM workflow_state_cursor
+        WHERE run_id IN (
+            SELECT run_id FROM workflow_state_cursor
+            WHERE current_state = '__succeeded__'
+            LIMIT :cap
+        )
+        """,
+    )
+    succeeded_result = await uow.session.exec(succeeded_sql, params={"cap": batch_cap})
+    succeeded_purged = getattr(succeeded_result, "rowcount", 0) or 0
+
+    cursors_purged = orphan_purged + terminal_purged + succeeded_purged
+
+    if zombies_cancelled or cursors_purged:
+        await uow.commit()
+        _log.info(
+            "zombie_reaper zombies=%d cursors_purged=%d "
+            "(orphan=%d terminal=%d succeeded=%d)",
+            zombies_cancelled, cursors_purged,
+            orphan_purged, terminal_purged, succeeded_purged,
+        )
+
+    return {
+        "zombies_cancelled": zombies_cancelled,
+        "cursors_purged": cursors_purged,
+    }
+
+
 
 
 
@@ -864,6 +991,12 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         except Exception as exc:  # noqa: BLE001
             _log.warning("masvs reconciler: stale-branch abandon failed: %s", exc, exc_info=True)
             stale = 0  # noqa: F841
+        # 6. Reap zombie tasks + stale workflow_state_cursors (D-283).
+        try:
+            reaped = await _reap_zombie_tasks_and_cursors(uow)  # noqa: F841
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("masvs reconciler: zombie reaper failed: %s", exc, exc_info=True)
+            reaped = {"zombies_cancelled": 0, "cursors_purged": 0}  # noqa: F841
         # Candidate parents: kind=masvs_audit, parent_investigation_id
         # IS NULL (true batch root), status in {CREATED, RUNNING}. PAUSED
         # parents are intentionally excluded so an operator who paused
