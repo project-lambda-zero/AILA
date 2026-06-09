@@ -489,48 +489,6 @@ class HonestVulnResearcher:
                 turn_number=turn_number,
             )
 
-        # Empty-command coerce: when decision.action == 'tool_run' but the
-        # command field is empty or whitespace, swap action to 'reasoning'
-        # (a no-op action that just writes a text message) before dispatch.
-        # The original version used "observe" — but "observe" is NOT a valid
-        # ReasoningAction Literal (Literal["script_execute","tool_run",
-        # "reasoning","submit","submit_outcome_review"]). Pydantic 2's
-        # model_copy doesn't reject invalid Literal updates loudly, so the
-        # assignment silently left action='tool_run', the empty command
-        # still hit the executor, and we burned the turn. Worse, every
-        # error message + prompt still suggested "action=observe" — telling
-        # the agent to pick an invalid value forever. Both fixed here.
-        if (
-            decision.action == "tool_run"
-            and not (decision.command or "").strip()
-            and not (decision.script_content or "").strip()
-        ):
-            _log.info(
-                "empty_tool_run COERCED→reasoning inv=%s branch=%s turn=%d "
-                "(action='tool_run' with empty command field)",
-                self.investigation_id, self.branch_id, turn_number,
-            )
-            case_state.observables["_directive.empty_tool_run_coerced"] = (
-                "*** EMPTY tool_run COERCED TO reasoning ***\n\n"
-                "Your prior turn emitted action='tool_run' but the "
-                "'command' field was empty. The engine treated it as "
-                "action='reasoning' so the turn could proceed. Next turn:\n"
-                "  - pick action='tool_run' ONLY if you have a concrete "
-                "tool query: {\"tool\": \"server.tool_name\", \"args\": {...}}.\n"
-                "  - pick action='reasoning' when thinking without a tool call.\n"
-                "  - pick action='submit' / 'submit_outcome_review' when "
-                "you have terminal evidence.\n\n"
-                "Valid actions: tool_run / reasoning / submit / "
-                "submit_outcome_review / script_execute. There is NO "
-                "'observe' action — that was a documentation bug. "
-                "Empty tool_run wastes a turn; use 'reasoning' to think."
-            )
-            decision = decision.model_copy(update={
-                "action": "reasoning",
-                "command": "",
-                "script_content": "",
-            })
-
         if decision.action == "submit":
             decision = self._maybe_reject_submit_with_unresolved_hypotheses(
                 decision=decision,
@@ -547,6 +505,41 @@ class HonestVulnResearcher:
                 case_state=case_state,
                 turn_number=turn_number,
             )
+
+        # FINAL GATE — empty tool_run coerce. Runs AFTER every other
+        # gate (re-vote, submit-with-unresolved-hyp, variant-hunt-submit)
+        # because those gates THEMSELVES produce action=tool_run +
+        # empty command as a "rejection no-op" output. Only checks
+        # `command` (the field tool_executor parses).
+        # Swap to "reasoning" (valid Literal; falls through to TEXT
+        # payload in _decision_to_message_payload). The directive
+        # observable explains what happened so the next prompt picks a
+        # real action instead of looping.
+        if (
+            decision.action == "tool_run"
+            and not (decision.command or "").strip()
+        ):
+            _log.info(
+                "empty_tool_run COERCED→reasoning inv=%s branch=%s turn=%d",
+                self.investigation_id, self.branch_id, turn_number,
+            )
+            case_state.observables["_directive.empty_tool_run_coerced"] = (
+                "*** EMPTY tool_run COERCED TO reasoning ***\n\n"
+                "Your prior turn emitted action='tool_run' but command "
+                "was empty. (Could also have come from an internal gate "
+                "that rejected your submit and converted to tool_run as "
+                "a no-op.) Engine treated it as action='reasoning'.\n\n"
+                "Valid actions: tool_run / reasoning / submit / "
+                "submit_outcome_review / script_execute. There is no "
+                "'observe' action. Empty tool_run wastes a turn — pick "
+                "'reasoning' to think, or check the directives in this "
+                "prompt for what you actually need to do next."
+            )
+            decision = decision.model_copy(update={
+                "action": "reasoning",
+                "command": "",
+                "script_content": "",
+            })
 
         new_case_state = self._engine.absorb(case_state, decision, turn_number=turn_number)
 
