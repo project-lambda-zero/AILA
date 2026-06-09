@@ -78,7 +78,8 @@ class MasvsSeedBuilder:
         package = _text_or_unknown(static_summary.get("package"))
         version_name = _text_or_unknown(static_summary.get("version_name"))
         version_code = _text_or_unknown(static_summary.get("version_code"))
-        sha256 = _text_or_unknown(overview.get("sha256"))
+        sha256_full = _text_or_unknown(overview.get("sha256"))
+        sha256 = sha256_full[:16] if sha256_full != _UNKNOWN else sha256_full
         index_id = _text_or_unknown(overview.get("audit_mcp_index_id"))
         decompiled_dir = _text_or_unknown(overview.get("decompiled_dir"))
         jadx_class_count = _text_or_unknown(overview.get("jadx_class_count"))
@@ -133,70 +134,32 @@ def _text_or_unknown(value: object) -> str:
 
 # Doubled braces escape literal `{` / `}` for ``str.format``; every
 # named placeholder below is filled by :meth:`MasvsSeedBuilder.build`.
+#
+# Aggressively trimmed (was ~4500 chars → now ~1200 chars). vuln_researcher
+# already injects: (a) the persona system prompt, (b) the full tool
+# surface declaration, (c) the audit-kind outcome contract. Repeating
+# them in the seed bloated each child's per-turn context by ~3x with
+# zero added information — drop them. What stays is the irreducible
+# per-control payload: which MASVS control to audit, which APK, which
+# audit-mcp index to query, and the catalog's evidence hints.
 _PROMPT_TEMPLATE = """\
-You are auditing the OWASP MASVS control **{control_id}** against the Android APK
-package `{package}` (versionName {version_name}, versionCode {version_code}, sha-256
-{sha256}). This investigation evaluates ONE control end-to-end — do not pivot
-into other MASVS groups, even when you happen across an unrelated finding.
+Audit MASVS control **{control_id}** ({group} L{level}) on APK `{package}`
+(versionName {version_name}, sha256 {sha256}...). Use audit_mcp index
+`{index_id}` for the jadx-decompiled Java tree ({jadx_class_count} classes).
 
-# Control: {control_id} (group={group}, level={level})
-
-{title}
+## {title}
 
 {description}
 
-# Verification steps
-
-Walk these in order. For each step record the call sites you inspected and
-whether they satisfy the requirement before moving to the next.
+## Verification steps
 
 {steps_block}
 
-# Evidence hints
-
-Use these literal substrings as seed queries against the audit_mcp index
-listed below — start with `semantic_search`, then drill in with
-`search_functions` / `read_function` / `callers_of` on the most promising
-hits:
+## Evidence hints (seed `mcp__audit_mcp_semantic_search` with these)
 
 {hints_block}
 
-# Relevant APIs
-
-The presence (or provable absence) of these symbols is load-bearing for the
-verdict on this control:
+## Load-bearing APIs
 
 {apis_block}
-
-# Tool surface (this child)
-
-  - audit_mcp index id : `{index_id}` — covers the jadx-decompiled Java
-    tree. Use `mcp__audit_mcp_semantic_search`, `mcp__audit_mcp_read_function`,
-    `mcp__audit_mcp_search_functions`, `mcp__audit_mcp_callers_of`,
-    `mcp__audit_mcp_xrefs_to`, and `mcp__audit_mcp_search_constants`.
-  - decompiled tree    : `{decompiled_dir}` ({jadx_class_count} classes).
-  - android_mcp tools  : the parsed AndroidManifest, the static_summary
-    (permissions, exported components, native libs, certificates,
-    signing scheme), and the MobSF scan result when one ran. Reach for
-    these when the control depends on manifest / signing / native-binary
-    metadata rather than Java source.
-
-# Outcome contract — how this child maps to a MASVS verdict
-
-Return exactly one primary outcome. The MASVS aggregator at
-`aila.modules.vr.masvs.verdict_mapper.child_outcome_to_verdict` reads it
-verbatim and never invents a verdict — silence becomes `inconclusive`,
-not `no_finding`:
-
-  - `direct_finding` (confidence >= 0.6) — only when you can cite a
-    concrete code excerpt with file path + line range that shows the
-    control is violated. Without that citation the finding is rejected.
-  - `refuted` — you walked every verification step above and can
-    affirmatively show the control is met (cite the satisfying code
-    pattern or the manifest declaration).
-  - explicit `not_applicable` tag — the underlying capability is absent
-    in this APK (e.g. native-binary controls when
-    `static_summary.native_libs` is empty). Cite the absence.
-  - anything else (timeout, cost cap, ambiguous evidence) — emit
-    `inconclusive` with a one-line reason describing what stopped you.
 """
