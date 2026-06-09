@@ -46,6 +46,31 @@ _DELIBERATION_SIBLINGS: tuple[PersonaVoice, ...] = (
 )
 _PRIMARY_PERSONA: PersonaVoice = PersonaVoice.HALVAR  # researcher
 
+
+async def _parent_is_masvs_audit(parent_investigation_id: str) -> bool:
+    """True when the parent investigation is a MASVS audit batch root.
+
+    Used by the auto-deliberation gate to short-circuit the 6-persona
+    sibling fanout for MASVS audit children. Each MASVS control should
+    be a single-persona narrow audit, not a multi-persona discovery
+    debate — both because (a) the operator pays per-stream LLM cost
+    that doesn't pay off for compliance-style audits, and (b) 5
+    children × 6 personas = 30 concurrent streams OOMs the local
+    LLM proxy.
+
+    Returns False on any error (so a query miss does not silently
+    disable the panel for non-MASVS investigations). Cheap one-row
+    lookup by primary key.
+    """
+    from aila.modules.vr.contracts.investigation import InvestigationKind  # noqa: PLC0415
+    async with UnitOfWork() as uow:
+        row = (await uow.session.exec(
+            _select(VRInvestigationRecord.kind).where(
+                VRInvestigationRecord.id == parent_investigation_id,
+            ),
+        )).first()
+    return row == InvestigationKind.MASVS_AUDIT.value
+
 __all__ = ["state_investigation_setup"]
 
 _log = logging.getLogger(__name__)
@@ -292,7 +317,13 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     # Auto-deliberation: spawn sibling branches and enqueue per-sibling
     # tasks ONLY on the primary task. Sibling tasks (explicit_branch_id
     # set) skip this block — they just run their assigned branch's loop.
-    if not explicit_branch_id and _AUTO_DELIBERATION:
+    # MASVS audit children additionally skip the 6-persona fanout: each
+    # MASVS control is a narrow check, fan-out wastes LLM streams and
+    # OOMs the local proxy. One persona per control, many turns deep.
+    is_masvs_child = inv.parent_investigation_id is not None and (
+        await _parent_is_masvs_audit(inv.parent_investigation_id)
+    )
+    if not explicit_branch_id and _AUTO_DELIBERATION and not is_masvs_child:
         await _spawn_persona_siblings_and_enqueue(
             investigation_id=investigation_id,
             primary_branch_id=branch.id,
