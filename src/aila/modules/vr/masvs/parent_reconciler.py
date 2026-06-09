@@ -144,7 +144,15 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
         # when a TaskRecord exists (the child has been enqueued, just not
         # picked up yet); CREATED children with no TaskRecord are the
         # virgin pool we'll draw from.
-        in_flight = (
+        def _scalar(row: object) -> int:
+            if row is None:
+                return 0
+            try:
+                return int(row[0]) if hasattr(row, "__getitem__") else int(row)
+            except (TypeError, ValueError, IndexError):
+                return 0
+
+        in_flight_row = (
             await uow.session.exec(
                 select(func.count(inv.id))
                 .where(inv.parent_investigation_id == parent_id)
@@ -153,12 +161,13 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                     InvestigationStatus.PAUSED.value,
                 ))),
             )
-        ).first() or 0
+        ).first()
+        in_flight = _scalar(in_flight_row)
 
         # Add CREATED children that ALREADY have a TaskRecord — they're
         # enqueued, just sitting in the queue waiting for a worker. They
         # count toward in_flight so we don't double-enqueue.
-        created_with_task = (
+        created_with_task_row = (
             await uow.session.exec(
                 select(func.count(inv.id))
                 .where(inv.parent_investigation_id == parent_id)
@@ -171,8 +180,8 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                     .exists(),
                 ),
             )
-        ).first() or 0
-        in_flight += int(created_with_task)
+        ).first()
+        in_flight += _scalar(created_with_task_row)
 
         slots = batch_size - int(in_flight)
         if slots <= 0:
@@ -198,7 +207,14 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
             )
         ).all()
 
-        for child_id in virgin:
+        for row in virgin:
+            # Row tuples → unwrap to scalar string. SQLModel session.exec
+            # returns Row tuples for select(scalar_column); we want the
+            # plain UUID/str value for the task kwarg.
+            if hasattr(row, "__getitem__") and not isinstance(row, str):
+                child_id = str(row[0])
+            else:
+                child_id = str(row)
             try:
                 await queue.submit(
                     track="vr",
@@ -432,26 +448,37 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
     nudged = 0
     for inv_id, outcome_id, proposer_branch_id in candidates:
         # Compute draft age: max turn_count of any branch since the
-        # proposer's turn at submit. Cheap proxy: max(turn_count) on
-        # this investigation. If under threshold, skip.
-        max_turn = (
+        max_turn_row = (
             await uow.session.exec(
                 select(func.max(branch.turn_count))
                 .where(branch.investigation_id == inv_id),
             )
-        ).first() or 0
+        ).first()
+        if max_turn_row is None:
+            max_turn = 0
+        elif hasattr(max_turn_row, "__getitem__") and not isinstance(max_turn_row, int):
+            max_turn = int(max_turn_row[0] or 0)
+        else:
+            max_turn = int(max_turn_row or 0)
         if max_turn < _MIN_DRAFT_AGE_TURNS:
             continue
 
         # Active non-proposer branches that haven't voted on this outcome.
-        voter_branch_ids = (
+        voter_branch_rows = (
             await uow.session.exec(
                 select(review.reviewer_branch_id)
                 .where(review.outcome_id == outcome_id),
             )
         ).all()
-        voted = {str(b) for b in voter_branch_ids if b}
-        voted.add(str(proposer_branch_id))  # proposer never votes on own
+        # rows may be Row(reviewer_branch_id=...) or plain scalar — handle both
+        voted: set[str] = set()
+        for r in voter_branch_rows:
+            if r is None:
+                continue
+            v = r[0] if hasattr(r, "__getitem__") and not isinstance(r, str) else r
+            if v:
+                voted.add(str(v))
+        voted.add(str(proposer_branch_id))
 
         stuck_branches = (
             await uow.session.exec(
@@ -461,7 +488,9 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
             )
         ).all()
 
-        for b in stuck_branches:
+        for raw_b in stuck_branches:
+            # Row tuple unwrap — same pattern as virgin children
+            b = raw_b[0] if hasattr(raw_b, "__getitem__") and not isinstance(raw_b, str) else raw_b
             if str(b.id) in voted:
                 continue
             try:
@@ -524,13 +553,23 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
 
     async with UnitOfWork() as uow:
         # 1. Top up APK batch slots before status transitions.
-        refilled = await _refill_apk_batches(uow)
-        # 2. Enforce cumulative-turn cap (force-close exhausted children).
-        exhausted = await _enforce_total_turn_cap(uow)
-        # 3. Escalate stuck drafts (inject mandatory-vote directive on
-        #    sibling branches of long-pending draft outcomes so the
-        #    quorum mechanic actually resolves).
-        nudged = await _escalate_stuck_drafts(uow)  # noqa: F841
+        try:
+            refilled = await _refill_apk_batches(uow)
+        except Exception as exc:  # noqa: BLE001 — best-effort tick
+            _log.warning("masvs reconciler: refill failed: %s", exc, exc_info=True)
+            refilled = 0
+        # 2. Enforce cumulative-turn cap.
+        try:
+            exhausted = await _enforce_total_turn_cap(uow)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("masvs reconciler: turn-cap failed: %s", exc, exc_info=True)
+            exhausted = 0
+        # 3. Escalate stuck drafts (mandatory-vote directive).
+        try:
+            nudged = await _escalate_stuck_drafts(uow)  # noqa: F841
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("masvs reconciler: stuck-draft escalation failed: %s", exc, exc_info=True)
+            nudged = 0  # noqa: F841
         # Candidate parents: kind=masvs_audit, parent_investigation_id
         # IS NULL (true batch root), status in {CREATED, RUNNING}. PAUSED
         # parents are intentionally excluded so an operator who paused
