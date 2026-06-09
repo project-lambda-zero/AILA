@@ -428,6 +428,16 @@ def _target_summary(record: Any) -> VRTargetSummary:
         # Pull each handle if present. Order mirrors the pipeline so an
         # operator can see how far the chain has progressed.
         overview: dict[str, Any] = {}
+        # Per-key projection. NOTE: android_mcp_mobsf_scan (the raw MobSF
+        # report) is intentionally NOT projected verbatim — it's a
+        # multi-MB JSON blob that bloated vuln_researcher prompts to >1M
+        # tokens per turn and OOM'd the LLM proxy. Instead we surface a
+        # one-line summary (count + severity buckets) that fits the prompt
+        # context. Operators can still query the full report via
+        # GET /vr/targets/{id}/mobsf-report (NOT YET IMPLEMENTED — read
+        # _mcp_handles_json.android_mcp_mobsf_scan directly from DB for
+        # now). Same for android_mcp_static_summary: project the digest,
+        # not the full androguard dump.
         for handle_key, out_key in (
             ("android_mcp_apk_sha256", "sha256"),
             ("android_mcp_decoded_dir", "decoded_dir"),
@@ -437,12 +447,57 @@ def _target_summary(record: Any) -> VRTargetSummary:
             ("android_mcp_jadx_class_count", "jadx_class_count"),
             ("audit_mcp_decompiled_index_id", "audit_mcp_index_id"),
             ("audit_mcp_decompiled_indexed_at", "audit_mcp_indexed_at"),
-            ("android_mcp_static_summary", "static_summary"),
-            ("android_mcp_mobsf_scan", "mobsf_scan"),
         ):
             value = handles.get(handle_key)
             if value is not None:
                 overview[out_key] = value
+
+        # static_summary digest: keep only the load-bearing fields. The full
+        # androguard output (34KB+ per-package metadata) is excessive to
+        # include in every LLM turn.
+        static_full = handles.get("android_mcp_static_summary") or {}
+        if isinstance(static_full, dict) and static_full:
+            digest: dict[str, Any] = {}
+            for k in (
+                "package", "version_name", "version_code",
+                "min_sdk", "target_sdk", "signing_scheme",
+            ):
+                if static_full.get(k) is not None:
+                    digest[k] = static_full[k]
+            # Counts only — don't dump 38 permission strings + 29 exported
+            # component class names into every LLM turn.
+            for k in (
+                "permissions", "dangerous_permissions", "exported_activities",
+                "exported_services", "exported_receivers", "exported_providers",
+                "native_libs", "certificates",
+            ):
+                v = static_full.get(k)
+                if isinstance(v, list):
+                    digest[f"{k}_count"] = len(v)
+            overview["static_summary"] = digest
+
+        # mobsf_scan digest: bucket-count summary. The full report is at
+        # most operator-facing — agents don't need it in every prompt.
+        mobsf_full = handles.get("android_mcp_mobsf_scan") or {}
+        if isinstance(mobsf_full, dict) and mobsf_full:
+            if mobsf_full.get("skipped"):
+                overview["mobsf_scan"] = {"skipped": True, "reason": mobsf_full.get("reason", "")}
+            else:
+                buckets = {"high": 0, "warning": 0, "info": 0, "good": 0, "secure": 0}
+                for section_key in ("code_analysis", "manifest_analysis", "android_api", "network_security"):
+                    section = mobsf_full.get(section_key)
+                    if isinstance(section, dict):
+                        for finding in section.values():
+                            if isinstance(finding, dict):
+                                sev = (finding.get("severity") or finding.get("status") or "").lower()
+                                if sev in buckets:
+                                    buckets[sev] += 1
+                overview["mobsf_scan"] = {
+                    "security_score": mobsf_full.get("security_score"),
+                    "trackers_detected": mobsf_full.get("trackers", {}).get("detected_trackers") if isinstance(mobsf_full.get("trackers"), dict) else None,
+                    "findings_by_severity": buckets,
+                }
+
         if overview:
             apk_overview = overview
 
