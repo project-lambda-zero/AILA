@@ -489,6 +489,47 @@ class HonestVulnResearcher:
                 turn_number=turn_number,
             )
 
+        # Empty-command coerce (Option C from the operator review): when
+        # decision.action == 'tool_run' but the command field is empty or
+        # whitespace, swap action to 'observe' before dispatch. Without
+        # this the tool_executor's malformed-command guard fires, writes
+        # an error message, and the agent often picks tool_run again next
+        # turn with the same empty command (the LLM's high-level intent
+        # was "do nothing this turn" but its structured-output default
+        # action stuck at tool_run). Burns the whole turn budget on
+        # malformed-loop cycles. Observed live on inv=30b4437c branch wei
+        # turns 26 + 29: empty command both times. Same shape on other
+        # investigations time to time per operator.
+        if (
+            decision.action == "tool_run"
+            and not (decision.command or "").strip()
+            and not (decision.script_content or "").strip()
+        ):
+            _log.info(
+                "empty_tool_run COERCED→observe inv=%s branch=%s turn=%d "
+                "(action='tool_run' with empty command field)",
+                self.investigation_id, self.branch_id, turn_number,
+            )
+            case_state.observables["_directive.empty_tool_run_coerced"] = (
+                "*** EMPTY tool_run COERCED TO observe ***\n\n"
+                "Your prior turn emitted action='tool_run' but the "
+                "'command' field was empty. The engine treated it as "
+                "action='observe' so the turn could proceed. Next turn:\n"
+                "  - pick action='tool_run' ONLY if you have a concrete "
+                "tool query: {\"tool\": \"server.tool_name\", \"args\": {...}}.\n"
+                "  - pick action='observe' when reasoning without a tool.\n"
+                "  - pick action='submit' / 'submit_outcome_review' when "
+                "you have terminal evidence.\n\n"
+                "Empty tool_run is never the right action — observe is "
+                "always safe and lets you reason on the next turn without "
+                "burning a malformed-command guard."
+            )
+            decision = decision.model_copy(update={
+                "action": "observe",
+                "command": "",
+                "script_content": "",
+            })
+
         if decision.action == "submit":
             decision = self._maybe_reject_submit_with_unresolved_hypotheses(
                 decision=decision,
