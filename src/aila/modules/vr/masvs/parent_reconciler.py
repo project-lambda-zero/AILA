@@ -632,6 +632,221 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
 
     return nudged
 
+async def _synthesize_no_finding_outcomes(uow: UnitOfWork) -> int:
+    """Synthesize an ``audit_memo`` outcome for orphaned investigations.
+
+    Operator rule: EVERY investigation must terminate with an outcome,
+    no exceptions. The existing close paths only fire when an outcome
+    already exists:
+
+      - ``services/outcome_review.py:auto_approved_no_active_voters``:
+        requires primary_outcome in ``draft`` state, gets approved.
+      - ``_close_rejected_outcomes`` (step 4): requires primary_outcome
+        in ``rejected``/``refuted`` state, closes after siblings vote.
+
+    Gap: variant_hunt / audit investigations that never produced any
+    outcome at all (agents abandoned without submitting). Observed
+    live on ``a0b33905`` — 6 branches all ``status=abandoned`` via
+    step 5 stale-detector, ``primary_outcome_id=NULL``, investigation
+    still ``running``. No closer exists for this shape.
+
+    Per operator rule: do NOT just mark completed without an outcome.
+    Instead synthesize an honest negative-result outcome:
+
+      - ``outcome_kind = AUDIT_MEMO`` — the catalog kind for
+        "this team audited and here's what they concluded";
+      - ``confidence = CAVEATED`` — honest about the limitation;
+      - ``state = approved`` — no quorum needed, all branches are
+        already terminal so no one can vote;
+      - ``dispatch_status = skipped`` — nothing to dispatch
+        downstream;
+      - ``branch_id`` = the branch with highest ``turn_count``
+        (the most "informed" branch; ties broken by created_at
+        ASC for determinism);
+      - payload includes a structured summary of which branches
+        abandoned, why, and the total turn count consumed.
+
+    Then set ``investigation.primary_outcome_id = new outcome.id``,
+    ``status = completed``, ``stopped_at`` and ``updated_at``.
+
+    Direct SQL INSERT for the outcome row because the ORM model has
+    13 columns including JSON fields; constructing via SQL avoids
+    importing the model and gives a single round-trip.
+
+    Returns count of investigations resolved this tick.
+    """
+    import json as _json_local  # noqa: PLC0415
+    import uuid as _uuid_local  # noqa: PLC0415
+
+    from sqlalchemy import text  # noqa: PLC0415
+
+    from aila.modules.vr.db_models import (  # noqa: PLC0415
+        VRInvestigationBranchRecord,
+    )
+
+    inv = VRInvestigationRecord
+    branch = VRInvestigationBranchRecord
+
+    # Find running investigations with primary_outcome_id IS NULL and
+    # where every branch is in a terminal state. The GROUP BY pattern
+    # gives us branch_count + terminal_count per investigation cheaply.
+    rows = (
+        await uow.session.exec(
+            select(
+                inv.id,
+                func.count(branch.id).label("branch_count"),
+                func.sum(
+                    coalesce(
+                        (
+                            branch.status.in_(
+                                (
+                                    BranchStatus.ABANDONED.value,
+                                    BranchStatus.COMPLETED.value,
+                                    BranchStatus.FAILED.value,
+                                ),
+                            )
+                        ).cast(__import__("sqlalchemy").Integer),
+                        0,
+                    ),
+                ).label("terminal_count"),
+            )
+            .select_from(inv)
+            .join(branch, branch.investigation_id == inv.id, isouter=True)
+            .where(inv.status == InvestigationStatus.RUNNING.value)
+            .where(inv.primary_outcome_id.is_(None))
+            .group_by(inv.id),
+        )
+    ).all()
+
+    orphan_inv_ids: list[str] = []
+    for row in rows:
+        if not (hasattr(row, "__getitem__") and not isinstance(row, str)):
+            continue
+        inv_id = str(row[0])
+        branch_count = int(row[1] or 0)
+        terminal_count = int(row[2] or 0)
+        if branch_count == 0:
+            # In-flight rollback / dispatcher race — leave alone.
+            continue
+        if terminal_count >= branch_count:
+            orphan_inv_ids.append(inv_id)
+
+    if not orphan_inv_ids:
+        return 0
+
+    now = utc_now()
+    now_iso = now.isoformat()
+    synthesized = 0
+
+    for inv_id in orphan_inv_ids:
+        # Pick the most "informed" branch: highest turn_count, ties
+        # broken by earliest created_at for determinism.
+        branch_rows = (
+            await uow.session.exec(
+                select(branch.id, branch.persona_voice, branch.turn_count, branch.closed_reason, branch.status)
+                .where(branch.investigation_id == inv_id)
+                .order_by(branch.turn_count.desc(), branch.created_at.asc()),
+            )
+        ).all()
+        if not branch_rows:
+            continue
+        # Unwrap rows
+        unwrapped: list[tuple[str, str, int, str | None, str]] = []
+        for br in branch_rows:
+            if hasattr(br, "__getitem__") and not isinstance(br, str):
+                unwrapped.append(
+                    (str(br[0]), str(br[1] or "?"), int(br[2] or 0), br[3], str(br[4] or "?")),
+                )
+        if not unwrapped:
+            continue
+
+        proposer_branch_id = unwrapped[0][0]
+        total_turns = sum(r[2] for r in unwrapped)
+        summary_text = (
+            "Investigation auto-closed by reconciler: every branch "
+            "reached a terminal state without proposing a finding. "
+            f"{len(unwrapped)} branches consumed {total_turns} total "
+            "turns. Per-branch outcome:"
+        )
+        per_branch = [
+            {
+                "persona": p,
+                "turns": t,
+                "status": s,
+                "closed_reason": cr or "n/a",
+            }
+            for (_bid, p, t, cr, s) in unwrapped
+        ]
+        payload = {
+            "verdict": "no_finding",
+            "summary": summary_text,
+            "branches": per_branch,
+            "synthesized_by": "parent_reconciler._synthesize_no_finding_outcomes",
+            "synthesized_at": now_iso,
+            "rule": "every_investigation_has_outcome",
+        }
+
+        outcome_id = str(_uuid_local.uuid4())
+        try:
+            await uow.session.exec(
+                text(
+                    """
+                    INSERT INTO vr_investigation_outcomes (
+                        id, investigation_id, branch_id, outcome_kind,
+                        payload_json, confidence, evidence_refs_json,
+                        accepted_by_operator, accepted_at,
+                        dispatch_status, dispatch_target,
+                        created_at, state
+                    ) VALUES (
+                        :id, :inv_id, :branch_id, :kind,
+                        :payload, :confidence, :evidence,
+                        false, NULL,
+                        'skipped', NULL,
+                        :now, 'approved'
+                    )
+                    """,
+                ),
+                params={
+                    "id": outcome_id,
+                    "inv_id": inv_id,
+                    "branch_id": proposer_branch_id,
+                    "kind": "audit_memo",
+                    "payload": _json_local.dumps(payload),
+                    "confidence": "caveated",
+                    "evidence": "[]",
+                    "now": now,
+                },
+            )
+            await uow.session.exec(
+                update(inv)
+                .where(inv.id == inv_id)
+                .where(inv.status == InvestigationStatus.RUNNING.value)
+                .values(
+                    primary_outcome_id=outcome_id,
+                    status=InvestigationStatus.COMPLETED.value,
+                    stopped_at=now,
+                    updated_at=now,
+                ),
+            )
+            synthesized += 1
+        except Exception as exc:  # noqa: BLE001
+            _log.warning(
+                "synthesize_no_finding failed inv=%s: %s", inv_id, exc, exc_info=True,
+            )
+
+    if synthesized:
+        await uow.commit()
+        _log.info(
+            "synthesized_no_finding_outcomes count=%d (first 5 ids=%s)",
+            synthesized,
+            ",".join(i[:8] for i in orphan_inv_ids[:5])
+            + ("..." if len(orphan_inv_ids) > 5 else ""),
+        )
+    return synthesized
+
+
+
+
 async def _close_rejected_outcomes(uow: UnitOfWork) -> int:
     """Force-close investigations whose primary outcome was REJECTED by quorum.
 
@@ -1009,6 +1224,16 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         except Exception as exc:  # noqa: BLE001
             _log.warning("masvs reconciler: stale-branch abandon failed: %s", exc, exc_info=True)
             stale = 0  # noqa: F841
+        # 5.5. Synthesize audit_memo outcomes for any investigation
+        # where all branches are now terminal but no outcome exists.
+        # Runs AFTER step 5 abandonment because that's what creates
+        # the orphan condition. Operator rule: every investigation
+        # MUST end with an outcome.
+        try:
+            synthesized = await _synthesize_no_finding_outcomes(uow)  # noqa: F841
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("masvs reconciler: no-finding synth failed: %s", exc, exc_info=True)
+            synthesized = 0  # noqa: F841
         # 6. Reap zombie tasks + stale workflow_state_cursors (D-283).
         try:
             reaped = await _reap_zombie_tasks_and_cursors(uow)  # noqa: F841
