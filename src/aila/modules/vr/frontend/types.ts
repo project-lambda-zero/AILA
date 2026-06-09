@@ -700,3 +700,52 @@ export interface McpCallLogEntry {
   error_excerpt: string | null;
   called_at: string;          // ISO 8601
 }
+
+// ─── MASVS audit aggregate (U-2 — per-control table) ───────────────────
+//
+// Wire schema matching `aila.modules.vr.contracts.masvs`. The JSON
+// endpoint at `GET /vr/targets/{id}/masvs-audit-aggregate` returns
+// `DataEnvelope<MasvsAuditAggregate>`. Verdict + group string unions
+// mirror the StrEnums on the backend; keep them in sync when adding
+// new values to either side.
+
+export type MasvsVerdict =
+  | "finding"
+  | "not_applicable"
+  | "no_finding"
+  | "inconclusive";
+
+export type MasvsGroup =
+  | "STORAGE"
+  | "CRYPTO"
+  | "AUTH"
+  | "NETWORK"
+  | "PLATFORM"
+  | "CODE"
+  | "RESILIENCE"
+  | "PRIVACY";
+
+export interface MasvsEvidenceLocation {
+  file: string;
+  function: string;
+}
+
+export interface MasvsControlVerdict {
+  control_id: string;
+  verdict: MasvsVerdict;
+  confidence: number;
+  child_investigation_id: string;
+  primary_outcome_id: string | null;
+  reason: string | null;
+  evidence_locations: MasvsEvidenceLocation[];
+}
+
+export interface MasvsAuditAggregate {
+  parent_id: string;
+  target_id: string;
+  masvs_spec_version: string;
+  generated_at: string; // ISO 8601 UTC
+  verdicts: MasvsControlVerdict[];
+  by_group: Partial<Record<MasvsGroup, MasvsControlVerdict[]>>;
+  summary_counts: Partial<Record<MasvsVerdict, number>>;
+}

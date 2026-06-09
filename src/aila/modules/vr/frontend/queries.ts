@@ -5,6 +5,7 @@ import { authorizedRequestJson } from "@platform/api/http";
 import type {
   DisclosureTrackInfo,
   Envelope,
+  MasvsAuditAggregate,
   McpServerSummary,
   McpCallLogEntry,
   RegisteredSystem,
@@ -806,6 +807,31 @@ export function useFuzzProposals(opts?: {
         Envelope<VRFuzzCampaignProposalSummary[]>
       >(`/vr/fuzz/proposals${qs ? `?${qs}` : ""}`);
     },
+    refetchInterval: 8000,
+  });
+}
+
+/** U-2 — MASVS audit aggregate (per-control verdicts + summary counts).
+ *
+ *  Fetches `GET /vr/targets/{targetId}/masvs-audit-aggregate?audit_id=<auditId>`
+ *  and returns the unwrapped :class:`MasvsAuditAggregate`. Poll cadence
+ *  matches `useInvestigationsForTarget` (8s) so the per-control table
+ *  surfaces new verdicts as children finish without the operator
+ *  refreshing the page. The hook stays disabled until BOTH ids are
+ *  truthy strings — `MasvsControlTable` only mounts once it has
+ *  resolved the active parent from the investigations list.
+ */
+export function useMasvsAuditAggregate(targetId: string, auditId: string | null) {
+  return useQuery({
+    queryKey: ["vr", "masvs-audit-aggregate", targetId, auditId],
+    queryFn: async () => {
+      const params = new URLSearchParams({ audit_id: auditId ?? "" });
+      const res = await authorizedRequestJson<Envelope<MasvsAuditAggregate>>(
+        `/vr/targets/${encodeURIComponent(targetId)}/masvs-audit-aggregate?${params.toString()}`,
+      );
+      return res.data;
+    },
+    enabled: !!targetId && !!auditId,
     refetchInterval: 8000,
   });
 }
