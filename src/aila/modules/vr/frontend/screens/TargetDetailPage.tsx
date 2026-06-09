@@ -797,6 +797,212 @@ function MasvsAuditCard({
   );
 }
 
+/** U-1 progress card. Sibling of MasvsAuditCard / MasvsReportCard:
+ * appears once the operator has dispatched a MASVS audit for this
+ * target. Surfaces total / completed / running / failed counts plus
+ * an ETA estimate derived from the median per-child wall-clock of
+ * terminal siblings.
+ *
+ * Reuses the same `useInvestigationsForTarget` query the report card
+ * polls — React Query dedupes the 8s refresh across cards so all
+ * three (dispatcher, progress, report) share one network round.
+ *
+ * ETA is intentionally serial-upper-bound: median × remaining. The
+ * dispatcher fans children through ARQ workers in parallel, so the
+ * real wall-clock will be lower depending on the live vr-queue
+ * concurrency the operator owns. We surface the per-control median
+ * + the worst-case sum so the operator can scale mentally to their
+ * own worker count rather than reading a fabricated point estimate.
+ * If no terminal child has both timestamps yet, both numbers render
+ * as "—" — partial signals beat fake confidence.
+ *
+ * Same `inv.kind as string` workaround as MasvsReportCard — the
+ * InvestigationKind union doesn't yet include "masvs_audit" because
+ * InvestigationsListPage.tsx has an exhaustive `Record<Kind, Icon>`
+ * that would also need an icon assignment. Out of scope for U-1. */
+function MasvsProgressCard({
+  targetId,
+  packageLabel,
+}: {
+  targetId: string;
+  packageLabel: string | null;
+}) {
+  const { data: investigationsResult, isLoading } =
+    useInvestigationsForTarget(targetId);
+  const investigations = investigationsResult?.data ?? [];
+
+  // Mirror MasvsReportCard's parent-resolution rule: pick the most
+  // recent kind=masvs_audit parent for this target. created_at is
+  // an ISO-8601 string from the wire so localeCompare orders it
+  // chronologically without parsing dates.
+  const masvsParents = investigations
+    .filter(
+      (inv) =>
+        (inv.kind as string) === "masvs_audit" &&
+        inv.parent_investigation_id == null,
+    )
+    .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+  const parent = masvsParents[0] ?? null;
+
+  if (isLoading || parent == null) return null;
+
+  const children = investigations.filter(
+    (inv) => inv.parent_investigation_id === parent.id,
+  );
+  const totalChildren = children.length;
+
+  // Status buckets. Terminal = completed | failed | abandoned per
+  // InvestigationStatus in types.ts. Anything else (created, running,
+  // paused) bucketizes as "running" for the operator's overview —
+  // they don't need to distinguish the three at this card's level.
+  let completedCount = 0;
+  let runningCount = 0;
+  let failedCount = 0;
+  const terminalDurationsSec: number[] = [];
+  for (const c of children) {
+    if (c.status === "completed") completedCount++;
+    else if (c.status === "failed" || c.status === "abandoned")
+      failedCount++;
+    else runningCount++;
+
+    // Median wall-time signal — include every terminal child with
+    // both timestamps, including failures (they consumed worker
+    // time too). A failed child that timed out at the cost cap is
+    // a legitimate data point for the per-control distribution.
+    const isTerminal =
+      c.status === "completed" ||
+      c.status === "failed" ||
+      c.status === "abandoned";
+    if (!isTerminal || !c.started_at || !c.stopped_at) continue;
+    const start = new Date(c.started_at).getTime();
+    const stop = new Date(c.stopped_at).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(stop) || stop <= start)
+      continue;
+    terminalDurationsSec.push((stop - start) / 1000);
+  }
+  const terminalCount = completedCount + failedCount;
+  const remainingCount = totalChildren - terminalCount;
+  const percentComplete =
+    totalChildren > 0 ? Math.round((terminalCount / totalChildren) * 100) : 0;
+
+  // P50 of terminal-child wall-times.
+  let medianSec: number | null = null;
+  if (terminalDurationsSec.length > 0) {
+    const sorted = [...terminalDurationsSec].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    medianSec =
+      sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  }
+
+  const medianLabel =
+    medianSec != null ? formatDurationCompact(medianSec) : "—";
+  let etaLabel: string;
+  if (remainingCount === 0) etaLabel = "0s (all terminal)";
+  else if (medianSec == null) etaLabel = "—";
+  else etaLabel = formatDurationCompact(medianSec * remainingCount);
+
+  const packageDisplay = packageLabel ?? "this APK";
+
+  return (
+    <AilaCard techBorder glow>
+      <div className="space-y-3">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-semibold text-foreground">
+              MASVS audit progress · {packageDisplay}
+            </h2>
+            <p className="text-xs text-text-muted mt-1 font-mono break-all">
+              parent {parent.id.slice(0, 8)} · {parent.status}
+            </p>
+          </div>
+          <AilaBadge severity="info" size="sm">
+            {percentComplete}% complete
+          </AilaBadge>
+        </div>
+
+        {/* Linear progress bar — terminalCount/total. */}
+        <div
+          className="w-full h-2 bg-surface rounded overflow-hidden border border-border-default"
+          role="progressbar"
+          aria-valuenow={percentComplete}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="MASVS audit child completion"
+        >
+          <div
+            className="h-full bg-accent transition-all duration-500"
+            style={{ width: `${percentComplete}%` }}
+          />
+        </div>
+
+        {/* Count tiles */}
+        <dl className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+          <div>
+            <dt className="text-text-muted">Total</dt>
+            <dd className="font-mono text-foreground text-sm">
+              {totalChildren}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-text-muted">Completed</dt>
+            <dd className="font-mono text-foreground text-sm">
+              {completedCount}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-text-muted">Running</dt>
+            <dd className="font-mono text-foreground text-sm">
+              {runningCount}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-text-muted">Failed</dt>
+            <dd className="font-mono text-foreground text-sm">
+              {failedCount}
+            </dd>
+          </div>
+        </dl>
+
+        {/* Timing block — separated by a divider so the operator's
+            eye groups counts vs estimates. */}
+        <dl className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs border-t border-border-default pt-3">
+          <div>
+            <dt className="text-text-muted">
+              Median wall-time per child
+            </dt>
+            <dd className="font-mono text-foreground">{medianLabel}</dd>
+          </div>
+          <div>
+            <dt className="text-text-muted">ETA (serial upper bound)</dt>
+            <dd className="font-mono text-foreground">{etaLabel}</dd>
+          </div>
+        </dl>
+        <p className="text-xs text-text-muted">
+          ETA = median × remaining. Children run through ARQ workers
+          in parallel, so actual wall-clock scales down with the live
+          vr-queue concurrency on this host.
+        </p>
+      </div>
+    </AilaCard>
+  );
+}
+
+/** Render seconds as `Ns` / `Nm Ss` / `Nh Nm`. Used by U-1's progress
+ * card for the per-child median and ETA cells — kept compact so the
+ * AilaBadge-style tiles don't wrap on narrow viewports. */
+function formatDurationCompact(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
 /** R-4 report-download card. Sibling of MasvsAuditCard: appears once
  * the operator has dispatched a MASVS audit for this target. The
  * dispatcher (D-1) creates one parent VRInvestigation with
@@ -1203,6 +1409,25 @@ export function TargetDetailPage() {
         && target.apk_overview?.static_summary
         && Object.keys(target.apk_overview.static_summary).length > 0 && (
         <MasvsAuditCard
+          targetId={target.id}
+          packageLabel={
+            typeof target.apk_overview.static_summary.package === "string"
+              ? (target.apk_overview.static_summary.package as string)
+              : target.android_package_name ?? null
+          }
+        />
+      )}
+
+      {/* U-1 progress card. Same gate as the dispatcher (above) and
+          the report card (below) — APK kinds with STATIC_SUMMARY.
+          The card self-hides until a parent masvs_audit row exists,
+          so on a fresh APK only the dispatcher renders. Once a
+          dispatch has fired, the card surfaces live counts +
+          per-child median wall-time + serial-upper-bound ETA. */}
+      {target.kind === "android_apk"
+        && target.apk_overview?.static_summary
+        && Object.keys(target.apk_overview.static_summary).length > 0 && (
+        <MasvsProgressCard
           targetId={target.id}
           packageLabel={
             typeof target.apk_overview.static_summary.package === "string"
