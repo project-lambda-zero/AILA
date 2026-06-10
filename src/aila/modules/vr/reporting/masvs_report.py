@@ -352,21 +352,31 @@ async def collect_findings(parent_id: str) -> MasvsAuditAggregate:
 # black text on the cell so badge contrast holds up even when the
 # reader prints the PDF on a monochrome printer — the text reads
 # either way).
+# Verdict colors: red for vulnerabilities, green for compliant, grey
+# for inapplicable, amber for not-yet-conclusive. Picked so a tired
+# reviewer skimming the report at 3am can't confuse "we found a
+# vulnerability" with "we found that this is fine" — the older labels
+# both contained the word "finding" and read the same on a similar-
+# toned badge.
 _VERDICT_COLOR: dict[MasvsVerdict, colors.Color] = {
-    MasvsVerdict.FINDING: colors.HexColor("#ff5f87"),         # alert pink
-    MasvsVerdict.NO_FINDING: colors.HexColor("#97dbbe"),      # mint
-    MasvsVerdict.NOT_APPLICABLE: colors.HexColor("#aac8e0"),  # muted blue
-    MasvsVerdict.INCONCLUSIVE: colors.HexColor("#d7afd7"),    # orchid
+    MasvsVerdict.FINDING: colors.HexColor("#d83b3b"),         # hard red
+    MasvsVerdict.NO_FINDING: colors.HexColor("#2e9b5a"),      # solid green
+    MasvsVerdict.NOT_APPLICABLE: colors.HexColor("#7c7c8a"),  # neutral grey
+    MasvsVerdict.INCONCLUSIVE: colors.HexColor("#d99a2c"),    # amber
 }
 
-# Verdict → uppercase label used on badges and in count headers. Kept
-# stable so a screen reader / text extraction always lands on the same
-# strings regardless of source code value names.
+# Verdict → uppercase label used on badges and in count headers. The
+# words must read unambiguously at a glance. "FINDING" and "NO FINDING"
+# both contained the word "finding" and were visually indistinguishable
+# from each other when a reviewer scanned a long report. Switching to
+# the security-audit standard PASS / FAIL / N/A / REVIEW so the badge
+# verbatim tells the reviewer "this control is good", "this control is
+# broken", "doesn't apply to this APK", or "we couldn't determine".
 _VERDICT_LABEL: dict[MasvsVerdict, str] = {
-    MasvsVerdict.FINDING: "FINDING",
-    MasvsVerdict.NO_FINDING: "NO FINDING",
-    MasvsVerdict.NOT_APPLICABLE: "NOT APPLICABLE",
-    MasvsVerdict.INCONCLUSIVE: "INCONCLUSIVE",
+    MasvsVerdict.FINDING: "FAIL",
+    MasvsVerdict.NO_FINDING: "PASS",
+    MasvsVerdict.NOT_APPLICABLE: "N/A",
+    MasvsVerdict.INCONCLUSIVE: "REVIEW",
 }
 
 # Display order for the executive-summary count grid and the per-row
@@ -469,7 +479,7 @@ def _overall_posture(
     """
     findings = summary_counts.get(MasvsVerdict.FINDING, 0)
     if findings > 0:
-        word = "FINDING" if findings == 1 else "FINDINGS"
+        word = "FAILING CONTROL" if findings == 1 else "FAILING CONTROLS"
         return (f"{findings} {word}", _VERDICT_COLOR[MasvsVerdict.FINDING])
     inconclusive = summary_counts.get(MasvsVerdict.INCONCLUSIVE, 0)
     if inconclusive > 0:
@@ -477,10 +487,10 @@ def _overall_posture(
             "AUDIT IN PROGRESS"
             if summary_counts.get(MasvsVerdict.NO_FINDING, 0) == 0
             and summary_counts.get(MasvsVerdict.NOT_APPLICABLE, 0) == 0
-            else "PARTIAL — INCONCLUSIVE CONTROLS REMAIN",
+            else f"{inconclusive} CONTROLS NEED REVIEW",
             _VERDICT_COLOR[MasvsVerdict.INCONCLUSIVE],
         )
-    return ("NO COMPLIANCE GAPS DETECTED", _VERDICT_COLOR[MasvsVerdict.NO_FINDING])
+    return ("ALL CONTROLS PASS", _VERDICT_COLOR[MasvsVerdict.NO_FINDING])
 
 
 def _append_cover(
