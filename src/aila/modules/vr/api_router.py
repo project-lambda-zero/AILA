@@ -3200,7 +3200,6 @@ def create_vr_router() -> APIRouter:
         aggregate: Any,
         target_summary: Any,
         handles: dict[str, Any],
-        request: Request,
     ) -> None:
         """Run the section-writer agent for every verdict in the
         aggregate that doesn't have a fresh cached
@@ -3471,7 +3470,7 @@ def create_vr_router() -> APIRouter:
         # PDF downloads skip the LLM round-trip. Failures fall back
         # to rendering the raw agent_summary (PDF still ships).
         await _populate_report_sections(
-            aggregate, target_summary, handles_dict, request,
+            aggregate, target_summary, handles_dict,
         )
 
         # build_pdf is sync (CPU-bound ReportLab render). The
