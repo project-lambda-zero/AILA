@@ -56,6 +56,524 @@ __all__ = [
 CATALOG_VERSION: str = "1.4.2-aila"
 
 
+_ARCH_CONTROLS: tuple[MasvsControl, ...] = (
+    MasvsControl(
+        id="MSTG-ARCH-1",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L1,
+        title="All app components are identified and known to be needed.",
+        description=(
+            "Every binary class, native library, asset, manifest-declared component "
+            "(Activity / Service / Receiver / Provider), and bundled SDK consumes "
+            "attack surface: unused Activities may be exported, unused permissions "
+            "leak data, unused SDKs ship CVEs the team is not tracking. The "
+            "verification target is that the team can point at every component in "
+            "the shipped APK and justify its presence — anything reachable via "
+            "PackageManager.getInstalledPackages or unzip -l on the APK that the "
+            "team cannot explain is a finding. ARCH controls are process / "
+            "documentation requirements: the audit verdict here is whether the team "
+            "MAINTAINS such an inventory, not whether the APK alone proves it."
+        ),
+        verification_steps=(
+            "Run apkanalyzer on the APK and list every declared <activity>, "
+            "<service>, <receiver>, <provider>, and exported attribute. Cross-"
+            "reference against the team's component inventory document — if no "
+            "inventory exists, that's the finding.",
+            "List every bundled jar / aar / so under the APK lib/ and bundled "
+            "classes*.dex via dexdump — confirm the team can name the source "
+            "module / SDK / library for each, including transitive Gradle deps. "
+            "Mystery .so files are an immediate finding.",
+            "Search for <activity android:exported=\"true\"> and <receiver "
+            "android:exported=\"true\"> entries — confirm each is intentionally "
+            "external-facing (deeplink target, push receiver) and protected by a "
+            "signature-level permission where appropriate.",
+        ),
+        relevant_apis=(
+            "android.content.pm.PackageManager.getInstalledPackages",
+            "android.content.pm.PackageManager.getActivityInfo",
+            "android.content.pm.PackageManager.getServiceInfo",
+        ),
+        evidence_hints=(
+            "AndroidManifest.xml",
+            "<activity",
+            "<service",
+            "<receiver",
+            "<provider",
+            "android:exported",
+            "uses-permission",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-ARCH-2",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L1,
+        title=(
+            "Security controls are never enforced only on the client side, but on "
+            "the respective remote endpoints."
+        ),
+        description=(
+            "Every check the client performs alone — input validation, role / "
+            "permission filtering, rate limiting, business-rule enforcement, fraud "
+            "scoring — runs in an environment the user controls and can bypass "
+            "with a repackaged APK or a Frida hook. The verification target is "
+            "that for every security-relevant decision, the SAME check exists at "
+            "the server endpoint and the client check is purely cosmetic / UX "
+            "(hide-disabled-button rather than enforce). Findings: input "
+            "validation only in client, role-based view filtering only in client, "
+            "balance / limit checks only in client (the client sends 'transfer "
+            "$X' and the server trusts the client's claim it's within limit)."
+        ),
+        verification_steps=(
+            "Enumerate client-side validation paths: TextInputLayout error "
+            "messages, isFormValid() booleans, Retrofit @Body Pojo with @NotNull "
+            "annotations. For each, confirm the same validation exists in the "
+            "server-side schema / handler (out-of-scope for APK alone — verdict "
+            "becomes 'requires server-side verification').",
+            "Find balance / limit / quota checks in the client (if (amount > "
+            "userLimit) return errror) and confirm these are advisory UX checks "
+            "with the SERVER doing the actual enforcement. Client-side limits "
+            "that are not also enforced server-side are a finding even if the "
+            "server check exists, because the client-side path conveys "
+            "implementation details an attacker can use.",
+            "Search for role / permission checks via client-resident flags "
+            "(isAdmin, isPremium, role == 'manager'). Each is a finding because "
+            "the client can flip them; the server must derive role from the "
+            "authenticated identity, never trust client-claimed role.",
+        ),
+        relevant_apis=(
+            "retrofit2.Retrofit",
+            "com.google.gson.Gson",
+            "android.text.InputFilter",
+            "androidx.lifecycle.ViewModel",
+        ),
+        evidence_hints=(
+            "isFormValid",
+            "isAdmin",
+            "isPremium",
+            "userLimit",
+            "clientValidation",
+            "InputFilter",
+            "validateOnClient",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-ARCH-3",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L1,
+        title=(
+            "A high-level architecture for the mobile app and all connected remote "
+            "services has been defined and security has been addressed in that "
+            "architecture."
+        ),
+        description=(
+            "An architecture document drawn before the first line of code lets the "
+            "team reason about trust boundaries, data flow, and security control "
+            "placement deliberately rather than reactively. Without it, every "
+            "later security review starts from scratch by reverse-engineering the "
+            "shipped APK. The verification target is presence of such a document "
+            "(NOT something the APK itself can prove — this control's verdict on "
+            "an APK-only audit is 'requires architecture document review'). "
+            "Documents must enumerate: app components, server endpoints, third-"
+            "party SDKs, data flow paths between them, trust boundaries, and "
+            "specific security controls at each boundary."
+        ),
+        verification_steps=(
+            "Request the architecture document from the team. Verify it lists "
+            "every component visible in the APK (Activities, Services, SDKs) "
+            "plus the server endpoints they call.",
+            "Verify trust boundaries are explicitly drawn — at minimum: device "
+            "boundary (untrusted), TLS termination boundary (semi-trusted), "
+            "server-side service mesh boundary (trusted) — with the controls at "
+            "each labeled.",
+            "Verify the document is current (revised within the last 6 months "
+            "OR matched against the latest release version) — stale architecture "
+            "documents are equivalent to no document.",
+        ),
+        relevant_apis=(),
+        evidence_hints=(
+            "architecture",
+            "trust_boundary",
+            "data_flow",
+            "threat_surface",
+            "ARCHITECTURE.md",
+            "DESIGN.md",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-ARCH-4",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L1,
+        title=(
+            "Data considered sensitive in the context of the mobile app is clearly "
+            "identified."
+        ),
+        description=(
+            "The team must produce a sensitive-data classification (sometimes "
+            "called a data inventory or data classification matrix) listing every "
+            "data category the app touches (credentials, PII, payment data, "
+            "session tokens, telemetry, support logs, user-generated content) "
+            "with a sensitivity tier (public / internal / confidential / "
+            "regulated) and a handling policy per tier. Without this, every "
+            "individual MASVS-STORAGE / NETWORK / CRYPTO control is impossible "
+            "to verify because there's no canonical answer to 'is THIS field "
+            "sensitive?'. The verification target is presence of the document "
+            "AND alignment between the document's claims and the actual APK "
+            "behavior (a category labeled 'never persisted' that the APK persists "
+            "is a finding even without breaking any other control)."
+        ),
+        verification_steps=(
+            "Request the data classification matrix. Verify every persisted / "
+            "transmitted / logged data class in the APK appears in it with an "
+            "explicit sensitivity tier.",
+            "Spot-check the APK against the matrix: pick 5 data fields from the "
+            "matrix, find them in the APK code, and verify the actual handling "
+            "matches the documented tier (e.g. confidential field marked "
+            "'EncryptedSharedPreferences only' should NOT be in plain "
+            "SharedPreferences).",
+            "Look for data classes in the APK that are NOT in the matrix — any "
+            "such gap is a finding (the team is handling data they have not "
+            "classified).",
+        ),
+        relevant_apis=(),
+        evidence_hints=(
+            "data_classification",
+            "sensitivity_tier",
+            "PII",
+            "confidential",
+            "data_inventory",
+            "DATA_CLASSIFICATION.md",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-ARCH-5",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L2,
+        title=(
+            "All app components are defined in terms of the business functions "
+            "and/or security functions they provide."
+        ),
+        description=(
+            "Extension of ARCH-1 to L2: every component must be tagged with the "
+            "business function it serves (login, balance display, transfer flow) "
+            "AND/OR the security function (audit logging, anti-fraud signal "
+            "collection, key management). Without this mapping, deciding whether "
+            "to keep, refactor, or remove a component during a security review is "
+            "guesswork. The verification target is presence of a component "
+            "function matrix and alignment with the actual APK component list."
+        ),
+        verification_steps=(
+            "Request the component-function matrix. Verify every Activity / "
+            "Service / Receiver in the APK manifest has a documented function "
+            "tag.",
+            "Spot-check 5 components and verify the documented function matches "
+            "the code (a Service tagged 'session refresh' should actually do "
+            "OAuth refresh work, not crypto-currency mining).",
+            "Flag any component with no function tag OR a function tag that "
+            "doesn't match the code — both are findings.",
+        ),
+        relevant_apis=(),
+        evidence_hints=(
+            "component_function",
+            "business_function",
+            "security_function",
+            "component_matrix",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-ARCH-6",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L2,
+        title=(
+            "A threat model for the mobile app and the associated remote services "
+            "has been produced that identifies potential threats and "
+            "countermeasures."
+        ),
+        description=(
+            "Threat modeling (STRIDE, PASTA, attack-tree) produces a structured "
+            "list of threats against the system with assigned likelihood, impact, "
+            "and chosen countermeasure (mitigated / accepted / transferred). "
+            "Without it, the team is shipping security controls without knowing "
+            "which threats they address. The verification target is presence of "
+            "a current threat model AND traceability from each MASVS-V1 through "
+            "MASVS-V8 control implementation back to a threat in the model."
+        ),
+        verification_steps=(
+            "Request the threat model document. Verify it uses a structured "
+            "methodology (STRIDE per component, PASTA, attack tree) — narrative "
+            "prose without a structured list is a finding.",
+            "Verify each MASVS-L1/L2 control the team claims to implement traces "
+            "back to a specific threat in the model — implementing controls "
+            "without a documented threat is gold-plating; documented threats "
+            "without controls is a coverage gap.",
+            "Verify the threat model is current (re-reviewed within 12 months OR "
+            "since the last major feature release).",
+        ),
+        relevant_apis=(),
+        evidence_hints=(
+            "threat_model",
+            "STRIDE",
+            "PASTA",
+            "attack_tree",
+            "countermeasure",
+            "THREAT_MODEL.md",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-ARCH-7",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L2,
+        title="All security controls have a centralized implementation.",
+        description=(
+            "Duplicate security control implementations (5 different "
+            "TrustManager subclasses, 3 different password-strength checkers, 2 "
+            "different Keystore wrappers) guarantee inconsistent behavior, "
+            "missed patches, and review fatigue. The verification target is that "
+            "each security control has ONE canonical implementation that every "
+            "caller routes through — a single SecurityModule / "
+            "CredentialManager / NetworkSecurityFactory whose change history is "
+            "the single source of truth for that control."
+        ),
+        verification_steps=(
+            "List every TrustManager / HostnameVerifier / Cipher / KeyStore "
+            "wrapper class in the APK. Confirm only 1-2 implementations per "
+            "category — N+ copies indicate fragmented implementations and a "
+            "finding.",
+            "Confirm callers actually use the canonical class — search for "
+            "OkHttpClient.Builder() constructions and verify each routes "
+            "through the same security configuration function rather than "
+            "constructing per-caller.",
+            "Verify the canonical security module has a recent change date and "
+            "is owned by a security-focused engineer (vs spread across the team "
+            "with nobody owning the whole).",
+        ),
+        relevant_apis=(
+            "javax.net.ssl.SSLContext",
+            "javax.net.ssl.X509TrustManager",
+            "okhttp3.OkHttpClient$Builder",
+            "java.security.KeyStore",
+        ),
+        evidence_hints=(
+            "SecurityModule",
+            "SecurityFactory",
+            "CredentialManager",
+            "NetworkSecurityConfig",
+            "centralized",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-ARCH-8",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L2,
+        title=(
+            "There is an explicit policy for how cryptographic keys (if any) are "
+            "managed, and the lifecycle of cryptographic keys is enforced. "
+            "Ideally, follow a key management standard such as NIST SP 800-57."
+        ),
+        description=(
+            "Key management policy must define: key generation method (Keystore "
+            "vs PBKDF2), key derivation parameters, key strength, key rotation "
+            "interval, key destruction process, key compromise response. "
+            "Without an explicit policy, key handling is ad-hoc and impossible "
+            "to audit. The verification target is presence of a written policy "
+            "AND alignment between the policy and the APK's actual key usage."
+        ),
+        verification_steps=(
+            "Request the key management policy. Verify it names a standard "
+            "(NIST SP 800-57, FIPS 140-2/3) and defines lifecycle stages for "
+            "each key class (master key, data encryption key, session key, "
+            "signing key).",
+            "Cross-reference the policy against the APK's actual KeyGen"
+            "ParameterSpec configurations — keys generated outside the policy "
+            "(different algorithm, shorter key length, no rotation) are "
+            "findings.",
+            "Verify the policy includes a key compromise response (rotate, "
+            "force re-auth, wipe credential store) and that the response path "
+            "is implemented in the APK (search for KeyStore.deleteEntry on the "
+            "credential-rotation path).",
+        ),
+        relevant_apis=(
+            "android.security.keystore.KeyGenParameterSpec",
+            "java.security.KeyStore",
+            "javax.crypto.KeyGenerator",
+            "java.security.KeyStore.deleteEntry",
+        ),
+        evidence_hints=(
+            "key_management",
+            "key_rotation",
+            "NIST_SP_800-57",
+            "FIPS_140",
+            "KEY_POLICY.md",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-ARCH-9",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L2,
+        title="A mechanism for enforcing updates of the mobile app exists.",
+        description=(
+            "When a vulnerability ships in version N, the team needs the user "
+            "to be on version N+1 — fast. Two enforcement paths: server-side "
+            "(API responses include a 'minimum_supported_version' field; the "
+            "client compares and blocks if BuildConfig.VERSION_NAME is below it) "
+            "and Play-side (in-app update API forcing immediate / flexible "
+            "update via Play Core). The verification target is presence of at "
+            "least one such mechanism, exercised on a non-trivial set of "
+            "endpoints (not just at app launch — version checks at app launch "
+            "alone allow a user to use a stale app indefinitely if they never "
+            "background it)."
+        ),
+        verification_steps=(
+            "Search for AppUpdateManager (com.google.android.play.core.appupdate) "
+            "usage and confirm it requests update info on app launch + on "
+            "resume + on a periodic timer.",
+            "Search for server-side version checks: API response handlers that "
+            "compare BuildConfig.VERSION_NAME / BuildConfig.VERSION_CODE "
+            "against a server-supplied minimum and either show a blocking "
+            "modal or redirect to Play Store.",
+            "Verify the block path is actually blocking — confirm the modal "
+            "uses setCancelable(false) and that no other code path can dismiss "
+            "it (DialogFragment.dismiss / Activity.finish bypasses).",
+        ),
+        relevant_apis=(
+            "com.google.android.play.core.appupdate.AppUpdateManager",
+            "com.google.android.play.core.appupdate.AppUpdateInfo",
+            "android.content.pm.PackageManager.getPackageInfo",
+        ),
+        evidence_hints=(
+            "AppUpdateManager",
+            "AppUpdateInfo",
+            "BuildConfig.VERSION_NAME",
+            "minimum_version",
+            "force_update",
+            "STALE_VERSION",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-ARCH-10",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L2,
+        title="Security is addressed within all parts of the software development lifecycle.",
+        description=(
+            "Security must be part of every SDLC stage: requirements (threat "
+            "model), design (architecture review), implementation (secure "
+            "coding standards), testing (SAST + DAST + dependency scanning), "
+            "deployment (signed releases + key custody), maintenance (security "
+            "patch SLA + dependency monitoring). The verification target is "
+            "presence of SDLC artifacts at each stage AND evidence that "
+            "security gates fire (PRs blocked on SAST findings, releases "
+            "blocked on unpatched CVEs)."
+        ),
+        verification_steps=(
+            "Request SDLC documentation. Verify each stage names a security "
+            "activity (threat model in requirements, design review in design, "
+            "secure coding standard in implementation, SAST in CI/CD, signed "
+            "release in deployment, CVE monitoring in maintenance).",
+            "Check CI/CD pipeline for security gates: SAST tool (Semgrep, "
+            "MobSF, Snyk Code), dependency scanner (Dependabot, Snyk, OWASP "
+            "Dependency-Check), signed release config. Absence is a finding.",
+            "Check release / hotfix history for security patch SLA — verify "
+            "the team has shipped a security patch within 30 days of a known "
+            "high-severity CVE in a dependency. Absence indicates either no "
+            "monitoring or no urgency.",
+        ),
+        relevant_apis=(),
+        evidence_hints=(
+            "SDLC",
+            "CI_CD",
+            "Semgrep",
+            "MobSF",
+            "Snyk",
+            "Dependabot",
+            "Dependency-Check",
+            "security_gate",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-ARCH-11",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L2,
+        title="A responsible disclosure policy is in place and effectively applied.",
+        description=(
+            "External security researchers must have a clear, low-friction "
+            "channel to report vulnerabilities, AND a documented response SLA. "
+            "Without this, researchers either publish without warning (zero-day "
+            "in the wild) or sell to brokers who do. The verification target is "
+            "presence of a security.txt file, a published security contact "
+            "address, a documented response timeline, and (ideally) a bug "
+            "bounty program with payout history."
+        ),
+        verification_steps=(
+            "Check the app's documented company / product site for "
+            "/.well-known/security.txt or /security or /responsible-disclosure "
+            "pages. Absence is a finding even on a security-mature team.",
+            "Verify the contact email / form is monitored — send a low-impact "
+            "test report and confirm a human response within the policy SLA.",
+            "Verify the team has a track record of public acknowledgements / "
+            "CVE assignments to external researchers (HackerOne / Bugcrowd "
+            "program history, GitHub Security Advisories filed). Absence "
+            "suggests an unused policy.",
+        ),
+        relevant_apis=(),
+        evidence_hints=(
+            "security.txt",
+            "responsible_disclosure",
+            "bug_bounty",
+            "HackerOne",
+            "Bugcrowd",
+            "security@",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-ARCH-12",
+        group=MasvsGroup.ARCH,
+        level=MasvsLevel.L1,
+        title="The app should comply with privacy laws and regulations.",
+        description=(
+            "Apps handling EU users must comply with GDPR (lawful basis, "
+            "consent, right to access / erasure / rectification, data minimization, "
+            "DPO contact, DPIA for high-risk processing). California users add "
+            "CCPA / CPRA. Brazilian users add LGPD. Healthcare data in the US "
+            "adds HIPAA. Each regime has APK-observable requirements: privacy "
+            "policy URL, consent UI, data subject access request (DSAR) "
+            "endpoint, data deletion endpoint, consent withdrawal. The "
+            "verification target is presence of these surfaces in the APK plus "
+            "a documented mapping from each requirement to the implementing "
+            "code path."
+        ),
+        verification_steps=(
+            "Identify the jurisdictions the app serves (manifest locale list, "
+            "supported languages, country picker). Determine the applicable "
+            "privacy regimes (GDPR, CCPA, LGPD, HIPAA).",
+            "For each regime, verify the APK includes its required surfaces: "
+            "GDPR — consent UI, privacy policy URL, DSAR / delete-account "
+            "flow, withdrawal-of-consent toggle. CCPA — 'Do Not Sell My "
+            "Information' link. HIPAA — encryption attestation, audit log "
+            "access.",
+            "Verify the privacy policy URL is reachable and current, and that "
+            "the DSAR / delete-account flow actually completes (does not fall "
+            "into a 'contact support' dead end).",
+        ),
+        relevant_apis=(
+            "android.app.AlertDialog",
+            "androidx.preference.PreferenceFragmentCompat",
+            "android.content.Intent.ACTION_VIEW",
+            "android.webkit.WebView",
+        ),
+        evidence_hints=(
+            "privacy_policy",
+            "consent",
+            "GDPR",
+            "CCPA",
+            "LGPD",
+            "HIPAA",
+            "DSAR",
+            "delete_account",
+            "do_not_sell",
+        ),
+    ),
+)
+
+
 _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
     MasvsControl(
         id="MSTG-STORAGE-1",
@@ -4571,6 +5089,7 @@ _PRIVACY_CONTROLS: tuple[MasvsControl, ...] = (
 
 
 MASVS_CONTROLS: tuple[MasvsControl, ...] = (
+    *_ARCH_CONTROLS,
     *_STORAGE_CONTROLS,
     *_CRYPTO_CONTROLS,
     *_AUTH_CONTROLS,
