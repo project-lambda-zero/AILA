@@ -150,6 +150,36 @@ def _suggest_nearest_paths(
     return suggestions
 
 
+def _looks_like_class_basename(name: str, file_path: str) -> bool:
+    """True iff ``name`` looks like the class declared in ``file_path``.
+
+    Heuristic for the class-rewrite auto-fallback in read_function:
+    Java + Kotlin convention is one top-level public class per file,
+    named identically to the file basename. So when the agent asks
+    for ``read_function(name="UcsLib", file_path=".../UcsLib.java")``,
+    name == file basename without extension is a near-certain signal
+    that the agent meant "give me the class" rather than "give me a
+    method called UcsLib".
+
+    Conservative: requires PascalCase first char so we don't rewrite
+    legitimately-failed method lookups like
+    ``read_function(name="checkNativeLibrary", file_path="...UcsLib.java")``
+    where the method actually exists in the file but the indexer
+    didn't catch it. False on lowercase names, names with parens,
+    names with dots, names not matching the basename.
+    """
+    if not name or not file_path:
+        return False
+    if not name[0].isupper():
+        return False
+    if any(c in name for c in "().<> "):
+        return False
+    # Extract basename without extension. Handle both / and \.
+    bare = file_path.replace("\\", "/").rsplit("/", 1)[-1]
+    stem = bare.rsplit(".", 1)[0] if "." in bare else bare
+    return name == stem
+
+
 def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
     """Project an MCP tool catalog entry into the form the prompt
     builder + agent need.
@@ -429,10 +459,72 @@ class AuditMcpBridgeTool(Tool):
                         and "not indexed" in err.lower()
                         and isinstance(normalized_kwargs.get("name"), str)
                     ):
+                        name = str(normalized_kwargs["name"])
+                        file_hint = str(normalized_kwargs.get("file_path") or "")
+                        # Class-rewrite auto-fallback: when the agent
+                        # asks for read_function(name="<Class>") and
+                        # name matches the file basename, they almost
+                        # certainly meant "give me the class source".
+                        # Trailmark indexes function bodies, not class
+                        # containers — so the lookup fails. Even for
+                        # methods INSIDE the class, the indexer
+                        # sometimes fails (JADX-decompiled Huawei SDK
+                        # files with `/* JADX INFO: loaded from:
+                        # classes5.dex */` markers + obfuscated
+                        # imports defeat the Java parser). The agent
+                        # then loops 20+ times on the same broken
+                        # call. Transparently rewrite to read_lines
+                        # and return the class source as if it were a
+                        # function body — the agent reads, learns,
+                        # moves on.
+                        if file_hint and _looks_like_class_basename(name, file_hint):
+                            rewrite_kwargs = {
+                                "index_id": normalized_kwargs.get("index_id") or "",
+                                "file_path": file_hint,
+                                "start": 1,
+                                "end": 300,
+                            }
+                            rewrite_result = await self._read_lines_local(rewrite_kwargs)
+                            if rewrite_result.get("status") == "ready":
+                                logging.getLogger(__name__).info(
+                                    "read_function CLASS_REWRITE %r → read_lines(%s, 1-300)",
+                                    name, file_hint,
+                                )
+                                content = rewrite_result.get("content", "")
+                                total_lines = rewrite_result.get("total_lines_in_file", 0)
+                                ctx["status"] = "ready"
+                                payload = {
+                                    "status": "ready",
+                                    "name": name,
+                                    "file_path": file_hint,
+                                    "start_line": 1,
+                                    "end_line": rewrite_result.get("end_line", 0),
+                                    "total_lines_in_file": total_lines,
+                                    "content": content,
+                                    "_bridge_note": (
+                                        f"{name!r} is a CLASS, not a function — "
+                                        f"audit-mcp's function index does not "
+                                        f"track class containers. Auto-rewrote "
+                                        f"to read_lines(file_path={file_hint!r}, "
+                                        f"start=1, end=300) and returned the "
+                                        f"class source below. To inspect a "
+                                        f"specific method INSIDE this class, "
+                                        f"call read_function with the method "
+                                        f"name (e.g. checkNativeLibrary, "
+                                        f"decryptKek) OR read_lines with a "
+                                        f"specific line range. If the file is "
+                                        f"larger than 300 lines, call "
+                                        f"read_lines again with start=301."
+                                    ),
+                                }
+                                # Skip the nearest-names suggestion
+                                # below — we already gave the agent
+                                # the file content.
+                                return payload  # noqa: TRY300
                         suggestions = await self._suggest_function_names(
                             base=base,
                             index_id=normalized_kwargs.get("index_id") or "",
-                            name=str(normalized_kwargs["name"]),
+                            name=name,
                         )
                         if suggestions:
                             payload["error"] = (
