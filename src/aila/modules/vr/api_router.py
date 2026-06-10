@@ -3331,11 +3331,11 @@ def create_vr_router() -> APIRouter:
         # render directly on the event loop. The aggregate is bounded
         # (≤46 L1 verdicts), so the render stays well inside ASGI
         # request-budget territory.
-        import json as _json_local  # noqa: PLC0415
+        import json  # noqa: PLC0415
         handles_dict: dict[str, Any] = {}
         try:
             if target.mcp_handles_json:
-                handles_dict = _json_local.loads(target.mcp_handles_json)
+                handles_dict = json.loads(target.mcp_handles_json)
         except (ValueError, TypeError):
             handles_dict = {}
         pdf_bytes = build_pdf(aggregate, target_summary, handles=handles_dict)
