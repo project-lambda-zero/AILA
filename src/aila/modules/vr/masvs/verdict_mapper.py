@@ -134,7 +134,7 @@ def child_outcome_to_verdict(
     # Branch 2 — refuted. Either the claim verifier emitted it on a
     # DIRECT_FINDING outcome (canonical post-synthesis path) or the
     # agent wrote it on an assessment_report outcome directly.
-    if verifier_verdict == "refuted" or _payload_says_refuted(payload):
+    if verifier_verdict == "refuted" or _payload_says_refuted(payload) or _payload_says_pass(payload):
         return MasvsControlVerdict(
             control_id=control.id,
             verdict=MasvsVerdict.NO_FINDING,
@@ -242,6 +242,76 @@ def _payload_says_refuted(payload: dict[str, Any]) -> bool:
         and verdict_raw.strip().lower() == "refuted"
     )
 
+
+
+# Natural-language indicators that the agent concluded the control is
+# COMPLIANT / PASSING / no vulnerability found — even when they
+# (incorrectly) labelled the outcome with kind=direct_finding. Agents
+# routinely use direct_finding as their default submit-kind regardless
+# of whether they actually found a vulnerability, so the audit_memo
+# system + the verifier signal alone don't catch every "we audited and
+# the app is fine" outcome. The mapper falls back to parsing the
+# ``payload['answer']`` text for these unambiguous PASS markers and
+# treats those as NO_FINDING.
+#
+# Order matters: longer phrases first so partial substrings of longer
+# matches don't trigger early. All checks are case-insensitive.
+_PASS_PHRASES: tuple[str, ...] = (
+    "no masvs violations found",
+    "no compliance gap",
+    "no compliance gaps",
+    "no violations found",
+    "no vulnerabilities found",
+    "no finding identified",
+    "audit complete: no",
+    "audit verdict: pass",
+    "audit verdict: compliant",
+    "audit result: pass",
+    "audit result: compliant",
+    "verdict: compliant",
+    "verdict: pass",
+    "fully compliant",
+    "is compliant with",
+    "complies with masvs",
+    "complies with mstg",
+)
+
+# Anti-pattern: even when one of the above is present, if the payload
+# also explicitly says FAIL / CRITICAL / GAP, the agent meant a real
+# finding (often mixed results — partial compliance with gaps). Don't
+# flip the verdict to NO_FINDING in that case.
+_FAIL_PHRASES: tuple[str, ...] = (
+    "audit verdict: fail",
+    "audit result: fail",
+    "partial compliance",
+    "critical gap",
+    "compliance gap detected",
+    "verdict: fail",
+    "finding: yes",
+    "violation detected",
+    "vulnerable to",
+)
+
+
+def _payload_says_pass(payload: dict[str, Any]) -> bool:
+    """Detect a natural-language PASS / compliant outcome.
+
+    Agents submit outcome_kind=direct_finding for both real
+    vulnerabilities AND audits that conclude the control is compliant.
+    Without a payload-text override, the mapper trusts outcome_kind
+    literally and renders 'audit found app is compliant' as a FAIL
+    badge — operator-observed and rejected. This helper scans the
+    ``answer`` field (the agent's free-text conclusion) for unambiguous
+    PASS markers and returns True only when at least one PASS phrase
+    is present AND no FAIL phrase is present.
+    """
+    answer_raw = payload.get("answer")
+    if not isinstance(answer_raw, str):
+        return False
+    text = answer_raw.lower()
+    if any(phrase in text for phrase in _FAIL_PHRASES):
+        return False
+    return any(phrase in text for phrase in _PASS_PHRASES)
 
 def _has_not_applicable_tag(payload: dict[str, Any]) -> bool:
     """Detect the agent's ``not_applicable`` tag in any of three places.
