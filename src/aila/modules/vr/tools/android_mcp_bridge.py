@@ -3,7 +3,7 @@
 Sibling of :class:`AuditMcpBridgeTool` (for source-graph audits) and
 :class:`IDABridgeTool` (for binary disassembly). The android-mcp server
 exposes Android-specific tools (apktool, jadx, androguard, MobSF, drozer,
-QARK, AndroBugs, LIEF, YARA-over-decompiled, apksigner, objection, frida,
+LIEF, YARA-over-decompiled, apksigner, objection, frida,
 adb, plus composite handlers) at the URL configured by the
 ``ANDROID_MCP_URL`` env var or ``vr.android_mcp_url`` config key. Default
 ``http://127.0.0.1:18823`` (android-mcp's documented HTTP bind).
@@ -129,7 +129,7 @@ class AndroidMcpBridgeTool(Tool):
     description = (
         "android-mcp Android APK audit bridge. Supports apktool_decode, "
         "jadx_decompile, androguard_summary, mobsf_scan, drozer_scan_apk, "
-        "qark_scan, androbugs_scan, lief_so analyze, yara_scan_dir, "
+        "lief_so analyze, yara_scan_dir, "
         "apksigner verify, objection patchapk / explore, frida helpers, "
         "adb facade, plus composite verify_capabilities / "
         "classify_behavior / compute_risk_score / find_secrets. "

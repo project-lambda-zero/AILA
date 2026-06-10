@@ -1808,14 +1808,14 @@ def _mcp_family_rule_for_kind(
             parts.append(
                 "For APK-specific facts — manifest, permissions, "
                 "signing certificates, behaviour classification, "
-                "MobSF / drozer / QARK / LIEF / YARA — "
+                "MobSF / drozer / LIEF / YARA — "
                 f"use **android_mcp** with `apk_path=\"{apk_path}\"`."
             )
         else:
             parts.append(
                 "For APK-specific facts — manifest, permissions, "
                 "signing certificates, behaviour classification, "
-                "MobSF / drozer / QARK / LIEF / YARA — "
+                "MobSF / drozer / LIEF / YARA — "
                 "use **android_mcp**. The bridge resolves the APK "
                 "path from the target descriptor automatically."
             )
@@ -2262,8 +2262,8 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
         # .so, Frida-resistant crypto .so etc.). Excluding ida_
         # headless previously forced agents to either skip native
         # analysis entirely or hallucinate calls to whichever
-        # android_mcp tool LOOKED native-adjacent (androbugs_scan,
-        # frida_*) which then errored every call. Including all
+        # android_mcp tool LOOKED native-adjacent (frida_*) which
+        # then errored every call. Including all
         # three gives the agent the actual right tool for every
         # facet of an APK target.
         return {"android_mcp", "audit_mcp", "ida_headless"}

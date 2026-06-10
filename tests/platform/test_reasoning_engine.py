@@ -133,6 +133,45 @@ def test_render_case_model_includes_contract_hypotheses_and_rejections() -> None
     assert "Rejected (do not re-propose" in rendered
 
 
+def test_render_case_model_partitions_tool_observables_across_three_mcp_servers() -> None:
+    """G-8: tool keys from all three MCP servers (audit_mcp, ida_headless,
+    android_mcp) must land in the uncapped "tool readings" bucket — not
+    the 15-key agent scratchpad bucket. Without this, android_mcp tool
+    observations (e.g. ``android_mcp.androguard_summary.apk_path=...``)
+    get evicted alongside agent scratchpad keys and the agent re-issues
+    APK static-summary calls it already paid for.
+    """
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    case_state = ReasoningCaseState(
+        observables={
+            "audit_mcp.read_function.name=Foo": "fn body",
+            "ida_headless.decompile.address=0x1234": "decompiled",
+            "android_mcp.androguard_summary.apk_path=/tmp/x.apk": "perms+certs",
+            "audit_mcp:legacy_colon_form": "still tool",
+            "android_mcp:legacy_colon_form": "still tool",
+            "_directive.pivot": "must not appear",
+            "sibling_h7": "agent scratchpad",
+            "mandatory_next": "agent scratchpad",
+        },
+    )
+
+    rendered = engine.render_case_model(case_state)
+
+    # All five tool-prefixed keys (3 dot + 2 colon) land under "tool readings".
+    assert "Observables — tool readings" in rendered
+    assert "audit_mcp.read_function.name=Foo = fn body" in rendered
+    assert "ida_headless.decompile.address=0x1234 = decompiled" in rendered
+    assert "android_mcp.androguard_summary.apk_path=/tmp/x.apk = perms+certs" in rendered
+    assert "audit_mcp:legacy_colon_form = still tool" in rendered
+    assert "android_mcp:legacy_colon_form = still tool" in rendered
+    # Agent scratchpad keys land separately.
+    assert "Observables — agent scratchpad (most recent 15):" in rendered
+    assert "sibling_h7 = agent scratchpad" in rendered
+    assert "mandatory_next = agent scratchpad" in rendered
+    # _directive.* is lifted to its own section, not rendered here.
+    assert "_directive.pivot" not in rendered
+
+
 def test_select_strategy_family_routes_mobile_and_vuln_cases() -> None:
     engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
     empty_state = ReasoningCaseState()

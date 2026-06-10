@@ -320,11 +320,16 @@ class CyberReasoningEngine:
         # re-calls read_function on names it already read.
         #
         # Tool keys are prefix-anchored: ``audit_mcp:*`` / ``audit_mcp.*``
-        # / ``ida_headless:*`` / ``ida_headless.*``. ``_directive.*`` is
-        # already lifted to its own top-of-prompt section so we drop them.
-        # Everything else is "agent-set scratchpad" — useful in moderation,
-        # hard-capped here too.
-        tool_prefixes = ("audit_mcp:", "audit_mcp.", "ida_headless:", "ida_headless.")
+        # / ``ida_headless:*`` / ``ida_headless.*`` / ``android_mcp:*``
+        # / ``android_mcp.*``. ``_directive.*`` is already lifted to its
+        # own top-of-prompt section so we drop them. Everything else is
+        # "agent-set scratchpad" — useful in moderation, hard-capped
+        # here too.
+        tool_prefixes = (
+            "audit_mcp:", "audit_mcp.",
+            "ida_headless:", "ida_headless.",
+            "android_mcp:", "android_mcp.",
+        )
         tool_obs: list[tuple[str, Any]] = []
         agent_obs: list[tuple[str, Any]] = []
         for k, v in case_state.observables.items():

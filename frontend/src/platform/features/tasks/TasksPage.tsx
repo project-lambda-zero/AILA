@@ -241,7 +241,7 @@ export function TasksPage() {
           <label className="font-mono text-xs text-text-muted" htmlFor="task-track">Track</label>
           <input
             id="task-track"
-            className="h-8 rounded-[2px] border border-border bg-base px-2.5 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors min-w-[120px]"
+            className="touch-target h-8 rounded-[2px] border border-border bg-base px-2.5 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors min-w-[120px]"
             type="text"
             value={trackFilter}
             onChange={(e) =>
@@ -254,7 +254,7 @@ export function TasksPage() {
           <label className="font-mono text-xs text-text-muted" htmlFor="task-status">Status</label>
           <select
             id="task-status"
-            className="h-8 rounded-[2px] border border-border bg-base px-2 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors"
+            className="touch-target h-8 rounded-[2px] border border-border bg-base px-2 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors"
             value={statusFilter ?? ""}
             onChange={(e) =>
               setSearchParams(updateSearchParams(searchParams, { status: e.target.value || null }))

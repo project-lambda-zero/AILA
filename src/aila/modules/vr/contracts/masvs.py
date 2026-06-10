@@ -189,6 +189,20 @@ class MasvsControlVerdict(BaseModel):
             "an answer field (audit_memo, no_primary_outcome, etc.)."
         ),
     )
+    report_section: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Structured per-control report subsection produced by the "
+            "section-writer agent (reporting/section_writer.py). When "
+            "present, the PDF renderer uses this in place of the raw "
+            "agent_summary — fields are sized for direct rendering "
+            "(headline / evidence list / risk / remediation / "
+            "why_it_matters / confidence_note). Populated lazily by the "
+            "PDF endpoint and cached on outcome.payload_json so the "
+            "53-LLM-calls-per-PDF cost only pays out once per audit "
+            "snapshot."
+        ),
+    )
 
 
 class MasvsAuditAggregate(BaseModel):

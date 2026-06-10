@@ -3196,6 +3196,136 @@ def create_vr_router() -> APIRouter:
             ),
         )
 
+    async def _populate_report_sections(
+        aggregate: Any,
+        target_summary: Any,
+        handles: dict[str, Any],
+        request: Request,
+    ) -> None:
+        """Run the section-writer agent for every verdict in the
+        aggregate that doesn't have a fresh cached
+        ``_report_section`` on its outcome. Mutates the verdicts
+        in-place so ``build_pdf`` sees the structured sections.
+
+        Concurrency: writer calls run in parallel via
+        ``asyncio.gather`` — 53 cached-and-fresh verdicts cost ~0ms;
+        53 cache-misses cost ~one round-trip per control (~30s
+        wall-clock at OmniRoute's typical structured-output latency)
+        instead of ~30s × 53 = 25min sequential.
+        """
+        import asyncio  # noqa: PLC0415
+        import json  # noqa: PLC0415
+        from aila.modules.vr.db_models import (  # noqa: PLC0415
+            VRInvestigationOutcomeRecord,
+        )
+        from aila.modules.vr.masvs.catalog import MASVS_CONTROLS  # noqa: PLC0415
+        from aila.modules.vr.reporting.section_writer import (  # noqa: PLC0415
+            generate_section,
+            is_cache_fresh,
+        )
+        from aila.platform.llm.client import AilaLLMClient  # noqa: PLC0415
+
+        catalog_by_id = {c.id: c for c in MASVS_CONTROLS}
+        apk_overview = target_summary.apk_overview or {}
+        static = apk_overview.get("static_summary") or {}
+        apk_context = {
+            "package": static.get("package") or target_summary.display_name,
+            "version": static.get("version_name"),
+            "version_code": static.get("version_code"),
+            "min_sdk": static.get("min_sdk"),
+            "target_sdk": static.get("target_sdk"),
+            "domain_hint": (
+                "banking / telco self-service" if "examplecorp" in (
+                    (static.get("package") or "").lower()
+                ) else None
+            ),
+        }
+
+        # Bulk-load outcome rows once so we can read cached sections
+        # AND write fresh ones in a single transaction.
+        outcome_ids = [
+            v.primary_outcome_id for v in aggregate.verdicts
+            if v.primary_outcome_id
+        ]
+        outcome_rows: dict[str, VRInvestigationOutcomeRecord] = {}
+        if outcome_ids:
+            async with UnitOfWork() as uow:
+                rows = (
+                    await uow.session.exec(
+                        select(VRInvestigationOutcomeRecord).where(
+                            VRInvestigationOutcomeRecord.id.in_(outcome_ids),
+                        ),
+                    )
+                ).all()
+                for row in rows:
+                    outcome_rows[str(row.id)] = row
+
+        llm = AilaLLMClient()
+        to_write: list[tuple[str, dict[str, Any]]] = []
+
+        async def _process(v: Any) -> None:
+            row = outcome_rows.get(v.primary_outcome_id or "")
+            payload: dict[str, Any] = {}
+            cached_section: dict[str, Any] | None = None
+            outcome_updated_at = None
+            raw_answer = ""
+            if row is not None:
+                try:
+                    payload = json.loads(row.payload_json or "{}")
+                except (ValueError, TypeError):
+                    payload = {}
+                cached_section = payload.get("_report_section")
+                outcome_updated_at = row.created_at  # outcomes are append-only; created_at is the freshness marker
+                raw_answer = str(payload.get("answer") or "")
+            if isinstance(cached_section, dict) and is_cache_fresh(cached_section, outcome_updated_at):
+                v.report_section = cached_section
+                return
+            control = catalog_by_id.get(v.control_id)
+            section_obj = await generate_section(
+                verdict=v,
+                control=control,
+                raw_answer=raw_answer or (v.agent_summary or ""),
+                apk_context=apk_context,
+                llm=llm,
+                run_id=v.child_investigation_id,
+            )
+            if section_obj is None:
+                return
+            section_dict = section_obj.model_dump(mode="json")
+            section_dict["generated_at"] = utc_now().isoformat()
+            v.report_section = section_dict
+            if row is not None:
+                to_write.append((str(row.id), section_dict))
+
+        await asyncio.gather(*(_process(v) for v in aggregate.verdicts))
+
+        # Write cached sections back so the next PDF download skips
+        # the LLM call. One UoW for the whole batch.
+        if to_write:
+            async with UnitOfWork() as uow:
+                cached_rows = (
+                    await uow.session.exec(
+                        select(VRInvestigationOutcomeRecord).where(
+                            VRInvestigationOutcomeRecord.id.in_(
+                                [oid for oid, _ in to_write],
+                            ),
+                        ),
+                    )
+                ).all()
+                cached_by_id = {str(r.id): r for r in cached_rows}
+                for oid, section_dict in to_write:
+                    row = cached_by_id.get(oid)
+                    if row is None:
+                        continue
+                    try:
+                        payload = json.loads(row.payload_json or "{}")
+                    except (ValueError, TypeError):
+                        payload = {}
+                    payload["_report_section"] = section_dict
+                    row.payload_json = json.dumps(payload)
+                    uow.session.add(row)
+                await uow.session.commit()
+
     @router.get(
         "/targets/{target_id}/masvs-report",
         summary=(
@@ -3326,11 +3456,6 @@ def create_vr_router() -> APIRouter:
                 detail=str(exc),
             ) from exc
 
-        # build_pdf is sync (CPU-bound ReportLab render). The
-        # investigation-report endpoint follows the same pattern —
-        # render directly on the event loop. The aggregate is bounded
-        # (≤46 L1 verdicts), so the render stays well inside ASGI
-        # request-budget territory.
         import json  # noqa: PLC0415
         handles_dict: dict[str, Any] = {}
         try:
@@ -3338,6 +3463,22 @@ def create_vr_router() -> APIRouter:
                 handles_dict = json.loads(target.mcp_handles_json)
         except (ValueError, TypeError):
             handles_dict = {}
+
+        # Section-writer agent pass: turn every raw verdict into a
+        # structured ReportSection (headline / evidence / risk /
+        # remediation / why_it_matters). Result is cached on
+        # outcome.payload_json under '_report_section' so subsequent
+        # PDF downloads skip the LLM round-trip. Failures fall back
+        # to rendering the raw agent_summary (PDF still ships).
+        await _populate_report_sections(
+            aggregate, target_summary, handles_dict, request,
+        )
+
+        # build_pdf is sync (CPU-bound ReportLab render). The
+        # investigation-report endpoint follows the same pattern —
+        # render directly on the event loop. The aggregate is bounded
+        # (≤53 L1 verdicts), so the render stays well inside ASGI
+        # request-budget territory.
         pdf_bytes = build_pdf(aggregate, target_summary, handles=handles_dict)
 
         filename = _masvs_report_filename(

@@ -141,7 +141,7 @@ function ToolListPanel({
           placeholder="Search tools…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="pl-7 font-mono text-xs"
+          className="touch-target pl-7 font-mono text-xs"
           aria-label="Search tools"
         />
       </div>

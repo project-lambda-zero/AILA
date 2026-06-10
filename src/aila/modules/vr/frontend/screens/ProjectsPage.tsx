@@ -140,9 +140,9 @@ function ProjectCard({
 
       {/* Title */}
       <div className="relative px-5 pb-3">
-        <h3 className="font-display text-lg font-semibold text-foreground leading-tight truncate">
+        <h2 className="font-display text-lg font-semibold text-foreground leading-tight truncate">
           {project.name}
-        </h3>
+        </h2>
         <p className="mt-0.5 text-xs font-mono text-text-muted truncate">
           {project.target_id ? targetName : "no target"}
         </p>

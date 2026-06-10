@@ -34,7 +34,7 @@ export function RecentlyViewed() {
           <li key={item.path}>
             <Link
               to={item.path}
-              className="flex items-center justify-between px-2 py-1.5 rounded-md text-xs text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+              className="touch-target flex items-center justify-between px-2 py-1.5 rounded-md text-xs text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
             >
               <span className="truncate min-w-0">{item.label}</span>
               <span className="ml-2 shrink-0 text-sidebar-foreground/40">

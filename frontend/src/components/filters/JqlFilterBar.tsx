@@ -303,7 +303,7 @@ export function JqlFilterBar({
             placeholder ??
             `Filter (e.g. ${fields[0]?.key ?? "module"}:value, cost>0.5)`
           }
-          className="flex-1 min-w-[180px] h-7 font-mono text-xs border-0 bg-transparent focus-visible:ring-0 px-1"
+          className="touch-target flex-1 min-w-[180px] h-7 font-mono text-xs border-0 bg-transparent focus-visible:ring-0 px-1"
           aria-label="Add filter"
         />
         {filters.length > 0 && (

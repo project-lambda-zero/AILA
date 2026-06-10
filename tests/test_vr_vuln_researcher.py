@@ -9,6 +9,7 @@ state machine (M3.R-7) is wired.
 from __future__ import annotations
 
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -70,16 +71,23 @@ class TestCaseStateEncoding:
 
 class TestDecisionToMessagePayload:
     def test_tool_run(self) -> None:
+        cmd = json.dumps({
+            "tool": "ida_headless.decompile",
+            "args": {"address_or_name": "0x140012345"},
+        })
         d = ReasoningTurnDecision(
             reasoning="run decompile on the suspect",
             action="tool_run",
             expected_observation="pseudocode of the function",
-            command="decompile",
+            command=cmd,
             script_content="address_or_name=0x140012345",
         )
         kind, payload = _decision_to_message_payload(d)
         assert kind == PayloadKind.TOOL_CALL
-        assert payload["command"] == "decompile"
+        assert payload["command"] == cmd
+        parsed = json.loads(payload["command"])
+        assert parsed["tool"] == "ida_headless.decompile"
+        assert parsed["args"]["address_or_name"] == "0x140012345"
         assert "address_or_name=0x140012345" in payload["script_content"]
         assert payload["reasoning"] == "run decompile on the suspect"
 
@@ -209,14 +217,14 @@ class TestRenderOperatorMessagesSection:
             {"id": "m1", "text": "check JSPI base", "intent": "steering"},
         ])
         assert "check JSPI base" in out
-        assert "[intent: steering]" in out
-        assert "Operator messages" in out
+        assert "intent=steering]" in out
+        assert "OPERATOR STEERING" in out
 
     def test_unclassified_intent_default(self) -> None:
         out = _render_operator_messages_section([
             {"id": "m1", "text": "look at recv", "intent": ""},
         ])
-        assert "[intent: unclassified]" in out
+        assert "intent=unclassified]" in out
 
     def test_multiple_messages_preserve_order(self) -> None:
         out = _render_operator_messages_section([
@@ -224,12 +232,12 @@ class TestRenderOperatorMessagesSection:
             {"id": "m2", "text": "second thought", "intent": "correction"},
         ])
         assert out.index("first thought") < out.index("second thought")
-        assert "[intent: steering]" in out
-        assert "[intent: correction]" in out
+        assert "intent=steering]" in out
+        assert "intent=correction]" in out
 
     def test_missing_text_doesnt_crash(self) -> None:
         out = _render_operator_messages_section([{"id": "m1", "intent": "steering"}])
-        assert "[intent: steering]" in out
+        assert "intent=steering]" in out
 
 
 class TestRenderAvailableToolsSection:
@@ -259,11 +267,12 @@ class TestRenderAvailableToolsSection:
 
     def test_includes_tool_count_per_server(self) -> None:
         out = _render_available_tools_section()
-        # New header format carries a schema-availability suffix
-        # (``— live schema`` or ``— schema unavailable``); the count
-        # is the first thing after the open paren.
-        assert "(81 tools — " in out or "(80 tools — " in out  # ida_headless
-        assert "(54 tools — " in out or "(53 tools — " in out  # audit_mcp
+        # Headers carry the count and a schema-availability suffix
+        # (``— live schema`` or ``— schema unavailable``). The exact
+        # count is intentionally elastic — bumping a tool catalog
+        # shouldn't churn this test.
+        assert re.search(r"## ida_headless \(\d+ tools — ", out)
+        assert re.search(r"## audit_mcp \(\d+ tools — ", out)
 
 
 class TestFormatParam:
@@ -378,7 +387,12 @@ class TestRenderAvailableToolsWithSchemas:
             target_kind="source_repo",
             tool_specs=specs,
         )
-        assert "NOT APPLICABLE for target kind `source_repo`" in out
+        # Server section for a non-applicable kind is silently
+        # suppressed entirely; the operator complained that surfacing
+        # "NOT APPLICABLE: ida_headless" still gave the agent a hook
+        # to think about IDA tools on a source_repo target. Contract
+        # is now total absence.
+        assert "## ida_headless" not in out
         # Don't render the signature for a suppressed server
         assert "ida_headless.decompile(" not in out
 

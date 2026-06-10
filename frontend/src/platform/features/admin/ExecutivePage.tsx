@@ -364,7 +364,7 @@ export function ExecutivePage() {
                 value={systemId}
                 onChange={(e) => setSystemId(e.target.value)}
                 placeholder="42"
-                className="font-mono text-sm"
+                className="touch-target font-mono text-sm"
                 inputMode="numeric"
               />
             </div>

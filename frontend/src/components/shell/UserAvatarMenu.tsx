@@ -60,7 +60,7 @@ export function UserAvatarMenu() {
         render={
           <button
             type="button"
-            className="flex items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+            className="touch-target flex items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
             aria-label="User menu"
           />
         }

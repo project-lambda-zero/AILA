@@ -154,9 +154,9 @@ export function EvidenceGraphPage() {
 
         {/* Right rail: selected node detail */}
         <aside className="space-y-2">
-          <AilaCard  techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+          <AilaCard  techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
             Selection
-          </h3>
+          </h2>
           {selected ? (
             <div className="text-xs space-y-2">
               <div className="flex items-center gap-1 flex-wrap">
@@ -209,9 +209,9 @@ export function EvidenceGraphPage() {
             </p>
           )}</AilaCard>
 
-          <AilaCard  techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+          <AilaCard  techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
             Counts
-          </h3>
+          </h2>
           <dl className="text-xs grid grid-cols-2 gap-1 font-mono">
             <dt className="text-text-muted">hypotheses</dt>
             <dd className="text-foreground text-right">

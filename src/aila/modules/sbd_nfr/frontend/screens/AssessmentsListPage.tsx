@@ -513,7 +513,7 @@ export function AssessmentsListPage() {
 
       <AilaCard variant="default" padding="md" techBorder glow><div className="flex flex-wrap items-end gap-3">
         <input
-          className="flex-1 p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
+          className="touch-target flex-1 p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
           style={{ minWidth: "12rem" }}
           type="search"
           placeholder="Search assessments..."
@@ -524,7 +524,7 @@ export function AssessmentsListPage() {
         <label className="flex flex-col gap-1 text-xs font-medium text-text-muted">
           Status
           <select
-            className="p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
+            className="touch-target p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
           >
@@ -538,7 +538,7 @@ export function AssessmentsListPage() {
 
       <div className="flex flex-wrap items-end gap-3">
         <input
-          className="flex-1 p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
+          className="touch-target flex-1 p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
           style={{ minWidth: "12rem" }}
           type="search"
           placeholder="Search assessments..."
@@ -549,7 +549,7 @@ export function AssessmentsListPage() {
         <label className="flex flex-col gap-1 text-xs font-medium text-text-muted">
           Status
           <select
-            className="p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
+            className="touch-target p-2.5 rounded-md border border-border bg-surface text-text font-sans text-sm"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
           >

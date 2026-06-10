@@ -437,7 +437,7 @@ export function InvestigationsListPage() {
       <button
         type="button"
         onClick={() => setShowForm((v) => !v)}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all hover:-translate-y-px"
+        className="touch-target inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all hover:-translate-y-px"
         style={{
           background: showForm
             ? "color-mix(in srgb, var(--color-text-muted) 28%, transparent)"
@@ -870,7 +870,7 @@ export function InvestigationsListPage() {
             }}
             placeholder="Search title (ILIKE)…"
             aria-label="Search investigations"
-            className="w-full pl-9 pr-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
+            className="touch-target w-full pl-9 pr-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
           />
         </div>
         <select
@@ -879,7 +879,7 @@ export function InvestigationsListPage() {
             setKindFilter(e.target.value);
             resetToFirstPage();
           }}
-          className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none uppercase tracking-wider"
+          className="touch-target px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none uppercase tracking-wider"
           aria-label="Filter by kind"
         >
           <option value="">all kind</option>
@@ -895,7 +895,7 @@ export function InvestigationsListPage() {
             setVerifierFilter(e.target.value);
             resetToFirstPage();
           }}
-          className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none uppercase tracking-wider"
+          className="touch-target px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none uppercase tracking-wider"
           aria-label="Filter by verifier verdict"
         >
           <option value="">all verifier</option>

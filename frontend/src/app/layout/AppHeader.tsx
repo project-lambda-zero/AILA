@@ -179,7 +179,7 @@ export function AppHeader() {
         <Button
           variant="outline"
           size="sm"
-          className="hidden sm:flex items-center gap-2 text-muted-foreground h-9 min-h-[44px] sm:min-h-0 sm:h-8 px-3"
+          className="touch-target hidden sm:flex items-center gap-2 text-muted-foreground h-9 min-h-[44px] sm:min-h-0 sm:h-8 px-3"
           onClick={openCommandPalette}
           aria-label="Open command palette"
         >

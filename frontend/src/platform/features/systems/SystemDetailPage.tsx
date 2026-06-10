@@ -155,7 +155,7 @@ export function SystemDetailPage() {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               {/* Left: connectivity + tags */}
               <div className="flex flex-col gap-4">
-                <AilaCard variant="default" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">SSH Connectivity</h3>
+                <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">SSH Connectivity</h2>
                 {connectivityQuery.isLoading ? (
                   <LoadingSkeletonGroup lines={2} />
                 ) : (
@@ -169,7 +169,7 @@ export function SystemDetailPage() {
                   </div>
                 )}</AilaCard>
 
-                <AilaCard variant="default" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Tags</h3>
+                <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Tags</h2>
                 <p className="font-mono text-xs text-text-muted">
                   Manage tags in the <button type="button" onClick={() => setTab("tags")} className="text-accent hover:underline">Tags tab</button>.
                 </p></AilaCard>
@@ -177,7 +177,7 @@ export function SystemDetailPage() {
 
               {/* Right: metadata + edit form */}
               <div className="flex flex-col gap-4">
-                <AilaCard variant="default" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">System Metadata</h3>
+                <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">System Metadata</h2>
                 <dl className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-sm">
                   <dt className="text-text-muted">Host</dt>
                   <dd className="text-text">{system.host}:{system.port}</dd>
@@ -200,7 +200,7 @@ export function SystemDetailPage() {
 
                 {/* Edit form */}
                 {canOperate && (
-                  <AilaCard variant="elevated" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Edit System</h3>
+                  <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Edit System</h2>
                   <form
                     className="flex flex-col gap-3"
                     onSubmit={(e) => {
@@ -279,7 +279,7 @@ export function SystemDetailPage() {
 
                 {/* Delete */}
                 {canOperate && (
-                  <AilaCard variant="default" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Danger Zone</h3>
+                  <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Danger Zone</h2>
                   <Button
                     variant="destructive"
                     size="sm"

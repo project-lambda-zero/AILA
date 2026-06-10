@@ -340,7 +340,7 @@ function FilterBar({
           });
         }}
       >
-        <SelectTrigger className="font-mono text-xs h-8 w-[220px]">
+        <SelectTrigger className="touch-target font-mono text-xs h-8 w-[220px]">
           <SelectValue placeholder="All definitions" />
         </SelectTrigger>
         <SelectContent>
@@ -361,7 +361,7 @@ function FilterBar({
         onChange={(e) => {
           onFiltersChange({ ...filters, current_state: e.target.value });
         }}
-        className="font-mono text-xs h-8 w-[180px]"
+        className="touch-target font-mono text-xs h-8 w-[180px]"
         aria-label="Filter by current state"
       />
 
@@ -370,7 +370,7 @@ function FilterBar({
         type="button"
         onClick={() => onAutoRefreshChange(!autoRefresh)}
         className={[
-          "flex items-center gap-1.5 px-2.5 py-1 rounded-[4px] border font-mono text-[11px] transition-colors",
+          "touch-target flex items-center gap-1.5 px-2.5 py-1 rounded-[4px] border font-mono text-[11px] transition-colors",
           autoRefresh
             ? "border-accent/60 bg-accent/10 text-accent"
             : "border-border text-muted-foreground hover:border-border hover:text-foreground",
@@ -385,7 +385,7 @@ function FilterBar({
       <Button
         size="sm"
         variant="ghost"
-        className="h-8 w-8 p-0"
+        className="touch-target h-8 w-8 p-0"
         onClick={onRefresh}
         disabled={isLoading}
         aria-label="Refresh now"
