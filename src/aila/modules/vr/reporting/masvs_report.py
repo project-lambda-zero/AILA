@@ -1135,13 +1135,40 @@ def _append_control_subsection(
     title_table.hAlign = "LEFT"
     story.append(KeepTogether([Spacer(1, 0.18 * inch), title_table]))
 
+    # 1. CATALOG DESCRIPTION — the spec text the audit ran against.
+    #    Small + faded so the reader knows what the control means but
+    #    isn't drowned in catalog prose before seeing real findings.
     if control is not None and control.description.strip():
         story.append(Paragraph(
-            _escape_for_paragraph(control.description),
+            "<font color='#9c9c9c' size='8'><i>"
+            f"{_escape_for_paragraph(control.description)}</i></font>",
             styles["body"],
         ))
 
+    # 2. AUDIT FINDINGS — the agent's actual conclusion text for THIS
+    #    APK on THIS control. This is the load-bearing block now, not
+    #    the catalog's generic verification steps. When the verdict
+    #    mapper couldn't pull an agent_summary (audit_memo synth, no
+    #    primary outcome, malformed payload), the section is skipped
+    #    rather than padded with template prose.
+    if verdict.agent_summary:
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(Paragraph(
+            "<font color='#ffd7af'><b>AUDIT FINDINGS</b></font>",
+            styles["meta"],
+        ))
+        for paragraph in verdict.agent_summary.split("\n\n"):
+            paragraph = paragraph.strip()
+            if paragraph:
+                story.append(Paragraph(
+                    _escape_for_paragraph(paragraph).replace("\n", "<br/>"),
+                    styles["body"],
+                ))
+                story.append(Spacer(1, 0.04 * inch))
+
+    # 3. AFFECTED COMPONENTS — file:method evidence the agent cited.
     if verdict.evidence_locations:
+        story.append(Spacer(1, 0.04 * inch))
         story.append(Paragraph(
             "<font color='#f0a8c7'><b>AFFECTED COMPONENTS</b></font>",
             styles["meta"],
@@ -1161,14 +1188,6 @@ def _append_control_subsection(
             ]
             for loc in verdict.evidence_locations
         ]
-        # File column gets the bulk of the row width — Android jadx
-        # output paths frequently run to 50+ chars and wrapping them
-        # mid-token makes the basename unreadable. Function column
-        # holds a short identifier (rare > 30 chars) so the narrower
-        # column is fine. At 8pt Courier (≈4.8pt / char) the file
-        # column fits ~96 chars without wrapping, which covers the
-        # typical jadx package depth of ``sources/<reverse-domain>/
-        # <feature>/<class>.java``.
         ev_table = Table(ev_rows, colWidths=[4.8 * inch, 1.4 * inch])
         ev_table.setStyle(TableStyle([
             ("FONT", (0, 0), (-1, -1), _FONT_MONO, 8),
@@ -1185,15 +1204,21 @@ def _append_control_subsection(
         ev_table.hAlign = "LEFT"
         story.append(ev_table)
 
-    if control is not None and control.verification_steps:
+    # 4. GENERIC VERIFICATION STEPS — only rendered when the agent
+    #    didn't produce a summary AND there's no evidence either.
+    #    Otherwise the catalog's generic "Run apkanalyzer + grep for X"
+    #    instructions just add noise to a report a real auditor reads.
+    no_agent_content = not verdict.agent_summary and not verdict.evidence_locations
+    if no_agent_content and control is not None and control.verification_steps:
         story.append(Spacer(1, 0.08 * inch))
         story.append(Paragraph(
-            "<font color='#f0a8c7'><b>VERIFICATION &amp; REMEDIATION</b></font>",
+            "<font color='#9c9c9c' size='8'><b>VERIFICATION CHECKLIST "
+            "(catalog default — agent produced no specific findings)</b></font>",
             styles["meta"],
         ))
         for step in control.verification_steps:
             story.append(Paragraph(
-                f"&bull;&nbsp; {_escape_for_paragraph(step)}",
+                f"<font size='8'>&bull;&nbsp; {_escape_for_paragraph(step)}</font>",
                 styles["body"],
             ))
 
