@@ -3331,7 +3331,13 @@ def create_vr_router() -> APIRouter:
         # render directly on the event loop. The aggregate is bounded
         # (≤46 L1 verdicts), so the render stays well inside ASGI
         # request-budget territory.
-        pdf_bytes = build_pdf(aggregate, target_summary)
+        handles_dict: dict[str, Any] = {}
+        try:
+            if target._mcp_handles_json:
+                handles_dict = json.loads(target._mcp_handles_json)
+        except (ValueError, TypeError):
+            handles_dict = {}
+        pdf_bytes = build_pdf(aggregate, target_summary, handles=handles_dict)
 
         filename = _masvs_report_filename(
             target_summary,

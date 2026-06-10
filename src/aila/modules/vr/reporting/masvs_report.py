@@ -638,10 +638,10 @@ def _append_executive_summary(
         )
     else:
         opening = (
-            f"<b>{findings}</b> {'finding' if findings == 1 else 'findings'}, "
-            f"<b>{no_finding}</b> no-finding, "
-            f"<b>{not_applicable}</b> not-applicable, "
-            f"<b>{inconclusive}</b> inconclusive across "
+            f"<b>{findings}</b> fail, "
+            f"<b>{no_finding}</b> pass, "
+            f"<b>{not_applicable}</b> not applicable, "
+            f"<b>{inconclusive}</b> needs review, across "
             f"<b>{total}</b> controls audited under "
             f"MASVS {_escape_for_paragraph(aggregate.masvs_spec_version)}."
         )
@@ -685,6 +685,271 @@ def _append_executive_summary(
     grid.hAlign = "CENTER"
     story.append(grid)
     story.append(Spacer(1, 0.2 * inch))
+
+def _append_findings_highlights(
+    story: list[Any],
+    aggregate: MasvsAuditAggregate,
+    styles: dict[str, ParagraphStyle],
+) -> None:
+    """Page right after Executive Summary listing every FAIL + REVIEW
+    verdict with a one-line title — so the reader sees what actually
+    needs attention before scrolling through 88 per-control
+    subsections. Skips silently when there are zero FAIL + REVIEW
+    rows (clean audit, all-PASS).
+    """
+    fails = [v for v in aggregate.verdicts if v.verdict == MasvsVerdict.FINDING]
+    reviews = [v for v in aggregate.verdicts if v.verdict == MasvsVerdict.INCONCLUSIVE]
+    if not fails and not reviews:
+        return
+
+    story.append(PageBreak())
+    story.append(_BookmarkFlowable("masvs-findings-highlights", "Findings & Open Reviews", level=0))
+    _append_section_h1(story, "Findings & Open Reviews", styles)
+    story.append(Paragraph(
+        "Controls requiring operator attention, ranked by verdict severity. "
+        "FAIL = the audit identified a compliance gap; REVIEW = the audit "
+        "could not reach a conclusion and human follow-up is required.",
+        styles["body"],
+    ))
+    story.append(Spacer(1, 0.15 * inch))
+
+    def _row(v: MasvsControlVerdict) -> list[Any]:
+        label = _VERDICT_LABEL[v.verdict]
+        color = _VERDICT_COLOR[v.verdict]
+        badge = Paragraph(
+            f"<font color='#ffffff' size='9'><b>{label}</b></font>",
+            styles["body"],
+        )
+        cid = Paragraph(f"<b>{_escape_for_paragraph(v.control_id)}</b>", styles["body"])
+        reason_text = v.reason or ""
+        if v.confidence:
+            reason_text = f"confidence {int(v.confidence * 100)}%  {reason_text}".strip()
+        evidence_count = len(v.evidence_locations) if v.evidence_locations else 0
+        if evidence_count:
+            reason_text = f"{evidence_count} evidence ref(s)  {reason_text}".strip()
+        reason = Paragraph(
+            f"<font size='8'>{_escape_for_paragraph(reason_text or '—')}</font>",
+            styles["body"],
+        )
+        return [badge, cid, reason]
+
+    rows: list[list[Any]] = []
+    for v in fails:
+        rows.append(_row(v))
+    for v in reviews:
+        rows.append(_row(v))
+
+    tbl = Table(rows, colWidths=[0.65 * inch, 1.45 * inch, 4.6 * inch])
+    style_cmds: list[tuple[Any, ...]] = [
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("BOX", (0, 0), (-1, -1), 0.4, _BG_BORDER),
+        ("INNERGRID", (0, 0), (-1, -1), 0.3, _BG_BORDER),
+    ]
+    cursor = 0
+    for verdict_group in (fails, reviews):
+        verdict_color = (
+            _VERDICT_COLOR[MasvsVerdict.FINDING] if verdict_group is fails
+            else _VERDICT_COLOR[MasvsVerdict.INCONCLUSIVE]
+        )
+        for _ in verdict_group:
+            style_cmds.append(("BACKGROUND", (0, cursor), (0, cursor), verdict_color))
+            style_cmds.append(("BACKGROUND", (1, cursor), (-1, cursor), _BG_SURFACE))
+            cursor += 1
+    tbl.setStyle(TableStyle(style_cmds))
+    tbl.hAlign = "LEFT"
+    story.append(tbl)
+    story.append(Spacer(1, 0.2 * inch))
+
+
+def _append_apk_intelligence(
+    story: list[Any],
+    target: VRTargetSummary,
+    static_summary: Mapping[str, Any],
+    handles: Mapping[str, Any] | None,
+    styles: dict[str, ParagraphStyle],
+) -> None:
+    """APK Intelligence page: package + build + signing + permissions
+    + exported components + native libraries + trackers. The reader
+    sees WHAT the audit looked at, not just per-control verdicts.
+
+    Pulls the full ``android_mcp_static_summary`` from ``handles`` when
+    available (passed in by the caller from ``_mcp_handles_json``).
+    The ``static_summary`` digest on ``target.apk_overview`` only
+    stores counts; the full inventory of permission names / native
+    .so / exported class names lives in the raw handles blob.
+    """
+    story.append(PageBreak())
+    story.append(_BookmarkFlowable("masvs-apk-intelligence", "APK Intelligence", level=0))
+    _append_section_h1(story, "APK Intelligence", styles)
+    story.append(Paragraph(
+        "What the audit looked at: package identity, signing chain, "
+        "manifest declarations, native code, third-party trackers.",
+        styles["body"],
+    ))
+    story.append(Spacer(1, 0.15 * inch))
+
+    full_static = (
+        handles.get("android_mcp_static_summary") if isinstance(handles, Mapping) else None
+    )
+    if not isinstance(full_static, Mapping):
+        full_static = static_summary if isinstance(static_summary, Mapping) else {}
+
+    mobsf = (
+        handles.get("android_mcp_mobsf_scan") if isinstance(handles, Mapping) else None
+    )
+    if not isinstance(mobsf, Mapping):
+        mobsf = (
+            (target.apk_overview or {}).get("mobsf_scan")
+            if isinstance(target.apk_overview, Mapping)
+            else None
+        )
+    if not isinstance(mobsf, Mapping):
+        mobsf = {}
+
+    def _kv_section(title_text: str, rows: list[tuple[str, str]]) -> None:
+        if not rows:
+            return
+        story.append(Paragraph(
+            f"<font color='#ffd7af'><b>{_escape_for_paragraph(title_text)}</b></font>",
+            styles["body"],
+        ))
+        story.append(Spacer(1, 0.04 * inch))
+        tbl = Table(
+            [
+                [
+                    Paragraph(f"<font size='9'><b>{_escape_for_paragraph(k)}</b></font>", styles["body"]),
+                    Paragraph(f"<font size='9'>{_escape_for_paragraph(v)}</font>", styles["body"]),
+                ]
+                for k, v in rows
+            ],
+            colWidths=[1.6 * inch, 5.0 * inch],
+        )
+        tbl.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("BACKGROUND", (0, 0), (-1, -1), _BG_SURFACE),
+            ("BOX", (0, 0), (-1, -1), 0.4, _BG_BORDER),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, _BG_BORDER),
+        ]))
+        tbl.hAlign = "LEFT"
+        story.append(tbl)
+        story.append(Spacer(1, 0.15 * inch))
+
+    def _coerce_list(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value if item is not None]
+        return []
+
+    # PACKAGE + BUILD
+    package_rows: list[tuple[str, str]] = []
+    for label, key in (
+        ("Package", "package"),
+        ("Version (name)", "version_name"),
+        ("Version (code)", "version_code"),
+        ("Min SDK", "min_sdk"),
+        ("Target SDK", "target_sdk"),
+        ("Compile SDK", "compile_sdk"),
+        ("Application class", "application_class"),
+        ("Main activity", "main_activity"),
+    ):
+        v = full_static.get(key)
+        if v is not None:
+            package_rows.append((label, str(v)))
+    _kv_section("Package & Build", package_rows)
+
+    # SIGNING CHAIN
+    signing_rows: list[tuple[str, str]] = []
+    scheme = full_static.get("signing_scheme")
+    if scheme is not None:
+        signing_rows.append(("Signing scheme", str(scheme)))
+    certs = _coerce_list(full_static.get("certificates"))
+    if certs:
+        signing_rows.append((f"Certificates ({len(certs)})", "\n".join(certs[:5]) + ("\n…" if len(certs) > 5 else "")))
+    _kv_section("Signing", signing_rows)
+
+    # PERMISSIONS
+    perms = _coerce_list(full_static.get("permissions"))
+    dangerous = _coerce_list(full_static.get("dangerous_permissions"))
+    if perms:
+        perm_rows = [(f"Declared ({len(perms)})", ", ".join(perms[:30]) + ("  …" if len(perms) > 30 else ""))]
+        if dangerous:
+            perm_rows.append((
+                f"Dangerous-protection-level ({len(dangerous)})",
+                ", ".join(dangerous),
+            ))
+        _kv_section("Permissions", perm_rows)
+
+    # EXPORTED COMPONENTS
+    exported_groups = [
+        ("Activities", "exported_activities"),
+        ("Services", "exported_services"),
+        ("Receivers", "exported_receivers"),
+        ("Providers", "exported_providers"),
+    ]
+    exp_rows: list[tuple[str, str]] = []
+    for label, key in exported_groups:
+        lst = _coerce_list(full_static.get(key))
+        if lst:
+            preview = "\n".join(lst[:8]) + (f"\n… ({len(lst) - 8} more)" if len(lst) > 8 else "")
+            exp_rows.append((f"{label} ({len(lst)})", preview))
+    if exp_rows:
+        _kv_section("Exported Components", exp_rows)
+
+    # NATIVE LIBRARIES (.so under lib/<abi>/)
+    native = _coerce_list(full_static.get("native_libs"))
+    if native:
+        # Bucket by ABI when paths contain '/'.
+        per_abi: dict[str, list[str]] = {}
+        for path in native:
+            parts = path.replace("\\", "/").split("/")
+            abi = parts[-2] if len(parts) >= 2 else "?"
+            per_abi.setdefault(abi, []).append(parts[-1])
+        nat_rows: list[tuple[str, str]] = []
+        for abi, libs in sorted(per_abi.items()):
+            nat_rows.append((
+                f"{abi} ({len(libs)})",
+                ", ".join(sorted(set(libs))),
+            ))
+        _kv_section("Native Libraries", nat_rows)
+
+    # MOBSF SCAN
+    mobsf_rows: list[tuple[str, str]] = []
+    if mobsf.get("security_score") is not None:
+        mobsf_rows.append(("Security score", f"{mobsf['security_score']}/100"))
+    trackers = mobsf.get("trackers_detected")
+    if trackers is not None:
+        mobsf_rows.append(("Trackers detected", str(trackers)))
+    raw_trackers = (
+        mobsf.get("trackers", {}).get("trackers")
+        if isinstance(mobsf.get("trackers"), Mapping)
+        else None
+    )
+    if isinstance(raw_trackers, list) and raw_trackers:
+        names = [
+            str(t.get("name") or t)
+            for t in raw_trackers
+            if t is not None
+        ]
+        if names:
+            mobsf_rows.append((
+                f"Tracker names ({len(names)})",
+                ", ".join(sorted(set(names))[:20]) + ("  …" if len(set(names)) > 20 else ""),
+            ))
+    buckets = mobsf.get("findings_by_severity")
+    if isinstance(buckets, Mapping):
+        bucket_strs = [f"{k}: {v}" for k, v in buckets.items() if v]
+        if bucket_strs:
+            mobsf_rows.append(("MobSF findings", ", ".join(bucket_strs)))
+    if mobsf_rows:
+        _kv_section("MobSF Static Scan", mobsf_rows)
+
 
 
 def _bookmark_key_for_group(group: MasvsGroup) -> str:
@@ -956,6 +1221,7 @@ def _append_control_subsection(
 def build_pdf(
     aggregate: MasvsAuditAggregate,
     target: VRTargetSummary,
+    handles: Mapping[str, Any] | None = None,
 ) -> bytes:
     """Render a :class:`MasvsAuditAggregate` as a PDF byte string.
 
@@ -1026,6 +1292,8 @@ def build_pdf(
     story: list[Any] = []
 
     _append_cover(story, aggregate, target, static_summary, styles)
+    _append_findings_highlights(story, aggregate, styles)
+    _append_apk_intelligence(story, target, static_summary, handles, styles)
     story.append(PageBreak())
     _append_executive_summary(story, aggregate, styles)
     _append_group_sections(story, aggregate, styles)
