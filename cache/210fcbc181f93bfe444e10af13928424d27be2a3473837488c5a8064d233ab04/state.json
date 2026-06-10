@@ -1,0 +1,12 @@
+{
+  "binary_id": "b_210fcbc181f9",
+  "sha256": "210fcbc181f93bfe444e10af13928424d27be2a3473837488c5a8064d233ab04",
+  "original_path": "C:\\Users\\THEDEVIL\\.android-mcp\\work\\apktool-9228be90bf0bc3c4\\lib\\arm64-v8a\\libsigner.so",
+  "root_filename": "libsigner.so",
+  "size_bytes": 945120,
+  "state": "READY",
+  "analyzer_pid": null,
+  "decompile_worker_pid": 6236,
+  "function_count": 0,
+  "error": "No binary found in workspace"
+}

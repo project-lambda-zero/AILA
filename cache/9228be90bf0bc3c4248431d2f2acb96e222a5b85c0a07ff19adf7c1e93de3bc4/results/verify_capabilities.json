@@ -1,0 +1,192 @@
+{
+  "anti_debug": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "cleanup": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "clipboard": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "credential_access": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "crypto": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "directory": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "dll_load": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "dns": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "file_io": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "gui_stealth": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "http_api": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "keylogger": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "named_pipe": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "network_enum": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "process_create": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "process_enum": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "process_inject": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "process_terminate": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "registry": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "screenshot": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "service": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "socket_raw": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "sync": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "system_info": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "thread": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "timestomp": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "token_privilege": {
+    "verdict": "absent",
+    "api_count": 0,
+    "call_count": 0,
+    "apis": [],
+    "evidence": []
+  },
+  "status": "ready"
+}

@@ -216,8 +216,6 @@ ANDROID_MCP_TOOLS: frozenset[str] = frozenset({
     # Component / permission auditing
     "drozer_scan_apk",
     # Static rule scanners
-    "qark_scan",
-    "androbugs_scan",
     # Native shared-object analysis
     "analyze_native_libs",
     # YARA over decompiled tree

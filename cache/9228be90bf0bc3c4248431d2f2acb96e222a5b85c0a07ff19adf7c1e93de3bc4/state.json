@@ -1,0 +1,12 @@
+{
+  "binary_id": "b_9228be90bf0b",
+  "sha256": "9228be90bf0bc3c4248431d2f2acb96e222a5b85c0a07ff19adf7c1e93de3bc4",
+  "original_path": "C:\\Users\\THEDEVIL\\AppData\\Local\\Temp\\ida_upload_tc86cvpi.apk",
+  "root_filename": "ida_upload_tc86cvpi.apk",
+  "size_bytes": 65870617,
+  "state": "READY",
+  "analyzer_pid": null,
+  "decompile_worker_pid": 18144,
+  "function_count": 0,
+  "error": null
+}

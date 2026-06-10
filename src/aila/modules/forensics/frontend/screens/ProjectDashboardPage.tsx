@@ -315,7 +315,7 @@ function FullAnalysisButton({ projectId }: { projectId: string }) {
   return (
     <AilaCard  techBorder glow><div className="flex items-center justify-between">
       <div>
-        <h3 className="text-sm font-semibold text-foreground">Pre-populate artifacts</h3>
+        <h2 className="text-sm font-semibold text-foreground">Pre-populate artifacts</h2>
         <p className="text-xs text-text-muted mt-0.5">
           Runs intake → collection → deep_analysis so the freeflow agent can answer questions
           instantly from cached evidence instead of re-scanning.
@@ -441,7 +441,7 @@ function RawDirectoryNotice() {
   return (
     <AilaCard  techBorder glow><div className="flex items-start justify-between gap-3">
       <div>
-        <h3 className="text-sm font-semibold text-foreground">Raw Directory — intake only</h3>
+        <h2 className="text-sm font-semibold text-foreground">Raw Directory — intake only</h2>
         <p className="text-xs text-text-muted mt-0.5">
           This project treats the evidence directory as a real filesystem on the analyzer.
           The pre/full-analysis pipeline (disk, memory, network, log lanes) is skipped —
@@ -525,7 +525,7 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
     <div className="space-y-4">
       <AilaCard  techBorder glow><div className="flex items-center justify-between mb-4">
         <div>
-          <h3 className="text-sm font-semibold font-mono text-foreground">Machine Readiness Check</h3>
+          <h2 className="text-sm font-semibold font-mono text-foreground">Machine Readiness Check</h2>
           {startEvent && (
             <p className="text-xs text-text-muted mt-0.5">{startEvent.message}</p>
           )}

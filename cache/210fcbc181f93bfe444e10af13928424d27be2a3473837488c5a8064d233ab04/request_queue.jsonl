@@ -1,0 +1,47 @@
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "search_pattern", "pattern_type": "string"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "call_graph", "binary_id": "b_210fcbc181f9", "_cache_key": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign", "address_or_name": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign", "depth": 3, "direction": "callees"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "batch_decompile", "binary_id": "b_210fcbc181f9", "_cache_key": "", "name_pattern": "nSign", "limit": 2, "kwargs": {"max_lines": 500}}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "search_pattern", "pattern_type": "string"}
+{"type": "decompile", "target": "Java_com_adjust_sdk_sig_NativeLibHelper_nSign"}
+{"type": "batch_decompile", "binary_id": "b_210fcbc181f9", "_cache_key": "", "name_pattern": "nSign", "limit": 5, "kwargs": {"max_lines": 500}}
+{"type": "search_pattern", "pattern_type": "string"}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "segments", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "segments", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "segments", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "segments", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}
+{"type": "exports", "binary_id": "b_210fcbc181f9", "_cache_key": ""}

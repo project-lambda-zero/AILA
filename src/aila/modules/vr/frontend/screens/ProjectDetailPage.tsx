@@ -210,9 +210,9 @@ function OverviewTab({
       {/* Hub panels — matches 08_FRONTEND_UX.md §1.3 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Targets panel */}
-        <AilaCard className="lg:col-span-1" techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+        <AilaCard className="lg:col-span-1" techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
           Targets
-        </h3>
+        </h2>
         <ul className="space-y-1.5 text-sm">
           {project.target_id && (
             <li className="flex items-center justify-between gap-2 border border-border-default rounded px-2 py-1.5">
@@ -246,9 +246,9 @@ function OverviewTab({
         </ul></AilaCard>
 
         {/* Active investigations */}
-        <AilaCard className="lg:col-span-1" techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+        <AilaCard className="lg:col-span-1" techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
           Investigations
-        </h3>
+        </h2>
         {projInvs.length === 0 ? (
           <p className="text-xs text-text-muted">
             No investigations on this target yet.
@@ -294,9 +294,9 @@ function OverviewTab({
         )}</AilaCard>
 
         {/* Findings summary */}
-        <AilaCard className="lg:col-span-1" techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+        <AilaCard className="lg:col-span-1" techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
           Findings
-        </h3>
+        </h2>
         <p className="text-2xl font-bold font-mono text-foreground">
           {project.finding_count}
         </p>
@@ -335,9 +335,9 @@ function OverviewTab({
 
       {/* Project event timeline strip (§1.3) — major events derived
           from existing data. Real event log is backend pending. */}
-      <AilaCard  techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+      <AilaCard  techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
         Project events
-      </h3>
+      </h2>
       <ol className="space-y-2 text-xs">
         <EventRow
           time={project.created_at}
@@ -511,9 +511,9 @@ function AdvisoryTab({
       </p>
       {findings.map((f) => (
         <AilaCard key={f.id ?? Math.random()} techBorder glow><div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
-          <h3 className="text-sm font-semibold text-foreground font-mono truncate">
+          <h2 className="text-sm font-semibold text-foreground font-mono truncate">
             {f.vulnerable_function ?? "(unknown function)"}
-          </h3>
+          </h2>
           <AilaBadge
             severity={disclosureStatusColor[f.disclosure_status] ?? "info"}
             size="sm"
@@ -619,9 +619,9 @@ function RecentReasoningRollup({
   const recent = messages.slice(-10).reverse();
   return (
     <AilaCard  techBorder glow><div className="flex items-center justify-between mb-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
         Recent reasoning ({recent.length})
-      </h3>
+      </h2>
       <Link
         to={`/vr/investigations/${investigationId}`}
         className="text-3xs text-accent hover:underline"
@@ -700,9 +700,9 @@ function WorkstationHeartbeatCard({
   if (!systemId) {
     return (
       <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
           Workstation
-        </h3>
+        </h2>
         <AilaBadge severity="info" size="sm">none assigned</AilaBadge>
       </div>
       <p className="text-3xs text-text-muted mt-2">
@@ -715,9 +715,9 @@ function WorkstationHeartbeatCard({
   const live = heartbeat?.reachable === true;
   return (
     <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
         Workstation
-      </h3>
+      </h2>
       <span
         className={
           "inline-block w-2 h-2 rounded-full "

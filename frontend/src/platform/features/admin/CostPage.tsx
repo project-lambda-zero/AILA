@@ -264,7 +264,7 @@ export function CostPage() {
               key={opt.label}
               type="button"
               onClick={() => setHistoryMonths(opt.months)}
-              className={`px-2.5 py-1 rounded-[2px] border font-mono text-xs transition-colors ${
+              className={`touch-target px-2.5 py-1 rounded-[2px] border font-mono text-xs transition-colors ${
                 historyMonths === opt.months
                   ? "border-accent text-accent bg-accent/10"
                   : "border-border text-text-muted hover:border-border-hover"
@@ -312,7 +312,7 @@ export function CostPage() {
               key={opt.label}
               type="button"
               onClick={() => setRoiMonths(opt.months)}
-              className={`px-2.5 py-1 rounded-[2px] border font-mono text-xs transition-colors ${
+              className={`touch-target px-2.5 py-1 rounded-[2px] border font-mono text-xs transition-colors ${
                 roiMonths === opt.months
                   ? "border-accent text-accent bg-accent/10"
                   : "border-border text-text-muted hover:border-border-hover"

@@ -29,7 +29,7 @@ function ProjectCard({
   return (
     <AilaCard onClick={onClick} className="cursor-pointer hover:ring-1 hover:ring-border-accent transition-shadow relative group" techBorder glow><div className="space-y-2">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold font-mono text-foreground truncate">{project.name}</h3>
+        <h2 className="text-base font-semibold font-mono text-foreground truncate">{project.name}</h2>
         <div className="flex items-center gap-2">
           <AilaBadge severity={statusColor[project.status] ?? "info"} size="sm">
             {project.status}

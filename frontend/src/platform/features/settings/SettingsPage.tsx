@@ -836,7 +836,7 @@ export function SettingsPage() {
         </p>
         <Link
           to="/settings/sessions"
-          className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent/80 font-medium transition-colors"
+          className="touch-target inline-flex items-center gap-2 text-sm text-accent hover:text-accent/80 font-medium transition-colors"
         >
           Manage active sessions
           <ArrowRight size={14} />

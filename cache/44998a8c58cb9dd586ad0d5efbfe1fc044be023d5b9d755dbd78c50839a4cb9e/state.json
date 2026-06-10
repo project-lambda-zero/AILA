@@ -1,0 +1,12 @@
+{
+  "binary_id": "b_44998a8c58cb",
+  "sha256": "44998a8c58cb9dd586ad0d5efbfe1fc044be023d5b9d755dbd78c50839a4cb9e",
+  "original_path": "C:\\Users\\THEDEVIL\\.android-mcp\\work\\apktool-9228be90bf0bc3c4\\lib\\arm64-v8a\\libucs-credential.so",
+  "root_filename": "libucs-credential.so",
+  "size_bytes": 310584,
+  "state": "READY",
+  "analyzer_pid": null,
+  "decompile_worker_pid": 3448,
+  "function_count": 0,
+  "error": "No binary found in workspace"
+}

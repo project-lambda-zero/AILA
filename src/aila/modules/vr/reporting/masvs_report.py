@@ -1056,6 +1056,107 @@ def _append_group_sections(
             )
 
 
+def _render_report_section_block(
+    story: list[Any],
+    section: Mapping[str, Any],
+    styles: dict[str, ParagraphStyle],
+) -> None:
+    """Render the writer-agent's ``ReportSection`` dict as the per-
+    control body. The dict mirrors :class:`ReportSection` from
+    ``aila.modules.vr.reporting.section_writer`` — we don't import
+    the model class here because the cached form on the outcome is
+    raw JSON.
+    """
+    headline = section.get("headline")
+    if headline:
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(Paragraph(
+            f"<font color='#ffd7af' size='11'><b>"
+            f"{_escape_for_paragraph(str(headline))}</b></font>",
+            styles["body"],
+        ))
+        story.append(Spacer(1, 0.05 * inch))
+
+    evidence = section.get("evidence") or []
+    if isinstance(evidence, list) and evidence:
+        story.append(Paragraph(
+            "<font color='#f0a8c7' size='8'><b>EVIDENCE</b></font>",
+            styles["meta"],
+        ))
+        ev_rows: list[list[Any]] = []
+        for item in evidence:
+            if not isinstance(item, Mapping):
+                continue
+            loc = str(item.get("location") or "—")
+            detail = str(item.get("detail") or "")
+            ev_rows.append([
+                Paragraph(
+                    f"<font name='{_FONT_MONO}' size='8'>"
+                    f"{_escape_for_paragraph(loc)}</font>",
+                    styles["body"],
+                ),
+                Paragraph(
+                    f"<font size='9'>{_escape_for_paragraph(detail)}</font>",
+                    styles["body"],
+                ),
+            ])
+        if ev_rows:
+            ev_table = Table(ev_rows, colWidths=[2.6 * inch, 3.6 * inch])
+            ev_table.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("BACKGROUND", (0, 0), (-1, -1), _BG_SURFACE),
+                ("BOX", (0, 0), (-1, -1), 0.25, _BG_BORDER),
+                ("INNERGRID", (0, 0), (-1, -1), 0.25, _BG_BORDER),
+            ]))
+            ev_table.hAlign = "LEFT"
+            story.append(ev_table)
+
+    risk = section.get("risk") or ""
+    if isinstance(risk, str) and risk.strip():
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(Paragraph(
+            "<font color='#f0a8c7' size='8'><b>RISK</b></font>",
+            styles["meta"],
+        ))
+        story.append(Paragraph(_escape_for_paragraph(risk), styles["body"]))
+
+    remediation = section.get("remediation") or ""
+    if isinstance(remediation, str) and remediation.strip():
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(Paragraph(
+            "<font color='#f0a8c7' size='8'><b>REMEDIATION</b></font>",
+            styles["meta"],
+        ))
+        story.append(Paragraph(_escape_for_paragraph(remediation), styles["body"]))
+
+    why = section.get("why_it_matters") or ""
+    if isinstance(why, str) and why.strip():
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(Paragraph(
+            "<font color='#9c9c9c' size='8'><b>WHY IT MATTERS</b></font>",
+            styles["meta"],
+        ))
+        story.append(Paragraph(
+            f"<font color='#9c9c9c' size='9'><i>"
+            f"{_escape_for_paragraph(why)}</i></font>",
+            styles["body"],
+        ))
+
+    caveat = section.get("confidence_note")
+    if isinstance(caveat, str) and caveat.strip():
+        story.append(Spacer(1, 0.05 * inch))
+        story.append(Paragraph(
+            f"<font color='#d99a2c' size='8'><b>NOTE:</b> "
+            f"{_escape_for_paragraph(caveat)}</font>",
+            styles["body"],
+        ))
+
+
 def _append_control_subsection(
     story: list[Any],
     verdict: MasvsControlVerdict,
@@ -1135,9 +1236,7 @@ def _append_control_subsection(
     title_table.hAlign = "LEFT"
     story.append(KeepTogether([Spacer(1, 0.18 * inch), title_table]))
 
-    # 1. CATALOG DESCRIPTION — the spec text the audit ran against.
-    #    Small + faded so the reader knows what the control means but
-    #    isn't drowned in catalog prose before seeing real findings.
+    # 1. CATALOG DESCRIPTION — faded grey, italic, small. Context only.
     if control is not None and control.description.strip():
         story.append(Paragraph(
             "<font color='#9c9c9c' size='8'><i>"
@@ -1145,13 +1244,16 @@ def _append_control_subsection(
             styles["body"],
         ))
 
-    # 2. AUDIT FINDINGS — the agent's actual conclusion text for THIS
-    #    APK on THIS control. This is the load-bearing block now, not
-    #    the catalog's generic verification steps. When the verdict
-    #    mapper couldn't pull an agent_summary (audit_memo synth, no
-    #    primary outcome, malformed payload), the section is skipped
-    #    rather than padded with template prose.
-    if verdict.agent_summary:
+    # 2a. STRUCTURED REPORT SECTION — preferred. Renders the
+    #     section-writer agent's headline / evidence / risk /
+    #     remediation / why-it-matters fields with proper visual
+    #     hierarchy. When the section-writer hasn't run yet (cache
+    #     miss + LLM down) we fall back to 2b.
+    if verdict.report_section:
+        _render_report_section_block(story, verdict.report_section, styles)
+    elif verdict.agent_summary:
+        # 2b. RAW AGENT SUMMARY fallback — only when the writer agent
+        #     didn't run. Less polished but still APK-specific.
         story.append(Spacer(1, 0.08 * inch))
         story.append(Paragraph(
             "<font color='#ffd7af'><b>AUDIT FINDINGS</b></font>",
