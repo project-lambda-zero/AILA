@@ -3720,6 +3720,509 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "getAllStackTraces",
         ),
     ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-5",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title="The app detects, and responds to, being run in an emulator.",
+        description=(
+            "Emulators (Android Studio AVD, Genymotion, BlueStacks) give an analyst "
+            "instrumentation root, full memory inspection, network MITM, snapshot / "
+            "rollback, and arbitrary system properties — all without the rooted-device "
+            "fingerprint that RESILIENCE-1 catches. The verification target is that "
+            "the app inspects multiple emulator-only signals and responds (alert, "
+            "feature degradation, exit) rather than running normally. Signals: "
+            "Build.FINGERPRINT containing generic/sdk_gphone/google_sdk, ro.kernel.qemu "
+            "system property = 1, presence of /dev/qemu_pipe or /dev/socket/qemud, "
+            "TelephonyManager.getDeviceId returning all-zeroes, Sensor.TYPE_ACCELEROMETER "
+            "absent or stationary, and battery state always 100% charging."
+        ),
+        verification_steps=(
+            "Search for Build.FINGERPRINT / Build.MODEL / Build.HARDWARE / Build.BRAND "
+            "/ Build.PRODUCT comparisons. Confirm at least one path checks for "
+            "generic / sdk / sdk_gphone / google_sdk / Emulator / Android SDK substrings.",
+            "Search for SystemProperties.get(\"ro.kernel.qemu\") or "
+            "Runtime.exec(\"getprop ro.kernel.qemu\") and confirm the value is "
+            "compared against \"1\" — the canonical AVD marker. Also check for "
+            "ro.hardware containing goldfish / ranchu.",
+            "Search for file probes of emulator-only paths: /dev/qemu_pipe, "
+            "/dev/socket/qemud, /system/lib/libc_malloc_debug_qemu.so, "
+            "/system/bin/qemu-props, /sys/qemu_trace — any File.exists / new File path "
+            "checking these is a positive signal. Bonus: SensorManager.getDefaultSensor"
+            "(TYPE_ACCELEROMETER) returning null is a strong emulator signal on real "
+            "device targets.",
+        ),
+        relevant_apis=(
+            "android.os.Build.FINGERPRINT",
+            "android.os.Build.MODEL",
+            "android.os.Build.HARDWARE",
+            "android.os.SystemProperties.get",
+            "java.lang.Runtime.exec",
+            "java.io.File.exists",
+            "android.hardware.SensorManager.getDefaultSensor",
+            "android.telephony.TelephonyManager.getDeviceId",
+        ),
+        evidence_hints=(
+            "ro.kernel.qemu",
+            "ro.hardware",
+            "goldfish",
+            "ranchu",
+            "sdk_gphone",
+            "google_sdk",
+            "qemu_pipe",
+            "Genymotion",
+            "BlueStacks",
+            "Build.FINGERPRINT",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-6",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "The app detects, and responds to, tampering the code and data in its own "
+            "memory space."
+        ),
+        description=(
+            "Runtime in-memory tampering (Frida method hooks, Substrate inline patches, "
+            "Cydia Substrate, Xposed) replaces method implementations without touching "
+            "on-disk artifacts — so RESILIENCE-3's static signature check sees a clean "
+            "APK while the running process answers to the attacker. Defense requires "
+            "the app to compute checksums / signatures of its own loaded classes and "
+            ".so segments at runtime and compare against expected values. The "
+            "verification target is presence of a self-integrity routine that hashes "
+            "dex bytes / native code pages and either trips a counter on mismatch "
+            "(stealth response) or refuses to proceed with sensitive operations (loud "
+            "response). Pure on-disk APK signature checks satisfy RESILIENCE-3 but NOT "
+            "this control because they miss in-memory hooks."
+        ),
+        verification_steps=(
+            "Search native libraries (libapp.so, libcore.so) for memory-scanning "
+            "routines: mprotect probes, /proc/self/maps reads that compare against "
+            "expected segment hashes, dlsym for known hook-library symbols "
+            "(gum_interceptor_, FridaGumJS, substrate_hook).",
+            "Search Java/Kotlin for dex integrity checks: loaders walking "
+            "Class.forName / ClassLoader.loadClass and computing SHA-256 of returned "
+            "byte[] via reflection, comparing against an embedded baseline. Frameworks "
+            "like DexGuard, Appdome, Promon SHIELD wrap this — recognize their "
+            "marker classes.",
+            "Verify the response on detection — silent counter increment (preferred), "
+            "delayed exit, feature flag flip — rather than immediate kill which is "
+            "the obvious failure mode an attacker can trace and patch.",
+        ),
+        relevant_apis=(
+            "android.os.Process.myPid",
+            "java.lang.ClassLoader.loadClass",
+            "java.lang.Class.forName",
+            "java.lang.reflect.Method",
+            "java.security.MessageDigest.getInstance",
+            "android.system.Os.lstat",
+            "java.io.RandomAccessFile",
+        ),
+        evidence_hints=(
+            "/proc/self/maps",
+            "gum_interceptor",
+            "FridaGumJS",
+            "substrate",
+            "xposed",
+            "checksum",
+            "selfIntegrity",
+            "DexGuard",
+            "AppdomeSDK",
+            "PromonSHIELD",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-7",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "The app implements multiple mechanisms in each defense category (8.1 to "
+            "8.6). Note that resiliency scales with the amount, diversity of the "
+            "originality of the mechanisms used."
+        ),
+        description=(
+            "Single-mechanism defense fails the moment an attacker identifies and "
+            "bypasses it. Resilience comes from depth: 3-5 INDEPENDENT root-detection "
+            "paths (su binary presence + Magisk Manager package + ro.build.tags = "
+            "test-keys + mount options on /system), 3+ debugger checks (Debug."
+            "isDebuggerConnected + ptrace self-attach + /proc/self/status TracerPid + "
+            "android:debuggable manifest reading itself), 3+ emulator checks (Build "
+            "fingerprint + system property + /dev/qemu probe), and so on per category. "
+            "The verification target is that for each of RESILIENCE-1 through "
+            "RESILIENCE-6 categories, the app implements at least 3 mechanisms drawn "
+            "from distinct signal sources (file system, runtime properties, native "
+            "syscalls, network) — never relying on a single check the attacker can "
+            "patch out with a Frida one-liner."
+        ),
+        verification_steps=(
+            "For each of the 6 defense categories (root detection, anti-debug, "
+            "tampering, anti-RE tools, anti-emulator, memory integrity), enumerate "
+            "every call site / check in the app and count distinct mechanisms.",
+            "Confirm each category has ≥ 3 distinct mechanisms drawn from DIFFERENT "
+            "signal classes (file probe + system property + native syscall + Java API "
+            "+ network round-trip) — five copies of File.exists are one mechanism, "
+            "not five.",
+            "Verify the mechanisms are wired into INDEPENDENT branches (no single "
+            "boolean OR'd as the final verdict that a Frida hook can flip — each "
+            "mechanism should update an independent counter and the decision should "
+            "consume the counter sum).",
+        ),
+        relevant_apis=(
+            "android.os.Debug.isDebuggerConnected",
+            "android.os.SystemProperties.get",
+            "java.io.File.exists",
+            "java.lang.Runtime.exec",
+            "android.app.ActivityManager.getRunningAppProcesses",
+            "android.os.Process.myPid",
+            "android.content.pm.PackageManager.getInstalledPackages",
+        ),
+        evidence_hints=(
+            "isDebuggerConnected",
+            "checkRoot",
+            "antiTamper",
+            "rootDetection",
+            "isEmulator",
+            "Magisk",
+            "ptrace",
+            "TracerPid",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-8",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "The detection mechanisms trigger responses of different types, including "
+            "delayed and stealthy responses."
+        ),
+        description=(
+            "Loud immediate exit (System.exit(1) right after a positive root check) "
+            "tells the attacker exactly which check fired and where in the code path. "
+            "Stealth + delayed responses force the attacker into a binary-search bug "
+            "hunt: a counter incremented on detection, sampled at a random later "
+            "interval, that subtly degrades the experience (wrong network endpoint, "
+            "slightly-wrong cryptographic output, gradual session expiration) — these "
+            "look like flaky behaviour, not a security check. The verification target "
+            "is that the app's response inventory includes at least 3 distinct "
+            "response types: silent counter, delayed exit (timer-based, hours later), "
+            "feature-flag corruption (encryption uses wrong key so server rejects), "
+            "and server-side flagging (account auto-locked next login)."
+        ),
+        verification_steps=(
+            "List every detection-positive code path and trace its response. Count "
+            "distinct response classes: immediate exit, delayed exit, silent counter, "
+            "feature degradation, network-side flagging.",
+            "Confirm ≥ 3 distinct response classes exist. Immediate exit on its own "
+            "is the obvious failure mode; presence of ONLY immediate exit is a "
+            "finding.",
+            "Verify the delayed/stealth responses have randomization (not exactly N "
+            "minutes after detection — drawn from a distribution) so an attacker "
+            "doing repeated runs cannot correlate the response timing back to the "
+            "trigger.",
+        ),
+        relevant_apis=(
+            "android.os.Handler.postDelayed",
+            "java.util.concurrent.ScheduledExecutorService",
+            "java.lang.System.exit",
+            "java.lang.Process.destroy",
+            "android.os.Process.killProcess",
+            "java.util.Random.nextLong",
+            "java.security.SecureRandom.nextInt",
+        ),
+        evidence_hints=(
+            "postDelayed",
+            "ScheduledExecutorService",
+            "System.exit",
+            "Process.killProcess",
+            "tamperCounter",
+            "delayedExit",
+            "stealthResponse",
+            "secureRandom",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-9",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "Obfuscation is applied to programmatic defenses, which in turn impede "
+            "de-obfuscation via dynamic analysis."
+        ),
+        description=(
+            "Plaintext class / method names ('checkRoot', 'isJailbroken', "
+            "'antiDebug') let an attacker locate the defense in seconds via JADX text "
+            "search and patch it out. Obfuscation moves the cost from minutes to "
+            "hours: ProGuard / R8 minification renames everything to single-letter "
+            "names, DexGuard / Appdome adds control-flow flattening + string "
+            "encryption, and native obfuscators (Themida, VMProtect) protect the .so "
+            "anti-debug code paths. The verification target is that classes "
+            "implementing detection routines are NOT identifiable by name in the "
+            "decompiled output, their string constants ('su', 'Magisk', '/system/xbin') "
+            "are NOT plaintext in the dex, and their control flow is non-linear "
+            "(opaque predicates, branch flattening) so a Frida hook on a single "
+            "method does not bypass the entire chain."
+        ),
+        verification_steps=(
+            "Decompile classes.dex and grep for obvious defense names — "
+            "checkRoot / isJailbroken / antiDebug / antiTamper / isEmulator. Hits "
+            "with these names in plaintext are a finding (defenses are findable in "
+            "seconds).",
+            "Search for plaintext strings that point at defenses: 'su', 'Magisk', "
+            "'frida-server', 'xposed', '/system/xbin'. These should be encrypted "
+            "(string-encryption library marker), Base64-encoded, or computed at "
+            "runtime from XOR / per-string keys — never the bare literal.",
+            "Confirm minification flags in the build configuration: minifyEnabled "
+            "true + R8 fullMode true + proguard-rules including -repackageclasses + "
+            "-allowaccessmodification — absence (or minifyEnabled false on a release "
+            "build) is itself a finding.",
+        ),
+        relevant_apis=(
+            "javax.crypto.Cipher.doFinal",
+            "java.util.Base64.getDecoder",
+            "java.lang.String.toCharArray",
+            "java.lang.reflect.Method.invoke",
+        ),
+        evidence_hints=(
+            "minifyEnabled",
+            "proguard-rules.pro",
+            "R8",
+            "DexGuard",
+            "stringEncryption",
+            "obfuscate",
+            "controlFlowFlattening",
+            "Base64.decode",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-10",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "The app implements a 'device binding' functionality using a device "
+            "fingerprint derived from multiple properties unique to the device."
+        ),
+        description=(
+            "A stolen session token, a copied EncryptedSharedPreferences blob, or a "
+            "backup restored onto a different device should be unusable on the new "
+            "device. Device binding wraps sensitive credentials with material derived "
+            "from properties unique to THIS device — Settings.Secure.ANDROID_ID, "
+            "Build.SERIAL, a Keystore-generated key (which is by definition "
+            "device-bound), DRM Widevine ID, hardware-attested SafetyNet / Play "
+            "Integrity nonce. The verification target is that sensitive credentials "
+            "(session token, OAuth refresh token, payment tokenisation key) are "
+            "encrypted with a key derived from at least 2 device-unique sources, "
+            "and that the unwrap path fails (forcing re-authentication) when any "
+            "source value changes — proving the credential cannot be reused on a "
+            "different device."
+        ),
+        verification_steps=(
+            "Find the credential storage path and trace its encryption key back to "
+            "the device-binding source. Confirm at least 2 sources combined: "
+            "Settings.Secure.ANDROID_ID + Keystore key (most common), or "
+            "ANDROID_ID + DRM ID, or Keystore + Play Integrity attestation token.",
+            "Verify the unwrap path re-reads the binding source on every credential "
+            "load and fails fast if values changed — a copied credential blob on a "
+            "different device will see a different ANDROID_ID and trip the fail "
+            "branch.",
+            "Inspect for SafetyNet / Play Integrity calls: SafetyNet.attest, "
+            "IntegrityManagerFactory.create, IntegrityTokenRequest. Server-side "
+            "verification of the returned token is the strongest binding because "
+            "Google's signed nonce attests the device identity.",
+        ),
+        relevant_apis=(
+            "android.provider.Settings$Secure.ANDROID_ID",
+            "android.os.Build.SERIAL",
+            "java.security.KeyStore",
+            "android.media.MediaDrm",
+            "com.google.android.gms.safetynet.SafetyNet.attest",
+            "com.google.android.play.core.integrity.IntegrityManagerFactory.create",
+        ),
+        evidence_hints=(
+            "ANDROID_ID",
+            "Settings.Secure",
+            "Build.SERIAL",
+            "MediaDrm",
+            "SafetyNet",
+            "IntegrityManager",
+            "deviceBinding",
+            "deviceFingerprint",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-11",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "All executable files and libraries belonging to the app are either "
+            "encrypted on the file level and/or important code and data segments "
+            "inside the executables are encrypted or packed. Trivial static analysis "
+            "does not reveal important code or data."
+        ),
+        description=(
+            "An unpacked classes.dex hands the attacker every method body and string "
+            "constant in seconds via JADX or apkleaks. Packing / encryption forces "
+            "them to run the app under a debugger (which RESILIENCE-2 should "
+            "frustrate) just to recover the decrypted dex from memory. The "
+            "verification target is that the on-disk APK does NOT contain readable "
+            "dex for sensitive classes — dex either lives encrypted in assets/ and "
+            "decrypted by a native loader at startup, OR sensitive logic is moved "
+            "into a .so and the .so itself is packed (UPX, custom UPX-derivatives, "
+            "Themida) so static disasm yields gibberish until unpacked. Bonus: "
+            "string encryption inside native code so cleartext URLs / API endpoints "
+            "do not appear in `strings libapp.so`."
+        ),
+        verification_steps=(
+            "JADX-decompile classes*.dex and assess: every sensitive class (auth, "
+            "crypto, network, anti-tamper) should be either obfuscated (R8) AND/OR "
+            "missing entirely (loaded via encrypted-asset DexClassLoader at "
+            "runtime).",
+            "Inspect assets/ and lib/<abi>/ for files with high entropy (≥ 7.5 bits/"
+            "byte = encrypted/packed). Cross-reference with native code that "
+            "reads + decrypts these assets at startup — if present, the protected "
+            "code lives in those blobs, not in dex.",
+            "Run `strings` against every libapp.so / native binary. If sensitive "
+            "URLs, hardcoded secrets, API endpoints, or method names appear as "
+            "plaintext, the native code is not protected — note that legitimate "
+            "OpenSSL / Boost strings will appear regardless, so focus on "
+            "app-specific identifiers.",
+        ),
+        relevant_apis=(
+            "dalvik.system.DexClassLoader",
+            "dalvik.system.InMemoryDexClassLoader",
+            "java.lang.System.loadLibrary",
+            "android.content.res.AssetManager.open",
+            "javax.crypto.Cipher.doFinal",
+        ),
+        evidence_hints=(
+            "DexClassLoader",
+            "InMemoryDexClassLoader",
+            "loadLibrary",
+            "assets/",
+            "high_entropy",
+            "packed",
+            "UPX",
+            "Themida",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-12",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "If the goal of obfuscation is to protect sensitive computations, an "
+            "obfuscation scheme is used that is both appropriate for the particular "
+            "task and robust against manual and automated de-obfuscation methods, "
+            "considering currently published research. The effectiveness of the "
+            "obfuscation scheme must be verified through manual testing. Note that "
+            "hardware-based isolation features are preferred over obfuscation "
+            "whenever possible."
+        ),
+        description=(
+            "Generic R8 / ProGuard name-only minification is enough to slow casual "
+            "browsing, NOT enough to protect cryptographic operations or DRM logic "
+            "from a determined attacker with a deobfuscation toolchain (jadx-gui "
+            "rename helpers, simplify-vm for control-flow flattening, angr for "
+            "symbolic execution against MBA expressions). The verification target is "
+            "that sensitive computations either (a) execute inside a hardware-isolated "
+            "Trusted Execution Environment (Keystore StrongBox, Trusty TA, Knox TEE) "
+            "where the host process cannot read the intermediate state — preferred — "
+            "or (b) use modern obfuscation appropriate to the threat model: control-"
+            "flow flattening (OLLVM, Tigress), opaque predicates, virtualisation, "
+            "mixed-boolean-arithmetic transforms. Plain R8 alone is a finding for "
+            "anything beyond IP protection."
+        ),
+        verification_steps=(
+            "Identify sensitive computations (cryptographic primitives, DRM key "
+            "derivation, white-box crypto, anti-fraud heuristics) and trace their "
+            "execution layer. Confirm each is in a TEE call (Keystore-bound Cipher "
+            "operations) OR in obfuscated native code with CFF/MBA, NOT in plain "
+            "Java/Kotlin even after R8.",
+            "Check for known TEE indicators: setIsStrongBoxBacked(true) on "
+            "KeyGenParameterSpec, Knox SDK imports, Trusty TA proxy calls, Widevine "
+            "L1 attestation.",
+            "Decompile native sensitive routines and assess CFG complexity vs the "
+            "size of the function — a 50-byte function with 100 basic blocks and "
+            "MBA arithmetic is obfuscated; a 50-byte function with 3 blocks is not.",
+        ),
+        relevant_apis=(
+            "android.security.keystore.KeyGenParameterSpec$Builder.setIsStrongBoxBacked",
+            "javax.crypto.Cipher.doFinal",
+            "java.security.KeyStore.getInstance",
+            "android.media.MediaDrm",
+        ),
+        evidence_hints=(
+            "setIsStrongBoxBacked",
+            "StrongBox",
+            "TEE",
+            "Trusty",
+            "Knox",
+            "Widevine",
+            "OLLVM",
+            "controlFlowFlattening",
+            "MBA",
+            "whiteBox",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-RESILIENCE-13",
+        group=MasvsGroup.RESILIENCE,
+        level=MasvsLevel.R,
+        title=(
+            "As a defense in depth, next to having solid hardening of the "
+            "communicating parties, application level payload encryption can be "
+            "applied to further impede eavesdropping."
+        ),
+        description=(
+            "TLS terminates at the server's outermost reverse proxy / load balancer "
+            "— after that point the request body travels in cleartext across the "
+            "datacenter network, into application logs, into observability pipelines "
+            "(Datadog APM, Sentry breadcrumbs, Splunk syslog), and into backup tapes. "
+            "An attacker who compromises any internal hop, or who exfiltrates a log "
+            "archive, recovers everything sent over TLS. Application-level payload "
+            "encryption (encrypting the request BODY with a key the LB does not have, "
+            "JOSE JWE, custom AES-GCM with per-session keys negotiated via ECDH) "
+            "wraps the sensitive content in a second envelope only the destination "
+            "service can open. The verification target is presence of such an "
+            "envelope for sensitive endpoints — sensitive request bodies encrypted "
+            "with a session key whose private half lives only on the application "
+            "server, not on the TLS-terminating proxy."
+        ),
+        verification_steps=(
+            "Enumerate sensitive request endpoints (payment, account-update, "
+            "high-value-transfer) and inspect the request body shape — confirm the "
+            "body is a JOSE compact serialisation (header.encrypted_key.iv."
+            "ciphertext.tag) or a custom AES-GCM envelope, not plain JSON.",
+            "Trace the key-negotiation path: ECDH against a server-published public "
+            "key (delivered out-of-band or pinned in the APK), HKDF expansion to a "
+            "session key, AES-GCM with per-request IVs. Reuse of the same IV is a "
+            "critical finding (catastrophic GCM nonce-reuse breaks confidentiality "
+            "AND authenticity).",
+            "Verify the server-public-key pin is rotated periodically or is itself "
+            "fetched from a Keystore-resident pin (defense against key compromise "
+            "via TLS-terminating-proxy MITM).",
+        ),
+        relevant_apis=(
+            "javax.crypto.Cipher",
+            "javax.crypto.spec.GCMParameterSpec",
+            "java.security.KeyAgreement",
+            "java.security.spec.ECGenParameterSpec",
+            "javax.crypto.KeyAgreement",
+            "org.jose4j.jwe.JsonWebEncryption",
+            "com.nimbusds.jose.JWEObject",
+        ),
+        evidence_hints=(
+            "JsonWebEncryption",
+            "JWEObject",
+            "JOSE",
+            "GCMParameterSpec",
+            "KeyAgreement",
+            "ECDH",
+            "HKDF",
+            "payloadEncrypt",
+            "applicationLayerEncryption",
+        ),
+    ),
 )
 
 
