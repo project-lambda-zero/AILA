@@ -29,6 +29,8 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from aila.modules.vr.masvs.models import MasvsGroup
