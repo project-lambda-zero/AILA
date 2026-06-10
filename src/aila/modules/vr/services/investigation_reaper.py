@@ -99,6 +99,21 @@ async def sweep_cap_exceeded_investigations() -> int:
             .group_by(MSG.investigation_id)
             .subquery()
         )
+        # Latest active-branch update across each inv. Used by the
+        # idle-grace gate below — when wall-clock cap fires we check
+        # if any active branch wrote within IDLE_GRACE_S; if yes, the
+        # audit is alive and the cap holds off (operator-mandated:
+        # 'fix abandon mechanism — branches doing real tool calls
+        # shouldn't get killed by calendar age alone').
+        active_acts = (
+            select(
+                BR.investigation_id.label("inv_id"),
+                func.max(BR.updated_at).label("latest_act"),
+            )
+            .where(BR.status == BranchStatus.ACTIVE.value)
+            .group_by(BR.investigation_id)
+            .subquery()
+        )
         running = (await uow.session.exec(
             select(
                 INV.id,
@@ -112,24 +127,41 @@ async def sweep_cap_exceeded_investigations() -> int:
                 coalesce(INV.started_at, INV.created_at).label("clock_start"),
                 coalesce(branch_turns.c.total_turns, 0),
                 coalesce(msg_counts.c.total_messages, 0),
+                active_acts.c.latest_act,
             )
             .outerjoin(branch_turns, branch_turns.c.inv_id == INV.id)
             .outerjoin(msg_counts, msg_counts.c.inv_id == INV.id)
+            .outerjoin(active_acts, active_acts.c.inv_id == INV.id)
             .where(INV.status == InvestigationStatus.RUNNING.value),
         )).all()
 
         now = utc_now()
+        idle_grace_s = _float_env("VR_WALL_CLOCK_IDLE_GRACE_S", 900.0)
         breaches: list[tuple[str, str]] = []
         for row in running:
-            inv_id, clock_start, total_turns, total_messages = row
+            inv_id, clock_start, total_turns, total_messages, latest_act = row
             if clock_start and clock_start.tzinfo is None:
                 clock_start = clock_start.replace(tzinfo=now.tzinfo)
+            if latest_act and latest_act.tzinfo is None:
+                latest_act = latest_act.replace(tzinfo=now.tzinfo)
             reason = None
             if total_turns and total_turns >= turn_cap:
                 reason = f"investigation_turn_cap:{total_turns}/{turn_cap}"
             elif total_messages and total_messages >= message_cap:
                 reason = f"investigation_message_cap:{total_messages}/{message_cap}"
             elif clock_start and clock_start < wallclock_cutoff:
+                # Wall-clock cap is a zombie-state safety net, NOT a
+                # guillotine for live audits. Skip when any active
+                # branch wrote within idle_grace_s — the audit is
+                # alive, calendar age alone doesn't justify killing
+                # it. Operator-observed e1a9e13c: 7 branches got
+                # cap-killed mid-tool-call because the calendar said
+                # 25.9h/24h even though renzo was running
+                # taint_paths_to at the same instant.
+                if latest_act is not None:
+                    idle_s = (now - latest_act).total_seconds()
+                    if idle_s < idle_grace_s:
+                        continue  # alive, skip cap fire
                 age_hours = (now - clock_start).total_seconds() / 3600.0
                 reason = (
                     f"investigation_wall_clock:{age_hours:.1f}h/"
