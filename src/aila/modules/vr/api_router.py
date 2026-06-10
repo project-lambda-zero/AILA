@@ -3333,8 +3333,8 @@ def create_vr_router() -> APIRouter:
         # request-budget territory.
         handles_dict: dict[str, Any] = {}
         try:
-            if target._mcp_handles_json:
-                handles_dict = json.loads(target._mcp_handles_json)
+            if target.mcp_handles_json:
+                handles_dict = json.loads(target.mcp_handles_json)
         except (ValueError, TypeError):
             handles_dict = {}
         pdf_bytes = build_pdf(aggregate, target_summary, handles=handles_dict)
