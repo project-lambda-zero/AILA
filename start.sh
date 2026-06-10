@@ -126,6 +126,56 @@ load_env() {
   else
     echo "[aila] WARNING: .env not found -- copy .env.example to .env first"
   fi
+  detect_android_sdk
+}
+
+# Discover an Android SDK install and export ANDROID_SDK_ROOT so child
+# processes (android-mcp, vr workers) can find apksigner / aapt /
+# zipalign even though the SDK installer never adds build-tools to
+# PATH on any OS. Belt-and-suspenders with android-mcp's own resolver
+# at android_mcp/sdk_discovery.py — that resolver also probes the
+# same per-OS defaults, but exporting the env var here makes the
+# choice visible (logs + tools see ANDROID_SDK_ROOT=...).
+#
+# Resolution order matches sdk_discovery.py for consistency. First
+# directory with a build-tools/ subdir wins. Silent no-op when
+# ANDROID_SDK_ROOT or ANDROID_HOME is already set (operator wins).
+detect_android_sdk() {
+  if [[ -n "${ANDROID_SDK_ROOT:-}" || -n "${ANDROID_HOME:-}" ]]; then
+    return 0
+  fi
+  local candidates=()
+  case "$OSTYPE" in
+    msys*|cygwin*|win32)
+      [[ -n "${LOCALAPPDATA:-}" ]] && candidates+=("$LOCALAPPDATA/Android/Sdk")
+      [[ -n "${ProgramFiles:-}" ]] && candidates+=("$ProgramFiles/Android/android-sdk")
+      ;;
+    darwin*)
+      candidates+=(
+        "$HOME/Library/Android/sdk"
+        "/usr/local/share/android-sdk"
+        "/opt/homebrew/share/android-sdk"
+        "/usr/local/lib/android/sdk"
+      )
+      ;;
+    *)
+      candidates+=(
+        "$HOME/Android/Sdk"
+        "/opt/android-sdk"
+        "/opt/android-sdk-linux"
+        "/usr/lib/android-sdk"
+        "/usr/local/lib/android/sdk"
+      )
+      ;;
+  esac
+  local sdk
+  for sdk in "${candidates[@]}"; do
+    if [[ -d "$sdk/build-tools" ]] && [[ -n "$(ls -A "$sdk/build-tools" 2>/dev/null)" ]]; then
+      export ANDROID_SDK_ROOT="$sdk"
+      echo "[aila] ANDROID_SDK_ROOT auto-detected: $sdk"
+      return 0
+    fi
+  done
 }
 
 # Turn a free-form label like "backend (port 8000)" or "worker:vr" into a
