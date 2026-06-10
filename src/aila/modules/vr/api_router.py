@@ -3259,7 +3259,12 @@ def create_vr_router() -> APIRouter:
                 for row in rows:
                     outcome_rows[str(row.id)] = row
 
-        llm = AilaLLMClient()
+        from aila.storage.registry import ConfigRegistry  # noqa: PLC0415
+        from aila.storage.secrets import SecretStore  # noqa: PLC0415
+        llm = AilaLLMClient(
+            registry=ConfigRegistry(),
+            secret_store=SecretStore(),
+        )
         to_write: list[tuple[str, dict[str, Any]]] = []
 
         async def _process(v: Any) -> None:
