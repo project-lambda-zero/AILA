@@ -144,30 +144,33 @@ detect_android_sdk() {
   if [[ -n "${ANDROID_SDK_ROOT:-}" || -n "${ANDROID_HOME:-}" ]]; then
     return 0
   fi
+  # Probe every known SDK install path regardless of detected OS. No
+  # two paths collide (the per-OS defaults are all-distinct), the
+  # first existing one wins, and probing all of them handles edge
+  # cases the strict OSTYPE branch missed: WSL bash with OSTYPE=
+  # linux-gnu running against a Windows-side SDK via /mnt/c, Git
+  # Bash on macOS, MSYS2 vs Cygwin vs WSL variants, etc.
   local candidates=()
-  case "$OSTYPE" in
-    msys*|cygwin*|win32)
-      [[ -n "${LOCALAPPDATA:-}" ]] && candidates+=("$LOCALAPPDATA/Android/Sdk")
-      [[ -n "${ProgramFiles:-}" ]] && candidates+=("$ProgramFiles/Android/android-sdk")
-      ;;
-    darwin*)
-      candidates+=(
-        "$HOME/Library/Android/sdk"
-        "/usr/local/share/android-sdk"
-        "/opt/homebrew/share/android-sdk"
-        "/usr/local/lib/android/sdk"
-      )
-      ;;
-    *)
-      candidates+=(
-        "$HOME/Android/Sdk"
-        "/opt/android-sdk"
-        "/opt/android-sdk-linux"
-        "/usr/lib/android-sdk"
-        "/usr/local/lib/android/sdk"
-      )
-      ;;
-  esac
+  # Env-derived (Windows-style) — empty / unset on POSIX, harmless.
+  [[ -n "${LOCALAPPDATA:-}" ]] && candidates+=("$LOCALAPPDATA/Android/Sdk")
+  [[ -n "${ProgramFiles:-}" ]] && candidates+=("$ProgramFiles/Android/android-sdk")
+  # WSL/cygwin /mnt/c style Windows-on-Linux discovery — only meaningful
+  # when bash is running inside WSL. Outside WSL these paths simply
+  # don't exist and the loop skips them.
+  if [[ -n "${USER:-}" ]]; then
+    candidates+=("/mnt/c/Users/$USER/AppData/Local/Android/Sdk")
+  fi
+  # POSIX-style defaults (Android Studio + Homebrew + distro pkgs).
+  candidates+=(
+    "$HOME/Library/Android/sdk"          # macOS Android Studio
+    "$HOME/Android/Sdk"                  # Linux Android Studio
+    "/usr/local/share/android-sdk"       # macOS Homebrew (Intel)
+    "/opt/homebrew/share/android-sdk"    # macOS Homebrew (Apple Si)
+    "/usr/local/lib/android/sdk"         # GitHub Actions runner
+    "/opt/android-sdk"                   # Arch / generic Linux
+    "/opt/android-sdk-linux"             # legacy Debian-derived
+    "/usr/lib/android-sdk"               # Debian / Ubuntu apt
+  )
   local sdk
   for sdk in "${candidates[@]}"; do
     if [[ -d "$sdk/build-tools" ]] && [[ -n "$(ls -A "$sdk/build-tools" 2>/dev/null)" ]]; then
