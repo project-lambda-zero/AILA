@@ -43,6 +43,68 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ── LLM endpoint health tracking ─────────────────────────────────────
+#
+# Per-process globals updated on every LLM call. Consumed by the masvs
+# parent_reconciler to gate stale-branch abandonment: when the LLM
+# endpoint has been unhealthy in the recent past, branches sitting
+# idle on retry-loops are NOT "stalled" by their own fault — they're
+# waiting on the LLM. Abandoning them in that window destroys real
+# progress and is operator-prohibited.
+#
+# We update _LAST_LLM_ERROR_AT on every retryable exception even when
+# a later retry succeeds — the failure window is still real, the
+# branch did spend wall-clock time waiting, and any concurrent
+# branches may have hit the same outage.
+_LAST_LLM_OK_AT: float = 0.0
+_LAST_LLM_ERROR_AT: float = 0.0
+_LLM_HEALTH_LOCK = asyncio.Lock()
+
+
+def _record_llm_ok() -> None:
+    """Update the last-OK timestamp. Called inside the retry success path."""
+    global _LAST_LLM_OK_AT  # noqa: PLW0603
+    _LAST_LLM_OK_AT = _time_mod.monotonic()
+
+
+def _record_llm_error() -> None:
+    """Update the last-error timestamp. Called inside every retry catch."""
+    global _LAST_LLM_ERROR_AT  # noqa: PLW0603
+    _LAST_LLM_ERROR_AT = _time_mod.monotonic()
+
+
+def is_llm_recently_unhealthy(window_s: float = 600.0) -> bool:
+    """Return True iff the LLM had any error in the trailing window AND
+    has not had a more recent success.
+
+    Used by reconciler step 5 to gate stale-branch abandonment. A
+    branch that has been idle through an LLM outage is waiting for
+    work, not stalled — abandoning it would destroy real progress.
+
+    Args:
+        window_s: How far back to look for the last error. Default 10
+            minutes — matches the worker's typical retry-window times
+            (5-10 retries with exponential backoff cap at 60s each).
+    """
+    if _LAST_LLM_ERROR_AT == 0.0:
+        return False
+    now = _time_mod.monotonic()
+    if (now - _LAST_LLM_ERROR_AT) > window_s:
+        return False
+    # Error within window — only "healthy" if a success has happened
+    # strictly after the most recent error.
+    return _LAST_LLM_OK_AT <= _LAST_LLM_ERROR_AT
+
+
+def get_llm_health_snapshot() -> dict[str, float | bool]:
+    """Expose health timestamps for diagnostics + logging."""
+    now = _time_mod.monotonic()
+    return {
+        "last_ok_age_s": (now - _LAST_LLM_OK_AT) if _LAST_LLM_OK_AT else -1.0,
+        "last_error_age_s": (now - _LAST_LLM_ERROR_AT) if _LAST_LLM_ERROR_AT else -1.0,
+        "recently_unhealthy_10min": is_llm_recently_unhealthy(600.0),
+    }
+
 
 # Models that reject ``temperature`` with 400. Configurable via the env var
 # AILA_LLM_MODELS_REJECTING_TEMPERATURE (comma-separated substrings matched
@@ -714,8 +776,10 @@ class AilaLLMClient:
                 except (AILAError, AttributeError):
                     pass
 
+                _record_llm_ok()
                 return _enrich_response(response, ctx)
             except (APIConnectionError, APITimeoutError, RateLimitError) as exc:
+                _record_llm_error()
                 last_error = exc
                 delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
                 logger.warning(
@@ -728,6 +792,7 @@ class AilaLLMClient:
                 await asyncio.sleep(delay)
             except LLMError as exc:
                 if exc.retryable:
+                    _record_llm_error()
                     last_error = exc
                     delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
                     logger.warning(
@@ -747,6 +812,7 @@ class AilaLLMClient:
                 # non-retryable errors are LLMError(retryable=False)
                 # which are caught above (classification blocks, schema
                 # violations). Everything else gets retried.
+                _record_llm_error()
                 last_error = exc
                 delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
                 logger.warning(

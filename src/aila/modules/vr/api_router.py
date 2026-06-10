@@ -4243,6 +4243,117 @@ def create_vr_router() -> APIRouter:
         return DataEnvelope(data=_investigation_summary(inv))
 
     @router.post(
+        "/investigations/{investigation_id}/reopen",
+        response_model=DataEnvelope[VRInvestigationSummary],
+        summary=(
+            "Reopen a terminal investigation and push it back through "
+            "the workflow. Accepts COMPLETED / FAILED / ABANDONED. "
+            "Non-destructive: existing branches + messages + outcomes "
+            "are preserved as a historical record. Spawns ONE fresh "
+            "primary branch with closed_reason='operator_reopen' "
+            "tagging on the prior primaries, flips investigation back "
+            "to RUNNING, and enqueues run_vr_investigate for the new "
+            "branch. Use when an audit closed prematurely (auto-synth "
+            "no_finding, rejected outcome, all branches abandoned via "
+            "stale-detector during an LLM outage) and the operator "
+            "wants another pass."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def reopen_investigation(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRInvestigationSummary]:
+        from aila.api.deps import get_task_queue  # noqa: PLC0415
+        from aila.platform.contracts._common import utc_now  # noqa: PLC0415
+
+        from .db_models import (  # noqa: PLC0415
+            VRInvestigationBranchRecord,
+            VRInvestigationRecord,
+        )
+        from .workflow.task import run_vr_investigate  # noqa: PLC0415
+
+        _reopenable = (
+            InvestigationStatus.COMPLETED.value,
+            InvestigationStatus.FAILED.value,
+            InvestigationStatus.ABANDONED.value,
+        )
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                ),
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            if inv.status not in _reopenable:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Cannot reopen investigation in status {inv.status!r}; "
+                        f"reopen accepts: {', '.join(_reopenable)}. Use "
+                        f"POST /investigations/{{id}}/resume for paused, or "
+                        f"/cancel + new dispatch to restart from scratch."
+                    ),
+                )
+
+            now = utc_now()
+            inv.status = InvestigationStatus.RUNNING.value
+            inv.pause_reason = None
+            inv.stopped_at = None
+            inv.updated_at = now
+            uow.session.add(inv)
+
+            # Spawn a fresh primary branch — old branches stay as
+            # historical record. fork_reason makes the lineage obvious
+            # in BranchTreePage + audit log.
+            new_branch = VRInvestigationBranchRecord(
+                investigation_id=inv.id,
+                status=BranchStatus.ACTIVE.value,
+                fork_reason=f"operator_reopen:{auth.user_id}",
+            )
+            uow.session.add(new_branch)
+            await uow.session.commit()
+            await uow.session.refresh(inv)
+            await uow.session.refresh(new_branch)
+
+            _log.info(
+                "reopen_investigation inv=%s by=%s new_branch=%s "
+                "(prior_status=%s)",
+                inv.id, auth.user_id, new_branch.id,
+                # status before flip is gone now; log a marker that
+                # operators can grep for in the audit trail.
+                "terminal",
+            )
+
+        # Submit fresh task for the new branch — same code path as
+        # dispatcher / resume. Goes through the regular vr ARQ queue
+        # and picks up the existing investigation state (case_state
+        # on existing branches stays put; the new branch starts at
+        # turn 0 with no carried state).
+        task_queue = get_task_queue("vr", request)
+        await task_queue.submit(
+            track="vr",
+            fn=run_vr_investigate,
+            kwargs={
+                "investigation_id": investigation_id,
+                "branch_id": new_branch.id,
+            },
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
+
+        return DataEnvelope(data=_investigation_summary(inv))
+
+    @router.post(
         "/investigations/{investigation_id}/reset",
         response_model=DataEnvelope[VRInvestigationSummary],
         summary=(

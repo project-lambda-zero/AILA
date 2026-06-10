@@ -1039,7 +1039,24 @@ async def _abandon_stale_branches(uow: UnitOfWork) -> int:
     from aila.modules.vr.db_models import (  # noqa: PLC0415
         VRInvestigationBranchRecord,
     )
+    from aila.platform.llm.client import is_llm_recently_unhealthy  # noqa: PLC0415
 
+    # LLM-outage gate (operator rule): branches sitting idle through
+    # an LLM endpoint outage are NOT stalled — they are waiting for
+    # work. Abandoning them in that window destroys real progress
+    # because the workflow couldn't run their next turn. Skip the
+    # whole abandonment step when the LLM has had any error in the
+    # trailing 10 min without a more recent success. The escalator
+    # wake-enqueue at step 3 still fires regardless: when the LLM
+    # recovers, the next wake will pick up the queued task and the
+    # branch resumes from its last known turn.
+    if is_llm_recently_unhealthy(600.0):
+        _log.info(
+            "stale_branches: skipping abandonment (LLM unhealthy "
+            "within last 10 min — branches waiting for work, not "
+            "stalled)",
+        )
+        return 0
     frozen_min = int(os.environ.get("VR_STALE_BRANCH_FROZEN_MIN", "30"))
     halted_min = int(os.environ.get("VR_STALE_BRANCH_HALTED_MIN", "120"))
     branch = VRInvestigationBranchRecord
