@@ -716,6 +716,7 @@ export type MasvsVerdict =
   | "inconclusive";
 
 export type MasvsGroup =
+  | "ARCH"
   | "STORAGE"
   | "CRYPTO"
   | "AUTH"

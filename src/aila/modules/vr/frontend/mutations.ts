@@ -1048,7 +1048,7 @@ export function useRejectFuzzProposal(proposalId: string) {
  *  `vr/api_router.py::dispatch_masvs_audit` and the L1 row count in
  *  `vr/masvs/catalog.py`. */
 export const MASVS_DEFAULT_CHILD_BUDGET_USD = 50;
-export const MASVS_L1_CONTROL_COUNT_ESTIMATE = 46;
+export const MASVS_L1_CONTROL_COUNT_ESTIMATE = 53;
 
 export interface MasvsAuditDispatchResult {
   parent_investigation_id: string;
