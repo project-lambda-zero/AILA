@@ -22,6 +22,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -39,6 +41,113 @@ __all__ = ["AuditMcpBridgeTool"]
 _XREF_ACTIONS = frozenset({
     "callers_of", "callees_of", "ancestors_of", "reachable_from",
 })
+
+
+# JADX p-prefix rewriter — see _resolve_jadx_prefixes docstring.
+_JADX_PREFIX_RE = re.compile(r"^p[0-9A-F]+(.+)$")
+
+
+def _resolve_jadx_prefixes(root: Path, file_path: str) -> Path | None:
+    """Walk ``file_path`` through ``root`` adding JADX p-prefixes where
+    needed. Returns the resolved absolute Path if every segment maps
+    to a real on-disk entry, otherwise None.
+
+    JADX rewrites package segments that collide with Java keywords,
+    digits, or its own internal rules by prefixing them with
+    ``p<smali_line_number_hex>``:
+
+      ``ui`` → ``p182ui`` (most common — every Android app)
+      ``do`` → ``p23do`` (Java keyword)
+      ``if`` → ``p17if`` (Java keyword)
+      ``2D`` → ``p9C2D`` (leading digit)
+
+    The renaming is per-class and the line-number portion is
+    deterministic but un-derivable from outside JADX itself. So we
+    walk the path: at each segment, if the literal name doesn't
+    resolve, scan the parent's children for any directory matching
+    ``p[0-9A-F]+<requested-name>``. If exactly one matches, use it
+    and continue walking. If zero or multiple match, give up.
+    """
+    parts = [p for p in file_path.replace("\\", "/").split("/") if p]
+    cursor = root
+    for part in parts:
+        candidate = cursor / part
+        try:
+            if candidate.exists():
+                cursor = candidate
+                continue
+            if not cursor.is_dir():
+                return None
+            matches = [
+                entry for entry in cursor.iterdir()
+                if entry.name.endswith(part)
+                and _JADX_PREFIX_RE.match(entry.name)
+            ]
+        except OSError:
+            return None
+        if len(matches) != 1:
+            return None
+        cursor = matches[0]
+    return cursor
+
+
+def _suggest_nearest_paths(
+    root: Path, file_path: str, max_suggestions: int = 6,
+) -> list[str]:
+    """Build a 'did you mean' list by walking back to the deepest
+    existing ancestor and returning its children whose name shares
+    the leaf basename (with JADX p-prefix stripped for fuzzy match).
+    """
+    parts = [p for p in file_path.replace("\\", "/").split("/") if p]
+    leaf = parts[-1] if parts else ""
+    leaf_stem = leaf.rsplit(".", 1)[0]
+    # Walk back until we find an existing ancestor.
+    cursor = root
+    consumed: list[str] = []
+    for part in parts[:-1]:
+        candidate = cursor / part
+        try:
+            if candidate.is_dir():
+                cursor = candidate
+                consumed.append(part)
+                continue
+            # Try p-prefix fuzzy.
+            if cursor.is_dir():
+                matches = [
+                    e for e in cursor.iterdir()
+                    if e.name.endswith(part)
+                    and _JADX_PREFIX_RE.match(e.name)
+                ]
+                if len(matches) == 1:
+                    cursor = matches[0]
+                    consumed.append(matches[0].name)
+                    continue
+        except OSError:
+            pass
+        break
+    # Scan cursor's children for fuzzy-match on the leaf.
+    suggestions: list[str] = []
+    try:
+        if cursor.is_dir():
+            for entry in cursor.iterdir():
+                name = entry.name
+                stem = name.rsplit(".", 1)[0]
+                # Direct match, prefix-stripped match, or substring.
+                m = _JADX_PREFIX_RE.match(stem)
+                stripped = m.group(1) if m else stem
+                if (
+                    name == leaf
+                    or stem == leaf_stem
+                    or stripped == leaf_stem
+                    or leaf_stem.lower() in name.lower()
+                ):
+                    rel = "/".join([*consumed, name])
+                    suggestions.append(rel)
+                    if len(suggestions) >= max_suggestions:
+                        break
+    except OSError:
+        pass
+    return suggestions
 
 
 def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
@@ -855,16 +964,57 @@ class AuditMcpBridgeTool(Tool):
                 abs_path = swap_path
                 file_path = file_path.rsplit(".", 1)[0] + abs_path.suffix
             else:
-                return {
-                    "status": "error",
-                    "error": (
-                        f"read_lines: file not found: {file_path} "
-                        f"(resolved to {abs_path}). Use semantic_search to "
-                        f"locate the correct path. Note: jadx decompiles "
-                        f"APKs to .java only — .kt files do not exist in "
-                        f"the decompiled tree."
-                    ),
-                }
+                # JADX rename fuzzy match (p182ui pattern). JADX
+                # rewrites package segments that collide with Java
+                # keywords / numerics / its own naming rules by
+                # prefixing them with ``p<smali_line_number>``: e.g.
+                # ``ui`` → ``p182ui``, ``do`` → ``p23do``, ``2D`` →
+                # ``p9C2D``. The agent reads the original-looking
+                # path from semantic_search results but the on-disk
+                # path carries the JADX prefix. Try to resolve by
+                # walking the path: for every missing segment, scan
+                # the parent's children for a ``p\d+<seg>`` match
+                # and rewrite the path in place. If the rewrite
+                # succeeds and the resulting file exists, use it.
+                rewritten = await asyncio.to_thread(
+                    _resolve_jadx_prefixes, root, file_path,
+                )
+                if rewritten is not None and await asyncio.to_thread(
+                    rewritten.is_file,
+                ):
+                    new_rel = str(rewritten.relative_to(root)).replace("\\", "/")
+                    logging.getLogger(__name__).info(
+                        "read_lines JADX_REWRITE %s → %s", file_path, new_rel,
+                    )
+                    abs_path = rewritten
+                    file_path = new_rel
+                else:
+                    # Build a "did you mean" suggestion by walking
+                    # backwards to the deepest existing ancestor and
+                    # listing its children that share the requested
+                    # leaf name (with JADX prefix stripped).
+                    suggestions = await asyncio.to_thread(
+                        _suggest_nearest_paths, root, file_path,
+                    )
+                    hint = (
+                        f" NEAREST INDEXED PATHS: {', '.join(suggestions)}"
+                        if suggestions
+                        else (
+                            " No similar path exists in the index. "
+                            "Use semantic_search to find the correct file."
+                        )
+                    )
+                    return {
+                        "status": "error",
+                        "error": (
+                            f"read_lines: file not found: {file_path} "
+                            f"(resolved to {abs_path}). JADX renames "
+                            f"colliding package names (e.g. ``ui`` → "
+                            f"``p182ui``, ``do`` → ``p23do``); the path "
+                            f"in semantic_search output is the on-disk "
+                            f"path, USE IT VERBATIM.{hint}"
+                        ),
+                    }
 
         def _read_all_lines(path: Path) -> list[str]:
             with path.open("r", encoding="utf-8", errors="replace") as f:
