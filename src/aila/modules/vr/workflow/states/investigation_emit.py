@@ -303,11 +303,70 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                         f"{total_messages}/{_INVESTIGATION_MESSAGE_CAP}"
                     )
                 elif age_hours >= _INVESTIGATION_WALL_CLOCK_HOURS:
-                    breach = (
-                        f"investigation_wall_clock:"
-                        f"{age_hours:.1f}h/"
-                        f"{_INVESTIGATION_WALL_CLOCK_HOURS:.1f}h"
+                    # Don't kill an investigation that's actively
+                    # producing work just because the calendar says
+                    # >24h since first turn. The wall-clock cap is a
+                    # safety net against zombie state (branches that
+                    # got stuck mid-run and now waste worker pool),
+                    # not a guillotine for live audits.
+                    #
+                    # Check the freshest branch updated_at against
+                    # NOW; if anything wrote within IDLE_GRACE_S
+                    # (default 15 min), the audit is alive and the
+                    # cap holds off. Worker activity (every tool
+                    # call) bumps updated_at, so a branch mid-tool-
+                    # call always trips this grace.
+                    #
+                    # Observed live on e1a9e13c: 25.9h/24h cap killed
+                    # 7 branches with the most-recent updated_at 30s
+                    # AFTER stopped_at — renzo was running
+                    # taint_paths_to and got mid-call killed.
+                    from aila.modules.vr.db_models import (  # noqa: PLC0415
+                        VRInvestigationBranchRecord as _BR2,
                     )
+                    idle_grace_s = float(
+                        __import__("os").environ.get(
+                            "VR_WALL_CLOCK_IDLE_GRACE_S", "900",
+                        ),
+                    )
+                    latest_act_row = (
+                        await uow.session.exec(
+                            _select(_func.max(_BR2.updated_at))
+                            .where(_BR2.investigation_id == investigation_id)
+                            .where(_BR2.status == "active"),
+                        )
+                    ).first()
+                    if latest_act_row is not None:
+                        latest_act = (
+                            latest_act_row
+                            if not hasattr(latest_act_row, "__getitem__")
+                            else latest_act_row[0]
+                        )
+                        if latest_act is not None:
+                            if latest_act.tzinfo is None:
+                                latest_act = latest_act.replace(tzinfo=UTC)
+                            idle_s = (utc_now() - latest_act).total_seconds()
+                            if idle_s < idle_grace_s:
+                                breach = None
+                            else:
+                                breach = (
+                                    f"investigation_wall_clock:"
+                                    f"{age_hours:.1f}h/"
+                                    f"{_INVESTIGATION_WALL_CLOCK_HOURS:.1f}h"
+                                    f"_idle{idle_s:.0f}s"
+                                )
+                        else:
+                            breach = (
+                                f"investigation_wall_clock:"
+                                f"{age_hours:.1f}h/"
+                                f"{_INVESTIGATION_WALL_CLOCK_HOURS:.1f}h"
+                            )
+                    else:
+                        breach = (
+                            f"investigation_wall_clock:"
+                            f"{age_hours:.1f}h/"
+                            f"{_INVESTIGATION_WALL_CLOCK_HOURS:.1f}h"
+                        )
 
                 if breach is not None:
                     actives = (await uow.session.exec(
