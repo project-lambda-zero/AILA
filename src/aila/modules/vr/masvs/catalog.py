@@ -669,6 +669,189 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "data_processing",
         ),
     ),
+    MasvsControl(
+        id="MSTG-STORAGE-13",
+        group=MasvsGroup.STORAGE,
+        level=MasvsLevel.L2,
+        title=(
+            "No sensitive data should be stored locally on the mobile device. Instead, "
+            "data should be retrieved from a remote endpoint when needed and only be "
+            "kept in memory."
+        ),
+        description=(
+            "Even with Keystore-backed encryption, locally stored sensitive data is "
+            "discoverable to a forensic adversary with physical device access — "
+            "encrypted Room databases survive on disk, key material is unwrappable on "
+            "a rooted device, and a backup snapshot lifts everything that ever lived "
+            "in app-private storage. The strongest defense is not to store the data "
+            "client-side at all: fetch it lazily over an authenticated channel, hold "
+            "it in memory only for the duration of the user's session, and let it "
+            "evaporate when the process dies. The verification target is that for "
+            "every L2 sensitive-data class (full payment card PAN, plaintext PIN, "
+            "decrypted PII, full account history), the app holds NO persistent copy — "
+            "no Room entity, no SharedPreferences entry, no file under getFilesDir, no "
+            "cache directory. Only ephemeral in-memory state derived from the latest "
+            "server response. Caches of the same data must either be encrypted with "
+            "key-bound material that the device can prove is current OR be cleared on "
+            "session end via Activity.onDestroy / Application.onTrimMemory."
+        ),
+        verification_steps=(
+            "Enumerate every persistence layer in the app (Room @Entity, "
+            "SharedPreferences keys, DataStore protobuf, raw File / FileOutputStream, "
+            "MediaStore writes) and classify by data sensitivity — for any L2 class "
+            "found persisted, the control fails unless step 3 holds.",
+            "Trace each server response containing L2 data through its caller and "
+            "verify the response object lives only in a ViewModel / StateFlow / "
+            "in-memory cache, never serialised to disk by a Retrofit cache or Apollo "
+            "normalised cache.",
+            "If on-device storage of L2 data is unavoidable (offline mode), confirm "
+            "the local copy is encrypted with a Keystore key bound to "
+            "setUserAuthenticationRequired(true) + setInvalidatedByBiometricEnrollment"
+            "(true) — and that the local copy is wiped on logout via a deterministic "
+            "delete path (db.clearAllTables, SharedPreferences.edit().clear()).",
+        ),
+        relevant_apis=(
+            "androidx.room.RoomDatabase.clearAllTables",
+            "android.content.SharedPreferences$Editor.clear",
+            "androidx.datastore.core.DataStore",
+            "androidx.security.crypto.EncryptedSharedPreferences",
+            "androidx.security.crypto.EncryptedFile",
+            "androidx.lifecycle.ViewModel.onCleared",
+            "android.app.Application.onTrimMemory",
+            "okhttp3.Cache",
+        ),
+        evidence_hints=(
+            "@Entity",
+            "RoomDatabase",
+            "SharedPreferences",
+            "DataStore",
+            "okhttp3.Cache",
+            "clearAllTables",
+            "edit().clear",
+            "onCleared",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-STORAGE-14",
+        group=MasvsGroup.STORAGE,
+        level=MasvsLevel.L2,
+        title=(
+            "If sensitive data is still required to be stored locally, it should be "
+            "encrypted using a key derived from hardware backed storage which requires "
+            "authentication."
+        ),
+        description=(
+            "When STORAGE-13 cannot be satisfied (offline mode, large attachment "
+            "caches, account-recovery material), the persisted copy must be encrypted "
+            "with a key the OS refuses to unwrap until the user has actively "
+            "authenticated. Android Keystore + setUserAuthenticationRequired(true) "
+            "binds key access to a fresh biometric or device-credential unlock, and "
+            "StrongBox (setIsStrongBoxBacked(true) on Pixel 3+) anchors that material "
+            "in a tamper-resistant secure element distinct from the application "
+            "processor. The verification target is that every persisted L2 store "
+            "(EncryptedSharedPreferences, EncryptedFile, SQLCipher database, manual "
+            "Cipher.doFinal output) derives its key from a Keystore alias whose "
+            "KeyGenParameterSpec sets BOTH setUserAuthenticationRequired(true) AND "
+            "setInvalidatedByBiometricEnrollment(true). Software-derived keys via "
+            "PBKDF2/SCrypt on a user PIN do not satisfy L2 because the PIN is "
+            "guessable offline."
+        ),
+        verification_steps=(
+            "Find every KeyGenParameterSpec.Builder construction and verify "
+            "setUserAuthenticationRequired(true), setInvalidatedByBiometric"
+            "Enrollment(true), and (where the hardware supports it) "
+            "setIsStrongBoxBacked(true) are all set on keys protecting sensitive "
+            "stores.",
+            "Find every persisted-store construction (EncryptedSharedPreferences."
+            "create, EncryptedFile.Builder, SQLCipher SQLiteDatabase.openOrCreate"
+            "Database) and trace the key argument back to a Keystore alias produced "
+            "by step 1 — keys derived from PBKDF2 of a user PIN, or read from "
+            "BuildConfig / strings.xml, are findings.",
+            "Inspect the master-key bootstrap path: androidx.security.crypto."
+            "MasterKey.Builder().setKeyScheme(MasterKey.KeyScheme.AES256_GCM)."
+            "setUserAuthenticationRequired(true, validityDurationSeconds=…) — "
+            "validityDurationSeconds of -1 (one-time auth) is strongest; long "
+            "validity windows (3600+) weaken protection.",
+        ),
+        relevant_apis=(
+            "android.security.keystore.KeyGenParameterSpec$Builder.setUserAuthentication"
+            "Required",
+            "android.security.keystore.KeyGenParameterSpec$Builder.setInvalidatedBy"
+            "BiometricEnrollment",
+            "android.security.keystore.KeyGenParameterSpec$Builder.setIsStrongBoxBacked",
+            "androidx.security.crypto.MasterKey$Builder",
+            "androidx.security.crypto.EncryptedSharedPreferences.create",
+            "androidx.security.crypto.EncryptedFile$Builder",
+            "net.sqlcipher.database.SQLiteDatabase.openOrCreateDatabase",
+        ),
+        evidence_hints=(
+            "setUserAuthenticationRequired",
+            "setIsStrongBoxBacked",
+            "setInvalidatedByBiometricEnrollment",
+            "MasterKey",
+            "AES256_GCM",
+            "EncryptedSharedPreferences",
+            "SQLiteDatabase.openOrCreate",
+            "validityDurationSeconds",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-STORAGE-15",
+        group=MasvsGroup.STORAGE,
+        level=MasvsLevel.L2,
+        title=(
+            "The app's local storage should be wiped after an excessive number of "
+            "failed authentication attempts."
+        ),
+        description=(
+            "An attacker with physical access can attempt the local PIN / biometric / "
+            "passphrase repeatedly — without rate-limiting and a hard wipe on a "
+            "threshold, every retry is a free guess against a small keyspace (4-digit "
+            "PIN = 10,000 tries). Sensitive apps must either count failed authentications "
+            "client-side and wipe the protected store at a low threshold (typically 5-10) "
+            "OR delegate the limit to Keystore's setUserAuthenticationValidityDuration"
+            "Seconds with a per-key invalidation on enough failures. The verification "
+            "target is presence of a failed-attempts counter persisted across app "
+            "restarts (Keystore-backed integer or signed atomic file), an explicit "
+            "threshold (commonly 5), and a wipe routine that clears the EncryptedShared"
+            "Preferences / EncryptedFile store and deletes the Keystore alias (so the "
+            "encrypted blobs become unrecoverable even with the file intact)."
+        ),
+        verification_steps=(
+            "Identify the local-auth verification path (PIN check, BiometricPrompt "
+            "negative, passphrase compare) and confirm the failure branch increments "
+            "a persistent counter — counters held in plain SharedPreferences are "
+            "rollback-attackable, prefer EncryptedSharedPreferences or a Keystore-"
+            "signed Long.",
+            "Confirm a threshold (typically 5-10) triggers a wipe routine that calls "
+            "EncryptedSharedPreferences.edit().clear(), File.delete on every "
+            "EncryptedFile, db.clearAllTables on every Room store, AND deletes the "
+            "underlying Keystore alias via KeyStore.deleteEntry(alias) — without "
+            "the last step the encrypted blobs remain on disk and a re-installed app "
+            "could decrypt them.",
+            "Verify the user-visible response to wipe (sign-out screen with "
+            "explanation, requires fresh full re-enrollment) rather than silent "
+            "deletion that confuses the user into thinking the app is broken.",
+        ),
+        relevant_apis=(
+            "java.security.KeyStore.deleteEntry",
+            "androidx.security.crypto.EncryptedSharedPreferences",
+            "android.content.SharedPreferences$Editor.clear",
+            "androidx.room.RoomDatabase.clearAllTables",
+            "java.io.File.delete",
+            "java.util.concurrent.atomic.AtomicInteger",
+        ),
+        evidence_hints=(
+            "failedAttempts",
+            "attemptsRemaining",
+            "MAX_ATTEMPTS",
+            "wipeData",
+            "KeyStore.deleteEntry",
+            "clearAllTables",
+            "lockoutThreshold",
+            "lockoutDuration",
+        ),
+    ),
 )
 
 
@@ -1825,6 +2008,174 @@ _NETWORK_CONTROLS: tuple[MasvsControl, ...] = (
             "SSLContext.init",
         ),
     ),
+    MasvsControl(
+        id="MSTG-NETWORK-4",
+        group=MasvsGroup.NETWORK,
+        level=MasvsLevel.L2,
+        title=(
+            "The app either uses its own certificate store, or pins the endpoint "
+            "certificate or public key, and subsequently does not establish connections "
+            "with endpoints that offer a different certificate or key, even if signed by "
+            "a trusted CA."
+        ),
+        description=(
+            "Stock CA verification trusts every certificate any of the ~150 root CAs in "
+            "Android's bundled trust store has signed. A single CA compromise (DigiNotar "
+            "2011, Symantec 2017), a state-issued intermediate, a user-installed root "
+            "(/system/etc/security/cacerts after rooting, or a corporate MDM-pushed CA), "
+            "or an enterprise SSL-inspection appliance all produce a 'valid' chain that "
+            "ordinary TrustManager logic accepts. Pinning narrows trust to a specific "
+            "leaf certificate's public-key SPKI hash, an intermediate, or a small set "
+            "of issuer keys the app actually expects — anything else fails the handshake "
+            "regardless of CA validity. The verification target is that the app declares "
+            "a pin set via Network Security Config (preferred — declarative, "
+            "manifest-level, survives library swaps) OR via OkHttp's CertificatePinner / "
+            "an X509TrustManager that compares SPKI hashes, AND that the pin set is "
+            "actually wired into every OkHttpClient / HttpsURLConnection / WebView "
+            "instance the app constructs — a pin set declared but not attached is the "
+            "common false-comfort finding."
+        ),
+        verification_steps=(
+            "Read res/xml/network_security_config.xml referenced from "
+            "AndroidManifest.xml application@android:networkSecurityConfig — confirm a "
+            "<pin-set> block with at least 2 <pin digest=\"SHA-256\"> entries (primary "
+            "+ backup) and an expiration ≥ 3 months in the future. Domain-scoped pins "
+            "(<domain includeSubdomains=\"true\">) are stronger than a global pin.",
+            "Search for OkHttp CertificatePinner usage: okhttp3.CertificatePinner."
+            "Builder().add(\"host\", \"sha256/…\") followed by OkHttpClient.Builder()."
+            "certificatePinner(...). Confirm the same client instance is used by every "
+            "Retrofit / Apollo / custom transport layer — a pinned client constructed "
+            "but never injected is a finding.",
+            "Search for X509TrustManager / HostnameVerifier custom implementations and "
+            "verify the checkServerTrusted / verify body actually compares an SPKI hash "
+            "or a known certificate — implementations that return without throwing or "
+            "that return true unconditionally disable pinning.",
+        ),
+        relevant_apis=(
+            "okhttp3.CertificatePinner",
+            "okhttp3.CertificatePinner$Builder.add",
+            "okhttp3.OkHttpClient$Builder.certificatePinner",
+            "javax.net.ssl.X509TrustManager.checkServerTrusted",
+            "javax.net.ssl.HostnameVerifier.verify",
+            "android.security.net.config.NetworkSecurityConfig",
+            "javax.net.ssl.SSLContext.init",
+            "java.security.MessageDigest.getInstance",
+        ),
+        evidence_hints=(
+            "<pin-set",
+            "<pin digest",
+            "CertificatePinner",
+            "certificatePinner",
+            "sha256/",
+            "checkServerTrusted",
+            "network_security_config",
+            "SPKI",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-NETWORK-5",
+        group=MasvsGroup.NETWORK,
+        level=MasvsLevel.L2,
+        title=(
+            "The app doesn't rely on a single insecure communication channel (email or "
+            "SMS) for critical operations, such as enrollments and account recovery."
+        ),
+        description=(
+            "SMS and email are best-effort transports — SMS is delivered in clear over "
+            "SS7, email is rarely TLS end-to-end, and SIM-swap fraud rerouted both "
+            "channels for thousands of US bank accounts in the 2019-2022 window. An app "
+            "that hands account recovery, OAuth enrollment, or payment authorization to "
+            "a single SMS code or a single email-link click lets any attacker who "
+            "compromised either channel hijack the account. The verification target is "
+            "that critical operations require corroboration across distinct channels — "
+            "an SMS OTP combined with biometric, a push notification with key-bound "
+            "approval, or step-up via a separate TOTP app — and that an SMS-only or "
+            "email-only path is either absent or marked legacy/rate-limited."
+        ),
+        verification_steps=(
+            "Enumerate every account-recovery / enrollment / payment-authorization flow "
+            "in the navigation graph and trace each to its server endpoint. Confirm "
+            "each requires confirmation across at least two distinct channels (SMS+push, "
+            "SMS+biometric, email+TOTP) rather than one.",
+            "Search for SmsRetriever / SmsManager.sendTextMessage / Intent.ACTION_SENDTO "
+            "(mailto) on the account-recovery path — if these are the SOLE confirmation "
+            "mechanism, that's a finding. Acceptable when combined with a second factor "
+            "(BiometricPrompt, FCM push approval, hardware key).",
+            "Verify the FCM push-notification handler for account-sensitive operations "
+            "requires an in-app approval gesture (BiometricPrompt or PIN re-entry) and "
+            "does not auto-approve on a deeplink click — silent confirmation via push "
+            "is functionally equivalent to a single-channel flow.",
+        ),
+        relevant_apis=(
+            "android.telephony.SmsManager.sendTextMessage",
+            "com.google.android.gms.auth.api.phone.SmsRetriever",
+            "android.content.Intent.ACTION_SENDTO",
+            "com.google.firebase.messaging.FirebaseMessagingService.onMessageReceived",
+            "androidx.biometric.BiometricPrompt.authenticate",
+            "android.app.NotificationManager.notify",
+        ),
+        evidence_hints=(
+            "SmsRetriever",
+            "sendTextMessage",
+            "ACTION_SENDTO",
+            "mailto:",
+            "smsto:",
+            "verification_code",
+            "recoveryEmail",
+            "magicLink",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-NETWORK-6",
+        group=MasvsGroup.NETWORK,
+        level=MasvsLevel.L2,
+        title=(
+            "The app only depends on up-to-date connectivity and security libraries."
+        ),
+        description=(
+            "Transport-layer libraries (OkHttp, Conscrypt, Volley, Apollo) and pinning "
+            "libraries (TrustKit, CWAC-NetSecurity) accumulate CVEs as protocol "
+            "weaknesses are discovered (OkHttp HTTP/2 HEADERS desync 2024-39689, "
+            "OpenSSL CCS injection, Conscrypt CRIME-class compression). A pinned client "
+            "built on a 2-year-old OkHttp loses every security patch shipped since, and "
+            "a single transitive Gradle dep can silently downgrade the on-disk version. "
+            "The verification target is that every TLS/HTTP library bundled in the APK "
+            "is at or near the latest stable release (within the project's documented "
+            "patch window) and that no library carries a known CVE without a "
+            "documented mitigation."
+        ),
+        verification_steps=(
+            "List every classes.dex / native library / aar containing transport code: "
+            "okhttp3.*, com.squareup.okhttp.*, org.conscrypt.*, libssl.so, libcrypto.so, "
+            "io.netty.*, com.android.volley.*. Extract the version from each (manifest "
+            "metadata for jars, native library symbols, BuildConfig.VERSION_NAME).",
+            "Cross-reference each version against the OSV / GitHub Security Advisories "
+            "database for known CVEs in the discovered version range — flag any "
+            "unpatched CVE with CVSS ≥ 7.0 affecting the bundled version.",
+            "Inspect BoringSSL / Conscrypt provider registration: Security.insertProvider"
+            "At(Conscrypt.newProvider(), 1) brings a known-current TLS stack at runtime "
+            "even on old Android versions — absence on an app targeting < API 29 is a "
+            "finding because the OS-bundled TLS stack will not receive patches.",
+        ),
+        relevant_apis=(
+            "okhttp3.OkHttpClient",
+            "org.conscrypt.Conscrypt.newProvider",
+            "java.security.Security.insertProviderAt",
+            "javax.net.ssl.SSLContext.getInstance",
+            "android.security.ProviderInstaller",
+            "com.google.android.gms.security.ProviderInstaller.installIfNeededAsync",
+        ),
+        evidence_hints=(
+            "OkHttp/",
+            "okhttp3",
+            "Conscrypt",
+            "ProviderInstaller",
+            "libssl.so",
+            "libcrypto.so",
+            "BoringSSL",
+            "TLS_VERSION",
+        ),
+    ),
 )
 
 
@@ -2348,6 +2699,169 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "RuntimeTypeAdapterFactory",
             "XStream",
             "SnakeYAML",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-PLATFORM-9",
+        group=MasvsGroup.PLATFORM,
+        level=MasvsLevel.L2,
+        title=(
+            "The app protects itself against screen overlay attacks. (Android only)"
+        ),
+        description=(
+            "TYPE_APPLICATION_OVERLAY (and pre-Android-O TYPE_SYSTEM_ALERT_WINDOW) lets "
+            "any app granted SYSTEM_ALERT_WINDOW (or the user-granted equivalent on "
+            "Android 6+) draw on top of every other app. Tapjacking malware uses this "
+            "to render a transparent or matching-skin overlay on top of a victim app's "
+            "consent / payment / permission dialog, capturing the user's touches while "
+            "the underlying app sees only an authorised click. The verification target "
+            "is that sensitive Views set FilterTouchesWhenObscured (xml attribute "
+            "android:filterTouchesWhenObscured=\"true\" or "
+            "View.setFilterTouchesWhenObscured(true)) — the system then drops any "
+            "touch event delivered to a View partly or fully covered by an overlay — "
+            "and that the host Activity additionally calls onFilterTouchEventForSecurity"
+            "(MotionEvent) checks for FLAG_WINDOW_IS_OBSCURED / FLAG_WINDOW_IS_PARTIALLY"
+            "_OBSCURED to drop the event explicitly with a user-visible warning."
+        ),
+        verification_steps=(
+            "Enumerate sensitive interaction Views (login Submit button, payment "
+            "confirm, biometric prompt host, permission grant dialog wrapper) and "
+            "confirm each carries android:filterTouchesWhenObscured=\"true\" in its "
+            "layout XML OR setFilterTouchesWhenObscured(true) at construction.",
+            "Inspect onTouchEvent / onFilterTouchEventForSecurity overrides in "
+            "sensitive Activities — confirm they check (event.flags & "
+            "MotionEvent.FLAG_WINDOW_IS_OBSCURED) != 0 and reject the event (return "
+            "false / consume without action) rather than passing it through to the "
+            "default handler.",
+            "Search for SYSTEM_ALERT_WINDOW / canDrawOverlays in the app's own manifest "
+            "/ runtime checks — if the app itself uses overlays, verify it cannot be "
+            "tricked into drawing on top of its OWN sensitive screens by a sibling "
+            "process with the same permission (Settings.canDrawOverlays check, view "
+            "of foreground app).",
+        ),
+        relevant_apis=(
+            "android.view.View.setFilterTouchesWhenObscured",
+            "android.view.View.onFilterTouchEventForSecurity",
+            "android.view.MotionEvent.FLAG_WINDOW_IS_OBSCURED",
+            "android.view.MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED",
+            "android.provider.Settings.canDrawOverlays",
+            "android.view.WindowManager$LayoutParams.TYPE_APPLICATION_OVERLAY",
+            "android.Manifest.permission.SYSTEM_ALERT_WINDOW",
+        ),
+        evidence_hints=(
+            "filterTouchesWhenObscured",
+            "FLAG_WINDOW_IS_OBSCURED",
+            "FLAG_WINDOW_IS_PARTIALLY_OBSCURED",
+            "onFilterTouchEventForSecurity",
+            "SYSTEM_ALERT_WINDOW",
+            "canDrawOverlays",
+            "TYPE_APPLICATION_OVERLAY",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-PLATFORM-10",
+        group=MasvsGroup.PLATFORM,
+        level=MasvsLevel.L2,
+        title=(
+            "A WebView's cache, storage, and loaded resources (JavaScript, etc.) "
+            "should be cleared before the WebView is destroyed."
+        ),
+        description=(
+            "WebView keeps a per-WebView HTTP cache (~/cache/webview), a per-origin "
+            "localStorage / IndexedDB persisted under app-private files, and cookies "
+            "in CookieManager. Any sensitive content rendered (session tokens in URL "
+            "fragments, decrypted PII fetched via fetch()) lands in one or more of "
+            "these stores. If the WebView is destroyed without clearing, the data "
+            "survives until the user explicitly clears app data — and a forensic "
+            "acquisition (or a subsequent compromise of any other code path with "
+            "private-file read access) recovers it. The verification target is that "
+            "every Activity / Fragment hosting a WebView with sensitive content calls "
+            "the full cleanup quartet in onDestroy / onPause: webView.clearHistory(), "
+            "webView.clearCache(true), webView.clearFormData(), and CookieManager."
+            "getInstance().removeAllCookies(null), plus WebStorage.getInstance()."
+            "deleteAllData() for any origin that may have written localStorage / "
+            "IndexedDB."
+        ),
+        verification_steps=(
+            "Enumerate every WebView instance in the app (XML <WebView>, programmatic "
+            "new WebView()). Trace each to its host Activity / Fragment lifecycle and "
+            "find the onDestroy / onPause handler.",
+            "Confirm each cleanup path calls all of: clearHistory(), clearCache(true), "
+            "clearFormData(), clearSslPreferences(), CookieManager.removeAllCookies, "
+            "WebStorage.deleteAllData. Calling only a subset leaves the rest "
+            "persistent.",
+            "Inspect WebSettings on the same WebView — confirm setDomStorageEnabled "
+            "and setDatabaseEnabled are FALSE for WebViews rendering sensitive content "
+            "unless explicitly required, and that setCacheMode(LOAD_NO_CACHE) is set "
+            "for sensitive responses so the cache layer never holds them.",
+        ),
+        relevant_apis=(
+            "android.webkit.WebView.clearCache",
+            "android.webkit.WebView.clearHistory",
+            "android.webkit.WebView.clearFormData",
+            "android.webkit.WebView.clearSslPreferences",
+            "android.webkit.CookieManager.removeAllCookies",
+            "android.webkit.WebStorage.deleteAllData",
+            "android.webkit.WebSettings.setDomStorageEnabled",
+            "android.webkit.WebSettings.setCacheMode",
+        ),
+        evidence_hints=(
+            "clearCache",
+            "clearHistory",
+            "clearFormData",
+            "removeAllCookies",
+            "WebStorage.deleteAllData",
+            "setDomStorageEnabled",
+            "LOAD_NO_CACHE",
+            "CookieManager",
+        ),
+    ),
+    MasvsControl(
+        id="MSTG-PLATFORM-11",
+        group=MasvsGroup.PLATFORM,
+        level=MasvsLevel.L2,
+        title=(
+            "Verify that the app prevents usage of custom third-party keyboards "
+            "whenever sensitive data is entered (iOS only)."
+        ),
+        description=(
+            "This control is iOS-specific (UITextField.textContentType / "
+            "UIApplicationDelegate.shouldAllowExtensionPointIdentifier) — Android "
+            "does not allow apps to filter the system IME. For an Android-only audit "
+            "this control is N/A. On cross-platform apps (Flutter, React Native, "
+            "KMP) the iOS half ships custom-keyboard rejection via shouldAllow"
+            "ExtensionPointIdentifier(.keyboard) returning false from the AppDelegate, "
+            "and / or sets sensitive UITextField.textContentType so the system "
+            "renders a trusted secure-input field. The verification target on a cross-"
+            "platform APK is that the iOS counterpart exists and is wired correctly "
+            "(usually validated via the paired IPA, not the APK alone)."
+        ),
+        verification_steps=(
+            "Confirm the app is Android-only (no iOS counterpart, no Flutter / React "
+            "Native / KMP iOS source bundled in the APK assets) — if Android-only, "
+            "mark this control N/A in the report with rationale.",
+            "For cross-platform apps, locate the iOS half of the codebase and search "
+            "AppDelegate.swift / SceneDelegate.swift for shouldAllowExtension"
+            "PointIdentifier(.keyboard) returning false — absence on a sensitive iOS "
+            "screen is a finding (verified separately against the IPA, not the APK).",
+            "For Flutter apps, search the Dart codebase for TextField "
+            "keyboardType: TextInputType.visiblePassword (which hints at iOS "
+            "secureTextEntry mapping) — Flutter does not directly expose the iOS "
+            "extension-point block, so the iOS host AppDelegate must still enforce "
+            "the policy.",
+        ),
+        relevant_apis=(
+            "io.flutter.plugin.editing.TextInputPlugin",
+            "com.facebook.react.views.textinput.ReactTextInputManager",
+            "androidx.compose.ui.text.input.TextFieldValue",
+        ),
+        evidence_hints=(
+            "shouldAllowExtensionPointIdentifier",
+            "UITextField",
+            "secureTextEntry",
+            "textContentType",
+            "visiblePassword",
+            "iOS",
         ),
     ),
 )
