@@ -443,9 +443,11 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
             .where(out.state.in_(("draft", "rejected", "refuted"))),
         )
     ).all()
-    if not candidates:
-        return 0
-
+    # Don't early-return when candidates is empty — the wake-enqueue
+    # below scans ALL active branches regardless of outcome state.
+    # Variant_hunt + audit investigations with NO outcome at all need
+    # the wake too. The directive-write loop just skips itself when
+    # there are no candidates; wake-enqueue runs unconditionally.
     nudged = 0
     for inv_id, outcome_id, proposer_branch_id in candidates:
         # Compute draft age: max turn_count of any branch since the
