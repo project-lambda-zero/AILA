@@ -1808,17 +1808,32 @@ def _mcp_family_rule_for_kind(
             parts.append(
                 "For APK-specific facts — manifest, permissions, "
                 "signing certificates, behaviour classification, "
-                "MobSF / drozer / QARK / AndroBugs / LIEF / YARA — "
+                "MobSF / drozer / QARK / LIEF / YARA — "
                 f"use **android_mcp** with `apk_path=\"{apk_path}\"`."
             )
         else:
             parts.append(
                 "For APK-specific facts — manifest, permissions, "
                 "signing certificates, behaviour classification, "
-                "MobSF / drozer / QARK / AndroBugs / LIEF / YARA — "
-                "use **android_mcp**. The bridge will resolve the APK "
+                "MobSF / drozer / QARK / LIEF / YARA — "
+                "use **android_mcp**. The bridge resolves the APK "
                 "path from the target descriptor automatically."
             )
+        parts.append(
+            "For NATIVE LIBRARY analysis (lib/arm64-v8a/*.so, "
+            "lib/armeabi-v7a/*.so — e.g. libucs-credential.so, "
+            "anti-tamper .so, JNI crypto .so) use **ida_headless** "
+            "tools. Start with `ida_headless.open_binary(path=\"<absolute "
+            "path to .so>\")` to register the library, then "
+            "`ida_headless.decompile(binary_id=..., address_or_name=...)`, "
+            "`ida_headless.imports`, `ida_headless.exports`, "
+            "`ida_headless.search_pattern`, etc. NEVER try to "
+            "analyze native .so files via audit_mcp (source-graph "
+            "indexer is Java/Kotlin only) or via android_mcp "
+            "(APK-level facets only, no instruction-level "
+            "decompilation). .so files in lib/<abi>/ are ELF "
+            "binaries — ida_headless is the only correct tool."
+        )
         return "RULE: " + " ".join(parts)
     if k in {
         "native_binary", "ipa", "jar", "dotnet_assembly",
@@ -2240,7 +2255,18 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     if k in _SOURCE_REPO_KINDS:
         return {"audit_mcp"}
     if k in _ANDROID_KINDS:
-        return {"android_mcp", "audit_mcp"}
+        # APKs ship Java/Kotlin source (audit_mcp via jadx index) AND
+        # APK-specific facets (android_mcp: manifest / permissions /
+        # signing / MobSF / etc.) AND native libraries in lib/<abi>/
+        # (ida_headless: the Huawei UCS credential .so, anti-tamper
+        # .so, Frida-resistant crypto .so etc.). Excluding ida_
+        # headless previously forced agents to either skip native
+        # analysis entirely or hallucinate calls to whichever
+        # android_mcp tool LOOKED native-adjacent (androbugs_scan,
+        # frida_*) which then errored every call. Including all
+        # three gives the agent the actual right tool for every
+        # facet of an APK target.
+        return {"android_mcp", "audit_mcp", "ida_headless"}
     if k in _BINARY_KINDS:
         return {"ida_headless"}
     return set(KNOWN_TOOLS.keys())
