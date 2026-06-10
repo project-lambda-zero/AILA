@@ -40,12 +40,16 @@ class MasvsLevel(StrEnum):
 
 
 class MasvsGroup(StrEnum):
-    """The eight MASVS v2.1.0 control groups.
+    """The nine MASVS v1.5 / v2.1.0 control groups.
 
     Catalog ids follow the OWASP convention ``MSTG-<GROUP>-<N>``, so
     the group enum values match the second segment of every id.
+    ARCH covers V1 architecture / threat-modeling requirements; the
+    other eight are technical categories with concrete code-level
+    verification steps.
     """
 
+    ARCH = "ARCH"
     STORAGE = "STORAGE"
     CRYPTO = "CRYPTO"
     AUTH = "AUTH"
