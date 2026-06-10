@@ -714,7 +714,6 @@ async def _synthesize_no_finding_outcomes(uow: UnitOfWork) -> int:
             .select_from(inv)
             .join(branch, branch.investigation_id == inv.id, isouter=True)
             .where(inv.status == InvestigationStatus.RUNNING.value)
-            .where(inv.primary_outcome_id.is_(None))
             .group_by(inv.id),
         )
     ).all()
@@ -740,6 +739,46 @@ async def _synthesize_no_finding_outcomes(uow: UnitOfWork) -> int:
     synthesized = 0
 
     for inv_id in orphan_inv_ids:
+        # Check if this investigation already has a primary outcome.
+        # If yes: skip synthesis, just flip the inv to completed.
+        # If no: synthesize an audit_memo and link it.
+        existing_outcome_row = (
+            await uow.session.exec(
+                select(inv.primary_outcome_id).where(inv.id == inv_id),
+            )
+        ).first()
+        existing_outcome: str | None = None
+        if existing_outcome_row is not None:
+            if hasattr(existing_outcome_row, "__getitem__") and not isinstance(existing_outcome_row, str):
+                existing_outcome = existing_outcome_row[0]
+            else:
+                existing_outcome = existing_outcome_row
+
+        if existing_outcome:
+            # Just flip — outcome already exists (was approved by quorum
+            # earlier, or some other path created it; we don't care
+            # which). Operator rule satisfied: investigation terminates
+            # with an outcome.
+            try:
+                await uow.session.exec(
+                    update(inv)
+                    .where(inv.id == inv_id)
+                    .where(inv.status == InvestigationStatus.RUNNING.value)
+                    .values(
+                        status=InvestigationStatus.COMPLETED.value,
+                        stopped_at=now,
+                        updated_at=now,
+                    ),
+                )
+                synthesized += 1
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "orphan close (with existing outcome) failed inv=%s: %s",
+                    inv_id, exc, exc_info=True,
+                )
+            continue
+
+        # No outcome: synthesize one.
         # Pick the most "informed" branch: highest turn_count, ties
         # broken by earliest created_at for determinism.
         branch_rows = (
@@ -751,7 +790,6 @@ async def _synthesize_no_finding_outcomes(uow: UnitOfWork) -> int:
         ).all()
         if not branch_rows:
             continue
-        # Unwrap rows
         unwrapped: list[tuple[str, str, int, str | None, str]] = []
         for br in branch_rows:
             if hasattr(br, "__getitem__") and not isinstance(br, str):
