@@ -142,6 +142,35 @@ export function useResetInvestigation(investigationId: string) {
   });
 }
 
+/** Reopen a terminal investigation (COMPLETED / FAILED / ABANDONED).
+ *  Non-destructive: existing branches + messages + outcomes preserved.
+ *  Spawns ONE fresh primary branch with fork_reason='operator_reopen:
+ *  <user>', flips investigation back to RUNNING, enqueues
+ *  run_vr_investigate for the new branch. Server-side wired at
+ *  vr/api_router.py::reopen_investigation. */
+export function useReopenInvestigation(investigationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<VRInvestigationSummary>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/reopen`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      // Invalidate everything that renders investigation state — the
+      // status flip + new branch + new task all need fresh fetches.
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "branches", investigationId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "messages", investigationId] });
+      toast.success("Investigation reopened — new branch dispatched");
+    },
+    onError: (err: Error) => {
+      toast.error(`Reopen failed: ${err.message}`);
+    },
+  });
+}
+
 export type InvestigationKindOverride =
   | "discovery"
   | "variant_hunt"

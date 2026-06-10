@@ -44,6 +44,7 @@ import {
   usePauseInvestigation,
   useReenqueueInvestigation,
   useResetInvestigation,
+  useReopenInvestigation,
   useResumeInvestigation,
   useReverifyInvestigation,
   usePromoteOutcomeToFinding,
@@ -407,6 +408,7 @@ export function InvestigationDetailPage() {
 
   const pauseMut = usePauseInvestigation(invId);
   const resetMut = useResetInvestigation(invId);
+  const reopenMut = useReopenInvestigation(invId);
   const resumeMut = useResumeInvestigation(invId);
   const reenqueueMut = useReenqueueInvestigation(invId);
   const sendMut = useSendOperatorMessage(invId);
@@ -758,6 +760,22 @@ export function InvestigationDetailPage() {
               <ReenqueuePicker
                 currentKind={inv.kind}
                 mutation={reenqueueMut}
+              />
+            )}
+            {(inv.status === "completed" || inv.status === "failed" || inv.status === "abandoned") && (
+              <ToolbarButton
+                icon={<Play weight="fill" />}
+                label={reopenMut.isPending ? "Reopening…" : "Reopen"}
+                variant="primary"
+                onClick={() => reopenMut.mutate()}
+                disabled={reopenMut.isPending}
+                title={
+                  "Push this terminal investigation back into the " +
+                  "workflow. Spawns a fresh primary branch on top of " +
+                  "the existing history (non-destructive — old branches " +
+                  "+ outcomes preserved as audit trail). Use when an " +
+                  "audit closed prematurely and you want another pass."
+                }
               />
             )}
           </div>
