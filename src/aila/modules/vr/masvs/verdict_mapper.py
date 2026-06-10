@@ -116,6 +116,7 @@ def child_outcome_to_verdict(
         if verifier_conf is not None
         else _ENUM_CONFIDENCE.get(outcome.confidence, 0.0)
     )
+    agent_summary = _extract_agent_summary(payload)
 
     # Branch 1 — explicit not_applicable tag wins over every other
     # signal. The agent has told us the control does not apply to this
@@ -129,6 +130,7 @@ def child_outcome_to_verdict(
             primary_outcome_id=outcome.id,
             reason=None,
             evidence_locations=evidence_locations,
+            agent_summary=agent_summary,
         )
 
     # Branch 2 — refuted. Either the claim verifier emitted it on a
@@ -143,6 +145,7 @@ def child_outcome_to_verdict(
             primary_outcome_id=outcome.id,
             reason=None,
             evidence_locations=evidence_locations,
+            agent_summary=agent_summary,
         )
 
     # Branch 3 — direct_finding above the confidence floor.
@@ -156,6 +159,7 @@ def child_outcome_to_verdict(
                 primary_outcome_id=outcome.id,
                 reason=f"verifier_inconclusive_conf_{numeric_conf:.2f}",
                 evidence_locations=evidence_locations,
+                agent_summary=agent_summary,
             )
         if numeric_conf >= _FINDING_CONFIDENCE_FLOOR:
             return MasvsControlVerdict(
@@ -166,6 +170,7 @@ def child_outcome_to_verdict(
                 primary_outcome_id=outcome.id,
                 reason=None,
                 evidence_locations=evidence_locations,
+                agent_summary=agent_summary,
             )
         return MasvsControlVerdict(
             control_id=control.id,
@@ -175,6 +180,7 @@ def child_outcome_to_verdict(
             primary_outcome_id=outcome.id,
             reason=f"direct_finding_low_confidence_{numeric_conf:.2f}",
             evidence_locations=evidence_locations,
+            agent_summary=agent_summary,
         )
 
     # Branch 4 — fallthrough. Carry the underlying outcome_kind so the
@@ -189,7 +195,39 @@ def child_outcome_to_verdict(
         primary_outcome_id=outcome.id,
         reason=f"outcome_kind={outcome.outcome_kind.value}",
         evidence_locations=evidence_locations,
+        agent_summary=agent_summary,
     )
+
+
+def _extract_agent_summary(payload: dict[str, Any], cap_chars: int = 3500) -> str | None:
+    """Pull the agent's natural-language conclusion from the outcome
+    payload's ``answer`` field. Truncates to ``cap_chars`` so the PDF
+    per-control subsection stays bounded.
+
+    Returns ``None`` when:
+      - the payload has no ``answer`` field at all (audit_memo synth,
+        verifier-only outcomes, malformed payloads)
+      - the ``answer`` is blank after stripping
+
+    Truncation: tries to cut at a paragraph or sentence boundary near
+    the cap so the report doesn't read as truncated mid-word. Falls
+    back to a hard char cut + ellipsis when no boundary is close.
+    """
+    raw = payload.get("answer")
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    if len(text) <= cap_chars:
+        return text
+    window = text[:cap_chars]
+    # Prefer paragraph boundary, fall back to sentence, fall back to char.
+    for sep in ("\n\n", "\n", ". ", " "):
+        idx = window.rfind(sep)
+        if idx >= cap_chars * 0.6:  # only accept a boundary in the last 40% of the window
+            return text[: idx + len(sep)].rstrip() + " …"
+    return window.rstrip() + " …"
 
 
 def _extract_verifier_signal(

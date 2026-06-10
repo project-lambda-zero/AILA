@@ -174,6 +174,21 @@ class MasvsControlVerdict(BaseModel):
             "the operator-visible evidence trail."
         ),
     )
+    agent_summary: str | None = Field(
+        default=None,
+        max_length=4000,
+        description=(
+            "First paragraph(s) of the child investigation's primary "
+            "outcome ``payload['answer']`` — the agent's natural-"
+            "language conclusion for this control on THIS APK. "
+            "Truncated to keep the PDF per-control subsection bounded. "
+            "PDF renderer prints this verbatim under the per-control "
+            "subsection as 'AUDIT FINDINGS', replacing the catalog's "
+            "generic verification_steps as the load-bearing prose. "
+            "``None`` when the child reached a terminal state without "
+            "an answer field (audit_memo, no_primary_outcome, etc.)."
+        ),
+    )
 
 
 class MasvsAuditAggregate(BaseModel):
