@@ -202,6 +202,40 @@ class AndroidMcpBridgeTool(Tool):
         if not action:
             return await self._list_tools()
 
+        # Block pipeline-only tools from agent-initiated calls. These
+        # ran exactly once during ingestion (TargetAnalysisService);
+        # results are persisted on vr_targets._mcp_handles_json +
+        # audit_mcp index id. Letting the agent retry them wastes
+        # minutes per call (mobsf re-uploads + re-scans, jadx
+        # re-decompiles 14k classes), risks corrupting the canonical
+        # output, and per operator policy mobsf output MUST NOT
+        # reach prompts.
+        #
+        # Observed live on bb5decf2: yuki + 5 siblings looped 50+
+        # turns each calling apktool_decode with invented `focus=`
+        # kwarg, hitting TypeError every time, ignoring the
+        # repeat-failure circuit breaker text. Bridge-level enforce-
+        # ment surfaces a clean error and points them at the data
+        # that already exists.
+        #
+        # TargetAnalysisService bypasses this guard via the
+        # internal _agent_bypass=True kwarg (popped before forward).
+        _agent_bypass = kwargs.pop("_agent_bypass", False)
+        if action in _PIPELINE_ONLY_TOOLS and not _agent_bypass:
+            return {
+                "status": "error",
+                "error": (
+                    f"{action!r} is a pipeline-only tool — the APK ingestion "
+                    "stage already ran it once. Its output is in the target "
+                    "summary (apk_overview.decompiled_dir for jadx_decompile, "
+                    "apk_overview.decoded_dir for apktool_decode, "
+                    "apk_overview.audit_mcp_index_id for source-level search). "
+                    "Use audit_mcp.* tools (semantic_search, read_function, "
+                    "search_constants, etc.) against the index to inspect the "
+                    "decompiled Java/smali — do NOT re-run the pipeline."
+                ),
+            }
+
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
 

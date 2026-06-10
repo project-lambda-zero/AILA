@@ -469,7 +469,7 @@ class TargetAnalysisService:
         # so overwriting is the correct behavior. Without this, every
         # retry after a single failure perma-fails until manual cleanup.
         resp = await self._android_mcp.forward(
-            action="apktool_decode", apk_path=apk_path, force=True,
+            action="apktool_decode", apk_path=apk_path, force=True, _agent_bypass=True,
         )
         if not isinstance(resp, dict) or resp.get("status") == "error":
             err = resp.get("error") if isinstance(resp, dict) else resp
@@ -501,7 +501,7 @@ class TargetAnalysisService:
     ) -> None:
         apk_path = self._resolve_apk_path(descriptor)
         resp = await self._android_mcp.forward(
-            action="jadx_decompile", apk_path=apk_path,
+            action="jadx_decompile", apk_path=apk_path, _agent_bypass=True,
         )
         if not isinstance(resp, dict) or resp.get("status") == "error":
             err = resp.get("error") if isinstance(resp, dict) else resp
@@ -656,7 +656,7 @@ class TargetAnalysisService:
 
         apk_path = self._resolve_apk_path(descriptor)
         resp = await self._android_mcp.forward(
-            action="mobsf_scan", apk_path=apk_path,
+            action="mobsf_scan", apk_path=apk_path, _agent_bypass=True,
         )
         if not isinstance(resp, dict) or resp.get("status") == "error":
             err = resp.get("error") if isinstance(resp, dict) else resp
