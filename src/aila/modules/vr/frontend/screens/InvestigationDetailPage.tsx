@@ -786,13 +786,18 @@ export function InvestigationDetailPage() {
                 disabled={pauseMut.isPending}
               />
             )}
-            {inv.status === "paused" && (
+            {(inv.status === "paused" || resumeMut.isResuming) && (
               <ToolbarButton
                 icon={<Play weight="fill" />}
-                label={resumeMut.isPending ? "Resuming…" : "Resume"}
+                // fix §54 — `isResuming` covers the API call AND a 2s
+                // post-success hold so the button shows "Resuming…" until
+                // the worker has plausibly picked up the task. Without
+                // this the label flipped back to "Resume" before the
+                // refetch landed, looking like the click did nothing.
+                label={resumeMut.isResuming ? "Resuming…" : "Resume"}
                 variant="primary"
                 onClick={() => resumeMut.mutate()}
-                disabled={resumeMut.isPending}
+                disabled={resumeMut.isResuming}
               />
             )}
             {inv.status === "created" && (
