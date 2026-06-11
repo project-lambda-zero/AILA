@@ -685,44 +685,53 @@ class ToolExecutor:
         call has failed 3+ times on the same branch, the executor
         injects a hard pivot hint into the next error.
         """
+        # fix §255 — was O(N²): each of up-to-50 errors triggered a
+        # nested ``_messages_before`` query (1 + 50 round trips).
+        # Single query now fetches up to 100 recent messages, then
+        # one linear pass pairs each (tool_call, error_text) tuple
+        # by adjacency — equivalent to a LAG() window function but
+        # portable across the SQLite/Postgres targets and easier to
+        # read.
         canonical = json.dumps(args, sort_keys=True, default=str)
         prefix = f"{server_id}.{tool_name} returned error"
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
                 _select(VRInvestigationMessageRecord)
                 .where(VRInvestigationMessageRecord.branch_id == branch_id)
-                .where(VRInvestigationMessageRecord.payload_kind == PayloadKind.TEXT.value)
                 .order_by(VRInvestigationMessageRecord.created_at.desc())
-                .limit(50)
+                .limit(100)
             )).all()
+        # Walk oldest→newest so `prev` is always the message that
+        # preceded `r` chronologically. A repeat-failure pair is a
+        # tool_call followed immediately by an error-text whose
+        # payload-text starts with `<server>.<tool> returned error`
+        # and whose tool_call args canonicalise to the supplied set.
         count = 0
-        for r in rows:
-            try:
-                payload = json.loads(r.payload_json or "{}")
-            except (ValueError, TypeError):
-                continue
-            if not payload.get("is_error"):
-                continue
-            text = str(payload.get("text") or "")
-            if not text.startswith(prefix):
-                continue
-            # Walk back the call that produced this error: look at the
-            # message immediately before with payload_kind=tool_call and
-            # check whether its args match.
-            prior_call = next(
-                (mm for mm in await self._messages_before(uow_branch_id=branch_id, before_id=r.id)
-                 if mm[0] == "tool_call"),
-                None,
-            )
-            if prior_call is None:
-                continue
-            try:
-                cmd = json.loads(json.loads(prior_call[1]).get("command") or "{}")
-                cmd_args = cmd.get("args") or {}
-                if json.dumps(cmd_args, sort_keys=True, default=str) == canonical:
-                    count += 1
-            except (ValueError, TypeError):
-                continue
+        prev: VRInvestigationMessageRecord | None = None
+        for r in reversed(rows):
+            if (
+                prev is not None
+                and prev.payload_kind == PayloadKind.TOOL_CALL.value
+                and r.payload_kind == PayloadKind.TEXT.value
+            ):
+                try:
+                    err_payload = json.loads(r.payload_json or "{}")
+                except (ValueError, TypeError):
+                    prev = r
+                    continue
+                if (
+                    err_payload.get("is_error")
+                    and str(err_payload.get("text") or "").startswith(prefix)
+                ):
+                    try:
+                        call_payload = json.loads(prev.payload_json or "{}")
+                        cmd = json.loads(call_payload.get("command") or "{}")
+                        cmd_args = cmd.get("args") or {}
+                        if json.dumps(cmd_args, sort_keys=True, default=str) == canonical:
+                            count += 1
+                    except (ValueError, TypeError):
+                        pass
+            prev = r
         return count
 
     async def _count_prior_error_class(
@@ -916,28 +925,6 @@ class ToolExecutor:
             return "type_mismatch"
         return None
 
-    async def _messages_before(
-        self, *, uow_branch_id: str, before_id: str,
-    ) -> list[tuple[str, str]]:
-        """Helper for _count_prior_failures: returns up to 3 messages
-        immediately before ``before_id`` on the same branch as
-        ``(payload_kind, payload_json)`` tuples."""
-        async with UnitOfWork() as uow:
-            anchor = (await uow.session.exec(
-                _select(VRInvestigationMessageRecord).where(
-                    VRInvestigationMessageRecord.id == before_id,
-                )
-            )).first()
-            if anchor is None:
-                return []
-            rows = (await uow.session.exec(
-                _select(VRInvestigationMessageRecord)
-                .where(VRInvestigationMessageRecord.branch_id == uow_branch_id)
-                .where(VRInvestigationMessageRecord.created_at < anchor.created_at)
-                .order_by(VRInvestigationMessageRecord.created_at.desc())
-                .limit(3)
-            )).all()
-        return [(r.payload_kind, r.payload_json or "") for r in rows]
 
     # Cap on case_state.observables size. Each tool call typically
     # adds 1-2 keys; an investigation that runs for 200+ turns can
