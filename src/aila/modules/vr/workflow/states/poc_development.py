@@ -20,8 +20,10 @@ cannot crash the workflow.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -256,6 +258,20 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             raw_max, _OPERATOR_MAX_ATTEMPTS_CEILING,
         )
     for attempt in range(1, max_attempts + 1):
+        # fix §305 — exponential backoff with jitter between attempts.
+        # The prior implementation re-fired the full LLM + compile + run
+        # pipeline immediately on every continue, so a flaky LLM tier
+        # (rate-limited / transient 503) or a wedged poc_runner socket
+        # would burn the whole attempt budget against the same broken
+        # backend inside a few hundred milliseconds. Sleep before
+        # attempts 2..N (NOT attempt 1) with the standard
+        # \`min(30, 2 ** attempt + jitter)\` shape.
+        if attempt > 1:
+            backoff_s = min(30.0, (2 ** attempt) + random.uniform(0, 1))
+            _log.info(
+                "poc_development: attempt %d backoff %.1fs", attempt, backoff_s,
+            )
+            await asyncio.sleep(backoff_s)
         try:
             generated = await _llm_poc(
                 services, _build_user_prompt(research, mitigations, history),
