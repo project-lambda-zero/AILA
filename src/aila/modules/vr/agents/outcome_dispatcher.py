@@ -61,6 +61,7 @@ from aila.platform.uow import UnitOfWork
 __all__ = [
     "OutcomeDispatchResult",
     "OutcomeDispatcher",
+    "OutcomeDispatcherError",
 ]
 
 _log = logging.getLogger(__name__)
@@ -85,6 +86,14 @@ _VARIANT_EXHAUSTION_PATTERN = re.compile(
     r"|EXHAUSTIVE\s+(?:NEGATIVE|SEARCH)"
     r")\b"
 )
+
+
+class OutcomeDispatcherError(Exception):
+    """Raised on fatal dispatcher failures (NULL state, unknown state,
+    handler exceptions). Surfacing rather than silently SKIPPING gives
+    the caller a chance to record FAILED + retry, instead of marking
+    the outcome dispatched-with-empty-result.
+    """
 
 
 @dataclass(slots=True)
@@ -175,7 +184,15 @@ class OutcomeDispatcher:
             )).first()
             if outcome is None:
                 raise ValueError(f"outcome {outcome_id} not found")
-            state = outcome.state or OUTCOME_STATE_DISPATCHED  # legacy NULL
+            if outcome.state is None:
+                # fix §182 — legacy NULL state masked the bug where a row
+                # skipped the draft→approved→dispatched lifecycle entirely.
+                # Treat as a hard error so the operator sees it instead of
+                # the row silently being marked "already_dispatched".
+                raise OutcomeDispatcherError(
+                    f"outcome.state is NULL outcome_id={outcome_id}",
+                )
+            state = outcome.state
             outcome_kind = OutcomeKind(outcome.outcome_kind)
             payload = json.loads(outcome.payload_json or "{}")
             investigation_id = outcome.investigation_id
