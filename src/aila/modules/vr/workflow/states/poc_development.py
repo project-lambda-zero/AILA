@@ -239,7 +239,22 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
     last_language: str = "python"
     last_filename: str = "poc.py"
 
-    max_attempts = max(1, int(services.config.poc_max_attempts))
+    # fix §304 — hard cap the operator-tunable poc_max_attempts at 25.
+    # The config row is operator-editable through the platform config
+    # UI and a misconfigured value of 1000 would launch a $500+ PoC
+    # session (every attempt is one LLM call + one compile + one run
+    # against the analyzer workstation). 25 is the published maximum
+    # in the operator runbook; surface the clamp loudly so a runaway
+    # config doesn't go unnoticed.
+    _OPERATOR_MAX_ATTEMPTS_CEILING = 25
+    raw_max = max(1, int(services.config.poc_max_attempts))
+    max_attempts = min(raw_max, _OPERATOR_MAX_ATTEMPTS_CEILING)
+    if raw_max > _OPERATOR_MAX_ATTEMPTS_CEILING:
+        _log.warning(
+            "poc_development: poc_max_attempts=%d exceeds ceiling %d — "
+            "clamping. Operator should fix the config or raise the ceiling.",
+            raw_max, _OPERATOR_MAX_ATTEMPTS_CEILING,
+        )
     for attempt in range(1, max_attempts + 1):
         try:
             generated = await _llm_poc(
