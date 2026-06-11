@@ -53,12 +53,23 @@ _CVE_RE = re.compile(r"\bCVE-\d{4}-\d+\b", re.IGNORECASE)
 class CVEResolution:
     """One resolved (or unresolved) CVE.
 
-    ``status`` is the field the agent must read:
-      - ``found``     → real intel; consume description / CWE / CVSS /
-                        EPSS / KEV
-      - ``not_found`` → no aggregator has a record for this CVE id;
-                        do not invent details
-      - ``error``     → transport / parser failure; treat as 'unknown'
+    ``status`` is the discriminator the agent must read — values are a
+    discriminated union:
+      - ``found``           → real intel; consume description / CWE /
+                              CVSS / EPSS / KEV.
+      - ``not_found``       → NVD definitively has no record (HTTP 404
+                              from the aggregator). Do not invent details.
+      - ``transport_error`` → NVD/IntelService unreachable (timeout,
+                              network error) OR returned an inconclusive
+                              fallback. Distinct from ``not_found``: agent
+                              MUST treat as "unknown — retry may resolve",
+                              NOT as "CVE doesn't exist".
+      - ``error``           → other unhandled failure (parser, internal);
+                              treat as 'unknown'.
+
+    fix §189 — added ``transport_error`` so the agent can distinguish
+    "NVD says no record" from "we couldn't reach NVD". Conflating the
+    two caused the agent to drop CVE context whenever NVD was down.
 
     EPSS + KEV signals are what distinguish "this CVE matters in
     the wild" from "the agent invented it":
@@ -236,12 +247,23 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
                 ))
             continue
         if knowledge is None:
+            # fix §189 — fetch_cve_intel returns None for BOTH
+            # "NVD definitively absent" AND "NVD lookup produced a
+            # fallback-only record because the network failed". We
+            # cannot distinguish from this layer; route to
+            # transport_error so the agent treats it as "unknown,
+            # retry may resolve" instead of "CVE doesn't exist".
+            # Distinguishing requires IntelService to expose the
+            # fallback_reason path (separate work).
             out.append(CVEResolution(
                 cve_id=cve_id,
-                status="not_found",
+                status="transport_error",
                 error=(
                     "IntelService returned no record after cache + NVD "
-                    "lookup. Agent must treat as unknown; do not invent."
+                    "lookup. Could be NVD-doesn't-have-it OR NVD-was-"
+                    "down — distinguishing requires IntelService API "
+                    "extension. Agent must treat as unknown; do not "
+                    "invent details and consider re-asking on next turn."
                 ),
             ))
             continue
