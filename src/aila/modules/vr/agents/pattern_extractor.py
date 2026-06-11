@@ -161,6 +161,24 @@ class PatternExtractor:
             ) from exc
 
         if getattr(response, "disabled", False):
+            # fix §192 — surface the kill-switch skip. Previously
+            # ``skipped_reason="llm_disabled"`` was returned silently:
+            # the caller in investigation_emit logs the
+            # PatternExtractionResult as a structured event but no
+            # WARNING-level line fired and no operator-visible message
+            # landed on the investigation. An operator who toggled the
+            # kill switch had no in-app confirmation that pattern
+            # extraction stopped happening.
+            _log.warning(
+                "pattern_extractor: LLM kill-switch active — extraction "
+                "skipped outcome_id=%s investigation_id=%s",
+                outcome_id, investigation.id,
+            )
+            await _emit_skip_event(
+                investigation_id=investigation.id,
+                outcome_id=outcome_id,
+                reason="llm_kill_switch_active",
+            )
             return PatternExtractionResult(
                 outcome_id=outcome_id,
                 investigation_id=investigation.id,
@@ -396,3 +414,57 @@ _EXTRACTION_SCHEMA: dict[str, Any] = {
     "required": ["patterns"],
     "additionalProperties": False,
 }
+
+
+async def _emit_skip_event(
+    *, investigation_id: str, outcome_id: str, reason: str,
+) -> None:
+    """Write an operator-visible engine message announcing that pattern
+    extraction was skipped.
+
+    fix §192 — kill-switch and config-disabled skips were previously
+    invisible to the operator. Engine writes a text message addressed
+    to the investigation's primary branch (broadcast semantics) so the
+    UI conversation pane surfaces the skip alongside the rest of the
+    engine's events. Best-effort: any failure inside this helper is
+    swallowed so a logging failure can't derail the extraction caller.
+    """
+    from aila.modules.vr.contracts import PayloadKind, SenderKind  # noqa: PLC0415
+    from aila.modules.vr.db_models import VRInvestigationBranchRecord  # noqa: PLC0415
+    from aila.platform.contracts._common import utc_now  # noqa: PLC0415
+
+    try:
+        async with UnitOfWork() as uow:
+            primary_id = (await uow.session.exec(
+                _select(VRInvestigationBranchRecord.id)
+                .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
+                .where(VRInvestigationBranchRecord.parent_branch_id.is_(None))
+                .limit(1)
+            )).first()
+            if primary_id is None:
+                return
+            payload = {
+                "text": (
+                    "Pattern extraction skipped: "
+                    f"{reason} (outcome_id={outcome_id})."
+                ),
+                "outcome_id": outcome_id,
+                "skip_reason": reason,
+            }
+            msg = VRInvestigationMessageRecord(
+                investigation_id=investigation_id,
+                branch_id=primary_id,
+                sender_kind=SenderKind.ENGINE.value,
+                sender_id="pattern_extractor",
+                payload_kind=PayloadKind.TEXT.value,
+                payload_json=json.dumps(payload),
+                created_at=utc_now(),
+            )
+            uow.session.add(msg)
+            await uow.commit()
+    except Exception as exc:  # noqa: BLE001 — visibility helper must not crash caller
+        _log.warning(
+            "pattern_extractor: failed to emit skip event "
+            "investigation_id=%s outcome_id=%s err=%s",
+            investigation_id, outcome_id, exc,
+        )
