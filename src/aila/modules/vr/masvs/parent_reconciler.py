@@ -582,29 +582,52 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
 
     if nudged:
         await uow.commit()
+    if nudged:
+        _log.info("masvs_stuck_drafts: nudged=%d", nudged)
+    return nudged
 
-    # Wake-enqueue: every tick, scan for ANY active branch and try to
-    # re-submit run_vr_investigate. The auto-continue chain in
-    # investigation_emit only re-enqueues on (max_turns, researcher_error*)
-    # exit reasons. Every other exit (terminal_submit on a sibling,
-    # status_flipped, submit_outcome_review, default fallthrough)
-    # leaves the branch status=active with no follow-up task. Without
-    # this wake, the branch sits forever until step 5 abandons it as
-    # stale — which is correct as a last resort but wastes 30-120 min.
-    #
-    # Earlier iteration only fired for branches carrying
-    # _directive.mandatory_vote_now, but variant_hunt / audit
-    # investigations with NO outcome at all (no draft, no rejected
-    # primary) never get the directive — they just sat idle until
-    # step 5 ran. Now we wake EVERY active branch on a non-terminal
-    # investigation. Idempotent: task_queue input_hash dedup at
-    # queue.py:132-140 refuses a duplicate while a real task is in
-    # (queued, running, waiting). So this is at-most-once per minute
-    # per branch, and a no-op when the branch already has a live task.
-    enqueued = 0
+
+async def _wake_stale_branches(uow: UnitOfWork) -> int:
+    """Side-channel wake for active branches with no live ARQ task.
+
+    fix §12 — Extracted from ``_escalate_stuck_drafts`` so the wake
+    can run LAST in the sweep tick (fix §43). Mixing the wake into the
+    directive-write helper let it race with the close-rejected and
+    abandon-stale steps that ran after it: the wake re-armed a worker
+    on the same branch those steps were about to close, so the
+    branch could advance its cursor mid-evaluation and produce a torn
+    transition.
+
+    Architectural note (§12): emitting ARQ tasks from a reconciler is
+    a layering violation — the engine should re-enqueue the next task
+    on every cursor advance. The auto-continue chain in
+    ``investigation_emit`` only re-enqueues on ``(max_turns,
+    researcher_error*)`` exit reasons; every other exit
+    (``terminal_submit`` on a sibling, ``status_flipped``,
+    ``submit_outcome_review``, default fallthrough) leaves the branch
+    at ``status=active`` with no follow-up task. Until the engine
+    learns those exits, this side channel keeps the queue moving.
+
+    Idempotent by construction: ``task_queue.submit`` computes a
+    SHA-256 ``input_hash`` over ``(fn_path, kwargs)`` and refuses a
+    duplicate while a task with the same hash is in
+    ``(queued, running, waiting)`` (``platform/tasks/queue.py:127-140``).
+    So a single tick is at-most-once per branch, and a no-op when the
+    branch already has a live task.
+
+    Returns the count of branches newly enqueued this tick.
+    """
     from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
+    from aila.modules.vr.db_models import (  # noqa: PLC0415
+        VRInvestigationBranchRecord,
+    )
     from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
+
+    inv = VRInvestigationRecord
+    branch = VRInvestigationBranchRecord
     q = default_task_queue()
+    enqueued = 0
+
     wakeable = (
         await uow.session.exec(
             select(branch.id, branch.investigation_id)
@@ -633,18 +656,20 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
                 group_id="vr_escalator_wake",
             )
             enqueued += 1
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — submit is best-effort;
+            # dedup misses and Redis blips are tolerable, the next tick retries.
             _log.warning(
-                "escalator wake-task submit failed branch=%s: %s", bid, exc,
+                "wake_stale_branches: branch=%s submit failed: %s",
+                bid, exc,
             )
-    if nudged or enqueued:
+    if enqueued:
         _log.info(
-            "masvs_stuck_drafts: nudged=%d wake_enqueued=%d "
+            "wake_stale_branches: wake_enqueued=%d "
             "(dedup may have skipped some)",
-            nudged, enqueued,
+            enqueued,
         )
+    return enqueued
 
-    return nudged
 
 async def _synthesize_no_finding_outcomes(uow: UnitOfWork) -> int:
     """Synthesize an ``audit_memo`` outcome for orphaned investigations.
@@ -1250,13 +1275,31 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
 async def sweep_masvs_audit_parents() -> dict[str, int]:
     """Reconcile parent status for every active MASVS audit batch.
 
-    Returns a ``{"started": int, "completed": int, "refilled": int,
-    "exhausted": int}`` counter pair naming the number of
-    ``CREATED → RUNNING`` and ``{CREATED, RUNNING} → COMPLETED``
-    transitions actually applied in this sweep. ``exhausted`` counts
-    investigations that hit the cumulative-turn cap. All counters are
-    post-rowcount so a lost race against a concurrent operator action
-    does not inflate them.
+    Returns a ``{"started": int, "completed": int, "refilled": int}``
+    counter dict naming the number of ``CREATED → RUNNING`` and
+    ``{CREATED, RUNNING} → COMPLETED`` transitions actually applied in
+    this sweep. All counters are post-rowcount so a lost race against
+    a concurrent operator action does not inflate them.
+
+    Sweep step order (fix §43 — wake moved LAST):
+      1. ``_refill_apk_batches``    — top up APK in-flight slots.
+      2. ``_enforce_total_turn_cap`` — close runs over the cumulative
+         turn cap before any later step inspects branch state.
+      3. ``_escalate_stuck_drafts`` — inject the mandatory-vote
+         directive (no wake-enqueue any more; that moved to step 9).
+      4. ``_close_rejected_outcomes`` — close investigations whose
+         primary outcome was rejected by quorum.
+      5. ``_abandon_stale_branches`` — abandon branches that stopped
+         making progress.
+      6. ``_synthesize_no_finding_outcomes`` — fill in audit_memo
+         outcomes for any investigation that orphaned at step 5.
+      7. ``_reap_zombie_tasks_and_cursors`` — cancel stale ``running``
+         taskrecords and purge dead workflow_state_cursors.
+      8. Parent ``CREATED/RUNNING → COMPLETED`` rollup (inline below).
+      9. ``_wake_stale_branches`` — side-channel ARQ wake LAST so
+         a freshly-enqueued task cannot race steps 4/5/8's snapshot
+         reads (a worker advancing a branch mid-evaluation produced
+         torn transitions in the pre-fix layout).
     """
     inv = VRInvestigationRecord
 
@@ -1275,7 +1318,8 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
             await _enforce_total_turn_cap(uow)
         except Exception as exc:  # noqa: BLE001
             _log.warning("masvs reconciler: turn-cap failed: %s", exc, exc_info=True)
-        # 3. Escalate stuck drafts (mandatory-vote directive).
+        # 3. Escalate stuck drafts (mandatory-vote directive only;
+        #    wake-enqueue moved to step 9 — fix §43).
         try:
             nudged = await _escalate_stuck_drafts(uow)  # noqa: F841
         except Exception as exc:  # noqa: BLE001
@@ -1293,7 +1337,7 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         except Exception as exc:  # noqa: BLE001
             _log.warning("masvs reconciler: stale-branch abandon failed: %s", exc, exc_info=True)
             stale = 0  # noqa: F841
-        # 5.5. Synthesize audit_memo outcomes for any investigation
+        # 6. Synthesize audit_memo outcomes for any investigation
         # where all branches are now terminal but no outcome exists.
         # Runs AFTER step 5 abandonment because that's what creates
         # the orphan condition. Operator rule: every investigation
@@ -1303,7 +1347,7 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         except Exception as exc:  # noqa: BLE001
             _log.warning("masvs reconciler: no-finding synth failed: %s", exc, exc_info=True)
             synthesized = 0  # noqa: F841
-        # 6. Reap zombie tasks + stale workflow_state_cursors (D-283).
+        # 7. Reap zombie tasks + stale workflow_state_cursors (D-283).
         try:
             reaped = await _reap_zombie_tasks_and_cursors(uow)  # noqa: F841
         except Exception as exc:  # noqa: BLE001
@@ -1424,6 +1468,21 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
 
         if any_changes:
             await uow.commit()
+
+        # 9. Side-channel wake LAST (fix §43). Earlier ordering ran
+        # the wake inside _escalate_stuck_drafts (step 3); a worker
+        # picking up that fresh task could advance a branch's cursor
+        # while steps 4/5/8 were mid-evaluation, producing torn
+        # transitions. Running the wake AFTER every read-and-write
+        # step guarantees the sweep tick observes a stable branch
+        # snapshot.
+        try:
+            await _wake_stale_branches(uow)
+        except Exception as exc:  # noqa: BLE001 — wake is best-effort
+            _log.warning(
+                "masvs reconciler: wake-stale-branches failed: %s",
+                exc, exc_info=True,
+            )
 
     if started or completed or refilled:
         _log.info(
