@@ -373,15 +373,40 @@ class ClaimVerifierAgent:
             }
 
         # Build the source text the extractor will reason about.
-        narrative = ""
+        # fix §342 — answer and panel narrative cap INDEPENDENTLY.
+        # Originally both were concatenated into one ``finding_text``
+        # then clamped to 8000 chars total; a long panel narrative
+        # crowded the agent's actual answer out of the prompt. The
+        # two carry different information: ``answer`` is the agent's
+        # verbatim claim (we need most of it intact — bump to 16000);
+        # ``panel_narrative`` is the synthesis prose around it (8000
+        # remains plenty for grounding). Capped fields are rendered
+        # as separate, labelled sections so the extractor sees both
+        # truncations explicitly and can decide which to lean on.
+        answer_full = str(canonical_payload.get("answer") or "")
+        narrative_full = ""
         ps = canonical_payload.get("panel_summary")
         if isinstance(ps, dict):
-            narrative = str(ps.get("narrative") or "")
-        finding_text = str(canonical_payload.get("answer") or "") + (
-            ("\n\n# Panel synthesis narrative\n" + narrative) if narrative else ""
-        )
-        if not finding_text.strip():
+            narrative_full = str(ps.get("narrative") or "")
+        if not (answer_full.strip() or narrative_full.strip()):
             return {"status": "skipped", "reason": "no_finding_text"}
+
+        _ANSWER_CAP = 16000
+        _PANEL_CAP = 8000
+        answer_capped = answer_full[:_ANSWER_CAP]
+        panel_capped = narrative_full[:_PANEL_CAP]
+        answer_section = (
+            f"## Agent answer\n\n{answer_capped}"
+            + ("\n\n[answer truncated to {n} chars]".format(n=_ANSWER_CAP)
+               if len(answer_full) > _ANSWER_CAP else "")
+        )
+        panel_section = ""
+        if panel_capped:
+            panel_section = (
+                f"\n\n## Panel synthesis narrative\n\n{panel_capped}"
+                + ("\n\n[panel narrative truncated to {n} chars]".format(n=_PANEL_CAP)
+                   if len(narrative_full) > _PANEL_CAP else "")
+            )
 
         # Stage 1: extractor — parse the claim into structured preconditions
         services = ServiceFactory()
@@ -395,7 +420,8 @@ class ClaimVerifierAgent:
             f"Investigation kind: {loaded['kind']}\n"
             f"Target index_id: {index_id}\n\n"
             f"{sig_section}"
-            f"## Finding text\n\n{finding_text[:8000]}\n"
+            f"{answer_section}"
+            f"{panel_section}\n"
         )
         try:
             extractor_response = await services.llm_client.chat(
