@@ -142,10 +142,13 @@ _INV_TERMINAL_STATUSES = frozenset({"completed", "failed", "exhausted", "cancell
 _TASK_DEAD_STATUSES = frozenset({"failed", "dead", "cancelled"})
 
 
-async def _reconcile_investigation_if_zombie(session: Any, inv: Any) -> bool:
-    """Flip a stuck investigation to ``failed`` only if its worker is dead.
+async def _zombie_reap_reason(session: Any, inv: Any) -> str | None:
+    """Return a human-readable reason for reaping ``inv``, or ``None``.
 
-    Returns True when the row was mutated (caller must commit).
+    Read-only. Inspects the worker ``TaskRecord`` and decides whether
+    the investigation row is stuck behind a worker that can no longer
+    finish it. Does NOT mutate ``inv`` or write to the session — see
+    :func:`_apply_zombie_reap` for the mutation.
 
     Reaping is conservative:
 
@@ -160,11 +163,11 @@ async def _reconcile_investigation_if_zombie(session: Any, inv: Any) -> bool:
       ``REAPER_ZOMBIE_THRESHOLD_S``.
     """
     if inv.status in _INV_TERMINAL_STATUSES:
-        return False
+        return None
     if inv.status not in ("pending", "running"):
-        return False
+        return None
     if not inv.task_id:
-        return False
+        return None
 
     from aila.platform.tasks.models import TaskRecord
 
@@ -172,15 +175,21 @@ async def _reconcile_investigation_if_zombie(session: Any, inv: Any) -> bool:
         select(TaskRecord).where(TaskRecord.id == inv.task_id)
     )).first()
 
-    reason: str | None = None
     if task is None:
-        reason = f"task {inv.task_id} no longer exists"
-    elif task.status in _TASK_DEAD_STATUSES:
-        reason = f"worker task settled as {task.status}"
+        return f"task {inv.task_id} no longer exists"
+    if task.status in _TASK_DEAD_STATUSES:
+        return f"worker task settled as {task.status}"
+    return None
 
-    if reason is None:
-        return False
 
+def _apply_zombie_reap(session: Any, inv: Any, reason: str) -> None:
+    """Mutate ``inv`` into the auto-reaped state. Caller commits.
+
+    Fix §49 — split out of the old ``_reconcile_investigation_if_zombie``
+    so HTTP GET handlers can advertise ``needs_reap`` without mutating
+    the row inside a safe method. The mutation now happens only on the
+    POST endpoint (``/reap``) the operator UI calls explicitly.
+    """
     inv.status = "failed"
     if not inv.final_answer:
         inv.final_answer = f"Investigation auto-reaped — {reason}."
@@ -188,7 +197,6 @@ async def _reconcile_investigation_if_zombie(session: Any, inv: Any) -> bool:
     _log.warning(
         "investigation auto-reaped inv_id=%s reason=%s", inv.id, reason,
     )
-    return True
 
 
 class InvestigationSummary(BaseModel):
@@ -206,6 +214,13 @@ class InvestigationSummary(BaseModel):
     confidence: str | None = None
     task_id: str | None = None
     parent_investigation_id: str | None = None
+    # fix §49 — GET handlers no longer mutate. When the row's worker
+    # task has settled as failed/dead/cancelled (or vanished), the
+    # GET surfaces ``needs_reap=True`` so the UI can show the stuck
+    # state and offer a 'Reap' action that POSTs to ``/reap``. The
+    # actual flip to ``failed`` happens only in the POST handler.
+    needs_reap: bool = False
+    needs_reap_reason: str | None = None
 
 
 class RerunInvestigationRequest(BaseModel):
@@ -232,6 +247,10 @@ class InvestigationDetail(BaseModel):
     confidence: str | None = None
     parent_investigation_id: str | None = None
     steps: list[AgentStep] = Field(default_factory=list)
+    # fix §49 — see InvestigationSummary above. Detail handler is a
+    # safe GET; reap mutation lives on POST ``/reap``.
+    needs_reap: bool = False
+    needs_reap_reason: str | None = None
 
 
 class NetworkAnalysis(BaseModel):
@@ -1905,12 +1924,14 @@ def create_forensics_router() -> APIRouter:
                 .order_by(InvestigationRunRecord.created_at.desc())
             )).all())
 
-            dirty = False
+            # fix §49 — GET no longer mutates. Build per-row needs_reap
+            # flags read-only; the operator UI calls POST /reap to
+            # trigger the actual status flip.
+            reap_reasons: dict[str, str] = {}
             for inv in rows:
-                if await _reconcile_investigation_if_zombie(uow.session, inv):
-                    dirty = True
-            if dirty:
-                await uow.commit()
+                reason = await _zombie_reap_reason(uow.session, inv)
+                if reason is not None:
+                    reap_reasons[inv.id] = reason
 
         return DataEnvelope(data=[
             InvestigationSummary(
@@ -1919,6 +1940,8 @@ def create_forensics_router() -> APIRouter:
                 max_attempts=r.max_attempts,
                 final_answer=r.final_answer, confidence=r.confidence,
                 parent_investigation_id=r.parent_investigation_id,
+                needs_reap=r.id in reap_reasons,
+                needs_reap_reason=reap_reasons.get(r.id),
             )
             for r in rows
         ])
@@ -1957,8 +1980,9 @@ def create_forensics_router() -> APIRouter:
             if inv is None or inv.project_id != project_id:
                 raise HTTPException(status_code=404, detail="Investigation not found.")
 
-            if await _reconcile_investigation_if_zombie(uow.session, inv):
-                await uow.commit()
+            # fix §49 — read-only zombie check; mutation now lives on
+            # POST /reap so this GET stays a safe method.
+            reap_reason = await _zombie_reap_reason(uow.session, inv)
 
             step_rows = (await uow.session.exec(
                 select(AgentStepRecord)
@@ -1974,7 +1998,78 @@ def create_forensics_router() -> APIRouter:
             confidence=inv.confidence,
             parent_investigation_id=inv.parent_investigation_id,
             steps=steps,
+            needs_reap=reap_reason is not None,
+            needs_reap_reason=reap_reason,
         ))
+
+    @router.post(
+        "/projects/{project_id}/investigations/{investigation_id}/reap",
+        response_model=DataEnvelope[InvestigationSummary],
+        summary="Force-flip a zombie investigation to ``failed``.",
+    )
+    @limiter.limit("30/minute")
+    async def reap_investigation(
+        request: Request,
+        project_id: str,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[InvestigationSummary]:
+        """Operator-initiated zombie reap (§49).
+
+        The GET handlers expose ``needs_reap`` read-only. When the
+        operator confirms the row is stuck the UI POSTs here, which
+        re-checks the same conservative predicate as the GETs and,
+        only if the predicate still holds, flips ``inv.status`` to
+        ``failed`` and writes an audit-friendly ``final_answer``.
+
+        Replaces the auto-reap-on-GET behavior that violated the HTTP
+        safe-method contract. A platform-level cron sweeper is still
+        responsible for stale rows whose UI never gets visited.
+        """
+        del request
+
+        from aila.modules.forensics.db_models import ForensicsProjectRecord, InvestigationRunRecord
+
+        async with UnitOfWork() as uow:
+            project = (await uow.session.exec(
+                select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
+            )).first()
+            if project is None:
+                raise HTTPException(status_code=404, detail=f"Project {project_id} not found.")
+            _require_project_ownership(project, auth)
+
+            inv = (await uow.session.exec(
+                select(InvestigationRunRecord).where(InvestigationRunRecord.id == investigation_id)
+            )).first()
+            if inv is None or inv.project_id != project_id:
+                raise HTTPException(status_code=404, detail="Investigation not found.")
+
+            reason = await _zombie_reap_reason(uow.session, inv)
+            if reason is None:
+                # Not a zombie. Return 409 — the client's view was
+                # stale, the row is fine.
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Investigation is not in a reapable state. "
+                        "Refresh and check needs_reap."
+                    ),
+                )
+            _apply_zombie_reap(uow.session, inv, reason)
+            await uow.commit()
+            await uow.session.refresh(inv)
+
+        return DataEnvelope(data=InvestigationSummary(
+            id=inv.id, project_id=inv.project_id, question=inv.question,
+            status=inv.status, attempts_used=inv.attempts_used,
+            max_attempts=inv.max_attempts,
+            final_answer=inv.final_answer, confidence=inv.confidence,
+            task_id=inv.task_id,
+            parent_investigation_id=inv.parent_investigation_id,
+            needs_reap=False,
+            needs_reap_reason=None,
+        ))
+
     @router.get(
         "/projects/{project_id}/investigations/{investigation_id}/reasoning-graphs",
         response_model=DataEnvelope[list[ReasoningGraphSnapshot]],
