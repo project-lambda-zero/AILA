@@ -431,3 +431,66 @@ async def test_dispatch_variant_hunt_order_enqueues_child(
 
 
 pytestmark = pytest.mark.asyncio
+
+
+# ----------------------------------------------------------------------
+# §47 / §54 — frontend cursor exposure via VRBranchSummary
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_branch_summary_carries_cursor_state_after_pause() -> None:
+    """After pause_investigation_atomic flips cursors to __paused__,
+    the _branch_summary helper exposes that via cursor_state +
+    cursor_archived_state fields on VRBranchSummary so the frontend
+    can distinguish 'operator paused' from 'task crashed' (both used
+    to collapse to status=PAUSED).
+    """
+    from aila.modules.vr.api_router import _branch_summary  # noqa: PLC0415
+    from aila.storage.db_models import WorkflowStateCursor  # noqa: PLC0415
+
+    target_id = await _seed_target("cs1")
+    inv_id = await _seed_inv(target_id)
+    branch_id = await _seed_branch(inv_id)
+    await _seed_cursor(branch_id, current_state="investigation_loop")
+    await pause_investigation_atomic(inv_id, user_id="x", reason="operator")
+
+    async with UnitOfWork() as uow:
+        branch = (await uow.session.exec(
+            select(VRInvestigationBranchRecord)
+            .where(VRInvestigationBranchRecord.id == branch_id),
+        )).first()
+        cursor = (await uow.session.exec(
+            select(WorkflowStateCursor)
+            .where(WorkflowStateCursor.run_id == branch_id),
+        )).first()
+
+    summary = _branch_summary(
+        branch,
+        cursor_state=cursor.current_state,
+        cursor_archived_state=cursor.archived_state,
+    )
+    assert summary.cursor_state == "__paused__"
+    assert summary.cursor_archived_state == "investigation_loop"
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_branch_summary_carries_none_when_no_cursor() -> None:
+    """Backward-compatible: a branch with no cursor yet (very short
+    window between investigation_setup spawn and first cursor write)
+    serializes with cursor_state=None / cursor_archived_state=None."""
+    from aila.modules.vr.api_router import _branch_summary  # noqa: PLC0415
+
+    target_id = await _seed_target("cs2")
+    inv_id = await _seed_inv(target_id)
+    branch_id = await _seed_branch(inv_id)
+
+    async with UnitOfWork() as uow:
+        branch = (await uow.session.exec(
+            select(VRInvestigationBranchRecord)
+            .where(VRInvestigationBranchRecord.id == branch_id),
+        )).first()
+
+    summary = _branch_summary(branch)
+    assert summary.cursor_state is None
+    assert summary.cursor_archived_state is None
