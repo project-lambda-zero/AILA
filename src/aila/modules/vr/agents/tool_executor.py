@@ -920,7 +920,10 @@ class ToolExecutor:
                 return
             try:
                 case_state = json.loads(branch.case_state_json or "{}")
-            except json.JSONDecodeError:
+            # fix §258 — also catch TypeError so a corrupted column
+            # (e.g. integer or null where a JSON string is expected)
+            # never wedges the merge.
+            except (json.JSONDecodeError, TypeError):
                 case_state = {}
             observables = case_state.get("observables")
             if not isinstance(observables, dict):
