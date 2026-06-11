@@ -1215,8 +1215,41 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
     dead state gets reaped.
 
     Returns ``{zombies_cancelled, cursors_purged}``.
+
+    fix §42 — Single-session-scope assumption.
+    --------------------------------------------------
+    The function issues four UPDATE/DELETE statements:
+      (1) UPDATE taskrecord SET status='cancelled' WHERE stale heartbeat
+      (2) DELETE workflow_state_cursor WHERE no matching taskrecord
+      (3) DELETE workflow_state_cursor WHERE taskrecord is terminal
+      (4) DELETE workflow_state_cursor WHERE current_state='__succeeded__'
+
+    Steps 1 → 3 are intentionally ordered so step 3 sees the rows step 1
+    just marked ``cancelled`` (the cancelled rows then become eligible
+    for cursor deletion in the same tick). This is correct ONLY when
+    all four statements run inside the SAME session/transaction, so
+    step 3's ``JOIN taskrecord`` sees step 1's uncommitted update —
+    Postgres' default READ COMMITTED visibility for statements within a
+    single transaction makes this work. If the caller ever split this
+    helper across two sessions, step 3 would miss the just-cancelled
+    rows and they'd survive until the next tick.
+
+    The assertion below enforces the assumption at function entry: the
+    caller MUST hand us a session that is already in a transaction.
+    Documentation-only change otherwise — no statement reordering, no
+    new commits.
     """
     from sqlalchemy import text  # noqa: PLC0415
+
+    # fix §42 — single-session-scope invariant. The caller's UnitOfWork
+    # implicitly begins a transaction on first session use; a stand-
+    # alone session that has not yet executed any statement will assert
+    # False here and surface the misuse loudly rather than silently
+    # losing the step-1→step-3 visibility chain.
+    assert uow.session.in_transaction(), (  # noqa: S101
+        "_reap_zombie_tasks_and_cursors must run inside a single "
+        "transaction so step 3's JOIN observes step 1's UPDATE"
+    )
 
     heartbeat_min = int(os.environ.get("VR_ZOMBIE_TASK_HEARTBEAT_MIN", "10"))
     batch_cap = int(os.environ.get("VR_CURSOR_CLEANUP_BATCH", "5000"))
