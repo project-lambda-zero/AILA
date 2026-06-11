@@ -328,7 +328,14 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             timeout_seconds=services.config.poc_timeout_seconds,
             memory_limit_mb=services.config.poc_memory_limit_mb,
         )
-        if run_result.get("crash_detected"):
+        # fix §306 — explicit \`is True\` check. The previous
+        # \`if run_result.get(\"crash_detected\"):\` would treat the string
+        # \"false\", the integer 0 wrapped in a string, or any non-empty
+        # JSON-serialized truthy-looking value as a crash. The
+        # poc_runner JSON contract says crash_detected is a bool, so
+        # accept only literal True; anything else (None, missing key,
+        # string \"false\", int 0) is a non-crash.
+        if run_result.get("crash_detected") is True:
             crash_payload = {
                 "poc_path": poc_path,
                 "first_run": run_result,
