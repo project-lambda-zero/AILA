@@ -455,6 +455,14 @@ def _target_summary(record: Any) -> VRTargetSummary:
         # static_summary digest: keep only the load-bearing fields. The full
         # androguard output (34KB+ per-package metadata) is excessive to
         # include in every LLM turn.
+        #
+        # fix §268 — `android_mcp_static_summary` now stores a pointer
+        # to a JSON artifact (`_artifact_path`) plus pre-computed
+        # digest fields (counts already as `*_count` keys). The
+        # legacy inline form (full payload as a dict) is still
+        # accepted; we compute `len()` on the lists when we encounter
+        # it so rows ingested before the cutover still project
+        # correctly.
         static_full = handles.get("android_mcp_static_summary") or {}
         if isinstance(static_full, dict) and static_full:
             digest: dict[str, Any] = {}
@@ -471,9 +479,12 @@ def _target_summary(record: Any) -> VRTargetSummary:
                 "exported_services", "exported_receivers", "exported_providers",
                 "native_libs", "certificates",
             ):
+                count_key = f"{k}_count"
                 v = static_full.get(k)
                 if isinstance(v, list):
-                    digest[f"{k}_count"] = len(v)
+                    digest[count_key] = len(v)
+                elif isinstance(static_full.get(count_key), int):
+                    digest[count_key] = static_full[count_key]
             overview["static_summary"] = digest
 
         # mobsf_scan digest: bucket-count summary. The full report is at

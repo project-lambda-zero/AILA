@@ -24,9 +24,12 @@ ida_headless.binary_survey).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from sqlmodel import select as _select
@@ -51,7 +54,14 @@ from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["TargetAnalysisError", "TargetAnalysisService"]
+__all__ = [
+    "TargetAnalysisError",
+    "TargetAnalysisService",
+    # fix §268, §269 — consumers in api_router / reporting / agents
+    # call these to resolve the artifact-file pointer back to its
+    # full JSON payload.
+    "load_target_artifact_payload",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -85,6 +95,176 @@ def _read_poll_timeout_env() -> float:
 
 _POLL_TIMEOUT_SECONDS = _read_poll_timeout_env()
 
+
+# fix §268, §269 — artifact-file storage for the heavy android-mcp
+# stage outputs (androguard summary + MobSF scan). The full payloads
+# (40KB-2MB each) used to live inline in ``mcp_handles_json`` where
+# every read of the row paid the parse cost. They now live in a
+# content-addressed JSON file under
+# ``VR_TARGET_ARTIFACT_DIR/{target_id}/{name}.json``; only a small
+# digest + pointer is kept inline so API projections and the MASVS
+# dispatcher stay cheap. Defaults to ``~/.aila/vr_target_artifacts``
+# (same shape as ANDROID_MCP_UPLOAD_DIR's ``~/.android-mcp/uploads``).
+def _artifact_root() -> Path:
+    raw = os.environ.get("VR_TARGET_ARTIFACT_DIR", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".aila" / "vr_target_artifacts"
+
+
+def _write_target_artifact(
+    target_id: str, name: str, payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Persist a JSON payload to the per-target artifact dir.
+
+    Writes ``{root}/{target_id}/{name}.json`` and returns a pointer
+    dict (``_artifact_path``, ``_artifact_sha256``, ``_artifact_size``,
+    ``_artifact_written_at``) suitable to embed in
+    ``mcp_handles_json``. Callers merge the pointer with any
+    pre-computed digest fields they want available without round-
+    tripping to disk.
+
+    The write goes through a temp file in the same directory + rename
+    so a crash mid-write can never leave a half-written JSON behind
+    that a future ``_load_target_artifact_payload`` would choke on.
+    """
+    target_dir = _artifact_root() / target_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = target_dir / f"{name}.json"
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    body_bytes = body.encode("utf-8")
+    sha = hashlib.sha256(body_bytes).hexdigest()
+    tmp_path = target_dir / f".{name}.json.tmp"
+    tmp_path.write_bytes(body_bytes)
+    os.replace(tmp_path, artifact_path)
+    return {
+        "_artifact_path": str(artifact_path.resolve()),
+        "_artifact_sha256": sha,
+        "_artifact_size": len(body_bytes),
+        "_artifact_written_at": utc_now().isoformat(),
+    }
+
+
+def _load_target_artifact_payload(
+    handle_value: Any,
+) -> Mapping[str, Any]:
+    """Resolve an inline handle reference to its full JSON payload.
+
+    ``handle_value`` is the value stored under one of the heavy
+    android-mcp keys (``android_mcp_static_summary``,
+    ``android_mcp_mobsf_scan``). Two shapes are supported:
+
+    * **Pointer form** (current): a dict carrying ``_artifact_path``
+      plus any pre-computed digest fields. The JSON file at
+      ``_artifact_path`` is read and parsed; on read failure (file
+      missing / corrupt JSON / unreadable) the inline dict is
+      returned as a graceful fallback so renderers still get the
+      digest fields they can render.
+    * **Legacy inline form**: a dict that already holds the full
+      payload. Returned as-is. Covers rows ingested before the
+      §268 / §269 cutover.
+
+    Non-mapping input returns an empty mapping.
+    """
+    if not isinstance(handle_value, Mapping):
+        return {}
+    artifact_path = handle_value.get("_artifact_path")
+    if not isinstance(artifact_path, str) or not artifact_path:
+        return handle_value
+    try:
+        with open(artifact_path, encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except (OSError, ValueError) as exc:
+        _log.warning(
+            "vr.target_analysis: failed to load artifact %s: %s — "
+            "falling back to inline digest",
+            artifact_path, exc,
+        )
+        return handle_value
+    if isinstance(payload, Mapping):
+        return payload
+    _log.warning(
+        "vr.target_analysis: artifact %s decoded as %s, not Mapping — "
+        "falling back to inline digest",
+        artifact_path, type(payload).__name__,
+    )
+    return handle_value
+
+
+def _static_summary_digest_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract the small inline digest from an androguard summary.
+
+    Carries the scalars an api_router / masvs-seed call would project
+    plus pre-computed list counts so the projection layer never has
+    to ``len()`` a 200-entry permission list on every request.
+    """
+    digest: dict[str, Any] = {}
+    for key in (
+        "package", "version_name", "version_code",
+        "min_sdk", "target_sdk", "compile_sdk",
+        "application_class", "main_activity",
+        "signing_scheme",
+    ):
+        value = payload.get(key)
+        if value is not None:
+            digest[key] = value
+    for key in (
+        "permissions", "dangerous_permissions",
+        "exported_activities", "exported_services",
+        "exported_receivers", "exported_providers",
+        "native_libs", "certificates",
+    ):
+        value = payload.get(key)
+        if isinstance(value, list):
+            digest[f"{key}_count"] = len(value)
+    return digest
+
+
+def _mobsf_digest_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract the operator-display digest from a MobSF scan response.
+
+    The full MobSF scan is multi-MB and must never enter LLM prompts
+    (PIPELINE_ONLY_TOOLS — see ``android_mcp_bridge._PIPELINE_ONLY_TOOLS``
+    comment). The inline digest carries only fields safe to show on
+    the target overview / PDF cover (security score + tracker count +
+    per-severity finding buckets); everything else lives in the
+    artifact file behind ``prompt_safe=False``.
+    """
+    digest: dict[str, Any] = {}
+    if payload.get("skipped"):
+        digest["skipped"] = True
+        if payload.get("reason") is not None:
+            digest["reason"] = payload["reason"]
+        return digest
+    if payload.get("security_score") is not None:
+        digest["security_score"] = payload["security_score"]
+    trackers = payload.get("trackers")
+    if isinstance(trackers, Mapping):
+        detected = trackers.get("detected_trackers")
+        if detected is not None:
+            digest["trackers_detected"] = detected
+    buckets = {"high": 0, "warning": 0, "info": 0, "good": 0, "secure": 0}
+    for section_key in (
+        "code_analysis", "manifest_analysis",
+        "android_api", "network_security",
+    ):
+        section = payload.get(section_key)
+        if isinstance(section, dict):
+            for finding in section.values():
+                if isinstance(finding, dict):
+                    sev = str(
+                        finding.get("severity") or finding.get("status") or "",
+                    ).lower()
+                    if sev in buckets:
+                        buckets[sev] += 1
+    if any(buckets.values()):
+        digest["findings_by_severity"] = buckets
+    return digest
+
+
+# Public re-export so api_router / reporting / agents can resolve
+# pointer-form handles without reaching into a `_`-prefixed symbol.
+load_target_artifact_payload = _load_target_artifact_payload
 
 
 # File extension → language identifier used in capability_profile +
@@ -738,10 +918,22 @@ class TargetAnalysisService:
             raise TargetAnalysisError(
                 f"android-mcp.androguard_summary failed: {err}",
             )
-        # The full androguard summary (package, permissions, certs,
-        # exported components) is small enough to embed verbatim — no
-        # paths to chase, downstream personas read it inline.
-        new_keys: dict[str, Any] = {"android_mcp_static_summary": resp}
+        # fix §268 — the full androguard summary (manifest XML, full
+        # permission list, every certificate fingerprint, every
+        # exported-component class name) can hit 1-2 MB on real APKs.
+        # Embedding it verbatim in ``mcp_handles_json`` made every
+        # /vr/targets list request parse + serialize the blob, and
+        # bloated worker logs that echo the row state. Persist to a
+        # content-addressed artifact under ``VR_TARGET_ARTIFACT_DIR``
+        # and keep only the digest + pointer inline. The PDF renderer
+        # and any other full-payload consumer pulls the file via
+        # ``load_target_artifact_payload``.
+        artifact_ref = _write_target_artifact(
+            target_id, "static_summary", resp,
+        )
+        digest = _static_summary_digest_fields(resp)
+        inline_ref: dict[str, Any] = {**artifact_ref, **digest}
+        new_keys: dict[str, Any] = {"android_mcp_static_summary": inline_ref}
         package = resp.get("package")
         if isinstance(package, str) and package:
             # Mirror the existing uploaded_filename pattern so the
@@ -752,9 +944,11 @@ class TargetAnalysisService:
         # overwrite each other's disjoint keys.
         await self._merge_handles_locked(target_id, new_keys)
         _log.info(
-            "vr.android.static_summary target=%s package=%s permissions=%d",
+            "vr.android.static_summary target=%s package=%s permissions=%d "
+            "artifact=%s size=%d",
             target_id, package,
             len(resp.get("permissions") or []),
+            artifact_ref["_artifact_path"], artifact_ref["_artifact_size"],
         )
 
     async def _android_mobsf_scan(

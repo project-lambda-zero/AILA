@@ -101,6 +101,9 @@ from aila.modules.vr.reporting.pdf_report import (
     _draw_footer,
     _escape_for_paragraph,
 )
+from aila.modules.vr.services.target_analysis import (
+    load_target_artifact_payload,
+)
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["build_pdf", "collect_findings"]
@@ -792,10 +795,19 @@ def _append_apk_intelligence(
     ))
     story.append(Spacer(1, 0.15 * inch))
 
-    full_static = (
+    # fix §268 — ``android_mcp_static_summary`` now stores a pointer
+    # to ``target_artifacts/{target_id}/static_summary.json``; the
+    # inline dict carries only the digest. The APK Intelligence section
+    # needs the FULL inventory (permission names, native_libs paths,
+    # exported-component class names), so resolve the pointer here.
+    # Legacy inline form (rows ingested pre-§268) is still accepted —
+    # the loader returns the input dict unchanged when no
+    # ``_artifact_path`` is present.
+    static_handle = (
         handles.get("android_mcp_static_summary") if isinstance(handles, Mapping) else None
     )
-    if not isinstance(full_static, Mapping):
+    full_static = load_target_artifact_payload(static_handle)
+    if not full_static:
         full_static = static_summary if isinstance(static_summary, Mapping) else {}
 
     mobsf = (

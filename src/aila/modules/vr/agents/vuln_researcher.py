@@ -943,14 +943,30 @@ class HonestVulnResearcher:
             handles.pop("android_mcp_mobsf_scan", None)
             static_full = handles.get("android_mcp_static_summary")
             if isinstance(static_full, dict) and static_full:
-                digest = {}
-                for k in ("package", "version_name", "version_code", "min_sdk", "target_sdk", "signing_scheme"):
-                    if static_full.get(k) is not None:
-                        digest[k] = static_full[k]
-                for k in ("permissions", "dangerous_permissions", "exported_activities", "exported_services", "exported_receivers", "exported_providers", "native_libs", "certificates"):
-                    v = static_full.get(k)
-                    if isinstance(v, list):
-                        digest[f"{k}_count"] = len(v)
+                # fix §268 — ``android_mcp_static_summary`` now stores a
+                # pointer + pre-computed digest under ``mcp_handles_json``
+                # rather than the full 1-2MB androguard payload. The
+                # pre-computed digest already carries every field this
+                # block produces (scalar keys + ``*_count`` integers),
+                # so when the pointer fields are present we just strip
+                # the ``_artifact_*`` metadata and keep the rest. The
+                # legacy inline-full form falls through to the original
+                # ``len()``-style projection.
+                if "_artifact_path" in static_full:
+                    digest = {
+                        k: v
+                        for k, v in static_full.items()
+                        if not k.startswith("_artifact")
+                    }
+                else:
+                    digest = {}
+                    for k in ("package", "version_name", "version_code", "min_sdk", "target_sdk", "signing_scheme"):
+                        if static_full.get(k) is not None:
+                            digest[k] = static_full[k]
+                    for k in ("permissions", "dangerous_permissions", "exported_activities", "exported_services", "exported_receivers", "exported_providers", "native_libs", "certificates"):
+                        v = static_full.get(k)
+                        if isinstance(v, list):
+                            digest[f"{k}_count"] = len(v)
                 handles["android_mcp_static_summary"] = digest
         return {
             "id": target.id,
