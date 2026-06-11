@@ -691,6 +691,10 @@ class OutcomeDispatcher:
                 f"min=${VARIANT_MIN_BUDGET_USD:.2f}",
             )
         child_depth = depth + 1
+        # Stamp the depth marker into initial_question so the agent (and
+        # downstream variant_hunt_orders emitter) can read it back and
+        # propagate `depth=child_depth` into each grandchild order.
+        child_question = f"[variant-depth={child_depth}] {child_question}"
 
         async with UnitOfWork() as uow:
             child = VRInvestigationRecord(
