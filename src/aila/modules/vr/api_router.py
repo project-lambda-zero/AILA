@@ -4143,13 +4143,32 @@ def create_vr_router() -> APIRouter:
         investigation_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
+        """Operator-initiated pause via cursor SSOT (Phase B).
+
+        Dispatches the atomic pause_investigation_atomic() task body,
+        which performs one transaction:
+          - SELECT FOR UPDATE every active branch's cursor
+          - flip current_state -> '__paused__' (archive prior state)
+          - cancel TaskRecord rows in queued/running
+          - flip inv.status -> PAUSED derived projection
+        Followed by best-effort ARQ purge after commit.
+
+        Replaces the prior 3-source-of-truth pattern (inv.status +
+        TaskRecord.status + arq:in-progress key) per Phase B closing
+        §32/§33/§35/§47.
+        """
         del request
-        from aila.platform.contracts._common import utc_now
-
         from .db_models import VRInvestigationRecord
+        from .workflow.pause_resume import (
+            PauseInvestigationError,
+            pause_investigation_atomic,
+        )
 
+        # Team filter: confirm the auth context can see this row before
+        # the atomic op runs. The atomic op itself doesn't enforce team
+        # filter (it's an internal helper).
         async with UnitOfWork() as uow:
-            inv = (await uow.session.exec(
+            inv_check = (await uow.session.exec(
                 _team_filter(
                     select(VRInvestigationRecord).where(
                         VRInvestigationRecord.id == investigation_id,
@@ -4157,42 +4176,40 @@ def create_vr_router() -> APIRouter:
                     VRInvestigationRecord, auth,
                 )
             )).first()
-            if inv is None:
+            if inv_check is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
-            if inv.status not in {InvestigationStatus.RUNNING.value, InvestigationStatus.CREATED.value}:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"Cannot pause investigation in status {inv.status!r}.",
-                )
-            inv.status = InvestigationStatus.PAUSED.value
-            inv.pause_reason = InvestigationPauseReason.OPERATOR.value
-            inv.updated_at = utc_now()
-            uow.session.add(inv)
-            await uow.session.commit()
-            await uow.session.refresh(inv)
 
-        # Drop the investigation's pending ARQ jobs so the worker
-        # doesn't dequeue them after pause + log STATUS_LOCKED for
-        # every one. Best-effort: investigation_setup's STATUS_LOCKED
-        # guard catches anything we miss here.
         try:
-            from .services.arq_purge import purge_arq_jobs_for_investigation
-            purged = await purge_arq_jobs_for_investigation(
-                investigation_id, track="vr",
+            summary = await pause_investigation_atomic(
+                investigation_id,
+                user_id=auth.user_id,
+                reason=InvestigationPauseReason.OPERATOR.value,
             )
-            if purged.get("purged_jobs", 0) > 0:
-                _log.info(
-                    "pause_investigation ARQ_PURGE inv=%s purged=%d (of %d scanned)",
-                    investigation_id, purged["purged_jobs"], purged["scanned"],
+        except PauseInvestigationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+
+        _log.info(
+            "pause_investigation inv=%s paused_cursors=%d "
+            "cancelled_tasks=%d noop=%s",
+            investigation_id,
+            summary["paused_cursors"],
+            summary["cancelled_tasks"],
+            summary["noop"],
+        )
+
+        # Re-load the inv row for the response envelope.
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
                 )
-        except (OSError, RuntimeError, ImportError) as exc:
-            _log.warning(
-                "pause_investigation ARQ_PURGE failed inv=%s err=%s",
-                investigation_id, exc,
-            )
+            )).first()
         return DataEnvelope(data=_investigation_summary(inv))
 
     @router.post(
@@ -4206,14 +4223,29 @@ def create_vr_router() -> APIRouter:
         investigation_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
+        """Operator-initiated resume via cursor SSOT (Phase B).
+
+        Dispatches resume_investigation_atomic() which performs one
+        transaction:
+          - SELECT FOR UPDATE every cursor with current_state='__paused__'
+            tied to this investigation's branches
+          - restore archived_state -> current_state, clear archive
+          - flip inv.status -> RUNNING
+        Then fans out one run_vr_investigate ARQ task PER resumed
+        cursor so every branch (not just the primary) ticks again.
+        Closes §34.
+        """
         from aila.api.deps import get_task_queue
-        from aila.platform.contracts._common import utc_now
 
         from .db_models import VRInvestigationRecord
-        from .workflow.task import run_vr_investigate
+        from .workflow.pause_resume import (
+            ResumeInvestigationError,
+            resume_investigation_atomic,
+        )
 
+        # Team filter first.
         async with UnitOfWork() as uow:
-            inv = (await uow.session.exec(
+            inv_check = (await uow.session.exec(
                 _team_filter(
                     select(VRInvestigationRecord).where(
                         VRInvestigationRecord.id == investigation_id,
@@ -4221,38 +4253,42 @@ def create_vr_router() -> APIRouter:
                     VRInvestigationRecord, auth,
                 )
             )).first()
-            if inv is None:
+            if inv_check is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
-            if inv.status != InvestigationStatus.PAUSED.value:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"Cannot resume investigation in status {inv.status!r}.",
-                )
-            inv.status = InvestigationStatus.RUNNING.value
-            inv.pause_reason = None
-            inv.updated_at = utc_now()
-            uow.session.add(inv)
-            await uow.session.commit()
-            await uow.session.refresh(inv)
 
-        # Flipping status to RUNNING is not enough — the prior task
-        # has already returned. We must submit a fresh run so the
-        # investigation_loop actually starts ticking again. The loop
-        # picks up branch.turn_count from the DB so the engine
-        # resumes at the next turn instead of restarting from turn 1.
         task_queue = get_task_queue("vr", request)
-        await task_queue.submit(
-            track="vr",
-            fn=run_vr_investigate,
-            kwargs={"investigation_id": investigation_id},
-            user_id=auth.user_id,
-            group_id=auth.role,
-            team_id=auth.team_id,
+        try:
+            summary = await resume_investigation_atomic(
+                investigation_id,
+                user_id=auth.user_id,
+                task_queue=task_queue,
+                auth_user_id=auth.user_id,
+                auth_role=auth.role,
+                auth_team_id=auth.team_id,
+            )
+        except ResumeInvestigationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+
+        _log.info(
+            "resume_investigation inv=%s resumed_cursors=%d submitted_tasks=%d",
+            investigation_id,
+            summary["resumed_cursors"],
+            summary["submitted_tasks"],
         )
 
+        # Re-load the inv row for response envelope.
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
+                )
+            )).first()
         return DataEnvelope(data=_investigation_summary(inv))
 
     @router.post(
