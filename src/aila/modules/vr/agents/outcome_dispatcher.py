@@ -1047,7 +1047,16 @@ class OutcomeDispatcher:
                 "outcome_id": outcome_id,
                 "status": "draft",
             },
-            dedup_key=f"{workspace_id}|{profile_kind}|{profile_name}",
+            # fix §264 — old dedup_key was (workspace, kind, name) only.
+            # Two drafts that shared a profile_name but had different spec
+            # dicts silently overwrote each other in KnowledgeService.
+            # Mix in the canonical-JSON spec hash so genuine spec changes
+            # produce a fresh entry instead of dedup-collapsing the latest
+            # over the previous.
+            dedup_key=(
+                f"{workspace_id}|{profile_kind}|{profile_name}|"
+                f"{hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:16]}"
+            ),
         )
         entry_id = store_result.get("entry_id")
         return OutcomeDispatchResult(
