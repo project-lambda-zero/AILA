@@ -635,7 +635,7 @@ class AilaLLMClient:
         """
         # Budget check BEFORE retry loop (Phase 122)
         if self.cost_tracker is not None and run_id is not None:
-            self.cost_tracker.check_budget(run_id, routing.task_type)
+            await self.cost_tracker.check_budget_async(run_id, routing.task_type)
 
         # Capture call start time for duration reporting (Phase 175 / D-05)
         _call_start = _time_mod.perf_counter()

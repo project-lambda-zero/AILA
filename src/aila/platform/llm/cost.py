@@ -122,6 +122,23 @@ class CostTracker:
                 f"{total}/{ceiling} tokens used. Partial results preserved."
             )
 
+    async def check_budget_async(
+        self, run_id: str | None, task_type: str,
+    ) -> None:
+        """Async budget check that seeds the in-memory totals from the
+        durable ledger (``LLMCostRecord``) before the synchronous check
+        runs (fix §128 / §129).
+
+        Worker restart no longer resets the budget to zero; sibling
+        workers see the same total. The sync :meth:`check_budget` keeps
+        its old contract for tests + sync callers — only the async
+        client path needs the seed, and only on a fresh process.
+        """
+        rid = run_id or _NO_RUN
+        if rid != _NO_RUN:
+            await self._mem.ensure_cost_seeded(rid)
+        self.check_budget(run_id, task_type)
+
     def _resolve_ceiling(self, task_type: str) -> int:
         """Read budget ceiling from ConfigRegistry.
 
