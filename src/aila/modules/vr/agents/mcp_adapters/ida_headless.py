@@ -22,6 +22,7 @@ from aila.modules.vr.contracts import PayloadKind
 
 from ._shared import (
     MAX_LIST_PREVIEW,
+    MAX_OBS_DUMP_CHARS,
     bounded_dump,
     obs_key_for,
     provenance_stamp,
@@ -48,18 +49,17 @@ __all__ = [
 ]
 
 
-# Per-adapter caps on observables size. Pseudocode and disassembly
-# are the worst offenders for prompt bloat. Raw responses remain in
-# the message store; observables only hold a bounded head slice.
-# Observable caps bumped 3000/2500 → 50000 to match audit_mcp's
-# read_function fix — at the prior caps, long decompiled functions
-# were truncated before the load-bearing branch / sink was visible
-# and the agent submitted false-positive findings on partial reads.
-# 50000 chars covers ~600 lines of pseudocode / ~1500 disasm
-# instructions; full bodies stay in the message store regardless.
-_MAX_OBS_PSEUDOCODE = 100000000
-_MAX_OBS_DISASM = 100000000
-_MAX_OBS_CALLSITES = 25
+# fix §278 — pseudocode / disasm observable caps are the shared
+# MAX_OBS_DUMP_CHARS (32 KiB). The prior comment narrated a "50000
+# chars covers ~600 lines" budget but the constants had drifted to
+# 100 MB — the bounded-slice rationale was code-comment fiction.
+# Specialised renderers downstream still keep the raw response in
+# the message store; only the observable preview rides this cap.
+# fix §279 — _MAX_OBS_CALLSITES previously sat at 25 alongside the
+# shared MAX_LIST_PREVIEW (20). One list-preview convention across
+# every adapter; if a specific tool ever needs a wider preview we
+# pass the cap explicitly at the call site instead of growing the
+# global constant.
 
 
 def _list_or_empty(raw: dict[str, Any], *keys: str) -> list[Any]:
@@ -93,8 +93,8 @@ def adapt_decompile(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
         "source_provenance": provenance_stamp(ctx),
     }
 
-    obs_value = pseudocode[:_MAX_OBS_PSEUDOCODE]
-    if len(pseudocode) > _MAX_OBS_PSEUDOCODE:
+    obs_value = pseudocode[:MAX_OBS_DUMP_CHARS]
+    if len(pseudocode) > MAX_OBS_DUMP_CHARS:
         obs_value += f"\n\n[truncated — full {line_count} lines in message {ctx.call_id}]"
 
     return AdapterResult(
@@ -146,9 +146,9 @@ def _xref_view_result(
         "total": len(refs),
         "source_provenance": provenance_stamp(ctx),
     }
-    lines = [_xref_compact_line(r) for r in refs[:_MAX_OBS_CALLSITES] if isinstance(r, dict)]
-    if len(refs) > _MAX_OBS_CALLSITES:
-        lines.append(f"  ... and {len(refs) - _MAX_OBS_CALLSITES} more")
+    lines = [_xref_compact_line(r) for r in refs[:MAX_LIST_PREVIEW] if isinstance(r, dict)]
+    if len(refs) > MAX_LIST_PREVIEW:
+        lines.append(f"  ... and {len(refs) - MAX_LIST_PREVIEW} more")
     body = "\n".join(lines) if lines else "  (none)"
     obs_value = f"{len(refs)} {summary_noun} for {target}:\n{body}"
     return AdapterResult(
@@ -371,7 +371,7 @@ def _code_pointer_result(
     body_keys: tuple[str, ...],
     obs_suffix: str,
     label: str,
-    max_chars: int = _MAX_OBS_DISASM,
+    max_chars: int = MAX_OBS_DUMP_CHARS,
 ) -> AdapterResult:
     body = ""
     for k in body_keys:
@@ -439,7 +439,7 @@ def adapt_pseudocode_slice_view(
         body_keys=("slices", "text", "lines"),
         obs_suffix=f"slice.{fn}",
         label=f"pseudocode slices in {fn}",
-        max_chars=_MAX_OBS_PSEUDOCODE,
+        max_chars=MAX_OBS_DUMP_CHARS,
     )
 
 
@@ -463,8 +463,8 @@ def adapt_diff_function(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResu
         "line_count": line_count,
         "source_provenance": provenance_stamp(ctx),
     }
-    obs_body = unified[:_MAX_OBS_DISASM]
-    if len(unified) > _MAX_OBS_DISASM:
+    obs_body = unified[:MAX_OBS_DUMP_CHARS]
+    if len(unified) > MAX_OBS_DUMP_CHARS:
         obs_body += f"\n... [truncated — {line_count} lines total in message {ctx.call_id}]"
     obs_value = (
         f"diff_function {old_name} vs {new_name} ({line_count} lines):\n{obs_body}"
