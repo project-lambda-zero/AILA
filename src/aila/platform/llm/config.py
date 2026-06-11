@@ -240,11 +240,21 @@ class LLMConfigProvider:
             return val
         return str(val).strip().lower() not in ("false", "0", "no")
 
+    # fix §156 — pipeline steps default to fail-closed so a regex compile
+    # error or transient validator hiccup never silently bypasses sanitize
+    # / validate / gate / verify on a hot path. Operators that want fail-
+    # open MUST opt in explicitly per task_type.
+    _SECURITY_CRITICAL_STEPS: frozenset[str] = frozenset(
+        {"sanitize", "validate", "gate", "verify", "classify", "seal"},
+    )
+
     async def resolve_fail_mode(self, step: str, task_type: str) -> str:
         """Resolve fail mode for a pipeline step and task_type.
 
-        Reads key ``llm_pipeline_{step}_fail_mode_{task_type}`` from ConfigRegistry.
-        Missing key (None) defaults to "open".
+        Reads key ``llm_pipeline_{step}_fail_mode_{task_type}`` from
+        ConfigRegistry. Missing key defaults to ``"closed"`` for security-
+        critical steps (sanitize/validate/gate/verify/classify/seal — §156)
+        and ``"open"`` for everything else.
 
         Args:
             step: Pipeline step name (e.g. "classify").
@@ -255,9 +265,9 @@ class LLMConfigProvider:
         """
         val = await self._registry.get("platform", f"llm_pipeline_{step}_fail_mode_{task_type}")
         if val is None:
-            return "open"
+            return "closed" if step in self._SECURITY_CRITICAL_STEPS else "open"
         normalized = str(val).strip().lower()
-        if normalized in ("closed", "close"):
+        if normalized in ("closed", "close", "strict"):
             return "closed"
         return "open"
 
