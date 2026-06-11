@@ -249,44 +249,22 @@ class HonestVulnResearcher:
                     "Passive 'keep alive without comment' is a deliberation "
                     "integrity failure."
                 )
-                # Inject directly into the branch's case_state observable
-                # so render_active_directives_section surfaces at the top
-                # of the next prompt build.
-                # NOTE: do NOT add `from ... import VRInvestigationBranchRecord`
-                # here. The module-level import at the top of the file
-                # already binds the name. A function-local
-                # `from ... import X` would shadow it for the WHOLE
-                # function — including the unconditional uses ~150 lines
-                # below at the message-write site — and Python's
-                # function-scope rule makes those uses raise
-                # UnboundLocalError on every code path where this `if
-                # consensus_rejections:` block does NOT execute (which is
-                # the normal case for any investigation whose siblings
-                # haven't rejected anything yet, i.e. every freshly-spawned
-                # investigation). This single typo crashed every primary +
-                # sibling task in <3s for two days straight.
-                async with UnitOfWork() as uow:
-                    branch_row = (await uow.session.exec(
-                        _select(VRInvestigationBranchRecord).where(
-                            VRInvestigationBranchRecord.id == self.branch_id,
-                        )
-                    )).first()
-                    if branch_row is not None:
-                        try:
-                            cs_obj = json.loads(branch_row.case_state_json or "{}")
-                            obs = cs_obj.get("observables") or {}
-                            if not isinstance(obs, dict):
-                                obs = {}
-                            obs["_directive.sibling_consensus_rejection"] = "\n".join(directive_lines)
-                            cs_obj["observables"] = obs
-                            branch_row.case_state_json = json.dumps(cs_obj)
-                            uow.session.add(branch_row)
-                            await uow.commit()
-                            # Reload case_state into local copy so this turn
-                            # also sees the directive.
-                            case_state.observables["_directive.sibling_consensus_rejection"] = "\n".join(directive_lines)
-                        except (json.JSONDecodeError, AttributeError):
-                            pass
+                # fix §103 — directive lives ONLY in the in-memory
+                # case_state.observables; the absorb()→branch_row write
+                # at the end of this turn persists it as part of the
+                # ONE consolidated case_state write per turn (was three
+                # writes: directive injection here, normal write at
+                # message-write site, terminal overwrite). The prompt
+                # builder below reads from `case_state` (line ~295) so
+                # this turn already sees the directive; absorb()
+                # preserves observables into new_case_state, which
+                # encodes to branch_row.case_state_json at end-of-turn.
+                # fix §89 — eliminates the pre-LLM directive UoW
+                # (one of the three commits this method used to run
+                # per turn). On a crash before the end-of-turn UoW
+                # the directive recomputes deterministically from
+                # sibling_context on retry, so no audit loss.
+                case_state.observables["_directive.sibling_consensus_rejection"] = "\n".join(directive_lines)
         system_prompt = _load_prompt(inv.strategy_family, branch.persona_voice)
         tool_specs = await _fetch_tool_specs(
             target_kind=(target_snapshot or {}).get("kind"),
@@ -364,9 +342,15 @@ class HonestVulnResearcher:
         # cache HIT, or from the upstream LLM call. Any failure to
         # validate the cache row falls through to the API path.
         decision: ReasoningTurnDecision | None = None
+        # fix §89 — `cache_hit` flag lets the post-LLM UoW skip the
+        # cache store when we already had the response. The previous
+        # separate `store_uow` here is folded into the message-write
+        # UoW further down so one UoW covers all post-LLM writes.
+        cache_hit = False
         if cached_response is not None:
             try:
                 decision = ReasoningTurnDecision.model_validate(cached_response)
+                cache_hit = True
                 _log.info(
                     "vuln_researcher: idempotency cache HIT inv=%s branch=%s turn=%d "
                     "(skipped duplicate LLM call)",
@@ -402,18 +386,12 @@ class HonestVulnResearcher:
                     f"{type(exc).__name__}: {exc}",
                     retryable=bool(getattr(exc, "retryable", False)),
                 ) from exc
-            # Store on success only — failed calls leave no cache entry
-            # so retry will hit the API again (correct behavior for
-            # transient failures).
-            async with UnitOfWork() as store_uow:
-                await store_response(
-                    store_uow.session,
-                    request_key=request_key,
-                    investigation_id=self.investigation_id,
-                    branch_id=self.branch_id,
-                    turn_number=turn_number,
-                    response=decision.model_dump(mode="json"),
-                )
+            # fix §89 — store_response moved into the post-LLM UoW at
+            # the end of run_turn. Cache row + message write + branch
+            # update + outcome upsert now share ONE transaction instead
+            # of three. Failure to commit means the cache row is also
+            # not persisted, so a retry hits the API again — correct
+            # behavior for transient failures.
 
         # fix §87 — was a production `assert`; stripped under `-O` and
         # then a NoneType-has-no-attribute crashes later on the next
@@ -561,7 +539,33 @@ class HonestVulnResearcher:
         terminal = decision.action == "submit"
         outcome_id: str | None = None
 
+        # fix §89 — ONE post-LLM UoW: cache store (if we made the LLM
+        # call) + message write + branch state update + outcome upsert.
+        # Was three separate UoWs (sibling-directive pre-LLM, cache
+        # store post-LLM, message-write post-LLM). The sibling-directive
+        # UoW was eliminated entirely by §103 (directive lives in
+        # in-memory case_state.observables and persists with the
+        # end-of-turn case_state_json write).
+        # fix §103 — ONE branch_row.case_state_json write per turn (was
+        # three). The final write happens AFTER terminal auto-resolve
+        # mutates new_case_state, so the durable scratchpad reflects
+        # the post-auto-resolve state in a single observable transition.
+        # Concurrent readers (frontend polling, auto_steering) see only
+        # the pre- and post-turn states, not three intermediate flips.
         async with UnitOfWork() as uow:
+            if not cache_hit:
+                # Store on success only — failed LLM calls leave no
+                # cache entry so retry hits the API again (correct for
+                # transient failures).
+                await store_response(
+                    uow.session,
+                    request_key=request_key,
+                    investigation_id=self.investigation_id,
+                    branch_id=self.branch_id,
+                    turn_number=turn_number,
+                    response=decision.model_dump(mode="json"),
+                )
+
             msg = VRInvestigationMessageRecord(
                 investigation_id=self.investigation_id,
                 branch_id=self.branch_id,
@@ -584,9 +588,7 @@ class HonestVulnResearcher:
                     f"branch {self.branch_id} disappeared during turn",
                 )
             branch_row.turn_count = turn_number
-            branch_row.case_state_json = _encode_case_state(new_case_state)
             branch_row.updated_at = utc_now()
-            uow.session.add(branch_row)
 
             if terminal:
                 outcome_kind = _terminal_outcome_kind(decision)
@@ -604,7 +606,6 @@ class HonestVulnResearcher:
                     turn=turn_number,
                     outcome_kind=outcome_kind.value,
                 )
-                branch_row.case_state_json = _encode_case_state(new_case_state)
                 outcome_id = await _upsert_canonical_outcome(
                     uow=uow,
                     investigation_id=self.investigation_id,
@@ -624,6 +625,12 @@ class HonestVulnResearcher:
                     f"terminal_submit:turn_{turn_number}:{outcome_kind.value}"
                 )
                 branch_row.closed_at = utc_now()
+
+            # fix §103 — single case_state_json write, performed after
+            # the optional terminal auto-resolve so the persisted
+            # scratchpad reflects post-resolution state.
+            branch_row.case_state_json = _encode_case_state(new_case_state)
+            uow.session.add(branch_row)
 
             await uow.session.commit()
             await uow.session.refresh(msg)
