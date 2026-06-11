@@ -62,6 +62,53 @@ _PARSER_SINK_APIS: tuple[str, ...] = (
     "lstrcpyA", "lstrcpyW", "lstrcatA", "lstrcatW",
 )
 
+# fix §231 — per-sink "tainted argument index" lookup. The previous
+# inline `sink_argument_index=2 if sink in {'memcpy','memmove'} else 0`
+# was wrong for ~70% of the unambiguous parser-sink APIs above (e.g.
+# strcpy/strcat/sprintf all have their tainted source at a non-zero
+# index that wasn't 2 either). Source: glibc/POSIX man pages
+# (strcpy(3), strcat(3), sprintf(3), snprintf(3), memcpy(3),
+# memmove(3), system(3), execve(2), popen(3), fopen(3), gets(3),
+# recv(2), recvfrom(2), read(2), fgets(3)) and MSDN for the wide-char
+# / lstr family. ``None`` means "no specific tainted-source argument"
+# (gets() pulls from stdin, scanf() from stdin) and the deep-assess
+# call is skipped entirely for that sink. Anything not in the table
+# falls back to 0 via ``.get(sink, 0)`` — a deliberately conservative
+# default that still lets the IDA bridge produce a verdict.
+_SINK_TAINT_ARG: dict[str, int | None] = {
+    "strcpy":   1,
+    "strcat":   1,
+    "sprintf":  2,
+    "snprintf": 2,
+    "memcpy":   1,
+    "memmove":  1,
+    "system":   0,
+    "exec":     0,
+    "execve":   0,
+    "popen":    0,
+    "fopen":    0,
+    "gets":     None,   # reads from stdin — no tainted argument
+    "recv":     1,
+    "recvfrom": 1,
+    "read":     1,
+    "fgets":    0,
+    # Windows wide-char mirrors of the POSIX functions above (MSDN).
+    "wcscpy":    1,
+    "wcscat":    1,
+    "wsprintfA": 2,
+    "wsprintfW": 2,
+    "lstrcpyA":  1,
+    "lstrcpyW":  1,
+    "lstrcatA":  1,
+    "lstrcatW":  1,
+    # scanf family — vsprintf/sscanf/scanf/fscanf write into varargs.
+    "vsprintf": 2,
+    "sscanf":   0,      # input string at arg 0
+    "scanf":    None,   # reads from stdin — no tainted argument
+    "fscanf":   None,   # reads from FILE* stream — no tainted argument
+}
+
+
 
 class McpCallable(Protocol):
     """Subset of bridge tool interface used by the dispatcher.
@@ -301,6 +348,12 @@ class FunctionRankingDispatcher:
             sink = next(iter(row["apis"]), None)
             if not sink:
                 continue
+            # fix §231 — table-driven taint argument; ``None`` skips the
+            # deep-assess call for sinks with no tainted-source argument
+            # (gets/scanf/fscanf read from stdin / a FILE* stream).
+            arg_index = _SINK_TAINT_ARG.get(sink, 0)
+            if arg_index is None:
+                continue
             deep_tasks.append((
                 addr,
                 self._ida.forward(
@@ -308,7 +361,7 @@ class FunctionRankingDispatcher:
                     binary_id=binary_id,
                     address_or_name=addr,
                     sink_function=sink,
-                    sink_argument_index=2 if sink in {"memcpy", "memmove"} else 0,
+                    sink_argument_index=arg_index,
                 ),
             ))
         if deep_tasks:
