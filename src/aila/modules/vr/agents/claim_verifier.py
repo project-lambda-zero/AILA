@@ -831,9 +831,14 @@ class ClaimVerifierAgent:
             dispatcher = OutcomeDispatcher(knowledge=ServiceFactory().knowledge)
             result = await dispatcher.dispatch(new_outcome_id)
         except Exception as exc:  # noqa: BLE001 — see comment above
+            # fix §350 — traceback surfaces here because the revert path
+            # is the last line of defense; if the dispatcher crashed
+            # out-of-protocol the operator needs the full stack to
+            # diagnose, not just the class:msg pair already in payload.
             _log.warning(
                 "auto_promote dispatch FAILED — reverting inv=%s original=%s new=%s err=%s",
                 self.investigation_id, canonical_id, new_outcome_id, exc,
+                exc_info=True,
             )
             await self._revert_auto_promote(
                 original_id=canonical_id,
