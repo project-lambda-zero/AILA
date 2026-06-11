@@ -2572,6 +2572,279 @@ def build_findings(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowabl
     return story
 
 
+# ---------------------------------------------------------------------------
+# RISK SNAPSHOT card — high-density per-finding header block
+# ---------------------------------------------------------------------------
+#
+# Each finding page opens with a tinted callout block that carries the
+# operator's "first 10 seconds" view of the finding: verdict, severity,
+# effort, confidence, panel author, branch convergence, and a 200-char
+# pull-quote drawn from the agent's answer text. The downstream catalog
+# description / verification steps / panel attribution / variant hunt /
+# affected-components / branch timeline blocks are unchanged.
+#
+# Severity heuristic (no badge for PASS/N/A/INFO/INCONCLUSIVE):
+#   - HIGH:  FAIL  + group ∈ {AUTH, CRYPTO, STORAGE, NETWORK, PLATFORM}
+#   - MED:   FAIL  + other group,
+#            OR REVIEW + group ∈ {AUTH, CRYPTO, STORAGE, NETWORK, PLATFORM}
+#   - LOW:   REVIEW + other group
+#
+# Effort heuristic (gated to FAIL/REVIEW — the only verdicts with a
+# remediation cost; PASS/N/A/INFO have no badge):
+#   - LARGE:  vho > 5  OR  affected_components > 10
+#   - MEDIUM: vho ∈ {2..5}  OR  affected_components ∈ {3..10}
+#   - SMALL:  vho < 2  AND  affected_components < 3
+
+_HIGH_RISK_GROUPS: frozenset[str] = frozenset({
+    "AUTH", "CRYPTO", "STORAGE", "NETWORK", "PLATFORM",
+})
+
+
+def _severity_label(f: FindingRecord) -> str | None:
+    """Return HIGH/MED/LOW, or None for verdicts that do not carry severity."""
+    v = f.verdict_label
+    if v == "FAIL":
+        return "HIGH" if f.group in _HIGH_RISK_GROUPS else "MED"
+    if v == "REVIEW":
+        return "MED" if f.group in _HIGH_RISK_GROUPS else "LOW"
+    return None
+
+
+def _effort_label(f: FindingRecord) -> str | None:
+    """Return LARGE/MEDIUM/SMALL effort, or None when not applicable."""
+    if f.verdict_label not in ("FAIL", "REVIEW"):
+        return None
+    vho_n = len(f.payload.get("variant_hunt_orders") or [])
+    ac_n = len(f.payload.get("affected_components") or [])
+    if vho_n > 5 or ac_n > 10:
+        return "LARGE"
+    if vho_n >= 2 or ac_n >= 3:
+        return "MEDIUM"
+    return "SMALL"
+
+
+def _severity_color(label: str | None) -> colors.Color:
+    return {
+        "HIGH": COL_FAIL,
+        "MED": COL_REVIEW,
+        "LOW": COL_INFO,
+    }.get(label or "", COL_MUTED)
+
+
+def _effort_color(label: str | None) -> colors.Color:
+    return {
+        "LARGE": COL_ACCENT_DEEP,
+        "MEDIUM": COL_ACCENT,
+        "SMALL": COL_MUTED,
+    }.get(label or "", COL_MUTED)
+
+
+def _dominant_persona(f: FindingRecord) -> str | None:
+    """Return the lowercase persona name with the most authoritative voice.
+
+    Preference order: synthesized_by → first panel_contributions entry →
+    first non-abandoned branch's persona_voice.
+    """
+    p = f.payload.get("synthesized_by")
+    if isinstance(p, str) and p:
+        return p.lower()
+    pcs = f.payload.get("panel_contributions") or []
+    if pcs:
+        cand = pcs[0].get("persona")
+        if isinstance(cand, str) and cand:
+            return cand.lower()
+    for b in f.child.get("branches") or []:
+        if b.get("status") in ("completed", "active", "running"):
+            v = b.get("persona_voice")
+            if isinstance(v, str) and v:
+                return v.lower()
+    return None
+
+
+def _branch_convergence_summary(f: FindingRecord) -> str:
+    """Render "N/M converged" with completed-vs-total counts."""
+    branches = f.child.get("branches") or []
+    total = len(branches)
+    if total == 0:
+        return "—"
+    completed = sum(1 for b in branches if b.get("status") == "completed")
+    return f"{completed}/{total} converged"
+
+
+# Markdown-noise stripper for pull-quotes — markdown markers in the first
+# 200 chars of an agent answer (#, **, `, leading list dashes) look like
+# debris when rendered inline as a quote. We strip the markers but keep
+# the words.
+_PULL_QUOTE_NOISE_RE = re.compile(r"(?:[#`*]+|^\s*[-+]\s+|^\s*\d+[.)]\s+)", re.MULTILINE)
+
+
+def _pull_quote_text(f: FindingRecord, cap: int = 200) -> str | None:
+    """Pull the first ``cap`` chars of the agent answer, cleaned of markdown.
+
+    Returns None when no answer text exists. The caller renders this as an
+    italic block with a left quote-rule.
+    """
+    answer = (f.payload.get("answer") or "").strip()
+    if not answer:
+        return None
+    # Drop markdown markers so the quote reads as prose, not as raw markup.
+    cleaned = _PULL_QUOTE_NOISE_RE.sub(" ", answer)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return None
+    if len(cleaned) <= cap:
+        return cleaned
+    return cleaned[: max(40, cap - 1)].rstrip(" ,;:") + "…"
+
+
+def _risk_snapshot_card(f: FindingRecord, s: dict[str, ParagraphStyle]) -> list[Flowable]:
+    """Return the tinted RISK SNAPSHOT card flowables.
+
+    Layout:
+
+        ┌────────────────────────────────────────────────────────────────┐
+        │  RISK SNAPSHOT                                                 │
+        ├────────────────────────────────────────────────────────────────┤
+        │ VERDICT   FAIL      ·  CONFIDENCE  0.85                        │
+        │ SEVERITY  HIGH      ·  EFFORT      MEDIUM                      │
+        │ AUTHORED  HALVAR    ·  BRANCHES    8/8 converged               │
+        │ VARIANTS  3 hypothesised (see § 07)                            │
+        ├────────────────────────────────────────────────────────────────┤
+        │ « the app's logout does NOT call a server endpoint … »         │
+        └────────────────────────────────────────────────────────────────┘
+
+    Severity / effort badges are suppressed for PASS / N/A / INFO /
+    INCONCLUSIVE. The pull-quote row is suppressed when the agent
+    produced no answer text.
+    """
+    vcol = VERDICT_COLOR.get(f.verdict_label, COL_NA)
+    sev = _severity_label(f)
+    eff = _effort_label(f)
+    persona = _dominant_persona(f)
+    persona_disp = (persona or "—").upper()
+    branches_disp = _branch_convergence_summary(f)
+    confidence_disp = f"{f.confidence:.2f}" if f.confidence else "—"
+    vho_n = len(f.payload.get("variant_hunt_orders") or [])
+    quote = _pull_quote_text(f, cap=200)
+
+    # ── Style helpers (tight, snapshot-local) ──
+    label_st = ParagraphStyle(
+        "SnapLabel", parent=s["body_xs"],
+        fontName=_font("Sans-Bold", "Helvetica-Bold"),
+        fontSize=6.6, leading=8.0, letterSpace=1.4,
+        textColor=COL_MUTED,
+    )
+    value_st = ParagraphStyle(
+        "SnapValue", parent=s["body_sm"],
+        fontName=_font("Mono-Bold", "Courier-Bold"),
+        fontSize=8.4, leading=9.6,
+        textColor=COL_INK,
+    )
+    quote_st = ParagraphStyle(
+        "SnapQuote", parent=s["body_sm"],
+        fontName=_font("Body-Italic", "Times-Italic"),
+        fontSize=8.6, leading=11.0,
+        leftIndent=6, rightIndent=4,
+        textColor=COL_INK, alignment=TA_LEFT,
+    )
+
+    def _pill(text: str, color: colors.Color) -> Paragraph:
+        hex_ = "#%02x%02x%02x" % (
+            int(color.red * 255), int(color.green * 255), int(color.blue * 255),
+        )
+        return Paragraph(
+            f"<font color='white'><b>&nbsp;{text}&nbsp;</b></font>",
+            ParagraphStyle(
+                f"Pill_{text}", parent=value_st,
+                fontSize=7.8, leading=9.6,
+                fontName=_font("Sans-Bold", "Helvetica-Bold"),
+                backColor=color, borderColor=color, borderWidth=0,
+                borderPadding=(1, 4, 1, 4),
+            ),
+        )
+
+    # ── Build the 3-row data grid ──
+    rows: list[list[Any]] = []
+    # Row 1: verdict + confidence
+    rows.append([
+        Paragraph("VERDICT", label_st), _pill(f.verdict_label, vcol),
+        Paragraph("CONFIDENCE", label_st), Paragraph(confidence_disp, value_st),
+    ])
+    # Row 2: severity + effort (cells may carry an em-dash placeholder pill)
+    sev_cell = _pill(sev, _severity_color(sev)) if sev else Paragraph("—", value_st)
+    eff_cell = _pill(eff, _effort_color(eff)) if eff else Paragraph("—", value_st)
+    rows.append([
+        Paragraph("SEVERITY", label_st), sev_cell,
+        Paragraph("EFFORT", label_st), eff_cell,
+    ])
+    # Row 3: authored / branches
+    rows.append([
+        Paragraph("AUTHORED", label_st),
+        Paragraph(persona_disp, value_st),
+        Paragraph("BRANCHES", label_st),
+        Paragraph(branches_disp, value_st),
+    ])
+    # Row 4 (optional): variants
+    if vho_n:
+        rows.append([
+            Paragraph("VARIANTS", label_st),
+            Paragraph(
+                f"{vho_n} hypothesised (see § 07)",
+                value_st,
+            ),
+            Paragraph("", label_st),
+            Paragraph("", value_st),
+        ])
+
+    col_w_label = 24 * mm
+    col_w_value = (PAGE_W - MARGIN_L - MARGIN_R - 2 * col_w_label) / 2
+    grid = Table(rows, colWidths=[col_w_label, col_w_value, col_w_label, col_w_value])
+    grid.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
+    ]))
+
+    # ── Title row + body grid wrapped in a thick verdict-coloured tile ──
+    title_html = (
+        f"<font name='{_font('Sans-Bold', 'Helvetica-Bold')}' "
+        f"color='#5b5443' size='7.0'>RISK&nbsp;SNAPSHOT</font>"
+    )
+    title_p = Paragraph(title_html, ParagraphStyle(
+        "SnapTitle", parent=label_st, fontSize=7.0, leading=8.4,
+        letterSpace=2.0, textColor=COL_MUTED,
+    ))
+
+    inner: list[list[Any]] = [[title_p], [grid]]
+    if quote:
+        # Pull-quote with a thick left-rule keyed to the verdict colour.
+        inner.append([Paragraph(f"« {quote} »", quote_st)])
+
+    outer = Table(inner, colWidths=[PAGE_W - MARGIN_L - MARGIN_R - 4 * mm])
+    outer_style: list[Any] = [
+        ("BACKGROUND", (0, 0), (-1, -1), COL_PAPER_DEEP),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.6, COL_INK),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.6, COL_INK),
+        ("LINEBEFORE", (0, 0), (0, -1), 2.4, vcol),
+        ("LINEAFTER", (-1, 0), (-1, -1), 0.4, COL_THIN),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.3, COL_THIN),
+    ]
+    if quote:
+        # Highlight the quote row with the verdict colour as a thicker
+        # left bar — operator's eye lands on the quote first.
+        outer_style.append(("LINEBEFORE", (0, -1), (0, -1), 3.2, vcol))
+        outer_style.append(("LINEABOVE", (0, -1), (-1, -1), 0.3, COL_THIN))
+    outer.setStyle(TableStyle(outer_style))
+
+    return [outer, Spacer(1, 2.5 * mm)]
+
+
 def _build_one_finding(f: FindingRecord, bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
     """Return all flowables for one finding page (may span multiple pages)."""
     story: list[Flowable] = []
@@ -2591,34 +2864,37 @@ def _build_one_finding(f: FindingRecord, bundle: Bundle, s: dict[str, ParagraphS
     story.append(Paragraph(f.catalog.get("title", ""), s["finding_title"]))
     story.append(Spacer(1, 1.5 * mm))
 
-    # Verdict reason + branch summary band
-    pieces: list[str] = []
-    pieces.append(f"<b>VERDICT</b> {f.verdict_label}")
-    pieces.append(f"<b>CONFIDENCE</b> {f.confidence:.2f}")
+    # RISK SNAPSHOT — operator's "first 10 seconds" view. Carries verdict,
+    # severity, effort, confidence, persona author, branch convergence,
+    # variant count and a pull-quote of the agent's answer. The card is
+    # the visual anchor of the page; the technical-metadata band below
+    # only carries traceability fields (mapper reason, child id, outcome
+    # id) that don't appear on the card.
+    story.extend(_risk_snapshot_card(f, s))
+
+    # Traceability band — slim line carrying mapper REASON + DB ids that
+    # the Risk Snapshot deliberately omits. This is for the operator who
+    # wants to find the source rows in the AILA database, not for the
+    # reader scanning verdict/severity.
+    band_pieces: list[str] = []
     if f.verdict_reason:
-        pieces.append(f"<b>REASON</b> {f.verdict_reason}")
-    branches = f.child.get("branches") or []
-    if branches:
-        active = [b for b in branches if b.get("status") in ("active", "running")]
-        completed = [b for b in branches if b.get("status") == "completed"]
-        abandoned = [b for b in branches if b.get("status") == "abandoned"]
-        pieces.append(
-            f"<b>BRANCHES</b> {len(branches)} total · "
-            f"{len(completed)} completed · {len(abandoned)} abandoned · "
-            f"{len(active)} live"
-        )
-    pieces.append(f"<b>CHILD</b> {f.child['id']}")
+        band_pieces.append(f"<b>REASON</b> {f.verdict_reason}")
+    band_pieces.append(f"<b>CHILD</b> {f.child['id']}")
     if f.outcome:
-        pieces.append(f"<b>OUTCOME</b> {f.outcome['id'][:8]} kind={f.outcome['outcome_kind']} conf={f.outcome['confidence']}")
-    band_style = ParagraphStyle("Band", parent=s["body_sm"],
+        band_pieces.append(
+            f"<b>OUTCOME</b> {f.outcome['id'][:8]} "
+            f"kind={f.outcome['outcome_kind']} "
+            f"conf={f.outcome['confidence']}"
+        )
+    band_style = ParagraphStyle("Band", parent=s["body_xs"],
                                 fontName=_font("Mono", "Courier"),
-                                fontSize=7.4, leading=9.0,
-                                textColor=COL_INK,
+                                fontSize=6.8, leading=8.4,
+                                textColor=COL_MUTED,
                                 backColor=COL_PAPER_DEEP,
-                                borderColor=COL_THIN, borderWidth=0.4,
-                                borderPadding=(3, 4, 3, 4),
+                                borderColor=COL_THIN, borderWidth=0.3,
+                                borderPadding=(2, 4, 2, 4),
                                 alignment=TA_LEFT)
-    story.append(Paragraph("  ·  ".join(pieces), band_style))
+    story.append(Paragraph("  ·  ".join(band_pieces), band_style))
     story.append(Spacer(1, 3 * mm))
 
     # Control catalog excerpt
@@ -3436,6 +3712,10 @@ def concur_check(pdf_path: Path, bundle: Bundle) -> dict[str, Any]:
     pages = reader.pages
     page_count = len(pages)
     full_text = "\n".join((p.extract_text() or "") for p in pages)
+    # Pre-compute the case-folded whitespace-collapsed text once. Per-finding
+    # locator probes (~40 of them) re-using this string avoids quadratic
+    # allocations that otherwise MemoryError on long answer payloads.
+    text_lo = re.sub(r"\s+", " ", full_text).lower()
 
     # Tally verdicts from bundle
     counts: Counter[str] = Counter(f.verdict_label for f in bundle.findings)
@@ -3467,7 +3747,6 @@ def concur_check(pdf_path: Path, bundle: Bundle) -> dict[str, Any]:
             ]
             combined_len = len(answer) + len(reasoning) + sum(len(b) for b in panel_briefs)
             # Locate any reasoning chunk in the extracted PDF text.
-            text_lo = re.sub(r"\s+", " ", full_text).lower()
             located = False
             for chunk in (answer, reasoning, *panel_briefs):
                 if not chunk:
