@@ -172,14 +172,20 @@ COL_PASS = colors.HexColor("#2e9b5a")
 COL_NA = colors.HexColor("#7c7c8a")
 COL_REVIEW = colors.HexColor("#d99a2c")
 COL_INCONCLUSIVE = colors.HexColor("#a1542e")  # darker amber for orphans
+# INFO: control verdict requires external (operator-supplied) documentation
+# — e.g. component inventory, data classification matrix, SBOM,
+# architecture diagram, privacy policy artifact. The code audit alone
+# cannot determine compliance; the verdict is informational, not a defect.
+# Steel blue keeps it visually distinct from the warm
+# fail/pass/review palette and signals "out of code-audit scope".
+COL_INFO = colors.HexColor("#3a6b8c")
 
 # Tactical chrome.
-COL_INK = colors.HexColor("#16181d")          # body text — near-black
-COL_PAPER = colors.HexColor("#f6f1e4")        # ivory page
-COL_PAPER_DEEP = colors.HexColor("#ebe3cf")   # cream for panel fills
-COL_RULE = colors.HexColor("#16181d")         # thick rule
-COL_THIN = colors.HexColor("#9a8f6f")         # body rule
-COL_ACCENT = colors.HexColor("#a83400")       # tactical rust
+COL_PAPER = colors.HexColor("#f5efde")        # ivory
+COL_PAPER_DEEP = colors.HexColor("#e8dfc4")   # darker ivory for tabular zebra
+COL_INK = colors.HexColor("#1c1812")          # near-black
+COL_THIN = colors.HexColor("#b8b09a")         # thin rule colour
+COL_ACCENT = colors.HexColor("#a83400")       # rust accent for chrome
 COL_ACCENT_DEEP = colors.HexColor("#5c2304")
 COL_NAVY = colors.HexColor("#1c2733")         # banners
 COL_NAVY_INK = colors.HexColor("#f3ead4")     # banner text
@@ -191,6 +197,7 @@ VERDICT_COLOR: dict[str, colors.Color] = {
     "PASS": COL_PASS,
     "N/A": COL_NA,
     "REVIEW": COL_REVIEW,
+    "INFO": COL_INFO,
     "INCONCLUSIVE": COL_INCONCLUSIVE,
 }
 
@@ -447,8 +454,9 @@ _SEVERITY_RANK: dict[str, int] = {
     "FAIL": 0,
     "REVIEW": 1,
     "INCONCLUSIVE": 2,
-    "N/A": 3,
-    "PASS": 4,
+    "INFO": 3,
+    "N/A": 4,
+    "PASS": 5,
 }
 
 
@@ -549,7 +557,6 @@ _FAIL_PHRASES_STRONG: tuple[str, ...] = (
     "CRITICAL GAP",
 )
 
-# Mixed-evidence markers — render as REVIEW (operator should look).
 _REVIEW_PHRASES: tuple[str, ...] = (
     "PARTIAL COMPLIANCE", "PARTIAL NON-COMPLIANCE",
     "PARTIAL FINDING", "PARTIALLY COMPLIANT",
@@ -563,10 +570,61 @@ _REVIEW_PHRASES: tuple[str, ...] = (
     "NEEDS HUMAN REVIEW",
     "ASSESSMENT INCOMPLETE",
     "INSUFFICIENT EVIDENCE",
-    "DOCUMENT_REQUIRED", "DOCUMENTATION REQUIRED",
-    "REQUIRES ARCHITECTURE DOCUMENT",
     "COMPLIANCE ASSESSMENT:",   # narrative assessment, no verdict word
     "FINDINGS: (1)", "FINDINGS:\n",  # enumerated findings narrative
+)
+
+# INFO markers — verdict cannot be determined from the APK alone because
+# the control's verification target is a TEAM-OWNED DOCUMENT or PROCESS
+# (component inventory, data classification matrix, SBOM, privacy policy
+# artifact, architecture diagram, change-management record). Operator
+# stated: external-document-required verdicts are INFORMATIONAL, not
+# code-audit FAILs.
+_INFO_PHRASES: tuple[str, ...] = (
+    # Architecture / design documents
+    "ARCHITECTURE_DOCUMENT_REQUIRED",
+    "ARCHITECTURE DOCUMENT REQUIRED",
+    "REQUIRES ARCHITECTURE DOCUMENT",
+    "ARCHITECTURE DIAGRAM REQUIRED",
+    "DESIGN DOCUMENT REQUIRED",
+    # Component / dependency / SBOM inventories
+    "NO COMPONENT INVENTORY",
+    "COMPONENT INVENTORY DOCUMENT",
+    "MAINTAINED COMPONENT INVENTORY",
+    "REQUIRES SBOM", "SBOM PROCESS",
+    "SBOM REQUIRED", "REQUIRES A SBOM",
+    "DEPENDENCY INVENTORY REQUIRES",
+    "CVE CROSS-REFERENCE", "CVE CROSS REFERENCE",
+    "THIRD-PARTY DEPENDENCY INVENTORY REQUIRES",
+    # Data classification / handling policies
+    "DATA CLASSIFICATION MATRIX",
+    "NO DATA CLASSIFICATION",
+    "SENSITIVITY-TIER INVENTORY",
+    "HANDLING-POLICY CONFIGURATION",
+    "DATA-CATEGORY ENUM",
+    # Privacy / policy artifacts
+    "PRIVACY POLICY ARTIFACT",
+    "NO PRIVACY POLICY",
+    "PRIVACY POLICY DOCUMENT",
+    "REQUIRES PRIVACY POLICY",
+    # Generic team-owned policy / process
+    "NO POLICY ARTIFACT", "POLICY ARTIFACT NOT FOUND",
+    "REQUIRES TEAM PROCESS",
+    "PROCESS REQUIRES IMPLEMENTATION",
+    "OUT OF SCOPE FOR CODE AUDIT",
+    "OUT OF SCOPE FOR STATIC AUDIT",
+    "CANNOT BE EVALUATED WITHOUT",
+    "CANNOT BE VERIFIED FROM CODE",
+    "REQUIRES OPERATOR INPUT",
+    "REQUIRES OPERATIONAL EVIDENCE",
+    "DOCUMENTATION REQUIRED",
+    "DOCUMENT_REQUIRED",
+    "DOCUMENT REQUIRED",
+    # Server / endpoint policy specs
+    "REQUIRES SERVER POLICY",
+    "SERVER POLICY DOCUMENT",
+    "REMOTE ENDPOINT POLICY",
+    "PASSWORD POLICY DOCUMENT",
 )
 
 # Substrings that look PASS-like but only when NOT in a negation context.
@@ -599,7 +657,6 @@ def _find_first_phrase(
                 if i >= 4 and text[i - 4: i] in _PASS_NEGATION_PREFIXES:
                     start = i + 1
                     continue
-                # also gate "NOT " (3 chars) prefix
                 if i >= 4 and text[i - 4: i] == "NOT ":
                     start = i + 1
                     continue
@@ -618,16 +675,17 @@ def _analyze_verdict_from_text(
 
     Priority order (head = first 400 chars, body = full text):
       1. Empty/missing answer → INCONCLUSIVE.
-      2. HEAD has REVIEW marker → REVIEW.
-      3. HEAD has both PASS and FAIL — EARLIEST POSITION wins (the
-         first verdict statement is canonical; later text just elaborates).
-      4. HEAD has only PASS marker → PASS.
-      5. HEAD has only FAIL marker → FAIL.
-      6. BODY has REVIEW marker → REVIEW.
-      7. BODY has both PASS and FAIL → REVIEW (genuinely mixed).
-      8. BODY has only PASS → PASS.
-      9. BODY has only FAIL → FAIL.
-      10. Otherwise → fallback to mapper label.
+      2. INFO marker ANYWHERE in text → INFO (external doc required;
+         out of code-audit scope — dominates PASS/FAIL/REVIEW).
+      3. HEAD has REVIEW marker → REVIEW.
+      4. HEAD has both PASS and FAIL — EARLIEST POSITION wins.
+      5. HEAD has only PASS marker → PASS.
+      6. HEAD has only FAIL marker → FAIL.
+      7. BODY has REVIEW marker → REVIEW.
+      8. BODY has both PASS and FAIL → REVIEW (genuinely mixed).
+      9. BODY has only PASS → PASS.
+      10. BODY has only FAIL → FAIL.
+      11. Otherwise → fallback to mapper label.
     """
     raw = (payload.get("answer") or payload.get("answer_brief") or "").strip()
     if not raw or raw.upper() == "N/A":
@@ -636,12 +694,20 @@ def _analyze_verdict_from_text(
     upper = raw.upper()
     head = upper[:400]
 
+    # INFO check first (and on full body, not just head). External-doc-
+    # required verdicts dominate every other classification.
+    info_pos, info_match = _find_first_phrase(_INFO_PHRASES, upper)
+    if info_match:
+        scope = "head" if info_pos < 400 else "body"
+        return ("INFO", f"{scope}_info:{info_match!r}@{info_pos}")
+
     head_review_pos, head_review_match = _find_first_phrase(_REVIEW_PHRASES, head)
     if head_review_match:
         return ("REVIEW", f"head_review:{head_review_match!r}")
 
     head_fail_pos, head_fail_match = _find_first_phrase(_FAIL_PHRASES_STRONG, head)
     head_pass_pos, head_pass_match = _find_first_phrase(_PASS_PHRASES_STRONG, head)
+
 
     if head_fail_match and head_pass_match:
         # Earliest position wins — the first verdict statement is canonical.
@@ -1060,7 +1126,7 @@ class HeatmapGrid(Flowable):
 
     GROUP_ORDER = ("ARCH", "STORAGE", "CRYPTO", "AUTH", "NETWORK",
                    "PLATFORM", "CODE", "PRIVACY")
-    VERDICT_ORDER = ("FAIL", "REVIEW", "INCONCLUSIVE", "N/A", "PASS")
+    VERDICT_ORDER = ("FAIL", "REVIEW", "INFO", "INCONCLUSIVE", "N/A", "PASS")
 
     def __init__(self, findings: list[FindingRecord], width: float):
         super().__init__()
@@ -1199,7 +1265,7 @@ class VerdictDistroBar(Flowable):
         if total == 0:
             return
         x = 0.0
-        order = ("FAIL", "REVIEW", "INCONCLUSIVE", "N/A", "PASS")
+        order = ("FAIL", "REVIEW", "INFO", "INCONCLUSIVE", "N/A", "PASS")
         for label in order:
             n = self.counts.get(label, 0)
             if n == 0:
@@ -1666,13 +1732,17 @@ def build_cover(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
     for grp in group_order:
         gc = by_group.get(grp) or Counter()
         total = sum(gc.values())
-        fails = gc.get("FAIL", 0)
         sig = GROUP_SIGIL.get(grp, grp[:2])
+        fails = gc.get("FAIL", 0)
+        infos = gc.get("INFO", 0)
+        info_chunk = (
+            f" · <font color='#3a6b8c'>info {infos}</font>" if infos else ""
+        )
         sigil_html = (
             f"<font name='Mono-Bold' color='#c2410c' size='12'>{sig}</font><br/>"
             f"<font name='Sans-Bold' size='6.5'>{grp}</font><br/>"
             f"<font name='Mono' color='#5b5443' size='7.5'>n={total} · "
-            f"<font color='#d83b3b'>fail {fails}</font></font>"
+            f"<font color='#d83b3b'>fail {fails}</font>{info_chunk}</font>"
         )
         sigil_cells.append(Paragraph(sigil_html, ParagraphStyle(
             "SigGrid", fontName=_font("Sans", "Helvetica"),
@@ -1897,10 +1967,13 @@ def build_exec_summary(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flo
     total = len(bundle.findings)
     fail_n = counts.get("FAIL", 0)
     review_n = counts.get("REVIEW", 0)
+    info_n = counts.get("INFO", 0)
     inconc_n = counts.get("INCONCLUSIVE", 0)
     pass_n = counts.get("PASS", 0)
     na_n = counts.get("N/A", 0)
-    posture_pct = (pass_n + na_n) / total * 100 if total else 0
+    # INFO counts as posture-neutral (operator-doc-needed, not a code defect)
+    # so we add it to the favorable side of the score.
+    posture_pct = (pass_n + na_n + info_n) / total * 100 if total else 0
     risk_pct = (fail_n + review_n + inconc_n) / total * 100 if total else 0
 
     apk_sum = bundle.apk.get("static_summary") or {}
@@ -1926,13 +1999,14 @@ def build_exec_summary(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flo
 
     # Headline ledger
     headline_data = [
-        ["TOTAL", "FAIL", "REVIEW", "INCONC.", "N/A", "PASS"],
-        [str(total), str(fail_n), str(review_n), str(inconc_n), str(na_n), str(pass_n)],
+        ["TOTAL", "FAIL", "REVIEW", "INFO", "INCONC.", "N/A", "PASS"],
+        [str(total), str(fail_n), str(review_n), str(info_n),
+         str(inconc_n), str(na_n), str(pass_n)],
     ]
-    ht = Table(headline_data, colWidths=[(PAGE_W - MARGIN_L - MARGIN_R) / 6] * 6)
+    ht = Table(headline_data, colWidths=[(PAGE_W - MARGIN_L - MARGIN_R) / 7] * 7)
     ht_style: list[Any] = [
-        ("FONT", (0, 0), (-1, 0), _font("Sans-Bold", "Helvetica-Bold"), 7.5),
-        ("FONT", (0, 1), (-1, 1), _font("Sans-Bold", "Helvetica-Bold"), 22.0),
+        ("FONT", (0, 0), (-1, 0), _font("Sans-Bold", "Helvetica-Bold"), 7.0),
+        ("FONT", (0, 1), (-1, 1), _font("Sans-Bold", "Helvetica-Bold"), 20.0),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TEXTCOLOR", (0, 0), (-1, 0), COL_MUTED),
@@ -1943,9 +2017,10 @@ def build_exec_summary(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flo
     ]
     ht_style.append(("TEXTCOLOR", (1, 1), (1, 1), COL_FAIL))
     ht_style.append(("TEXTCOLOR", (2, 1), (2, 1), COL_REVIEW))
-    ht_style.append(("TEXTCOLOR", (3, 1), (3, 1), COL_INCONCLUSIVE))
-    ht_style.append(("TEXTCOLOR", (4, 1), (4, 1), COL_NA))
-    ht_style.append(("TEXTCOLOR", (5, 1), (5, 1), COL_PASS))
+    ht_style.append(("TEXTCOLOR", (3, 1), (3, 1), COL_INFO))
+    ht_style.append(("TEXTCOLOR", (4, 1), (4, 1), COL_INCONCLUSIVE))
+    ht_style.append(("TEXTCOLOR", (5, 1), (5, 1), COL_NA))
+    ht_style.append(("TEXTCOLOR", (6, 1), (6, 1), COL_PASS))
     ht.setStyle(TableStyle(ht_style))
     story.append(ht)
     story.append(Spacer(1, 3 * mm))
@@ -1954,15 +2029,20 @@ def build_exec_summary(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flo
     story.append(VerdictDistroBar(dict(counts), PAGE_W - MARGIN_L - MARGIN_R))
     story.append(Spacer(1, 5 * mm))
 
-    # Posture narrative
-    story.append(_h2("02.1  ·  POSTURE NARRATIVE", s))
     story.append(Paragraph(
         f"Across the {total} MASVS L1 controls dispatched, the panel returned "
         f"<b>{fail_n} FAIL</b>, <b>{review_n} REVIEW</b>, "
-        f"<b>{inconc_n} INCONCLUSIVE</b>, <b>{na_n} N/A</b> and <b>{pass_n} PASS</b>. "
+        f"<b>{info_n} INFO</b>, "
+        f"<b>{inconc_n} INCONCLUSIVE</b>, <b>{na_n} N/A</b> and "
+        f"<b>{pass_n} PASS</b>. "
         f"{risk_pct:.0f}% of controls landed in the FAIL/REVIEW/INCONCLUSIVE band that "
         f"requires Vodafone TR engineering attention; {posture_pct:.0f}% of controls landed "
-        "in the cleared band (PASS or formally not-applicable). The "
+        "in the cleared band (PASS, formally not-applicable, or pending "
+        "operator-supplied documentation under the INFO disposition). "
+        "The INFO disposition flags controls whose verification target is a "
+        "team-owned artifact — component inventory, data classification matrix, "
+        "SBOM, architecture diagram, privacy policy — which the code audit "
+        "cannot synthesize on its own. The "
         "highest-density risk group is "
         + _max_risk_group(by_group) + ". Per-control evidence, agent reasoning, and "
         "remediation guidance follow in §06.",
@@ -3054,28 +3134,49 @@ def build_methodology(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flow
 
     story.append(_h2("08.5  ·  OUTCOME → VERDICT  MAPPING", s))
     story.append(Paragraph(
-        "The mapping rule is pure and lives at "
-        "<font name='Mono'>aila.modules.vr.masvs.verdict_mapper.child_outcome_to_verdict</font>. "
-        "Four branches:", s["body"]))
+        "Verdicts are derived in two passes. First, the production mapper "
+        "<font name='Mono'>aila.modules.vr.masvs.verdict_mapper.child_outcome_to_verdict</font> "
+        "keys off the outcome_kind enum. Second, this renderer reads the "
+        "agent's full answer text and applies a text-first override so an "
+        "agent who submitted <font name='Mono'>direct_finding</font> with "
+        "answer body 'COMPLIANCE VERIFIED' lands at PASS instead of FAIL "
+        "(the raw mapper would have called it a finding). Six branches:",
+        s["body"]))
     rule_rows: list[list[Any]] = [["TRIGGER", "VERDICT"]]
     rules = [
+        ("Agent answer head or body declares external documentation is "
+         "required to verify the control: architecture document, component "
+         "inventory, SBOM, data classification matrix, privacy policy "
+         "artifact, server-side policy spec. Out of code-audit scope; "
+         "verdict is informational only.",
+         "INFO"),
         ("Payload carries an explicit <b>not_applicable</b> tag (any of "
          "<font name='Mono'>tags=['not_applicable']</font>, "
          "<font name='Mono'>applicability='not_applicable'</font>, or the flag).",
          "N/A"),
-        ("Verifier emits <b>refuted</b>, OR payload natural-language carries a PASS "
-         "phrase without contradiction (catalogued in the mapper).",
+        ("Agent answer text declares compliance: <b>PASS</b>, "
+         "<b>COMPLIANCE VERIFIED</b>, <b>NO VIOLATION FOUND</b>, "
+         "<b>SUBSTANTIALLY MEETS</b>, <b>NO EXTERNALLY REACHABLE</b>, etc., "
+         "without a contradicting violation phrase.",
          "PASS"),
-        ("<b>direct_finding</b> outcome with verifier confidence ≥ 0.6 "
-         "(or, when the verifier never ran, the enum confidence ≥ MEDIUM).",
+        ("Agent answer text declares violation: <b>FAIL</b>, "
+         "<b>VIOLATION CONFIRMED</b>, <b>DIRECT_FINDING:</b>, "
+         "<b>NON-COMPLIANT</b>, <b>CONTROL NOT MET</b>, etc., "
+         "without a contradicting compliance phrase. Earliest-position-wins "
+         "when both appear in the head (the first verdict statement is canonical).",
          "FAIL"),
-        ("Direct finding below the floor, an audit_memo, an unverified "
-         "assessment_report, or no outcome at all (turn-cap / wall-clock).",
-         "REVIEW / INCONCLUSIVE"),
+        ("Agent reports mixed or partial compliance: <b>PARTIAL COMPLIANCE</b>, "
+         "<b>WITH HARDENING NOTES</b>, <b>FINDINGS: (1)…(N)</b>, "
+         "<b>COMPLIANCE ASSESSMENT:</b> narrative without a verdict word.",
+         "REVIEW"),
+        ("No agent answer text (empty payload, audit_memo orphan), OR a literal "
+         "'N/A' answer. These are investigations the panel could not converge.",
+         "INCONCLUSIVE"),
     ]
     for trig, verd in rules:
         verd_col = {"FAIL": COL_FAIL, "PASS": COL_PASS, "N/A": COL_NA,
-                    "REVIEW / INCONCLUSIVE": COL_REVIEW}.get(verd, COL_INK)
+                    "REVIEW": COL_REVIEW, "INFO": COL_INFO,
+                    "INCONCLUSIVE": COL_INCONCLUSIVE}.get(verd, COL_INK)
         rule_rows.append([
             Paragraph(trig, s["table_cell"]),
             _para(verd, ParagraphStyle("V", parent=s["table_cell_mono"],
@@ -3087,13 +3188,16 @@ def build_methodology(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flow
     story.append(rt)
     story.append(Spacer(1, 4 * mm))
     story.append(Paragraph(
-        "The mapper is the <i>only</i> writer of verdicts in the AILA pipeline. The "
-        "PDF renderer reads the mapper's output verbatim — no second-guessing, no "
-        "post-hoc reclassification. The one minor reclassification this renderer "
-        "applies is splitting the mapper's INCONCLUSIVE bucket into two operator-"
-        "facing labels: <b>REVIEW</b> for inconclusives that carry agent reasoning "
-        "(operator should look) and <b>INCONCLUSIVE</b> for those that have no "
-        "outcome at all (auto-closed before quorum).", s["body_sm"]))
+        "The text override exists because the agents legitimately submit "
+        "<font name='Mono'>direct_finding</font> outcomes whose body declares "
+        "compliance — the mapper would otherwise mis-label those as code "
+        "defects. The <b>INFO</b> disposition is operator-defined: when the "
+        "agent's verdict turns on a team-owned document or process that the "
+        "code audit cannot synthesize (an SBOM, an architecture diagram, "
+        "a privacy policy artifact), the control is flagged as informational "
+        "rather than as a code-audit failure. This separates engineering "
+        "remediation work from operations / documentation work.",
+        s["body_sm"]))
     story.append(PageBreak())
 
     # 08.6 — toolchain
