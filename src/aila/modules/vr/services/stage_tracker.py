@@ -62,6 +62,7 @@ from aila.modules.vr.contracts.target_stages import (
     TargetAnalysisStages,
     roll_up_overall_state,
 )
+from aila.modules.vr.contracts.target import AnalysisState
 from aila.modules.vr.db_models import VRTargetRecord
 from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
@@ -445,7 +446,10 @@ async def reap_stuck_stages() -> int:
     async with UnitOfWork() as uow:
         rows = (await uow.session.exec(
             _select(VRTargetRecord).where(
-                VRTargetRecord.analysis_state == "ingesting",
+                # fix §324 — drive the filter off the enum value so a
+                # rename of AnalysisState.INGESTING (e.g. to RUNNING)
+                # doesn't silently break the reaper scan.
+                VRTargetRecord.analysis_state == AnalysisState.INGESTING.value,
             ),
         )).all()
         now = utc_now()
