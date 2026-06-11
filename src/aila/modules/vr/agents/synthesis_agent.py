@@ -202,8 +202,10 @@ def _synthesis_confidence(panel: list[dict[str, Any]]) -> OutcomeConfidence:
     outcome_kind (CRITIC says PATCH_PRESENT, RESEARCHER says
     DIRECT_FINDING — that's real disagreement).
     """
+    # fix §326 — rank 0 ('exact' confidence) must round-trip to
+    # OutcomeConfidence.EXACT, not STRONG. The reverse map was lossy.
     rank_to_conf = {
-        0: OutcomeConfidence.STRONG,
+        0: OutcomeConfidence.EXACT,
         1: OutcomeConfidence.STRONG,
         2: OutcomeConfidence.MEDIUM,
         3: OutcomeConfidence.CAVEATED,
