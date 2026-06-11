@@ -22,6 +22,7 @@ from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
 
+
 # Auto-deliberation toggle. When 1 (default), investigation_setup
 # spawns sibling branches for critic + implementer personas and
 # enqueues a separate run_vr_investigate task per sibling so each

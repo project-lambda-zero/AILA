@@ -302,14 +302,14 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
     # against the analyzer workstation). 25 is the published maximum
     # in the operator runbook; surface the clamp loudly so a runaway
     # config doesn't go unnoticed.
-    _OPERATOR_MAX_ATTEMPTS_CEILING = 25
+    operator_max_attempts_ceiling = 25
     raw_max = max(1, int(services.config.poc_max_attempts))
-    max_attempts = min(raw_max, _OPERATOR_MAX_ATTEMPTS_CEILING)
-    if raw_max > _OPERATOR_MAX_ATTEMPTS_CEILING:
+    max_attempts = min(raw_max, operator_max_attempts_ceiling)
+    if raw_max > operator_max_attempts_ceiling:
         _log.warning(
             "poc_development: poc_max_attempts=%d exceeds ceiling %d — "
             "clamping. Operator should fix the config or raise the ceiling.",
-            raw_max, _OPERATOR_MAX_ATTEMPTS_CEILING,
+            raw_max, operator_max_attempts_ceiling,
         )
     for attempt in range(1, max_attempts + 1):
         # fix §305 — exponential backoff with jitter between attempts.

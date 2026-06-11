@@ -23,15 +23,15 @@ if TYPE_CHECKING:
 
 __all__ = ["get_shared_run_memory", "set_shared_run_memory"]
 
-_SHARED_RUN_MEMORY: "RunMemory | None" = None
+_SHARED_RUN_MEMORY: RunMemory | None = None
 
 
-def set_shared_run_memory(run_memory: "RunMemory | None") -> None:
+def set_shared_run_memory(run_memory: RunMemory | None) -> None:
     """Publish the process-wide RunMemory instance (§130 wiring)."""
     global _SHARED_RUN_MEMORY
     _SHARED_RUN_MEMORY = run_memory
 
 
-def get_shared_run_memory() -> "RunMemory | None":
+def get_shared_run_memory() -> RunMemory | None:
     """Return the process-wide RunMemory instance, or None if not yet set."""
     return _SHARED_RUN_MEMORY

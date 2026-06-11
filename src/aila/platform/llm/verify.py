@@ -23,7 +23,6 @@ from .gate import extract_confidence
 
 if TYPE_CHECKING:
     from ..events.emitter import EventEmitter
-    from .client import AilaLLMClient
 
 logger = logging.getLogger(__name__)
 

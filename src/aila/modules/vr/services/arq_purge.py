@@ -43,6 +43,8 @@ from aila.platform.tasks.constants import (
     ARQ_QUEUE_KEY_TEMPLATE,
 )
 
+_log = logging.getLogger(__name__)
+
 __all__ = [
     "purge_arq_jobs_for_investigation",
     "purge_for_investigation",
