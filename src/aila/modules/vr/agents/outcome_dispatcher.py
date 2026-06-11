@@ -1095,12 +1095,37 @@ class OutcomeDispatcher:
         )
 
         # Path 1: variant-hunt fan-out for residual gap candidates.
-        spawned_children: list[str] = []
+        # fix §266 — same idempotent spawn pattern as §236. Each
+        # successful spawn writes back to the outcome payload so a
+        # mid-loop crash + re-dispatch doesn't re-spawn the same N.
+        spawned_indices: set[int] = set(
+            payload.get("_spawned_variant_indices") or [],
+        )
+        spawned_children: list[str] = list(
+            payload.get("_spawned_variant_child_ids") or [],
+        )
         spawn_errors: list[str] = []
         variants = payload.get("variant_hunt_orders")
+        # Reuse §238's coercion: tolerate a single dict, drop garbage.
+        if isinstance(variants, dict):
+            variants = [variants]
+        elif variants is not None and not isinstance(variants, list):
+            _log.warning(
+                "patch_assessment variant_hunt_orders unexpected type=%s "
+                "inv=%s outcome=%s",
+                type(variants).__name__, investigation_id, outcome_id,
+            )
+            variants = None
         if isinstance(variants, list):
-            for raw in variants:
+            for idx, raw in enumerate(variants):
                 if not isinstance(raw, dict):
+                    _log.warning(
+                        "patch_assessment variant_hunt_orders[%d] non-dict "
+                        "type=%s dropped inv=%s outcome=%s",
+                        idx, type(raw).__name__, investigation_id, outcome_id,
+                    )
+                    continue
+                if idx in spawned_indices:
                     continue
                 try:
                     child_id = await self._spawn_variant_child(
@@ -1109,6 +1134,12 @@ class OutcomeDispatcher:
                         payload=raw,
                     )
                     spawned_children.append(child_id)
+                    spawned_indices.add(idx)
+                    await self._persist_variant_spawn(
+                        outcome_id=outcome_id,
+                        variant_index=idx,
+                        child_id=child_id,
+                    )
                 except (ValueError, RuntimeError) as exc:
                     spawn_errors.append(f"{type(exc).__name__}:{exc}")
 
