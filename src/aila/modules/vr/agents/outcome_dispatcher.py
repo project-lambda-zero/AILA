@@ -683,13 +683,45 @@ class OutcomeDispatcher:
             await uow.session.commit()
             await uow.session.refresh(child)
             child_id = child.id
+            child_team_id = child.team_id
 
+        # fix §233 — enqueue the run_vr_investigate task. Without this
+        # the child sits in status=CREATED forever; the canonical
+        # VARIANT_HUNT_ORDER outcome path produced zombie investigations
+        # while the bundled _spawn_variant_child path correctly enqueued.
+        # Same enqueue shape as _spawn_variant_child (commit 6d7cab1).
+        enqueue_error: str | None = None
+        try:
+            from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
+            from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
+            task_queue = default_task_queue()
+            await task_queue.submit(
+                track="vr",
+                fn=run_vr_investigate,
+                kwargs={"investigation_id": child_id},
+                user_id="system",
+                group_id="vr_variant_hunt_order",
+                team_id=child_team_id,
+            )
+        except (OSError, RuntimeError, TimeoutError, ImportError) as exc:
+            enqueue_error = f"{type(exc).__name__}:{exc}"
+            _log.warning(
+                "_dispatch_variant_hunt_order: enqueue failed child=%s err=%s",
+                child_id, exc,
+            )
+
+        reason_parts = [
+            f"target_id={child_target_id}",
+            f"budget=${child_budget:.2f}",
+        ]
+        if enqueue_error:
+            reason_parts.append(f"enqueue_error={enqueue_error[:120]}")
         return OutcomeDispatchResult(
             outcome_id=outcome_id,
             outcome_kind=OutcomeKind.VARIANT_HUNT_ORDER,
             dispatch_status=OutcomeDispatchStatus.DISPATCHED,
             dispatch_target=f"vr_investigation:{child_id}",
-            reason=f"target_id={child_target_id} budget=${child_budget:.2f}",
+            reason=" ".join(reason_parts),
         )
 
     async def _spawn_variant_child(
