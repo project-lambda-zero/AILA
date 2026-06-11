@@ -26,7 +26,7 @@ from ._shared import (
     obs_key_for,
     provenance_stamp,
 )
-from .base import AdapterContext, AdapterResult
+from .base import AdapterContext, AdapterResult, is_read_tool
 
 __all__ = [
     "adapt_decompile",
@@ -76,6 +76,7 @@ def _list_or_empty(raw: dict[str, Any], *keys: str) -> list[Any]:
 # ----------------------------------------------------------------------
 
 
+@is_read_tool("ida_headless", "decompile")
 def adapt_decompile(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``decompile`` response to DECOMPILED_FUNCTION payload."""
     function_name = str(raw.get("function_name") or raw.get("name") or "<unknown>")
@@ -173,6 +174,7 @@ def adapt_find_api_call_sites(
     )
 
 
+@is_read_tool("ida_headless", "xrefs_to")
 def adapt_xrefs_to(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``xrefs_to`` response to XREF_VIEW payload (incoming references)."""
     target = str(
@@ -191,6 +193,7 @@ def adapt_xrefs_to(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     )
 
 
+@is_read_tool("ida_headless", "xrefs_from")
 def adapt_xrefs_from(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``xrefs_from`` response to XREF_VIEW payload (outgoing references)."""
     source = str(
@@ -255,6 +258,7 @@ def _taint_result(
     )
 
 
+@is_read_tool("ida_headless", "interprocedural_taint")
 def adapt_interprocedural_taint(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
@@ -268,6 +272,7 @@ def adapt_interprocedural_taint(
     )
 
 
+@is_read_tool("ida_headless", "trace_dataflow")
 def adapt_trace_dataflow(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``trace_dataflow`` to TAINT_FLOW payload."""
     sink = str(ctx.args.get("sink_function") or "<sink>")
@@ -279,6 +284,7 @@ def adapt_trace_dataflow(raw: dict[str, Any], ctx: AdapterContext) -> AdapterRes
     )
 
 
+@is_read_tool("ida_headless", "def_use")
 def adapt_def_use(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``def_use`` to TAINT_FLOW payload (def/use chains)."""
     function = str(ctx.args.get("address_or_name") or "<fn>")
@@ -396,6 +402,7 @@ def _code_pointer_result(
     )
 
 
+@is_read_tool("ida_headless", "disassemble_function")
 def adapt_disassemble_function(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
@@ -421,6 +428,7 @@ def adapt_get_microcode(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResu
     )
 
 
+@is_read_tool("ida_headless", "pseudocode_slice_view")
 def adapt_pseudocode_slice_view(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:

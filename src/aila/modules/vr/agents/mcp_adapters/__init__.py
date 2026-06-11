@@ -27,6 +27,9 @@ from .base import (
     AdapterContext,
     AdapterFn,
     AdapterResult,
+    get_read_tools,
+    is_read_tool,
+    register_read_tool,
 )
 from .known_tools import (
     ANDROID_MCP_TOOLS,
@@ -45,6 +48,9 @@ __all__ = [
     "IDA_HEADLESS_TOOLS",
     "KNOWN_TOOLS",
     "get_adapter",
+    "get_read_tools",
+    "is_read_tool",
+    "register_read_tool",
     "registered_tools",
     "specialized_tools",
 ]

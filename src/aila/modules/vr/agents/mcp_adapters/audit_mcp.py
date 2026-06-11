@@ -25,7 +25,7 @@ from ._shared import (
     obs_key_for,
     provenance_stamp,
 )
-from .base import AdapterContext, AdapterResult
+from .base import AdapterContext, AdapterResult, is_read_tool
 
 __all__ = [
     "adapt_fuzzing_targets",
@@ -574,6 +574,7 @@ def _audit_xref_result(
     )
 
 
+@is_read_tool("audit_mcp", "callers_of")
 def adapt_callers_of(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``callers_of`` to XREF_VIEW payload."""
     target = str(
@@ -592,6 +593,7 @@ def adapt_callers_of(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     )
 
 
+@is_read_tool("audit_mcp", "callees_of")
 def adapt_callees_of(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``callees_of`` to XREF_VIEW payload."""
     target = str(
@@ -629,6 +631,7 @@ def _audit_taint_summary_lines(paths: list[Any]) -> list[str]:
     return lines
 
 
+@is_read_tool("audit_mcp", "taint_paths_to")
 def adapt_taint_paths_to(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
@@ -658,6 +661,7 @@ def adapt_taint_paths_to(
     )
 
 
+@is_read_tool("audit_mcp", "paths_between")
 def adapt_paths_between(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
@@ -762,6 +766,7 @@ def adapt_diff_codebases(
 # ----------------------------------------------------------------------
 
 
+@is_read_tool("audit_mcp", "read_function")
 def adapt_read_function(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
@@ -1068,6 +1073,7 @@ def _render_chunks_dense(raw: dict[str, Any]) -> tuple[str, int]:
     return body, len(results)
 
 
+@is_read_tool("audit_mcp", "semantic_search")
 def adapt_semantic_search(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
@@ -1091,6 +1097,7 @@ def adapt_semantic_search(
     )
 
 
+@is_read_tool("audit_mcp", "find_related")
 def adapt_find_related(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
@@ -1121,6 +1128,7 @@ def adapt_find_related(
 # ----------------------------------------------------------------------
 
 
+@is_read_tool("audit_mcp", "read_lines")
 def adapt_read_lines(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
