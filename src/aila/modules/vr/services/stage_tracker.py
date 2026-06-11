@@ -165,6 +165,49 @@ async def load_target_stages(target_id: str) -> TargetAnalysisStages:
         return parse_stages(row.analysis_stages_json)
 
 
+def _apply_stages_to_row(
+    row: VRTargetRecord,
+    stages: TargetAnalysisStages,
+    extra_columns: dict[str, Any] | None = None,
+) -> None:
+    """Mutate `row` in place to persist `stages` + recompute the rolled-up
+    `analysis_state` enum. Does NOT commit; caller owns the UoW.
+
+    Extracted so callers that already hold a `SELECT FOR UPDATE` row
+    inside their own transaction (e.g. `StageTracker.__aenter__`) can
+    reuse the same write path as `save_target_stages` without spawning
+    a second UoW.
+    """
+    rolled = roll_up_overall_state(stages)
+    failing = [
+        (name, s.error) for name, s in stages.all_stages()
+        if s.state == StageState.FAILED and s.error
+    ]
+    rolled_message = (
+        f"{failing[0][0].value}: {failing[0][1]}" if failing else None
+    )
+    now = utc_now()
+    row.analysis_stages_json = serialize_stages(stages)
+    row.analysis_state = rolled.value
+    row.analysis_state_message = rolled_message
+
+    # Derived timestamps: the EARLIEST started_at across stages is the
+    # analysis_started_at; the LATEST completed_at across done stages
+    # is the analysis_completed_at.
+    starts = [s.started_at for _, s in stages.all_stages() if s.started_at]
+    if starts:
+        row.analysis_started_at = min(starts)
+    completes = [s.completed_at for _, s in stages.all_stages() if s.completed_at]
+    if completes:
+        row.analysis_completed_at = max(completes)
+
+    if extra_columns:
+        for col, value in extra_columns.items():
+            setattr(row, col, value)
+
+    row.updated_at = now
+
+
 async def save_target_stages(
     target_id: str,
     stages: TargetAnalysisStages,
@@ -182,41 +225,13 @@ async def save_target_stages(
     crash-window between persisting work output and recording the
     state transition.
     """
-    rolled = roll_up_overall_state(stages)
-    failing = [
-        (name, s.error) for name, s in stages.all_stages() if s.state == StageState.FAILED and s.error
-    ]
-    rolled_message = (
-        f"{failing[0][0].value}: {failing[0][1]}" if failing else None
-    )
-
     async with UnitOfWork() as uow:
         row = (await uow.session.exec(
             _select(VRTargetRecord).where(VRTargetRecord.id == target_id),
         )).first()
         if row is None:
             raise StageTrackerError(f"target {target_id} not found")
-
-        now = utc_now()
-        row.analysis_stages_json = serialize_stages(stages)
-        row.analysis_state = rolled.value
-        row.analysis_state_message = rolled_message
-
-        # Derived timestamps: the EARLIEST started_at across stages
-        # is the analysis_started_at; the LATEST completed_at across
-        # done stages is the analysis_completed_at.
-        starts = [s.started_at for _, s in stages.all_stages() if s.started_at]
-        if starts:
-            row.analysis_started_at = min(starts)
-        completes = [s.completed_at for _, s in stages.all_stages() if s.completed_at]
-        if completes:
-            row.analysis_completed_at = max(completes)
-
-        if extra_columns:
-            for col, value in extra_columns.items():
-                setattr(row, col, value)
-
-        row.updated_at = now
+        _apply_stages_to_row(row, stages, extra_columns)
         uow.session.add(row)
         await uow.session.commit()
 
@@ -251,52 +266,68 @@ class StageTracker:
         self._stages: TargetAnalysisStages | None = None
 
     async def __aenter__(self) -> StageTracker:
-        stages = await load_target_stages(self.target_id)
-        current = stages.get(self.stage)
+        # fix §320 — SELECT FOR UPDATE on the target row so two workers
+        # racing through __aenter__ serialize on the row lock; the loser
+        # observes RUNNING (or DONE) and raises StageInFlight instead of
+        # both writing RUNNING and double-running the stage.
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _select(VRTargetRecord)
+                .where(VRTargetRecord.id == self.target_id)
+                .with_for_update(),
+            )).first()
+            if row is None:
+                raise StageTrackerError(f"target {self.target_id} not found")
+            stages = parse_stages(row.analysis_stages_json)
+            current = stages.get(self.stage)
 
-        if current.state == StageState.DONE:
-            raise StageAlreadyDoneError(
-                f"target {self.target_id} stage {self.stage.value} is already DONE",
-            )
-
-        if current.state == StageState.RUNNING:
-            # Is the other in-flight worker still within its timeout
-            # window? If yes, refuse to enter (StageInFlight). If no,
-            # take over (operator-resume / post-crash recovery).
-            started = current.started_at
-            now = utc_now()
-            if started is not None:
-                # SQL persisted timestamps come back as naive on some
-                # backends; UTC-coerce so the comparison is stable.
-                if started.tzinfo is None:
-                    started = started.replace(tzinfo=UTC)
-                stale_threshold = now - timedelta(seconds=self.stage_timeout_s)
-                if started > stale_threshold:
-                    raise StageInFlightError(
-                        f"target {self.target_id} stage {self.stage.value} is "
-                        f"already RUNNING since {started.isoformat()} "
-                        f"(within {self.stage_timeout_s}s timeout)",
-                    )
-                _log.warning(
-                    "stage_tracker: %s/%s was RUNNING for %.0fs (> %.0fs timeout) — "
-                    "taking over (attempt %d)",
-                    self.target_id, self.stage.value,
-                    (now - started).total_seconds(),
-                    self.stage_timeout_s,
-                    current.attempts + 1,
+            if current.state == StageState.DONE:
+                raise StageAlreadyDoneError(
+                    f"target {self.target_id} stage {self.stage.value} is already DONE",
                 )
-            # else: RUNNING without started_at — broken row, just take over
 
-        # Transition to RUNNING with incremented attempt counter.
-        new_status = StageStatus(
-            state=StageState.RUNNING,
-            started_at=utc_now(),
-            completed_at=None,
-            attempts=current.attempts + 1,
-            error=None,
-        )
-        stages.set(self.stage, new_status)
-        await save_target_stages(self.target_id, stages)
+            if current.state == StageState.RUNNING:
+                # Is the other in-flight worker still within its timeout
+                # window? If yes, refuse to enter (StageInFlight). If no,
+                # take over (operator-resume / post-crash recovery).
+                started = current.started_at
+                now = utc_now()
+                if started is not None:
+                    # SQL persisted timestamps come back as naive on some
+                    # backends; UTC-coerce so the comparison is stable.
+                    if started.tzinfo is None:
+                        started = started.replace(tzinfo=UTC)
+                    stale_threshold = now - timedelta(seconds=self.stage_timeout_s)
+                    if started > stale_threshold:
+                        raise StageInFlightError(
+                            f"target {self.target_id} stage {self.stage.value} is "
+                            f"already RUNNING since {started.isoformat()} "
+                            f"(within {self.stage_timeout_s}s timeout)",
+                        )
+                    _log.warning(
+                        "stage_tracker: %s/%s was RUNNING for %.0fs (> %.0fs timeout) — "
+                        "taking over (attempt %d)",
+                        self.target_id, self.stage.value,
+                        (now - started).total_seconds(),
+                        self.stage_timeout_s,
+                        current.attempts + 1,
+                    )
+                # else: RUNNING without started_at — broken row, just take over
+
+            # Transition to RUNNING with incremented attempt counter,
+            # writing inside the same UoW that holds the row lock.
+            new_status = StageStatus(
+                state=StageState.RUNNING,
+                started_at=utc_now(),
+                completed_at=None,
+                attempts=current.attempts + 1,
+                error=None,
+            )
+            stages.set(self.stage, new_status)
+            _apply_stages_to_row(row, stages)
+            uow.session.add(row)
+            await uow.session.commit()
+
         self._stages = stages
         return self
 
