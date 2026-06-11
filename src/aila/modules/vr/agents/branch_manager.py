@@ -116,7 +116,17 @@ class BranchManager:
                 persona_voice=persona_voice,
                 fork_reason=fork_reason,
                 fork_at_turn=at_turn,
-                case_state_json=_strip_directives_from_state(parent.case_state_json or "{}"),
+                # fix §112 — strip parent's rejected/resolved hypothesis
+                # bookkeeping from the forked copy. Carrying these
+                # forward verbatim caused sibling-consensus rejection
+                # (vuln_researcher) to count each branch's rejections
+                # independently — the child never learned the parent
+                # had killed h7, so both branches re-walked the dead
+                # end. The child re-derives rejection from its own
+                # evidence stream if its turns lead there.
+                case_state_json=_strip_rejected_from_state(
+                    _strip_directives_from_state(parent.case_state_json or "{}"),
+                ),
                 turn_count=0,
                 branch_cost_usd=0.0,
             )
@@ -492,6 +502,35 @@ def _strip_directives_from_state(raw_json: str) -> str:
     data["observables"] = {
         k: v for k, v in obs.items() if not str(k).startswith("_directive.")
     }
+    return json.dumps(data)
+
+def _strip_rejected_from_state(raw_json: str) -> str:
+    """Strip ``rejected`` + ``resolved`` hypothesis lists from a case_state JSON blob.
+
+    Used at fork time (fix §112): rejected/resolved hypothesis lists
+    are parent-branch bookkeeping. Copying them verbatim to the child
+    makes sibling-consensus rejection (vuln_researcher) count each
+    branch's rejections independently, so a hypothesis the parent
+    killed stays live in the child until the child happens to reject
+    it on its own. Worse: both branches then burn turns re-deriving
+    the same dead end. The fix is to start the child with empty
+    rejected/resolved lists; it re-derives rejection from its own
+    evidence if/when its turns reach that conclusion.
+
+    Live ``hypotheses`` are kept — those are the parent's open
+    investigative threads the child legitimately inherits and may
+    continue working on (or independently reject).
+    """
+    if not raw_json:
+        return raw_json
+    try:
+        data = json.loads(raw_json)
+    except (ValueError, TypeError):
+        return raw_json
+    if isinstance(data.get("rejected"), list):
+        data["rejected"] = []
+    if isinstance(data.get("resolved"), list):
+        data["resolved"] = []
     return json.dumps(data)
 
 
