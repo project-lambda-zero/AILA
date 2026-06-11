@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { authorizedRequestJson } from "@platform/api/http";
@@ -99,23 +100,82 @@ export function usePauseInvestigation(investigationId: string) {
   });
 }
 
+/**
+ * Resume a paused investigation.
+ *
+ * Returns the standard useMutation result PLUS an `isResuming` boolean
+ * that stays true during the API call AND for 2s after success. Callers
+ * (resume button label, disabled-state) read `isResuming` instead of
+ * `isPending` so the UI does not flicker from 'paused' → 'running' in
+ * one frame.
+ *
+ * fix §54 — frontend status display when an investigation is freshly
+ * RESUMED. The previous hook invalidated the investigation cache
+ * immediately on success, so the refetch returned `status='running'`
+ * a few hundred ms after the click — visually the stepper jumped
+ * from 'paused' to 'investigation_loop' instantly, even though the
+ * worker had not yet picked the task up. The 2s hold gives the
+ * operator visual confirmation that resume actually fired AND lines
+ * up with the wall-clock worker pickup latency observed in production
+ * (typically <1s; 2s is generous headroom).
+ *
+ * TODO(Phase B / CUTOVER_DEPS.md): once the API exposes
+ * workflow_state_cursor.current_state, replace the hard-coded 2s
+ * with a subscription that resolves when the cursor leaves
+ * '__paused__'. That is the real SSOT for "worker has picked up
+ * the task". Hard-coded 2s is the best the frontend can do without
+ * cursor exposure.
+ */
 export function useResumeInvestigation(investigationId: string) {
   const queryClient = useQueryClient();
-  return useMutation({
+  const [postSuccessHold, setPostSuccessHold] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear any pending timer when the consumer unmounts so the
+  // setPostSuccessHold(false) below does not run on a torn-down
+  // component. invalidateQueries is fine to call post-unmount —
+  // queryClient outlives the component.
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    },
+    [],
+  );
+
+  const mutation = useMutation({
     mutationFn: () =>
       authorizedRequestJson<Envelope<VRInvestigationSummary>>(
         `/vr/investigations/${encodeURIComponent(investigationId)}/resume`,
         { method: "POST" },
       ),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
-      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
-      toast.success("Investigation resumed");
+      setPostSuccessHold(true);
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        setPostSuccessHold(false);
+        timerRef.current = null;
+        // After the hold elapses, fetch the real state. By this point
+        // the worker has typically advanced the cursor out of
+        // __paused__ and the stepper renders the correct stage.
+        queryClient.invalidateQueries({
+          queryKey: ["vr", "investigation", investigationId],
+        });
+        queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      }, 2000);
+      toast.success("Investigation resuming…");
     },
     onError: (err: Error) => {
       toast.error(`Resume failed: ${err.message}`);
     },
   });
+
+  return {
+    ...mutation,
+    isResuming: mutation.isPending || postSuccessHold,
+  };
 }
 
 export function useResetInvestigation(investigationId: string) {

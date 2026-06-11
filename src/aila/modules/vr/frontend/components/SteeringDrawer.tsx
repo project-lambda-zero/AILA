@@ -122,10 +122,18 @@ export function SteeringDrawer({
               <button
                 type="button"
                 onClick={() => resumeMut.mutate()}
-                disabled={status !== "paused" || resumeMut.isPending}
+                // fix §54 — `isResuming` includes a 2s post-success hold
+                // so the button stays in the "Resuming…" state until the
+                // worker has plausibly picked the task up. Status is
+                // checked against 'paused' OR the in-flight hold, since
+                // the cache still reads 'paused' during the 2s window.
+                disabled={
+                  (status !== "paused" && !resumeMut.isResuming) ||
+                  resumeMut.isResuming
+                }
                 className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
               >
-                {resumeMut.isPending ? "Resuming…" : "Resume"}
+                {resumeMut.isResuming ? "Resuming…" : "Resume"}
               </button>
             </div>
           </Section>
