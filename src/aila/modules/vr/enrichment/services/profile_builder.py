@@ -319,7 +319,17 @@ class CapabilityProfileBuilder:
                 # record_output so it lands in the same commit as the
                 # stage's DONE transition.
                 existing = json.loads(target_row.capability_profile_json or "{}")
-                preserved_keys = ("function_ranking", "enrichment_errors", "overrides")
+                # fix §227 — only preserve sidecar keys that are NOT proper
+                # model fields. If any of these names is later promoted to a
+                # TargetCapabilityProfile field, the freshly-composed value
+                # MUST win — otherwise the old sidecar silently overwrites
+                # the new field forever (it was added to existing by some
+                # past build that didn't yet know about the field).
+                _preserved_candidates = ("function_ranking", "enrichment_errors", "overrides")
+                _model_field_names = set(TargetCapabilityProfile.model_fields)
+                preserved_keys = tuple(
+                    k for k in _preserved_candidates if k not in _model_field_names
+                )
                 preserved = {k: existing[k] for k in preserved_keys if k in existing}
                 merged = profile.model_dump(mode="json")
                 merged.update(preserved)
