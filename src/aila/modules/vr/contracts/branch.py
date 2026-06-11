@@ -50,6 +50,15 @@ class PersonaVoice(StrEnum):
     RENZO = "renzo"
     NOOR = "noor"
     WEI = "wei"
+    # Phase E §177/§178/§180 — synthetic voices written by branch_manager
+    # when no agent persona is meaningful. Alembic 064 backfilled NULL
+    # rows with UNSPECIFIED and set the column NOT NULL with default
+    # 'unspecified'. Both must round-trip through this enum so the
+    # api_router serializer doesn't crash with "is not a valid
+    # PersonaVoice".
+    UNSPECIFIED = "unspecified"
+    MERGE_RESULT = "merge_result"
+    FORK_UNNAMED = "fork_unnamed"
 
 
 class BranchOperation(StrEnum):
@@ -91,6 +100,20 @@ class VRBranchSummary(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     strategy_family: str | None = None
+    # Phase B cursor SSOT (cutover): the branch's workflow_state_cursor
+    # current_state. None when the branch has no cursor yet (very
+    # short window between investigation_setup spawn and the first
+    # cursor write). Operator-visible values include:
+    #   - 'investigation_setup' / 'investigation_loop' / 'investigation_emit'
+    #     (running states)
+    #   - '__paused__'   (Phase B operator-driven pause)
+    #   - '__succeeded__' / '__failed__' / '__cancelled__' / '__crashed__'
+    #     (engine-reserved terminals)
+    # Use this field — NOT ``status`` — to distinguish "paused by the
+    # operator" (cursor=__paused__) from "task crashed" (cursor=__crashed__);
+    # ``status`` collapses both into PAUSED for the UI tile.
+    cursor_state: str | None = None
+    cursor_archived_state: str | None = None
 
 
 class StrategyBranchSpawn(BaseModel):

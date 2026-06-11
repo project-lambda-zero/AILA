@@ -662,8 +662,20 @@ async def _compute_live_investigation_cost(
         return 0.0
 
 
-def _branch_summary(record: Any) -> VRBranchSummary:
-    """Project a VRInvestigationBranchRecord row to summary."""
+def _branch_summary(
+    record: Any,
+    cursor_state: str | None = None,
+    cursor_archived_state: str | None = None,
+) -> VRBranchSummary:
+    """Project a VRInvestigationBranchRecord row to summary.
+
+    ``cursor_state`` + ``cursor_archived_state`` come from
+    :class:`WorkflowStateCursor` joined by ``run_id == branch.id``.
+    Callers that haven't joined the cursor table pass ``None``; the
+    UI then falls back to the legacy ``status`` field for paused-state
+    detection (which has the Phase B precision loss noted in the
+    contract docstring).
+    """
     return VRBranchSummary(
         id=record.id,
         investigation_id=record.investigation_id,
@@ -681,6 +693,8 @@ def _branch_summary(record: Any) -> VRBranchSummary:
         created_at=record.created_at,
         updated_at=record.updated_at,
         strategy_family=record.strategy_family,
+        cursor_state=cursor_state,
+        cursor_archived_state=cursor_archived_state,
     )
 
 
@@ -5093,6 +5107,8 @@ def create_vr_router() -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Investigation {investigation_id} not found.",
             )
+        from aila.storage.db_models import WorkflowStateCursor  # noqa: PLC0415
+
         from .db_models import VRInvestigationBranchRecord
 
         async with UnitOfWork() as uow:
@@ -5101,8 +5117,30 @@ def create_vr_router() -> APIRouter:
                 .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
                 .order_by(VRInvestigationBranchRecord.created_at.asc())
             )).all()
+            branch_ids = [r.id for r in rows]
+            cursors_by_run: dict[str, tuple[str | None, str | None]] = {}
+            if branch_ids:
+                cursor_rows = (await uow.session.exec(
+                    select(
+                        WorkflowStateCursor.run_id,
+                        WorkflowStateCursor.current_state,
+                        WorkflowStateCursor.archived_state,
+                    ).where(WorkflowStateCursor.run_id.in_(branch_ids))
+                )).all()
+                for cr in cursor_rows:
+                    run_id = cr[0] if hasattr(cr, "__getitem__") else cr.run_id
+                    cur = cr[1] if hasattr(cr, "__getitem__") else cr.current_state
+                    arc = cr[2] if hasattr(cr, "__getitem__") else cr.archived_state
+                    cursors_by_run[str(run_id)] = (cur, arc)
 
-        return DataEnvelope(data=[_branch_summary(r) for r in rows])
+        return DataEnvelope(data=[
+            _branch_summary(
+                r,
+                cursor_state=cursors_by_run.get(r.id, (None, None))[0],
+                cursor_archived_state=cursors_by_run.get(r.id, (None, None))[1],
+            )
+            for r in rows
+        ])
 
     @router.get(
         "/investigations/{investigation_id}/outcomes",
