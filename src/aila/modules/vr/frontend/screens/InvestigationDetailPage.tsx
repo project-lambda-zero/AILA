@@ -731,27 +731,39 @@ export function InvestigationDetailPage() {
       </div>
 
       {/* Workflow stepper */}
-      {/* §25 / §82 — currentState is derived from inv.status because
-          the workflow_state_cursor.current_state column is not yet
-          exposed via the API. Deferred to Phase B: that PR adds a
-          cursor-status endpoint and the WorkflowStepper reads the
-          real state. Until then this client-side mapping collapses
-          three workflow states (investigation_setup / loop / emit)
-          into one display when inv.status='running', and §54
-          (post-pause/resume rendering) also lives in this gap.
+      {/* §9 / §25 / §82 — WorkflowStepper currentState. The real source
+          of truth is workflow_state_cursor.current_state, which is not
+          yet exposed via the API.
 
-          The currentState below stays as-is — Phase B replaces the
-          derivation with a useInvestigationCursor(invId) read. */}
+          TODO(Phase B / CUTOVER_DEPS.md): once
+          /vr/investigations/{id}/cursor exposes cursor.current_state on
+          the wire, replace this domain-status mapping with the cursor
+          read. The Phase B contract: GET returns
+          `{ current_state: WorkflowStateKey, archived_state: ... | null }`
+          and the mapping below collapses to
+          `currentState={cursor.current_state}` with
+          `cursor.current_state === '__paused__'` rendered as null below
+          the stepper (StatusIndicator already labels it).
+
+          Until then this mapping is best-effort: it collapses
+          investigation_setup / loop / emit into one display when
+          inv.status === 'running'. The paused branch below is the §9
+          explicit case so the UI does NOT mis-render setup. */}
       <AilaCard techBorder glow><WorkflowStepper
         flow="investigate"
         currentState={
-          inv.status === "running"
-            ? "investigation_loop"
-            : inv.status === "completed"
-              ? "investigation_emit"
-              : inv.status === "failed"
-                ? "investigation_loop"
-                : "investigation_setup"
+          // fix §9 — explicit paused mapping: pass null so the stepper
+          // dims every stage. The StatusIndicator owns the 'Paused'
+          // label; the stepper just stops claiming a wrong stage.
+          inv.status === "paused"
+            ? null
+            : inv.status === "running"
+              ? "investigation_loop"
+              : inv.status === "completed"
+                ? "investigation_emit"
+                : inv.status === "failed"
+                  ? "investigation_loop"
+                  : "investigation_setup"
         }
         failedAt={inv.status === "failed" ? "investigation_loop" : null}
       /></AilaCard>
