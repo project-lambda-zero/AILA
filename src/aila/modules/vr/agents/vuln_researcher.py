@@ -2753,13 +2753,32 @@ async def _upsert_canonical_outcome(
         existing.confidence = new_confidence
         changed = True
 
+    # fix §166 — stop overwriting payload['answer'] on merge. Every
+    # submission's full answer goes into payload['merge_log'] as a
+    # versioned, persona-attributed entry. The canonical
+    # payload['answer'] is seeded on first submission and never
+    # replaced thereafter, so the original answer survives forever
+    # and the report/frontend has a stable text field to render.
+    # Operator can read merge_log to see every persona's full answer
+    # with provenance (and panel_contributions[i].answer_brief still
+    # carries each per-persona text per §171).
     old_answer = old_payload.get("answer") or ""
     new_answer = new_payload.get("answer") or ""
-    if new_answer and (
-        len(new_answer) > len(old_answer) * 1.2
-        or new_kind_rank < old_kind_rank
-    ):
-        old_payload["answer"] = new_answer
+    if new_answer and new_answer != old_answer:
+        merge_log = old_payload.get("merge_log") or []
+        merge_log.append({
+            "persona": persona,
+            "branch_id": branch_id,
+            "at_turn": at_turn,
+            "submitted_at": now.isoformat(),
+            "outcome_kind": new_outcome_kind,
+            "confidence": new_confidence,
+            "answer": new_answer,
+        })
+        old_payload["merge_log"] = merge_log
+        # Seed canonical answer if absent; never overwrite once set.
+        if not old_answer:
+            old_payload["answer"] = new_answer
         changed = True
 
     contributions = old_payload.get("panel_contributions") or []
