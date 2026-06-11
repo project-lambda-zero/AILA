@@ -2462,24 +2462,67 @@ def build_findings_index(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[F
         s["body"]))
     story.append(Spacer(1, 4 * mm))
 
-    rows = [["FIND.", "CTRL", "GROUP", "VERDICT", "CONF.", "TITLE  &  AGENT  ONE-LINER"]]
+    # Two row kinds:
+    #   data row  — 6 columns (FIND/CTRL/GROUP/VERDICT/CONF/TITLE)
+    #   quote row — single-column span carrying the agent's pull-quote
+    #               (FAIL findings only)
+    # We track row indices as we build so the TableStyle can SPAN the
+    # quote rows and shade them in the verdict colour.
+    rows: list[list[Any]] = [
+        ["FIND.", "CTRL", "GROUP", "VERDICT", "CONF.",
+         "TITLE  &  AGENT  ONE-LINER"]
+    ]
+    quote_rows: list[int] = []   # row indices that carry a spanned quote
     findings_sorted = sorted(
         bundle.findings,
         key=lambda f: (f.severity_rank, f.control_id),
+    )
+    quote_style = ParagraphStyle(
+        "IdxQuote", parent=s["body_sm"],
+        fontName=_font("Body-Italic", "Times-Italic"),
+        fontSize=8.4, leading=10.4,
+        leftIndent=6, rightIndent=4,
+        textColor=COL_INK, alignment=TA_LEFT,
     )
     for f in findings_sorted:
         one_liner = f.catalog.get("title", "")
         rows.append([
             _para(f.finding_id, s["table_cell_mono"]),
             _para(f.control_id, s["table_cell_mono"]),
-            _para(f.group, ParagraphStyle("G", parent=s["table_cell_mono"], textColor=COL_ACCENT)),
+            _para(f.group, ParagraphStyle("G", parent=s["table_cell_mono"],
+                                           textColor=COL_ACCENT)),
             _verdict_cell(f.verdict_label),
             _para(f"{f.confidence:.2f}", s["table_cell_mono"]),
             _para(one_liner, s["table_cell_xs"]),
         ])
-    tt = Table(rows, colWidths=[16 * mm, 24 * mm, 18 * mm, 22 * mm, 13 * mm, None],
+        # FAIL rows get an italic pull-quote on the line beneath. Pulls
+        # the eye to the worst findings without forcing the operator
+        # to flip to §06 just to see why a row is red.
+        if f.verdict_label == "FAIL":
+            quote = _pull_quote_text(f, cap=140)
+            if quote:
+                safe = _md_inline(_html_escape(quote))
+                quote_para = Paragraph(f"« {safe} »", quote_style)
+                # All six cells filled with empty placeholders; the
+                # SPAN command later merges them into one wide cell.
+                rows.append([quote_para, "", "", "", "", ""])
+                quote_rows.append(len(rows) - 1)
+    tt = Table(rows, colWidths=[16 * mm, 24 * mm, 18 * mm, 22 * mm, 13 * mm,
+                                  None],
                repeatRows=1)
-    tt.setStyle(_zebra_table_style(len(rows)))
+    base_style = _zebra_table_style(len(rows))
+    # Add SPAN + verdict-coloured left rule + shade for every quote row.
+    extra_cmds: list[Any] = []
+    for ri in quote_rows:
+        extra_cmds.append(("SPAN", (0, ri), (-1, ri)))
+        extra_cmds.append(("BACKGROUND", (0, ri), (-1, ri), COL_ZEBRA))
+        extra_cmds.append(("LINEBEFORE", (0, ri), (0, ri), 3.0, COL_FAIL))
+        extra_cmds.append(("LEFTPADDING", (0, ri), (-1, ri), 8))
+        extra_cmds.append(("TOPPADDING", (0, ri), (-1, ri), 1.5))
+        extra_cmds.append(("BOTTOMPADDING", (0, ri), (-1, ri), 2.5))
+    for cmd in extra_cmds:
+        base_style.add(*cmd)
+    tt.setStyle(base_style)
     story.append(tt)
     story.append(PageBreak())
     return story
