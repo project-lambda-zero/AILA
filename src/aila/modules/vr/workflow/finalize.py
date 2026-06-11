@@ -50,8 +50,9 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func
 from sqlalchemy.sql.functions import coalesce
+from sqlmodel import select
 
 from aila.modules.vr.contracts import BranchStatus, InvestigationStatus
 from aila.modules.vr.db_models import (

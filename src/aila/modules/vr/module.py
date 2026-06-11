@@ -220,9 +220,6 @@ class VRModule(ModuleProtocol):
         return {"vr.ida_reachability": _ida_reachability}
 
 
-_SWEEPS_REGISTERED = False
-
-
 def _register_vr_periodic_sweeps() -> None:
     """Register VR's per-tick maintenance sweeps with the platform reaper.
 
@@ -233,17 +230,20 @@ def _register_vr_periodic_sweeps() -> None:
     declared; the platform iterates the registry without knowing VR
     exists.
 
-    Idempotent via the module-level ``_SWEEPS_REGISTERED`` flag — safe
-    against repeated ``create_module()`` calls (test fixtures, hot-reload).
+    Idempotent: probe the registry for the well-known sentinel name
+    ``vr.finalize``; if it's already there, every other VR sweep is
+    registered too and re-registration would raise. Probing the registry
+    rather than a module-level flag means tests that clear the registry
+    in an autouse fixture automatically re-register on the next
+    create_module() call.
     """
-    global _SWEEPS_REGISTERED  # noqa: PLW0603 — module-init flag
-    if _SWEEPS_REGISTERED:
-        return
-    _SWEEPS_REGISTERED = True
-
     from aila.platform.tasks.sweeps import (  # noqa: PLC0415
+        all_periodic_sweeps,
         register_periodic_sweep,
     )
+
+    if "vr.finalize" in all_periodic_sweeps():
+        return
 
     # vr.stage_tracker — reaps stuck target-analysis stages whose
     # workers never recorded a terminal transition. Returns an int
