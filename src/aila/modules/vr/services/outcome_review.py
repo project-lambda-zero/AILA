@@ -270,9 +270,22 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
         )).all()
         non_proposing_count = len(siblings)
         quorum_k = compute_quorum(non_proposing_count)
+        # ACTIVE siblings are the only ones the halt loop touches. The
+        # ``PAUSED`` filter below is defensive — PAUSED is already not
+        # in ACTIVE, but if someone broadens this filter later the halt
+        # guard at the per-sibling loop will still skip them.
         active_siblings = [
             b for b in siblings if b.status == BranchStatus.ACTIVE.value
         ]
+        # fix §78 — count PAUSED siblings as "potentially voting once
+        # resumed". The no-active-voters auto-approve must NOT fire
+        # when there are PAUSED siblings that could vote later; treating
+        # them as dead voters would let the operator's pause survive a
+        # silent auto-approval and a phantom resume on a terminal
+        # investigation.
+        paused_siblings_count = sum(
+            1 for b in siblings if b.status == BranchStatus.PAUSED.value
+        )
 
         new_state = prior_state
         transition_reason = ""
@@ -296,10 +309,14 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
         # The pre-submit draft_pending gate (vuln_researcher) is the
         # primary mitigation; this is the safety net for investigations
         # that predate the gate or hit the gate's blind spots.
+        # fix §78 — gate the fallback on PAUSED count too: if there are
+        # paused siblings, they may resume and vote, so do not collapse
+        # to auto-approve. Operator action (pause) blocks auto-settle.
         if (
             prior_state == OUTCOME_STATE_DRAFT
             and quorum_k > 0
             and len(active_siblings) == 0
+            and paused_siblings_count == 0
             and (approve_count + reject_count) < quorum_k
         ):
             new_state = OUTCOME_STATE_APPROVED
@@ -338,6 +355,15 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
             # done rather than perpetually active.
             if new_state == OUTCOME_STATE_APPROVED:
                 for sibling in active_siblings:
+                    # fix §78 — defensive guard: skip PAUSED branches
+                    # if they ever appear in active_siblings (the filter
+                    # above currently excludes them, but a future change
+                    # could broaden it). Operator-paused branches must
+                    # NOT be flipped to ABANDONED here — the pause is
+                    # the operator's explicit hold; halting via ABANDONED
+                    # would lose that semantic and prevent resume.
+                    if sibling.status == BranchStatus.PAUSED.value:
+                        continue
                     sibling.status = BranchStatus.ABANDONED.value
                     sibling.closed_reason = (
                         f"sibling_outcome_approved:{outcome_id}"
