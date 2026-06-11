@@ -9,19 +9,11 @@ response persisted under the key.
 The cache table is created by migration ``061_llm_idempotency_cache``.
 
 Design notes:
-
-* Key derivation is the CALLER'S responsibility — this module makes no
-  assumption about what the input shape is. ``make_request_key`` is a
-  convenience helper that's also explicitly defensive (sha256, no
-  partial hashes).
-
-* Best-effort writes. If the DB write fails, the LLM call still
-  succeeded for the caller — we log and continue. The next retry will
-  just call the API again.
-
-* TTL is 7 days by default (migration server_default). The /reset
-  endpoint should cascade-delete by investigation_id; a periodic
-  scheduler should prune expired rows. Neither is wired here.
+* TTL is 7 days by default (migration server_default). Expired rows are
+  pruned by the platform reaper cron (worker.py) which calls
+  :func:`purge_expired` once per minute (§123 — Phase E15). The /reset
+  endpoint does not cascade-delete by investigation_id; consumers that
+  need that should call :func:`purge_for_investigation` explicitly.
 
 * Costs (prompt_tokens / completion_tokens / cost_usd) are stored on
   the cache row so a HIT can record the COSTS THAT WERE SAVED — useful
@@ -37,6 +29,7 @@ from typing import Any
 
 from sqlalchemy import DateTime, Index
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlmodel import Field, SQLModel, delete, select
 
 from aila.platform.contracts._common import utc_now
@@ -44,8 +37,11 @@ from aila.platform.contracts._common import utc_now
 __all__ = [
     "LLMIdempotencyCache",
     "lookup_cached_response",
-    "store_response",
     "make_request_key",
+    "purge_expired",
+    "purge_for_investigation",
+    "run_purge_expired_cron",
+    "store_response",
 ]
 
 _log = logging.getLogger(__name__)
@@ -76,11 +72,24 @@ class LLMIdempotencyCache(SQLModel, table=True):
 
 
 def make_request_key(*parts: Any) -> str:
-    """Stable sha256 of the joined parts. Caller decides what's in."""
+    """Stable sha256 of the joined parts. Caller decides what's in.
+
+    fix §120 (companion) — dicts and lists are required to be JSON-clean.
+    The legacy ``default=str`` escape hatch was removed so a caller passing
+    ``{"value": Decimal("1.0")}`` and ``{"value": "1.0"}`` no longer collide
+    on the same key. Pre-serialize exotic types at the caller.
+    """
     h = hashlib.sha256()
     for p in parts:
         if isinstance(p, (dict, list)):
-            h.update(json.dumps(p, sort_keys=True, default=str).encode())
+            try:
+                h.update(json.dumps(p, sort_keys=True).encode())
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    "make_request_key part is not JSON-serializable "
+                    "(strict mode — pre-serialize exotic types): "
+                    f"{exc}",
+                ) from exc
         else:
             h.update(str(p).encode())
         h.update(b"\x00")  # separator
@@ -105,12 +114,30 @@ async def lookup_cached_response(
                 LLMIdempotencyCache.request_key == request_key,
             )
         )).first()
-    except Exception as exc:  # noqa: BLE001 — cache lookup is best-effort
-        _log.debug("idempotency cache lookup failed: %s", exc)
+    except SQLAlchemyError as exc:
+        # fix §124 — surface true DB failures at WARNING+ instead of swallowing
+        # silently. The lookup remains best-effort (returns None so caller
+        # falls back to a live LLM call) but the operator now sees broken-cache
+        # symptoms in logs.
+        _log.warning(
+            "idempotency cache lookup db error for key=%s: %s",
+            request_key[:12], exc,
+        )
+        return None
+    except (OSError, RuntimeError, ValueError) as exc:
+        _log.warning(
+            "idempotency cache lookup transport error for key=%s: %s",
+            request_key[:12], exc,
+        )
         return None
     if row is None:
         return None
-    if row.expires_at < utc_now():
+    expires = row.expires_at
+    if expires is not None and expires.tzinfo is None:
+        # fix §122 — normalize legacy tz-naive expires_at to UTC.
+        from datetime import UTC  # noqa: PLC0415
+        expires = expires.replace(tzinfo=UTC)
+    if expires is None or expires < utc_now():
         return None
     try:
         return json.loads(row.response_json)
@@ -141,7 +168,19 @@ async def store_response(
 
     now = utc_now()
     expires = now + timedelta(days=ttl_days)
-    payload = json.dumps(response, default=str)
+    # fix §120 — reject non-JSON-serializable values at write time. The
+    # default=str escape hatch made `Decimal("1.0")` and `"1.0"` serialize
+    # identically, so two semantically-different responses collided on the
+    # same cache key. Force callers to pre-serialize anything exotic.
+    try:
+        payload = json.dumps(response, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        _log.warning(
+            "idempotency cache write rejected for %s — response is not "
+            "JSON-serializable (%s); caller must pre-serialize.",
+            request_key[:12], exc,
+        )
+        return
     try:
         # PostgreSQL native upsert. The LLMIdempotencyCache table's
         # sole primary key is request_key, so ON CONFLICT (request_key)
@@ -170,7 +209,7 @@ async def store_response(
         )
         await session.execute(stmt)
         await session.commit()
-    except Exception as exc:  # noqa: BLE001 — best-effort
+    except (SQLAlchemyError, DBAPIError) as exc:
         _log.warning(
             "idempotency cache write failed for %s: %s", request_key[:12], exc,
         )
@@ -179,7 +218,9 @@ async def store_response(
 async def purge_expired(session: Any) -> int:
     """Delete rows past their expires_at. Returns count purged.
 
-    Intended for a periodic cron sweep; not wired by this module.
+    Wired into the platform reaper cron via :func:`run_purge_expired_cron`
+    so expired rows are pruned once per minute (§123). Direct callers may
+    also invoke this with their own session for ad-hoc cleanup.
     """
     try:
         result = await session.execute(
@@ -188,7 +229,51 @@ async def purge_expired(session: Any) -> int:
             )
         )
         await session.commit()
-        return int(getattr(result, "rowcount", 0) or 0)
-    except Exception as exc:  # noqa: BLE001
+        # fix §69-style: rowcount can be -1 on some drivers when the row count
+        # is unknown. Clamp at zero to avoid negative log lines.
+        rc = int(getattr(result, "rowcount", 0) or 0)
+        return rc if rc >= 0 else 0
+    except (SQLAlchemyError, DBAPIError) as exc:
         _log.warning("idempotency cache purge failed: %s", exc)
         return 0
+
+
+async def purge_for_investigation(
+    session: Any, investigation_id: str,
+) -> int:
+    """Delete every cache row tied to ``investigation_id``.
+
+    Used by ``/reset`` endpoints / explicit cascade deletes (§121). Returns
+    the count deleted, or 0 on transport error (best-effort — the data is
+    cache state, not source of truth).
+    """
+    if not investigation_id:
+        return 0
+    try:
+        result = await session.execute(
+            delete(LLMIdempotencyCache).where(
+                LLMIdempotencyCache.investigation_id == investigation_id,
+            )
+        )
+        await session.commit()
+        rc = int(getattr(result, "rowcount", 0) or 0)
+        return rc if rc >= 0 else 0
+    except (SQLAlchemyError, DBAPIError) as exc:
+        _log.warning(
+            "idempotency cache purge_for_investigation(%s) failed: %s",
+            investigation_id, exc,
+        )
+        return 0
+
+
+async def run_purge_expired_cron() -> int:
+    """Open a session and call :func:`purge_expired`.
+
+    Wired into ``platform/tasks/worker.py:reaper`` (§123). Standalone
+    function so the cron import surface stays narrow — the reaper does
+    not need to know about session scopes.
+    """
+    from aila.storage.database import async_session_scope  # noqa: PLC0415
+
+    async with async_session_scope() as session:
+        return await purge_expired(session)
