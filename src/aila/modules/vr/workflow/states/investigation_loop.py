@@ -45,6 +45,45 @@ _log = logging.getLogger(__name__)
 # a code change.
 _DEFAULT_MAX_TURNS = int(os.environ.get("VR_MAX_TURNS_PER_TASK", "70"))
 
+# fix §286 — module-level executor + bridges singleton, lazily built
+# on first task wakeup of each worker process.
+#
+# Prior code constructed a fresh IDABridgeTool / AuditMcpBridgeTool /
+# AndroidMcpBridgeTool / ToolExecutor on EVERY task. The bridges hold
+# instance-level httpx clients with connection pools (W1 E12 fix); a
+# new instance per task means a new pool every task, defeating the
+# whole point of the pool. The executor carries an LRU
+# investigation_id → audit_mcp index_id cache (fix §252) sized for
+# 2048 concurrent investigations; throwing it away per task means
+# every investigation pays the cold-cache resolve cost EVERY task,
+# 70 turns wide.
+#
+# Caching at module scope ties the lifetime to the worker process,
+# which is the right granularity:
+#   * Restarting a worker bounces the pools (operator intent on
+#     restart: re-check bridge config).
+#   * Within a worker, tasks for the same investigation reuse the
+#     warm index_id; tasks for different investigations share the
+#     httpx pool but get independent LRU entries.
+_EXECUTOR_SINGLETON: ToolExecutor | None = None
+
+
+def _get_executor() -> ToolExecutor:
+    """Return the per-worker-process ToolExecutor singleton.
+
+    Constructed on first call; subsequent calls return the same
+    instance so the bridge httpx pools + executor LRU index_id cache
+    survive across investigations.
+    """
+    global _EXECUTOR_SINGLETON  # noqa: PLW0603 — module singleton
+    if _EXECUTOR_SINGLETON is None:
+        _EXECUTOR_SINGLETON = ToolExecutor(
+            ida=IDABridgeTool(),
+            audit_mcp=AuditMcpBridgeTool(),
+            android_mcp=AndroidMcpBridgeTool(),
+        )
+    return _EXECUTOR_SINGLETON
+
 
 async def _investigation_status(investigation_id: str) -> str | None:
     async with UnitOfWork() as uow:
@@ -104,11 +143,7 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
         cve_intel=raw_cve_intel,
         applicable_patterns=raw_patterns,
     )
-    executor = ToolExecutor(
-        ida=IDABridgeTool(),
-        audit_mcp=AuditMcpBridgeTool(),
-        android_mcp=AndroidMcpBridgeTool(),
-    )
+    executor = _get_executor()  # fix §286 — shared per-worker-process singleton
 
     last_turn_idx = 0
     last_outcome_id: str | None = None
