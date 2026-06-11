@@ -889,7 +889,30 @@ class TargetAnalysisService:
                 f"audit_mcp.index_codebase returned no index_id: {kickoff!r}",
             )
 
-        await self._poll_audit_mcp(index_id)
+        # fix §270 — long-tail audit-mcp indexing on a jadx Java tree
+        # (trailmark + semble cold-build over ~100k decompiled classes)
+        # can run for hours, bounded by _POLL_TIMEOUT_SECONDS (default
+        # 4h, operator-overridable via VR_INGESTION_POLL_TIMEOUT_S).
+        #
+        # Ideal fix: re-enter this state every 60s via a
+        # ``next_state=index_decompiled_wait`` workflow continuation
+        # so the ARQ worker slot frees up between polls. The platform
+        # workflow engine doesn't expose a WakeOn / timer-based
+        # re-entry primitive today (``aila.platform.workflows`` only
+        # routes state results forward; ``aila.platform.automation``
+        # is cron-based, not per-task), and ``run_target_analysis``
+        # itself is a single ``@platform_task`` rather than a
+        # ``DurableStateMachine``. Spec authoring + plumbing a new
+        # WakeOn surface is out of scope for §270.
+        #
+        # Fallback per the §270 acceptance: keep the inline await but
+        # pace it at 60s instead of 3s. ``asyncio.sleep`` already
+        # yields cooperatively (other coroutines on the same worker
+        # event loop interleave during the wait); the 20x interval
+        # bump trades poll resolution (worst case the stage notices
+        # READY 57s late) for 20x less HTTP traffic to audit-mcp and
+        # 20x quieter worker logs over the 4h budget.
+        await self._poll_audit_mcp(index_id, interval_s=60.0)
 
         # fix §240 — locked merge (group-2 single stage, but pattern
         # stays uniform across all android workers).
@@ -1242,7 +1265,21 @@ class TargetAnalysisService:
             f"ida analysis timed out after {_POLL_TIMEOUT_SECONDS:.0f}s",
         )
 
-    async def _poll_audit_mcp(self, index_id: str) -> None:
+    async def _poll_audit_mcp(
+        self, index_id: str, interval_s: float | None = None,
+    ) -> None:
+        """Poll ``audit_mcp.poll_index`` until READY / FAILED / timeout.
+
+        ``interval_s`` overrides the default ``_POLL_INTERVAL_SECONDS``
+        (3.0). The override exists for §270 — long-tail audit-mcp
+        indexing (decompiled APK Java trees in particular: trailmark +
+        semble cold-build on a ~100k-class jadx output can run for
+        hours) is still bound by ``_POLL_TIMEOUT_SECONDS`` (default 4h)
+        but doesn't need a 3-second poll cadence the entire way. A 60s
+        cadence cuts the per-call HTTP traffic to audit-mcp by 20x and
+        keeps log noise proportional to the wait.
+        """
+        sleep_for = interval_s if interval_s is not None else _POLL_INTERVAL_SECONDS
         deadline = utc_now().timestamp() + _POLL_TIMEOUT_SECONDS
         while utc_now().timestamp() < deadline:
             resp = await self._audit_mcp.forward(
@@ -1255,7 +1292,7 @@ class TargetAnalysisService:
                 raise TargetAnalysisError(
                     f"audit_mcp index failed: {resp.get('error') or resp}",
                 )
-            await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+            await asyncio.sleep(sleep_for)
         raise TargetAnalysisError(
             f"audit_mcp index timed out after {_POLL_TIMEOUT_SECONDS:.0f}s",
         )
