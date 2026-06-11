@@ -474,22 +474,36 @@ async def post_draft_review_request(
         f"audit_mcp.read_lines / read_function before you can approve. "
         f"If you cannot ground a claim, vote reject or abstain."
     )
+    # fix §248 — exact-key dedup via the indexed ``auto_steering_key``
+    # column added by migration 063 (originally for auto_steering, but
+    # the column is generic — it's the canonical "system-authored
+    # message dedup sentinel"). No new migration needed.
+    #
+    # Why no separate ``dedup_key`` column: 063 already provides the
+    # exact shape we need — VARCHAR(128) NULL with a partial UNIQUE
+    # index on (investigation_id, auto_steering_key) WHERE NOT NULL,
+    # and a composite index for the read path. Adding a parallel
+    # ``dedup_key`` column would duplicate schema for the same purpose;
+    # we reuse the existing column and document the name as historical.
+    #
+    # Atomicity: we fire the INSERT first and rely on the UNIQUE
+    # constraint for racing concurrent callers (same pattern auto_steering
+    # uses, see fix §338). If two parallel re-entries of investigation_emit
+    # both miss the read check, the second INSERT raises IntegrityError;
+    # we look up the surviving row and return its id. No SELECT FOR
+    # UPDATE needed because the unique constraint provides the
+    # serialization point at write time.
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
     async with UnitOfWork() as uow:
         # Idempotency: skip if a request for the same outcome already exists.
-        # We match on the auto_steering_key substring stored verbatim in the
-        # payload_json TEXT column. Using ``LIKE`` against the JSON-serialised
-        # blob is intentional — adding a JSONB column or an extracted-value
-        # index is overkill for a single-key idempotency check.
         existing = (await uow.session.exec(
             _select(VRInvestigationMessageRecord)
             .where(
-                VRInvestigationMessageRecord.investigation_id
-                == investigation_id,
+                VRInvestigationMessageRecord.investigation_id == investigation_id,
             )
             .where(
-                VRInvestigationMessageRecord.payload_json.contains(
-                    auto_steering_key,
-                ),
+                VRInvestigationMessageRecord.auto_steering_key == auto_steering_key,
             )
             .limit(1),
         )).first()
@@ -513,6 +527,9 @@ async def post_draft_review_request(
                 "outcome_id": outcome_id,
             }),
             operator_intent=OperatorIntent.STEERING.value,
+            # fix §248 — populate the indexed dedup column so the
+            # UNIQUE constraint catches concurrent re-entry races.
+            auto_steering_key=auto_steering_key,
             created_at=utc_now(),
         )
         uow.session.add(msg)
@@ -527,6 +544,36 @@ async def post_draft_review_request(
         # in pattern_store / outcome_dispatcher / target_analysis are
         # not structural drift — same behaviour today — but should
         # converge on ``uow.commit()`` opportunistically.
-        await uow.commit()
+        try:
+            await uow.commit()
+        except IntegrityError:
+            # fix §248 — race window between the read check and the
+            # write: a concurrent re-entry inserted the same key
+            # first. Roll back the failed insert (auto on session
+            # exit) and look up the surviving row in a fresh UoW.
+            await uow.rollback()
+            _log.info(
+                "outcome_review.post_draft_review_request race-deduped "
+                "inv=%s outcome=%s key=%s",
+                investigation_id, outcome_id, auto_steering_key,
+            )
+            async with UnitOfWork() as lookup:
+                surviving = (await lookup.session.exec(
+                    _select(VRInvestigationMessageRecord)
+                    .where(
+                        VRInvestigationMessageRecord.investigation_id
+                        == investigation_id,
+                    )
+                    .where(
+                        VRInvestigationMessageRecord.auto_steering_key
+                        == auto_steering_key,
+                    )
+                    .limit(1),
+                )).first()
+                if surviving is None:
+                    # Unique-violation but no surviving row? DB is in
+                    # an unexpected state; surface loudly.
+                    raise
+                return surviving.id
         await uow.session.refresh(msg)
         return msg.id
