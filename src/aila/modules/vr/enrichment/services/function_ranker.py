@@ -129,7 +129,7 @@ class FunctionRankingDispatcher:
                 handles = json.loads(target_row.mcp_handles_json or "{}")
 
                 if target_row.kind == TargetKind.SOURCE_REPO.value:
-                    ranking = await self._rank_source(target_id, handles)
+                    ranking = await self._rank_source(target_id, handles, tracker)
                 elif target_row.kind in {
                     TargetKind.NATIVE_BINARY.value,
                     TargetKind.ANDROID_APK.value,  # fix §228 — canonical name (TargetKind.APK never existed)
@@ -167,7 +167,12 @@ class FunctionRankingDispatcher:
             _log.info("function_ranker: target %s ranking in flight — skip", target_id)
             return None
 
-    async def _rank_source(self, target_id: str, handles: dict[str, Any]) -> FunctionRanking:
+    async def _rank_source(
+        self,
+        target_id: str,
+        handles: dict[str, Any],
+        tracker: StageTracker,
+    ) -> FunctionRanking:
         index_id = handles.get("audit_mcp_index_id")
         if not index_id:
             raise FunctionRankerError(
@@ -181,10 +186,16 @@ class FunctionRankingDispatcher:
 
         # Async pattern — audit-mcp returns 'pending' + task_id for heavy
         # work (firefox-scale GPU CSR build + ranking). Poll until ready
-        # or until we've burned the per-stage timeout (StageTracker
-        # default 30 min for FUNCTION_RANKING — see services/stage_
-        # tracker.py). The poll cadence matches audit_mcp's own polling
-        # window so we don't hammer it.
+        # or until we're inside the safety margin before the stage's
+        # hard deadline.
+        # fix §229 — was hardcoded at 180 polls × 5 s = 15 min, half the
+        # FUNCTION_RANKING stage's 30 min budget. Now poll up to 30 s
+        # before the tracker's stage_timeout_s elapses, so audit-mcp
+        # gets the full window the stage tracker advertises.
+        _POLL_INTERVAL_S = 5.0
+        _DEADLINE_SAFETY_MARGIN_S = 30.0
+        _loop = asyncio.get_running_loop()
+        _deadline_monotonic = _loop.time() + tracker.stage_timeout_s
         poll_attempts = 0
         while resp.get("status") == "pending":
             task_id = resp.get("task_id") or resp.get("id")
@@ -194,13 +205,15 @@ class FunctionRankingDispatcher:
                 raise FunctionRankerError(
                     f"audit-mcp fuzzing_targets returned pending with no task_id: {resp!r}",
                 )
-            poll_attempts += 1
-            if poll_attempts > 180:  # ~15 min at 5 s cadence
+            remaining = _deadline_monotonic - _loop.time()
+            if remaining <= _DEADLINE_SAFETY_MARGIN_S:
                 raise FunctionRankerError(
                     f"audit-mcp fuzzing_targets still pending after {poll_attempts} polls "
-                    f"(~{poll_attempts * 5}s) for target {target_id}",
+                    f"for target {target_id}: <={_DEADLINE_SAFETY_MARGIN_S:.0f}s of the "
+                    f"{tracker.stage_timeout_s:.0f}s FUNCTION_RANKING budget remaining",
                 )
-            await asyncio.sleep(5)
+            poll_attempts += 1
+            await asyncio.sleep(_POLL_INTERVAL_S)
             resp = await self._audit_mcp.forward(action="poll_task", task_id=task_id)
 
         if resp.get("status") not in {"ready", None}:
