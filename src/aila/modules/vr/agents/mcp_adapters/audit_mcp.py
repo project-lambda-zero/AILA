@@ -21,6 +21,7 @@ from aila.modules.vr.contracts import PayloadKind
 
 from ._shared import (
     MAX_LIST_PREVIEW,
+    MAX_OBS_DUMP_CHARS,
     bounded_dump,
     obs_key_for,
     provenance_stamp,
@@ -1028,7 +1029,14 @@ adapt_search_functions = _adapt_search_functions_specialized
 # chars, so the agent saw quoted/escaped/indented JSON with ~3-4 of
 # 8 results bleeding past the cap. Now: dense block per chunk so the
 # agent gets real readable source.
-_MAX_OBS_CHUNKS = 100000000
+# fix §247 — coupled to _shared.MAX_OBS_DUMP_CHARS (32 KiB) so the cap
+# moves in lockstep with the rest of the system. The whole rendered
+# block list shares the same budget as one bounded_dump; per-block
+# budget is a quarter of that, ensuring a single 200 KiB chunk can't
+# evict every other result and that ~4 well-sized chunks land in the
+# observable for the agent to compare side by side.
+_MAX_OBS_CHUNKS = MAX_OBS_DUMP_CHARS
+_MAX_PER_CHUNK = MAX_OBS_DUMP_CHARS // 4
 
 
 def _render_chunks_dense(raw: dict[str, Any]) -> tuple[str, int]:
@@ -1039,7 +1047,9 @@ def _render_chunks_dense(raw: dict[str, Any]) -> tuple[str, int]:
         <content>
 
     Returns ``(rendered, count)``. Output is capped at _MAX_OBS_CHUNKS;
-    chunks beyond the cap are dropped with a trailing marker.
+    chunks beyond the cap are dropped with a trailing marker; chunks
+    whose individual block exceeds ``_MAX_PER_CHUNK`` are truncated
+    in-place (fix §247) rather than evicting siblings.
     """
     results = raw.get("results") or raw.get("matches") or raw.get("hits") or []
     if not isinstance(results, list):
@@ -1048,8 +1058,12 @@ def _render_chunks_dense(raw: dict[str, Any]) -> tuple[str, int]:
     total_chars = 0
     dropped = 0
     for r in results:
+        # fix §246 — coerce non-dict result to {"content": str(r)} so
+        # it still renders (with no metadata) instead of vanishing. The
+        # prior `continue` silently dropped results, making the agent
+        # observe N-1 chunks for an N-element response with no marker.
         if not isinstance(r, dict):
-            continue
+            r = {"content": str(r)}
         fp = r.get("file_path") or r.get("file") or r.get("path") or "?"
         s_line = r.get("start_line") or r.get("line") or "?"
         e_line = r.get("end_line") or "?"
@@ -1062,6 +1076,15 @@ def _render_chunks_dense(raw: dict[str, Any]) -> tuple[str, int]:
         score_tag = f"score={score:.3f} " if isinstance(score, (int, float)) else ""
         header = f"=== {fp}:{s_line}-{e_line} [{lang}] {score_tag}===\n"
         block = header + content + "\n"
+        # fix §247 — per-block cap. A single overweight chunk used to
+        # trip the total-chars guard, get dropped whole, and leak its
+        # entire payload across the budget for neighbouring chunks.
+        if len(block) > _MAX_PER_CHUNK:
+            cut = _MAX_PER_CHUNK
+            block = block[:cut] + (
+                f"\n... <truncated {len(block) - cut} chars; full chunk "
+                f"in message store>\n"
+            )
         if total_chars + len(block) > _MAX_OBS_CHUNKS:
             dropped += 1
             continue
