@@ -329,8 +329,20 @@ Rules:
 class ClaimVerifierAgent:
     """Three-stage adversarial verifier: extract → probe → verdict."""
 
-    _EXTRACTOR_TASK_TYPE = "vulnerability_research.synthesizer"
-    _VERDICT_TASK_TYPE = "vulnerability_research.synthesizer"
+    # fix §340 — task-type diversity. Both stages used to share
+    # ``vulnerability_research.synthesizer``, which routes to the
+    # same model the synthesis agent uses. An adversarial verifier
+    # that shares a model with the agent it audits has no diversity —
+    # the same prompt biases lead to the same blind spots. Each stage
+    # gets its own task_type so operators can route them to a
+    # different model via ConfigRegistry keys
+    # ``llm_model_vulnerability_research.verifier_extractor`` and
+    # ``llm_model_vulnerability_research.verifier_verdict``. Until
+    # those keys are populated they fall back to ``llm_default_model``
+    # (same as any unknown task_type); routing the verdict stage to
+    # a different model is the meaningful follow-up.
+    _EXTRACTOR_TASK_TYPE = "vulnerability_research.verifier_extractor"
+    _VERDICT_TASK_TYPE = "vulnerability_research.verifier_verdict"
     _MAX_PROBES = 8
     _PROBE_TIMEOUT_S = 30.0
 
