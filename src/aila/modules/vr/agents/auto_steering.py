@@ -52,6 +52,18 @@ __all__ = ["maybe_post_auto_steering"]
 
 _log = logging.getLogger(__name__)
 
+# fix §337 — auto-steering swallows every error so a tool result is
+# never derailed by a rule-evaluation bug. The swallow hides systemic
+# failures (bridge unreachable, schema drift in raw_result, …). Track
+# consecutive failures: after _FAILURE_ESCALATION_THRESHOLD in a row,
+# escalate to ERROR + reset the counter so the operator log surfaces
+# the systemic problem instead of one-off warnings drowning in noise.
+# Module-level int is safe — auto-steering runs serially per tool call
+# inside a single worker; the GIL makes the read-modify-write atomic
+# enough for a coarse threshold counter (no precision needed).
+_FAILURE_ESCALATION_THRESHOLD = 5
+_consecutive_failures = 0
+
 
 def _normalize_acked_observable(raw: object) -> list[str]:
     """Canonicalise the ``_acked_operator_messages`` observable shape.
@@ -569,6 +581,92 @@ async def _post(
 # ─────────────────────────────────────────────────────────────────
 
 
+async def _evaluate_rules(
+    *,
+    investigation_id: str,
+    branch_id: str,
+    server_id: str,
+    tool_name: str,
+    args: dict,
+    raw_result: dict,
+    bridge_base_url: str,
+) -> str | None:
+    """Run every rule against ``raw_result`` and post the first match.
+
+    Extracted from :func:`maybe_post_auto_steering` so the outer
+    function can wrap one call in the §337 failure-counter try/except
+    and reset the counter on every clean return (whether or not a
+    steering was actually posted). Returns the posted message id, or
+    ``None`` when no rule fired or the correction could not be derived.
+    """
+    # Rule 1: read_lines past EOF (successful response, EOF overshoot)
+    if _detect_read_lines_past_eof(server_id, tool_name, args, raw_result):
+        file_path = str(args.get("file_path") or "")
+        total = int(raw_result.get("total_lines_in_file") or 0)
+        requested_end = int(args.get("end") or 0)
+        index_id = str(args.get("index_id") or "")
+        key = f"read_lines_past_eof:{file_path}:{requested_end}"
+        if await _already_posted(investigation_id, key):
+            return None
+        queries = await _recent_semantic_queries(investigation_id, branch_id)
+        correction = await _derive_eof_correction(
+            bridge_base_url, index_id, file_path, total, requested_end, queries,
+        )
+        if not correction:
+            return None
+        return await _post(investigation_id, branch_id, correction, key)
+
+    # Rule 2: read_function returned file header (indexer fault)
+    if _detect_read_function_returned_file_header(server_id, tool_name, args, raw_result):
+        file_path = str(args.get("file_path") or "")
+        fn_name = str(args.get("name") or "")
+        index_id = str(args.get("index_id") or "")
+        key = f"read_function_indexer_fault:{file_path}:{fn_name}"
+        if await _already_posted(investigation_id, key):
+            return None
+        correction = await _derive_file_header_correction(
+            bridge_base_url, index_id, file_path, fn_name,
+        )
+        if not correction:
+            return None
+        return await _post(investigation_id, branch_id, correction, key)
+
+    # Rule 3: read_lines returned file-not-found error
+    if _detect_read_lines_file_not_found(server_id, tool_name, args, raw_result):
+        file_path = str(args.get("file_path") or "")
+        index_id = str(args.get("index_id") or "")
+        key = f"read_lines_file_not_found:{index_id}:{file_path}"
+        if await _already_posted(investigation_id, key):
+            return None
+        queries = await _recent_semantic_queries(investigation_id, branch_id)
+        correction = await _derive_file_not_found_correction(
+            bridge_base_url, index_id, file_path, queries,
+        )
+        if not correction:
+            return None
+        return await _post(investigation_id, branch_id, correction, key)
+
+    # Rule 4: bridge rejected kwarg shape
+    if _detect_tool_kwarg_rejected(server_id, tool_name, args, raw_result):
+        raw_err = str(raw_result.get("error") or "")
+        # fix §339 — replace fragile ``raw_err.split(':', 1)[0]``
+        # err_class extraction (drifts whenever the bridge changes
+        # its error wording) with a structural key based on the
+        # call shape itself. Same tool + same arg-name set always
+        # share the key; a genuinely different rejection (different
+        # arg names) gets a different key and re-posts.
+        arg_keys = ",".join(sorted(str(k) for k in (args or {}).keys()))
+        key = f"kwarg_rejected:{tool_name}:{arg_keys}"
+        if await _already_posted(investigation_id, key):
+            return None
+        correction = await _derive_kwarg_rejected_correction(
+            f"{server_id}.{tool_name}", raw_err, args,
+        )
+        return await _post(investigation_id, branch_id, correction, key)
+
+    return None
+
+
 async def maybe_post_auto_steering(
     *,
     investigation_id: str,
@@ -587,86 +685,50 @@ async def maybe_post_auto_steering(
 
     Best-effort: any error is logged and swallowed so a failure in
     the auto-steering path can never derail the actual tool result.
+    fix §337 — consecutive failures are counted; the
+    :data:`_FAILURE_ESCALATION_THRESHOLD`-th failure in a row escalates
+    the swallowed warning to ERROR so a systemic problem (bridge down,
+    raw_result schema drift) surfaces instead of drowning in noise.
     """
+    global _consecutive_failures  # noqa: PLW0603 — single module-level counter
     if not raw_result or not isinstance(raw_result, dict):
         return None
     # NOTE: do NOT early-return on status != "ready" — error responses
     # are the trigger for Rule 3 (file_not_found) and Rule 4 (kwarg
     # rejected). Each rule's detector decides whether it cares about
     # the response shape.
-
     try:
-        # Rule 1: read_lines past EOF (successful response, EOF overshoot)
-        if _detect_read_lines_past_eof(server_id, tool_name, args, raw_result):
-            file_path = str(args.get("file_path") or "")
-            total = int(raw_result.get("total_lines_in_file") or 0)
-            requested_end = int(args.get("end") or 0)
-            index_id = str(args.get("index_id") or "")
-            key = f"read_lines_past_eof:{file_path}:{requested_end}"
-            if await _already_posted(investigation_id, key):
-                return None
-            queries = await _recent_semantic_queries(investigation_id, branch_id)
-            correction = await _derive_eof_correction(
-                bridge_base_url, index_id, file_path, total, requested_end, queries,
-            )
-            if not correction:
-                return None
-            return await _post(investigation_id, branch_id, correction, key)
-
-        # Rule 2: read_function returned file header (indexer fault)
-        if _detect_read_function_returned_file_header(server_id, tool_name, args, raw_result):
-            file_path = str(args.get("file_path") or "")
-            fn_name = str(args.get("name") or "")
-            index_id = str(args.get("index_id") or "")
-            key = f"read_function_indexer_fault:{file_path}:{fn_name}"
-            if await _already_posted(investigation_id, key):
-                return None
-            correction = await _derive_file_header_correction(
-                bridge_base_url, index_id, file_path, fn_name,
-            )
-            if not correction:
-                return None
-            return await _post(investigation_id, branch_id, correction, key)
-
-        # Rule 3: read_lines returned file-not-found error
-        if _detect_read_lines_file_not_found(server_id, tool_name, args, raw_result):
-            file_path = str(args.get("file_path") or "")
-            index_id = str(args.get("index_id") or "")
-            key = f"read_lines_file_not_found:{index_id}:{file_path}"
-            if await _already_posted(investigation_id, key):
-                return None
-            queries = await _recent_semantic_queries(investigation_id, branch_id)
-            correction = await _derive_file_not_found_correction(
-                bridge_base_url, index_id, file_path, queries,
-            )
-            if not correction:
-                return None
-            return await _post(investigation_id, branch_id, correction, key)
-
-        # Rule 4: bridge rejected kwarg shape
-        if _detect_tool_kwarg_rejected(server_id, tool_name, args, raw_result):
-            raw_err = str(raw_result.get("error") or "")
-            # fix §339 — replace fragile ``raw_err.split(':', 1)[0]``
-            # err_class extraction (drifts whenever the bridge changes
-            # its error wording) with a structural key based on the
-            # call shape itself. Same tool + same arg-name set always
-            # share the key; a genuinely different rejection (different
-            # arg names) gets a different key and re-posts.
-            arg_keys = ",".join(sorted(str(k) for k in (args or {}).keys()))
-            key = f"kwarg_rejected:{tool_name}:{arg_keys}"
-            if await _already_posted(investigation_id, key):
-                return None
-            correction = await _derive_kwarg_rejected_correction(
-                f"{server_id}.{tool_name}", raw_err, args,
-            )
-            return await _post(investigation_id, branch_id, correction, key)
-
-    except Exception as exc:  # noqa: BLE001 — auto-steering must never fail loud
-        _log.warning(
-            "auto_steering: rule evaluation failed inv=%s branch=%s "
-            "tool=%s err=%s",
-            investigation_id, branch_id, tool_name, exc,
+        result = await _evaluate_rules(
+            investigation_id=investigation_id,
+            branch_id=branch_id,
+            server_id=server_id,
+            tool_name=tool_name,
+            args=args,
+            raw_result=raw_result,
+            bridge_base_url=bridge_base_url,
         )
+    except Exception as exc:  # noqa: BLE001 — auto-steering must never fail loud
+        _consecutive_failures += 1
+        if _consecutive_failures >= _FAILURE_ESCALATION_THRESHOLD:
+            _log.error(
+                "auto_steering: %d consecutive rule-evaluation failures — "
+                "likely systemic (bridge down, raw_result schema drift, "
+                "ack-observable corruption). Latest inv=%s branch=%s "
+                "tool=%s err=%s",
+                _consecutive_failures, investigation_id, branch_id,
+                tool_name, exc,
+            )
+            _consecutive_failures = 0
+        else:
+            _log.warning(
+                "auto_steering: rule evaluation failed inv=%s branch=%s "
+                "tool=%s err=%s (consecutive=%d)",
+                investigation_id, branch_id, tool_name, exc,
+                _consecutive_failures,
+            )
         return None
-
-    return None
+    # Clean run — reset the counter so transient hiccups don't
+    # accumulate forever.
+    if _consecutive_failures:
+        _consecutive_failures = 0
+    return result
