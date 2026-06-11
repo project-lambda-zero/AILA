@@ -57,6 +57,7 @@ from aila.modules.vr._task_queue import default_task_queue
 from aila.modules.vr.contracts import (
     BranchStatus,
     InvestigationKind,
+    InvestigationPauseReason,
     InvestigationStatus,
 )
 from aila.modules.vr.contracts.target import TargetKind
@@ -77,6 +78,39 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset(
         InvestigationStatus.ABANDONED.value,
     ),
 )
+
+
+class PauseReason:
+    """Canonical values this reconciler writes to ``pause_reason``.
+
+    fix §19 — the ``pause_reason`` column is ``varchar(32)`` and the
+    API deserialiser (``api_router._investigation_summary``) calls
+    ``InvestigationPauseReason(record.pause_reason)`` on read. Any
+    value outside the contract enum 500's the next investigation
+    fetch (D-280). Prior writes here put free-form strings like
+    ``"exhausted_total_turn_cap:total_turns=200"`` (36+ chars AND
+    not in the enum) into the column.
+
+    This class collapses the reconciler's local reason vocabulary
+    onto contract-enum values. Each constant names the structural
+    reason at THIS layer; its value is whatever contract enum the
+    operator UI expects to render for that reason. Adding a new
+    reason here is a comment-only change unless it needs a new
+    contract-enum member (then update ``InvestigationPauseReason``
+    first and add the migration).
+
+    TURN_CAP / WALL_CLOCK / STUCK_DRAFT are all forced completions
+    rather than literal pauses — the closest valid enum value is
+    ``COST_BUDGET`` (every cap is structurally a budget cap: turn,
+    wall-clock, dollar). Detail (actual turn count, wall-clock
+    elapsed) goes in the log line, NOT the bounded column.
+    """
+
+    TURN_CAP = InvestigationPauseReason.COST_BUDGET.value
+    WALL_CLOCK = InvestigationPauseReason.COST_BUDGET.value
+    OPERATOR = InvestigationPauseReason.OPERATOR.value
+    STUCK_DRAFT = InvestigationPauseReason.COST_BUDGET.value
+
 
 
 def _batch_size() -> int:
@@ -358,9 +392,10 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
 
         if not has_draft and target_inv:
             target_inv.status = InvestigationStatus.COMPLETED.value
-            target_inv.pause_reason = (
-                f"exhausted_total_turn_cap:total_turns={total_turns}"
-            )
+            # fix §19 — bounded enum value (<=32 chars, validates
+            # against InvestigationPauseReason); detail moves to the
+            # log line below so the API serializer doesn't 500.
+            target_inv.pause_reason = PauseReason.TURN_CAP
             target_inv.stopped_at = utc_now()
             target_inv.updated_at = utc_now()
             uow.session.add(target_inv)
