@@ -25,6 +25,7 @@ directly. Deferred to when the rule engine actually produces a tie.
 """
 from __future__ import annotations
 
+import asyncio  # fix §225 — parallel IDA forward fan-out in _gather_binary_signals
 import json
 import logging
 from typing import Any
@@ -383,6 +384,11 @@ class CapabilityProfileBuilder:
         # fix §224 — returns (signals, n_attempted, n_failed) so build() can
         # detect "all MCP signals failed" instead of silently producing an
         # empty-shell profile when IDA bridge is wedged.
+        # fix §225 — fan all 7 IDA forwards out concurrently via asyncio.gather.
+        # Previously sequential at ~30 s each (~3.5 min total); now bounded by
+        # the slowest action (~30 s). Bridge concurrency is safe — IDA worker
+        # serializes per binary_id internally; multiple actions for the same
+        # binary already share that lock.
         binary_id = handles.get("binary_id")
         if not binary_id:
             raise ProfileBuilderError(
@@ -390,74 +396,75 @@ class CapabilityProfileBuilder:
                 "or wait for the auto-ingestion to complete",
             )
 
-        signals: dict[str, Any] = {}
-        attempted = 0
-        failed = 0
+        # (label, kwargs) — order is the gather-output order below.
+        binary_actions: tuple[tuple[str, dict[str, Any]], ...] = (
+            ("binary_survey",       {"action": "binary_survey",       "binary_id": binary_id}),
+            ("checksec",            {"action": "checksec",            "binary_id": binary_id}),
+            ("classify_behavior",   {"action": "classify_behavior",   "binary_id": binary_id}),
+            ("verify_capabilities", {"action": "verify_capabilities", "binary_id": binary_id}),
+            ("capa_scan",           {"action": "capa_scan",           "binary_id": binary_id}),
+            ("imports",             {"action": "imports",             "binary_id": binary_id}),
+            ("exports",             {"action": "exports",             "binary_id": binary_id}),
+        )
 
-        attempted += 1
-        survey_resp = await self._ida.forward(action="binary_survey", binary_id=binary_id)
-        if survey_resp.get("status") == "ready":
+        responses = await asyncio.gather(
+            *(self._ida.forward(**kw) for _, kw in binary_actions),
+            return_exceptions=True,  # one bridge crash MUST NOT poison the batch
+        )
+
+        signals: dict[str, Any] = {}
+        attempted = len(binary_actions)
+        failed = 0
+        by_label: dict[str, dict[str, Any]] = {}
+        for (label, _kw), resp in zip(binary_actions, responses, strict=True):
+            if isinstance(resp, BaseException):
+                _log.warning(
+                    "_gather_binary_signals: %s raised %s: %s",
+                    label, type(resp).__name__, resp,
+                )
+                failed += 1
+                continue
+            if not isinstance(resp, dict) or resp.get("status") != "ready":
+                failed += 1
+                continue
+            by_label[label] = resp
+
+        if "binary_survey" in by_label:
+            survey_resp = by_label["binary_survey"]
             signals["primary_language"] = (
                 survey_resp.get("primary_language") or _infer_language_from_survey(survey_resp)
             )
             signals["arch"] = survey_resp.get("arch") or ""
             signals["entry_points"] = survey_resp.get("entry_points") or []
             signals["raw_binary_survey"] = survey_resp
-        else:
-            failed += 1
 
-        attempted += 1
-        checksec_resp = await self._ida.forward(action="checksec", binary_id=binary_id)
-        if checksec_resp.get("status") == "ready":
+        if "checksec" in by_label:
+            checksec_resp = by_label["checksec"]
             signals["mitigations"] = {
                 k: v for k, v in checksec_resp.items()
                 if k not in ("status", "binary_id")
             }
-        else:
-            failed += 1
 
-        attempted += 1
-        behavior_resp = await self._ida.forward(action="classify_behavior", binary_id=binary_id)
-        if behavior_resp.get("status") == "ready":
+        if "classify_behavior" in by_label:
+            behavior_resp = by_label["classify_behavior"]
             signals["behavior_categories"] = behavior_resp.get("categories") or []
             signals["raw_classify_behavior"] = behavior_resp
-        else:
-            failed += 1
 
-        attempted += 1
-        caps_resp = await self._ida.forward(action="verify_capabilities", binary_id=binary_id)
-        if caps_resp.get("status") == "ready":
+        if "verify_capabilities" in by_label:
+            caps_resp = by_label["verify_capabilities"]
             signals["verified_capabilities"] = caps_resp.get("capabilities") or []
             signals["raw_verify_capabilities"] = caps_resp
-        else:
-            failed += 1
 
-        attempted += 1
-        capa_resp = await self._ida.forward(action="capa_scan", binary_id=binary_id)
-        if capa_resp.get("status") == "ready":
+        if "capa_scan" in by_label:
+            capa_resp = by_label["capa_scan"]
             signals["capa_matches"] = capa_resp.get("matches") or []
             signals["raw_capa_scan"] = capa_resp
-        else:
-            failed += 1
 
         # §1.4 — Imports + Exports tabs read these signals directly.
-        attempted += 1
-        imports_resp = await self._ida.forward(
-            action="imports", binary_id=binary_id,
-        )
-        if imports_resp.get("status") == "ready":
-            signals["imports"] = imports_resp.get("imports") or []
-        else:
-            failed += 1
-
-        attempted += 1
-        exports_resp = await self._ida.forward(
-            action="exports", binary_id=binary_id,
-        )
-        if exports_resp.get("status") == "ready":
-            signals["exports"] = exports_resp.get("exports") or []
-        else:
-            failed += 1
+        if "imports" in by_label:
+            signals["imports"] = by_label["imports"].get("imports") or []
+        if "exports" in by_label:
+            signals["exports"] = by_label["exports"].get("exports") or []
 
         return signals, attempted, failed
 

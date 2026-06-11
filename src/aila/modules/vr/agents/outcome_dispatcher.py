@@ -288,18 +288,18 @@ class OutcomeDispatcher:
                     dispatch_target=None,
                     reason=f"unknown_outcome_kind:{outcome_kind.value}",
                 )
-        except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
-            _log.warning(
-                "outcome_dispatcher FAILED outcome_id=%s kind=%s err=%s",
-                outcome_id, outcome_kind.value, exc,
+        except Exception:
+            # fix §184 — narrow except masked UnboundLocalError on
+            # `result` when an unexpected exception escaped before
+            # `result` was assigned. Catch everything, log with the
+            # full traceback, and reraise so the caller can mark the
+            # outcome FAILED instead of leaving a half-state with a
+            # phantom `result`.
+            _log.exception(
+                "outcome_dispatcher FAILED outcome_id=%s kind=%s",
+                outcome_id, outcome_kind.value,
             )
-            result = OutcomeDispatchResult(
-                outcome_id=outcome_id,
-                outcome_kind=outcome_kind,
-                dispatch_status=OutcomeDispatchStatus.FAILED,
-                dispatch_target=None,
-                reason=f"{type(exc).__name__}: {exc}",
-            )
+            raise
 
         await self._update_outcome_status(result)
         _log.info(
