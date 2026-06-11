@@ -132,7 +132,7 @@ class FunctionRankingDispatcher:
                     ranking = await self._rank_source(target_id, handles)
                 elif target_row.kind in {
                     TargetKind.NATIVE_BINARY.value,
-                    TargetKind.APK.value,
+                    TargetKind.ANDROID_APK.value,  # fix §228 — canonical name (TargetKind.APK never existed)
                     TargetKind.IPA.value,
                     TargetKind.JAR.value,
                     TargetKind.DOTNET_ASSEMBLY.value,
