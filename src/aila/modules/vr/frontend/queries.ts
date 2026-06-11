@@ -23,6 +23,8 @@ import type {
   VRWorkspaceSummary,
 } from "./types";
 
+import { formatBranchDisplayName } from "./branchDisplay";
+
 export function useVRProjects(offset = 0, limit = 20) {
   return useQuery({
     queryKey: ["vr", "projects", offset, limit],
@@ -733,9 +735,10 @@ export function useBranchLabel(
 ): string {
   if (!branchId || !branches) return "—";
   const hit = branches.find((b) => b.id === branchId);
-  if (!hit) return "branch";
-  const persona = hit.persona_voice ? `${hit.persona_voice}` : "branch";
-  // fork_at_turn disambiguates siblings spawned by the same persona
+  if (!hit) return "Unnamed branch";
+  // §181 — defense-in-depth fallback consolidated via formatBranchDisplayName.
+  // fork_at_turn disambiguates siblings spawned by the same persona.
+  const persona = formatBranchDisplayName(hit);
   return hit.fork_at_turn != null ? `${persona} @t${hit.fork_at_turn}` : persona;
 }
 
