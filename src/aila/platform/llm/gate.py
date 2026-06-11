@@ -16,7 +16,6 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from openai import AsyncOpenAI
 
 from ..exceptions import AILAError
 from .config import LLMConfigProvider, LLMRouting
@@ -166,26 +165,30 @@ async def _resolve_consensus_config(
 
 async def _run_consensus(
     *,
-    call_fn: Callable[..., Awaitable[Any]],
+    inner_call: Callable[..., Awaitable[Any]],
     config_provider: LLMConfigProvider,
     routing: LLMRouting,
     messages: list[dict[str, Any]],
     original_score: float,
     medium_threshold: float,
+    run_id: str | None = None,
 ) -> tuple[Any, float] | None:
     """Run consensus retry calls and compute majority vote.
 
-    Makes additional LLM calls (bypassing the pipeline to prevent recursion),
-    collects confidence scores, and returns the winning response if majority
-    vote passes.
+    §101: each retry routes through ``AilaLLMClient._inner_call`` so the
+    consensus tokens land in the same cost ledger as the primary call.
+    The inner_call bypasses the pipeline by design (no recursive gate).
 
     Args:
-        call_fn: Async callable for raw LLM calls (_single_call).
+        inner_call: Async callable that issues a single LLM call WITHOUT
+            triggering the pipeline. Wired to AilaLLMClient._inner_call.
         config_provider: For reading consensus config.
         routing: Original routing from the pipeline call.
         messages: Original message list.
         original_score: Confidence score of the original response.
         medium_threshold: Score threshold for "passing" in majority vote.
+        run_id: Run identifier for cost accounting (carried through to
+            ``persist_cost_record``).
 
     Returns:
         Tuple of (winning_response, winning_score) if majority improves,
@@ -221,21 +224,14 @@ async def _run_consensus(
                 task_type=routing.task_type,
             )
 
-        # Create fresh client for consensus call
-        client = AsyncOpenAI(
-            api_key=routing.api_key,
-            base_url=routing.base_url,
-            max_retries=0,
-        )
-
         try:
-            resp = await call_fn(
-                client=client,
+            resp = await inner_call(
                 routing=consensus_routing,
                 messages=messages,
                 response_format=None,
                 tools=None,
                 tool_executor=None,
+                run_id=run_id,
             )
             content = resp.content if resp.content else ""
             finish_reason = resp.finish_reason if resp.finish_reason else ""
@@ -269,7 +265,7 @@ async def _run_consensus(
 
 def make_gate_step(
     config_provider: LLMConfigProvider,
-    call_fn: Callable[..., Awaitable[Any]],
+    inner_call: Callable[..., Awaitable[Any]],
     emitter: EventEmitter | None = None,
 ) -> Any:
     """Create the gate pipeline step closure.
@@ -279,7 +275,11 @@ def make_gate_step(
 
     Args:
         config_provider: LLMConfigProvider for threshold/config reads.
-        call_fn: Async callable for consensus retry calls (bypasses pipeline).
+        inner_call: Async callable that issues a single LLM call WITHOUT
+            triggering the pipeline. Wired to
+            :meth:`AilaLLMClient._inner_call` so the consensus retries
+            charge against the same cost ledger as the primary call
+            (fix §101).
         emitter: Optional EventEmitter for audit logging.
 
     Returns:
@@ -324,12 +324,13 @@ def make_gate_step(
             ctx["consensus_strategy"] = strategy
 
             result = await _run_consensus(
-                call_fn=call_fn,
+                inner_call=inner_call,
                 config_provider=config_provider,
                 routing=routing,
                 messages=messages,
                 original_score=score,
                 medium_threshold=medium,
+                run_id=ctx.get("run_id") or None,
             )
 
             if result is not None:

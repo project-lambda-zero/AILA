@@ -830,6 +830,108 @@ class AilaLLMClient:
             retryable=True,
         )
 
+    async def _inner_call(
+        self,
+        *,
+        routing: Any,
+        messages: list[dict[str, Any]],
+        response_format: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_executor: Callable[[str, dict[str, Any]], Awaitable[str]] | None = None,
+        run_id: str | None = None,
+        team_id: str | None = None,
+    ) -> LLMResponse:
+        """Execute one API call WITHOUT pipeline recursion.
+
+        Used by gate consensus retries (§101) and verify second-model
+        calls (§100) — both must bypass the pipeline (would recurse into
+        themselves) but still accumulate cost against the operator's
+        run budget. Previously each step constructed its own
+        ``AsyncOpenAI`` directly and the tokens were invisible to the
+        cost tracker / persist_cost_record / Prometheus pipeline. Now
+        the platform builds the inner client the same way
+        :meth:`_call_with_retry` does and records the same cost ledger.
+
+        Pipeline recursion is avoided structurally — we call
+        :meth:`_single_call` directly instead of routing through
+        :class:`PipelineRunner`.
+        """
+        try:
+            _timeout_s = float(os.environ.get("AILA_LLM_TIMEOUT_SECONDS", "180"))
+        except ValueError:
+            _timeout_s = 180.0
+        client = AsyncOpenAI(
+            api_key=routing.api_key,
+            base_url=routing.base_url,
+            max_retries=0,
+            timeout=_timeout_s,
+        )
+        _call_start = _time_mod.perf_counter()
+        try:
+            response = await self._single_call(
+                client=client,
+                routing=routing,
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_executor=tool_executor,
+            )
+
+            # Cost recording — same shape as :meth:`_call_with_retry` so
+            # consensus / verify tokens land in the same per-run budget
+            # and the operator's spend reports tell the truth (fix §100).
+            try:
+                if self.cost_tracker is not None:
+                    self.cost_tracker.record(run_id, response.usage)
+            except Exception as exc:  # noqa: BLE001 — best-effort accounting
+                logger.debug("inner_call cost_tracker.record failed: %s", exc)
+
+            try:
+                from aila.platform.llm.cost import (  # noqa: PLC0415
+                    calculate_cost_usd,
+                    persist_cost_record,
+                )
+                _prompt_tokens = response.usage.get("prompt_tokens", 0)
+                _completion_tokens = response.usage.get("completion_tokens", 0)
+                _cost_usd, _ = await calculate_cost_usd(
+                    routing.model_id, _prompt_tokens, _completion_tokens,
+                    self._config._registry,
+                )
+                _duration_ms = int(
+                    (_time_mod.perf_counter() - _call_start) * 1000,
+                )
+                await persist_cost_record(
+                    run_id=run_id,
+                    model_id=routing.model_id,
+                    task_type=routing.task_type,
+                    team_id=team_id,
+                    prompt_tokens=_prompt_tokens,
+                    completion_tokens=_completion_tokens,
+                    cost_usd=_cost_usd,
+                    registry=self._config._registry,
+                    prompt_preview=None,
+                    response_preview=(
+                        response.content
+                        if isinstance(response.content, str) else None
+                    ),
+                    duration_ms=_duration_ms,
+                    status="ok",
+                )
+            except (
+                ValueError, sqlalchemy.exc.SQLAlchemyError, AttributeError,
+            ) as exc:
+                logger.debug(
+                    "inner_call cost persistence failed: %s",
+                    exc,
+                )
+
+            return response
+        finally:
+            try:
+                await client.close()
+            except Exception as exc:  # noqa: BLE001 — client cleanup
+                logger.debug("inner_call client.close() failed: %s", exc)
+
     async def _single_call(
         self,
         *,

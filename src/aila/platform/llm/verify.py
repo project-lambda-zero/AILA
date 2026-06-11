@@ -1,15 +1,15 @@
 """Second-model verification pipeline step.
 
-Triggered when confidence is below a configurable threshold.  Sends the
-SAME original prompt (blind -- no first model output) to a different model
-and compares verdicts.  Both models' evidence and verdicts are stored in
-VerificationRecord for full audit transparency.
+Triggered when the primary model's confidence is below the configured
+threshold. Issues a blind second call with the ORIGINAL messages so the
+second model has not seen the first model's output, then compares
+confidence verdicts and records a VerificationRecord.
 
-The second model sees only the raw messages -- never the first model's
-response.  This prevents anchoring bias in the verification assessment.
-
-The verification step follows the same AsyncOpenAI client creation pattern
-as gate.py's consensus retry: fresh client, bypass pipeline via call_fn.
+§100: the second call goes through ``AilaLLMClient._inner_call`` so the
+tokens accumulate against the run's cost budget, cost-record persistence
+fires the same way as the primary call, and the Prometheus / domain-
+event pipeline sees the spend. The previous implementation constructed
+``AsyncOpenAI`` directly and the verifier's cost was invisible.
 """
 
 from __future__ import annotations
@@ -18,13 +18,12 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from openai import AsyncOpenAI
-
 from .config import LLMConfigProvider, LLMRouting
 from .gate import extract_confidence
 
 if TYPE_CHECKING:
     from ..events.emitter import EventEmitter
+    from .client import AilaLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +92,7 @@ def _emit_verify_event(
 
 def make_verify_step(
     config_provider: LLMConfigProvider,
-    call_fn: Callable[..., Awaitable[Any]],
+    inner_call: Callable[..., Awaitable[Any]],
     emitter: EventEmitter | None = None,
 ) -> Any:
     """Create the verify pipeline step closure.
@@ -107,7 +106,10 @@ def make_verify_step(
 
     Args:
         config_provider: LLMConfigProvider for threshold/model config reads.
-        call_fn: Async callable for raw LLM calls (bypasses pipeline).
+        inner_call: Async callable that issues a single LLM call WITHOUT
+            triggering the pipeline. Wired to
+            :meth:`AilaLLMClient._inner_call` so cost tracking + persistence
+            fire on the verifier's tokens (fix §100).
         emitter: Optional EventEmitter for audit logging.
 
     Returns:
@@ -167,8 +169,10 @@ def make_verify_step(
         first_confidence = confidence_score
         first_level = ctx.get("confidence", "UNKNOWN")
 
-        # Call second model with ORIGINAL messages (blind -- no first model output)
-        # Follow gate.py pattern: create fresh client, bypass pipeline via call_fn
+        # Call second model with ORIGINAL messages (blind -- no first model output).
+        # §100: route through AilaLLMClient._inner_call so the verifier's
+        # tokens land in the same cost ledger as the primary call. The inner
+        # call still bypasses the pipeline by design (no recursive verify).
         try:
             verify_routing = LLMRouting(
                 model_id=verify_model,
@@ -180,23 +184,14 @@ def make_verify_step(
                 task_type=task_type,
             )
 
-            client = AsyncOpenAI(
-                api_key=routing.api_key,
-                base_url=routing.base_url,
-                max_retries=0,
+            second_resp = await inner_call(
+                routing=verify_routing,
+                messages=messages,  # Original messages -- blind assessment
+                response_format=None,
+                tools=None,
+                tool_executor=None,
+                run_id=ctx.get("run_id") or None,
             )
-
-            try:
-                second_resp = await call_fn(
-                    client=client,
-                    routing=verify_routing,
-                    messages=messages,  # Original messages -- blind assessment
-                    response_format=None,
-                    tools=None,
-                    tool_executor=None,
-                )
-            finally:
-                await client.close()
 
             second_content = second_resp.content if second_resp.content else ""
             second_finish = second_resp.finish_reason if second_resp.finish_reason else ""
