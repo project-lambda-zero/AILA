@@ -236,16 +236,16 @@ class OutcomeDispatcher:
                 reason="already_dispatched",
             )
         if state != OUTCOME_STATE_APPROVED:
-            _log.warning(
-                "outcome_dispatcher UNKNOWN_STATE outcome_id=%s state=%s",
-                outcome_id, state,
+            # fix §183 — supersedes §185. An unknown state means the
+            # outcome lifecycle is corrupted; SKIPPED is silent and
+            # hides the corruption. Raise so the worker logs the
+            # traceback and the caller marks the outcome FAILED.
+            _log.error(
+                "outcome_dispatcher UNKNOWN_STATE outcome_id=%s state=%s kind=%s",
+                outcome_id, state, outcome_kind.value,
             )
-            return OutcomeDispatchResult(
-                outcome_id=outcome_id,
-                outcome_kind=outcome_kind,
-                dispatch_status=OutcomeDispatchStatus.SKIPPED,
-                dispatch_target=None,
-                reason=f"unknown_state:{state}",
+            raise OutcomeDispatcherError(
+                f"unknown outcome state outcome_id={outcome_id} state={state!r}",
             )
         try:
             if outcome_kind == OutcomeKind.AUDIT_MEMO:
