@@ -165,7 +165,7 @@ async def pause_investigation_atomic(
                 "SELECT run_id, current_state FROM workflow_state_cursor "
                 "WHERE run_id = ANY(:ids) FOR UPDATE"
             ).bindparams(ids=[investigation_id, *branch_ids])
-            locked = (await uow.session.execute(lock_stmt)).all()
+            locked = (await uow.session.exec(lock_stmt)).all()
             pausable = [
                 row.run_id
                 for row in locked
@@ -185,7 +185,7 @@ async def pause_investigation_atomic(
                     ts=now,
                     ids=pausable,
                 )
-                result = await uow.session.execute(upd_stmt)
+                result = await uow.session.exec(upd_stmt)
                 summary["paused_cursors"] = result.rowcount or 0
 
         # 3. Cancel TaskRecord rows in active dispatch states. Phase B
@@ -210,7 +210,7 @@ async def pause_investigation_atomic(
                 marker=f"operator_pause:{user_id or 'unknown'}\n",
                 ids=[investigation_id, *branch_ids],
             )
-            cancel_result = await uow.session.execute(cancel_stmt)
+            cancel_result = await uow.session.exec(cancel_stmt)
             summary["cancelled_tasks"] = cancel_result.rowcount or 0
 
         # 4. Flip the investigation status derived projection.
@@ -307,7 +307,7 @@ async def resume_investigation_atomic(
             "  AND current_state = :paused "
             "FOR UPDATE"
         ).bindparams(paused=RESERVED_PAUSED, ids=candidate_ids)
-        locked = (await uow.session.execute(lock_stmt)).all()
+        locked = (await uow.session.exec(lock_stmt)).all()
 
         for row in locked:
             if row.archived_state:
@@ -331,7 +331,7 @@ async def resume_investigation_atomic(
                     ts=now,
                     paused=RESERVED_PAUSED,
                 )
-                await uow.session.execute(upd_stmt)
+                await uow.session.exec(upd_stmt)
             summary["resumed_cursors"] = len(resumed_run_ids)
 
         # 3. Flip inv.status back to RUNNING.
