@@ -109,7 +109,7 @@ def child_outcome_to_verdict(
         )
 
     payload: dict[str, Any] = outcome.payload or {}
-    evidence_locations = _extract_evidence_locations(payload)
+    evidence_locations, evidence_locations_total = _extract_evidence_locations(payload)
     verifier_verdict, verifier_conf = _extract_verifier_signal(payload)
     numeric_conf = (
         verifier_conf
@@ -130,6 +130,7 @@ def child_outcome_to_verdict(
             primary_outcome_id=outcome.id,
             reason=None,
             evidence_locations=evidence_locations,
+            evidence_locations_total=evidence_locations_total,
             agent_summary=agent_summary,
         )
 
@@ -145,6 +146,7 @@ def child_outcome_to_verdict(
             primary_outcome_id=outcome.id,
             reason=None,
             evidence_locations=evidence_locations,
+            evidence_locations_total=evidence_locations_total,
             agent_summary=agent_summary,
         )
 
@@ -159,6 +161,7 @@ def child_outcome_to_verdict(
                 primary_outcome_id=outcome.id,
                 reason=f"verifier_inconclusive_conf_{numeric_conf:.2f}",
                 evidence_locations=evidence_locations,
+                evidence_locations_total=evidence_locations_total,
                 agent_summary=agent_summary,
             )
         if numeric_conf >= _FINDING_CONFIDENCE_FLOOR:
@@ -170,6 +173,7 @@ def child_outcome_to_verdict(
                 primary_outcome_id=outcome.id,
                 reason=None,
                 evidence_locations=evidence_locations,
+                evidence_locations_total=evidence_locations_total,
                 agent_summary=agent_summary,
             )
         return MasvsControlVerdict(
@@ -180,6 +184,7 @@ def child_outcome_to_verdict(
             primary_outcome_id=outcome.id,
             reason=f"direct_finding_low_confidence_{numeric_conf:.2f}",
             evidence_locations=evidence_locations,
+            evidence_locations_total=evidence_locations_total,
             agent_summary=agent_summary,
         )
 
@@ -195,6 +200,7 @@ def child_outcome_to_verdict(
         primary_outcome_id=outcome.id,
         reason=f"outcome_kind={outcome.outcome_kind.value}",
         evidence_locations=evidence_locations,
+        evidence_locations_total=evidence_locations_total,
         agent_summary=agent_summary,
     )
 
@@ -396,7 +402,7 @@ _EVIDENCE_LOCATION_CAP: int = 32
 
 def _extract_evidence_locations(
     payload: dict[str, Any],
-) -> list[MasvsEvidenceLocation]:
+) -> tuple[list[MasvsEvidenceLocation], int]:
     """Read ``payload['affected_components']`` defensively.
 
     Per ``vr/agents/prompts/system_audit.md``, every DIRECT_FINDING
@@ -421,10 +427,15 @@ def _extract_evidence_locations(
     the field or every entry is malformed, an empty list is the
     correct, honest output.
     """
+    # fix §217 — return (capped_list, true_total) so the verdict carries
+    # the pre-cap count for "N of M shown" rendering. The list is
+    # bounded by :data:`_EVIDENCE_LOCATION_CAP`; the int counts every
+    # validly-formed entry the agent emitted before truncation.
     raw = payload.get("affected_components")
     if not isinstance(raw, list):
-        return []
+        return [], 0
     locations: list[MasvsEvidenceLocation] = []
+    total = 0
     for entry in raw:
         if not isinstance(entry, dict):
             continue
@@ -436,9 +447,9 @@ def _extract_evidence_locations(
         function_text = function_value.strip()
         if not file_text or not function_text:
             continue
-        locations.append(
-            MasvsEvidenceLocation(file=file_text, function=function_text),
-        )
-        if len(locations) >= _EVIDENCE_LOCATION_CAP:
-            break
-    return locations
+        total += 1
+        if len(locations) < _EVIDENCE_LOCATION_CAP:
+            locations.append(
+                MasvsEvidenceLocation(file=file_text, function=function_text),
+            )
+    return locations, total

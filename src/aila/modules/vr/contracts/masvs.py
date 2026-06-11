@@ -175,6 +175,18 @@ class MasvsControlVerdict(BaseModel):
             "the operator-visible evidence trail."
         ),
     )
+    evidence_locations_total: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            # fix §217 — surface true count so renderer can show 'N of M shown'.
+            "Total count of validly-formed entries in the child outcome's "
+            "``payload['affected_components']`` BEFORE the per-verdict cap "
+            "is applied to :attr:`evidence_locations`. The PDF renderer "
+            "uses this to show 'N of M shown' when the cap truncated a "
+            "complex audit's evidence trail."
+        ),
+    )
     agent_summary: str | None = Field(
         default=None,
         max_length=4000,
