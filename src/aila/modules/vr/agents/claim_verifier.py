@@ -241,6 +241,7 @@ OUTPUT FORMAT (strict JSON, no prose, no markdown fences):
   "preconditions": [
     {
       "id": "P1",
+      "rank": 1,
       "claim": "<one-sentence claim the finding depends on>",
       "if_refuted_then": "<what the finding gets if this is false>",
       "probe": {
@@ -255,6 +256,11 @@ OUTPUT FORMAT (strict JSON, no prose, no markdown fences):
 
 Rules:
   - 3 to 6 preconditions. Be selective; pick the load-bearing ones.
+  - ``rank`` is a 1-based importance ordinal: 1 = most load-bearing,
+    2 = next most load-bearing, etc. Output as many preconditions as
+    are warranted by the finding — the executor runs at most the top
+    8 by rank, so put the load-bearing ones first by ``rank``. Rank
+    ties are broken by output order.
   - Each ``probe`` must be a real audit-mcp tool (search_source,
     search_macros, read_function, search_constants, callers_of,
     callees_of, etc.). Use ``$INDEX_ID`` as a literal placeholder for
@@ -408,6 +414,22 @@ class ClaimVerifierAgent:
         preconditions = self._parse_preconditions(extractor_response.content)
         if not preconditions:
             return {"status": "failed", "reason": "extractor_returned_no_preconditions"}
+        # fix §341 — pick top-N probes by extractor-supplied rank, not
+        # by sequence order. Output order is the LLM's writing order,
+        # not a load-bearing-ness signal; without this sort an extractor
+        # that lists low-rank preconditions first burned the probe
+        # budget on irrelevant ones. ``rank`` is 1-based; missing/non-
+        # numeric rank sorts to the end via a large sentinel so old
+        # extractor outputs degrade to sequence order rather than
+        # crashing on the comparison.
+        preconditions = sorted(
+            enumerate(preconditions),
+            key=lambda iv: (
+                iv[1].get("rank") if isinstance(iv[1].get("rank"), (int, float)) else 10_000,
+                iv[0],
+            ),
+        )
+        preconditions = [p for _, p in preconditions]
 
         # Stage 2: probe executor — substitute $INDEX_ID + run each probe
         bridge = AuditMcpBridgeTool()
