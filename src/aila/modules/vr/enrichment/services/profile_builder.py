@@ -254,8 +254,16 @@ class CapabilityProfileBuilder:
                 descriptor = json.loads(target_row.descriptor_json or "{}")
                 kind_str = target_row.kind
 
+                # fix §224 — gather methods return (signals, attempted, failed)
+                # so we can refuse to mark the stage DONE when half-or-more of
+                # the MCP calls failed (previously a wedged bridge produced an
+                # empty-shell profile silently flipped to DONE).
+                signals_attempted = 0
+                signals_failed = 0
                 if kind_str == TargetKind.SOURCE_REPO.value:
-                    signals = await self._gather_source_signals(handles)
+                    signals, signals_attempted, signals_failed = (
+                        await self._gather_source_signals(handles)
+                    )
                 elif kind_str in {
                     TargetKind.NATIVE_BINARY.value,
                     TargetKind.ANDROID_APK.value,
@@ -266,7 +274,9 @@ class CapabilityProfileBuilder:
                     TargetKind.KERNEL_MODULE.value,
                     TargetKind.HYPERVISOR_IMAGE.value,
                 }:
-                    signals = await self._gather_binary_signals(handles)
+                    signals, signals_attempted, signals_failed = (
+                        await self._gather_binary_signals(handles)
+                    )
                 else:
                     # Unsupported kinds (cve / protocol_capture / crash_input /
                     # patch_diff) — no MCP gather. Operator can still drive
@@ -274,6 +284,16 @@ class CapabilityProfileBuilder:
                     signals = {
                         "primary_language": descriptor.get("primary_language") or "",
                     }
+
+                # fix §224 — refuse "silent empty profile" when majority of MCP
+                # signals failed. Only enforced when attempts were made (the
+                # unsupported-kind branch above sets attempted=0 by design).
+                if signals_attempted > 0 and signals_failed >= signals_attempted / 2:
+                    raise ProfileBuilderError(
+                        f"all MCP signals failed "
+                        f"(attempted={signals_attempted} failed={signals_failed} "
+                        f"target_id={target_id} kind={kind_str})",
+                    )
 
                 # Rule engine produces applicable_* lists deterministically
                 # from (kind, language) tuples. No MCP calls in this step.
@@ -312,7 +332,12 @@ class CapabilityProfileBuilder:
             _log.info("profile_builder: target %s in-flight — skip", target_id)
             return None
 
-    async def _gather_source_signals(self, handles: dict[str, Any]) -> dict[str, Any]:
+    async def _gather_source_signals(
+        self, handles: dict[str, Any],
+    ) -> tuple[dict[str, Any], int, int]:
+        # fix §224 — returns (signals, n_attempted, n_failed) so build() can
+        # detect "all MCP signals failed" instead of silently producing an
+        # empty-shell profile when audit-mcp is wedged.
         index_id = handles.get("audit_mcp_index_id")
         if not index_id:
             raise ProfileBuilderError(
@@ -321,26 +346,43 @@ class CapabilityProfileBuilder:
             )
 
         signals: dict[str, Any] = {}
+        attempted = 0
+        failed = 0
+
+        attempted += 1
         langs_resp = await self._audit_mcp.forward(action="detect_languages", index_id=index_id)
         if langs_resp.get("status") == "ready":
             signals["primary_language"] = langs_resp.get("primary") or ""
             signals["secondary_languages"] = list(langs_resp.get("secondary") or [])
             signals["raw_detect_languages"] = langs_resp
+        else:
+            failed += 1
 
+        attempted += 1
         surface_resp = await self._audit_mcp.forward(action="attack_surface", index_id=index_id)
         if surface_resp.get("status") == "ready":
             signals["frameworks"] = list(surface_resp.get("frameworks") or [])
             signals["entrypoint_count"] = int(surface_resp.get("entrypoint_count") or 0)
             signals["raw_attack_surface"] = surface_resp
+        else:
+            failed += 1
 
+        attempted += 1
         prean_resp = await self._audit_mcp.forward(action="preanalysis", index_id=index_id)
         if prean_resp.get("status") == "ready":
             signals["blast_radius_top"] = prean_resp.get("blast_radius_top") or []
             signals["raw_preanalysis"] = prean_resp
+        else:
+            failed += 1
 
-        return signals
+        return signals, attempted, failed
 
-    async def _gather_binary_signals(self, handles: dict[str, Any]) -> dict[str, Any]:
+    async def _gather_binary_signals(
+        self, handles: dict[str, Any],
+    ) -> tuple[dict[str, Any], int, int]:
+        # fix §224 — returns (signals, n_attempted, n_failed) so build() can
+        # detect "all MCP signals failed" instead of silently producing an
+        # empty-shell profile when IDA bridge is wedged.
         binary_id = handles.get("binary_id")
         if not binary_id:
             raise ProfileBuilderError(
@@ -349,6 +391,10 @@ class CapabilityProfileBuilder:
             )
 
         signals: dict[str, Any] = {}
+        attempted = 0
+        failed = 0
+
+        attempted += 1
         survey_resp = await self._ida.forward(action="binary_survey", binary_id=binary_id)
         if survey_resp.get("status") == "ready":
             signals["primary_language"] = (
@@ -357,42 +403,63 @@ class CapabilityProfileBuilder:
             signals["arch"] = survey_resp.get("arch") or ""
             signals["entry_points"] = survey_resp.get("entry_points") or []
             signals["raw_binary_survey"] = survey_resp
+        else:
+            failed += 1
 
+        attempted += 1
         checksec_resp = await self._ida.forward(action="checksec", binary_id=binary_id)
         if checksec_resp.get("status") == "ready":
             signals["mitigations"] = {
                 k: v for k, v in checksec_resp.items()
                 if k not in ("status", "binary_id")
             }
+        else:
+            failed += 1
 
+        attempted += 1
         behavior_resp = await self._ida.forward(action="classify_behavior", binary_id=binary_id)
         if behavior_resp.get("status") == "ready":
             signals["behavior_categories"] = behavior_resp.get("categories") or []
             signals["raw_classify_behavior"] = behavior_resp
+        else:
+            failed += 1
 
+        attempted += 1
         caps_resp = await self._ida.forward(action="verify_capabilities", binary_id=binary_id)
         if caps_resp.get("status") == "ready":
             signals["verified_capabilities"] = caps_resp.get("capabilities") or []
             signals["raw_verify_capabilities"] = caps_resp
+        else:
+            failed += 1
 
+        attempted += 1
         capa_resp = await self._ida.forward(action="capa_scan", binary_id=binary_id)
         if capa_resp.get("status") == "ready":
             signals["capa_matches"] = capa_resp.get("matches") or []
             signals["raw_capa_scan"] = capa_resp
+        else:
+            failed += 1
 
         # §1.4 — Imports + Exports tabs read these signals directly.
+        attempted += 1
         imports_resp = await self._ida.forward(
             action="imports", binary_id=binary_id,
         )
         if imports_resp.get("status") == "ready":
             signals["imports"] = imports_resp.get("imports") or []
+        else:
+            failed += 1
+
+        attempted += 1
         exports_resp = await self._ida.forward(
             action="exports", binary_id=binary_id,
         )
         if exports_resp.get("status") == "ready":
             signals["exports"] = exports_resp.get("exports") or []
+        else:
+            failed += 1
 
-        return signals
+        return signals, attempted, failed
 
     def _compose_profile(
         self,
