@@ -394,14 +394,20 @@ class StageTracker:
                 uow.session.add(row)
                 await uow.session.commit()
             except Exception as save_exc:  # noqa: BLE001
-                # We MUST NOT swallow the original work exception just
-                # because the state-commit hiccupped. Log + let original
-                # propagate.
+                # fix §322 — if the work itself succeeded (exc is None)
+                # but the state-commit failed, the caller MUST know:
+                # otherwise they treat the stage as DONE while the DB
+                # still says RUNNING and the next worker double-runs the
+                # work. If the work already raised, keep the swallow so
+                # the original exception still propagates as the more
+                # informative root cause.
                 _log.error(
                     "stage_tracker: failed to commit stage status for %s/%s: %s",
                     self.target_id, self.stage.value, save_exc,
                     exc_info=True,
                 )
+                if exc is None:
+                    raise
 
         # Returning False/None propagates the exception; True swallows.
         # Never swallow — caller wants to know.
