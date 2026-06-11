@@ -608,9 +608,14 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 investigation_id, result.trigger, result.action_taken,
             )
     except Exception as exc:  # noqa: BLE001 — best-effort, never blocks emit
+        # fix §350 — finalize is best-effort because the emit terminal
+        # already wrote the cursor; the traceback surfaces a structural
+        # finalize regression (handler crash, DB unreachable) on every
+        # occurrence instead of just the class name.
         _log.warning(
             "investigation_emit FINALIZE failed inv=%s err=%s",
             investigation_id, exc,
+            exc_info=True,
         )
     _log.info(
         "investigation_emit DONE investigation_id=%s exit_reason=%s final_status=%s outcome_id=%s",
