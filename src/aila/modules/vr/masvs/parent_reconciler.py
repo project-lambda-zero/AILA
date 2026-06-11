@@ -796,7 +796,11 @@ async def _wake_stale_branches(uow: UnitOfWork) -> int:
     return enqueued
 
 
-async def _synthesize_no_finding_outcomes(uow: UnitOfWork) -> int:
+async def _synthesize_no_finding_outcomes(
+    uow: UnitOfWork,
+    *,
+    only_id: str | None = None,
+) -> int:
     """Synthesize an ``audit_memo`` outcome for orphaned investigations.
 
     Operator rule: EVERY investigation must terminate with an outcome,
@@ -814,28 +818,9 @@ async def _synthesize_no_finding_outcomes(uow: UnitOfWork) -> int:
     step 5 stale-detector, ``primary_outcome_id=NULL``, investigation
     still ``running``. No closer exists for this shape.
 
-    Per operator rule: do NOT just mark completed without an outcome.
-    Instead synthesize an honest negative-result outcome:
-
-      - ``outcome_kind = AUDIT_MEMO`` — the catalog kind for
-        "this team audited and here's what they concluded";
-      - ``confidence = CAVEATED`` — honest about the limitation;
-      - ``state = approved`` — no quorum needed, all branches are
-        already terminal so no one can vote;
-      - ``dispatch_status = skipped`` — nothing to dispatch
-        downstream;
-      - ``branch_id`` = the branch with highest ``turn_count``
-        (the most "informed" branch; ties broken by created_at
-        ASC for determinism);
-      - payload includes a structured summary of which branches
-        abandoned, why, and the total turn count consumed.
-
-    Then set ``investigation.primary_outcome_id = new outcome.id``,
-    ``status = completed``, ``stopped_at`` and ``updated_at``.
-
-    Direct SQL INSERT for the outcome row because the ORM model has
-    13 columns including JSON fields; constructing via SQL avoids
-    importing the model and gives a single round-trip.
+    Phase C: optional ``only_id`` filters the orphan scan to one
+    investigation. The finalize chokepoint passes this so per-id
+    invocations are O(1) instead of O(N) scans.
 
     Returns count of investigations resolved this tick.
     """
@@ -852,35 +837,35 @@ async def _synthesize_no_finding_outcomes(uow: UnitOfWork) -> int:
     branch = VRInvestigationBranchRecord
 
     # Find running investigations with primary_outcome_id IS NULL and
-    # where every branch is in a terminal state. The GROUP BY pattern
-    # gives us branch_count + terminal_count per investigation cheaply.
-    rows = (
-        await uow.session.exec(
-            select(
-                inv.id,
-                func.count(branch.id).label("branch_count"),
-                func.sum(
-                    coalesce(
-                        (
-                            branch.status.in_(
-                                (
-                                    BranchStatus.ABANDONED.value,
-                                    BranchStatus.COMPLETED.value,
-                                    BranchStatus.MERGED.value,
-                                    BranchStatus.PROMOTED.value,
-                                ),
-                            )
-                        ).cast(__import__("sqlalchemy").Integer),
-                        0,
-                    ),
-                ).label("terminal_count"),
-            )
-            .select_from(inv)
-            .join(branch, branch.investigation_id == inv.id, isouter=True)
-            .where(inv.status == InvestigationStatus.RUNNING.value)
-            .group_by(inv.id),
+    # where every branch is in a terminal state.
+    candidate_stmt = (
+        select(
+            inv.id,
+            func.count(branch.id).label("branch_count"),
+            func.sum(
+                coalesce(
+                    (
+                        branch.status.in_(
+                            (
+                                BranchStatus.ABANDONED.value,
+                                BranchStatus.COMPLETED.value,
+                                BranchStatus.MERGED.value,
+                                BranchStatus.PROMOTED.value,
+                            ),
+                        )
+                    ).cast(__import__("sqlalchemy").Integer),
+                    0,
+                ),
+            ).label("terminal_count"),
         )
-    ).all()
+        .select_from(inv)
+        .join(branch, branch.investigation_id == inv.id, isouter=True)
+        .where(inv.status == InvestigationStatus.RUNNING.value)
+        .group_by(inv.id)
+    )
+    if only_id is not None:
+        candidate_stmt = candidate_stmt.where(inv.id == only_id)
+    rows = (await uow.session.exec(candidate_stmt)).all()
 
     orphan_inv_ids: list[str] = []
     for row in rows:
@@ -1050,7 +1035,11 @@ async def _synthesize_no_finding_outcomes(uow: UnitOfWork) -> int:
 
 
 
-async def _close_rejected_outcomes(uow: UnitOfWork) -> int:
+async def _close_rejected_outcomes(
+    uow: UnitOfWork,
+    *,
+    only_id: str | None = None,
+) -> int:
     """Force-close investigations whose primary outcome was REJECTED by quorum.
 
     Mirror of the existing ``auto_approved_no_active_voters`` path in
@@ -1071,6 +1060,10 @@ async def _close_rejected_outcomes(uow: UnitOfWork) -> int:
     remaining active branches with ``closed_reason='outcome_rejected
     _by_quorum'`` so the audit trail is clear.
 
+    Phase C: optional ``only_id`` filters the candidate scan to one
+    investigation. The finalize chokepoint passes this so per-id
+    invocations are O(1) instead of O(N) scans.
+
     Returns the count of investigations closed this tick.
     """
     from aila.modules.vr.db_models import (  # noqa: PLC0415
@@ -1087,14 +1080,15 @@ async def _close_rejected_outcomes(uow: UnitOfWork) -> int:
     review = VRInvestigationOutcomeReviewRecord
 
     # Find running investigations whose primary outcome is rejected.
-    candidates = (
-        await uow.session.exec(
-            select(inv.id, inv.primary_outcome_id, out.branch_id)
-            .join(out, out.id == inv.primary_outcome_id)
-            .where(inv.status == InvestigationStatus.RUNNING.value)
-            .where(out.state.in_(("rejected", "refuted"))),
-        )
-    ).all()
+    candidate_stmt = (
+        select(inv.id, inv.primary_outcome_id, out.branch_id)
+        .join(out, out.id == inv.primary_outcome_id)
+        .where(inv.status == InvestigationStatus.RUNNING.value)
+        .where(out.state.in_(("rejected", "refuted")))
+    )
+    if only_id is not None:
+        candidate_stmt = candidate_stmt.where(inv.id == only_id)
+    candidates = (await uow.session.exec(candidate_stmt)).all()
     if not candidates:
         return 0
 
