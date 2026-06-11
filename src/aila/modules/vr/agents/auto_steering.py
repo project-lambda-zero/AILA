@@ -710,6 +710,8 @@ async def maybe_post_auto_steering(
     except Exception as exc:  # noqa: BLE001 — auto-steering must never fail loud
         _consecutive_failures += 1
         if _consecutive_failures >= _FAILURE_ESCALATION_THRESHOLD:
+            # fix §350 — escalation includes traceback so operator can
+            # diagnose systemic root cause from a single log line.
             _log.error(
                 "auto_steering: %d consecutive rule-evaluation failures — "
                 "likely systemic (bridge down, raw_result schema drift, "
@@ -717,14 +719,19 @@ async def maybe_post_auto_steering(
                 "tool=%s err=%s",
                 _consecutive_failures, investigation_id, branch_id,
                 tool_name, exc,
+                exc_info=True,
             )
             _consecutive_failures = 0
         else:
+            # fix §350 — traceback also on the per-occurrence warning;
+            # first-failure debugging shouldn't have to wait for the
+            # escalation threshold.
             _log.warning(
                 "auto_steering: rule evaluation failed inv=%s branch=%s "
                 "tool=%s err=%s (consecutive=%d)",
                 investigation_id, branch_id, tool_name, exc,
                 _consecutive_failures,
+                exc_info=True,
             )
         return None
     # Clean run — reset the counter so transient hiccups don't
