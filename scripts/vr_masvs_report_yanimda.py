@@ -1630,150 +1630,256 @@ def _short_id(uuid_str: str) -> str:
 
 
 def build_cover(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
+    """Render the cover page.
+
+    Layout (top → bottom):
+
+    1. Document sigil row (small mono, just below the navy banner)
+    2. Title block — ``MASVS L1`` / ``AUDIT REPORT`` in Vodafone Lt
+    3. Two-column row — subtitle prose on the LEFT, 6-row APK
+       fingerprint card on the RIGHT (aligned right edge)
+    4. DASHBOARD band — six big-number columns (TOTAL / FAIL / REVIEW /
+       INFO / INCONC / PASS) with verdict-coloured numerals
+    5. AT A GLANCE panel — bottom quarter, top three FAILs with their
+       group sigil and one-line title
+    6. Footnote — distribution + honesty contract caveat
+
+    The per-group sigil bar that used to live here was moved to the
+    §02 EXECUTIVE SUMMARY heatmap so the cover stays a 5-second scan
+    surface.
+    """
     apk = bundle.apk
     audit = bundle.audit["audit"]
-    target = bundle.audit["target"]
     sum_ = apk.get("static_summary") or {}
 
     story: list[Flowable] = []
     # The cover chrome (top navy banner, bottom rust bar, tick band) is
-    # painted via the "cover" PageTemplate's onPage hook (_draw_cover_chrome).
-    # The first flowable just pushes the title block below the banner.
+    # painted via the "cover" PageTemplate's onPage hook
+    # (_draw_cover_chrome). The first flowable just pushes the title
+    # block below the banner.
     story.append(Spacer(1, 8 * mm))
 
     # Sigil row directly below the navy banner the onPage hook paints.
     sigil_style = ParagraphStyle(
-        "Sigil", parent=s["mono"], fontSize=9.0, leading=10.0,
+        "Sigil", parent=s["mono"], fontSize=8.6, leading=10.0,
         textColor=COL_MUTED, letterSpace=4.0,
     )
     story.append(Paragraph(
         f"DOCUMENT  ·  YANIMDA-MASVS-L1  ·  REVISION {REPORT_VERSION}  ·  COPY  001 OF 001",
         sigil_style,
     ))
-    story.append(Spacer(1, 16 * mm))
+    story.append(Spacer(1, 14 * mm))
 
-    # Big title block
+    # ── 2. Big title block (top third of page) ──
     story.append(Paragraph("MASVS L1", s["cover_title"]))
     story.append(Paragraph("AUDIT  REPORT", s["cover_title"]))
     story.append(Spacer(1, 4 * mm))
-    story.append(Paragraph(
-        "OWASP Mobile Application Security Verification Standard · Level 1",
-        s["cover_subtitle"],
-    ))
-    story.append(Spacer(1, 6 * mm))
     story.append(HorizontalRule(PAGE_W - MARGIN_L - MARGIN_R, thickness=1.6))
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 5 * mm))
 
-    # Subject identification — dense mono grid
-    meta_rows = [
-        ["SUBJECT", target.get("display_name") or sum_.get("package", "")],
-        ["PACKAGE", sum_.get("package") or apk.get("package_name") or "—"],
-        ["VERSION", f"{sum_.get('version_name', '—')}  (code {sum_.get('version_code', '—')})"],
-        ["SDK", f"min {sum_.get('min_sdk', '—')}  ·  target {sum_.get('target_sdk', '—')}"],
-        ["APK SHA-256", apk.get("apk_sha256", "—")],
-        ["DECOMPILED CLASSES", f"{apk.get('jadx_class_count', '—'):,}".replace(",", " ")],
-        ["MOBSF APPSEC SCORE", str((apk.get("mobsf_scan") or {}).get("appsec", {}).get("security_score", "—"))],
+    # ── 3. Two-column row — subtitle (left) + APK fingerprint (right) ──
+    subtitle_left = [
+        Paragraph(
+            "OWASP Mobile Application Security Verification Standard · Level 1",
+            s["cover_subtitle"],
+        ),
+        Spacer(1, 3 * mm),
+        Paragraph(
+            "53 controls evaluated by a 6-persona reasoning panel against the "
+            f"<b>{sum_.get('package') or apk.get('package_name') or '—'}</b> APK. "
+            "Verdicts derived by the production mapper, agent reasoning "
+            "rendered verbatim.",
+            ParagraphStyle("CoverLead", parent=s["body"], fontSize=10.0,
+                           leading=13.0, textColor=COL_INK,
+                           alignment=TA_LEFT),
+        ),
     ]
-    meta_table = Table(
-        meta_rows, colWidths=[40 * mm, None],
+
+    # Right-aligned APK fingerprint — 5 rows max
+    fp_label_st = ParagraphStyle("FpL", parent=s["body_xs"],
+                                 fontName=_font("Sans-Bold", "Helvetica-Bold"),
+                                 fontSize=6.6, leading=8.0, letterSpace=1.4,
+                                 textColor=COL_MUTED, alignment=TA_RIGHT)
+    fp_value_st = ParagraphStyle("FpV", parent=s["body_sm"],
+                                 fontName=_font("Mono-Bold", "Courier-Bold"),
+                                 fontSize=8.4, leading=10.6,
+                                 textColor=COL_INK, alignment=TA_RIGHT)
+    sha = (apk.get("apk_sha256") or "")
+    sha_short = (sha[:16] + "…" + sha[-8:]) if len(sha) >= 26 else sha
+    fp_rows = [
+        [Paragraph("PACKAGE", fp_label_st),
+         Paragraph(sum_.get("package") or apk.get("package_name") or "—",
+                   fp_value_st)],
+        [Paragraph("VERSION", fp_label_st),
+         Paragraph(
+             f"{sum_.get('version_name', '—')}  ·  build {sum_.get('version_code', '—')}",
+             fp_value_st)],
+        [Paragraph("APK SHA-256", fp_label_st),
+         Paragraph(sha_short or "—", fp_value_st)],
+        [Paragraph("AUDIT ID", fp_label_st),
+         Paragraph((audit.get("id") or "—")[:36], fp_value_st)],
+        [Paragraph("AUDIT WINDOW", fp_label_st),
+         Paragraph(_duration_str(audit.get("created_at"),
+                                  audit.get("stopped_at")),
+                   fp_value_st)],
+        [Paragraph("CONTROLS EVALUATED", fp_label_st),
+         Paragraph(f"{len(bundle.findings)} / {len(bundle.catalog)}",
+                   fp_value_st)],
+    ]
+    fp_card = Table(fp_rows, colWidths=[34 * mm, 46 * mm])
+    fp_card.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.4),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.4, COL_INK),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.4, COL_INK),
+        ("LINEBEFORE", (0, 0), (0, -1), 2.4, COL_ACCENT),
+    ]))
+
+    # Left column has variable height; right column the fixed-height card.
+    inner_w = PAGE_W - MARGIN_L - MARGIN_R
+    left_w = inner_w - 80 * mm - 4 * mm
+    twocol = Table(
+        [[subtitle_left, fp_card]],
+        colWidths=[left_w, 80 * mm],
     )
-    meta_table.setStyle(TableStyle([
-        ("FONT", (0, 0), (0, -1), _font("Sans-Bold", "Helvetica-Bold"), 8.0),
-        ("FONT", (1, 0), (1, -1), _font("Mono", "Courier"), 9.0),
-        ("TEXTCOLOR", (0, 0), (0, -1), COL_MUTED),
-        ("TEXTCOLOR", (1, 0), (1, -1), COL_INK),
+    twocol.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 1.2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
-        ("LINEABOVE", (0, 0), (-1, 0), 0.3, COL_THIN),
-        ("LINEBELOW", (0, -1), (-1, -1), 0.3, COL_THIN),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
-    story.append(meta_table)
+    story.append(twocol)
     story.append(Spacer(1, 10 * mm))
 
-    # Audit run window
-    audit_rows = [
-        ["AUDIT ID", audit.get("id", "—")],
-        ["AUDIT KIND", audit.get("kind", "—")],
-        ["AUDIT STATUS", audit.get("status", "—")],
-        ["BEGAN", audit.get("created_at", "—")],
-        ["STOPPED", audit.get("stopped_at", "—")],
-        ["CONTROLS EVALUATED", f"{len(bundle.findings)} / {len(bundle.catalog)}"],
-    ]
-    audit_table = Table(audit_rows, colWidths=[40 * mm, None])
-    audit_table.setStyle(TableStyle([
-        ("FONT", (0, 0), (0, -1), _font("Sans-Bold", "Helvetica-Bold"), 8.0),
-        ("FONT", (1, 0), (1, -1), _font("Mono", "Courier"), 9.0),
-        ("TEXTCOLOR", (0, 0), (0, -1), COL_MUTED),
-        ("TEXTCOLOR", (1, 0), (1, -1), COL_INK),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 1.2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
-    ]))
-    story.append(audit_table)
-    story.append(Spacer(1, 14 * mm))
-
-    # Verdict count strip
+    # ── 4. DASHBOARD band — six big-number columns ──
     counts: Counter[str] = Counter(f.verdict_label for f in bundle.findings)
-    story.append(Paragraph("VERDICT MATRIX", s["caps_accent"]))
-    story.append(Spacer(1, 1.5 * mm))
-    story.append(VerdictDistroBar(dict(counts), PAGE_W - MARGIN_L - MARGIN_R))
-
-    # Sigil grid — 9 group sigils with per-group verdict tally as a
-    # tactical strip across the bottom of the cover.
-    by_group: dict[str, Counter[str]] = defaultdict(Counter)
-    for f in bundle.findings:
-        by_group[f.group][f.verdict_label] += 1
-    group_order = ["ARCH", "STORAGE", "CRYPTO", "AUTH", "NETWORK",
-                   "PLATFORM", "CODE", "PRIVACY"]
-    sigil_cells: list[Any] = []
-    for grp in group_order:
-        gc = by_group.get(grp) or Counter()
-        total = sum(gc.values())
-        sig = GROUP_SIGIL.get(grp, grp[:2])
-        fails = gc.get("FAIL", 0)
-        infos = gc.get("INFO", 0)
-        info_chunk = (
-            f" · <font color='#3a6b8c'>info {infos}</font>" if infos else ""
-        )
-        sigil_html = (
-            f"<font name='Mono-Bold' color='#c2410c' size='12'>{sig}</font><br/>"
-            f"<font name='Sans-Bold' size='6.5'>{grp}</font><br/>"
-            f"<font name='Mono' color='#5b5443' size='7.5'>n={total} · "
-            f"<font color='#d83b3b'>fail {fails}</font>{info_chunk}</font>"
-        )
-        sigil_cells.append(Paragraph(sigil_html, ParagraphStyle(
-            "SigGrid", fontName=_font("Sans", "Helvetica"),
-            alignment=TA_CENTER, leading=10.0)))
-    sigil_table = Table([sigil_cells], colWidths=[(PAGE_W - MARGIN_L - MARGIN_R) / len(group_order)] * len(group_order))
-    sigil_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+    total = len(bundle.findings)
+    dash_cols = [
+        ("TOTAL",   total,                       COL_INK),
+        ("FAIL",    counts.get("FAIL", 0),       COL_FAIL),
+        ("REVIEW",  counts.get("REVIEW", 0),     COL_REVIEW),
+        ("INFO",    counts.get("INFO", 0),       COL_INFO),
+        ("INCONC.", counts.get("INCONCLUSIVE", 0), COL_INCONCLUSIVE),
+        ("PASS",    counts.get("PASS", 0),       COL_PASS),
+    ]
+    dash_head = [Paragraph(
+        f"<font color='#5b5443'>{name}</font>",
+        ParagraphStyle("DH", parent=s["caps"], fontSize=7.4, leading=9.0,
+                       letterSpace=2.0, textColor=COL_MUTED,
+                       alignment=TA_CENTER),
+    ) for name, _, _ in dash_cols]
+    dash_num = []
+    for _, n, col in dash_cols:
+        hex_ = "#%02x%02x%02x" % (int(col.red * 255), int(col.green * 255),
+                                   int(col.blue * 255))
+        dash_num.append(Paragraph(
+            f"<font color='{hex_}'>{n}</font>",
+            ParagraphStyle(
+                "DN", parent=s["cover_title"],
+                fontName=_font("Sans-Bold", "Helvetica-Bold"),
+                fontSize=34.0, leading=36.0, alignment=TA_CENTER,
+            ),
+        ))
+    col_w = inner_w / len(dash_cols)
+    dash_table = Table(
+        [dash_head, dash_num],
+        colWidths=[col_w] * len(dash_cols),
+    )
+    dash_style: list[Any] = [
         ("BACKGROUND", (0, 0), (-1, -1), COL_PAPER_DEEP),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LINEABOVE", (0, 0), (-1, 0), 0.8, COL_INK),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.8, COL_INK),
-        ("LINEAFTER", (0, 0), (-2, 0), 0.3, COL_THIN),
-    ]))
-    story.append(sigil_table)
-    story.append(Spacer(1, 8 * mm))
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, 0), "MIDDLE"),
+        ("VALIGN", (0, 1), (-1, 1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, 0), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+        ("TOPPADDING", (0, 1), (-1, 1), 0),
+        ("BOTTOMPADDING", (0, 1), (-1, 1), 6),
+        ("LINEABOVE", (0, 0), (-1, 0), 1.6, COL_INK),
+        ("LINEBELOW", (0, -1), (-1, -1), 1.6, COL_INK),
+    ]
+    # Thin vertical dividers between columns
+    for ci in range(1, len(dash_cols)):
+        dash_style.append(("LINEBEFORE", (ci, 0), (ci, -1), 0.3, COL_THIN))
+    dash_table.setStyle(TableStyle(dash_style))
+    story.append(dash_table)
+    story.append(Spacer(1, 10 * mm))
 
-    # Footnote
+    # ── 5. AT A GLANCE panel — top FAILs ──
+    glance_header = ParagraphStyle(
+        "GH", parent=s["caps"], fontSize=8.4, leading=10.0,
+        letterSpace=2.4, textColor=COL_ACCENT,
+    )
+    story.append(Paragraph("AT  A  GLANCE  ·  WORST  FINDINGS", glance_header))
+    story.append(Spacer(1, 1.5 * mm))
+
+    fails = [f for f in bundle.findings if f.verdict_label == "FAIL"]
+    fails_sorted = sorted(fails, key=lambda f: -f.confidence)[:3]
+    if fails_sorted:
+        glance_rows: list[list[Any]] = []
+        for f in fails_sorted:
+            sig = GROUP_SIGIL.get(f.group, f.group[:2])
+            sev = _severity_label(f) or "—"
+            title_text = f.catalog.get("title", "")
+            row = [
+                Paragraph(
+                    f"<font name='{_font('Mono-Bold', 'Courier-Bold')}' "
+                    f"color='#d83b3b' size='12'>{sig}</font>",
+                    ParagraphStyle("GSig", parent=s["mono"], alignment=TA_CENTER),
+                ),
+                Paragraph(
+                    f"<font name='{_font('Sans-Bold', 'Helvetica-Bold')}' "
+                    f"size='9.0'>{f.finding_id}</font>  "
+                    f"<font color='#5b5443' size='8.0'>{f.control_id}</font>  "
+                    f"<font color='#7c7c8a' size='7.5'>· {f.group} · "
+                    f"sev {sev}</font><br/>"
+                    f"<font size='8.6'>{_html_escape(title_text)}</font>",
+                    ParagraphStyle("GT", parent=s["body"], fontSize=9.0,
+                                   leading=11.2, alignment=TA_LEFT),
+                ),
+            ]
+            glance_rows.append(row)
+        # Build the table with thin row separators
+        gt = Table(glance_rows, colWidths=[16 * mm, inner_w - 16 * mm])
+        gt_style: list[Any] = [
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("BACKGROUND", (0, 0), (0, -1), COL_PAPER_DEEP),
+            ("LINEABOVE", (0, 0), (-1, 0), 0.6, COL_INK),
+            ("LINEBELOW", (0, -1), (-1, -1), 0.6, COL_INK),
+        ]
+        for ri in range(1, len(glance_rows)):
+            gt_style.append(("LINEABOVE", (0, ri), (-1, ri), 0.3, COL_THIN))
+        gt.setStyle(TableStyle(gt_style))
+        story.append(gt)
+    else:
+        # Defensive: only fires if the audit produced zero FAILs.
+        story.append(Paragraph(
+            "No FAIL verdicts in this audit — see § 02 for the full posture.",
+            s["body_sm"]))
+    story.append(Spacer(1, 6 * mm))
+
+    # ── 6. Footnote ──
     fn_style = ParagraphStyle("CoverFootnote", parent=s["body_xs"],
                               textColor=COL_MUTED, alignment=TA_JUSTIFY)
     story.append(Paragraph(
-        "This document is the machine-generated synthesis of one multi-day VR (Vulnerability "
-        "Research) MASVS L1 audit dispatched against the subject APK. Each of the 53 MASVS "
-        "L1 controls was investigated independently by a six-persona reasoning panel "
-        "(halvar/noor researchers · maddie/yuki critics · renzo/wei implementers). Verdicts "
-        "are derived by the production mapper "
+        "This document is the machine-generated synthesis of one multi-day VR "
+        "(Vulnerability Research) MASVS L1 audit dispatched against the subject "
+        "APK. Each of the 53 MASVS L1 controls was investigated independently by "
+        "a six-persona reasoning panel (halvar/noor researchers · maddie/yuki "
+        "critics · renzo/wei implementers). The AILA platform and its panel "
+        "methodology are described in §03. Verdicts are derived by the "
+        "production mapper "
         "<font name='Mono'>aila.modules.vr.masvs.verdict_mapper.child_outcome_to_verdict</font> "
-        "and never invented by this renderer. Findings are the agents' verbatim conclusions; "
-        "the editorial layer here is purely typographic. Distribution is restricted to "
-        "Vodafone TR security stakeholders. Do not redistribute outside the engagement.",
+        "and never invented by this renderer. Findings are the agents' verbatim "
+        "conclusions; the editorial layer is purely typographic. Distribution "
+        "is restricted to Vodafone TR security stakeholders.",
         fn_style,
     ))
 
@@ -1952,6 +2058,188 @@ def _h4(text: str, s: dict[str, ParagraphStyle]) -> Paragraph:
     return Paragraph(text, s["h4"])
 
 
+def _build_at_a_glance(
+    bundle: Bundle,
+    s: dict[str, ParagraphStyle],
+    counts: Counter[str],
+    by_group: dict[str, Counter[str]],
+) -> list[Flowable]:
+    """Single-page AT A GLANCE dashboard.
+
+    Sits as the first page of § 02 (before the posture narrative). Carries
+    the big-number verdict counts and a 9-row group ledger so the operator
+    can decide in 30 seconds whether to dig further. Pages-per-section:
+
+        02.1  AT A GLANCE        — 1 page (this function)
+        02.2  POSTURE NARRATIVE  — 1 page
+        02.3  HEATMAP            — same page or +1
+        02.4  TOP-SEVERITY       — same page or +1
+    """
+    story: list[Flowable] = []
+    story.append(_h2("02.1  ·  AT  A  GLANCE", s))
+    story.append(Paragraph(
+        "Single-page audit dashboard. Verdict counts, group ledger, and the "
+        "top FAILs by group. The full posture narrative starts on the next "
+        "page.",
+        s["body_sm"]))
+    story.append(Spacer(1, 4 * mm))
+
+    inner_w = PAGE_W - MARGIN_L - MARGIN_R
+    total = len(bundle.findings)
+
+    # ── Big-number dashboard ──
+    dash_cols = [
+        ("TOTAL",   total,                          COL_INK),
+        ("FAIL",    counts.get("FAIL", 0),          COL_FAIL),
+        ("REVIEW",  counts.get("REVIEW", 0),        COL_REVIEW),
+        ("INFO",    counts.get("INFO", 0),          COL_INFO),
+        ("INCONC.", counts.get("INCONCLUSIVE", 0),  COL_INCONCLUSIVE),
+        ("PASS",    counts.get("PASS", 0),          COL_PASS),
+    ]
+    head_cells = [Paragraph(
+        f"<font color='#5b5443'>{name}</font>",
+        ParagraphStyle("AAGH", parent=s["caps"], fontSize=7.4, leading=9.0,
+                       letterSpace=2.0, textColor=COL_MUTED,
+                       alignment=TA_CENTER),
+    ) for name, _, _ in dash_cols]
+    num_cells: list[Any] = []
+    for _, n, col in dash_cols:
+        hex_ = "#%02x%02x%02x" % (int(col.red * 255), int(col.green * 255),
+                                   int(col.blue * 255))
+        num_cells.append(Paragraph(
+            f"<font color='{hex_}'>{n}</font>",
+            ParagraphStyle(
+                "AAGN", parent=s["cover_title"],
+                fontName=_font("Sans-Bold", "Helvetica-Bold"),
+                fontSize=30.0, leading=32.0, alignment=TA_CENTER,
+            ),
+        ))
+    col_w = inner_w / len(dash_cols)
+    dash = Table([head_cells, num_cells], colWidths=[col_w] * len(dash_cols))
+    dash_style: list[Any] = [
+        ("BACKGROUND", (0, 0), (-1, -1), COL_PAPER_DEEP),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, 0), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 1),
+        ("TOPPADDING", (0, 1), (-1, 1), 0),
+        ("BOTTOMPADDING", (0, 1), (-1, 1), 5),
+        ("LINEABOVE", (0, 0), (-1, 0), 1.4, COL_INK),
+        ("LINEBELOW", (0, -1), (-1, -1), 1.4, COL_INK),
+    ]
+    for ci in range(1, len(dash_cols)):
+        dash_style.append(("LINEBEFORE", (ci, 0), (ci, -1), 0.3, COL_THIN))
+    dash.setStyle(TableStyle(dash_style))
+    story.append(dash)
+    story.append(Spacer(1, 3 * mm))
+
+    # Distribution stack bar — operator's eye reads severity from the
+    # left edge.
+    story.append(VerdictDistroBar(dict(counts), inner_w))
+    story.append(Spacer(1, 6 * mm))
+
+    # ── Group ledger — one row per group in MASVS canonical order ──
+    story.append(_h3("BY  CONTROL  GROUP", s))
+    group_order = ["ARCH", "STORAGE", "CRYPTO", "AUTH", "NETWORK",
+                   "PLATFORM", "CODE", "RESILIENCE", "PRIVACY"]
+    rows: list[list[Any]] = [[
+        "GROUP", "n", "FAIL", "REVIEW", "INFO", "INCONC", "PASS",
+        "TOP  CONTROL  OF  CONCERN",
+    ]]
+    for grp in group_order:
+        gc = by_group.get(grp) or Counter()
+        gtotal = sum(gc.values())
+        if gtotal == 0:
+            continue
+        # Top control = first FAIL by confidence, else first REVIEW, else "—"
+        top = None
+        worst_band = ("FAIL", "REVIEW", "INCONCLUSIVE", "INFO")
+        for band in worst_band:
+            cands = [f for f in bundle.findings
+                     if f.group == grp and f.verdict_label == band]
+            if cands:
+                top = max(cands, key=lambda f: f.confidence)
+                break
+        top_label = "—"
+        if top is not None:
+            top_label = (
+                f"<font name='{_font('Mono-Bold', 'Courier-Bold')}'>"
+                f"{top.control_id}</font> "
+                f"<font color='#5b5443' size='7.4'>"
+                f"{_html_escape(top.catalog.get('title', ''))[:80]}</font>"
+            )
+        rows.append([
+            _para(grp, ParagraphStyle(
+                "AAGGrp", parent=s["table_cell_mono"],
+                fontName=_font("Mono-Bold", "Courier-Bold"),
+                textColor=COL_ACCENT)),
+            _para(str(gtotal), s["table_cell_mono"]),
+            _para(str(gc.get("FAIL", 0) or "·"),
+                  ParagraphStyle("AAGF", parent=s["table_cell_mono"],
+                                 textColor=COL_FAIL if gc.get("FAIL") else COL_MUTED,
+                                 alignment=TA_CENTER)),
+            _para(str(gc.get("REVIEW", 0) or "·"),
+                  ParagraphStyle("AAGR", parent=s["table_cell_mono"],
+                                 textColor=COL_REVIEW if gc.get("REVIEW") else COL_MUTED,
+                                 alignment=TA_CENTER)),
+            _para(str(gc.get("INFO", 0) or "·"),
+                  ParagraphStyle("AAGI", parent=s["table_cell_mono"],
+                                 textColor=COL_INFO if gc.get("INFO") else COL_MUTED,
+                                 alignment=TA_CENTER)),
+            _para(str(gc.get("INCONCLUSIVE", 0) or "·"),
+                  ParagraphStyle("AAGIC", parent=s["table_cell_mono"],
+                                 textColor=COL_INCONCLUSIVE if gc.get("INCONCLUSIVE") else COL_MUTED,
+                                 alignment=TA_CENTER)),
+            _para(str(gc.get("PASS", 0) or "·"),
+                  ParagraphStyle("AAGP", parent=s["table_cell_mono"],
+                                 textColor=COL_PASS if gc.get("PASS") else COL_MUTED,
+                                 alignment=TA_CENTER)),
+            _para(top_label, s["table_cell"]),
+        ])
+    gt = Table(rows, colWidths=[
+        20 * mm, 10 * mm, 12 * mm, 14 * mm, 12 * mm, 14 * mm, 12 * mm, None,
+    ], repeatRows=1)
+    gt.setStyle(_zebra_table_style(len(rows)))
+    story.append(gt)
+    story.append(Spacer(1, 4 * mm))
+
+    # ── Posture one-liner ──
+    fail_n = counts.get("FAIL", 0)
+    review_n = counts.get("REVIEW", 0)
+    inconc_n = counts.get("INCONCLUSIVE", 0)
+    info_n = counts.get("INFO", 0)
+    pass_n = counts.get("PASS", 0)
+    na_n = counts.get("N/A", 0)
+    risk_pct = (fail_n + review_n + inconc_n) / total * 100 if total else 0
+    posture_pct = (pass_n + na_n + info_n) / total * 100 if total else 0
+    summary_html = (
+        f"<b>{risk_pct:.0f}%</b> of controls landed in the risk band "
+        f"(FAIL + REVIEW + INCONCLUSIVE); "
+        f"<b>{posture_pct:.0f}%</b> landed in the cleared band "
+        f"(PASS + N/A + INFO).  "
+        f"Highest-density risk group: <b>{_max_risk_group(by_group)}</b>.  "
+        "See §06 for per-control evidence and remediation."
+    )
+    summary_box = Table(
+        [[Paragraph(summary_html, ParagraphStyle(
+            "AAGSum", parent=s["body"], fontSize=9.4, leading=12.4,
+            textColor=COL_INK, alignment=TA_LEFT))]],
+        colWidths=[inner_w],
+    )
+    summary_box.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), COL_PAPER_DEEP),
+        ("LINEBEFORE", (0, 0), (0, -1), 2.4, COL_ACCENT),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.4, COL_INK),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.4, COL_INK),
+    ]))
+    story.append(summary_box)
+    return story
+
+
 def build_exec_summary(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
     counts: Counter[str] = Counter(f.verdict_label for f in bundle.findings)
     by_group: dict[str, Counter[str]] = defaultdict(Counter)
@@ -1963,6 +2251,13 @@ def build_exec_summary(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flo
     story.append(_h1("§ 02  ·  EXECUTIVE SUMMARY", s))
     story.append(HorizontalRule(PAGE_W - MARGIN_L - MARGIN_R, thickness=1.4))
     story.append(Spacer(1, 3 * mm))
+
+    # ── 02.1  AT A GLANCE — single-page dashboard ──
+    # One page, no narrative. Operator scans this in 30 seconds and
+    # decides whether to dig further. The narrative posture analysis
+    # and the heatmap live on the NEXT page (02.2 / 02.3).
+    story.extend(_build_at_a_glance(bundle, s, counts, by_group))
+    story.append(PageBreak())
 
     total = len(bundle.findings)
     fail_n = counts.get("FAIL", 0)
@@ -1980,6 +2275,8 @@ def build_exec_summary(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flo
     appsec = (bundle.apk.get("mobsf_scan") or {}).get("appsec", {})
     score = appsec.get("security_score", "—")
 
+    # ── 02.2  Posture narrative ──
+    story.append(_h2("02.2  ·  POSTURE  NARRATIVE", s))
     overview = (
         f"The subject is the Vodafone Türkiye self-service Android app "
         f"<b>{apk_sum.get('package') or bundle.apk.get('package_name')}</b> "
@@ -1996,38 +2293,9 @@ def build_exec_summary(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flo
     )
     story.append(Paragraph(overview, s["body"]))
     story.append(Spacer(1, 4 * mm))
-
-    # Headline ledger
-    headline_data = [
-        ["TOTAL", "FAIL", "REVIEW", "INFO", "INCONC.", "N/A", "PASS"],
-        [str(total), str(fail_n), str(review_n), str(info_n),
-         str(inconc_n), str(na_n), str(pass_n)],
-    ]
-    ht = Table(headline_data, colWidths=[(PAGE_W - MARGIN_L - MARGIN_R) / 7] * 7)
-    ht_style: list[Any] = [
-        ("FONT", (0, 0), (-1, 0), _font("Sans-Bold", "Helvetica-Bold"), 7.0),
-        ("FONT", (0, 1), (-1, 1), _font("Sans-Bold", "Helvetica-Bold"), 20.0),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TEXTCOLOR", (0, 0), (-1, 0), COL_MUTED),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.4, COL_THIN),
-        ("BACKGROUND", (0, 0), (-1, 1), COL_PAPER_DEEP),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]
-    ht_style.append(("TEXTCOLOR", (1, 1), (1, 1), COL_FAIL))
-    ht_style.append(("TEXTCOLOR", (2, 1), (2, 1), COL_REVIEW))
-    ht_style.append(("TEXTCOLOR", (3, 1), (3, 1), COL_INFO))
-    ht_style.append(("TEXTCOLOR", (4, 1), (4, 1), COL_INCONCLUSIVE))
-    ht_style.append(("TEXTCOLOR", (5, 1), (5, 1), COL_NA))
-    ht_style.append(("TEXTCOLOR", (6, 1), (6, 1), COL_PASS))
-    ht.setStyle(TableStyle(ht_style))
-    story.append(ht)
-    story.append(Spacer(1, 3 * mm))
-
-    # Distribution bar
-    story.append(VerdictDistroBar(dict(counts), PAGE_W - MARGIN_L - MARGIN_R))
-    story.append(Spacer(1, 5 * mm))
+    # The headline ledger + distribution bar that used to live here moved
+    # to the 02.1 AT A GLANCE dashboard one page above so the posture
+    # narrative can stand on its own.
 
     story.append(Paragraph(
         f"Across the {total} MASVS L1 controls dispatched, the panel returned "
@@ -2049,8 +2317,8 @@ def build_exec_summary(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flo
         s["body"]))
     story.append(Spacer(1, 4 * mm))
 
-    # Heatmap header
-    story.append(_h2("02.2  ·  VERDICT × GROUP HEATMAP", s))
+    # ── 02.3  Heatmap ──
+    story.append(_h2("02.3  ·  VERDICT × GROUP HEATMAP", s))
     story.append(Paragraph(
         "Rows are MASVS v2.1.0 control groups; columns are verdict bands. "
         "Cell intensity is keyed to count — empty cells carry a single dot.",
@@ -2059,11 +2327,11 @@ def build_exec_summary(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flo
     story.append(HeatmapGrid(bundle.findings, PAGE_W - MARGIN_L - MARGIN_R))
     story.append(Spacer(1, 5 * mm))
 
-    # FAIL highlights — the top 5 most severe findings
+    # ── 02.4  Top-severity findings table ──
     fails = [f for f in bundle.findings if f.verdict_label == "FAIL"]
     fails_sorted = sorted(fails, key=lambda f: -f.confidence)[:6]
     if fails_sorted:
-        story.append(_h2("02.3  ·  TOP-SEVERITY FINDINGS", s))
+        story.append(_h2("02.4  ·  TOP-SEVERITY FINDINGS", s))
         rows = [["FIND.", "CTRL", "GROUP", "CONF.", "TITLE / ONE-LINE"]]
         for f in fails_sorted:
             t = f.catalog.get("title", "")
