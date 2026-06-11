@@ -36,7 +36,7 @@ from .audit_mcp import (
     adapt_semantic_search,
     adapt_taint_paths_to,
 )
-from .base import AdapterFn
+from .base import AdapterFn, register_read_tool
 from .generic import adapt_generic
 from .ida_headless import (
     adapt_call_chain,
@@ -124,6 +124,17 @@ _SPECIALIZED: dict[tuple[str, str], AdapterFn] = {
     # Bridge-side virtual tool: raw file slice by line range.
     ("audit_mcp", "read_lines"): adapt_read_lines,
 }
+
+# fix §200 — generic-adapter-backed read tools registered explicitly.
+# These tools have no specialised adapter (they fall through to
+# ``adapt_generic``) so there is no function for ``@is_read_tool`` to
+# decorate; register them imperatively at import time instead.
+for _server, _tool in (
+    ("audit_mcp", "extract_class"),
+    ("audit_mcp", "entrypoint_paths_to"),
+):
+    register_read_tool(_server, _tool)
+del _server, _tool
 
 
 def get_adapter(server_id: str, tool_name: str) -> AdapterFn | None:

@@ -29,6 +29,7 @@ from sqlmodel import select as _select
 from aila.modules.vr.agents.mcp_adapters import (
     AdapterContext,
     get_adapter,
+    get_read_tools,
 )
 from aila.modules.vr.contracts import PayloadKind, SenderKind
 from aila.modules.vr.db_models import (
@@ -441,7 +442,7 @@ class ToolExecutor:
             # / search_macros / semantic_search — those find candidates
             # without reading any source body. The directive stays put
             # until the agent commits to a real read.
-            if (server_id, tool_name) in self._READ_TOOLS:
+            if (server_id, tool_name) in self._read_tools():
                 adapter_result.observables_delta = {
                     **(adapter_result.observables_delta or {}),
                     "_directive.pivot": "",
@@ -854,12 +855,19 @@ class ToolExecutor:
         ("ida_headless", "segments"),
     })
 
-    # Tools whose call genuinely satisfies a "READ SOURCE / TRACE FLOW"
-    # pivot directive. Only these clear `_directive.pivot`. Without this
-    # gate, any non-survey call (e.g. semantic_search, search_macros,
-    # search_functions) would silently drop the pivot even though no
-    # function body was actually read.
-    _READ_TOOLS: frozenset[tuple[str, str]] = frozenset({
+    # fix §200 — was a hardcoded class attribute. Now sourced from
+    # ``mcp_adapters.get_read_tools()`` which is populated at import
+    # time by the ``@is_read_tool`` decorator on each specialised
+    # adapter (plus a small imperative list in
+    # ``mcp_adapters.registry`` for the generic-adapter-backed read
+    # tools ``extract_class`` and ``entrypoint_paths_to``).
+    #
+    # This fallback is used only when the adapter modules have never
+    # been imported in the current process (e.g. a narrow unit test
+    # that constructs a ToolExecutor with stub bridges and never
+    # exercises the dispatch path). Production code paths always
+    # import the adapters first via ``get_adapter`` at line 218.
+    _READ_TOOLS_FALLBACK: frozenset[tuple[str, str]] = frozenset({
         ("audit_mcp", "read_function"),
         ("audit_mcp", "read_lines"),         # bridge-side verbatim slice
         ("audit_mcp", "semantic_search"),    # returns full code chunks
@@ -879,6 +887,11 @@ class ToolExecutor:
         ("ida_headless", "xrefs_to"),
         ("ida_headless", "xrefs_from"),
     })
+
+    @classmethod
+    def _read_tools(cls) -> frozenset[tuple[str, str]]:
+        registered = get_read_tools()
+        return registered or cls._READ_TOOLS_FALLBACK
 
     async def _survey_streak_hint(
         self,
