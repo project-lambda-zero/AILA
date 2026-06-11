@@ -56,7 +56,34 @@ __all__ = ["TargetAnalysisError", "TargetAnalysisService"]
 _log = logging.getLogger(__name__)
 
 _POLL_INTERVAL_SECONDS = 3.0
-_POLL_TIMEOUT_SECONDS = 14400.0  # 4 hours — monorepo-scale ceiling (chromium ~30min, firefox should fit similar; nginx ~30s)
+# fix §241 — operator-overridable poll timeout. Default 14400 (4h)
+# fits the chromium / firefox / android-mcp ingestion envelope; large
+# monorepos (chromium ~30min observed, mainline kernel possibly more)
+# benefit from an extension knob. Read once at module load — workers
+# pick up changes on restart, which matches the rest of the VR env
+# surface (VR_*_TIMEOUT_S constants).
+def _read_poll_timeout_env() -> float:
+    raw = os.environ.get("VR_INGESTION_POLL_TIMEOUT_S")
+    if not raw:
+        return 14400.0
+    try:
+        value = float(raw)
+    except ValueError:
+        _log.warning(
+            "VR_INGESTION_POLL_TIMEOUT_S=%r is not a number — using default 14400s",
+            raw,
+        )
+        return 14400.0
+    if value <= 0:
+        _log.warning(
+            "VR_INGESTION_POLL_TIMEOUT_S=%r is non-positive — using default 14400s",
+            raw,
+        )
+        return 14400.0
+    return value
+
+
+_POLL_TIMEOUT_SECONDS = _read_poll_timeout_env()
 
 
 
