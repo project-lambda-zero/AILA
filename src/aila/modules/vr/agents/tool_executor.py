@@ -138,32 +138,25 @@ class ToolExecutor:
 
         parsed = _parse_command(command_raw)
         if parsed is None:
-            # Empty / malformed tool_run is by far the most common loop
-            # mode the agent gets stuck in: it picks action=tool_run but
-            # produces no command string. The previous behaviour was a
-            # plain error text that the LLM ignored on the next turn,
-            # producing the same empty command, looping until the turn
-            # cap. Two-layer mitigation:
-            #   (a) FIRST malformed command on this branch → return the
-            #       error AS BEFORE, but include the "you should have
-            #       picked observe" hint so the LLM has a clear next move.
-            #   (b) SECOND consecutive malformed command → STOP message
-            #       with explicit submit/observe options; the agent has
-            #       proven it cannot recover via tool_run.
-            # The original threshold of >= 2 fired the STOP message only
-            # after 3 broken commands; observed b53d3bb0 had branches
-            # producing 4-8 consecutive empty commands without the STOP
-            # ever firing because the counter only sees the LAST run on
-            # this branch (not the whole history).
-            malformed_count = await self._count_consecutive_malformed(
+            # fix §201 — count TOTAL malformed-command errors on the
+            # last 50 engine messages from this branch (was: consecutive
+            # from the tail). Alternating empty→good→empty→good→empty
+            # legitimately means the agent cannot stabilise on a valid
+            # tool_run shape and should be force-stopped; the prior
+            # consecutive-only counter reset on every single good call
+            # in between, so a branch could produce 8 empty commands
+            # interleaved with 1-shot reasoning blocks and never trip
+            # the breaker. STOP fires when total >= 5 (this call would
+            # make the 6th).
+            malformed_count = await self._count_total_malformed(
                 branch_id,
             )
-            if malformed_count >= 1:
+            if malformed_count >= 5:
                 err = (
-                    "STOP — you have produced 2 consecutive empty or "
-                    "malformed tool_run commands. The engine cannot "
-                    "dispatch an empty command. Your next turn MUST be "
-                    "one of:\n"
+                    "STOP — you have produced 6 or more empty or "
+                    "malformed tool_run commands on this branch (last "
+                    "50 messages). The engine cannot dispatch an empty "
+                    "command. Your next turn MUST be one of:\n"
                     "  (a) action=tool_run with valid JSON command: "
                     '{\"tool\": \"audit_mcp.read_function\", \"args\": {\"name\": \"...\"}}\n'
                     "  (b) action=submit if you have enough evidence to "
@@ -639,13 +632,20 @@ class ToolExecutor:
         )
 
 
-    async def _count_consecutive_malformed(
+    async def _count_total_malformed(
         self,
         branch_id: str,
     ) -> int:
-        """Count consecutive recent malformed-command error messages on this
-        branch. Walks backward from the latest message; stops at the first
-        non-error or non-malformed message.
+        """Count TOTAL malformed-command error messages on this branch
+        across the last 50 engine messages.
+
+        fix §201 — was ``_count_consecutive_malformed`` which walked
+        backwards from the tail and stopped at the first non-malformed
+        message. That meant a single good call would reset the counter
+        and let the breaker miss alternating empty/good/empty/... loops.
+        Total count over a bounded window catches the alternating shape
+        while still self-clearing over time as good calls scroll the
+        50-message window past the malformed ones.
         """
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
@@ -657,7 +657,7 @@ class ToolExecutor:
                     VRInvestigationMessageRecord.sender_kind == SenderKind.ENGINE.value,
                 )
                 .order_by(VRInvestigationMessageRecord.created_at.desc())
-                .limit(10)
+                .limit(50)
             )).all()
 
         count = 0
@@ -665,11 +665,9 @@ class ToolExecutor:
             try:
                 payload = json.loads(row.payload_json or "{}")
             except (ValueError, TypeError):
-                break
+                continue
             if payload.get("is_error") and _MALFORMED_TOOL_RUN_MARKER in str(payload.get("text", "")):
                 count += 1
-            else:
-                break
         return count
     async def _count_prior_failures(
         self,
