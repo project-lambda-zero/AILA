@@ -144,7 +144,18 @@ class PatternExtractor:
                 ],
                 schema=_EXTRACTION_SCHEMA,
             )
-        except (OSError, TimeoutError, RuntimeError) as exc:
+        except Exception as exc:  # noqa: BLE001 — fix §191
+            # Broaden the narrow ``(OSError, TimeoutError, RuntimeError)``
+            # filter. Pattern instance — every LLM call site that catches
+            # narrowly was missing httpx errors, pydantic validation
+            # failures, JSON-decode errors raised before reaching the
+            # outer parser, and provider-specific shapes. Log + re-raise
+            # as PatternExtractorError so the caller sees the failure
+            # class instead of crashing the worker.
+            _log.warning(
+                "pattern_extractor: LLM call failed outcome_id=%s err=%s",
+                outcome_id, exc,
+            )
             raise PatternExtractorError(
                 f"LLM call failed for outcome {outcome_id}: {exc}",
             ) from exc
