@@ -113,6 +113,61 @@ class PauseReason:
 
 
 
+# fix §26 — bounded broad-except in sweep wrappers.
+#
+# Each ``except Exception:  # noqa: BLE001`` wrapper around a sweep
+# step trades crash-loud-on-first-error for keep-the-cron-alive. That
+# trade is necessary at this layer — a transient DB blip in one step
+# (refill) should NOT stop the next step (zombie reaper) from running
+# this tick — but the original wrappers logged a single warning and
+# then forgot the failure. A step that fails on EVERY tick for hours
+# is operationally indistinguishable from a step that has never
+# failed: same warning per tick, no escalation. The counter below
+# closes that gap.
+#
+# Module-global by design: the reaper cron re-invokes
+# ``sweep_masvs_audit_parents`` every minute and the counts must
+# persist across ticks, otherwise the "consecutive" threshold never
+# fires. Reset to 0 on the first successful tick of a step.
+_SWEEP_STEP_FAILURES: dict[str, int] = {}
+_SWEEP_STEP_FAIL_ESCALATE_AFTER = 5
+
+
+def _record_sweep_step_failure(step: str, exc: BaseException) -> None:
+    """Increment ``step``'s consecutive-failure counter; escalate at 5+.
+
+    Called from the broad-except wrappers in ``sweep_masvs_audit_parents``.
+    First through fourth failures get a ``WARNING`` line (current
+    behavior). The fifth and every subsequent consecutive failure
+    emits ``ERROR`` so on-call notices that this sweep step has
+    silently failed for ``_SWEEP_STEP_FAIL_ESCALATE_AFTER`` ticks
+    straight rather than tripping on a one-off Redis blip.
+    """
+    n = _SWEEP_STEP_FAILURES.get(step, 0) + 1
+    _SWEEP_STEP_FAILURES[step] = n
+    if n < _SWEEP_STEP_FAIL_ESCALATE_AFTER:
+        _log.warning(
+            "masvs reconciler: %s failed (%d consecutive): %s",
+            step, n, exc, exc_info=True,
+        )
+    else:
+        _log.error(
+            "masvs reconciler: %s has failed %d consecutive ticks — "
+            "operator action required: %s",
+            step, n, exc, exc_info=True,
+        )
+
+
+def _record_sweep_step_success(step: str) -> None:
+    """Reset ``step``'s consecutive-failure counter after a clean tick."""
+    if _SWEEP_STEP_FAILURES.pop(step, 0):
+        _log.info(
+            "masvs reconciler: %s recovered after prior failures", step,
+        )
+
+
+
+
 def _batch_size() -> int:
     """Read MASVS_AUDIT_BATCH_SIZE env var with safe default.
 
@@ -1447,8 +1502,14 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         # 1. Top up APK batch slots before status transitions.
         try:
             refilled = await _refill_apk_batches(uow)
-        except Exception as exc:  # noqa: BLE001 — best-effort tick
-            _log.warning("masvs reconciler: refill failed: %s", exc, exc_info=True)
+            _record_sweep_step_success("refill_apk_batches")
+        except Exception as exc:  # noqa: BLE001 — see _record_sweep_step_failure
+            # Broad catch: refill failure on tick N must not block
+            # steps 2-9 on the same tick. The counter helper escalates
+            # to ERROR after _SWEEP_STEP_FAIL_ESCALATE_AFTER consecutive
+            # failures so a permanently-broken refill cannot hide behind
+            # the per-tick WARNING noise.
+            _record_sweep_step_failure("refill_apk_batches", exc)
             refilled = 0
         # 2. Enforce cumulative-turn cap.
         try:
@@ -1487,8 +1548,13 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         # 7. Reap zombie tasks + stale workflow_state_cursors (D-283).
         try:
             reaped = await _reap_zombie_tasks_and_cursors(uow)  # noqa: F841
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("masvs reconciler: zombie reaper failed: %s", exc, exc_info=True)
+            _record_sweep_step_success("reap_zombie_tasks_and_cursors")
+        except Exception as exc:  # noqa: BLE001 — see _record_sweep_step_failure
+            # Broad catch: a failing reaper must not stop the parent
+            # rollup or wake step from running this tick. Persistent
+            # failure escalates to ERROR via the counter helper because
+            # a stuck zombie reaper jams the entire VR queue (D-283).
+            _record_sweep_step_failure("reap_zombie_tasks_and_cursors", exc)
             reaped = {"zombies_cancelled": 0, "cursors_purged": 0}  # noqa: F841
         # Candidate parents: kind=masvs_audit, parent_investigation_id
         # IS NULL (true batch root), status in {CREATED, RUNNING}. PAUSED
