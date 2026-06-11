@@ -654,17 +654,40 @@ class ClaimVerifierAgent:
             uow.session.add(original)
             await uow.commit()
 
+        # fix §348 — atomicity for the kind flip + dispatch pair. The
+        # previous shape committed the new DIRECT_FINDING row, then
+        # dispatched outside any transaction; if dispatch raised an
+        # exception not caught by the dispatcher (or the broad-but-
+        # finite tuple here missed the actual class), the new row was
+        # left dispatch_status=PENDING with no reaper, indistinguishable
+        # from a row legitimately mid-flight.
+        #
+        # New shape: catch ALL exceptions around dispatch, and on any
+        # uncaught failure REVERT the promotion atomically — delete the
+        # new DIRECT_FINDING row, strip ``promoted_to`` from the original
+        # row's payload. The dispatcher's own catch handles the
+        # in-protocol failure path (returns FAILED, dispatcher already
+        # set the row to FAILED — observable, no further action needed).
+        # The revert here covers the out-of-protocol failure path that
+        # leaves nothing observable downstream.
+        #
+        # Cross-ref §109: vuln_researcher applies the same in-UoW
+        # pattern on the engine-crash side; this is the same idea on
+        # the verifier-promote side.
         try:
             dispatcher = OutcomeDispatcher(knowledge=ServiceFactory().knowledge)
             result = await dispatcher.dispatch(new_outcome_id)
-        except (OSError, RuntimeError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 — see comment above
             _log.warning(
-                "auto_promote dispatch FAILED inv=%s original=%s new=%s err=%s",
+                "auto_promote dispatch FAILED — reverting inv=%s original=%s new=%s err=%s",
                 self.investigation_id, canonical_id, new_outcome_id, exc,
             )
+            await self._revert_auto_promote(
+                original_id=canonical_id,
+                new_outcome_id=new_outcome_id,
+            )
             return {
-                "status": "promoted_dispatch_failed",
-                "promoted_outcome_id": new_outcome_id,
+                "status": "promoted_dispatch_failed_reverted",
                 "reason": f"{type(exc).__name__}:{exc}",
             }
         _log.info(
@@ -679,6 +702,54 @@ class ClaimVerifierAgent:
             "dispatch_target": result.dispatch_target,
             "dispatch_reason": result.reason[:200],
         }
+
+    async def _revert_auto_promote(
+        self,
+        *,
+        original_id: str,
+        new_outcome_id: str,
+    ) -> None:
+        """fix §348 — reverse a partially-applied auto-promote.
+
+        Called when ``dispatcher.dispatch`` raises an uncaught exception
+        AFTER the promotion UoW already committed. Deletes the new
+        DIRECT_FINDING row and strips the ``promoted_to`` block from
+        the original ASSESSMENT_REPORT row so the next verifier run
+        can retry, and so no orphan PENDING row sits on the table
+        with no reaper.
+
+        Best-effort: this method swallows its own DB errors and logs
+        them. The caller already returns a ``promoted_dispatch_failed_
+        reverted`` status so the operator sees the failure regardless.
+        """
+        try:
+            async with UnitOfWork() as uow:
+                new_row = (await uow.session.exec(
+                    _select(VRInvestigationOutcomeRecord).where(
+                        VRInvestigationOutcomeRecord.id == new_outcome_id,
+                    )
+                )).first()
+                if new_row is not None:
+                    await uow.session.delete(new_row)
+                original = (await uow.session.exec(
+                    _select(VRInvestigationOutcomeRecord).where(
+                        VRInvestigationOutcomeRecord.id == original_id,
+                    )
+                )).first()
+                if original is not None:
+                    try:
+                        payload = json.loads(original.payload_json or "{}")
+                    except (ValueError, TypeError):
+                        payload = {}
+                    if payload.pop("promoted_to", None) is not None:
+                        original.payload_json = json.dumps(payload)
+                        uow.session.add(original)
+                await uow.commit()
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log.exception(
+                "auto_promote REVERT FAILED inv=%s original=%s new=%s err=%s",
+                self.investigation_id, original_id, new_outcome_id, exc,
+            )
 
     async def _load_context(self) -> dict[str, Any]:
         from aila.modules.vr.db_models import VRTargetRecord  # noqa: PLC0415
