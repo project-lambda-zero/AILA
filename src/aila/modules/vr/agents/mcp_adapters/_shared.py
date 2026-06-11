@@ -24,16 +24,18 @@ __all__ = [
 ]
 
 
-# Cap on JSON-ish dumps pushed into observables. ~2KB ≈ 500 tokens per
-# observation entry — enough context for the next reasoning turn without
-# Cap for the generic JSON-dump fallback (adapt_generic). Bumped
-# 2000 → 15000 — at 2000 chars a typical search_source response with
-# limit=50 was truncated to ~6-8 matches and the agent never saw the
-# load-bearing line. Specialized adapters override this with their
-# own dense renderers (see audit_mcp._render_matches_dense at 30000);
-# this constant only governs the catch-all path for unspecialized
-# tools.
-MAX_OBS_DUMP_CHARS = 100000000
+# fix §271 — single source of truth for the bounded preview cap. The
+# prior value (100MB) made "bounded" a misnomer: a 50MB JSON dump
+# landed verbatim in observables, which then rode in case_state_json
+# through every prompt build, parent_reconciler scan, and frontend
+# fetch. 32 KiB is the working budget — roughly one Platypus PDF
+# paragraph rendered at body_sm, or ~8000 tokens of plain text —
+# which is enough for the agent to recognise the next move without
+# stuffing whole files into the reasoning state. Specialised renderers
+# (audit_mcp._render_matches_dense, _render_chunks_dense, ida_headless
+# pseudocode/disasm) reference this constant directly; raw responses
+# still live in the message store untruncated for the operator UI.
+MAX_OBS_DUMP_CHARS = 32 * 1024
 
 # Cap on per-list previews surfaced into observables.
 MAX_LIST_PREVIEW = 20
