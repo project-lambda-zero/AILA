@@ -97,6 +97,12 @@ class IDABridgeTool(Tool):
         self._timeout = timeout or float(
             os.environ.get("IDA_HEADLESS_TIMEOUT", "120"),
         )
+        # fix §211 — per-instance schema cache + alias map. Class-level
+        # storage leaked across instances (tests saw stale state) and
+        # was never invalidated when the upstream IDA MCP server
+        # reloaded its tool catalog.
+        self._spec_cache: list[dict[str, Any]] | None = None
+        self._auto_alias_map: dict[str, dict[str, str]] = {}
 
     async def _resolve_base_url(self) -> str:
         if self._fixed_base_url is not None:
@@ -151,18 +157,13 @@ class IDABridgeTool(Tool):
     # Manual overrides — empty by design; everything is data-driven.
     _MANUAL_OVERRIDES: dict[str, dict[str, str]] = {}
 
-    # Auto-built ``{action: {alias: canonical}}`` populated by
-    # ``list_tool_specs()`` after the first /tools fetch.
-    _AUTO_ALIAS_MAP: dict[str, dict[str, str]] = {}
-
-    @classmethod
     def _normalize_kwargs(
-        cls, action: str, kwargs: dict[str, Any],
+        self, action: str, kwargs: dict[str, Any],
     ) -> tuple[dict[str, Any], list[str]]:
         """Delegate to the shared resolver against the live alias map."""
         from aila.modules.vr.tools._kwarg_alias import normalize_kwargs  # noqa: PLC0415
 
-        return normalize_kwargs(action, kwargs, cls._AUTO_ALIAS_MAP)
+        return normalize_kwargs(action, kwargs, self._auto_alias_map)
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the MCP HTTP API.
@@ -244,9 +245,7 @@ class IDABridgeTool(Tool):
                     ctx["error_excerpt"] = err[:400]
             return payload
 
-    # Schema-driven tool catalog cache — race-safe because each fetch
-    # writes the same value (idempotent).
-    _SPEC_CACHE: list[dict[str, Any]] | None = None
+    # fix §211 — _SPEC_CACHE moved to instance attr in __init__.
 
     async def _list_tools(self) -> dict:
         """Return available MCP tool names + schemas."""
@@ -259,9 +258,9 @@ class IDABridgeTool(Tool):
         }
 
     async def list_tool_specs(self) -> list[dict[str, Any]]:
-        """Fetch the IDA MCP catalog with parsed schemas. Cached per process."""
-        if self.__class__._SPEC_CACHE is not None:
-            return self.__class__._SPEC_CACHE
+        """Fetch the IDA MCP catalog with parsed schemas. Cached per instance."""
+        if self._spec_cache is not None:
+            return self._spec_cache
         base = await self._resolve_base_url()
         url = f"{base}/tools"
         try:
@@ -273,24 +272,24 @@ class IDABridgeTool(Tool):
                 "ida_headless catalog fetch failed (%s) — agent will see "
                 "name-only listing without schemas", exc,
             )
-            self.__class__._SPEC_CACHE = []
+            self._spec_cache = []
             return []
-        self.__class__._SPEC_CACHE = [_compact_spec(t) for t in raw]
+        self._spec_cache = [_compact_spec(t) for t in raw]
         # Derive the per-action alias map from the live schema. Every
         # subsequent _normalize_kwargs call resolves through this map.
         from aila.modules.vr.tools._kwarg_alias import build_alias_map  # noqa: PLC0415
 
-        self.__class__._AUTO_ALIAS_MAP = build_alias_map(
-            self.__class__._SPEC_CACHE,
+        self._auto_alias_map = build_alias_map(
+            self._spec_cache,
             self._KW_FAMILIES,
             self._MANUAL_OVERRIDES,
         )
         logging.getLogger(__name__).info(
             "ida_bridge: catalog loaded — %d tools, %d with alias maps",
-            len(self.__class__._SPEC_CACHE),
-            len(self.__class__._AUTO_ALIAS_MAP),
+            len(self._spec_cache),
+            len(self._auto_alias_map),
         )
-        return self.__class__._SPEC_CACHE
+        return self._spec_cache
 
     async def _upload_binary(self, file_path: str | None = None, **_extra: Any) -> dict:
         """Upload a local binary to the MCP server for analysis.

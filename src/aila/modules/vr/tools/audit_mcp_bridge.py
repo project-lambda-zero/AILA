@@ -262,6 +262,12 @@ class AuditMcpBridgeTool(Tool):
         self._timeout = timeout or float(
             os.environ.get("AUDIT_MCP_TIMEOUT", "300"),
         )
+        # fix §207 — per-instance prewarm registry. Class-level storage
+        # leaked across instances (tests saw stale state) and grew
+        # monotonically in long-running workers (one entry per index_id,
+        # never reclaimed).
+        self._warmed_indexes: set[str] = set()
+        self._warm_locks: dict[str, Any] = {}
 
     # ── Per-index pre-warm registry ──────────────────────────────────
     #
@@ -276,10 +282,7 @@ class AuditMcpBridgeTool(Tool):
     # gives each of the 4 workers ~4 calls — statistically certain to
     # warm them all. Subsequent calls go through unchanged.
     #
-    # Class-level set + per-index asyncio.Lock so 3 branches firing
-    # the first call in parallel don't trigger 3 separate fan-outs.
-    _warmed_indexes: set[str] = set()
-    _warm_locks: dict[str, Any] = {}  # lazy asyncio.Lock per index_id
+    # fix §207 — moved to instance attrs in __init__.
     _PREWARM_FANOUT: int = 16
     _PREWARM_TIMEOUT_S: float = 90.0
 
@@ -787,12 +790,12 @@ class AuditMcpBridgeTool(Tool):
         """
         import asyncio  # noqa: PLC0415
 
-        if index_id in self.__class__._warmed_indexes:
+        if index_id in self._warmed_indexes:
             return
         # Skip pre-warm on single-worker deployments — see docstring.
         workers = int(os.environ.get("AUDIT_MCP_WORKERS", "1") or "1")
         if workers <= 1:
-            self.__class__._warmed_indexes.add(index_id)
+            self._warmed_indexes.add(index_id)
             logging.getLogger(__name__).info(
                 "audit_mcp_bridge: pre-warm skipped for %s "
                 "(AUDIT_MCP_WORKERS=%d, no fan-out needed)",
@@ -800,13 +803,13 @@ class AuditMcpBridgeTool(Tool):
             )
             return
 
-        lock = self.__class__._warm_locks.get(index_id)
+        lock = self._warm_locks.get(index_id)
         if lock is None:
             lock = asyncio.Lock()
-            self.__class__._warm_locks[index_id] = lock
+            self._warm_locks[index_id] = lock
 
         async with lock:
-            if index_id in self.__class__._warmed_indexes:
+            if index_id in self._warmed_indexes:
                 return  # another caller raced through while we waited
 
             base = await self._resolve_base_url()
@@ -853,7 +856,7 @@ class AuditMcpBridgeTool(Tool):
                 "audit_mcp_bridge: pre-warm of %s complete in %.1fs",
                 index_id, elapsed,
             )
-            self.__class__._warmed_indexes.add(index_id)
+            self._warmed_indexes.add(index_id)
 
     async def _validate_kwargs(
         self,
