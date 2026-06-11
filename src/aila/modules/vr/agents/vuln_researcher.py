@@ -361,9 +361,13 @@ class HonestVulnResearcher:
                 # other cache-shape mismatch. We fall through to the
                 # API path; the bad cache row stays in DB but will be
                 # overwritten by store_response on the next success.
+                # fix §350 — surface traceback so a malformed cache row's
+                # actual shape failure is debuggable on first occurrence
+                # instead of waiting for a second hit.
                 _log.warning(
                     "vuln_researcher: cache validate failed (%s: %s) — calling LLM",
                     type(exc).__name__, exc,
+                    exc_info=True,
                 )
                 decision = None
 
