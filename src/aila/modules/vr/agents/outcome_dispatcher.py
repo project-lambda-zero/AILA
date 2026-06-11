@@ -1118,6 +1118,19 @@ class OutcomeDispatcher:
         nday_handle_id: str | None = None
         nday_error: str | None = None
         if isinstance(patch_descriptor, dict) and patch_descriptor:
+            # fix §265 — explicit required-key check before enqueue. The
+            # nday workflow upstream blew up midway when any of these
+            # were absent; raise at the dispatcher so the outcome ends
+            # up FAILED with a clear reason instead of silently leaving
+            # the nday queue empty + a half-touched assessment row.
+            missing = [
+                k for k in ("vulnerable_ref", "patched_ref", "repo_url")
+                if not patch_descriptor.get(k)
+            ]
+            if missing:
+                raise ValueError(
+                    f"patch_descriptor missing required keys: {missing}",
+                )
             try:
                 handle = await enqueue_vr_nday(
                     self._task_queue_factory(),
