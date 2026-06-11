@@ -415,47 +415,101 @@ class TargetAnalysisService:
     # ─── android_apk staged ingestion (PRD §C-20) ──────────────────────
 
     async def _analyze_android_apk(self, target_id: str) -> None:
-        """Drive the android-mcp + audit-mcp ingestion stages sequentially.
+        """Drive the android-mcp + audit-mcp ingestion stages.
 
-        APK_DECODE → JADX_DECOMPILE → INDEX_DECOMPILED → STATIC_SUMMARY
-        → MOBSF_SCAN. Each runs under its own StageTracker so the
-        operator can resume any single failed stage via
-        POST /vr/targets/:id/resume-analysis without re-running the
-        ones that already succeeded.
+        fix §240 — wall-clock optimisation: the four stages that take an
+        APK path as their sole input are independent (apktool, jadx,
+        androguard, MobSF run against the same file with disjoint output
+        keys) so we fan them out via ``asyncio.gather``.
+        INDEX_DECOMPILED depends on JADX_DECOMPILE writing
+        ``android_mcp_decompiled_dir`` and runs sequentially after.
 
-        INDEX_DECOMPILED hands the jadx Java tree to audit-mcp's
-        ``index_codebase`` so VR personas auditing an APK get the same
-        Trailmark/Semble surface they get against source-repo targets
-        (semantic_search, callers_of, read_function over decompiled
-        Java methods). The audit-mcp index_id flows through
-        ``mcp_handles_json.audit_mcp_decompiled_index_id`` to the
-        agent prompt's target snapshot (F-4).
+        On a typical APK:
+          - APK_DECODE        ~30s   (apktool)
+          - JADX_DECOMPILE    5-15min
+          - STATIC_SUMMARY    ~30s   (androguard)
+          - MOBSF_SCAN        5-30min (optional, skipped if no API key)
+          - INDEX_DECOMPILED  varies (audit-mcp index of jadx output)
 
-        Outputs accumulate into ``mcp_handles_json`` across stages so
-        downstream consumers (VR personas, refresh-source button) read
-        a single coherent handles dict instead of stitching together
-        per-stage scratch files.
+        Sequential wall-clock: ~50min worst case.
+        Group-parallel: ~max(group_1) + index = ~30min worst case.
 
-        Stops the chain on the first hard failure — the failing stage
-        is left at FAILED state by its tracker, downstream stages stay
-        at PENDING until the operator resumes. A stage already DONE
-        on a re-run is logged and the chain proceeds (idempotent).
+        Concurrent ``mcp_handles_json`` writes are race-protected by a
+        per-worker SELECT FOR UPDATE merge (see ``_merge_handles_locked``):
+        each worker grabs the row lock briefly to merge its disjoint keys
+        into the latest snapshot, so parallel completions can't overwrite
+        each other.
+
+        Stops on the first hard failure — the failing stage is left at
+        FAILED by its tracker, downstream stages stay at PENDING until
+        the operator resumes. A stage already DONE on a re-run is logged
+        and the chain proceeds (idempotent).
         """
-        await self._run_android_stage(
-            target_id, StageName.APK_DECODE, self._android_apk_decode,
+        # GROUP 1: independent stages — fan out.
+        # asyncio.gather propagates the FIRST exception and cancels
+        # outstanding tasks; that matches the existing sequential chain's
+        # "stop on first failure" contract.
+        await asyncio.gather(
+            self._run_android_stage(
+                target_id, StageName.APK_DECODE, self._android_apk_decode,
+            ),
+            self._run_android_stage(
+                target_id, StageName.JADX_DECOMPILE, self._android_jadx_decompile,
+            ),
+            self._run_android_stage(
+                target_id, StageName.STATIC_SUMMARY, self._android_static_summary,
+            ),
+            self._run_android_stage(
+                target_id, StageName.MOBSF_SCAN, self._android_mobsf_scan,
+            ),
         )
-        await self._run_android_stage(
-            target_id, StageName.JADX_DECOMPILE, self._android_jadx_decompile,
-        )
+        # GROUP 2: depends on JADX_DECOMPILE having written
+        # ``android_mcp_decompiled_dir``; runs strictly after group 1.
         await self._run_android_stage(
             target_id, StageName.INDEX_DECOMPILED, self._android_index_decompiled,
         )
-        await self._run_android_stage(
-            target_id, StageName.STATIC_SUMMARY, self._android_static_summary,
-        )
-        await self._run_android_stage(
-            target_id, StageName.MOBSF_SCAN, self._android_mobsf_scan,
-        )
+
+    async def _merge_handles_locked(
+        self,
+        target_id: str,
+        new_keys: dict[str, Any],
+    ) -> None:
+        """Atomically merge ``new_keys`` into the target row's
+        ``mcp_handles_json``.
+
+        fix §240 — parallel android stages must not overwrite each
+        other's contributions. Each worker calls this AFTER its MCP
+        action returns and BEFORE the StageTracker commits DONE. The
+        SELECT FOR UPDATE serialises the read-modify-write across
+        concurrent stages so disjoint keys (apktool's
+        ``android_mcp_decoded_dir``, jadx's ``android_mcp_decompiled_dir``,
+        etc.) all survive into the final row.
+
+        Trade-off vs §322 (persist-work-product-in-same-commit-as-DONE):
+        this introduces a small crash window between the merge commit
+        and the tracker's DONE commit. If a crash lands in that window,
+        the row carries the worker's keys but the stage stays RUNNING;
+        the stage reaper times it out → FAILED, and the next operator-
+        resume re-runs the stage (idempotent because android MCP
+        actions are content-addressed and re-run with force=True).
+        """
+        if not new_keys:
+            return
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _select(VRTargetRecord)
+                .where(VRTargetRecord.id == target_id)
+                .with_for_update(),
+            )).first()
+            if row is None:
+                raise TargetAnalysisError(
+                    f"target {target_id} vanished during handles merge",
+                )
+            merged = json.loads(row.mcp_handles_json or "{}")
+            merged.update(new_keys)
+            row.mcp_handles_json = json.dumps(merged)
+            uow.session.add(row)
+            await uow.commit()
 
     async def _run_android_stage(
         self,
@@ -466,11 +520,20 @@ class TargetAnalysisService:
         """Wrap one android stage in a StageTracker.
 
         The ``worker`` callable receives ``(target_id, descriptor,
-        current_handles, tracker)`` and is responsible for calling
-        ``tracker.record_output(...)`` with the accumulated
-        ``mcp_handles_json``. Raises ``TargetAnalysisError`` on hard
-        failure; the tracker captures it as FAILED and re-raises so
-        the chain stops.
+        current_handles, tracker)``. ``current_handles`` is read AT
+        STAGE ENTRY from the DB — useful for stages that need to read
+        a prior stage's output (INDEX_DECOMPILED reads
+        ``android_mcp_decompiled_dir`` written by JADX_DECOMPILE).
+
+        Workers MUST NOT pass ``mcp_handles_json`` through
+        ``tracker.record_output``: parallel siblings would overwrite
+        each other's disjoint keys. Use ``self._merge_handles_locked``
+        instead to atomically merge new keys into the row. The tracker
+        still owns the DONE/FAILED state transition and records the
+        non-handles work-product columns.
+
+        Raises ``TargetAnalysisError`` on hard failure; the tracker
+        captures it as FAILED and re-raises so the chain stops.
         """
         try:
             async with StageTracker(target_id, stage) as tracker:
@@ -527,12 +590,14 @@ class TargetAnalysisService:
             raise TargetAnalysisError(
                 f"android-mcp.apktool_decode returned no output_dir: {resp!r}",
             )
-        current_handles["android_mcp_decoded_dir"] = output_dir
+        new_keys: dict[str, Any] = {"android_mcp_decoded_dir": output_dir}
         if resp.get("apk_sha256"):
-            current_handles["android_mcp_apk_sha256"] = resp["apk_sha256"]
+            new_keys["android_mcp_apk_sha256"] = resp["apk_sha256"]
         if resp.get("manifest_path"):
-            current_handles["android_mcp_manifest_path"] = resp["manifest_path"]
-        tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+            new_keys["android_mcp_manifest_path"] = resp["manifest_path"]
+        # fix §240 — locked merge into mcp_handles_json so parallel
+        # group-1 stages don't overwrite each other's disjoint keys.
+        await self._merge_handles_locked(target_id, new_keys)
         _log.info(
             "vr.android.apk_decode target=%s output_dir=%s",
             target_id, output_dir,
@@ -568,12 +633,14 @@ class TargetAnalysisService:
             raise TargetAnalysisError(
                 f"android-mcp.jadx_decompile returned no sources_dir / output_dir: {resp!r}",
             )
-        current_handles["android_mcp_decompiled_dir"] = sources_dir
+        new_keys: dict[str, Any] = {"android_mcp_decompiled_dir": sources_dir}
         if resp.get("output_dir") and resp.get("output_dir") != sources_dir:
-            current_handles["android_mcp_jadx_root"] = resp["output_dir"]
+            new_keys["android_mcp_jadx_root"] = resp["output_dir"]
         if isinstance(resp.get("class_count"), int):
-            current_handles["android_mcp_jadx_class_count"] = resp["class_count"]
-        tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+            new_keys["android_mcp_jadx_class_count"] = resp["class_count"]
+        # fix §240 — locked merge so parallel group-1 stages don't
+        # overwrite each other's disjoint keys.
+        await self._merge_handles_locked(target_id, new_keys)
         _log.info(
             "vr.android.jadx_decompile target=%s sources_dir=%s classes=%s",
             target_id, sources_dir, resp.get("class_count"),
@@ -614,10 +681,10 @@ class TargetAnalysisService:
 
         decompiled_dir = current_handles.get("android_mcp_decompiled_dir")
         if not isinstance(decompiled_dir, str) or not decompiled_dir:
-            current_handles["audit_mcp_decompiled_index"] = {
-                "skipped": "no jadx output",
-            }
-            tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+            await self._merge_handles_locked(
+                target_id,
+                {"audit_mcp_decompiled_index": {"skipped": "no jadx output"}},
+            )
             _log.warning(
                 "vr.android.index_decompiled target=%s apk=%s skipped — "
                 "no android_mcp_decompiled_dir in handles",
@@ -644,9 +711,12 @@ class TargetAnalysisService:
 
         await self._poll_audit_mcp(index_id)
 
-        current_handles["audit_mcp_decompiled_index_id"] = index_id
-        current_handles["audit_mcp_decompiled_indexed_at"] = utc_now().isoformat()
-        tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+        # fix §240 — locked merge (group-2 single stage, but pattern
+        # stays uniform across all android workers).
+        await self._merge_handles_locked(target_id, {
+            "audit_mcp_decompiled_index_id": index_id,
+            "audit_mcp_decompiled_indexed_at": utc_now().isoformat(),
+        })
         _log.info(
             "vr.android.index_decompiled target=%s apk=%s index_id=%s path=%s",
             target_id, apk_path, index_id, decompiled_dir,
@@ -671,14 +741,16 @@ class TargetAnalysisService:
         # The full androguard summary (package, permissions, certs,
         # exported components) is small enough to embed verbatim — no
         # paths to chase, downstream personas read it inline.
-        current_handles["android_mcp_static_summary"] = resp
+        new_keys: dict[str, Any] = {"android_mcp_static_summary": resp}
         package = resp.get("package")
         if isinstance(package, str) and package:
             # Mirror the existing uploaded_filename pattern so the
             # frontend display name can fall back to the package id
             # once STATIC_SUMMARY completes (PRD §C-21).
-            current_handles["android_mcp_package_name"] = package
-        tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+            new_keys["android_mcp_package_name"] = package
+        # fix §240 — locked merge so parallel group-1 stages don't
+        # overwrite each other's disjoint keys.
+        await self._merge_handles_locked(target_id, new_keys)
         _log.info(
             "vr.android.static_summary target=%s package=%s permissions=%d",
             target_id, package,
@@ -699,11 +771,13 @@ class TargetAnalysisService:
                 "vr.android.mobsf_scan target=%s skipped (MOBSF_API_KEY unset)",
                 target_id,
             )
-            current_handles["android_mcp_mobsf_scan"] = {
-                "skipped": True,
-                "reason": "MOBSF_API_KEY env var not set on the AILA host",
-            }
-            tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+            # fix §240 — locked merge.
+            await self._merge_handles_locked(target_id, {
+                "android_mcp_mobsf_scan": {
+                    "skipped": True,
+                    "reason": "MOBSF_API_KEY env var not set on the AILA host",
+                },
+            })
             return
 
         apk_path = self._resolve_apk_path(descriptor)
@@ -715,8 +789,11 @@ class TargetAnalysisService:
             raise TargetAnalysisError(
                 f"android-mcp.mobsf_scan failed: {err}",
             )
-        current_handles["android_mcp_mobsf_scan"] = resp
-        tracker.record_output(mcp_handles_json=json.dumps(current_handles))
+        # fix §240 — locked merge so parallel group-1 stages don't
+        # overwrite each other's disjoint keys.
+        await self._merge_handles_locked(
+            target_id, {"android_mcp_mobsf_scan": resp},
+        )
         _log.info(
             "vr.android.mobsf_scan target=%s scan_hash=%s",
             target_id, resp.get("_scan_hash"),
