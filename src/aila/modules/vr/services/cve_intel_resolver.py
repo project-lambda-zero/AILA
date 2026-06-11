@@ -32,6 +32,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
+
 __all__ = [
     "CVEResolution",
     "extract_cve_ids",
@@ -192,9 +194,18 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
     for cve_id in cve_ids:
         try:
             knowledge = await svc.fetch_cve_intel(cve_id)
-        except Exception as exc:  # noqa: BLE001  defensive — collapse NVD/transport to status
-            text = str(exc)
-            if "404" in text or "Not Found" in text:
+        except Exception as exc:  # noqa: BLE001  defensive — classify by type then collapse
+            # fix §188 — classify error type by exception class instead of
+            # string-matching the message. A genuine NVD 404 reaches us as
+            # httpx.HTTPStatusError(.response.status_code==404); transport
+            # failures arrive as httpx.TimeoutException / httpx.NetworkError.
+            # Anything else is bucket "error" with the exception class name
+            # in the payload so the operator can debug from logs.
+            if (
+                isinstance(exc, httpx.HTTPStatusError)
+                and exc.response is not None
+                and exc.response.status_code == 404
+            ):
                 out.append(CVEResolution(
                     cve_id=cve_id,
                     status="not_found",
@@ -206,11 +217,22 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
                         "the CVE id is critical to the investigation."
                     ),
                 ))
+            elif isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
+                out.append(CVEResolution(
+                    cve_id=cve_id,
+                    status="transport_error",
+                    error=(
+                        f"{type(exc).__name__}: NVD/IntelService unreachable "
+                        f"({str(exc)[:200]}). Treat the CVE id as unknown for "
+                        f"this turn — a retry on the next investigation step "
+                        f"may resolve."
+                    ),
+                ))
             else:
                 out.append(CVEResolution(
                     cve_id=cve_id,
                     status="error",
-                    error=f"{type(exc).__name__}: {text[:240]}",
+                    error=f"{type(exc).__name__}: {str(exc)[:240]}",
                 ))
             continue
         if knowledge is None:
