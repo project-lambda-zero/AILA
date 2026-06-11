@@ -131,3 +131,87 @@ async def test_async_callable_compatibility() -> None:
     result = await fn()
     assert result == {"ran": True}
 
+
+
+# ─────────────────────────────────────────────────────────────────
+# Phase B.5 cancellation token tests
+# ─────────────────────────────────────────────────────────────────
+
+
+def test_cancellation_token_starts_un_cancelled() -> None:
+    from aila.platform.llm.cancellation import (  # noqa: PLC0415
+        CancellationToken,
+    )
+    t = CancellationToken("test-inv-1")
+    assert t.is_cancelled() is False
+    assert t.id == "test-inv-1"
+
+
+def test_cancellation_token_cancel_is_idempotent() -> None:
+    from aila.platform.llm.cancellation import (  # noqa: PLC0415
+        CancellationToken,
+    )
+    t = CancellationToken("test-inv-2")
+    t.cancel()
+    assert t.is_cancelled() is True
+    t.cancel()  # second call no-op
+    assert t.is_cancelled() is True
+
+
+def test_cancellation_token_raise_if_cancelled() -> None:
+    from aila.platform.llm.cancellation import (  # noqa: PLC0415
+        CancellationToken,
+        LLMCancelledError,
+    )
+    t = CancellationToken("test-inv-3")
+    t.raise_if_cancelled()  # un-cancelled is a no-op
+    t.cancel()
+    import pytest  # noqa: PLC0415
+    with pytest.raises(LLMCancelledError, match="test-inv-3"):
+        t.raise_if_cancelled()
+
+
+def test_registry_shares_token_across_callers() -> None:
+    from aila.platform.llm.cancellation import (  # noqa: PLC0415
+        clear_for_investigation,
+        get_cancellation_token,
+    )
+    clear_for_investigation("test-inv-4")
+    a = get_cancellation_token("test-inv-4")
+    b = get_cancellation_token("test-inv-4")
+    assert a is b
+    assert a.is_cancelled() is False
+
+
+def test_cancel_for_investigation_flips_token() -> None:
+    from aila.platform.llm.cancellation import (  # noqa: PLC0415
+        cancel_for_investigation,
+        clear_for_investigation,
+        get_cancellation_token,
+    )
+    clear_for_investigation("test-inv-5")
+    t = get_cancellation_token("test-inv-5")
+    assert t.is_cancelled() is False
+    assert cancel_for_investigation("test-inv-5") is True
+    assert t.is_cancelled() is True
+
+
+def test_cancel_for_missing_investigation_returns_false() -> None:
+    from aila.platform.llm.cancellation import (  # noqa: PLC0415
+        cancel_for_investigation,
+        clear_for_investigation,
+    )
+    clear_for_investigation("test-inv-6-nonexistent")
+    assert cancel_for_investigation("test-inv-6-nonexistent") is False
+
+
+def test_clear_for_investigation_drops_token() -> None:
+    from aila.platform.llm.cancellation import (  # noqa: PLC0415
+        clear_for_investigation,
+        get_cancellation_token,
+        token_registry_snapshot,
+    )
+    get_cancellation_token("test-inv-7")
+    assert "test-inv-7" in token_registry_snapshot()
+    clear_for_investigation("test-inv-7")
+    assert "test-inv-7" not in token_registry_snapshot()

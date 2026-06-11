@@ -243,6 +243,22 @@ async def pause_investigation_atomic(
             investigation_id, exc,
             exc_info=True,
         )
+    # 6. Phase B.5 hard cancellation: flip the per-investigation
+    # cancellation token so any in-flight LLM retry loop or tool
+    # bridge dispatch sees the cancellation at its next retry-boundary
+    # check (cancel_for_investigation is a no-op if no token exists
+    # in this process — the cursor SSOT is the cross-process synchronizer).
+    try:
+        from aila.platform.llm.cancellation import (  # noqa: PLC0415
+            cancel_for_investigation,
+        )
+        cancel_for_investigation(investigation_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        _log.warning(
+            "pause_investigation_atomic CANCEL_TOKEN failed inv=%s err=%s",
+            investigation_id, exc,
+            exc_info=True,
+        )
 
     return summary
 
@@ -349,6 +365,22 @@ async def resume_investigation_atomic(
         await uow.session.refresh(inv)
         summary["inv_status"] = inv.status
 
+    # Phase B.5 — clear the cancellation token so the resumed branches'
+    # next LLM call / tool dispatch sees a fresh (non-cancelled) token.
+    # The fan-out below dispatches new ARQ tasks that will call
+    # get_cancellation_token(investigation_id) and receive a freshly-
+    # minted token, not the cancelled-from-pause one.
+    try:
+        from aila.platform.llm.cancellation import (  # noqa: PLC0415
+            clear_for_investigation,
+        )
+        clear_for_investigation(investigation_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        _log.warning(
+            "resume_investigation_atomic CLEAR_TOKEN failed inv=%s err=%s",
+            investigation_id, exc,
+            exc_info=True,
+        )
     # 4. AFTER commit: fan-out one ARQ task per resumed cursor. Closes
     #    §34 — every branch (not just the primary) gets a worker pickup.
     from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
