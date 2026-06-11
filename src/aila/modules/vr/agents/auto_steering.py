@@ -646,11 +646,14 @@ async def maybe_post_auto_steering(
         # Rule 4: bridge rejected kwarg shape
         if _detect_tool_kwarg_rejected(server_id, tool_name, args, raw_result):
             raw_err = str(raw_result.get("error") or "")
-            # De-dupe key is (tool, error-class). The kwarg name is in
-            # the error text — repeated identical attempts share the key,
-            # but a genuinely different rejection re-posts.
-            err_class = raw_err.split(":", 1)[0][:80] if raw_err else "unknown"
-            key = f"kwarg_rejected:{tool_name}:{err_class}"
+            # fix §339 — replace fragile ``raw_err.split(':', 1)[0]``
+            # err_class extraction (drifts whenever the bridge changes
+            # its error wording) with a structural key based on the
+            # call shape itself. Same tool + same arg-name set always
+            # share the key; a genuinely different rejection (different
+            # arg names) gets a different key and re-posts.
+            arg_keys = ",".join(sorted(str(k) for k in (args or {}).keys()))
+            key = f"kwarg_rejected:{tool_name}:{arg_keys}"
             if await _already_posted(investigation_id, key):
                 return None
             correction = await _derive_kwarg_rejected_correction(
