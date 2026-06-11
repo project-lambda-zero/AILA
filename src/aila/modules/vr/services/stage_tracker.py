@@ -458,7 +458,12 @@ async def reap_stuck_stages() -> int:
                     AnalysisState.INGESTING.value,
                     AnalysisState.FAILED.value,
                 ]),
-            ),
+            )
+            # fix §119 — cap per-pass work. With 10k stuck rows in one
+            # pass the reaper would hold a transaction for minutes and
+            # block legitimate __aenter__/__aexit__ row locks; bound it
+            # to 200 and let the next cron tick drain the rest.
+            .limit(200),
         )).all()
         now = utc_now()
         for row in rows:
