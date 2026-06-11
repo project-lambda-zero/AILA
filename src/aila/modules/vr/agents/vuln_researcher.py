@@ -2736,10 +2736,36 @@ async def _upsert_canonical_outcome(
             changed = True
     old_payload["variant_hunt_orders"] = old_orders
 
-    if new_payload.get("poc_code") and not old_payload.get("poc_code"):
-        old_payload["poc_code"] = new_payload["poc_code"]
-        old_payload["poc_language"] = new_payload.get("poc_language", "text")
-        changed = True
+    # fix §167 — capture every poc_code submission. Previously the new
+    # poc was taken ONLY when the old slot was empty, so a second
+    # branch's more complete or correct PoC was silently dropped (not
+    # even in panel_contributions before §175). Each submission is now
+    # appended to payload['poc_code_versions'] as a persona-attributed
+    # entry. The legacy single payload['poc_code'] field is still
+    # populated on first write for backward compatibility with readers
+    # that haven't migrated to the list shape.
+    if new_payload.get("poc_code"):
+        poc_versions = old_payload.get("poc_code_versions") or []
+        already_recorded = any(
+            isinstance(v, dict)
+            and v.get("branch_id") == branch_id
+            and v.get("at_turn") == at_turn
+            for v in poc_versions
+        )
+        if not already_recorded:
+            poc_versions.append({
+                "persona": persona,
+                "branch_id": branch_id,
+                "at_turn": at_turn,
+                "submitted_at": now.isoformat(),
+                "poc_code": new_payload["poc_code"],
+                "poc_language": new_payload.get("poc_language", "text"),
+            })
+            old_payload["poc_code_versions"] = poc_versions
+            changed = True
+        if not old_payload.get("poc_code"):
+            old_payload["poc_code"] = new_payload["poc_code"]
+            old_payload["poc_language"] = new_payload.get("poc_language", "text")
 
     new_kind_rank = _OUTCOME_KIND_RANK.get(new_outcome_kind, 99)
     old_kind_rank = _OUTCOME_KIND_RANK.get(existing.outcome_kind, 99)
