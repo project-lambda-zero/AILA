@@ -2845,6 +2845,151 @@ def _risk_snapshot_card(f: FindingRecord, s: dict[str, ParagraphStyle]) -> list[
     return [outer, Spacer(1, 2.5 * mm)]
 
 
+# ---------------------------------------------------------------------------
+# KEY TAKEAWAY box — one-sentence "what to do next" for every FAIL
+# ---------------------------------------------------------------------------
+#
+# Operator wants the reader who scrolls to the bottom of a FAIL finding
+# to leave with a clear remediation direction. The panel rarely emits a
+# clean ``remediation`` field on its own (1/53 controls in this audit),
+# so the takeaway is synthesised from the strongest signal available:
+#
+#   1. payload['remediation']       — agent-authored remediation prose
+#   2. variant_hunt_orders[0].title — the first variant hypothesis is
+#                                     the panel's recommended follow-up
+#   3. first sentence of the agent answer (head) — used as a fallback
+#
+# The box only renders on FAIL findings; PASS / N/A / INFO / REVIEW /
+# INCONCLUSIVE pages are not actionable in the same sense.
+
+_TAKEAWAY_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+
+
+def _first_sentence(text: str, max_chars: int) -> str:
+    """Return the first sentence-ish chunk, capped at ``max_chars``."""
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+    # Split on sentence boundary; first chunk is the leading sentence.
+    sents = _TAKEAWAY_SENTENCE_RE.split(text, maxsplit=1)
+    head = sents[0] if sents else text
+    if len(head) <= max_chars:
+        return head
+    return head[: max(40, max_chars - 1)].rstrip(" ,;:") + "…"
+
+
+def _synthesize_takeaway(f: FindingRecord) -> str | None:
+    """Return a 1-2 sentence "what to do next" string, or None.
+
+    Composition strategy (in priority order):
+
+    1. ``payload['remediation']`` — when the agent supplied explicit
+       remediation prose, use the first sentence (capped at 240 chars).
+    2. Otherwise, combine the FIRST ``variant_hunt_orders[0].title`` —
+       the panel's recommended follow-up investigation — with the FIRST
+       sentence (or 120 chars) of the agent's answer text. The variant
+       title carries the WHAT; the answer carries the WHY.
+    3. Fallback: first sentence of the answer alone.
+    """
+    payload = f.payload
+
+    # 1. Explicit remediation field
+    rem = payload.get("remediation")
+    if isinstance(rem, str) and rem.strip():
+        return _first_sentence(rem.strip(), 240)
+    if isinstance(rem, dict):
+        # Some payloads carry remediation as a dict with `summary` / `text`.
+        for key in ("summary", "text", "description", "action"):
+            v = rem.get(key)
+            if isinstance(v, str) and v.strip():
+                return _first_sentence(v.strip(), 240)
+    if isinstance(rem, list) and rem:
+        # First list item — could be str or dict.
+        first = rem[0]
+        if isinstance(first, str) and first.strip():
+            return _first_sentence(first.strip(), 240)
+        if isinstance(first, dict):
+            for key in ("summary", "text", "title", "action"):
+                v = first.get(key)
+                if isinstance(v, str) and v.strip():
+                    return _first_sentence(v.strip(), 240)
+
+    # 2. Variant title + answer head
+    vho = payload.get("variant_hunt_orders") or []
+    vt: str = ""
+    if vho and isinstance(vho[0], dict):
+        title = vho[0].get("title") or vho[0].get("hypothesis") or ""
+        if isinstance(title, str):
+            vt = title.strip()
+    answer = (payload.get("answer") or "").strip()
+    if vt and answer:
+        cleaned_ans = _PULL_QUOTE_NOISE_RE.sub(" ", answer)
+        ans_head = _first_sentence(cleaned_ans, 140)
+        # Stitch: "Hypothesis: {variant_title}. Evidence: {answer_head}."
+        # Cap the combined length at 280 chars.
+        combined = f"Hypothesis: {vt}. Evidence: {ans_head}"
+        if len(combined) > 280:
+            return combined[:279].rstrip(" ,;:") + "…"
+        return combined
+    if vt:
+        return f"Recommended follow-up: investigate {vt}."
+
+    # 3. Plain answer head
+    if answer:
+        cleaned_ans = _PULL_QUOTE_NOISE_RE.sub(" ", answer)
+        return _first_sentence(cleaned_ans, 240)
+    return None
+
+
+def _key_takeaway_box(f: FindingRecord, s: dict[str, ParagraphStyle]) -> list[Flowable]:
+    """Return the ``▶ KEY TAKEAWAY`` callout flowables.
+
+    Returns an empty list when no takeaway can be synthesised (which
+    only happens for FAILs with literally no agent answer text — none
+    in the current audit, but safe).
+    """
+    text = _synthesize_takeaway(f)
+    if not text:
+        return []
+
+    vcol = VERDICT_COLOR.get(f.verdict_label, COL_FAIL)
+    # Header — small caps accent in verdict colour
+    header_style = ParagraphStyle(
+        "TakeawayH", parent=s["caps"],
+        fontName=_font("Sans-Bold", "Helvetica-Bold"),
+        fontSize=8.0, leading=10.0, letterSpace=2.0,
+        textColor=vcol, spaceAfter=0,
+    )
+    body_style = ParagraphStyle(
+        "TakeawayB", parent=s["body"],
+        fontSize=9.4, leading=12.4,
+        textColor=COL_INK, alignment=TA_LEFT,
+        spaceBefore=0, spaceAfter=0,
+    )
+    safe = _md_inline(_html_escape(text)).replace("\n", " ")
+
+    rows = [
+        [Paragraph("&#9654;&nbsp;&nbsp;KEY&nbsp;TAKEAWAY", header_style)],
+        [Paragraph(safe, body_style)],
+    ]
+    t = Table(rows, colWidths=[PAGE_W - MARGIN_L - MARGIN_R - 4 * mm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), COL_PAPER_DEEP),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (0, 0), 4),
+        ("TOPPADDING", (0, 1), (0, 1), 2),
+        ("BOTTOMPADDING", (0, 0), (0, 0), 1),
+        ("BOTTOMPADDING", (0, 1), (0, 1), 5),
+        # Thick verdict-coloured left rule + thin ink box
+        ("LINEBEFORE", (0, 0), (0, -1), 3.6, vcol),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.6, COL_INK),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.6, COL_INK),
+        ("LINEAFTER", (-1, 0), (-1, -1), 0.4, COL_THIN),
+    ]))
+    return [Spacer(1, 3 * mm), KeepTogether(t), Spacer(1, 2 * mm)]
+
+
 def _build_one_finding(f: FindingRecord, bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
     """Return all flowables for one finding page (may span multiple pages)."""
     story: list[Flowable] = []
@@ -3041,6 +3186,13 @@ def _build_one_finding(f: FindingRecord, bundle: Bundle, s: dict[str, ParagraphS
     else:
         # Orphan finding — no outcome
         story.append(_orphan_block(f, s))
+
+    # KEY TAKEAWAY callout (FAIL only) — the operator-facing
+    # "what to do next" anchor at the end of the page. Renders
+    # AFTER provenance / orphan branch but BEFORE the branches detail
+    # table so the reader's eye lands on it before the dense table.
+    if f.verdict_label == "FAIL":
+        story.extend(_key_takeaway_box(f, s))
 
     # Bottom band: branches detail
     story.append(Spacer(1, 2 * mm))
