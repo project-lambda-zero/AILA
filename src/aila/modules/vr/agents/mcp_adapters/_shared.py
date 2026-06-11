@@ -76,13 +76,22 @@ def provenance_stamp(ctx: AdapterContext) -> dict[str, str]:
 def obs_key_for(ctx: AdapterContext, suffix: str = "") -> str:
     """Canonical observables key for a tool call.
 
-    Format: ``<server>.<tool>[.<suffix-or-arg-fingerprint>]``. When the
-    caller supplies an explicit ``suffix`` (e.g. a function name) we use
-    it verbatim. Otherwise we derive a short fingerprint from
-    ``ctx.args`` so two calls with different arguments do NOT collide
-    on the same key — the prior behaviour silently overwrote each
-    other, which caused the agent to forget what it had already
+    Format: ``<server>.<tool>[.<suffix-or-arg-fingerprint-or-call-id>]``.
+    When the caller supplies an explicit ``suffix`` (e.g. a function
+    name) we use it verbatim. Otherwise we derive a short fingerprint
+    from ``ctx.args`` so two calls with different arguments do NOT
+    collide on the same key — the prior behaviour silently overwrote
+    each other, which caused the agent to forget what it had already
     looked up and keep re-issuing the same call.
+
+    fix §275 — for no-arg tools (e.g. ``audit_mcp.list_indexes``,
+    ``cache_stats``) neither the suffix nor the fingerprint produces
+    a discriminator. Two consecutive calls would land at the same
+    ``<server>.<tool>`` key and overwrite each other's observation,
+    so the agent saw "what happened last" with no record that the
+    earlier call ever ran. Fall back to ``ctx.call_id`` (the
+    message-store id, already monotonically unique per call) so each
+    no-arg invocation gets a distinct key.
     """
     base = f"{ctx.mcp_server_id}.{ctx.tool_name}"
     if suffix:
@@ -90,6 +99,8 @@ def obs_key_for(ctx: AdapterContext, suffix: str = "") -> str:
     arg_fp = _args_fingerprint(ctx.args)
     if arg_fp:
         return f"{base}.{arg_fp}"
+    if ctx.call_id:
+        return f"{base}.call_{ctx.call_id}"
     return base
 
 
