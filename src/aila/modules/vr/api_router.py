@@ -2121,12 +2121,13 @@ def create_vr_router() -> APIRouter:
                         sa_text(f"DELETE FROM {stub_table} WHERE target_id = :tid"),
                         {"tid": target_id},
                     )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001 — fix §350 DEFENSIVE: cascade cleanup tolerates missing tables on older deployments; traceback added so genuine schema/permission failures aren't silenced
                     # If a deployment lacks one of these tables, log + continue.
                     # The final target delete will surface any real FK still binding.
                     _log.warning(
                         "delete_target: cascade cleanup of %s skipped (%s: %s)",
                         stub_table, type(exc).__name__, str(exc)[:120],
+                        exc_info=True,
                     )
 
             await uow.session.delete(row)
@@ -4681,9 +4682,10 @@ def create_vr_router() -> APIRouter:
                         "WHERE kwargs_json LIKE :pat)"
                     ).bindparams(pat=f'%"{investigation_id}"%')
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 — fix §350 DEFENSIVE: re-enqueue cursor cleanup is best-effort; traceback surfaces the stack so an alembic / FK-bind regression doesn't hide
                 logging.getLogger(__name__).warning(
                     "re-enqueue: cursor cleanup failed: %s", exc,
+                    exc_info=True,
                 )
             await uow.session.commit()
             await uow.session.refresh(inv)
