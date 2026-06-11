@@ -189,6 +189,16 @@ class WorkflowStateCursor(SQLModel, table=True):
     )
     version: int = Field(default=0, nullable=False)
 
+    # Phase B (cutover): preserves the prior `current_state` across a
+    # pause/resume cycle. NULL except while the cursor is at
+    # ``__paused__``. Pause writes archived_state = current_state, then
+    # sets current_state = '__paused__'. Resume reverses the assignment
+    # and clears archived_state. See migration 067.
+    archived_state: str | None = Field(
+        default=None,
+        sa_column=Column("archived_state", String(128), nullable=True),
+    )
+
 
 class WorkflowStateTransition(SQLModel, table=True):
     """Append-only audit/replay log of every engine state transition.

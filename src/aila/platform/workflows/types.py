@@ -30,6 +30,14 @@ RESERVED_FAILED: Final[str] = "__failed__"
 RESERVED_CANCELLED: Final[str] = "__cancelled__"
 RESERVED_CRASHED: Final[str] = "__crashed__"
 
+# Phase B (cutover): non-terminal pause state. The cursor sits here when
+# the operator pauses an investigation. Distinct from terminals — paused
+# cursors are resumable via :func:`pause_investigation` /
+# :func:`resume_investigation` tasks (see vr.workflow.tasks.pause_resume).
+# The prior ``current_state`` is preserved on ``archived_state`` so resume
+# can restore it.
+RESERVED_PAUSED: Final[str] = "__paused__"
+
 RESERVED_TERMINAL_STATES: Final[frozenset[str]] = frozenset(
     {
         RESERVED_SUCCEEDED,
