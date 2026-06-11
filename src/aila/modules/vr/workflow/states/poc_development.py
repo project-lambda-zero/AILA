@@ -138,7 +138,32 @@ def _build_user_prompt(
     return "\n".join(parts)
 
 
-async def _llm_poc(services: Any, user_prompt: str) -> PoCResponse:
+# fix §307 — first 3 attempts are routed to a cheaper draft task type;
+# attempts ≥ 4 escalate to the full vulnerability_research model. The
+# rationale: early attempts iterate on the rough shape (does the
+# pwntools layout look right? does the C buffer math line up?) and a
+# small/fast model is enough. By attempt 4 the pipeline has burned
+# 3× LLM + compile + run; the remaining attempts deserve the
+# highest-quality model the routing tier exposes. Operator can rewire
+# either task_type independently via the platform routing config.
+_POC_DRAFT_TASK_TYPE = "vulnerability_research.poc_draft"
+_POC_FINAL_TASK_TYPE = "vulnerability_research"
+_POC_DRAFT_ATTEMPTS_BEFORE_ESCALATION = 3
+
+
+def _task_type_for_attempt(attempt: int) -> str:
+    """Return the LLM task_type to use for the given 1-indexed attempt."""
+    if attempt <= _POC_DRAFT_ATTEMPTS_BEFORE_ESCALATION:
+        return _POC_DRAFT_TASK_TYPE
+    return _POC_FINAL_TASK_TYPE
+
+
+async def _llm_poc(
+    services: Any,
+    user_prompt: str,
+    *,
+    task_type: str = _POC_FINAL_TASK_TYPE,
+) -> PoCResponse:
     """Ask the LLM for one PoC; return a validated PoCResponse.
 
     fix §302 — swapped `chat` for `chat_structured` against PoCResponse.
@@ -149,9 +174,13 @@ async def _llm_poc(services: Any, user_prompt: str) -> PoCResponse:
     boundaries. chat_structured ALSO handles the one-shot retry on
     parse failure, so a transient JSON malformation no longer aborts
     a whole attempt.
+
+    fix §307 — task_type is now a parameter (default: final tier) so
+    the attempt loop can pass the cheaper draft task_type for early
+    iterations.
     """
     response = await services.llm_client.chat_structured(
-        task_type="vulnerability_research",
+        task_type=task_type,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -203,7 +232,9 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
         _log.info("poc_development: no SSH integration; skipping execution")
         try:
             generated = await _llm_poc(
-                services, _build_user_prompt(research, mitigations, []),
+                services,
+                _build_user_prompt(research, mitigations, []),
+                task_type=_POC_DRAFT_TASK_TYPE,
             )
         except LLMDisabledByOperatorError:
             return StateResult(
@@ -274,7 +305,9 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             await asyncio.sleep(backoff_s)
         try:
             generated = await _llm_poc(
-                services, _build_user_prompt(research, mitigations, history),
+                services,
+                _build_user_prompt(research, mitigations, history),
+                task_type=_task_type_for_attempt(attempt),
             )
         except LLMDisabledByOperatorError:
             # fix §303 — operator pulled the kill switch. Do NOT burn
