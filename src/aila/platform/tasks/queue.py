@@ -32,6 +32,7 @@ from collections.abc import Callable
 from datetime import UTC
 from graphlib import CycleError, TopologicalSorter
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from aila.api.constants import MODULE_ID_PLATFORM
@@ -124,10 +125,21 @@ class TaskQueue:
         fn_module = self._extract_module_id(fn_path)
         self._enforce_module_boundary(fn_path, fn_module)
 
-        # SEC-07: SHA-256 task dedup — return existing handle for identical active tasks
-        input_hash = hashlib.sha256(
-            json.dumps({"fn": fn_path, "kwargs": kwargs}, sort_keys=True, default=str).encode()
-        ).hexdigest()
+        # SEC-07: SHA-256 task dedup. fix §73 — drop ``default=str`` so two
+        # semantically different kwarg sets (Decimal("1.0") vs "1.0", UUID
+        # vs UUID-string, datetime vs ISO string) no longer stringify-collide
+        # into the same dedup hash. Callers must pass JSON-clean kwargs.
+        try:
+            input_hash = hashlib.sha256(
+                json.dumps(
+                    {"fn": fn_path, "kwargs": kwargs}, sort_keys=True,
+                ).encode()
+            ).hexdigest()
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "TaskQueue.submit kwargs must be JSON-serializable "
+                f"(strict mode — §73): {exc}",
+            ) from exc
 
         async with async_session_scope() as dedup_session:
             existing = (await dedup_session.exec(
@@ -168,7 +180,35 @@ class TaskQueue:
 
         async with async_session_scope() as session:
             session.add(record)
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                # fix §72 — the partial UNIQUE index on input_hash WHERE
+                # status IN (queued, running, waiting) caught the race
+                # between two concurrent submit() calls with identical
+                # fn+kwargs. The loser falls back to a dedup return of
+                # the winner's task_id, so the operator never sees two
+                # ARQ jobs for the same hash.
+                await session.rollback()
+                async with async_session_scope() as dedup_session:
+                    winner = (await dedup_session.exec(
+                        select(TaskRecord)
+                        .where(TaskRecord.input_hash == input_hash)
+                        .where(
+                            TaskRecord.status.in_(  # type: ignore[union-attr]
+                                ["queued", "running", "waiting"],
+                            ),
+                        )
+                    )).first()
+                if winner is not None:
+                    _log.info(
+                        "Task dedup via §72 unique index: hash=%s winner=%s",
+                        input_hash[:12], winner.id,
+                    )
+                    return TaskHandle(task_id=str(winner.id))
+                # No active winner row — the race resolved to a terminal
+                # state between the integrity error and our re-read. Bail.
+                raise
             await session.refresh(record)
             task_id = record.id
 
@@ -176,7 +216,9 @@ class TaskQueue:
             try:
                 await self._validate_dag(task_id, depends_on)
             except ValueError:
-                # Clean up the orphaned WAITING record before re-raising
+                # fix §74 — rollback path now also deletes the workflow_state_cursor
+                # row keyed by run_id == task_id so a parallel worker that loaded
+                # the cursor between INSERT and rollback can't leave it orphaned.
                 async with async_session_scope() as session:
                     orphan = (await session.exec(
                         select(TaskRecord).where(TaskRecord.id == task_id)
@@ -184,6 +226,7 @@ class TaskQueue:
                     if orphan is not None:
                         await session.delete(orphan)
                         await session.commit()
+                await self._delete_orphan_cursor(task_id)
                 raise
 
         if not depends_on:
@@ -208,7 +251,10 @@ class TaskQueue:
             )
             if not enqueued:
                 # Roll back the DB record so a failed enqueue does not leave
-                # a ghost "queued" task sitting in the DB forever.
+                # a ghost "queued" task sitting in the DB forever. fix §74 —
+                # also clean up any workflow_state_cursor that was created
+                # by a parallel worker between the INSERT commit and this
+                # rollback.
                 async with async_session_scope() as session:
                     ghost = (await session.exec(
                         select(TaskRecord).where(TaskRecord.id == task_id)
@@ -216,6 +262,7 @@ class TaskQueue:
                     if ghost is not None:
                         await session.delete(ghost)
                         await session.commit()
+                await self._delete_orphan_cursor(task_id)
                 raise WorkerUnreachableError(
                     f"Task queue Redis is unreachable (url={redis_url}) — submission rejected."
                 )
@@ -363,6 +410,37 @@ class TaskQueue:
             sorter.prepare()
         except CycleError as exc:
             raise ValueError(f"Circular dependency detected: {exc}") from exc
+
+    async def _delete_orphan_cursor(self, task_id: str) -> None:
+        """Drop ``workflow_state_cursor`` rows keyed by ``task_id`` on the
+        rollback paths in :meth:`submit` (fix §74).
+
+        A parallel worker that loaded ``_load_or_init_cursor`` between
+        the INSERT commit and the rollback could leave a cursor without
+        a TaskRecord backing it. ``cursor_reaper`` only sweeps
+        ``__crashed__`` cursors; this one would be at ``start_state``
+        and linger forever, blocking re-submission per the
+        stale-cursor-blocks-resubmission rule in CLAUDE.md.
+
+        Best-effort: never raises. A failed cleanup just leaves the
+        cursor for the cursor reaper to pick up on a later sweep.
+        """
+        try:
+            from sqlalchemy import delete as _delete  # noqa: PLC0415
+
+            from aila.storage.db_models import WorkflowStateCursor  # noqa: PLC0415
+            async with async_session_scope() as session:
+                await session.execute(
+                    _delete(WorkflowStateCursor).where(
+                        WorkflowStateCursor.run_id == task_id,
+                    )
+                )
+                await session.commit()
+        except Exception as exc:  # noqa: BLE001 — best-effort cleanup
+            _log.warning(
+                "queue._delete_orphan_cursor(%s) failed: %s; cursor reaper "
+                "will retry on the next tick", task_id, exc,
+            )
 
     def _get_redis_url(self) -> str | None:
         import os
