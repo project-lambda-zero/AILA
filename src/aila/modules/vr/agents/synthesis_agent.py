@@ -18,6 +18,7 @@ import json
 import logging
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts import (
@@ -29,12 +30,85 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
 )
 from aila.platform.contracts._common import utc_now
+from aila.platform.llm.errors import BudgetExceededError
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["SynthesisAgent"]
+__all__ = ["SynthesisAgent", "SynthesisResponse"]
 
 _log = logging.getLogger(__name__)
+
+# Investigation statuses that mean "still alive — synthesis may write".
+# Anything outside this set (PAUSED / COMPLETED / FAILED / ABANDONED) means
+# the operator or another agent closed the investigation while the LLM
+# call was in flight; UoW 2 aborts in that case (fix §160).
+_ALIVE_STATUSES: frozenset[str] = frozenset({
+    InvestigationStatus.CREATED.value,
+    InvestigationStatus.RUNNING.value,
+})
+
+
+class SynthesisResponse(BaseModel):
+    """Structured output schema for the persona-deliberation synthesiser.
+
+    Enforced by :meth:`AilaLLMClient.chat_structured` (fix §159) so the
+    synthesiser never receives free-text markdown that the renderer
+    cannot validate. Each field renders into one labelled section of the
+    final markdown narrative via :meth:`to_markdown`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    headline_verdict: str = Field(
+        min_length=1,
+        max_length=600,
+        description=(
+            "One sentence: did the panel find a bug, find a patch in "
+            "place, or fail to establish either."
+        ),
+    )
+    points_of_agreement: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="What every persona converged on, with source citations.",
+    )
+    points_of_disagreement: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description=(
+            "Where personas reached different conclusions; name each "
+            "side and which has stronger evidence."
+        ),
+    )
+    unresolved_questions: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="What the panel could not settle.",
+    )
+    recommended_next_actions: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Variant hunts to spawn, refs to audit, operator questions.",
+    )
+
+    def to_markdown(self) -> str:
+        """Render the structured response back into the markdown shape
+        consumers (PDF renderer, UI) already know how to display.
+        """
+        def _bulleted(items: list[str]) -> str:
+            if not items:
+                return "_(none)_"
+            return "\n".join(f"- {item}" for item in items)
+
+        return (
+            f"**Headline verdict.** {self.headline_verdict.strip()}\n\n"
+            f"### Points of agreement\n{_bulleted(self.points_of_agreement)}\n\n"
+            f"### Points of disagreement\n"
+            f"{_bulleted(self.points_of_disagreement)}\n\n"
+            f"### Unresolved questions\n{_bulleted(self.unresolved_questions)}\n\n"
+            f"### Recommended next actions\n"
+            f"{_bulleted(self.recommended_next_actions)}\n"
+        )
 
 
 class SynthesisAgent:
@@ -112,25 +186,49 @@ class SynthesisAgent:
             if not panel:
                 return {"status": "skipped", "reason": "no_valid_contributions"}
 
-        # Synthesise via LLM.
+        # fix §159 — switch to chat_structured so the response is
+        # schema-validated; the renderer never has to parse free-text
+        # markdown that might drift.
+        # fix §158 — broaden the narrow ``except RuntimeError`` so
+        # systemic LLM failures (TimeoutError, httpx errors, validation
+        # failures, etc.) are visible instead of crashing the worker.
+        # BudgetExceededError is reraised so the caller sees the budget
+        # halt for what it is (NOT an LLM failure).
         services = ServiceFactory()
         try:
-            response = await services.llm_client.chat(
+            response = await services.llm_client.chat_structured(
                 task_type=self._TASK_TYPE,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": _render_panel(panel)},
                 ],
+                model_class=SynthesisResponse,
             )
-        except RuntimeError as exc:
+        except BudgetExceededError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — broaden to catch every
+            # systemic LLM failure shape; narrow except hid TimeoutError +
+            # httpx errors + validation failures (fix §158).
             _log.warning(
                 "synthesis LLM call failed for inv=%s err=%s",
                 self.investigation_id, exc,
             )
-            return {"status": "failed", "reason": f"llm_error:{exc}"}
+            return {"status": "failed", "reason": f"llm_error:{type(exc).__name__}"}
         if response.disabled:
             return {"status": "skipped", "reason": "llm_kill_switch_active"}
-        synthesis_text = (response.content or "").strip()
+        # chat_structured guarantees ``response.content`` is JSON matching
+        # the schema. LLMResponse does NOT carry a ``.parsed`` field, so
+        # validate explicitly here.
+        try:
+            parsed = SynthesisResponse.model_validate_json(response.content)
+        except ValueError as exc:
+            _log.warning(
+                "synthesis chat_structured content failed schema validation "
+                "inv=%s err=%s",
+                self.investigation_id, exc,
+            )
+            return {"status": "failed", "reason": "structured_parse_failed"}
+        synthesis_text = parsed.to_markdown().strip()
         if not synthesis_text:
             return {"status": "failed", "reason": "empty_llm_response"}
 
@@ -138,10 +236,39 @@ class SynthesisAgent:
         # new outcome row — D-101 mandates exactly one canonical row per
         # investigation.
         async with UnitOfWork() as uow:
-            canonical_row = (await uow.session.exec(
-                _select(VRInvestigationOutcomeRecord).where(
-                    VRInvestigationOutcomeRecord.id == canonical.id,
+            # fix §160 — SELECT FOR UPDATE on the investigation row so
+            # we hold a row-lock for the full UoW; if the operator
+            # paused the investigation between UoW 1 and UoW 2, the
+            # status re-check below sees the PAUSED state and aborts.
+            # Without the lock, two synthesis triggers could fire in
+            # parallel (or pause+synthesis could interleave) and the
+            # later writer would clobber the operator's pause.
+            inv_row = (await uow.session.exec(
+                _select(VRInvestigationRecord)
+                .where(VRInvestigationRecord.id == self.investigation_id)
+                .with_for_update()
+            )).first()
+            if inv_row is None:
+                return {"status": "skipped", "reason": "investigation_disappeared"}
+            # fix §160 — re-check status under lock. If the operator
+            # paused (or another path closed) the investigation while
+            # the LLM call was in flight, abort cleanly without
+            # overwriting the operator's terminal state.
+            if inv_row.status not in _ALIVE_STATUSES:
+                _log.info(
+                    "synthesis aborted inv=%s — status=%s no longer alive "
+                    "(paused or closed mid-synthesis)",
+                    self.investigation_id, inv_row.status,
                 )
+                return {
+                    "status": "skipped",
+                    "reason": f"investigation_not_alive:{inv_row.status}",
+                }
+
+            canonical_row = (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.id == canonical.id)
+                .with_for_update()
             )).first()
             if canonical_row is None:
                 return {"status": "skipped", "reason": "canonical_disappeared"}
@@ -172,17 +299,10 @@ class SynthesisAgent:
             canonical_row.confidence = _synthesis_confidence(panel).value
             uow.session.add(canonical_row)
 
-            # Flip investigation status to COMPLETED + record stopped_at.
-            inv_row = (await uow.session.exec(
-                _select(VRInvestigationRecord).where(
-                    VRInvestigationRecord.id == self.investigation_id,
-                )
-            )).first()
-            if inv_row is not None:
-                inv_row.status = InvestigationStatus.COMPLETED.value
-                inv_row.stopped_at = utc_now()
-                inv_row.updated_at = utc_now()
-                uow.session.add(inv_row)
+            # Flip investigation status to COMPLETED + record stopped_at
+            # via the shared helper (fix §162).
+            _mark_investigation_completed(inv_row)
+            uow.session.add(inv_row)
             await uow.commit()
 
         _log.info(
@@ -223,6 +343,21 @@ def _synthesis_confidence(panel: list[dict[str, Any]]) -> OutcomeConfidence:
     if len(kinds) > 1:
         median = min(median + 1, 4)
     return rank_to_conf.get(median, OutcomeConfidence.MEDIUM)
+
+
+def _mark_investigation_completed(inv_row: VRInvestigationRecord) -> None:
+    """Set ``inv`` to COMPLETED + stopped_at/updated_at in a single helper
+    so every synthesis writer flips the same three fields the same way.
+
+    fix §162 — replaces inline ``inv.status = COMPLETED.value`` writes
+    with a shared helper. When E1 ships its sibling ``_mark_investigation_completed``
+    at the outcome_dispatcher layer (§22), this local helper can be
+    swapped out for the shared one without touching call sites.
+    """
+    now = utc_now()
+    inv_row.status = InvestigationStatus.COMPLETED.value
+    inv_row.stopped_at = now
+    inv_row.updated_at = now
 
 
 def _render_panel(panel: list[dict[str, Any]]) -> str:
