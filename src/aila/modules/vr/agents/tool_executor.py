@@ -934,17 +934,33 @@ class ToolExecutor:
             # OLDEST non-directive keys by dict insertion order
             # (Python 3.7+ guarantees insertion order in dicts).
             if len(observables) > self._MAX_OBSERVABLES:
-                directives = {
-                    k: v for k, v in observables.items()
-                    if str(k).startswith("_directive.")
+                # fix §259 — preserve original key insertion order so
+                # the prompt-rendering position of every kept key stays
+                # stable across turns. The prior implementation rebuilt
+                # observables as {**kept_non_directives, **directives},
+                # which moved every directive to the END regardless of
+                # where it had originally been inserted — turn-to-turn
+                # context drift the agent observed as "the steering
+                # block keeps moving around".
+                #
+                # Build (a) the set of directive keys (always kept) and
+                # (b) the set of non-directive keys we will keep (the
+                # newest N by insertion order), then reconstruct the
+                # dict by walking the original items in order and
+                # keeping each entry that belongs to either set.
+                directive_keys = {
+                    k for k in observables if str(k).startswith("_directive.")
                 }
-                non_directives = [
-                    (k, v) for k, v in observables.items()
-                    if not str(k).startswith("_directive.")
+                non_directive_keys = [
+                    k for k in observables if k not in directive_keys
                 ]
-                keep_n = max(0, self._MAX_OBSERVABLES - len(directives))
-                kept = dict(non_directives[-keep_n:])
-                observables = {**kept, **directives}
+                keep_n = max(0, self._MAX_OBSERVABLES - len(directive_keys))
+                kept_non_directive_keys = set(non_directive_keys[-keep_n:])
+                kept_or_directive = directive_keys | kept_non_directive_keys
+                observables = {
+                    k: v for k, v in observables.items()
+                    if k in kept_or_directive
+                }
             case_state["observables"] = observables
             branch.case_state_json = json.dumps(case_state)
             branch.updated_at = utc_now()
