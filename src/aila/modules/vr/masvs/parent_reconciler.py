@@ -378,9 +378,13 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 )
                 enqueued_total += 1
             except Exception as exc:  # noqa: BLE001 — submission is best-effort
+                # fix §350 — traceback surfaces ARQ/Redis transport vs
+                # dedup-table regression vs idempotency-key collision
+                # without forcing a second tick to compare.
                 _log.warning(
                     "masvs batch refill: parent=%s child=%s enqueue failed: %s",
                     parent_id, child_id, exc,
+                    exc_info=True,
                 )
                 break  # bail this parent; next tick will retry
 
@@ -798,9 +802,13 @@ async def _wake_stale_branches(uow: UnitOfWork) -> int:
             enqueued += 1
         except Exception as exc:  # noqa: BLE001 — submit is best-effort;
             # dedup misses and Redis blips are tolerable, the next tick retries.
+            # fix §350 — traceback surfaces so a structural break (auth
+            # bind, dedup table drift) isn't silenced behind a transient
+            # Redis blip's WARNING line.
             _log.warning(
                 "wake_stale_branches: branch=%s submit failed: %s",
                 bid, exc,
+                exc_info=True,
             )
     if enqueued:
         _log.info(
