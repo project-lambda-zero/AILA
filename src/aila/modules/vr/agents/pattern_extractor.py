@@ -49,6 +49,14 @@ _log = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "pattern_extraction.md"
 _MAX_TRANSCRIPT_CHARS = 30000  # cap to keep extraction prompt under budget
+# fix §194 — split the budget into a head + tail window so the seed
+# prompt (lives in the first ~2000 chars) survives long investigations.
+_TRANSCRIPT_HEAD_CHARS = 5000
+_TRANSCRIPT_TAIL_CHARS = _MAX_TRANSCRIPT_CHARS - _TRANSCRIPT_HEAD_CHARS  # 25000
+# fix §193 — bound the SQL fetch. Investigations rarely exceed a few
+# thousand messages; 5000 is a generous cap that keeps the worst-case
+# materialisation under ~10MB at typical per-row sizes.
+_TRANSCRIPT_ROW_LIMIT = 5000
 
 # Outcome kinds where pattern extraction is meaningful. AUDIT_MEMO is
 # explicitly INCLUDED — negative audits still encode reusable search
@@ -279,10 +287,31 @@ class PatternExtractor:
     async def _load_transcript(self, investigation_id: str) -> str:
         """Render the investigation's messages as a single transcript string.
 
-        Truncated to ``_MAX_TRANSCRIPT_CHARS`` from the END (most recent
-        messages preserved) so the extraction prompt stays under budget
-        even for long investigations. The outcome summary is the lens —
-        the model can extract patterns even from a tail slice.
+        Budget is :data:`_MAX_TRANSCRIPT_CHARS`. When the full transcript
+        exceeds the budget, the truncated rendering keeps:
+
+          * the first :data:`_TRANSCRIPT_HEAD_CHARS` so the seed prompt
+            (which sets the investigation's scope) survives,
+          * a ``<<<...truncated N chars...>>>`` marker,
+          * the last :data:`_TRANSCRIPT_TAIL_CHARS` so the final
+            reasoning steps survive.
+
+        fix §193 — bound the SQL fetch with LIMIT. Investigations of
+        ~5000 messages were materialising 20–100 MB into worker memory
+        before truncation happened in Python. The LIMIT picks the
+        newest messages (DESC) and reverses to chronological order
+        so the head/tail rendering still matches the original
+        timeline.
+
+        fix §194 — keep first 5000 chars + last 25000 chars (was
+        last 30000). The seed prompt + initial hypothesis statement
+        live in the first ~2000 chars; the previous "keep tail only"
+        scheme dropped exactly the lens the extractor needs.
+
+        fix §195 — append the canonical outcome's ``panel_summary``
+        (when present) at the END of the transcript so the extractor
+        always sees the synthesised verdict regardless of where the
+        message-row truncation landed.
         """
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
@@ -290,8 +319,25 @@ class PatternExtractor:
                 .where(
                     VRInvestigationMessageRecord.investigation_id == investigation_id,
                 )
-                .order_by(VRInvestigationMessageRecord.created_at.asc()),
+                .order_by(VRInvestigationMessageRecord.created_at.desc())
+                .limit(_TRANSCRIPT_ROW_LIMIT),
             )).all()
+            # Newest-first fetch reverses to chronological so head/tail
+            # rendering reflects the actual timeline.
+            rows = list(reversed(rows))
+
+            # fix §195 — fetch the canonical outcome's panel_summary
+            # separately and append at end. Synthesis output lives on
+            # the outcome row, not on a message row, so the
+            # message-table query above never includes it.
+            panel_summary_row = (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord)
+                .where(
+                    VRInvestigationOutcomeRecord.investigation_id == investigation_id,
+                )
+                .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+                .limit(1)
+            )).first()
 
         parts: list[str] = []
         for row in rows:
@@ -300,12 +346,35 @@ class PatternExtractor:
                 f" turn={row.at_turn}]\n{row.payload_json or ''}\n",
             )
         full = "\n".join(parts)
+
+        # Append the synthesis panel_summary if present (§195).
+        if panel_summary_row is not None and panel_summary_row.payload_json:
+            try:
+                payload = json.loads(panel_summary_row.payload_json)
+            except (ValueError, TypeError):
+                payload = {}
+            panel_summary = payload.get("panel_summary") if isinstance(payload, dict) else None
+            if isinstance(panel_summary, dict):
+                narrative = str(panel_summary.get("narrative") or "").strip()
+                if narrative:
+                    full = (
+                        f"{full}\n\n"
+                        f"[synthesis_panel_summary outcome_id={panel_summary_row.id}]\n"
+                        f"{narrative}\n"
+                    )
+
         if len(full) <= _MAX_TRANSCRIPT_CHARS:
             return full
+
+        # fix §194 — first 5000 + last 25000 with explicit truncation
+        # marker. Preserves the seed prompt at the head and the final
+        # reasoning at the tail.
+        head = full[:_TRANSCRIPT_HEAD_CHARS]
+        tail = full[-_TRANSCRIPT_TAIL_CHARS:]
+        dropped = len(full) - _TRANSCRIPT_HEAD_CHARS - _TRANSCRIPT_TAIL_CHARS
         return (
-            f"[transcript truncated to last {_MAX_TRANSCRIPT_CHARS} chars; "
-            f"full length {len(full)}]\n"
-            + full[-_MAX_TRANSCRIPT_CHARS:]
+            f"{head}\n\n<<<...truncated {dropped} chars "
+            f"(full length {len(full)})...>>>\n\n{tail}"
         )
 
 
