@@ -450,12 +450,17 @@ async def reap_stuck_stages() -> int:
 
     Returns the number of stages reaped. Intended to be called from
     the periodic worker cron (1-minute interval is fine — each call
-    is a single SELECT + targeted UPDATE per offending row).
+    is a single SELECT for candidates + one targeted UPDATE per
+    offending row, each in its own UoW).
     """
-    reaped = 0
+    # fix §325 — snapshot candidate ids in a short read-only UoW, then
+    # process each row in its OWN UoW. Previously a single deferred
+    # commit at the end of the loop meant one bad row dropped every
+    # other staged mutation; now each row commits (or rolls back)
+    # independently.
     async with UnitOfWork() as uow:
-        rows = (await uow.session.exec(
-            _select(VRTargetRecord).where(
+        candidates = (await uow.session.exec(
+            _select(VRTargetRecord.id).where(
                 # fix §116 / §324 — broaden the scan to every state
                 # whose rolled-up value can hide a stuck RUNNING stage.
                 # AnalysisState only has 4 values (PENDING / INGESTING /
@@ -475,10 +480,20 @@ async def reap_stuck_stages() -> int:
             # to 200 and let the next cron tick drain the rest.
             .limit(200),
         )).all()
-        now = utc_now()
-        for row in rows:
+
+    reaped = 0
+    for target_id in candidates:
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+            )).first()
+            if row is None:
+                # Target deleted between scan and per-row UoW — skip.
+                continue
             stages = parse_stages(row.analysis_stages_json)
             mutated = False
+            now = utc_now()
+            row_reaped = 0
             for stage_name, status in stages.all_stages():
                 if status.state != StageState.RUNNING:
                     continue
@@ -503,11 +518,11 @@ async def reap_stuck_stages() -> int:
                     error=f"reaper: RUNNING for {age:.0f}s (> {timeout_s:.0f}s timeout); resume to retry",
                 ))
                 mutated = True
-                reaped += 1
+                row_reaped += 1
             if mutated:
-                # Re-roll + commit. We commit directly here rather than
-                # routing back through save_target_stages so we don't
-                # open three UoWs per row.
+                # Re-roll + commit. We mutate the row directly rather
+                # than routing back through save_target_stages so we
+                # don't open a second UoW for the same row.
                 rolled = roll_up_overall_state(stages)
                 row.analysis_stages_json = serialize_stages(stages)
                 row.analysis_state = rolled.value
@@ -521,6 +536,6 @@ async def reap_stuck_stages() -> int:
                     row.analysis_state_message = reaped_msgs[0]
                 row.updated_at = now
                 uow.session.add(row)
-        if reaped:
-            await uow.session.commit()
+                await uow.session.commit()
+                reaped += row_reaped
     return reaped
