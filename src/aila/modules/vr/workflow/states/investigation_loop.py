@@ -25,7 +25,10 @@ from aila.modules.vr.agents import (
 )
 from aila.modules.vr.agents.tool_executor import ToolExecutor
 from aila.modules.vr.contracts.investigation import InvestigationStatus
-from aila.modules.vr.db_models import VRInvestigationRecord
+from aila.modules.vr.db_models import (
+    VRInvestigationBranchRecord,
+    VRInvestigationRecord,
+)
 from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
 from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
 from aila.modules.vr.tools.ida_bridge import IDABridgeTool
@@ -85,15 +88,69 @@ def _get_executor() -> ToolExecutor:
     return _EXECUTOR_SINGLETON
 
 
-async def _investigation_status(investigation_id: str) -> str | None:
+async def _is_loop_alive(investigation_id: str, branch_id: str) -> tuple[bool, str]:
+    """Return ``(alive, exit_reason)`` for the polling sites in the loop.
+
+    Phase B (cutover): the loop's terminal check used to read only
+    ``inv.status`` via a fresh UoW every turn (per §287). Two failures
+    that pattern produced:
+
+      * Operator paused a SPECIFIC branch (not the whole investigation).
+        ``inv.status`` stayed RUNNING; the loop kept ticking on a
+        branch the operator had paused. (§288)
+      * The cursor SSOT (Phase B) flips ``__paused__`` atomically with
+        ``inv.status``; reading the cursor is the canonical check and
+        the same UoW already holds it.
+
+    This helper performs ONE UoW + ONE query that returns three signals:
+      * cursor.current_state for the branch_id (the SSOT)
+      * branch.status (per-branch pause / abandon)
+      * inv.status (parent pause / terminal)
+
+    Alive when:
+      * cursor exists AND current_state != '__paused__' AND
+        not in {SUCCEEDED, FAILED, CANCELLED, CRASHED}
+      * branch.status not in dead states
+      * inv.status == RUNNING
+    """
+    from aila.modules.vr.contracts.branch import BranchStatus  # noqa: PLC0415
+    from aila.platform.workflows.types import (  # noqa: PLC0415
+        RESERVED_PAUSED,
+        RESERVED_TERMINAL_STATES,
+    )
+    from aila.storage.db_models import WorkflowStateCursor  # noqa: PLC0415
+
     async with UnitOfWork() as uow:
         inv = (await uow.session.exec(
             _select(VRInvestigationRecord).where(
                 VRInvestigationRecord.id == investigation_id,
             )
         )).first()
-        return inv.status if inv else None
+        if inv is None:
+            return False, "inv_not_found"
+        if inv.status != InvestigationStatus.RUNNING.value:
+            return False, f"inv_status_flipped:{inv.status}"
 
+        # Branch-level pause / abandon — §288 closes this.
+        branch = (await uow.session.exec(
+            _select(VRInvestigationBranchRecord).where(
+                VRInvestigationBranchRecord.id == branch_id,
+            )
+        )).first()
+        if branch is None:
+            return False, "branch_not_found"
+        if branch.status != BranchStatus.ACTIVE.value:
+            return False, f"branch_status_flipped:{branch.status}"
+
+        # Cursor SSOT — Phase B's pause writes __paused__ here.
+        cursor = await uow.session.get(WorkflowStateCursor, branch_id)
+        if cursor is not None:
+            if cursor.current_state == RESERVED_PAUSED:
+                return False, "cursor_paused"
+            if cursor.current_state in RESERVED_TERMINAL_STATES:
+                return False, f"cursor_terminal:{cursor.current_state}"
+
+    return True, "alive"
 
 async def state_investigation_loop(input: dict[str, Any], services: Any) -> StateResult:
     """Run turns until terminal / max / status flips out of RUNNING.
@@ -151,12 +208,16 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
     exit_reason = "max_turns"
 
     for turn_attempt in range(1, max_turns + 1):
-        status = await _investigation_status(investigation_id)
-        if status != InvestigationStatus.RUNNING.value:
-            exit_reason = f"status_flipped:{status}"
+        # fix §287 + §288 — single UoW polls inv.status, branch.status,
+        # AND cursor.current_state (Phase B SSOT). Operator pauses at
+        # any of the three layers are visible.
+        alive, alive_reason = await _is_loop_alive(investigation_id, branch_id)
+        if not alive:
+            exit_reason = alive_reason
             _log.info(
-                "investigation_loop EXIT investigation_id=%s reason=%s after_turn=%d",
-                investigation_id, exit_reason, last_turn_idx,
+                "investigation_loop EXIT investigation_id=%s branch_id=%s "
+                "reason=%s after_turn=%d",
+                investigation_id, branch_id, exit_reason, last_turn_idx,
             )
             break
 
