@@ -279,6 +279,19 @@ def _register_vr_periodic_sweeps() -> None:
         sweep_masvs_audit_parents,
     )
 
+    # vr.finalize — Phase C chokepoint. Walks RUNNING investigations
+    # and applies the deterministic trigger picker (all_outcomes /
+    # rejected_quorum / wall_clock_idle_grace / all_terminal_no_outcome).
+    # Delegates to the existing reaper primitives via the
+    # investigation_finalize entry point. Coexists with the older
+    # vr.investigation_reaper + vr.branch_reaper sweeps for one
+    # release cycle so an operator can verify behavior on a live
+    # audit before the old sweeps get unregistered.
+    from .workflow.finalize import (  # noqa: PLC0415
+        sweep_finalizable_investigations,
+    )
+    register_periodic_sweep("vr.finalize", sweep_finalizable_investigations)
+
 
 # Module-load-time registration. Imports are deferred inside the
 # function so a `from aila.modules.vr.module import VRModule` for

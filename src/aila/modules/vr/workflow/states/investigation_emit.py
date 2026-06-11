@@ -583,6 +583,11 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
     # enqueue a synthesis task that consolidates all persona verdicts
     # into one final outcome. Idempotent — synthesis dedupes itself by
     # checking inv.primary_outcome_id before producing a new one.
+    # fix Phase-C — synthesis trigger goes through the finalize chokepoint.
+    # _maybe_trigger_synthesis covered only one of the four trigger conditions
+    # (all_outcomes). The finalize chokepoint additionally catches the other
+    # three (rejected_quorum, wall_clock_idle_grace, all_terminal_no_outcome)
+    # which previously raced across three separate reaper paths.
     if outcome_id is not None:
         try:
             await _maybe_trigger_synthesis(investigation_id)
@@ -592,6 +597,21 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 investigation_id, exc,
             )
 
+    # Independent of outcome_id: call finalize. Cheap when no trigger
+    # fires (single SELECT + branch/outcome aggregate, no action).
+    try:
+        from ..finalize import finalize_investigation  # noqa: PLC0415
+        result = await finalize_investigation(investigation_id)
+        if result.trigger not in ("no_trigger", "not_running"):
+            _log.info(
+                "investigation_emit FINALIZE inv=%s trigger=%s action=%s",
+                investigation_id, result.trigger, result.action_taken,
+            )
+    except Exception as exc:  # noqa: BLE001 — best-effort, never blocks emit
+        _log.warning(
+            "investigation_emit FINALIZE failed inv=%s err=%s",
+            investigation_id, exc,
+        )
     _log.info(
         "investigation_emit DONE investigation_id=%s exit_reason=%s final_status=%s outcome_id=%s",
         investigation_id, exit_reason, final_status, outcome_id,
