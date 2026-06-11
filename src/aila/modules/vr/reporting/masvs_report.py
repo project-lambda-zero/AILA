@@ -715,7 +715,7 @@ def _append_findings_highlights(
 
     def _row(v: MasvsControlVerdict) -> list[Any]:
         label = _VERDICT_LABEL[v.verdict]
-        color = _VERDICT_COLOR[v.verdict]
+        _VERDICT_COLOR[v.verdict]
         badge = Paragraph(
             f"<font color='#ffffff' size='9'><b>{label}</b></font>",
             styles["body"],

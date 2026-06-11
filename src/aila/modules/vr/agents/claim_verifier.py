@@ -458,21 +458,21 @@ class ClaimVerifierAgent:
         if not (answer_full.strip() or narrative_full.strip()):
             return {"status": "skipped", "reason": "no_finding_text"}
 
-        _ANSWER_CAP = 16000
-        _PANEL_CAP = 8000
-        answer_capped = answer_full[:_ANSWER_CAP]
-        panel_capped = narrative_full[:_PANEL_CAP]
+        answer_cap = 16000
+        panel_cap = 8000
+        answer_capped = answer_full[:answer_cap]
+        panel_capped = narrative_full[:panel_cap]
         answer_section = (
             f"## Agent answer\n\n{answer_capped}"
-            + ("\n\n[answer truncated to {n} chars]".format(n=_ANSWER_CAP)
-               if len(answer_full) > _ANSWER_CAP else "")
+            + (f"\n\n[answer truncated to {answer_cap} chars]"
+               if len(answer_full) > answer_cap else "")
         )
         panel_section = ""
         if panel_capped:
             panel_section = (
                 f"\n\n## Panel synthesis narrative\n\n{panel_capped}"
-                + ("\n\n[panel narrative truncated to {n} chars]".format(n=_PANEL_CAP)
-                   if len(narrative_full) > _PANEL_CAP else "")
+                + (f"\n\n[panel narrative truncated to {panel_cap} chars]"
+                   if len(narrative_full) > panel_cap else "")
             )
 
         # Stage 1: extractor — parse the claim into structured preconditions
