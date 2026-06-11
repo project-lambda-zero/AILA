@@ -493,6 +493,17 @@ async def post_draft_review_request(
             created_at=utc_now(),
         )
         uow.session.add(msg)
+        # fix §251 — ``uow.commit()`` is the canonical UnitOfWork API:
+        # ``platform/uow.py`` defines it as a thin wrapper around
+        # ``self.session.commit()``. Both call shapes commit the
+        # currently-open transaction, but ``uow.commit()`` is preferred
+        # so the UoW remains the single coordination point if it ever
+        # grows additional hooks (audit, team-context flush, etc.).
+        # Other call sites in this file (lines ~210, ~378) already use
+        # this form; the inconsistent ``uow.session.commit()`` callers
+        # in pattern_store / outcome_dispatcher / target_analysis are
+        # not structural drift — same behaviour today — but should
+        # converge on ``uow.commit()`` opportunistically.
         await uow.commit()
         await uow.session.refresh(msg)
         return msg.id
