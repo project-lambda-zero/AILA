@@ -81,7 +81,6 @@ class MasvsSeedBuilder:
         sha256_full = _text_or_unknown(overview.get("sha256"))
         sha256 = sha256_full[:16] if sha256_full != _UNKNOWN else sha256_full
         index_id = _text_or_unknown(overview.get("audit_mcp_index_id"))
-        decompiled_dir = _text_or_unknown(overview.get("decompiled_dir"))
         jadx_class_count = _text_or_unknown(overview.get("jadx_class_count"))
 
         steps_block = "\n".join(
@@ -108,7 +107,6 @@ class MasvsSeedBuilder:
             version_code=version_code,
             sha256=sha256,
             index_id=index_id,
-            decompiled_dir=decompiled_dir,
             jadx_class_count=jadx_class_count,
             steps_block=steps_block,
             hints_block=hints_block,
