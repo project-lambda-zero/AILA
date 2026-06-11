@@ -1322,10 +1322,15 @@ class OutcomeDispatcher:
                         ),
                     )).all()
                     if not remaining:
-                        inv.status = InvestigationStatus.COMPLETED.value
-                        inv.stopped_at = utc_now()
-                        inv.updated_at = utc_now()
-                        uow.session.add(inv)
+                        # fix §22 — single chokepoint for the status
+                        # transition. Phase B will replace the direct
+                        # write with a workflow-engine transition call;
+                        # in the meantime route every COMPLETED write
+                        # through this helper so Phase B is a one-line
+                        # swap. The dispatcher MUST NOT remain the
+                        # writer of investigation.status per the SSOT
+                        # contract — engine state handlers own it.
+                        self._mark_investigation_completed(uow, inv)
                         _log.info(
                             "outcome_dispatcher COMPLETE investigation=%s "
                             "(dispatched, no active branches remain)",
