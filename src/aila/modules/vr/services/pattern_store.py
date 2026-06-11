@@ -19,6 +19,7 @@ Deferred to v1.1 (per GA-45/46):
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -143,7 +144,15 @@ class PatternStore:
             if body.body and body.body.strip()
             else body.summary
         )
-        dedup_key = f"{body.workspace_id}|{body.kind.value}|{body.summary[:200]}"
+        # fix §205 — body-hash dedup_key. Two patterns whose summaries
+        # share the first 200 characters but have different bodies
+        # used to collide under the legacy ``summary[:200]`` truncation
+        # — KnowledgeService treated them as the same entry, dropping
+        # the second. SHA-256 over the full content is collision-
+        # resistant; the leading 16 hex chars are ample for the
+        # namespace-scoped (workspace_id|kind|hash) key space.
+        body_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        dedup_key = f"{body.workspace_id}|{body.kind.value}|{body_hash}"
 
         async with UnitOfWork() as uow:
             row = VRPatternRecord(
