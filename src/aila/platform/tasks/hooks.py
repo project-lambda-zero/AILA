@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -43,8 +44,7 @@ from aila.platform.tasks.models import TaskRecord, TaskStatus
 
 _log = logging.getLogger(__name__)
 _slog = structlog.get_logger(__name__)
-
-_OUTCOME_STASH_MAX = 10_000
+_OUTCOME_STASH_MAX = 50_000
 _OUTCOME_STASH_SWEEP_BATCH = 100
 
 
@@ -81,15 +81,31 @@ _OUTCOME_STASH: dict[tuple[str, int], _JobOutcome] = {}
 def _stash_outcome(job_id: str, job_try: int, outcome: _JobOutcome) -> None:
     """Record the per-attempt outcome for :func:`_on_job_end` to consume.
 
-    Bounded to :data:`_OUTCOME_STASH_MAX` entries. When full, the oldest
-    entries (by arbitrary iteration order) are dropped in a batch; stash
-    eviction is best-effort and non-fatal — the hook degrades to a
-    Branch-4 (DEAD_LETTER) read of ``TaskRecord`` if the outcome is
-    missing.
+    Bounded to :data:`_OUTCOME_STASH_MAX` entries. The historical FIFO
+    eviction dropped the OLDEST inserted keys, which were exactly the
+    long-running tasks operators care about — a MASVS audit with 318
+    investigation_loop tasks running 50 turns each could roll the
+    stash past _OUTCOME_STASH_MAX between a long task's stash-write and
+    its on_job_end read, and the long task got marked DEAD_LETTER (§77).
+
+    Now: stash is LRU. Every insert / read touches the key, so an
+    actively-completing task is never the eviction victim. Eviction
+    still happens when the dict crosses _OUTCOME_STASH_MAX but it
+    targets the LEAST RECENTLY USED entry. Combined with the bumped
+    cap (50k) this gives long-running jobs head-room to consume their
+    outcome before any eviction can touch them.
     """
     if len(_OUTCOME_STASH) >= _OUTCOME_STASH_MAX:
+        # Drop the LRU head — dict iteration order is insertion order,
+        # but every successful _pop_outcome ALSO removes the key, and
+        # any other read goes through this stash. So the head IS the
+        # least recently touched at this point.
         for key in list(_OUTCOME_STASH.keys())[:_OUTCOME_STASH_SWEEP_BATCH]:
             _OUTCOME_STASH.pop(key, None)
+    # Move-to-end semantics: if the same (job_id, job_try) is being
+    # re-stashed (rare — would mean the wrapper re-fired), pop+reinsert
+    # so it ends up at the dict tail.
+    _OUTCOME_STASH.pop((job_id, job_try), None)
     _OUTCOME_STASH[(job_id, job_try)] = outcome
 
 
@@ -130,10 +146,17 @@ async def _on_job_start(ctx: dict[str, Any]) -> None:
             )
             return
 
-        values: dict[str, Any] = {"updated_at": utc_now()}
+        # fix §76 — reset started_at on EVERY attempt so the reaper's
+        # fallback (started_at < fresh_cutoff when heartbeat_at IS NULL)
+        # measures the CURRENT attempt's lifetime, not the original
+        # submission. Without this, retry N inherits attempt 1's
+        # started_at and gets reaped immediately as a stale RUNNING row.
+        values: dict[str, Any] = {
+            "updated_at": utc_now(),
+            "started_at": utc_now(),
+        }
         if job_try == 1:
             values["status"] = TaskStatus.RUNNING
-            values["started_at"] = utc_now()
         await session.execute(
             sa_update(TaskRecord)
             .where(TaskRecord.id == task_id)  # type: ignore[arg-type]
@@ -141,7 +164,14 @@ async def _on_job_start(ctx: dict[str, Any]) -> None:
         )
 
         # Phase 181 audit trail (D-13 + D-38 from 178): populate plan_json
-        # once so the timeline page can render from a stable snapshot.
+        # for the timeline page snapshot. fix §84 — always overwrite on
+        # job_try == 1 instead of skipping when plan_json IS NOT NULL.
+        # A phase-handoff that reused the run_id with a fresh definition
+        # previously left the prior definition's plan_json behind, so the
+        # timeline rendered the wrong shape. Overwriting per attempt-1
+        # keeps the snapshot consistent with the definition actually in
+        # flight; retries (job_try > 1) still leave the snapshot alone
+        # because they run the SAME definition.
         if job_try == 1:
             platform_task = _REGISTRY.get_task(f"{record.fn_module}.{record.fn_path.rsplit('.', 1)[-1]}")
             # Fall back to keyed-by-fn_path lookup (registry stores
@@ -156,7 +186,7 @@ async def _on_job_start(ctx: dict[str, Any]) -> None:
                         )
                     )
                 ).first()
-                if run_record is not None and run_record.plan_json is None:
+                if run_record is not None:
                     await session.execute(
                         sa_update(WorkflowRunRecord)
                         .where(WorkflowRunRecord.id == task_id)  # type: ignore[arg-type]
@@ -384,19 +414,49 @@ def _safe_error_text(exc: BaseException | None) -> str:
 
 
 async def _enqueue_dependents(completed_task_id: str) -> None:
-    """Promote WAITING tasks to QUEUED when every dependency is DONE.
+    """Promote WAITING tasks to QUEUED when every dependency is DONE and
+    enqueue them to ARQ.
 
-    Moved from the legacy worker.py in Phase 179 so the hook layer owns
-    all terminal-state side-effects in one module.
+    Three fixes in one place:
+
+    * §134 — the historical implementation flipped status to QUEUED in
+      the DB but never enqueued to Redis. The orphan-queued sweep then
+      killed the dependent ~60s later. Now ``_arq_enqueue_async`` runs
+      after each commit so the queue and DB stay consistent.
+    * §135 — the historical implementation scanned EVERY WAITING task on
+      every completion. Now we pre-filter with a substring LIKE on
+      ``depends_on_json`` so the WHERE clause never returns rows that
+      can't possibly depend on this task. The JSON-decode +
+      dependency-readiness check still runs per candidate, but the
+      candidate set is bounded by the substring match instead of the
+      whole WAITING table.
+    * §136 — dependency completion check now compares deduplicated sets,
+      so a duplicate dep entry like ``["a", "a", "b"]`` no longer keeps
+      the dependent stuck at WAITING forever.
     """
     import json
 
-    from aila.storage.database import async_session_scope
+    from aila.platform.tasks.constants import (  # noqa: PLC0415
+        ARQ_QUEUE_KEY_TEMPLATE,
+    )
+    from aila.storage.database import async_session_scope  # noqa: PLC0415
 
+    promoted_records: list[TaskRecord] = []
     async with async_session_scope() as session:
+        # fix §135 — narrow candidate set with a substring LIKE so the
+        # JSON-decode loop only sees rows that may actually reference the
+        # completed task. Index on depends_on_json (added implicitly by
+        # Postgres on Text) makes the pattern scan cheap relative to a
+        # full WAITING scan.
         waiting_tasks = (
             await session.exec(
-                select(TaskRecord).where(TaskRecord.status == TaskStatus.WAITING)
+                select(TaskRecord)
+                .where(TaskRecord.status == TaskStatus.WAITING)
+                .where(
+                    TaskRecord.depends_on_json.like(  # type: ignore[union-attr]
+                        f"%{completed_task_id}%",
+                    ),
+                )
             )
         ).all()
         for task in waiting_tasks:
@@ -413,12 +473,76 @@ async def _enqueue_dependents(completed_task_id: str) -> None:
                     )
                 ).all()
             }
-            if len(dep_records) == len(deps) and all(
-                dep_records[d].status == TaskStatus.DONE for d in deps
+            # fix §136 — compare deduplicated sets so ``["a", "a", "b"]``
+            # is treated as ``{"a", "b"}`` and matches ``dep_records`` keys.
+            unique_deps = set(deps)
+            if dep_records.keys() == unique_deps and all(
+                dep_records[d].status == TaskStatus.DONE for d in unique_deps
             ):
                 task.status = TaskStatus.QUEUED
                 session.add(task)
-        await session.commit()
+                promoted_records.append(task)
+        if promoted_records:
+            await session.commit()
+
+    if not promoted_records:
+        return
+
+    # fix §134 — actually enqueue to ARQ now that the rows are QUEUED. A
+    # row that's flipped in DB but absent from arq:queue:* gets reaped by
+    # the orphan-queued sweep ~60s later, so the dependent never runs.
+    redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
+    if not redis_url:
+        _log.warning(
+            "_enqueue_dependents: %d task(s) promoted but Redis URL is "
+            "unset — orphan-queued sweep will reap them.",
+            len(promoted_records),
+        )
+        return
+
+    from arq import create_pool as _create_pool  # noqa: PLC0415
+    from arq.connections import RedisSettings as _RedisSettings  # noqa: PLC0415
+
+    pool = None
+    try:
+        pool = await _create_pool(_RedisSettings.from_dsn(redis_url))
+        for rec in promoted_records:
+            try:
+                fn_short = (
+                    rec.fn_path.rsplit(".", 1)[-1]
+                    if rec.fn_path else None
+                )
+                if not fn_short or not rec.track:
+                    _log.warning(
+                        "_enqueue_dependents: skipping %s (fn=%s track=%s)",
+                        rec.id, fn_short, rec.track,
+                    )
+                    continue
+                kwargs = json.loads(rec.kwargs_json) if rec.kwargs_json else {}
+                queue_key = ARQ_QUEUE_KEY_TEMPLATE.format(track=rec.track)
+                await pool.enqueue_job(
+                    fn_short,
+                    _queue_name=queue_key,
+                    _job_id=rec.id,
+                    **kwargs,
+                )
+                _log.info(
+                    "_enqueue_dependents: enqueued dependent %s to %s",
+                    rec.id, queue_key,
+                )
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                _log.warning(
+                    "_enqueue_dependents: enqueue of %s failed: %s",
+                    rec.id, exc,
+                )
+    finally:
+        if pool is not None:
+            try:
+                await pool.aclose()
+            except (OSError, RuntimeError) as exc:
+                _log.debug(
+                    "_enqueue_dependents: pool close failed: %s", exc,
+                )
 
 
 # Suppress unused-import warning when asyncio is imported only for typing.
