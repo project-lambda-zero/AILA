@@ -109,7 +109,6 @@ _APPLICABLE_FUZZING_ENGINES: dict[tuple[str, str], list[str]] = {
     (TargetKind.IPA.value, "swift"):                ["libfuzzer-swift"],
     (TargetKind.IPA.value, "objc"):                 ["libfuzzer"],
     # Android extension — libFuzzer-Android for native libs in APK
-    # Android extension — libFuzzer-Android for native libs in APK
     (TargetKind.ANDROID_APK.value, "c++"):          ["libfuzzer-android"],
     (TargetKind.ANDROID_APK.value, "c"):            ["libfuzzer-android"],
     # .NET — sharpfuzz coverage-guided fuzzer
@@ -121,6 +120,21 @@ _APPLICABLE_FUZZING_ENGINES: dict[tuple[str, str], list[str]] = {
     (TargetKind.KERNEL_MODULE.value, "c"):          ["syzkaller", "kafl"],
     (TargetKind.HYPERVISOR_IMAGE.value, "c"):       ["afl++", "qemu-fuzz"],
     (TargetKind.HYPERVISOR_IMAGE.value, "c++"):     ["afl++", "qemu-fuzz"],
+
+    # fix §226 — explicit (kind, '*') wildcard fallback when language detection
+    # returned empty/unknown. Lookup in _compose_profile falls through to these
+    # when (kind, lang) misses. Empty list = "no fuzzer recommendation, drive
+    # the investigation via reasoning strategies" (an honest signal, not a
+    # silent miss).
+    (TargetKind.NATIVE_BINARY.value, "*"):          [],
+    (TargetKind.SOURCE_REPO.value, "*"):            [],
+    (TargetKind.ANDROID_APK.value, "*"):            [],
+    (TargetKind.IPA.value, "*"):                    [],
+    (TargetKind.JAR.value, "*"):                    [],
+    (TargetKind.DOTNET_ASSEMBLY.value, "*"):        [],
+    (TargetKind.KERNEL_IMAGE.value, "*"):           [],
+    (TargetKind.KERNEL_MODULE.value, "*"):          [],
+    (TargetKind.HYPERVISOR_IMAGE.value, "*"):       [],
 }
 
 # (target_kind, primary_language) → reasoning strategy family default
@@ -490,9 +504,13 @@ class CapabilityProfileBuilder:
 
         applicable_mcp_servers = list(_APPLICABLE_MCP_BY_KIND.get(target_row.kind, []))
 
+        # fix §226 — empty primary_language hits (kind, '') which is never a
+        # registered key; fall through to the (kind, '*') wildcard before the
+        # empty-list default, so the lookup is explicit rather than silent.
         engines_key = (target_row.kind, primary_language.lower())
         applicable_fuzzing_engines = list(
-            _APPLICABLE_FUZZING_ENGINES.get(engines_key, [])
+            _APPLICABLE_FUZZING_ENGINES.get(engines_key)
+            or _APPLICABLE_FUZZING_ENGINES.get((target_row.kind, "*"), [])
         )
 
         default_reasoning_strategy = (
