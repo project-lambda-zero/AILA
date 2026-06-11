@@ -392,6 +392,12 @@ class Bundle:
     # Variant hunt orders aggregated across all findings, each with
     # a V-NNN id and a back-reference to its parent finding.
     variants: list[dict[str, Any]]
+    # Curated AILA-platform facts (personas, workflow states, MCP
+    # servers, audit-run stats, limitations). Used exclusively by the
+    # § 03 ABOUT THE PLATFORM section so the prose there does NOT
+    # invent fields — every line traces back to aila_brief.json.
+    # Optional so older inputs without the brief still load.
+    aila_brief: dict[str, Any] = field(default_factory=dict)
 
 
 def _load_payload(outcome: dict[str, Any]) -> dict[str, Any]:
@@ -801,6 +807,16 @@ def load_bundle(report_dir: Path) -> Bundle:
     audit = json.loads((report_dir / "audit_dump.json").read_text(encoding="utf-8"))
     catalog = json.loads((report_dir / "masvs_catalog.json").read_text(encoding="utf-8"))
     apk = json.loads((report_dir / "apk_intel.json").read_text(encoding="utf-8"))
+    # AILA platform brief is optional but feeds the § 03 ABOUT THE
+    # PLATFORM section. Missing brief => the about-section renders a
+    # one-line fallback paragraph instead of crashing.
+    brief_path = report_dir / "aila_brief.json"
+    aila_brief: dict[str, Any] = {}
+    if brief_path.exists():
+        try:
+            aila_brief = json.loads(brief_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            aila_brief = {}
 
     # Order findings to follow the catalog (which is already in MASVS
     # natural order: ARCH → STORAGE → CRYPTO → AUTH → NETWORK →
@@ -855,7 +871,11 @@ def load_bundle(report_dir: Path) -> Bundle:
                 }
             )
 
-    return Bundle(audit=audit, catalog=catalog, apk=apk, findings=findings, variants=variants)
+    return Bundle(
+        audit=audit, catalog=catalog, apk=apk,
+        findings=findings, variants=variants,
+        aila_brief=aila_brief,
+    )
 
 
 # ============================================================================
@@ -2451,8 +2471,8 @@ def _zebra_table_style(nrows: int) -> TableStyle:
 
 def build_findings_index(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
     story: list[Flowable] = []
-    story.append(_set_section("FINDINGS  INDEX", "§ 03"))
-    story.append(_h1("§ 03  ·  FINDINGS INDEX", s))
+    story.append(_set_section("FINDINGS  INDEX", "§ 05"))
+    story.append(_h1("§ 05  ·  FINDINGS INDEX", s))
     story.append(HorizontalRule(PAGE_W - MARGIN_L - MARGIN_R, thickness=1.4))
     story.append(Spacer(1, 3 * mm))
     story.append(Paragraph(
@@ -2530,6 +2550,324 @@ def build_findings_index(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[F
 
 def _verdict_cell(label: str) -> Flowable:
     return VerdictBadge(label, width=20 * mm, height=4.6 * mm)
+
+
+# ============================================================================
+# ABOUT AILA — § 03 — platform explainer
+# ============================================================================
+#
+# Operator wants the reader to know WHO produced the audit before they
+# read its findings. § 03 is a 3-5 page platform explainer drawing
+# every fact from .run/yanimda_report/aila_brief.json — no fields
+# invented here.
+
+def _persona_character_one_liner(text: str) -> str:
+    """Pull the character descriptor from the persona prompt header.
+
+    The persona prompt opens with
+
+        # Your voice: HALVAR — the hypothesizer (researcher role) You are
+        **Halvar**, the researcher voice. ...
+
+    The character substring is between the em-dash after the persona name
+    and the opening parenthesis of the role tag — ``the hypothesizer``,
+    ``the falsifier``, ``the operationalizer``, etc. We return THAT
+    substring with a capitalised first letter; the role parenthetical
+    (``(researcher role)``) is shown alongside as the ROLE column already.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    raw = text.strip()
+    # Match the header: "# Your voice: NAME — the X (role)"
+    m = re.search(
+        r"#\s*Your\s+voice:\s*[A-Z]+\s*[\u2014\u2013\-]\s*(?P<char>[^()\n]+?)\s*\(",
+        raw,
+    )
+    if not m:
+        return ""
+    char = m.group("char").strip(" .,;:")
+    if not char:
+        return ""
+    # Capitalise the first letter — "the hypothesizer" → "The hypothesizer"
+    char = char[0].upper() + char[1:]
+    return char
+
+
+def build_about_aila(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
+    """Render the § 03 ABOUT THE PLATFORM section.
+
+    Six subsections sourced from ``bundle.aila_brief``:
+
+        03.1  What AILA is
+        03.2  The 6-persona panel
+        03.3  The workflow
+        03.4  The MCP tool stack
+        03.5  This audit's facts
+        03.6  Limitations and disclosure
+
+    All persona names, workflow state descriptions, MCP server entries,
+    audit-run stats and limitations come from
+    ``.run/yanimda_report/aila_brief.json``. When the brief is missing,
+    the section degrades to a one-paragraph fallback so older inputs
+    still build a valid PDF.
+    """
+    brief = bundle.aila_brief or {}
+    story: list[Flowable] = []
+    story.append(_set_section("ABOUT  THE  PLATFORM", "§ 03"))
+    story.append(_h1("§ 03  ·  ABOUT THE PLATFORM — AILA / Vulnerability Research", s))
+    story.append(HorizontalRule(PAGE_W - MARGIN_L - MARGIN_R, thickness=1.4))
+    story.append(Spacer(1, 3 * mm))
+
+    if not brief:
+        story.append(Paragraph(
+            "<i>The AILA platform brief (aila_brief.json) was not present in the "
+            "report input directory. This section degrades to a single-line stub; "
+            "regenerate the report with the brief staged to populate it.</i>",
+            ParagraphStyle("AboutFB", parent=s["body"], textColor=COL_MUTED)))
+        story.append(PageBreak())
+        return story
+
+    inner_w = PAGE_W - MARGIN_L - MARGIN_R
+
+    # ── 03.1  What AILA is ──
+    story.append(_h2("03.1  ·  WHAT  AILA  IS", s))
+    story.append(Paragraph(
+        "<b>AILA</b> (AI Lab Assistant) is a modular AI security platform. Its "
+        "<b>VR (Vulnerability Research)</b> module performs adversarial code "
+        "audits by spawning a panel of six independent reasoning agents per "
+        "control. Each agent reasons through the control's verification "
+        "objective using a layered MCP tool stack — <font name='Mono'>audit_mcp</font> "
+        "for source-code semantic search, AST queries and call-graph traversal; "
+        "<font name='Mono'>android_mcp</font> for APK ingestion (apktool, jadx, "
+        "androguard, MobSF); <font name='Mono'>ida_headless</font> for native "
+        "binary disassembly and exploitability assessment. After the panel "
+        "deliberates, an independent <b>claim verifier</b> runs adversarial "
+        "probes against the proposed finding; a refuted claim flips the verdict "
+        "back to NO_FINDING. Every line of this report is the synthesis of that "
+        "process — the platform does not fabricate findings, does not paraphrase "
+        "agent prose, and never substitutes its own conclusion for the panel's "
+        "verbatim reasoning.",
+        s["body"]))
+    story.append(Spacer(1, 5 * mm))
+
+    # ── 03.2  The 6-persona panel ──
+    story.append(_h2("03.2  ·  THE  6-PERSONA  PANEL", s))
+    story.append(Paragraph(
+        "Every MASVS L1 control is dispatched to six independent reasoning "
+        "agents — two researchers, two critics, two implementers. Each agent "
+        "reasons in isolation; cross-pollination happens only at terminal time "
+        "when the synthesis agent merges the panel's contributions into one "
+        "canonical outcome.",
+        s["body_sm"]))
+    story.append(Spacer(1, 2 * mm))
+
+    persona_roles = brief.get("personas_roles") or {}
+    persona_prompts = brief.get("personas") or {}
+    persona_order = ["halvar", "noor", "maddie", "yuki", "renzo", "wei"]
+
+    persona_rows: list[list[Any]] = [["PERSONA", "ROLE", "CHARACTER"]]
+    for pname in persona_order:
+        role = persona_roles.get(pname, "—")
+        char = _persona_character_one_liner(persona_prompts.get(pname, ""))
+        pcol = _PERSONA_COLOR.get(pname, COL_INK)
+        phex = "#%02x%02x%02x" % (
+            int(pcol.red * 255), int(pcol.green * 255), int(pcol.blue * 255),
+        )
+        persona_rows.append([
+            Paragraph(
+                f"<font name='{_font('Sans-Bold', 'Helvetica-Bold')}' "
+                f"color='{phex}' size='9.4'>{pname.upper()}</font>",
+                s["table_cell_mono"],
+            ),
+            _para(role, s["table_cell"]),
+            _para(_html_escape(char) or "—", s["table_cell_xs"]),
+        ])
+    pt = Table(persona_rows, colWidths=[28 * mm, 56 * mm, None], repeatRows=1)
+    pt.setStyle(_zebra_table_style(len(persona_rows)))
+    story.append(pt)
+    story.append(Spacer(1, 3 * mm))
+
+    cv_text = brief.get("claim_verifier") or ""
+    vh_text = brief.get("variant_hunt") or ""
+    if cv_text:
+        story.append(_h4("CLAIM  VERIFIER", s))
+        story.append(Paragraph(cv_text, s["body_sm"]))
+        story.append(Spacer(1, 2 * mm))
+    if vh_text:
+        story.append(_h4("VARIANT  HUNT", s))
+        story.append(Paragraph(vh_text, s["body_sm"]))
+        story.append(Spacer(1, 4 * mm))
+
+    # ── 03.3  The workflow ──
+    story.append(_h2("03.3  ·  THE  WORKFLOW", s))
+    story.append(Paragraph(
+        "Each per-control investigation is a durable six-state machine. State "
+        "advances on terminal conditions (panel quorum, persona turn cap, "
+        "wall-clock cap, or every branch landing in a terminal status). Persisted "
+        "to PostgreSQL between states so investigations survive crashes and "
+        "retries.",
+        s["body_sm"]))
+    story.append(Spacer(1, 2 * mm))
+
+    states_raw = brief.get("workflow_states") or []
+    flow_labels = ["SETUP", "LOOP", "EMIT", "SYNTHESIZE", "VERIFY", "DISPATCH"]
+    # One arrow row + one description row beneath
+    arrow_cells: list[Any] = []
+    desc_cells: list[Any] = []
+    for i, lab in enumerate(flow_labels):
+        # Box label
+        arrow_cells.append(Paragraph(
+            f"<font name='{_font('Sans-Bold', 'Helvetica-Bold')}' "
+            f"color='white' size='10.4'>{lab}</font>",
+            ParagraphStyle(
+                f"FlowLab_{i}", parent=s["caps"], alignment=TA_CENTER,
+                fontSize=10.4, leading=12.0, letterSpace=1.4,
+            ),
+        ))
+        # One-line description from the brief (text after the em-dash)
+        desc = ""
+        if i < len(states_raw):
+            state_str = states_raw[i]
+            if isinstance(state_str, str) and "—" in state_str:
+                desc = state_str.split("—", 1)[1].strip()
+            elif isinstance(state_str, str):
+                desc = state_str
+        desc_cells.append(Paragraph(
+            _html_escape(desc)[:120],
+            ParagraphStyle(
+                f"FlowDesc_{i}", parent=s["body_xs"],
+                fontSize=6.8, leading=8.4, alignment=TA_CENTER,
+                textColor=COL_INK,
+            ),
+        ))
+    flow_table = Table(
+        [arrow_cells, desc_cells],
+        colWidths=[inner_w / len(flow_labels)] * len(flow_labels),
+    )
+    flow_style: list[Any] = [
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BACKGROUND", (0, 0), (-1, 0), COL_NAVY),
+        ("BACKGROUND", (0, 1), (-1, 1), COL_PAPER_DEEP),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("TOPPADDING", (0, 0), (-1, 0), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+        ("TOPPADDING", (0, 1), (-1, 1), 3),
+        ("BOTTOMPADDING", (0, 1), (-1, 1), 3),
+    ]
+    # Thin accent dividers + arrow glyph via the right-edge rule
+    for ci in range(len(flow_labels) - 1):
+        flow_style.append(("LINEAFTER", (ci, 0), (ci, 0), 1.2, COL_ACCENT))
+        flow_style.append(("LINEAFTER", (ci, 1), (ci, 1), 0.3, COL_THIN))
+    flow_style.append(("BOX", (0, 0), (-1, -1), 0.6, COL_INK))
+    flow_table.setStyle(TableStyle(flow_style))
+    story.append(flow_table)
+    story.append(Spacer(1, 2 * mm))
+    story.append(Paragraph(
+        "<i>Terminal conditions:</i> panel quorum (4-of-6 personas converge on "
+        "the same verdict), persona turn cap (70 turns per voice), audit "
+        "wall-clock cap (24 h), or all branches reach a terminal status. "
+        "Whichever fires first stops the loop.",
+        ParagraphStyle("FlowNote", parent=s["body_xs"], textColor=COL_MUTED,
+                       alignment=TA_JUSTIFY)))
+    story.append(Spacer(1, 5 * mm))
+
+    # ── 03.4  The MCP tool stack ──
+    story.append(_h2("03.4  ·  THE  MCP  TOOL  STACK", s))
+    story.append(Paragraph(
+        "All agent reasoning is grounded by tool calls against three MCP "
+        "(Model Context Protocol) servers running locally. The bridge layer "
+        "normalises tool responses into observable case-state entries the next "
+        "turn's prompt reads — agents never see raw HTTP, only typed records.",
+        s["body_sm"]))
+    story.append(Spacer(1, 2 * mm))
+
+    mcp_servers = brief.get("mcp_servers") or []
+    mcp_rows: list[list[Any]] = [["SERVER", "PURPOSE", "URL", "TOOL  COUNT"]]
+    for srv in mcp_servers:
+        mcp_rows.append([
+            _para(srv.get("name") or "—", ParagraphStyle(
+                "McpN", parent=s["table_cell_mono"],
+                fontName=_font("Mono-Bold", "Courier-Bold"),
+                textColor=COL_ACCENT)),
+            _para(srv.get("purpose") or "—", s["table_cell"]),
+            _para(srv.get("url") or "—", s["table_cell_mono"]),
+            _para(srv.get("tool_count_approx") or "—",
+                  ParagraphStyle("McpC", parent=s["table_cell_mono"],
+                                 alignment=TA_CENTER)),
+        ])
+    mt = Table(mcp_rows, colWidths=[28 * mm, None, 44 * mm, 22 * mm],
+               repeatRows=1)
+    mt.setStyle(_zebra_table_style(len(mcp_rows)))
+    story.append(mt)
+    story.append(Spacer(1, 5 * mm))
+
+    # ── 03.5  This audit's facts ──
+    story.append(_h2("03.5  ·  THIS  AUDIT'S  FACTS", s))
+    facts = brief.get("audit_facts") or {}
+    facts_rows = [
+        ["MASVS  L1  CONTROLS  EVALUATED",
+         str(facts.get("controls_evaluated") or len(bundle.findings))],
+        ["PERSONAS  PER  CONTROL",
+         str(facts.get("personas_per_control") or 6)],
+        ["MAX  TURNS  PER  PERSONA",
+         str(facts.get("max_turns_per_persona") or 70)],
+        ["WALL-CLOCK  CAP  (HOURS)",
+         str(facts.get("wall_clock_per_audit_cap_hours") or 24)],
+        ["TOTAL  BRANCHES  SPAWNED  (APPROX.)",
+         f"~{facts.get('total_branches_spawned_approx', '—')}"],
+        ["LLM  REASONING  TURNS  (APPROX.)",
+         str(facts.get("actual_llm_turns_approx") or "—")],
+        ["AUDIT  BEGAN  (UTC)",
+         str(facts.get("audit_began") or "—")],
+        ["AUDIT  COMPLETED  (UTC)",
+         str(facts.get("audit_completed") or "—")],
+        ["ELAPSED  WALL-CLOCK  (APPROX.)",
+         f"{facts.get('elapsed_hours_approx', '—')} h"],
+    ]
+    ft_data: list[list[Any]] = [["METRIC", "VALUE"]]
+    for label, value in facts_rows:
+        ft_data.append([
+            _para(label, ParagraphStyle(
+                "FactL", parent=s["table_h"], fontSize=7.4, alignment=TA_LEFT)),
+            _para(value, ParagraphStyle(
+                "FactV", parent=s["table_cell_mono"],
+                fontName=_font("Mono-Bold", "Courier-Bold"),
+                fontSize=8.4, textColor=COL_INK)),
+        ])
+    ft = Table(ft_data, colWidths=[80 * mm, None], repeatRows=1)
+    ft.setStyle(_zebra_table_style(len(ft_data)))
+    story.append(ft)
+    story.append(Spacer(1, 2 * mm))
+    story.append(Paragraph(
+        "In concrete terms: every PASS / FAIL / INFO / REVIEW row in §06 is "
+        "the convergent verdict of up to six independent agents that each "
+        "spent up to 70 reasoning turns interrogating the APK source through "
+        "the MCP tool stack above. The persona voices in §06's "
+        "<b>panel attribution</b> sub-section are the verbatim per-voice "
+        "contributions; the synthesis agent merged them into the canonical "
+        "outcome you see in <b>agent reasoning</b>.",
+        s["body_sm"]))
+    story.append(Spacer(1, 5 * mm))
+
+    # ── 03.6  Limitations & disclosure ──
+    story.append(_h2("03.6  ·  LIMITATIONS  &  DISCLOSURE", s))
+    story.append(Paragraph(
+        "Honest scope statement of what AILA does and does NOT do on this "
+        "engagement. The limitations below are not disclaimers — they are the "
+        "explicit boundary of the platform's reach so the operator can "
+        "calibrate where additional manual review is required.",
+        s["body_sm"]))
+    story.append(Spacer(1, 2 * mm))
+    limitations = brief.get("limitations") or []
+    for i, lim in enumerate(limitations, 1):
+        safe = _md_inline(_html_escape(lim))
+        story.append(Paragraph(
+            f"<b>{i}.</b>&nbsp;&nbsp;{safe}",
+            ParagraphStyle("LimItem", parent=s["body"], fontSize=9.0,
+                           leading=11.6, leftIndent=8, alignment=TA_LEFT,
+                           spaceAfter=3)))
+    story.append(PageBreak())
+    return story
 
 
 # ============================================================================
@@ -4307,8 +4645,14 @@ def build_pdf(out_path: Path, bundle: Bundle) -> int:
         story.extend(build_cover(bundle, s))
         story.extend(build_doc_control(bundle, s))
         story.extend(build_exec_summary(bundle, s))
-        story.extend(build_findings_index(bundle, s))
+        # § 03  ABOUT THE PLATFORM — inserted between exec summary and APK
+        # intel so the reader knows how the verdicts were produced before
+        # reading the technical body. Pulls all facts from aila_brief.json.
+        story.extend(build_about_aila(bundle, s))
         story.extend(build_apk_intel(bundle, s))
+        # Findings index renumbers from § 03 to § 05 after the insertion
+        # of ABOUT THE PLATFORM. Findings themselves keep their § 06 home.
+        story.extend(build_findings_index(bundle, s))
         story.extend(build_findings(bundle, s))
         story.extend(build_variant_index(bundle, s))
         story.extend(build_methodology(bundle, s))
