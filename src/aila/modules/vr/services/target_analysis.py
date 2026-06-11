@@ -288,7 +288,26 @@ class TargetAnalysisService:
         await self._skip_inapplicable_stages(target_id, applicable)
 
         if kind == TargetKind.ANDROID_APK:
-            await self._analyze_android_apk(target_id)
+            # fix §242 — mirror the legacy ingestion path's exception
+            # contract so android targets follow the same operator-
+            # resume flow on stage state collisions. Without this, a
+            # StageAlreadyDoneError / StageInFlightError raised from
+            # any of the five android stages propagated raw into the
+            # ARQ task: the worker logged ERROR + marked the task
+            # failed, leaving the operator to dig through logs instead
+            # of seeing the harmless idempotency log line.
+            try:
+                await self._analyze_android_apk(target_id)
+            except StageAlreadyDoneError:
+                _log.info(
+                    "vr.target_analysis: target %s android stage already done — skip",
+                    target_id,
+                )
+            except StageInFlightError:
+                _log.info(
+                    "vr.target_analysis: target %s android stage in flight — skip",
+                    target_id,
+                )
             return
 
         # Legacy INGESTION flow — source_repo / binary kinds / CVE etc.
