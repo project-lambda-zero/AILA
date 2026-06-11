@@ -40,6 +40,29 @@ MAX_OBS_DUMP_CHARS = 32 * 1024
 # Cap on per-list previews surfaced into observables.
 MAX_LIST_PREVIEW = 20
 
+# fix §274 — curated set of args dropped from the obs-key fingerprint.
+# Two buckets, both opaque to "what the agent actually asked":
+#   - target-handle identifiers (``index_id``, ``binary_id``) that
+#     stay constant across every call on one branch;
+#   - pagination cursors that page the same conceptual question.
+# Adding ``page``, ``cursor``, ``next_token``, ``page_size``, ``from``,
+# ``to`` was operator-observed: without them, three pages of the
+# same search produced three different obs-keys and three side-by-side
+# observation entries instead of overwriting cleanly. Contributors
+# adding new pagination knobs to a tool MUST extend this set.
+_PAGINATION_NOISE_KEYS: frozenset[str] = frozenset({
+    "index_id",
+    "binary_id",
+    "limit",
+    "offset",
+    "page",
+    "page_size",
+    "cursor",
+    "next_token",
+    "from",
+    "to",
+})
+
 
 def provenance_stamp(ctx: AdapterContext) -> dict[str, str]:
     """Standard source_provenance dict embedded in every adapter payload."""
@@ -81,8 +104,7 @@ def _args_fingerprint(args: dict[str, Any]) -> str:
     sorted ``key=value`` list joined with ``__``, truncated to keep
     the observable key readable.
     """
-    noise = {"index_id", "binary_id", "limit", "offset"}
-    significant = {k: v for k, v in (args or {}).items() if k not in noise and v not in (None, "", [])}
+    significant = {k: v for k, v in (args or {}).items() if k not in _PAGINATION_NOISE_KEYS and v not in (None, "", [])}
     if not significant:
         return ""
     parts = [f"{k}={significant[k]}" for k in sorted(significant)]
