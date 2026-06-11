@@ -527,8 +527,14 @@ class TargetAnalysisService:
         tracker: StageTracker,
     ) -> None:
         apk_path = self._resolve_apk_path(descriptor)
+        # fix §267 — mirror apktool_decode's force=True. Without it, a
+        # retry after partial JADX failure trips JADX's "destination
+        # exists" guard and perma-fails until manual cleanup. The
+        # workspace dir is content-addressed by sha so overwriting is
+        # the correct retry behavior; same reasoning the comment on
+        # _android_apk_decode line ~480 spells out.
         resp = await self._android_mcp.forward(
-            action="jadx_decompile", apk_path=apk_path, _agent_bypass=True,
+            action="jadx_decompile", apk_path=apk_path, force=True, _agent_bypass=True,
         )
         if not isinstance(resp, dict) or resp.get("status") == "error":
             err = resp.get("error") if isinstance(resp, dict) else resp
