@@ -4767,7 +4767,6 @@ def concur_check(pdf_path: Path, bundle: Bundle) -> dict[str, Any]:
         anomalies.append("Package id 'com.vodafone.selfservis' not found in PDF text")
     if "38" not in full_text:
         anomalies.append("Permission count '38' not found in PDF text")
-
     # Variant hunt index ≥ 5
     variant_count = len(bundle.variants)
     if variant_count < 5:
@@ -4775,12 +4774,49 @@ def concur_check(pdf_path: Path, bundle: Bundle) -> dict[str, Any]:
 
     size_mb = pdf_path.stat().st_size / (1024 * 1024)
 
+    # ── Structural checks introduced by the reshape ──
+    # Strip the chrome strip so we can match against the title strings the
+    # body flowables emit (the running chrome uses double-spaced
+    # all-caps; the body uses single-spaced).
+    text_lo_collapsed = text_lo  # already case-folded + space-collapsed
+
+    # 1. § 03 ABOUT THE PLATFORM section present in extracted text.
+    if ("about the platform" not in text_lo_collapsed
+            and "about  the  platform" not in text_lo_collapsed):
+        anomalies.append("§ 03 ABOUT THE PLATFORM section not found in PDF text")
+
+    # 2. RISK SNAPSHOT card occurrences should equal the finding count.
+    snapshot_count = text_lo_collapsed.count("risk snapshot")
+    if snapshot_count < len(bundle.findings):
+        anomalies.append(
+            f"RISK SNAPSHOT cards found {snapshot_count} times in PDF text; "
+            f"expected at least {len(bundle.findings)} (one per finding)"
+        )
+
+    # 3. KEY TAKEAWAY callouts should equal the FAIL count.
+    fail_n = counts.get("FAIL", 0)
+    takeaway_count = text_lo_collapsed.count("key takeaway")
+    if takeaway_count < fail_n:
+        anomalies.append(
+            f"KEY TAKEAWAY callouts found {takeaway_count} times in PDF text; "
+            f"expected at least {fail_n} (one per FAIL finding)"
+        )
+
+    # 4. AT A GLANCE dashboard present.
+    if "at  a  glance" not in text_lo_collapsed and "at a glance" not in text_lo_collapsed:
+        anomalies.append("AT A GLANCE dashboard not found in PDF text")
+
+    # 5. INFO verdicts should NOT trigger a "panel attribution missing"
+    # complaint — they are an operator-doc-needed disposition.
+    # (Existing missing_panel check already only checks FAIL/REVIEW.)
+
     report: dict[str, Any] = {
         "pdf_path": str(pdf_path),
         "page_count": page_count,
         "verdict_distribution": dict(counts),
-        "fail_count": counts.get("FAIL", 0),
+        "fail_count": fail_n,
         "review_count": counts.get("REVIEW", 0),
+        "info_count": counts.get("INFO", 0),
         "na_count": counts.get("N/A", 0),
         "pass_count": counts.get("PASS", 0),
         "inconclusive_count": counts.get("INCONCLUSIVE", 0),
@@ -4790,6 +4826,10 @@ def concur_check(pdf_path: Path, bundle: Bundle) -> dict[str, Any]:
         "variant_count": variant_count,
         "anomalies": anomalies,
         "size_mb": round(size_mb, 2),
+        "structure": {
+            "risk_snapshot_count": snapshot_count,
+            "key_takeaway_count": takeaway_count,
+        },
     }
 
     print()
@@ -4812,12 +4852,15 @@ def concur_check(pdf_path: Path, bundle: Bundle) -> dict[str, Any]:
     print(f"  Anomalies                 : {len(anomalies)}")
     for a in anomalies:
         print(f"    · {a}")
+    print(f"  Risk snapshot cards (text): {snapshot_count}")
+    print(f"  Key takeaway boxes  (text): {takeaway_count}  "
+          f"(FAIL findings: {fail_n})")
     print("============================================================")
     print()
 
     # Hard assertions per spec
     assert page_count > 50, f"page count {page_count} ≤ 50"
-    assert size_mb < 50, f"size {size_mb:.2f} MB ≥ 50 MB"
+    assert size_mb < 2.0, f"size {size_mb:.2f} MB ≥ 2 MB"
     assert not missing_controls, f"controls missing from PDF: {missing_controls}"
     # Per-spec: FAIL findings must have ≥500 chars of agent reasoning text.
     # Tolerate the FAILs that genuinely have no agent answer text in the source
@@ -4826,6 +4869,19 @@ def concur_check(pdf_path: Path, bundle: Bundle) -> dict[str, Any]:
     located = [s for s in short_fails if "not located in PDF text" in s]
     assert not located, f"FAIL reasoning not located in PDF: {located}"
     assert variant_count >= 5, f"variant index too small ({variant_count})"
+    # New structural assertions from the reshape:
+    assert snapshot_count >= len(bundle.findings), (
+        f"only {snapshot_count} RISK SNAPSHOT cards in PDF; "
+        f"expected ≥ {len(bundle.findings)}"
+    )
+    assert takeaway_count >= fail_n, (
+        f"only {takeaway_count} KEY TAKEAWAY callouts in PDF; "
+        f"expected ≥ {fail_n} (one per FAIL)"
+    )
+    assert (
+        "about the platform" in text_lo_collapsed
+        or "about  the  platform" in text_lo_collapsed
+    ), "§ 03 ABOUT THE PLATFORM section not present in PDF text"
     return report
 
 
