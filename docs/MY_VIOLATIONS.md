@@ -4461,6 +4461,8 @@ The merge logic supports this — only the action-routing in
 
 ## 174. `_upsert_canonical_outcome` only reads OLDEST canonical — second canonical's `panel_contributions` stranded
 
+> RESOLVED — duplicate of §168; collapsed in cutover.
+
 **File**: `agents/vuln_researcher.py:2620-2625` (combined with §168).
 
 **Bug**: When the race in §168 creates two canonical rows, the
