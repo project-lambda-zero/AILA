@@ -155,12 +155,24 @@ async def _get_intel_service() -> Any | None:
             get_worker_platform,
         )
     except Exception as exc:  # noqa: BLE001
-        _log.warning("cve_intel: worker platform import failed: %s", exc)
+        # fix §350 — DEFENSIVE: bootstrap import failure must not crash
+        # the resolver; surface the traceback so a packaging / circular
+        # import regression is diagnosable from a single warning.
+        _log.warning(
+            "cve_intel: worker platform import failed: %s", exc,
+            exc_info=True,
+        )
         return None
     try:
         platform = await get_worker_platform()
     except Exception as exc:  # noqa: BLE001
-        _log.warning("cve_intel: get_worker_platform raised: %s", exc)
+        # fix §350 — DEFENSIVE: platform.get_worker_platform() races on
+        # cold start; surface traceback so a non-transient init failure
+        # (config registry crash, DB unreachable) is debuggable.
+        _log.warning(
+            "cve_intel: get_worker_platform raised: %s", exc,
+            exc_info=True,
+        )
         return None
     try:
         vuln_runtime = platform.runtime.require_module("vulnerability")
@@ -258,6 +270,17 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
                     ),
                 ))
             else:
+                # fix §350 — DEFENSIVE classifier: known shapes (httpx 404,
+                # timeout, network error) are bucketed cleanly; unknown
+                # exceptions land here as `status="error"` with class+msg
+                # in the payload, but the traceback now also reaches the
+                # operator log so the unknown shape can be added to the
+                # classifier on next iteration.
+                _log.warning(
+                    "cve_intel: unknown fetch_cve_intel error class=%s cve=%s",
+                    type(exc).__name__, cve_id,
+                    exc_info=True,
+                )
                 out.append(CVEResolution(
                     cve_id=cve_id,
                     status="error",
