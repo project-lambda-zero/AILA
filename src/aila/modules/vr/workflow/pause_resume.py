@@ -234,9 +234,14 @@ async def pause_investigation_atomic(
             investigation_id, track="vr",
         )
     except Exception as exc:  # noqa: BLE001 — best-effort
+        # fix §350 — surface traceback. ARQ purge is best-effort because
+        # cursor SSOT already blocks surviving jobs at next pickup; the
+        # stack distinguishes Redis transport blips from a structural
+        # ARQ client break.
         _log.warning(
             "pause_investigation_atomic ARQ_PURGE failed inv=%s err=%s",
             investigation_id, exc,
+            exc_info=True,
         )
 
     return summary
@@ -377,9 +382,14 @@ async def resume_investigation_atomic(
                 investigation_id, run_id,
             )
         except Exception as exc:  # noqa: BLE001 — best-effort per branch
+            # fix §350 — traceback surfaces ARQ/dedup-table regression vs
+            # transient Redis failure; the resume submit retries on the
+            # next operator action, but the operator needs the stack to
+            # diagnose if the same branch keeps failing.
             _log.warning(
                 "resume_investigation_atomic submit failed inv=%s run=%s err=%s",
                 investigation_id, run_id, exc,
+                exc_info=True,
             )
 
     summary["submitted_tasks"] = submitted
