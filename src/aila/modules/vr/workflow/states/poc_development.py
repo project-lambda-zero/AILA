@@ -28,9 +28,28 @@ from pydantic import BaseModel, Field
 
 from aila.platform.workflows.types import StateResult
 
-__all__ = ["state_poc_development"]
+__all__ = ["LLMDisabledByOperatorError", "state_poc_development"]
 
 _log = logging.getLogger(__name__)
+
+
+# fix §303 — dedicated exception for the LLM kill-switch state. The
+# prior code raised `RuntimeError("LLM disabled by operator")` which
+# the outer try/except caught alongside transient httpx errors and
+# transient pydantic ValidationErrors, smearing operator intent into
+# the same retry bucket as flake. With a dedicated subclass, the
+# attempt loop can distinguish "this attempt failed; revise and try
+# again" (RuntimeError, ValueError, OSError, TimeoutError) from
+# "operator pulled the kill switch; STOP burning attempts" and
+# short-circuit accordingly.
+class LLMDisabledByOperatorError(Exception):
+    """Raised when the LLM kill switch is engaged.
+
+    Engine-side semantics: do NOT retry the attempt loop; the
+    operator has explicitly disabled LLM usage. The state handler
+    catches this once and exits with an untested payload tagged
+    `llm_kill_switch_active`.
+    """
 
 
 # fix §302 — schema for chat_structured. Replaces the prior
@@ -139,7 +158,7 @@ async def _llm_poc(services: Any, user_prompt: str) -> PoCResponse:
         run_id=services.run_id,
     )
     if response.disabled:
-        raise RuntimeError("LLM disabled by operator")
+        raise LLMDisabledByOperatorError("LLM disabled by operator")
     # chat_structured guarantees the content matches PoCResponse on
     # success, but LLMResponse carries it as a JSON string (no
     # `.parsed` field — see synthesis_agent for the same pattern).
@@ -184,6 +203,16 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             generated = await _llm_poc(
                 services, _build_user_prompt(research, mitigations, []),
             )
+        except LLMDisabledByOperatorError:
+            return StateResult(
+                next_state="advisory",
+                output={
+                    **input,
+                    "poc": _untested_payload(
+                        "llm_kill_switch_active", None, None,
+                    ),
+                },
+            )
         except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
             return StateResult(
                 next_state="advisory",
@@ -215,6 +244,21 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
         try:
             generated = await _llm_poc(
                 services, _build_user_prompt(research, mitigations, history),
+            )
+        except LLMDisabledByOperatorError:
+            # fix §303 — operator pulled the kill switch. Do NOT burn
+            # additional attempts; surface the untested payload now.
+            return StateResult(
+                next_state="advisory",
+                output={
+                    **input,
+                    "poc": {
+                        **_untested_payload(
+                            "llm_kill_switch_active", last_code, last_language,
+                        ),
+                        "history": history,
+                    },
+                },
             )
         except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
             history.append({
