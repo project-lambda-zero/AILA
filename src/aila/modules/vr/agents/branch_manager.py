@@ -428,7 +428,27 @@ class BranchManager:
         *,
         reason: str = "",
     ) -> BranchOpResult:
-        """Re-activate a PAUSED branch."""
+        """Re-activate a PAUSED branch.
+
+        fix §39 — DESIGN DECISION: resume() flips the branch back to
+        ACTIVE but does NOT enqueue a fresh ARQ task. The Phase B
+        cursor-SSOT contract (DURABLE_STATEMACHINE_DESIGN §15) makes
+        the cursor the single source of truth for "is this branch
+        live": when a branch flips ACTIVE the engine's poll loop
+        observes the transition on its next tick and re-enqueues the
+        appropriate worker task. Enqueueing here as well would
+        duplicate the responsibility (two writers racing on the same
+        ARQ slot) and rebuild the dual-write desync the cursor
+        SSOT is meant to eliminate.
+
+        Consequence today (pre-Phase-B): resume() is effectively a
+        no-op for non-MASVS investigations because no poll loop
+        notices the ACTIVE flip. The MASVS reconciler's wake-enqueue
+        path picks it up for MASVS work. Phase B adds the engine-
+        side re-enqueue for everything else; THIS METHOD stays as it
+        is — by design — so Phase B is a one-line swap on the
+        engine side, not a delete here plus an add there.
+        """
         async with UnitOfWork() as uow:
             branch = await self._load_branch(uow, branch_id)
             if branch.status != BranchStatus.PAUSED.value:
