@@ -532,8 +532,12 @@ async def _emit_skip_event(
             uow.session.add(msg)
             await uow.commit()
     except Exception as exc:  # noqa: BLE001 — visibility helper must not crash caller
+        # fix §350 — surface traceback. The skip-event emit is best-effort
+        # but a recurring failure here means the operator-visible engine
+        # message channel is broken, which needs the stack to diagnose.
         _log.warning(
             "pattern_extractor: failed to emit skip event "
             "investigation_id=%s outcome_id=%s err=%s",
             investigation_id, outcome_id, exc,
+            exc_info=True,
         )
