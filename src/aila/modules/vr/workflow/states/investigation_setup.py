@@ -418,20 +418,37 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
             KnowledgeService,
         )
 
+        # fix §294 — read every needed target column into local vars
+        # BEFORE the UoW closes. The prior code dereferenced
+        # target.workspace_id / target.kind / target.primary_language
+        # AFTER the `async with UnitOfWork()` block exited, which
+        # works today (sqlmodel attaches loaded columns to the
+        # detached instance) but is silently fragile — any future
+        # lazy-load relationship on VRTargetRecord, expire_on_commit
+        # flip, or SQLAlchemy version bump turns those accesses into
+        # DetachedInstanceError. Pull primitives out while the
+        # session is still live; reference locals after.
+        target_kind: str | None = None
+        target_lang: str | None = None
+        target_ws: str | None = None
         async with UnitOfWork() as uow:
             target = (await uow.session.exec(
                 _select(VRTargetRecord).where(VRTargetRecord.id == inv.target_id),
             )).first()
-        if target is not None:
+            if target is not None:
+                target_kind = target.kind
+                target_lang = target.primary_language
+                target_ws = target.workspace_id
+        if target_ws is not None:
             query = (inv.initial_question or inv.title or "").strip()
             if query:
                 store = PatternStore(knowledge=KnowledgeService())
                 results = await store.applicable(
-                    workspace_id=target.workspace_id,
+                    workspace_id=target_ws,
                     team_id=inv.team_id,
                     query=query,
-                    target_kind=target.kind,
-                    primary_language=target.primary_language,
+                    target_kind=target_kind,
+                    primary_language=target_lang,
                     k=10,
                 )
                 for r in results:
