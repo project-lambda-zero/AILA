@@ -96,6 +96,13 @@ class OutcomeDispatcherError(Exception):
     """
 
 
+# fix §237 — variant-hunt fork-time guards. MAX_VARIANT_DEPTH bounds
+# the recursion chain so a runaway agent can't fork variants of variants
+# of variants forever. VARIANT_MIN_BUDGET_USD prevents spawning a child
+# whose $-budget can't pay for even a single round of reasoning.
+MAX_VARIANT_DEPTH = 5
+VARIANT_MIN_BUDGET_USD = 5.0
+
 @dataclass(slots=True)
 class OutcomeDispatchResult:
     """Result of dispatching one outcome."""
@@ -665,15 +672,25 @@ class OutcomeDispatcher:
             payload.get("question") or payload.get("hypothesis")
             or f"Find variants of the issue identified in {parent.title}",
         )
-        # fix §234 — same defensive None handling as
-        # _dispatch_variant_hunt_order; floor at $5 so a child
-        # always has a working budget.
-        parent_budget = float(parent.cost_budget_usd or 5.0)
+        # fix §237 — fork-time guards. depth from payload (default 1 =
+        # spawning level; child operates at depth+1). Refuse if either
+        # the depth limit OR the minimum budget would be violated.
+        # Defensive None handling for parent.cost_budget_usd (fix §234).
+        depth = int(payload.get("depth") or 1)
+        if depth + 1 > MAX_VARIANT_DEPTH:
+            raise ValueError(
+                f"variant_depth_exceeded:depth={depth} max={MAX_VARIANT_DEPTH}",
+            )
+        parent_budget = float(parent.cost_budget_usd or VARIANT_MIN_BUDGET_USD)
         child_budget = float(
             payload.get("cost_budget_usd") or (parent_budget * 0.5),
         )
-        if child_budget < 5.0:
-            child_budget = 5.0
+        if child_budget < VARIANT_MIN_BUDGET_USD:
+            raise ValueError(
+                f"variant_budget_below_floor:${child_budget:.2f} "
+                f"min=${VARIANT_MIN_BUDGET_USD:.2f}",
+            )
+        child_depth = depth + 1
 
         async with UnitOfWork() as uow:
             child = VRInvestigationRecord(
