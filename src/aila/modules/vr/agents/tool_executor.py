@@ -600,7 +600,9 @@ class ToolExecutor:
                 _select(VRInvestigationMessageRecord)
                 .where(
                     VRInvestigationMessageRecord.branch_id == branch_id,
-                    VRInvestigationMessageRecord.sender_kind == "engine",
+                    # fix §256 — was the literal "engine"; drift hazard
+                    # if SenderKind.ENGINE's value ever changes.
+                    VRInvestigationMessageRecord.sender_kind == SenderKind.ENGINE.value,
                 )
                 .order_by(VRInvestigationMessageRecord.created_at.desc())
                 .limit(10)
