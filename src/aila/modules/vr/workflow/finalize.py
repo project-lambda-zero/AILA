@@ -343,20 +343,16 @@ async def _handle_rejected_quorum(
     """Delegate to the existing rejected-outcomes close path.
 
     The actual implementation lives in
-    ``parent_reconciler._close_rejected_outcomes`` (or the per-inv
-    variant). Importing it here keeps finalize a chokepoint without
-    duplicating logic.
+    ``parent_reconciler._close_rejected_outcomes`` (sweep-shaped — walks
+    all investigations). Per-id extraction is a follow-up; calling the
+    sweep here is idempotent and the sweep skips investigations that
+    aren't in the rejected-quorum condition.
     """
     from ..masvs.parent_reconciler import (  # noqa: PLC0415
         _close_rejected_outcomes,
     )
 
     async with UnitOfWork() as uow:
-        # _close_rejected_outcomes is a SWEEP that scans all
-        # investigations. We don't have a per-id variant exposed; the
-        # call still does the right thing for this investigation as a
-        # side effect of the sweep. Operator-acceptable for now; per-id
-        # variant is a follow-up cleanup once Phase C ships.
         result = await _close_rejected_outcomes(uow)
         await uow.commit()
     return (
@@ -369,20 +365,25 @@ async def _handle_wall_clock_idle_grace(
     investigation_id: str,
     context: dict[str, Any],
 ) -> str:
-    """Delegate to the cap-exceeded reaper for a single investigation.
+    """Delegate to the per-id cap-exceeded helper.
 
-    The existing ``sweep_cap_exceeded_investigations`` walks ALL
-    RUNNING investigations. We need the same effect on JUST this id;
-    we run the sweep and trust its idempotency (the sweep only acts
-    on rows that breach the cap, which now includes our target).
+    Phase C extraction:
+    :func:`investigation_reaper.evaluate_cap_for_investigation` runs the
+    same decision tree as ``sweep_cap_exceeded_investigations`` but
+    scoped to one inv id, so finalize doesn't pay the O(N) sweep cost
+    when triggered per-investigation.
     """
     from ..services.investigation_reaper import (  # noqa: PLC0415
-        sweep_cap_exceeded_investigations,
+        evaluate_cap_for_investigation,
     )
 
-    completed = await sweep_cap_exceeded_investigations()
+    reason = await evaluate_cap_for_investigation(investigation_id)
+    if reason is None:
+        return (
+            f"cap_eval_no_breach:subkind={context.get('trigger_subkind', 'wall_clock')}"
+        )
     return (
-        f"cap_exceeded:completed={completed} "
+        f"cap_exceeded:reason={reason} "
         f"subkind={context.get('trigger_subkind', 'wall_clock')}"
     )
 
