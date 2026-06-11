@@ -30,6 +30,7 @@ import asyncio
 import json
 import logging
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -179,9 +180,21 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
     if not binary_id:
         raise RuntimeError(f"upload returned no binary_id: {upload}")
 
-    waited = 0.0
+    # fix §299 — track wall-clock via time.monotonic(). The prior
+    # \`waited += _POLL_INTERVAL_S\` after each \`asyncio.sleep\` counted
+    # POLL iterations, not real time: every \`ida_bridge.forward\` adds
+    # tens-of-ms to seconds of httpx latency that the counter ignored,
+    # so a "60s" budget under load actually wall-clocked to 3-4× that
+    # before failing. Operators set the budget against wall-clock
+    # expectations; track wall-clock.
+    start = time.monotonic()
     last: dict[str, Any] = upload
-    while waited < _POLL_BUDGET_S:
+    while True:
+        elapsed = time.monotonic() - start
+        if elapsed >= _POLL_BUDGET_S:
+            raise SetupBudgetExceededError(
+                binary_id=str(binary_id), waited_s=elapsed,
+            )
         if upload.get("analysis_ready") or upload.get("state") in ("READY", "INDEXED"):
             return last
         last = await ida_bridge.forward(
@@ -192,15 +205,20 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
         if last.get("analysis_ready") or last.get("state") in ("READY", "INDEXED"):
             return last
         await asyncio.sleep(_POLL_INTERVAL_S)
-        waited += _POLL_INTERVAL_S
-    raise SetupBudgetExceededError(binary_id=str(binary_id), waited_s=waited)
 
 
 async def _wait_until_ready(ida_bridge: Any, binary_id: str) -> dict[str, Any]:
     """Poll an existing binary_id until analysis is ready or budget exhausts."""
-    waited = 0.0
+    # fix §299 — wall-clock via time.monotonic() (see _upload_and_wait
+    # for the full rationale; same shape, no upload payload to seed).
+    start = time.monotonic()
     last: dict[str, Any] = {}
-    while waited < _POLL_BUDGET_S:
+    while True:
+        elapsed = time.monotonic() - start
+        if elapsed >= _POLL_BUDGET_S:
+            raise SetupBudgetExceededError(
+                binary_id=str(binary_id), waited_s=elapsed,
+            )
         last = await ida_bridge.forward(
             action="poll_analysis", binary_id=binary_id,
         )
@@ -209,8 +227,6 @@ async def _wait_until_ready(ida_bridge: Any, binary_id: str) -> dict[str, Any]:
         if last.get("analysis_ready") or last.get("state") in ("READY", "INDEXED"):
             return last
         await asyncio.sleep(_POLL_INTERVAL_S)
-        waited += _POLL_INTERVAL_S
-    raise SetupBudgetExceededError(binary_id=str(binary_id), waited_s=waited)
 
 
 async def _ingest_target(
