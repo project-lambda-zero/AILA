@@ -42,12 +42,42 @@ from aila.platform.contracts.budget import BudgetConfig, BudgetState
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
 
-__all__ = ["VR_UPLOAD_STAGING", "state_setup"]
+__all__ = ["VR_UPLOAD_STAGING", "SetupBudgetExceededError", "state_setup"]
 
 _log = logging.getLogger(__name__)
 
 _POLL_INTERVAL_S = 2.0
-_POLL_BUDGET_S = 60.0
+# fix §298 — raised to 600s (10min) AND made explicit-error-on-exhaust.
+# Prior 60s budget fired before large-binary IDA analysis finished on
+# anything bigger than a small library, and the helpers below
+# _log.warning(...) then `return last` — handing a not-yet-ready
+# payload to the caller as if it were a successful analysis. Down-
+# stream tools then hit "binary not indexed" errors per call.
+# A truthful explicit failure surfaces the timeout at the setup
+# boundary where the operator can extend the budget or bounce the
+# IDA bridge.
+_POLL_BUDGET_S = 600.0
+
+
+class SetupBudgetExceededError(RuntimeError):
+    """Raised when IDA analysis polling exhausts _POLL_BUDGET_S.
+
+    Carries ``binary_id`` so downstream / operator tooling can
+    correlate against the in-flight MCP analysis. Engine treats this
+    as non-retriable by default — extending the budget requires
+    operator intent (env override, code change), not a blind retry.
+    """
+
+    def __init__(self, binary_id: str, waited_s: float) -> None:
+        super().__init__(
+            f"IDA analysis polling exceeded {waited_s:.0f}s budget for "
+            f"binary_id={binary_id} (cap={_POLL_BUDGET_S:.0f}s) — "
+            f"either the IDA bridge is wedged or the binary is too large "
+            f"for the configured budget; bump _POLL_BUDGET_S or restart "
+            f"the audit-mcp / IDA pipeline",
+        )
+        self.binary_id = binary_id
+        self.waited_s = waited_s
 
 # AILA-local staging directory for multipart uploads. The API multipart
 # handler writes ``<filename>`` here; this state handler reads it, SCPs it
@@ -163,11 +193,7 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
             return last
         await asyncio.sleep(_POLL_INTERVAL_S)
         waited += _POLL_INTERVAL_S
-    _log.warning(
-        "setup: analysis still not ready after %.0fs for binary_id=%s — proceeding",
-        _POLL_BUDGET_S, binary_id,
-    )
-    return last
+    raise SetupBudgetExceededError(binary_id=str(binary_id), waited_s=waited)
 
 
 async def _wait_until_ready(ida_bridge: Any, binary_id: str) -> dict[str, Any]:
@@ -184,11 +210,7 @@ async def _wait_until_ready(ida_bridge: Any, binary_id: str) -> dict[str, Any]:
             return last
         await asyncio.sleep(_POLL_INTERVAL_S)
         waited += _POLL_INTERVAL_S
-    _log.warning(
-        "setup: analysis still not ready after %.0fs for binary_id=%s — proceeding",
-        _POLL_BUDGET_S, binary_id,
-    )
-    return last
+    raise SetupBudgetExceededError(binary_id=str(binary_id), waited_s=waited)
 
 
 async def _ingest_target(
