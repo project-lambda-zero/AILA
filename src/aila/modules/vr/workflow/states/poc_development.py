@@ -272,6 +272,19 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
     last_language: str = "python"
     last_filename: str = "poc.py"
 
+    # fix §308 — track the "best" non-crashing attempt by a closeness
+    # heuristic. The prior code surfaced LAST attempt's language/code
+    # in the untested_payload, which biased the operator's manual
+    # follow-up toward whatever the LLM emitted last (often a
+    # regressed simpler attempt after several rich ones failed). Score
+    # = len(stderr_tail) + 100 * (exit_code != 0). Higher score is
+    # closer to a crash. \`best_*\` stays at the highest-scored attempt
+    # so the untested_payload below reports the strongest candidate
+    # the operator should look at, not the chronologically last one.
+    best_code: str = ""
+    best_language: str = "python"
+    best_score: int = -1
+
     # fix §304 — hard cap the operator-tunable poc_max_attempts at 25.
     # The config row is operator-editable through the platform config
     # UI and a misconfigured value of 1000 would launch a $500+ PoC
@@ -378,23 +391,46 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
                 "detail": f"exit={run_result.get('exit_code')}",
             })
             break
+        # fix §308 — score this attempt's closeness-to-crash. Longer
+        # stderr_tail or any non-zero exit code is "closer" than a
+        # clean 0-byte stderr exit. Update best_* whenever this
+        # attempt outscores the prior best so the untested_payload
+        # ultimately surfaces the strongest candidate.
+        stderr_tail = run_result.get("stderr_tail") or ""
+        exit_code = run_result.get("exit_code")
+        score = len(stderr_tail) + (100 if exit_code not in (0, None) else 0)
+        if score > best_score:
+            best_score = score
+            best_code = last_code
+            best_language = last_language
         history.append({
             "attempt": attempt, "language": last_language,
             "outcome": "no_crash",
             "detail": (
-                f"exit={run_result.get('exit_code')} timeout={run_result.get('timeout')} "
-                f"stderr={(run_result.get('stderr_tail') or '')[:200]}"
+                f"exit={exit_code} timeout={run_result.get('timeout')} "
+                f"stderr={stderr_tail[:200]} score={score}"
             ),
         })
 
     if crash_payload is None:
+        # fix §308 — fall back to best_* (highest closeness-to-crash
+        # score) instead of last_*. If no attempts produced any
+        # measurable signal (best_score stayed at -1), fall back to
+        # last_* — that's still the only thing we can show.
+        surfaced_code = best_code if best_score >= 0 else last_code
+        surfaced_lang = best_language if best_score >= 0 else last_language
         return StateResult(
             next_state="advisory",
             output={
                 **input,
                 "poc": {
-                    **_untested_payload("no crash within attempt budget", last_code, last_language),
+                    **_untested_payload(
+                        "no crash within attempt budget",
+                        surfaced_code,
+                        surfaced_lang,
+                    ),
                     "history": history,
+                    "best_score": best_score,
                 },
             },
         )
