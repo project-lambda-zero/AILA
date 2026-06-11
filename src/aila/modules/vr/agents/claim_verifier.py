@@ -70,9 +70,30 @@ _NEGATIVE_ANSWER_PREFIXES = (
     "NO VULNERABILITY",
     "NO FINDING",
     "PATCH PRESENT",
+    "PATCH IS IN PLACE",
     "VARIANT DEAD",
     "VARIANT IS DEAD",
     "NO VARIANTS",
+    "VULNERABILITY DOES NOT APPLY",
+    "NOT EXPLOITABLE IN PRACTICE",
+    "THE ISSUE IS MITIGATED",
+)
+
+# fix §346 — substring matchers for descriptive negative claims that
+# don't always start at character 0. The agent often prefaces its
+# verdict with a sentence like "Verdict: …" or a status header, so
+# requiring the negative phrase at strict position 0 misses true
+# negatives. These phrases are unambiguous enough that a substring
+# match against the first ~200 chars is safe; the short prefixes
+# above stay startswith-only to avoid e.g. ``"NO BUG"`` matching
+# inside a sentence like ``"the absence of NO BUG patterns"`` (still
+# unlikely but the startswith semantics is the strongest signal).
+_NEGATIVE_ANSWER_SUBSTRINGS = (
+    "NO EXPLOITABLE CONDITION REACHES HERE",
+    "THE ISSUE IS MITIGATED",
+    "VULNERABILITY DOES NOT APPLY",
+    "NOT EXPLOITABLE IN PRACTICE",
+    "PATCH IS IN PLACE",
 )
 
 # fix §345 — env override for the auto-promote confidence floor.
@@ -105,8 +126,13 @@ def is_negative_finding_claim(answer: str) -> bool:
     'confirmed' actually means 'confirmed there is no bug'. Those
     must NOT be auto-promoted to direct_finding.
     """
-    head = (answer or "").strip().upper()[:80]
-    return any(head.startswith(p) for p in _NEGATIVE_ANSWER_PREFIXES)
+    # Widen the head window to 200 chars so the substring matchers can
+    # see past a brief lead-in like ``"Verdict: …"``; startswith
+    # comparisons remain anchored at position 0 by construction.
+    head = (answer or "").strip().upper()[:200]
+    if any(head.startswith(p) for p in _NEGATIVE_ANSWER_PREFIXES):
+        return True
+    return any(phrase in head for phrase in _NEGATIVE_ANSWER_SUBSTRINGS)
 
 
 
