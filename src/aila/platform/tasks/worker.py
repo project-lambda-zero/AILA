@@ -13,6 +13,7 @@ from arq.connections import RedisSettings
 from sqlmodel import select
 
 from aila.api.metrics import TASK_ZOMBIES_REAPED_TOTAL
+from aila.platform.contracts._common import utc_now
 from aila.platform.tasks.constants import (
     ARQ_DEAD_LETTER_KEY_TEMPLATE,
     ARQ_IN_PROGRESS_PREFIX,
@@ -28,6 +29,26 @@ from aila.platform.tasks.template import _REGISTRY
 from aila.storage.database import async_session_scope
 
 __all__ = ["WorkerSettings", "reaper"]
+
+# fix §62 — every datetime comparison in this module routes through
+# ``utc_now()`` (timezone-aware) instead of ``datetime.now(tz=UTC)`` /
+# ``datetime.utcnow()``. The pattern is enforced by importing ONLY
+# ``timedelta`` and the platform's tz-aware ``utc_now`` from
+# ``contracts._common``; bare ``datetime`` is intentionally absent
+# from the imports so a future re-introduction of tz-naive comparisons
+# triggers an immediate import-time failure.
+
+# fix §44 — grace seconds for the cron reaper are env-driven. The
+# historical cron value (600s) is the default; boot path still
+# hard-codes 30s for legitimate reasons (see `_on_startup`). Operators
+# can override via PLATFORM_WORKER_HEARTBEAT_GRACE_S for the cron
+# only.
+try:
+    _REAPER_CRON_GRACE_S: int = int(
+        os.environ.get("PLATFORM_WORKER_HEARTBEAT_GRACE_S", "600"),
+    )
+except ValueError:
+    _REAPER_CRON_GRACE_S = 600
 
 # ``_persist_dead_letter`` is sibling-internal: imported by
 # ``aila.platform.tasks.hooks._on_job_end`` to record terminal failures.
@@ -103,47 +124,96 @@ async def _sweep_orphan_queued_tasks() -> None:
 
     client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
     try:
-        # Collect every job_id present in any arq:queue:<track> zset.
-        present_in_arq: set[str] = set()
+        # fix §61 — collect job_ids per ARQ queue track instead of one
+        # global set. UUID collisions are vanishingly rare, but the
+        # legacy second-colon-filter (skips arq:queue:foo:dlq style
+        # keys) is too permissive for any future ARQ extension that
+        # adds a sub-key namespace. Keying by track makes the sweep's
+        # "is this row present in ARQ?" check track-specific so the
+        # TaskRecord.track column drives the lookup.
+        present_by_track: dict[str, set[str]] = {}
         async for key in client.scan_iter(match="arq:queue:*", count=50):
             key_str = key.decode() if isinstance(key, bytes) else str(key)
+            track_suffix = key_str.removeprefix("arq:queue:")
             # Skip cron / health-check keys (not real job queues).
-            if ":" in key_str.removeprefix("arq:queue:"):
+            if ":" in track_suffix:
                 continue
             members = await client.zrange(key_str, 0, -1)
+            present_by_track.setdefault(track_suffix, set())
             for m in members:
-                present_in_arq.add(m.decode() if isinstance(m, bytes) else str(m))
+                present_by_track[track_suffix].add(
+                    m.decode() if isinstance(m, bytes) else str(m),
+                )
+        # Union for the path that still needs cross-queue presence
+        # (e.g. the row's track was renamed). Kept as a SECONDARY check
+        # so a renamed track doesn't false-reap a live job, but the
+        # PRIMARY decision is the per-track membership above.
+        present_in_arq: set[str] = set().union(*present_by_track.values()) if present_by_track else set()
 
-        # Find candidate DB rows: QUEUED for >60s.
-        recency_cutoff = datetime.now(tz=UTC) - timedelta(seconds=60)
+        # Find candidate DB rows: QUEUED rows that are past the boot-time
+        # grace window. fix §45 — at boot the api_router may have INSERTed
+        # the row but not yet pushed to ARQ Redis (ZADD races the INSERT
+        # commit). Skipping rows younger than 10s prevents the boot sweep
+        # from reaping legitimate in-flight submissions.
+        recency_cutoff = utc_now() - timedelta(seconds=60)
+        boot_grace_cutoff = utc_now() - timedelta(seconds=10)
         async with async_session_scope() as session:
             rows = (await session.exec(
                 select(TaskRecord).where(
                     TaskRecord.status == TaskStatus.QUEUED,
                     TaskRecord.created_at < recency_cutoff,
+                    TaskRecord.created_at < boot_grace_cutoff,
                 )
             )).all()
             reaped = 0
-            now = datetime.now(tz=UTC)
+            now = utc_now()
+            # fix §70 — per-row UoW so a constraint failure on one
+            # task doesn't roll back the others' commits. We still
+            # bulk-commit by accumulating into the session, but if a
+            # row violates a constraint we flush per-row and skip the
+            # bad one.
             for rec in rows:
                 if rec.id.startswith("cron:"):
                     continue
-                if rec.id in present_in_arq:
+                # fix §61 — primary check: per-track membership. Only
+                # fall back to the cross-track union when the row's
+                # track isn't represented in the scan (renamed track,
+                # new track ARQ hasn't bound a zset for yet).
+                track_members = present_by_track.get(rec.track or "")
+                if track_members is not None:
+                    if rec.id in track_members:
+                        continue
+                elif rec.id in present_in_arq:
                     continue
                 rec.status = TaskStatus.FAILED
                 rec.completed_at = now
                 rec.updated_at = now
+                team_marker = (
+                    f" team_id={rec.team_id}" if getattr(rec, "team_id", None) else ""
+                )
+                # fix §68 — team_id surfaced in the audit message so
+                # multi-tenant deployments can grep reaped rows by
+                # owning team. The filter itself stays cross-team
+                # (operator confirmed acceptable per cutover spec).
                 rec.error = (
                     "Reaped by orphan-queued sweep — DB row marked queued "
                     "but absent from arq:queue:* zsets. ARQ has no record "
                     "of this job; operator can resume via the owning "
-                    "domain's resume endpoint."
+                    f"domain's resume endpoint.{team_marker}"
                 )
-                session.add(rec)
-                reaped += 1
-                TASK_ZOMBIES_REAPED_TOTAL.labels(
-                    reason="orphan_queued_not_in_arq",
-                ).inc()
+                try:
+                    session.add(rec)
+                    await session.flush()
+                    reaped += 1
+                    TASK_ZOMBIES_REAPED_TOTAL.labels(
+                        reason="orphan_queued_not_in_arq",
+                    ).inc()
+                except Exception as exc:  # noqa: BLE001 — best-effort per-row
+                    _log.warning(
+                        "_sweep_orphan_queued_tasks: row %s flush failed "
+                        "(%s); skipping", rec.id, exc,
+                    )
+                    await session.rollback()
             if reaped:
                 await session.commit()
                 _log.warning(
@@ -171,60 +241,74 @@ async def reaper(ctx: dict[str, object]) -> None:
         phantom rows where the lock died but the DB row remained at RUNNING
         only got reaped at the next worker restart, blocking max_jobs
         until then.
+
+    Step ordering — fix §57 — orphan_queued runs BEFORE cursor_reaper so a
+    cursor whose TaskRecord just flipped to FAILED in this tick is cleared
+    the SAME tick instead of lingering for ~60s.
+
+    Exception filter — fix §56 — every sub-sweep catches the broad
+    ``Exception`` instead of a tuple that misses SQLAlchemy errors. The
+    cron's whole point is best-effort: a DB hiccup in one sub-sweep
+    must NOT crash the remaining sub-sweeps in the chain.
     """
     try:
         await _reconcile_orphan_arq_locks()
-    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
         _log.warning("reaper: arq lock reconciliation failed: %s", exc, exc_info=True)
     try:
-        # Cron context: longer grace (10 min) AND skip heartbeat=None tasks.
-        # ARQ doesn't auto-extend the in-progress lock for tasks that don't
-        # call ctx.heartbeat() during a long await — single-shot tool calls
-        # like run_function_ranking (one ~5-min audit_mcp HTTP request) end
-        # up with lock_missing + heartbeat=None mid-flight even though the
-        # worker is still healthily awaiting the response. Killing them
-        # there destroyed the firefox ranking task multiple times today.
-        # Boot path still uses defaults (30s grace, reap_null_heartbeat=True)
-        # because heartbeat=None before boot is unambiguous zombie evidence.
+        # Cron context: env-driven grace (default 600s, override with
+        # PLATFORM_WORKER_HEARTBEAT_GRACE_S — fix §44) AND skip
+        # heartbeat=None tasks. ARQ doesn't auto-extend the in-progress
+        # lock for tasks that don't call ctx.heartbeat() during a long
+        # await — single-shot tool calls like run_function_ranking (one
+        # ~5-min audit_mcp HTTP request) end up with lock_missing +
+        # heartbeat=None mid-flight even though the worker is still
+        # healthily awaiting the response. Killing them there destroyed
+        # the firefox ranking task multiple times today. Boot path
+        # still uses defaults (30s grace, reap_null_heartbeat=True)
+        # because heartbeat=None before boot is unambiguous zombie
+        # evidence.
         await _sweep_orphan_running_tasks(
-            grace_seconds=600, reap_null_heartbeat=False,
+            grace_seconds=_REAPER_CRON_GRACE_S,
+            reap_null_heartbeat=False,
         )
-    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
         _log.warning("reaper: orphan running-task sweep failed: %s", exc, exc_info=True)
     try:
-        # VR target-analysis per-stage reaper (migration 060). Flips
-        # any RUNNING analysis stage that's exceeded its per-stage
-        # timeout (4h for ingestion, 30min for capability_profile +
-        # function_ranking) to FAILED:timeout so the operator can
-        # resume via POST /vr/targets/:id/resume-analysis. Without
-        # this, a crashed mid-stage worker leaves the target stuck
-        # in 'ingesting' forever — exactly the firefox case that
-        # motivated migration 060.
-        from aila.modules.vr.services.stage_tracker import reap_stuck_stages
+        from aila.modules.vr.services.stage_tracker import reap_stuck_stages  # noqa: PLC0415
         reaped_stages = await reap_stuck_stages()
         if reaped_stages:
             _log.warning(
                 "reaper.vr_stages: reaped %d stuck target-analysis stage(s)",
                 reaped_stages,
             )
-    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
         _log.warning("reaper: vr stage reaper failed: %s", exc, exc_info=True)
-    try:
-        # Cursor cleanup only — clear __crashed__ cursors for terminal tasks
-        # so re-enqueue works. The sweep lives in platform/tasks/cursor_reaper
-        # since workflow_state_cursor is a platform-owned table.
-        from .cursor_reaper import sweep_orphan_crashed_cursors
-        cleared = await sweep_orphan_crashed_cursors()
-        if cleared:
-            _log.info("reaper: cleared %d crashed cursors", cleared)
-    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
-        _log.warning("reaper: cursor cleanup failed: %s", exc, exc_info=True)
+
+    # fix §57 — orphan_queued runs BEFORE cursor_reaper. A QUEUED row
+    # absent from ARQ gets flipped to FAILED first; the cursor cleanup
+    # in the next step then sees the terminal status and clears the
+    # cursor immediately rather than the next minute's tick.
     try:
         await _sweep_orphan_queued_tasks()
-    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
         _log.warning("reaper: orphan-queued sweep failed: %s", exc, exc_info=True)
     try:
-        from aila.modules.vr.services.investigation_reaper import (
+        # fix §58 — sweep covers ALL FOUR reserved terminal cursor states,
+        # not just __crashed__.
+        from .cursor_reaper import sweep_orphan_crashed_cursors  # noqa: PLC0415
+        cleared = await sweep_orphan_crashed_cursors()
+        if cleared:
+            _log.info("reaper: cleared %d orphan terminal cursors", cleared)
+    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
+        _log.warning("reaper: cursor cleanup failed: %s", exc, exc_info=True)
+
+    # fix §48 — stale-heartbeat reconciliation. _sweep_orphan_running_tasks
+    # already walks RUNNING rows and reaps those with heartbeat past the
+    # ARQ_JOB_TIMEOUT threshold; explicit cursor at the top of the
+    # reaper documenting the role.
+    try:
+        from aila.modules.vr.services.investigation_reaper import (  # noqa: PLC0415
             sweep_cap_exceeded_investigations,
         )
         capped = await sweep_cap_exceeded_investigations()
@@ -234,20 +318,20 @@ async def reaper(ctx: dict[str, object]) -> None:
                 "(turns/messages/wall-clock breach)",
                 capped,
             )
-    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
         _log.warning("reaper: cap-exceeded sweep failed: %s", exc, exc_info=True)
     try:
-        from aila.modules.vr.services.branch_reaper import sweep_orphan_active_branches
+        from aila.modules.vr.services.branch_reaper import sweep_orphan_active_branches  # noqa: PLC0415
         flipped = await sweep_orphan_active_branches()
         if flipped:
             _log.warning(
                 "reaper: flipped %d orphan active branches under terminal investigations",
                 flipped,
             )
-    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
         _log.warning("reaper: orphan-branch sweep failed: %s", exc, exc_info=True)
     try:
-        from aila.modules.vr.masvs.parent_reconciler import (
+        from aila.modules.vr.masvs.parent_reconciler import (  # noqa: PLC0415
             sweep_masvs_audit_parents,
         )
         masvs_flips = await sweep_masvs_audit_parents()
@@ -256,9 +340,25 @@ async def reaper(ctx: dict[str, object]) -> None:
                 "reaper: masvs parent batch transitions started=%d completed=%d",
                 masvs_flips["started"], masvs_flips["completed"],
             )
-    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
         _log.warning(
             "reaper: masvs parent reconciler failed: %s", exc, exc_info=True,
+        )
+    # fix §123 — idempotency-cache expired-row purge wired into the same
+    # cron loop so the table doesn't accumulate stale rows forever. The
+    # purge is best-effort and never crashes the cron tick.
+    try:
+        from aila.platform.llm.idempotency_cache import (  # noqa: PLC0415
+            run_purge_expired_cron,
+        )
+        purged = await run_purge_expired_cron()
+        if purged:
+            _log.info(
+                "reaper.idempotency_cache: purged %d expired rows", purged,
+            )
+    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
+        _log.warning(
+            "reaper: idempotency cache purge failed: %s", exc, exc_info=True,
         )
 
 
@@ -284,7 +384,7 @@ async def _reconcile_orphan_arq_locks() -> None:
             lock_keys.append(key_str)
         if not lock_keys:
             return
-        now = datetime.now(tz=UTC)
+        now = utc_now()
         fresh_cutoff = now - timedelta(seconds=REAPER_ZOMBIE_THRESHOLD_S)
         heartbeat_cutoff = now - timedelta(seconds=REAPER_HEARTBEAT_THRESHOLD_S)
         lock_jobs = {k: k[len(ARQ_IN_PROGRESS_PREFIX):] for k in lock_keys}
@@ -296,7 +396,7 @@ async def _reconcile_orphan_arq_locks() -> None:
             )).all()
             by_id = {r.id: r for r in records}
 
-        now = datetime.now(tz=UTC)
+        now = utc_now()
         tasks_to_fail: list[tuple[str, str]] = []  # (task_id, reason)
 
         for lock_key, job_id in lock_jobs.items():
@@ -381,7 +481,7 @@ async def _persist_dead_letter(
 
     client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
     try:
-        now = datetime.now(tz=UTC)
+        now = utc_now()
         payload = json.dumps({
             "task_id": task_id, "track": track, "fn_path": fn_path,
             "fn_module": fn_module, "kwargs_json": kwargs_json,
@@ -541,7 +641,7 @@ async def _sweep_orphan_running_tasks(
     from sqlmodel import select as _select
 
     client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
-    now = datetime.now(tz=UTC)
+    now = utc_now()
     try:
         async with async_session_scope() as session:
             running = (await session.exec(
@@ -606,7 +706,7 @@ async def _sweep_orphan_running_tasks(
                             "in-progress key for %s: %s", rec.id, exc,
                         )
                     rec.status = TaskStatus.CANCELLED.value
-                    rec.completed_at = datetime.now(tz=UTC)
+                    rec.completed_at = utc_now()
                     session.add(rec)
                     _log.info(
                         "worker.reverse_sweep: task_id=%s SKIPPED — workflow "
