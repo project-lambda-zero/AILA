@@ -83,9 +83,15 @@ class MasvsSeedBuilder:
         index_id = _text_or_unknown(overview.get("audit_mcp_index_id"))
         jadx_class_count = _text_or_unknown(overview.get("jadx_class_count"))
 
-        steps_block = "\n".join(
-            f"{idx}. {step}"
-            for idx, step in enumerate(control.verification_steps, start=1)
+        # fix §222 — match the hints_block/apis_block pattern: empty
+        # verification_steps would otherwise render as a blank section
+        # heading with no body, telling the scout nothing.
+        steps_block = (
+            "\n".join(
+                f"{idx}. {step}"
+                for idx, step in enumerate(control.verification_steps, start=1)
+            )
+            or "(none catalogued — use evidence hints below)"
         )
         hints_block = (
             "\n".join(f"  - {hint}" for hint in control.evidence_hints)
