@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
+
 # Re-export enrichment-pipeline tasks so the platform worker bootstrap
 # (which loads only ``<module>/workflow/task.py``) picks them up and
 # registers them with the ARQ function table. Without these re-exports
@@ -26,6 +28,31 @@ from aila.modules.vr.enrichment.workers import (  # noqa: F401  (re-export for A
 from aila.modules.vr.workflow.definitions import VR_INVESTIGATE_V1, VR_NDAY_V1
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
+
+# fix §141 + §142 — explicit transient-error tuple for @platform_task
+# retries on this module's seeds. Without retriable_on, the @platform_task
+# wrapper defaults to "retry on any exception", which retries
+# non-transient failures (LLM-disabled-by-operator, KeyError-from-
+# corrupted-state, CancelledError, Pydantic ValidationError, etc.) that
+# will never succeed on a second try. Each retry costs one worker slot +
+# whatever LLM tokens the first try burned before raising.
+#
+# The tuple covers exactly the transports that legitimately flap under
+# load: DB / IO / socket (OSError), arbitrary wall-clock waits
+# (TimeoutError), TCP-level rejects (ConnectionError), and httpx-level
+# transport / 5xx upstream errors (httpx.HTTPError covers HTTPStatusError
+# + TimeoutException + TransportError + ProtocolError). Anything else
+# fails fast.
+#
+# Mirrors ``definitions._TRANSPORT_TRANSIENT`` (which controls per-STATE
+# retries inside the workflow engine); this tuple controls per-TASK
+# retries at the ARQ layer (the outer envelope around the engine run).
+_TASK_TRANSIENT: tuple[type[BaseException], ...] = (
+    OSError,
+    TimeoutError,
+    ConnectionError,
+    httpx.HTTPError,
+)
 
 __all__ = [
     "run_capability_profile_build",
@@ -44,6 +71,10 @@ __all__ = [
     module_id="vr",
     max_tries=2,
     timeout_s=10800.0,  # 3 hours — covers full setup -> research -> PoC -> advisory
+    # fix §141 — explicit retriable_on so the ARQ-level retry only
+    # fires on transports that legitimately flap (the same shape as
+    # VR_NDAY_V1's _TRANSPORT_TRANSIENT, mirrored here at task level).
+    retriable_on=_TASK_TRANSIENT,
     definition=VR_NDAY_V1,
 )
 async def run_vr_nday(
@@ -59,6 +90,13 @@ async def run_vr_nday(
     module_id="vr",
     max_tries=1,
     timeout_s=7800.0,  # 2h+ — covers a full investigation_loop run
+    # fix §142 — explicit retriable_on so the single retry budget is
+    # only spent on transport-class transients. VR_INVESTIGATE_V1's
+    # investigation_setup state opens a DB session + does CVE-intel
+    # network calls; a transient DB / network blip is worth the
+    # retry, a Pydantic ValidationError / KeyError / PermissionError
+    # / CancelledError is not.
+    retriable_on=_TASK_TRANSIENT,
     definition=VR_INVESTIGATE_V1,
 )
 async def run_vr_investigate(
@@ -326,6 +364,12 @@ async def run_vr_draft_poc(
     module_id="vr",
     max_tries=2,
     timeout_s=900.0,  # 15 min — one synthesis LLM call + DB writes
+    # fix §141 / §142 — explicit retriable_on so retries only fire on
+    # transport-class transients. Synthesis is an LLM round-trip + DB
+    # writes: an LLM 5xx / connection blip is worth one retry, an
+    # LLM-disabled-by-operator / structured-parse failure / state-
+    # corruption KeyError is not.
+    retriable_on=_TASK_TRANSIENT,
 )
 async def run_vr_synthesis(
     ctx: TaskContext,
