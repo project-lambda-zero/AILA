@@ -121,10 +121,13 @@ class IDABridgeTool(Tool):
             # ImportError). SQLAlchemy errors from ConfigRegistry().get
             # used to propagate and crash the bridge call. URL
             # resolution is a config lookup — fail-safe to the default.
+            # fix §350 — traceback added; mirror of audit_mcp_bridge §315
+            # so a ConfigRegistry break is debuggable from either bridge.
             logging.getLogger(__name__).info(
                 "ida_bridge: ConfigRegistry lookup failed "
                 "(%s: %s) — falling back to default URL",
                 type(exc).__name__, exc,
+                exc_info=True,
             )
         return "http://127.0.0.1:18821"
 
