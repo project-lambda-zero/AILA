@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import timedelta
 
 from sqlalchemy import cast, func, select, update
 from sqlalchemy.dialects.postgresql import JSONB
@@ -62,6 +61,22 @@ from aila.modules.vr.contracts import (
 )
 from aila.modules.vr.contracts.target import TargetKind
 from aila.modules.vr.db_models import VRInvestigationRecord, VRTargetRecord
+
+# Phase C moved the implementations of these helpers out of this
+# MASVS-specific module into the canonical
+# :mod:`aila.modules.vr.services.investigation_finalizers` location.
+# Aliased back to their original underscore-prefix names so
+# ``sweep_masvs_audit_parents`` below + any operator tooling that
+# imported via ``vr.masvs.parent_reconciler`` keeps working.
+from aila.modules.vr.services.investigation_finalizers import (
+    abandon_stale_branches_impl as _abandon_stale_branches,
+)
+from aila.modules.vr.services.investigation_finalizers import (
+    close_rejected_outcomes as _close_rejected_outcomes,
+)
+from aila.modules.vr.services.investigation_finalizers import (
+    synthesize_no_finding_outcomes as _synthesize_no_finding_outcomes,
+)
 from aila.modules.vr.workflow.task import run_vr_investigate
 from aila.platform.contracts._common import utc_now
 from aila.platform.tasks.models import TaskRecord
@@ -796,470 +811,22 @@ async def _wake_stale_branches(uow: UnitOfWork) -> int:
     return enqueued
 
 
-async def _synthesize_no_finding_outcomes(
-    uow: UnitOfWork,
-    *,
-    only_id: str | None = None,
-) -> int:
-    """Synthesize an ``audit_memo`` outcome for orphaned investigations.
+# ────────────────────────────────────────────────────────────────
+# Generic finalizer helpers
+# ────────────────────────────────────────────────────────────────
+#
+# Phase C moved the implementations of ``_synthesize_no_finding_outcomes``
+# / ``_close_rejected_outcomes`` / ``_abandon_stale_branches`` out of this
+# MASVS-specific module into the canonical
+# :mod:`aila.modules.vr.services.investigation_finalizers` location. They
+# were never MASVS-specific — they handle generic investigation
+# finalization that ALSO applies to MASVS audits.
+#
+# Aliases are bound at the top of the file (search for the
+# investigation_finalizers import) so internal callers below + any
+# operator tooling that imported these via ``vr.masvs.parent_reconciler``
+# keep working without source changes.
 
-    Operator rule: EVERY investigation must terminate with an outcome,
-    no exceptions. The existing close paths only fire when an outcome
-    already exists:
-
-      - ``services/outcome_review.py:auto_approved_no_active_voters``:
-        requires primary_outcome in ``draft`` state, gets approved.
-      - ``_close_rejected_outcomes`` (step 4): requires primary_outcome
-        in ``rejected``/``refuted`` state, closes after siblings vote.
-
-    Gap: variant_hunt / audit investigations that never produced any
-    outcome at all (agents abandoned without submitting). Observed
-    live on ``a0b33905`` — 6 branches all ``status=abandoned`` via
-    step 5 stale-detector, ``primary_outcome_id=NULL``, investigation
-    still ``running``. No closer exists for this shape.
-
-    Phase C: optional ``only_id`` filters the orphan scan to one
-    investigation. The finalize chokepoint passes this so per-id
-    invocations are O(1) instead of O(N) scans.
-
-    Returns count of investigations resolved this tick.
-    """
-    import json as _json_local  # noqa: PLC0415
-    import uuid as _uuid_local  # noqa: PLC0415
-
-    from sqlalchemy import text  # noqa: PLC0415
-
-    from aila.modules.vr.db_models import (  # noqa: PLC0415
-        VRInvestigationBranchRecord,
-    )
-
-    inv = VRInvestigationRecord
-    branch = VRInvestigationBranchRecord
-
-    # Find running investigations with primary_outcome_id IS NULL and
-    # where every branch is in a terminal state.
-    candidate_stmt = (
-        select(
-            inv.id,
-            func.count(branch.id).label("branch_count"),
-            func.sum(
-                coalesce(
-                    (
-                        branch.status.in_(
-                            (
-                                BranchStatus.ABANDONED.value,
-                                BranchStatus.COMPLETED.value,
-                                BranchStatus.MERGED.value,
-                                BranchStatus.PROMOTED.value,
-                            ),
-                        )
-                    ).cast(__import__("sqlalchemy").Integer),
-                    0,
-                ),
-            ).label("terminal_count"),
-        )
-        .select_from(inv)
-        .join(branch, branch.investigation_id == inv.id, isouter=True)
-        .where(inv.status == InvestigationStatus.RUNNING.value)
-        .group_by(inv.id)
-    )
-    if only_id is not None:
-        candidate_stmt = candidate_stmt.where(inv.id == only_id)
-    rows = (await uow.session.exec(candidate_stmt)).all()
-
-    orphan_inv_ids: list[str] = []
-    for row in rows:
-        if not (hasattr(row, "__getitem__") and not isinstance(row, str)):
-            continue
-        inv_id = str(row[0])
-        branch_count = int(row[1] or 0)
-        terminal_count = int(row[2] or 0)
-        if branch_count == 0:
-            # In-flight rollback / dispatcher race — leave alone.
-            continue
-        if terminal_count >= branch_count:
-            orphan_inv_ids.append(inv_id)
-
-    if not orphan_inv_ids:
-        return 0
-
-    now = utc_now()
-    now_iso = now.isoformat()
-    synthesized = 0
-
-    for inv_id in orphan_inv_ids:
-        # Check if this investigation already has a primary outcome.
-        # If yes: skip synthesis, just flip the inv to completed.
-        # If no: synthesize an audit_memo and link it.
-        existing_outcome_row = (
-            await uow.session.exec(
-                select(inv.primary_outcome_id).where(inv.id == inv_id),
-            )
-        ).first()
-        existing_outcome: str | None = None
-        if existing_outcome_row is not None:
-            if hasattr(existing_outcome_row, "__getitem__") and not isinstance(existing_outcome_row, str):
-                existing_outcome = existing_outcome_row[0]
-            else:
-                existing_outcome = existing_outcome_row
-
-        if existing_outcome:
-            # Just flip — outcome already exists (was approved by quorum
-            # earlier, or some other path created it; we don't care
-            # which). Operator rule satisfied: investigation terminates
-            # with an outcome.
-            try:
-                await uow.session.exec(
-                    update(inv)
-                    .where(inv.id == inv_id)
-                    .where(inv.status == InvestigationStatus.RUNNING.value)
-                    .values(
-                        status=InvestigationStatus.COMPLETED.value,
-                        stopped_at=now,
-                        updated_at=now,
-                    ),
-                )
-                synthesized += 1
-            except Exception as exc:  # noqa: BLE001
-                _log.warning(
-                    "orphan close (with existing outcome) failed inv=%s: %s",
-                    inv_id, exc, exc_info=True,
-                )
-            continue
-
-        # No outcome: synthesize one.
-        # Pick the most "informed" branch: highest turn_count, ties
-        # broken by earliest created_at for determinism.
-        branch_rows = (
-            await uow.session.exec(
-                select(branch.id, branch.persona_voice, branch.turn_count, branch.closed_reason, branch.status)
-                .where(branch.investigation_id == inv_id)
-                .order_by(branch.turn_count.desc(), branch.created_at.asc()),
-            )
-        ).all()
-        if not branch_rows:
-            continue
-        unwrapped: list[tuple[str, str, int, str | None, str]] = []
-        for br in branch_rows:
-            if hasattr(br, "__getitem__") and not isinstance(br, str):
-                unwrapped.append(
-                    (str(br[0]), str(br[1] or "?"), int(br[2] or 0), br[3], str(br[4] or "?")),
-                )
-        if not unwrapped:
-            continue
-
-        proposer_branch_id = unwrapped[0][0]
-        total_turns = sum(r[2] for r in unwrapped)
-        summary_text = (
-            "Investigation auto-closed by reconciler: every branch "
-            "reached a terminal state without proposing a finding. "
-            f"{len(unwrapped)} branches consumed {total_turns} total "
-            "turns. Per-branch outcome:"
-        )
-        per_branch = [
-            {
-                "persona": p,
-                "turns": t,
-                "status": s,
-                "closed_reason": cr or "n/a",
-            }
-            for (_bid, p, t, cr, s) in unwrapped
-        ]
-        payload = {
-            "verdict": "no_finding",
-            "summary": summary_text,
-            "branches": per_branch,
-            "synthesized_by": "parent_reconciler._synthesize_no_finding_outcomes",
-            "synthesized_at": now_iso,
-            "rule": "every_investigation_has_outcome",
-        }
-
-        outcome_id = str(_uuid_local.uuid4())
-        try:
-            await uow.session.exec(
-                text(
-                    """
-                    INSERT INTO vr_investigation_outcomes (
-                        id, investigation_id, branch_id, outcome_kind,
-                        payload_json, confidence, evidence_refs_json,
-                        accepted_by_operator, accepted_at,
-                        dispatch_status, dispatch_target,
-                        created_at, state
-                    ) VALUES (
-                        :id, :inv_id, :branch_id, :kind,
-                        :payload, :confidence, :evidence,
-                        false, NULL,
-                        'skipped', NULL,
-                        :now, 'approved'
-                    )
-                    """,
-                ),
-                params={
-                    "id": outcome_id,
-                    "inv_id": inv_id,
-                    "branch_id": proposer_branch_id,
-                    "kind": "audit_memo",
-                    "payload": _json_local.dumps(payload),
-                    "confidence": "caveated",
-                    "evidence": "[]",
-                    "now": now,
-                },
-            )
-            await uow.session.exec(
-                update(inv)
-                .where(inv.id == inv_id)
-                .where(inv.status == InvestigationStatus.RUNNING.value)
-                .values(
-                    primary_outcome_id=outcome_id,
-                    status=InvestigationStatus.COMPLETED.value,
-                    stopped_at=now,
-                    updated_at=now,
-                ),
-            )
-            synthesized += 1
-        except Exception as exc:  # noqa: BLE001
-            _log.warning(
-                "synthesize_no_finding failed inv=%s: %s", inv_id, exc, exc_info=True,
-            )
-
-    if synthesized:
-        await uow.commit()
-        _log.info(
-            "synthesized_no_finding_outcomes count=%d (first 5 ids=%s)",
-            synthesized,
-            ",".join(i[:8] for i in orphan_inv_ids[:5])
-            + ("..." if len(orphan_inv_ids) > 5 else ""),
-        )
-    return synthesized
-
-
-
-
-async def _close_rejected_outcomes(
-    uow: UnitOfWork,
-    *,
-    only_id: str | None = None,
-) -> int:
-    """Force-close investigations whose primary outcome was REJECTED by quorum.
-
-    Mirror of the existing ``auto_approved_no_active_voters`` path in
-    ``services/outcome_review.py`` but for the rejection direction:
-    once ``evaluate_quorum`` flips an outcome ``draft → rejected``
-    (reject_count ≥ quorum_k), the investigation has no auto-close
-    path — it just sits at ``status=running`` waiting for some other
-    branch to propose an alternative outcome. In practice the other
-    branches are already deep in their own audits and rarely produce
-    a competing outcome, so the investigation runs forever.
-
-    Policy: when ``primary_outcome.state ∈ {rejected, refuted}`` AND
-    every active non-proposer branch has either voted on the rejected
-    outcome OR is itself abandoned/completed, the rejection is
-    effectively final. Mark the investigation ``completed`` with
-    ``pause_reason='operator'`` (closest valid enum value — the auto-
-    closer is operator-policy-driven, not a true pause), abandon any
-    remaining active branches with ``closed_reason='outcome_rejected
-    _by_quorum'`` so the audit trail is clear.
-
-    Phase C: optional ``only_id`` filters the candidate scan to one
-    investigation. The finalize chokepoint passes this so per-id
-    invocations are O(1) instead of O(N) scans.
-
-    Returns the count of investigations closed this tick.
-    """
-    from aila.modules.vr.db_models import (  # noqa: PLC0415
-        VRInvestigationBranchRecord,
-        VRInvestigationOutcomeRecord,
-    )
-    from aila.modules.vr.db_models.outcome_review import (  # noqa: PLC0415
-        VRInvestigationOutcomeReviewRecord,
-    )
-
-    inv = VRInvestigationRecord
-    out = VRInvestigationOutcomeRecord
-    branch = VRInvestigationBranchRecord
-    review = VRInvestigationOutcomeReviewRecord
-
-    # Find running investigations whose primary outcome is rejected.
-    candidate_stmt = (
-        select(inv.id, inv.primary_outcome_id, out.branch_id)
-        .join(out, out.id == inv.primary_outcome_id)
-        .where(inv.status == InvestigationStatus.RUNNING.value)
-        .where(out.state.in_(("rejected", "refuted")))
-    )
-    if only_id is not None:
-        candidate_stmt = candidate_stmt.where(inv.id == only_id)
-    candidates = (await uow.session.exec(candidate_stmt)).all()
-    if not candidates:
-        return 0
-
-    closed = 0
-    for inv_id, outcome_id, proposer_branch_id in candidates:
-        # Count active non-proposer branches that HAVEN'T voted yet.
-        # If any remain, leave the inv alone — they might propose an
-        # alternative outcome. If all have voted, the rejection is final.
-        voter_rows = (
-            await uow.session.exec(
-                select(review.reviewer_branch_id)
-                .where(review.outcome_id == outcome_id),
-            )
-        ).all()
-        voted: set[str] = set()
-        for r in voter_rows:
-            v = r[0] if hasattr(r, "__getitem__") and not isinstance(r, str) else r
-            if v:
-                voted.add(str(v))
-        voted.add(str(proposer_branch_id))
-
-        active_rows = (
-            await uow.session.exec(
-                select(branch.id)
-                .where(branch.investigation_id == inv_id)
-                .where(branch.status == BranchStatus.ACTIVE.value),
-            )
-        ).all()
-        active_ids: list[str] = []
-        for r in active_rows:
-            v = r[0] if hasattr(r, "__getitem__") and not isinstance(r, str) else r
-            if v:
-                active_ids.append(str(v))
-
-        unvoted_active = [bid for bid in active_ids if bid not in voted]
-        if unvoted_active:
-            # Leave it — they may still vote OR submit own outcome.
-            continue
-
-        # All non-proposer active branches voted (or none remain). Close.
-        await uow.session.exec(
-            update(branch)
-            .where(branch.investigation_id == inv_id)
-            .where(branch.status == BranchStatus.ACTIVE.value)
-            .values(
-                status=BranchStatus.ABANDONED.value,
-                closed_reason="outcome_rejected_by_quorum",
-                closed_at=utc_now(),
-                updated_at=utc_now(),
-            ),
-        )
-        target_inv = (
-            await uow.session.exec(
-                select(inv).where(inv.id == inv_id),
-            )
-        ).first()
-        if target_inv and not isinstance(target_inv, type(None)):
-            t = target_inv[0] if hasattr(target_inv, "__getitem__") and not isinstance(target_inv, str) else target_inv
-            t.status = InvestigationStatus.COMPLETED.value
-            t.pause_reason = "operator"  # closest valid enum value
-            t.stopped_at = utc_now()
-            t.updated_at = utc_now()
-            uow.session.add(t)
-            closed += 1
-            _log.info(
-                "rejected_outcome_closed inv=%s outcome=%s",
-                inv_id, outcome_id,
-            )
-
-    if closed:
-        await uow.commit()
-    return closed
-
-async def _abandon_stale_branches(uow: UnitOfWork) -> int:
-    """Abandon active branches that have stopped making progress.
-
-    Two failure modes observed in production:
-      1. ``turn_count=0`` since the dispatcher created the branch hours
-         ago — the first turn never queued (lost task, dead worker,
-         dependency wait that never resolved). These are dead from
-         birth.
-      2. ``turn_count>=1`` but ``updated_at`` is many hours old — the
-         agent made some progress, then the task chain broke (auto-
-         steering operator message logged but no engine reply, ARQ
-         orphan, OmniRoute crash). The branch sits ``status=active`` so
-         it blocks the parent investigation from auto-completing in
-         ``_check_terminal_status``.
-
-    Thresholds (tunable via env):
-      ``VR_STALE_BRANCH_FROZEN_MIN`` (default 30): minutes of inactivity
-        before a branch with ``turn_count < 5`` is abandoned. These
-        never really started; short timeout is safe.
-      ``VR_STALE_BRANCH_HALTED_MIN`` (default 120): minutes of
-        inactivity before a branch with ``turn_count >= 5`` is
-        abandoned. They made real progress; give them longer in case
-        the agent comes back.
-
-    A healthy active branch writes ``updated_at`` every tool call
-    (every few seconds during a turn), so 30 min of inactivity is
-    already a strong signal of failure. Abandoned branches get
-    ``closed_reason='stale_no_progress_<frozen|halted>_<min>min'`` so
-    the operator can grep the audit trail.
-
-    Returns the count of branches abandoned this tick.
-    """
-    from aila.modules.vr.db_models import (  # noqa: PLC0415
-        VRInvestigationBranchRecord,
-    )
-    from aila.platform.llm.client import is_llm_recently_unhealthy  # noqa: PLC0415
-
-    # LLM-outage gate (operator rule): branches sitting idle through
-    # an LLM endpoint outage are NOT stalled — they are waiting for
-    # work. Abandoning them in that window destroys real progress
-    # because the workflow couldn't run their next turn. Skip the
-    # whole abandonment step when the LLM has had any error in the
-    # trailing 10 min without a more recent success. The escalator
-    # wake-enqueue at step 3 still fires regardless: when the LLM
-    # recovers, the next wake will pick up the queued task and the
-    # branch resumes from its last known turn.
-    if is_llm_recently_unhealthy(600.0):
-        _log.info(
-            "stale_branches: skipping abandonment (LLM unhealthy "
-            "within last 10 min — branches waiting for work, not "
-            "stalled)",
-        )
-        return 0
-    frozen_min = int(os.environ.get("VR_STALE_BRANCH_FROZEN_MIN", "30"))
-    halted_min = int(os.environ.get("VR_STALE_BRANCH_HALTED_MIN", "120"))
-    branch = VRInvestigationBranchRecord
-    now = utc_now()
-    frozen_cutoff = now - timedelta(minutes=frozen_min)
-    halted_cutoff = now - timedelta(minutes=halted_min)
-
-    # 1. Frozen-from-birth: turn_count < 5 + idle >= frozen_min.
-    frozen_result = await uow.session.exec(
-        update(branch)
-        .where(branch.status == BranchStatus.ACTIVE.value)
-        .where(branch.turn_count < 5)
-        .where(branch.updated_at < frozen_cutoff)
-        .values(
-            status=BranchStatus.ABANDONED.value,
-            closed_reason=f"stale_no_progress_frozen_{frozen_min}min",
-            closed_at=now,
-            updated_at=now,
-        ),
-    )
-    frozen_count = getattr(frozen_result, "rowcount", 0) or 0
-
-    # 2. Halted-after-progress: turn_count >= 5 + idle >= halted_min.
-    halted_result = await uow.session.exec(
-        update(branch)
-        .where(branch.status == BranchStatus.ACTIVE.value)
-        .where(branch.turn_count >= 5)
-        .where(branch.updated_at < halted_cutoff)
-        .values(
-            status=BranchStatus.ABANDONED.value,
-            closed_reason=f"stale_no_progress_halted_{halted_min}min",
-            closed_at=now,
-            updated_at=now,
-        ),
-    )
-    halted_count = getattr(halted_result, "rowcount", 0) or 0
-
-    total = frozen_count + halted_count
-    if total:
-        await uow.commit()
-        _log.info(
-            "stale_branches_abandoned frozen=%d halted=%d total=%d",
-            frozen_count, halted_count, total,
-        )
-    return total
 
 async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
     """Reap zombie tasks and stale workflow_state_cursor rows.
