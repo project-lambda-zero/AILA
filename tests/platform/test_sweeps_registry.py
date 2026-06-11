@@ -123,6 +123,7 @@ def test_vr_module_create_module_is_idempotent() -> None:
     assert first_snapshot == second_snapshot
 
 
+@pytest.mark.asyncio
 async def test_async_callable_compatibility() -> None:
     """Sweeps are awaitable; verify the registry stores async functions."""
     sweeps.register_periodic_sweep("tests.async", _truthy_sweep)
@@ -130,5 +131,3 @@ async def test_async_callable_compatibility() -> None:
     result = await fn()
     assert result == {"ran": True}
 
-
-pytestmark = pytest.mark.asyncio
