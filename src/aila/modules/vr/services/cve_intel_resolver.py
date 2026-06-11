@@ -40,8 +40,11 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-# Permissive CVE pattern — catches CVE-2024-1, CVE-2024-1234567, etc.
-_CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
+# Permissive CVE pattern — catches CVE-2024-1 (1-digit historical) through
+# CVE-2026-100000000 (8+ digits, increasingly common in 2024+). The IntelService
+# backend returns not_found for invalid ids, so the regex stays loose.
+# fix §187 — was \d{4,7}; 1-digit and 8+-digit serials were silently dropped.
+_CVE_RE = re.compile(r"\bCVE-\d{4}-\d+\b", re.IGNORECASE)
 
 
 @dataclass
