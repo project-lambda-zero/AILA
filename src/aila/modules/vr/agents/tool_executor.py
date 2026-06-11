@@ -58,6 +58,12 @@ _log = logging.getLogger(__name__)
 # loud message on the next turn instead of an empty rendering.
 _SUCCESS_STATUSES: frozenset[str] = frozenset({"ready", "completed", "ok"})
 
+# fix §254 — single source of truth for the malformed-command marker.
+# Emitted by the executor (see line 159) and matched by the consecutive-
+# malformed counter (see _count_consecutive_malformed). Drift between
+# the two halves used to silently break the STOP-circuit-breaker.
+_MALFORMED_TOOL_RUN_MARKER: str = "Malformed tool_run"
+
 
 @dataclass(slots=True)
 class ToolExecutionResult:
@@ -156,7 +162,7 @@ class ToolExecutor:
                 )
             else:
                 err = (
-                    "Malformed tool_run command — expected JSON with "
+                    f"{_MALFORMED_TOOL_RUN_MARKER} command — expected JSON with "
                     "'tool' (e.g. 'server.tool_name') and 'args' dict. "
                     f"Got: {command_raw[:200]!r}. "
                     "If you don't have a specific tool query to make this "
@@ -606,7 +612,7 @@ class ToolExecutor:
                 payload = json.loads(row.payload_json or "{}")
             except (ValueError, TypeError):
                 break
-            if payload.get("is_error") and "Malformed tool_run" in str(payload.get("text", "")):
+            if payload.get("is_error") and _MALFORMED_TOOL_RUN_MARKER in str(payload.get("text", "")):
                 count += 1
             else:
                 break
