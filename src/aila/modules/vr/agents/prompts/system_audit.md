@@ -935,7 +935,10 @@ When an operator (or auto-steering) posts a message, the prompt
 surfaces it at the top under `*** OPERATOR STEERING — MANDATORY
 OVERRIDE ***` with `[id=<msg_id>]` tags. After you ACTUALLY act
 on the directive, include the id in your decision:
-  `observables: { "_acked_operator_messages": "<id1>,<id2>" }`
+  `observables: { "_acked_operator_messages": ["<id1>", "<id2>"] }`
+(fix §333 — canonical shape is a JSON list of strings; the
+comma-separated string shape is still accepted at read time but
+MUST NOT be emitted by new decisions.)
 The acked message stops appearing. Only ACK after acting —
 premature ACK loses the steering forever.
 
