@@ -64,6 +64,14 @@ _SUCCESS_STATUSES: frozenset[str] = frozenset({"ready", "completed", "ok"})
 # the two halves used to silently break the STOP-circuit-breaker.
 _MALFORMED_TOOL_RUN_MARKER: str = "Malformed tool_run"
 
+# fix §261 — DoS guard. _parse_command runs json.loads on agent-supplied
+# strings; a runaway agent that emits a multi-megabyte command_raw would
+# pin a worker thread on the parse for seconds and bloat the resulting
+# error message that gets persisted. 64KB is well above any legitimate
+# tool call (the largest known shape is a script_execute body capped
+# elsewhere at ~16KB).
+_MAX_TOOL_CMD_BYTES: int = 65536
+
 
 @dataclass(slots=True)
 class ToolExecutionResult:
@@ -950,6 +958,14 @@ def _parse_command(raw: str) -> tuple[str, dict[str, Any]] | None:
     error back to the engine via a TEXT message.
     """
     if not raw or not raw.strip():
+        return None
+    # fix §261 — bail before json.loads on oversize input.
+    if len(raw) > _MAX_TOOL_CMD_BYTES:
+        _log.warning(
+            "tool_executor._parse_command: command_raw exceeds cap "
+            "(%d > %d bytes); rejecting before JSON parse",
+            len(raw), _MAX_TOOL_CMD_BYTES,
+        )
         return None
     try:
         decoded = json.loads(raw)
