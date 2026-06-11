@@ -251,19 +251,13 @@ def _register_vr_periodic_sweeps() -> None:
     from .services.stage_tracker import reap_stuck_stages  # noqa: PLC0415
     register_periodic_sweep("vr.stage_tracker", reap_stuck_stages)
 
-    # vr.investigation_reaper — completes investigations past their
-    # turn / message / wall-clock caps when no worker reaches the
-    # turn-boundary check.
-    from .services.investigation_reaper import (  # noqa: PLC0415
-        sweep_cap_exceeded_investigations,
-    )
-    register_periodic_sweep(
-        "vr.investigation_reaper",
-        sweep_cap_exceeded_investigations,
-    )
-
     # vr.branch_reaper — flips orphan ACTIVE branches whose parent
-    # investigation has reached a terminal status.
+    # investigation is ALREADY terminal. Independent of finalize:
+    # finalize drives RUNNING investigations to terminal; branch_reaper
+    # cleans up branches left behind under investigations that already
+    # terminated via some other path (operator DB action, legacy code
+    # paths that completed an investigation without cascading to its
+    # branches).
     from .services.branch_reaper import (  # noqa: PLC0415
         sweep_orphan_active_branches,
     )
@@ -271,6 +265,8 @@ def _register_vr_periodic_sweeps() -> None:
 
     # vr.masvs_parent_reconciler — drives the parent batch state
     # machine (CREATED → RUNNING → COMPLETED) for MASVS audits.
+    # MASVS-SPECIFIC: this sweep walks parent investigations of kind
+    # masvs_audit and rolls up child statuses.
     from .masvs.parent_reconciler import (  # noqa: PLC0415
         sweep_masvs_audit_parents,
     )
@@ -280,13 +276,21 @@ def _register_vr_periodic_sweeps() -> None:
     )
 
     # vr.finalize — Phase C chokepoint. Walks RUNNING investigations
-    # and applies the deterministic trigger picker (all_outcomes /
-    # rejected_quorum / wall_clock_idle_grace / all_terminal_no_outcome).
-    # Delegates to the existing reaper primitives via the
-    # investigation_finalize entry point. Coexists with the older
-    # vr.investigation_reaper + vr.branch_reaper sweeps for one
-    # release cycle so an operator can verify behavior on a live
-    # audit before the old sweeps get unregistered.
+    # and applies the deterministic 4-trigger picker:
+    #
+    #   1. all_outcomes              -> synthesis_enqueued
+    #   2. rejected_quorum           -> close-rejected per-id helper
+    #   3. wall_clock_idle_grace     -> cap-exceeded per-id helper
+    #                                   (also covers turn / message caps)
+    #   4. all_terminal_no_outcome   -> orphan audit_memo per-id helper
+    #
+    # Replaces the prior vr.investigation_reaper + vr.branch_reaper
+    # sweeps (their work is folded into the per-id helpers finalize
+    # delegates to). The sweep wrappers in
+    # vr/services/investigation_reaper.py and
+    # vr/services/branch_reaper.py remain importable so any operator
+    # tooling that hits them directly still works, but they no longer
+    # run on the cron.
     from .workflow.finalize import (  # noqa: PLC0415
         sweep_finalizable_investigations,
     )

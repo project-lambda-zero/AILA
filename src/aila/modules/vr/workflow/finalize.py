@@ -340,21 +340,18 @@ async def _handle_rejected_quorum(
     investigation_id: str,
     context: dict[str, Any],
 ) -> str:
-    """Delegate to the existing rejected-outcomes close path.
+    """Delegate to the per-id rejected-quorum closer.
 
-    The actual implementation lives in
-    ``parent_reconciler._close_rejected_outcomes`` (sweep-shaped — walks
-    all investigations). Per-id extraction is a follow-up; calling the
-    sweep here is idempotent and the sweep skips investigations that
-    aren't in the rejected-quorum condition.
+    Implementation in
+    :mod:`vr.services.investigation_finalizers` (canonical API surface);
+    the underlying body lives in ``parent_reconciler._close_rejected_outcomes``
+    until the next refactor moves it physically.
     """
-    from ..masvs.parent_reconciler import (  # noqa: PLC0415
-        _close_rejected_outcomes,
+    from ..services.investigation_finalizers import (  # noqa: PLC0415
+        close_rejected_for_investigation,
     )
 
-    async with UnitOfWork() as uow:
-        closed = await _close_rejected_outcomes(uow, only_id=investigation_id)
-        await uow.commit()
+    closed = await close_rejected_for_investigation(investigation_id)
     return (
         f"rejected_close:closed={closed} "
         f"votes={context.get('rejected_votes')}"
@@ -392,22 +389,18 @@ async def _handle_all_terminal_no_outcome(
     investigation_id: str,
     context: dict[str, Any],
 ) -> str:
-    """Delegate to the orphan-synthesize path.
+    """Delegate to the per-id orphan synthesizer.
 
-    ``parent_reconciler._synthesize_no_finding_outcomes`` writes an
-    audit_memo for investigations whose branches all terminated
-    without producing an outcome. We call it through the sweep
-    function the cron uses; same idempotency story as above.
+    Implementation in :mod:`vr.services.investigation_finalizers`; the
+    underlying body lives in
+    ``parent_reconciler._synthesize_no_finding_outcomes`` until the next
+    refactor moves it physically.
     """
-    from ..masvs.parent_reconciler import (  # noqa: PLC0415
-        _synthesize_no_finding_outcomes,
+    from ..services.investigation_finalizers import (  # noqa: PLC0415
+        synthesize_no_finding_for_investigation,
     )
 
-    async with UnitOfWork() as uow:
-        wrote = await _synthesize_no_finding_outcomes(
-            uow, only_id=investigation_id,
-        )
-        await uow.commit()
+    wrote = await synthesize_no_finding_for_investigation(investigation_id)
     return f"audit_memo_synthesized:wrote={wrote}"
 
 
