@@ -34,6 +34,7 @@ __all__ = [
     "run_target_analysis",
     "run_vr_investigate",
     "run_vr_nday",
+    "run_vr_outcome_dispatch",
     "run_vr_synthesis",
 ]
 
@@ -368,3 +369,54 @@ async def run_vr_claim_verifier(
     )
     agent = ClaimVerifierAgent(investigation_id=investigation_id)
     return await agent.run()
+
+
+@platform_task(
+    track="vr",
+    module_id="vr",
+    max_tries=2,
+    timeout_s=600.0,  # 10 min — dispatcher writes outcome + halts siblings + flips inv
+)
+async def run_vr_outcome_dispatch(
+    ctx: TaskContext,
+    outcome_id: str,
+    **_: Any,
+) -> dict[str, Any]:
+    """Dispatch one approved outcome via OutcomeDispatcher.dispatch.
+
+    fix §90 — was an inline ``dispatcher.dispatch(...)`` call from
+    ``HonestVulnResearcher.run_turn`` on quorum APPROVED. Dispatch
+    cascades cross-branch (halts sibling branches, flips inv to
+    COMPLETED, purges ARQ jobs) and must not run inside one branch's
+    turn-execution context — other branches' workers would observe
+    the cascade mid-flight outside their own atomic-commit boundary.
+
+    This task lets the agent enqueue dispatch and continue its own
+    turn cleanly; the dispatcher fires from its own worker context,
+    inside its own UoW, against its own retry budget.
+    """
+    del ctx
+    from aila.modules.vr.agents.outcome_dispatcher import (  # noqa: PLC0415
+        OutcomeDispatcher,
+    )
+    from aila.platform.services.factory import (  # noqa: PLC0415
+        ServiceFactory,
+    )
+
+    dispatcher = OutcomeDispatcher(knowledge=ServiceFactory().knowledge)
+    result = await dispatcher.dispatch(outcome_id)
+    return {
+        "outcome_id": result.outcome_id,
+        "outcome_kind": (
+            result.outcome_kind.value
+            if hasattr(result.outcome_kind, "value")
+            else str(result.outcome_kind)
+        ),
+        "dispatch_status": (
+            result.dispatch_status.value
+            if hasattr(result.dispatch_status, "value")
+            else str(result.dispatch_status)
+        ),
+        "dispatch_target": result.dispatch_target,
+        "reason": result.reason,
+    }
