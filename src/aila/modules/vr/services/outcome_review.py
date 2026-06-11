@@ -210,6 +210,29 @@ async def upsert_review(
         await uow.commit()
         await uow.session.refresh(row)
 
+    # fix §170 — DESIGN DECISION PENDING (docs/CUTOVER_DEPS.md §4).
+    # ``suggested_edits_json`` is persisted on the review row but never
+    # applied to the underlying outcome. The two viable wirings are:
+    #   (a) frontend Apply button on the Reviews panel → API endpoint
+    #       writes the suggestion back onto the canonical outcome
+    #       (operator gated).
+    #   (b) synthesis_agent ingests every review's suggested_edits and
+    #       folds them into the panel_summary the next time it runs
+    #       (agent-driven, no operator click).
+    # Operator has not chosen between (a) and (b); until they do, every
+    # ``request_edit`` vote with a non-empty payload is a silent data
+    # loss. We emit a WARNING here so the condition is visible in
+    # worker logs — operators can grep for ``suggested_edits_pending``
+    # to count the wasted LLM cycles and prioritise the wiring decision.
+    if suggested:
+        _log.warning(
+            "outcome_review.suggested_edits_pending — outcome=%s branch=%s "
+            "persona=%s vote=%s edits_keys=%s. Suggestion stored on review "
+            "row but NOT applied (no Apply path wired). Operator decision "
+            "outstanding per docs/CUTOVER_DEPS.md §4 / §170.",
+            outcome_id, reviewer_branch_id, row.reviewer_persona, vote,
+            sorted(suggested.keys()),
+        )
     _log.info(
         "outcome_review UPSERT outcome=%s branch=%s persona=%s vote=%s",
         outcome_id, reviewer_branch_id, row.reviewer_persona, vote,
