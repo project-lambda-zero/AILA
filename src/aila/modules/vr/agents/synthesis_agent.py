@@ -211,7 +211,11 @@ def _synthesis_confidence(panel: list[dict[str, Any]]) -> OutcomeConfidence:
         3: OutcomeConfidence.CAVEATED,
         4: OutcomeConfidence.UNKNOWN,
     }
-    conf_rank = {"strong": 1, "exact": 0, "medium": 2, "caveated": 3, "weak": 3, "unknown": 4}
+    # fix §161 — 'weak' is NOT in OutcomeConfidence; drop the alias.
+    # Personas that emit 'weak' fall through to the .get(default=4)
+    # ('unknown') rank, which is the same end-state CAVEATED would
+    # have produced via the disagreement penalty.
+    conf_rank = {"exact": 0, "strong": 1, "medium": 2, "caveated": 3, "unknown": 4}
     ranks = sorted(conf_rank.get(p.get("confidence", "unknown"), 4) for p in panel)
     median = ranks[len(ranks) // 2]
     # Disagreement penalty: any kind mismatch downgrades by 1.
