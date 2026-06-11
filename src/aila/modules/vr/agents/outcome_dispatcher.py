@@ -517,9 +517,26 @@ class OutcomeDispatcher:
         )
         spawn_errors: list[str] = []
         variants = payload.get("variant_hunt_orders")
+        # fix §238 — agents occasionally emit `variant_hunt_orders` as a
+        # single dict instead of a list of dicts (when there's exactly
+        # one order). Coerce to list. Anything that isn't a dict or list
+        # gets dropped with an explicit log so silent corruption shows up.
+        if isinstance(variants, dict):
+            variants = [variants]
+        elif variants is not None and not isinstance(variants, list):
+            _log.warning(
+                "variant_hunt_orders has unexpected type=%s inv=%s outcome=%s",
+                type(variants).__name__, investigation_id, outcome_id,
+            )
+            variants = None
         if isinstance(variants, list):
             for idx, raw in enumerate(variants):
                 if not isinstance(raw, dict):
+                    _log.warning(
+                        "variant_hunt_orders[%d] non-dict type=%s dropped "
+                        "inv=%s outcome=%s",
+                        idx, type(raw).__name__, investigation_id, outcome_id,
+                    )
                     continue
                 if idx in spawned_indices:
                     continue
