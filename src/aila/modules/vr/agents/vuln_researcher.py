@@ -2617,6 +2617,21 @@ async def _upsert_canonical_outcome(
 
     inv.primary_outcome_id always points at the canonical row.
     """
+    # fix §168 — race-fix: serialize canonical-outcome writes per
+    # investigation by taking a row lock on the parent investigation
+    # row BEFORE the existence check. Concurrent terminal_submits
+    # queue at this lock; the second arrival sees the row created by
+    # the first and falls through to the merge path instead of
+    # INSERTing a duplicate canonical. Chose SELECT FOR UPDATE over
+    # an alembic UNIQUE-index + ON CONFLICT migration because no
+    # schema change is required (vr_investigations row always exists
+    # by FK) and the lock scope is exactly the per-investigation
+    # critical section.
+    await uow.session.exec(
+        _select(VRInvestigationRecord)
+        .where(VRInvestigationRecord.id == investigation_id)
+        .with_for_update(),
+    )
     existing = (await uow.session.exec(
         _select(VRInvestigationOutcomeRecord)
         .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
