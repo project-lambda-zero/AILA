@@ -220,6 +220,73 @@ class VRModule(ModuleProtocol):
         return {"vr.ida_reachability": _ida_reachability}
 
 
+_SWEEPS_REGISTERED = False
+
+
+def _register_vr_periodic_sweeps() -> None:
+    """Register VR's per-tick maintenance sweeps with the platform reaper.
+
+    Called from :func:`create_module` so the registration is a side-effect
+    of module instantiation — the same lifecycle hook the platform uses
+    for capability profiles + tool keys + route specs. This is the
+    operator-visible chokepoint where "VR module owns these sweeps" is
+    declared; the platform iterates the registry without knowing VR
+    exists.
+
+    Idempotent via the module-level ``_SWEEPS_REGISTERED`` flag — safe
+    against repeated ``create_module()`` calls (test fixtures, hot-reload).
+    """
+    global _SWEEPS_REGISTERED  # noqa: PLW0603 — module-init flag
+    if _SWEEPS_REGISTERED:
+        return
+    _SWEEPS_REGISTERED = True
+
+    from aila.platform.tasks.sweeps import (  # noqa: PLC0415
+        register_periodic_sweep,
+    )
+
+    # vr.stage_tracker — reaps stuck target-analysis stages whose
+    # workers never recorded a terminal transition. Returns an int
+    # count of stages reaped.
+    from .services.stage_tracker import reap_stuck_stages  # noqa: PLC0415
+    register_periodic_sweep("vr.stage_tracker", reap_stuck_stages)
+
+    # vr.investigation_reaper — completes investigations past their
+    # turn / message / wall-clock caps when no worker reaches the
+    # turn-boundary check.
+    from .services.investigation_reaper import (  # noqa: PLC0415
+        sweep_cap_exceeded_investigations,
+    )
+    register_periodic_sweep(
+        "vr.investigation_reaper",
+        sweep_cap_exceeded_investigations,
+    )
+
+    # vr.branch_reaper — flips orphan ACTIVE branches whose parent
+    # investigation has reached a terminal status.
+    from .services.branch_reaper import (  # noqa: PLC0415
+        sweep_orphan_active_branches,
+    )
+    register_periodic_sweep("vr.branch_reaper", sweep_orphan_active_branches)
+
+    # vr.masvs_parent_reconciler — drives the parent batch state
+    # machine (CREATED → RUNNING → COMPLETED) for MASVS audits.
+    from .masvs.parent_reconciler import (  # noqa: PLC0415
+        sweep_masvs_audit_parents,
+    )
+    register_periodic_sweep(
+        "vr.masvs_parent_reconciler",
+        sweep_masvs_audit_parents,
+    )
+
+
+# Module-load-time registration. Imports are deferred inside the
+# function so a `from aila.modules.vr.module import VRModule` for
+# the protocol type doesn't fire the registration; only the platform's
+# `create_module()` call triggers it.
+
+
 def create_module() -> ModuleProtocol:
     """Return a new VRModule instance for the platform module loader."""
+    _register_vr_periodic_sweeps()
     return VRModule()

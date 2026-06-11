@@ -274,16 +274,26 @@ async def reaper(ctx: dict[str, object]) -> None:
         )
     except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
         _log.warning("reaper: orphan running-task sweep failed: %s", exc, exc_info=True)
-    try:
-        from aila.modules.vr.services.stage_tracker import reap_stuck_stages  # noqa: PLC0415
-        reaped_stages = await reap_stuck_stages()
-        if reaped_stages:
+    # fix §X-platform-layering — iterate the generic sweep registry instead
+    # of hardcoding module-specific imports. Modules register their sweeps
+    # at import time via aila.platform.tasks.sweeps.register_periodic_sweep.
+    # The platform worker has zero awareness of which modules own which
+    # sweeps; this restores the "platform never imports from modules"
+    # invariant (CLAUDE.md non-negotiable rule #5).
+    from .sweeps import all_periodic_sweeps  # noqa: PLC0415
+    for sweep_name, sweep_fn in all_periodic_sweeps().items():
+        try:
+            result = await sweep_fn()
+            if result:
+                # Truthy result is logged at INFO. The sweep owns its
+                # own structured-detail logging; the platform just
+                # surfaces "this sweep produced work this tick" for
+                # the operator-visible cron log.
+                _log.info("reaper.%s: %s", sweep_name, result)
+        except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
             _log.warning(
-                "reaper.vr_stages: reaped %d stuck target-analysis stage(s)",
-                reaped_stages,
+                "reaper.%s: failed: %s", sweep_name, exc, exc_info=True,
             )
-    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
-        _log.warning("reaper: vr stage reaper failed: %s", exc, exc_info=True)
 
     # fix §57 — orphan_queued runs BEFORE cursor_reaper. A QUEUED row
     # absent from ARQ gets flipped to FAILED first; the cursor cleanup
@@ -302,48 +312,6 @@ async def reaper(ctx: dict[str, object]) -> None:
             _log.info("reaper: cleared %d orphan terminal cursors", cleared)
     except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
         _log.warning("reaper: cursor cleanup failed: %s", exc, exc_info=True)
-
-    # fix §48 — stale-heartbeat reconciliation. _sweep_orphan_running_tasks
-    # already walks RUNNING rows and reaps those with heartbeat past the
-    # ARQ_JOB_TIMEOUT threshold; explicit cursor at the top of the
-    # reaper documenting the role.
-    try:
-        from aila.modules.vr.services.investigation_reaper import (  # noqa: PLC0415
-            sweep_cap_exceeded_investigations,
-        )
-        capped = await sweep_cap_exceeded_investigations()
-        if capped:
-            _log.warning(
-                "reaper: completed %d cap-exceeded investigations "
-                "(turns/messages/wall-clock breach)",
-                capped,
-            )
-    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
-        _log.warning("reaper: cap-exceeded sweep failed: %s", exc, exc_info=True)
-    try:
-        from aila.modules.vr.services.branch_reaper import sweep_orphan_active_branches  # noqa: PLC0415
-        flipped = await sweep_orphan_active_branches()
-        if flipped:
-            _log.warning(
-                "reaper: flipped %d orphan active branches under terminal investigations",
-                flipped,
-            )
-    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
-        _log.warning("reaper: orphan-branch sweep failed: %s", exc, exc_info=True)
-    try:
-        from aila.modules.vr.masvs.parent_reconciler import (  # noqa: PLC0415
-            sweep_masvs_audit_parents,
-        )
-        masvs_flips = await sweep_masvs_audit_parents()
-        if masvs_flips["started"] or masvs_flips["completed"]:
-            _log.info(
-                "reaper: masvs parent batch transitions started=%d completed=%d",
-                masvs_flips["started"], masvs_flips["completed"],
-            )
-    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
-        _log.warning(
-            "reaper: masvs parent reconciler failed: %s", exc, exc_info=True,
-        )
     # fix §123 — idempotency-cache expired-row purge wired into the same
     # cron loop so the table doesn't accumulate stale rows forever. The
     # purge is best-effort and never crashes the cron tick.
