@@ -462,10 +462,29 @@ class ToolExecutor:
         # investigation just like the human operator would — same DB
         # write, same prompt position on next turn, same ACK contract.
         # Best-effort; failures here NEVER abort the tool result path.
+        # fix §198 — was hardcoded `http://127.0.0.1:18822`. Pull the
+        # resolved URL from the audit_mcp bridge instance (W1 §208
+        # made it a single attribute lookup after the first call), so
+        # operator config / env overrides propagate to the auto-steering
+        # path without a process restart. Falls back to the hardcoded
+        # default only if the bridge instance lacks the accessor (e.g.
+        # a test stub).
         from aila.modules.vr.agents.auto_steering import (  # noqa: PLC0415
             maybe_post_auto_steering,
         )
-        bridge_base_url = "http://127.0.0.1:18822"
+        audit_mcp_bridge = self._bridges.get("audit_mcp")
+        if hasattr(audit_mcp_bridge, "base_url"):
+            try:
+                bridge_base_url = await audit_mcp_bridge.base_url()
+            except Exception as exc:  # noqa: BLE001
+                _log.info(
+                    "tool_executor: bridge.base_url() failed (%s: %s); "
+                    "falling back to default",
+                    type(exc).__name__, exc,
+                )
+                bridge_base_url = "http://127.0.0.1:18822"
+        else:
+            bridge_base_url = "http://127.0.0.1:18822"
         try:
             posted_id = await maybe_post_auto_steering(
                 investigation_id=investigation_id,
