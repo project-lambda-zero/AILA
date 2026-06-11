@@ -305,22 +305,28 @@ class HonestVulnResearcher:
             sibling_context=sibling_context,
             applicable_patterns=self._applicable_patterns,
         )
-        # DIAG (temporary): per-component prompt size logging so operator can
-        # see what's bloating the 1M-token context limit. Remove after fix.
-        import json as _json_diag  # noqa: PLC0415
-        sys_chars = len(system_prompt or "")
-        usr_chars = len(user_prompt or "")
-        tools_chars = len(_json_diag.dumps(tool_specs) if tool_specs else "")
-        snap_chars = len(_json_diag.dumps(target_snapshot) if target_snapshot else "")
-        cs_chars = len(_json_diag.dumps(case_state.model_dump() if hasattr(case_state, "model_dump") else {}))
-        _log.warning(
-            "PROMPT_SIZE_DIAG inv=%s branch=%s turn=%d persona=%s "
-            "sys=%d user=%d tools=%d snap=%d case=%d TOTAL=%d (~%dK tok)",
-            inv.id[:8], branch.id[:8], turn_number, branch.persona_voice,
-            sys_chars, usr_chars, tools_chars, snap_chars, cs_chars,
-            sys_chars + usr_chars + tools_chars,
-            (sys_chars + usr_chars + tools_chars) // 4000,
-        )
+        # fix §88 — per-component prompt-size logging stays as
+        # diagnostic visibility, demoted from WARNING to DEBUG. At
+        # WARNING level this fired ~22k times per MASVS audit (53
+        # children × 70 turns × 6 personas), flooding the worker log
+        # and drowning real warnings. Operators enable
+        # vuln_researcher logger at DEBUG when they want to see the
+        # bloat distribution.
+        if _log.isEnabledFor(logging.DEBUG):
+            import json as _json_diag  # noqa: PLC0415
+            sys_chars = len(system_prompt or "")
+            usr_chars = len(user_prompt or "")
+            tools_chars = len(_json_diag.dumps(tool_specs) if tool_specs else "")
+            snap_chars = len(_json_diag.dumps(target_snapshot) if target_snapshot else "")
+            cs_chars = len(_json_diag.dumps(case_state.model_dump() if hasattr(case_state, "model_dump") else {}))
+            _log.debug(
+                "PROMPT_SIZE_DIAG inv=%s branch=%s turn=%d persona=%s "
+                "sys=%d user=%d tools=%d snap=%d case=%d TOTAL=%d (~%dK tok)",
+                inv.id[:8], branch.id[:8], turn_number, branch.persona_voice,
+                sys_chars, usr_chars, tools_chars, snap_chars, cs_chars,
+                sys_chars + usr_chars + tools_chars,
+                (sys_chars + usr_chars + tools_chars) // 4000,
+            )
 
         # v0.4 GA-52: branch persona maps to a per-role task_type
         # (researcher / implementer / critic). Falls back to the
