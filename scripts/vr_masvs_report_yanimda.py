@@ -752,26 +752,32 @@ class FindingHeader(Flowable):
         # Title — sans bold, wrapped onto one line (truncated if longer)
         c.setFillColor(COL_INK)
         c.setFont(_font("Sans-Bold", "Helvetica-Bold"), 11.0)
+        # Right-side verdict pill occupies ~30mm — reserve 32mm of right
+        # margin so the title text doesn't crash into it.
         title_x = 52 * mm
-        title_w = self.width - title_x - 36 * mm
+        # 42mm reserve so the title can never bleed under the verdict
+        # pill — the longest pill ("INCONCLUSIVE" at 10pt) wants ~38mm.
+        title_w = self.width - title_x - 42 * mm
         title = self.title
-        # ad-hoc truncation
         face = _font("Sans-Bold", "Helvetica-Bold")
-        max_chars = 130
         while c.stringWidth(title, face, 11.0) > title_w and len(title) > 12:
             title = title[: max(12, len(title) - 4)] + "…"
             if len(title) <= 16:
                 break
-            if len(title) > max_chars:
-                title = title[:max_chars] + "…"
         c.drawString(title_x, self.height - 7 * mm, title)
-        # Confidence dot row
-        c.setFillColor(COL_MUTED)
-        c.setFont(_font("Mono", "Courier"), 7.5)
-        conf_text = f"CONFIDENCE  {self.confidence:0.2f}"
-        c.drawString(title_x, self.height - 12 * mm, conf_text)
-        # Right-side verdict pill
-        pill_w = 26 * mm
+        # Confidence label is intentionally omitted here — the band
+        # immediately below the header already prints it next to VERDICT.
+        # Right-side verdict pill (verdict only — confidence sits to the
+        # left under the title; previously CONFIDENCE was drawn at the
+        # same y as the control_id row and visually collided when the
+        # control_id+group string stretched into the second column).
+        # The verdict pill auto-sizes to the label width so the long
+        # "INCONCLUSIVE" string doesn't bleed past the page margin while
+        # "FAIL"/"PASS" stay tight.
+        pill_font = _font("Sans-Bold", "Helvetica-Bold")
+        pill_font_size = 12.0 if len(self.verdict) <= 6 else 10.0
+        pill_text_w = c.stringWidth(self.verdict, pill_font, pill_font_size)
+        pill_w = max(26 * mm, pill_text_w + 8 * mm)
         pill_h = 10 * mm
         pill_x = self.width - pill_w - 1
         pill_y = (self.height - pill_h) / 2
@@ -779,8 +785,8 @@ class FindingHeader(Flowable):
         c.setStrokeColor(vcol)
         c.roundRect(pill_x, pill_y, pill_w, pill_h, 1.5 * mm, fill=1, stroke=0)
         c.setFillColor(colors.white)
-        c.setFont(_font("Sans-Bold", "Helvetica-Bold"), 12)
-        c.drawCentredString(pill_x + pill_w / 2, pill_y + pill_h / 2 - 4, self.verdict)
+        c.setFont(pill_font, pill_font_size)
+        c.drawCentredString(pill_x + pill_w / 2, pill_y + pill_h / 2 - pill_font_size / 3, self.verdict)
 
 
 class HeatmapGrid(Flowable):
@@ -2931,27 +2937,40 @@ def concur_check(pdf_path: Path, bundle: Bundle) -> dict[str, Any]:
         if cid not in full_text:
             missing_controls.append(cid)
 
-    # For each FAIL finding, assert the agent reasoning length ≥ 500 in the PDF.
-    # We approximate "in its section" by looking for the agent's first 200 chars
-    # in the extracted text near the finding's section banner.
+    # For each FAIL finding, assert there is at least 500 chars of agent
+    # reasoning rendered on the page. The PDF page renders ``answer`` +
+    # ``reasoning`` + each ``panel_contributions[].answer_brief`` — the
+    # combined length is what the operator actually reads. (Some agents
+    # write a 3-char answer field like "N/A" but produce a multi-KB
+    # reasoning section; the operator-facing content is fine in those
+    # cases.) The hard assertion is only that the first 100 chars of
+    # SOME chunk of agent text resolves into the extracted PDF text.
     for f in bundle.findings:
         if f.verdict_label == "FAIL":
             answer = (f.payload.get("answer") or "").strip()
-            if not answer:
-                short_fails.append(f"{f.finding_id} ({f.control_id}) — payload has no 'answer'")
-                continue
-            seg = re.sub(r"\s+", " ", answer[:500])[:200].lower()
+            reasoning = (f.payload.get("reasoning") or "").strip()
+            panel_briefs = [
+                (pc.get("answer_brief") or "").strip()
+                for pc in (f.payload.get("panel_contributions") or [])
+            ]
+            combined_len = len(answer) + len(reasoning) + sum(len(b) for b in panel_briefs)
+            # Locate any reasoning chunk in the extracted PDF text.
             text_lo = re.sub(r"\s+", " ", full_text).lower()
-            if seg not in text_lo:
-                # Permit partial match — try the first 100 chars instead.
-                seg2 = seg[:100]
-                if seg2 not in text_lo:
-                    short_fails.append(
-                        f"{f.finding_id} ({f.control_id}) — agent reasoning not located in PDF text"
-                    )
-            if len(answer) < 500:
+            located = False
+            for chunk in (answer, reasoning, *panel_briefs):
+                if not chunk:
+                    continue
+                seg = re.sub(r"\s+", " ", chunk)[:160].lower()
+                if seg and seg in text_lo:
+                    located = True
+                    break
+            if not located and (answer or reasoning or panel_briefs):
                 short_fails.append(
-                    f"{f.finding_id} ({f.control_id}) — payload answer only {len(answer)} chars (< 500)"
+                    f"{f.finding_id} ({f.control_id}) — agent reasoning not located in PDF text"
+                )
+            if combined_len < 500:
+                short_fails.append(
+                    f"{f.finding_id} ({f.control_id}) — combined agent reasoning only {combined_len} chars (< 500)"
                 )
         if (f.verdict_label in {"FAIL", "REVIEW"}) and not (f.payload.get("panel_contributions") or []):
             missing_panel.append(f.finding_id + " (" + f.control_id + ")")
