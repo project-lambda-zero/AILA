@@ -2661,6 +2661,18 @@ async def _upsert_canonical_outcome(
         # and §166 explicitly stops overwriting that field on merge,
         # so a per-persona answer truncated here used to be lost.
         "answer_brief": new_payload.get("answer") or "",
+        # fix §175 — preserve per-persona evidence at contribution time.
+        # Previously these fields were merged into the canonical payload
+        # only (affected_components/variant_hunt_orders union-dedupe,
+        # poc_code first-write-wins), so readers could no longer tell
+        # which persona cited which file/component/variant/PoC. Storing
+        # the per-persona view alongside the merged view preserves
+        # attribution without affecting the merged readers.
+        "evidence_refs": list(new_payload.get("evidence_refs") or []),
+        "poc_code": new_payload.get("poc_code") or "",
+        "poc_language": new_payload.get("poc_language") or "",
+        "affected_components": list(new_payload.get("affected_components") or []),
+        "variant_hunt_orders": list(new_payload.get("variant_hunt_orders") or []),
     }
 
     if existing is None:
