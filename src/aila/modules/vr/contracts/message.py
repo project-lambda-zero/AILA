@@ -34,10 +34,18 @@ __all__ = [
 
 
 class SenderKind(StrEnum):
-    """Who sent this message."""
+    """Who sent this message.
+
+    fix §250 — added ``SYSTEM`` so system-authored steering messages
+    (outcome_review draft requests, future system notices) can be
+    distinguished from human-typed OPERATOR messages by sender_kind
+    alone. UI filters and prompt-builder broadcast queries that need
+    to surface both should match on ``{OPERATOR, SYSTEM}``.
+    """
 
     ENGINE = "engine"
     OPERATOR = "operator"
+    SYSTEM = "system"
 
 
 class PayloadKind(StrEnum):
