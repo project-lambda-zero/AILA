@@ -150,6 +150,22 @@ async def _is_loop_alive(investigation_id: str, branch_id: str) -> tuple[bool, s
             if cursor.current_state in RESERVED_TERMINAL_STATES:
                 return False, f"cursor_terminal:{cursor.current_state}"
 
+    # Phase B.5 — per-investigation cancellation token. Process-local;
+    # cross-process synchronization is via the cursor SSOT (which the
+    # block above already checked). The token catches the case where
+    # pause was triggered AFTER the cursor read above but BEFORE this
+    # turn's LLM call: same-process pause flips the token immediately,
+    # so the next turn's alive check exits clean instead of paying
+    # the LLM cost.
+    try:
+        from aila.platform.llm.cancellation import (  # noqa: PLC0415
+            get_cancellation_token,
+        )
+        if get_cancellation_token(investigation_id).is_cancelled():
+            return False, "cancellation_token_set"
+    except Exception:  # noqa: BLE001 — best-effort
+        pass
+
     return True, "alive"
 
 async def state_investigation_loop(input: dict[str, Any], services: Any) -> StateResult:
