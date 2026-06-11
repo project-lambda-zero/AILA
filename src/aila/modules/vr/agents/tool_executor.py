@@ -48,6 +48,16 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
+# fix §202 — bridge writer-side whitelist contract (cross-ref W1 §214
+# ida_bridge, §215 android_mcp_bridge): success statuses are normalised
+# to exactly one of {"ready", "completed", "ok"}. The async progression
+# values {"pending", "queued", "running"} mean the bridge returned
+# without a final result — from the executor's POV that is indistinguishable
+# from an error because there is no payload to render. Any other value
+# (unknown / malformed) is coerced to error here so the engine sees a
+# loud message on the next turn instead of an empty rendering.
+_SUCCESS_STATUSES: frozenset[str] = frozenset({"ready", "completed", "ok"})
+
 
 @dataclass(slots=True)
 class ToolExecutionResult:
@@ -220,8 +230,20 @@ class ToolExecutor:
                 message_id=msg_id, success=False, error=err,
             )
 
-        if raw.get("status") == "error":
+        # fix §202 — positive whitelist (writer contract closure for W1
+        # §214/§215). Treat anything outside _SUCCESS_STATUSES as an
+        # executor-visible error: includes legitimate `error` envelopes,
+        # the async in-progress values (pending/queued/running) that mean
+        # "no payload yet", and any unknown/malformed status string the
+        # bridge let slip through.
+        _status = raw.get("status")
+        if _status not in _SUCCESS_STATUSES:
             raw_err = raw.get("error") or ""
+            if not raw_err and _status:
+                raw_err = (
+                    f"unexpected status {_status!r} (success requires "
+                    f"one of {sorted(_SUCCESS_STATUSES)})"
+                )
             err = f"{server_id}.{tool_name} returned error: {raw_err!r}"
             # Common false-negative: audit_mcp.read_function says
             # 'Function X not indexed' — but the identifier is a
