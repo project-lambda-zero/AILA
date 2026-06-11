@@ -978,7 +978,10 @@ def _parse_command(raw: str) -> tuple[str, dict[str, Any]] | None:
     if not isinstance(decoded, dict):
         return None
     tool_id = decoded.get("tool")
-    args = decoded.get("args", {})
+    # fix §260 — `args` explicitly set to None (e.g. by an agent that
+    # remembered list_indexes takes no kwargs) used to fail the dict
+    # isinstance check and force-stop. Coerce missing-OR-None to {}.
+    args = decoded.get("args") or {}
     if not isinstance(tool_id, str) or not isinstance(args, dict):
         return None
     return tool_id, args
