@@ -326,6 +326,16 @@ class AuditMcpBridgeTool(Tool):
         self._resolved_base_url = "http://127.0.0.1:18822"
         return self._resolved_base_url
 
+    async def base_url(self) -> str:
+        """Public accessor for the resolved bridge base URL.
+
+        fix §198 — exposes the cached resolution for downstream callers
+        (tool_executor's auto-steering path) so they don't have to
+        hardcode ``http://127.0.0.1:18822`` and stay in sync with
+        operator overrides via env / ConfigRegistry.
+        """
+        return await self._resolve_base_url()
+
     def invalidate_base_url(self) -> None:
         """Drop the cached base URL; next call re-resolves via env + config."""
         # fix §208 — optional escape hatch for operators who PATCH the
