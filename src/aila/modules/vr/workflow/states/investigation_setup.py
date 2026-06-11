@@ -28,7 +28,15 @@ from aila.platform.workflows.types import StateResult
 # persona reasons independently against its own task_type-routed
 # LLM. Set VR_AUTO_PERSONA_DELIBERATION=0 to disable (single-branch
 # fallback — operator forks personas manually).
-_AUTO_DELIBERATION = os.environ.get("VR_AUTO_PERSONA_DELIBERATION", "1") == "1"
+#
+# fix §295 — lazy getter (was module-load `_AUTO_DELIBERATION`).
+# Reading env at module load makes the toggle unchangeable for the
+# worker lifetime; operator-flipped env after a worker restart never
+# took effect until full process bounce. Lazy getter is read each
+# time setup runs, so a worker that sees a fresh env on next ARQ
+# task wakeup honours it.
+def _is_auto_deliberation_enabled() -> bool:
+    return os.environ.get("VR_AUTO_PERSONA_DELIBERATION", "1") == "1"
 
 # The personas assigned to the auto-spawned siblings. Primary branch
 # becomes the first researcher; each entry below spawns a sibling.
@@ -292,7 +300,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     # Auto-deliberation: spawn sibling branches and enqueue per-sibling
     # tasks ONLY on the primary task. Sibling tasks (explicit_branch_id
     # set) skip this block — they just run their assigned branch's loop.
-    if not explicit_branch_id and _AUTO_DELIBERATION:
+    if not explicit_branch_id and _is_auto_deliberation_enabled():
         await _spawn_persona_siblings_and_enqueue(
             investigation_id=investigation_id,
             primary_branch_id=branch.id,
