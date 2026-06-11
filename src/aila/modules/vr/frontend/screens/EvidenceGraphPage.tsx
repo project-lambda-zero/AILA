@@ -17,6 +17,7 @@ import {
   useInvestigationBranches,
   useInvestigationOutcomes,
 } from "../queries";
+import { formatBranchDisplayName } from "../branchDisplay";
 
 /** EvidenceGraphPage — 08_FRONTEND_UX.md §1.9.
  *
@@ -78,7 +79,7 @@ export function EvidenceGraphPage() {
       ns.push({
         id: `branch-${b.id}`,
         kind: "hypothesis",
-        label: `${b.persona_voice ?? "branch"}${b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}`,
+        label: `${formatBranchDisplayName(b)}${b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}`,
         state: stateMap[b.status] ?? "open",
         meta: { branch: b },
       });

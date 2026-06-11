@@ -20,6 +20,7 @@ import {
   useInvestigationBranches,
 } from "../queries";
 import type { BranchStatus, VRBranchSummary } from "../types";
+import { formatBranchDisplayName } from "../branchDisplay";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 // Colour-code branches by status. Aligns with the AilaBadge palette so
@@ -112,7 +113,7 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
           label: (
             <div style={{ textAlign: "left", color: "white", fontSize: 11 }}>
               <div style={{ fontWeight: 600 }}>
-                {b.persona_voice ?? "branch"}
+                {formatBranchDisplayName(b)}
                 {b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}
               </div>
               <div style={{ opacity: 0.8 }}>
