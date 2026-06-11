@@ -96,22 +96,31 @@ def obs_key_for(ctx: AdapterContext, suffix: str = "") -> str:
 def _args_fingerprint(args: dict[str, Any]) -> str:
     """Stable short fingerprint of significant tool args.
 
-    Drops noise that's identical across all calls of one tool
-    (``index_id``, ``binary_id``) and pagination knobs that don't
-    change the conceptual question (``limit``, ``offset``). What's
-    left identifies WHAT the agent asked about — e.g. ``pattern`` for
-    a search, ``name`` for read_function. The fingerprint is the
-    sorted ``key=value`` list joined with ``__``, truncated to keep
-    the observable key readable.
+    Drops pagination noise (``_PAGINATION_NOISE_KEYS``) and keeps what
+    identifies WHAT the agent asked about — e.g. ``pattern`` for a
+    search, ``name`` for read_function. The fingerprint is the sorted
+    ``key=value`` list joined with ``__``, truncated to keep the
+    observable key readable.
+
+    fix §273 — caps each per-value at 30 chars BEFORE joining so a
+    single 1000-char arg can't dominate the budget and elide every
+    other arg. The prior single global truncate let one big value
+    swallow siblings; two calls with the same big first arg but
+    different second args produced IDENTICAL fingerprints and
+    silently overwrote each other's observation entries.
     """
     significant = {k: v for k, v in (args or {}).items() if k not in _PAGINATION_NOISE_KEYS and v not in (None, "", [])}
     if not significant:
         return ""
-    parts = [f"{k}={significant[k]}" for k in sorted(significant)]
+    parts: list[str] = []
+    for k in sorted(significant):
+        rendered = str(significant[k])
+        if len(rendered) > 30:
+            rendered = rendered[:27] + "..."
+        parts.append(f"{k}={rendered}")
     joined = "__".join(parts)
-    # Cap individual args at ~40 chars so a giant value doesn't blow
-    # out the observable key; the full args still go to the message
-    # payload for the operator UI.
+    # Global cap after per-value truncation so the whole fingerprint
+    # still fits into a readable observable key on tools with many args.
     if len(joined) > 120:
         joined = joined[:117] + "..."
     return joined
