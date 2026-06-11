@@ -66,6 +66,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationOutcomeReviewRecord,
 )
 from aila.platform.contracts._common import utc_now
+from aila.platform.services.audit import record_audit_event
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
@@ -80,6 +81,7 @@ __all__ = [
     "compute_quorum",
     "evaluate_quorum",
     "post_draft_review_request",
+    "set_outcome_state",
     "upsert_review",
 ]
 
@@ -140,6 +142,88 @@ def compute_quorum(non_proposing_sibling_count: int) -> int:
     if non_proposing_sibling_count <= 0:
         return 0
     return max(2, non_proposing_sibling_count)
+
+
+def set_outcome_state(
+    uow: UnitOfWork,
+    outcome: VRInvestigationOutcomeRecord,
+    new_state: str,
+    *,
+    reason: str,
+) -> bool:
+    """Single point for ``vr_investigation_outcomes.state`` writes.
+
+    Fix §20 — every direct ``outcome.state = ...`` write goes through
+    this helper so the audit trail (``AuditEventRecord`` in the
+    platform audit table) records the prior→new transition plus the
+    caller-supplied reason. Without that row a forensic question of
+    'who flipped this outcome and when' has only ``_log.info`` chatter
+    to chase.
+
+    Caller still owns the commit boundary — this helper adds the
+    outcome row + the audit row to the active session and returns.
+
+    Args:
+        uow: Active UnitOfWork. The outcome row was already loaded
+            via ``uow.session`` so the same session adds both writes.
+        outcome: ORM-attached outcome row.
+        new_state: Target state. One of ``OUTCOME_STATE_*``.
+        reason: Human-readable explanation (e.g. ``"approved_3_of_3_required"``,
+            ``"dispatched_by_outcome_dispatcher"``). Stored in the
+            audit row's ``details_json``.
+
+    Returns:
+        True when a transition occurred (prior_state != new_state);
+        False when ``outcome.state`` already equals ``new_state``
+        (no-op call, no audit row written).
+
+    §14 known callers (single source of truth for outcome state
+    transitions across the codebase):
+      - ``services/outcome_review.evaluate_quorum`` — draft → approved /
+        rejected based on sibling votes.
+      - ``agents/outcome_dispatcher._update_outcome_status`` —
+        approved → dispatched on successful downstream ship.
+    The synthesis_agent path (``agents/synthesis_agent``) does NOT
+    write ``outcome.state`` — it updates ``payload_json`` and
+    ``confidence`` on the canonical row and flips investigation
+    ``status`` instead; the outcome's state continues to be owned by
+    the two callers above. New writers MUST route through this
+    helper.
+
+    Phase B note. Phase B routes outcome state transitions through
+    the workflow engine (one transition row in
+    ``workflow_state_transitions``, no direct column write). When
+    that lands this helper becomes a thin wrapper that delegates to
+    the engine; the call sites here stay unchanged.
+    """
+    prior_state = outcome.state
+    if prior_state == new_state:
+        return False
+    outcome.state = new_state
+    uow.session.add(outcome)
+
+    # Audit trail. Platform-owned audit table — same table the
+    # workflow engine writes its transition rows to (engine.py:1000)
+    # so an operator querying by run_id sees a single chronological
+    # stream of state changes.
+    record_audit_event(
+        uow.session,
+        run_id=outcome.investigation_id,
+        stage="vr.outcome",
+        action=f"outcome_state:{prior_state}->{new_state}",
+        target=f"outcome:{outcome.id}",
+        details={
+            "outcome_id": outcome.id,
+            "prior_state": prior_state,
+            "new_state": new_state,
+            "reason": reason,
+        },
+    )
+    _log.info(
+        "outcome_state STATE %s -> %s outcome=%s reason=%s",
+        prior_state, new_state, outcome.id, reason,
+    )
+    return True
 
 
 async def upsert_review(
@@ -371,8 +455,10 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
 
         transition_occurred = new_state != prior_state
         if transition_occurred:
-            outcome.state = new_state
-            uow.session.add(outcome)
+            # fix §20 — route the state write through set_outcome_state
+            # so the audit trail (AuditEventRecord) captures the
+            # prior->new flip alongside the quorum derivation reason.
+            set_outcome_state(uow, outcome, new_state, reason=transition_reason)
             # Sibling halt on approval. Closed (=ABANDONED) so the
             # branch stops being re-enqueued and the UI shows it as
             # done rather than perpetually active.

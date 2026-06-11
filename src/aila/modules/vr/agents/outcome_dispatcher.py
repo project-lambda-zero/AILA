@@ -1240,6 +1240,7 @@ class OutcomeDispatcher:
         )
         from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
             OUTCOME_STATE_DISPATCHED,
+            set_outcome_state,
         )
         from aila.platform.contracts._common import utc_now  # noqa: PLC0415
 
@@ -1257,8 +1258,22 @@ class OutcomeDispatcher:
                 result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
             )
             if just_dispatched:
-                outcome.state = OUTCOME_STATE_DISPATCHED
-            uow.session.add(outcome)
+                # fix §20 — single point for outcome.state writes.
+                # set_outcome_state adds the audit-trail row (and
+                # this outcome row) to the session; we still need
+                # the explicit session.add for the dispatch_status /
+                # dispatch_target columns we set above when this
+                # call is a no-op state-wise.
+                set_outcome_state(
+                    uow,
+                    outcome,
+                    OUTCOME_STATE_DISPATCHED,
+                    reason=f"dispatched_by_outcome_dispatcher:{result.dispatch_target or '?'}",
+                )
+            else:
+                # state unchanged — still persist the dispatch_status
+                # / dispatch_target updates from the lines above.
+                uow.session.add(outcome)
 
             # When an outcome successfully dispatches, the investigation
             # has reached its goal — any remaining active sibling
