@@ -187,23 +187,29 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
     # so a "60s" budget under load actually wall-clocked to 3-4× that
     # before failing. Operators set the budget against wall-clock
     # expectations; track wall-clock.
+    #
+    # fix §300 — single \`current\` variable in place of the prior
+    # \`upload\` / \`last\` duality. The original code seeded \`last = upload\`,
+    # then checked \`upload.get(...)\` (NEVER changes after upload) at the
+    # top of every loop AND \`last.get(...)\` (updated each iteration) at
+    # the bottom. The \`upload\` check was structurally dead after the
+    # first iteration; future readers stumbled over it. Renamed to
+    # \`current\`, reassigned in the loop, checked uniformly.
     start = time.monotonic()
-    last: dict[str, Any] = upload
+    current: dict[str, Any] = upload
     while True:
         elapsed = time.monotonic() - start
         if elapsed >= _POLL_BUDGET_S:
             raise SetupBudgetExceededError(
                 binary_id=str(binary_id), waited_s=elapsed,
             )
-        if upload.get("analysis_ready") or upload.get("state") in ("READY", "INDEXED"):
-            return last
-        last = await ida_bridge.forward(
+        if current.get("analysis_ready") or current.get("state") in ("READY", "INDEXED"):
+            return current
+        current = await ida_bridge.forward(
             action="poll_analysis", binary_id=binary_id,
         )
-        if last.get("status") == "error":
-            raise RuntimeError(f"poll_analysis error: {last.get('error')}")
-        if last.get("analysis_ready") or last.get("state") in ("READY", "INDEXED"):
-            return last
+        if current.get("status") == "error":
+            raise RuntimeError(f"poll_analysis error: {current.get('error')}")
         await asyncio.sleep(_POLL_INTERVAL_S)
 
 
@@ -211,21 +217,22 @@ async def _wait_until_ready(ida_bridge: Any, binary_id: str) -> dict[str, Any]:
     """Poll an existing binary_id until analysis is ready or budget exhausts."""
     # fix §299 — wall-clock via time.monotonic() (see _upload_and_wait
     # for the full rationale; same shape, no upload payload to seed).
+    # fix §300 — \`current\` naming consistent with _upload_and_wait.
     start = time.monotonic()
-    last: dict[str, Any] = {}
+    current: dict[str, Any] = {}
     while True:
         elapsed = time.monotonic() - start
         if elapsed >= _POLL_BUDGET_S:
             raise SetupBudgetExceededError(
                 binary_id=str(binary_id), waited_s=elapsed,
             )
-        last = await ida_bridge.forward(
+        current = await ida_bridge.forward(
             action="poll_analysis", binary_id=binary_id,
         )
-        if last.get("status") == "error":
-            raise RuntimeError(f"poll_analysis error: {last.get('error')}")
-        if last.get("analysis_ready") or last.get("state") in ("READY", "INDEXED"):
-            return last
+        if current.get("status") == "error":
+            raise RuntimeError(f"poll_analysis error: {current.get('error')}")
+        if current.get("analysis_ready") or current.get("state") in ("READY", "INDEXED"):
+            return current
         await asyncio.sleep(_POLL_INTERVAL_S)
 
 
