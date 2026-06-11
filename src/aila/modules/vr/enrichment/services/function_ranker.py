@@ -240,8 +240,8 @@ class FunctionRankingDispatcher:
         # FUNCTION_RANKING stage's 30 min budget. Now poll up to 30 s
         # before the tracker's stage_timeout_s elapses, so audit-mcp
         # gets the full window the stage tracker advertises.
-        _POLL_INTERVAL_S = 5.0
-        _DEADLINE_SAFETY_MARGIN_S = 30.0
+        poll_interval_s = 5.0
+        deadline_safety_margin_s = 30.0
         _loop = asyncio.get_running_loop()
         _deadline_monotonic = _loop.time() + tracker.stage_timeout_s
         poll_attempts = 0
@@ -254,14 +254,14 @@ class FunctionRankingDispatcher:
                     f"audit-mcp fuzzing_targets returned pending with no task_id: {resp!r}",
                 )
             remaining = _deadline_monotonic - _loop.time()
-            if remaining <= _DEADLINE_SAFETY_MARGIN_S:
+            if remaining <= deadline_safety_margin_s:
                 raise FunctionRankerError(
                     f"audit-mcp fuzzing_targets still pending after {poll_attempts} polls "
-                    f"for target {target_id}: <={_DEADLINE_SAFETY_MARGIN_S:.0f}s of the "
+                    f"for target {target_id}: <={deadline_safety_margin_s:.0f}s of the "
                     f"{tracker.stage_timeout_s:.0f}s FUNCTION_RANKING budget remaining",
                 )
             poll_attempts += 1
-            await asyncio.sleep(_POLL_INTERVAL_S)
+            await asyncio.sleep(poll_interval_s)
             resp = await self._audit_mcp.forward(action="poll_task", task_id=task_id)
 
         if resp.get("status") not in {"ready", None}:

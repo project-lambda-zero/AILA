@@ -1260,10 +1260,9 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
             refilled = 0
         # 2. Enforce cumulative-turn cap.
         try:
-            exhausted = await _enforce_total_turn_cap(uow)
+            await _enforce_total_turn_cap(uow)
         except Exception as exc:  # noqa: BLE001
             _log.warning("masvs reconciler: turn-cap failed: %s", exc, exc_info=True)
-            exhausted = 0
         # 3. Escalate stuck drafts (mandatory-vote directive).
         try:
             nudged = await _escalate_stuck_drafts(uow)  # noqa: F841
