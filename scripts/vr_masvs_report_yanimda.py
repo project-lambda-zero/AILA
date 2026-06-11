@@ -231,44 +231,70 @@ REPORT_VERSION = "1.0.0"
 # FONT REGISTRATION
 # ============================================================================
 
+_VF_LOCAL_FONTS = Path.home() / "AppData" / "Local" / "Microsoft" / "Windows" / "Fonts"
+
 _FONT_CANDIDATES: dict[str, list[str]] = {
+    # Body — Vodafone Rg Regular (132 KB).
     "Body": [
+        str(_VF_LOCAL_FONTS / "Vodafone.Rg_r.ttf"),
         r"C:\Windows\Fonts\georgia.ttf",
     ],
+    # Body italic — Vodafone Lt (light) stands in for italic emphasis since
+    # the brand has no italic cut. Visually distinct from Rg without forcing
+    # synthetic italic from the rasterizer.
     "Body-Italic": [
+        str(_VF_LOCAL_FONTS / "Vodafone.Lt_r.ttf"),
         r"C:\Windows\Fonts\georgiai.ttf",
     ],
+    # Body bold — Vodafone Rg Gras (file ships PostScript name VodafoneRg-Bold).
     "Body-Bold": [
+        str(_VF_LOCAL_FONTS / "Vodafone.Rg.ttf"),
         r"C:\Windows\Fonts\georgiab.ttf",
     ],
+    # Body bold italic — no Vodafone variant; reuse bold.
     "Body-BoldItalic": [
+        str(_VF_LOCAL_FONTS / "Vodafone.Rg.ttf"),
         r"C:\Windows\Fonts\georgiaz.ttf",
     ],
+    # Mono kept as Consolas; Vodafone has no monospace cut.
     "Mono": [
         r"C:\Windows\Fonts\consola.ttf",
     ],
     "Mono-Bold": [
         r"C:\Windows\Fonts\consolab.ttf",
     ],
+    # Sans = Vodafone Rg (same Rg face as body for typographic unity; brand
+    # uses Rg as the universal sans). Distinct hierarchy comes from size,
+    # weight, color, and letter-spacing — not from a separate family.
     "Sans": [
+        str(_VF_LOCAL_FONTS / "Vodafone.Rg_r.ttf"),
         r"C:\Windows\Fonts\arial.ttf",
     ],
     "Sans-Bold": [
+        str(_VF_LOCAL_FONTS / "Vodafone.Rg.ttf"),
         r"C:\Windows\Fonts\arialbd.ttf",
     ],
     "Sans-BoldItalic": [
+        str(_VF_LOCAL_FONTS / "Vodafone.Rg.ttf"),
         r"C:\Windows\Fonts\arialbi.ttf",
+    ],
+    # Display = Vodafone Lt (Light, 148 KB). Used for the cover title block
+    # and chapter openers where the airy thin weight reads as brand-deliberate
+    # rather than generic. Falls back to Arial when not installed.
+    "Display": [
+        str(_VF_LOCAL_FONTS / "Vodafone.Lt_r.ttf"),
+        r"C:\Windows\Fonts\arial.ttf",
     ],
 }
 
 
 def _register_fonts() -> None:
-    """Register the tactical typography stack.
+    """Register the Vodafone typography stack (Rg / Lt) with consolas mono.
 
-    Falls back to reportlab built-ins (Helvetica/Times/Courier) for any
-    family that has no readable TTF on this host. The fallback path is
-    not encountered on the operator's workstation; it exists so the
-    script does not crash when run from a fresh container.
+    Falls back to Georgia / Arial / Helvetica built-ins when the Vodafone
+    fonts aren't installed (e.g. when this script is run on a fresh CI
+    container). Operator workstation has both Vodafone Rg and Lt installed
+    under %LOCALAPPDATA%\\Microsoft\\Windows\\Fonts.
     """
     for face, paths in _FONT_CANDIDATES.items():
         for p in paths:
@@ -300,6 +326,14 @@ def _register_fonts() -> None:
             bold="Mono-Bold",
             italic="Mono",
             boldItalic="Mono-Bold",
+        )
+        # Display family is single-weight (Lt); bold/italic reuse the same face.
+        pdfmetrics.registerFontFamily(
+            "Display",
+            normal="Display",
+            bold="Display",
+            italic="Display",
+            boldItalic="Display",
         )
     except Exception:
         pass
@@ -815,8 +849,12 @@ def _styles() -> dict[str, ParagraphStyle]:
         leading=11.0, textColor=COL_ACCENT,
     )
 
+    # Cover title uses Vodafone Lt (Display face) at a generous size — the
+    # airy thin weight is the brand's signature display look. Falls back to
+    # Helvetica when Display is unregistered.
+    display = _font("Display", "Helvetica")
     s["cover_title"] = ParagraphStyle(
-        "CoverTitle", parent=base, fontName=sans_b, fontSize=38.0, leading=42.0,
+        "CoverTitle", parent=base, fontName=display, fontSize=44.0, leading=46.0,
         textColor=COL_INK, alignment=TA_LEFT,
     )
     s["cover_subtitle"] = ParagraphStyle(
