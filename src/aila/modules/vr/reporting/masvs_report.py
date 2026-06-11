@@ -810,10 +810,19 @@ def _append_apk_intelligence(
     if not full_static:
         full_static = static_summary if isinstance(static_summary, Mapping) else {}
 
-    mobsf = (
+    # fix §269 — ``android_mcp_mobsf_scan`` now stores a pointer with
+    # ``prompt_safe=False`` plus a small digest (security_score,
+    # trackers_detected, findings_by_severity); the full multi-MB
+    # report lives in ``target_artifacts/{target_id}/mobsf_scan.json``.
+    # The PDF tracker / native-libs / findings tables need the FULL
+    # payload, so resolve through the artifact loader. Legacy
+    # inline-full form (rows ingested pre-§269) passes through
+    # untouched.
+    mobsf_handle = (
         handles.get("android_mcp_mobsf_scan") if isinstance(handles, Mapping) else None
     )
-    if not isinstance(mobsf, Mapping):
+    mobsf = load_target_artifact_payload(mobsf_handle)
+    if not mobsf:
         mobsf = (
             (target.apk_overview or {}).get("mobsf_scan")
             if isinstance(target.apk_overview, Mapping)

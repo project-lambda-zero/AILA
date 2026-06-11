@@ -489,10 +489,28 @@ def _target_summary(record: Any) -> VRTargetSummary:
 
         # mobsf_scan digest: bucket-count summary. The full report is at
         # most operator-facing — agents don't need it in every prompt.
+        #
+        # fix §269 — ``android_mcp_mobsf_scan`` now stores a pointer
+        # to ``target_artifacts/{target_id}/mobsf_scan.json`` plus a
+        # pre-computed digest (``security_score``, ``trackers_detected``,
+        # ``findings_by_severity``) and an explicit ``prompt_safe=False``.
+        # The legacy inline-full form (rows ingested pre-§269) is still
+        # accepted — we recompute the buckets when no pre-computed
+        # digest is present.
         mobsf_full = handles.get("android_mcp_mobsf_scan") or {}
         if isinstance(mobsf_full, dict) and mobsf_full:
             if mobsf_full.get("skipped"):
                 overview["mobsf_scan"] = {"skipped": True, "reason": mobsf_full.get("reason", "")}
+            elif "_artifact_path" in mobsf_full:
+                projected: dict[str, Any] = {}
+                if mobsf_full.get("security_score") is not None:
+                    projected["security_score"] = mobsf_full["security_score"]
+                if mobsf_full.get("trackers_detected") is not None:
+                    projected["trackers_detected"] = mobsf_full["trackers_detected"]
+                buckets = mobsf_full.get("findings_by_severity")
+                if isinstance(buckets, dict):
+                    projected["findings_by_severity"] = buckets
+                overview["mobsf_scan"] = projected
             else:
                 buckets = {"high": 0, "warning": 0, "info": 0, "good": 0, "secure": 0}
                 for section_key in ("code_analysis", "manifest_analysis", "android_api", "network_security"):

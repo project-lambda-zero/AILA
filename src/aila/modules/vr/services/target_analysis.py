@@ -958,7 +958,18 @@ class TargetAnalysisService:
         current_handles: dict[str, Any],
         tracker: StageTracker,
     ) -> None:
-        """MobSF static scan. Skipped when MOBSF_API_KEY is unset."""
+        """MobSF static scan. Skipped when MOBSF_API_KEY is unset.
+
+        fix §269 — MobSF output is multi-MB (every code/manifest
+        finding plus tracker fingerprints plus the original mapped
+        APK upload metadata) and is operator-mandated off-policy for
+        LLM prompts (see ``android_mcp_bridge._PIPELINE_ONLY_TOOLS``
+        comment). Persist the full payload to
+        ``VR_TARGET_ARTIFACT_DIR/{target_id}/mobsf_scan.json`` and
+        keep an inline digest + pointer with an explicit
+        ``prompt_safe=False`` marker so any future prompt-builder
+        that lands on this key has an unambiguous denial in shape.
+        """
         mobsf_api_key = os.environ.get("MOBSF_API_KEY", "").strip()
         if not mobsf_api_key:
             _log.info(
@@ -966,10 +977,16 @@ class TargetAnalysisService:
                 target_id,
             )
             # fix §240 — locked merge.
+            # Skipped stage stays inline (no artifact written) — the
+            # ``skipped``/``reason`` fields are operator-display only
+            # and tiny enough to keep on the row. ``prompt_safe=False``
+            # still applies in case a future renderer treats skipped
+            # MobSF as a value to project.
             await self._merge_handles_locked(target_id, {
                 "android_mcp_mobsf_scan": {
                     "skipped": True,
                     "reason": "MOBSF_API_KEY env var not set on the AILA host",
+                    "prompt_safe": False,
                 },
             })
             return
@@ -983,14 +1000,31 @@ class TargetAnalysisService:
             raise TargetAnalysisError(
                 f"android-mcp.mobsf_scan failed: {err}",
             )
+        artifact_ref = _write_target_artifact(
+            target_id, "mobsf_scan", resp,
+        )
+        digest = _mobsf_digest_fields(resp)
+        inline_ref: dict[str, Any] = {
+            **artifact_ref,
+            **digest,
+            # Explicit prompt-safe marker — load-bearing for D-100.
+            # MobSF output must NEVER reach LLM prompts. The marker
+            # makes intent unmistakable for the prompt builder and
+            # any future tool that surfaces the inline handle.
+            "prompt_safe": False,
+        }
+        scan_hash = resp.get("_scan_hash")
+        if scan_hash is not None:
+            inline_ref["_scan_hash"] = scan_hash
         # fix §240 — locked merge so parallel group-1 stages don't
         # overwrite each other's disjoint keys.
         await self._merge_handles_locked(
-            target_id, {"android_mcp_mobsf_scan": resp},
+            target_id, {"android_mcp_mobsf_scan": inline_ref},
         )
         _log.info(
-            "vr.android.mobsf_scan target=%s scan_hash=%s",
-            target_id, resp.get("_scan_hash"),
+            "vr.android.mobsf_scan target=%s scan_hash=%s artifact=%s size=%d",
+            target_id, scan_hash,
+            artifact_ref["_artifact_path"], artifact_ref["_artifact_size"],
         )
 
     # ─── per-kind ingestion ─────────────────────────────────────────────
