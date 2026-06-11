@@ -31,6 +31,7 @@ from aila.modules.vr.db_models import (
 )
 from aila.platform.contracts._common import utc_now
 from aila.platform.llm.errors import BudgetExceededError
+from aila.platform.llm.sanitize import sanitize_input
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
 
@@ -361,6 +362,12 @@ def _mark_investigation_completed(inv_row: VRInvestigationRecord) -> None:
 
 
 def _render_panel(panel: list[dict[str, Any]]) -> str:
+    # fix §165 — panel content (answer / reasoning / persona_voice) is
+    # derived from upstream tool results and arbitrary LLM outputs. Pass
+    # every dynamic string through ``sanitize_input`` before splicing it
+    # into the synthesiser's prompt so a persona that pasted an
+    # ``Ignore previous instructions``-style payload from a tool result
+    # can't override the synthesis system prompt.
     lines: list[str] = [
         "# Persona deliberation panel",
         "",
@@ -371,18 +378,21 @@ def _render_panel(panel: list[dict[str, Any]]) -> str:
         "",
     ]
     for p in panel:
-        lines.append(f"## {p['persona_voice'].upper()} (turn {p['turn_count']})")
-        lines.append(f"outcome_kind: {p['outcome_kind']}")
-        lines.append(f"confidence: {p['confidence']}")
+        persona = sanitize_input(str(p["persona_voice"])).upper()
+        outcome_kind = sanitize_input(str(p["outcome_kind"]))
+        confidence = sanitize_input(str(p["confidence"]))
+        lines.append(f"## {persona} (turn {p['turn_count']})")
+        lines.append(f"outcome_kind: {outcome_kind}")
+        lines.append(f"confidence: {confidence}")
         lines.append(f"affected_components: {len(p['affected_components'])} entries")
         lines.append(f"variant_hunt_orders: {len(p['variant_hunt_orders'])} entries")
         lines.append("")
         lines.append("### answer")
-        lines.append(p["answer"] or "(empty)")
+        lines.append(sanitize_input(p["answer"]) if p["answer"] else "(empty)")
         lines.append("")
         if p.get("reasoning"):
             lines.append("### reasoning")
-            lines.append(p["reasoning"])
+            lines.append(sanitize_input(p["reasoning"]))
             lines.append("")
     lines.append(
         "# Synthesis instruction\n\n"
