@@ -318,10 +318,14 @@ class AuditMcpBridgeTool(Tool):
             # and anything else raised by ConfigRegistry().get used to
             # propagate and crash the bridge call. URL resolution is a
             # config lookup — fail-safe to the default.
+            # fix §350 — traceback now reaches the fallback log so a
+            # non-transient ConfigRegistry break (DB unreachable, schema
+            # drift) is grep-able from the INFO line.
             logging.getLogger(__name__).info(
                 "audit_mcp_bridge: ConfigRegistry lookup failed "
                 "(%s: %s) — falling back to default URL",
                 type(exc).__name__, exc,
+                exc_info=True,
             )
         self._resolved_base_url = "http://127.0.0.1:18822"
         return self._resolved_base_url
