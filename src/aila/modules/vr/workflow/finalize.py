@@ -483,9 +483,13 @@ async def sweep_finalizable_investigations() -> dict[str, int]:
         try:
             result = await finalize_investigation(inv_id)
         except Exception as exc:  # noqa: BLE001 — best-effort per inv
+            # fix §350 — surface traceback so a recurring per-inv
+            # finalize failure (handler crash, DB unreachable) is
+            # debuggable from the cron log alone.
             _log.warning(
                 "sweep_finalizable_investigations: finalize failed inv=%s err=%s",
                 inv_id, exc,
+                exc_info=True,
             )
             by_trigger["error"] = by_trigger.get("error", 0) + 1
             continue
