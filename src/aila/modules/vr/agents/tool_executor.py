@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from collections import OrderedDict
 from typing import Any
 from uuid import uuid4
 
@@ -92,11 +92,14 @@ class ToolExecutor:
     method returning a canned dict.
     """
 
-    # Known placeholder strings agents hallucinate in place of a real
-    # audit-mcp index_id. Each one costs an LLM retry-storm worth of
-    # wall-clock when it round-trips through the bridge and back to
-    # the agent as "Unknown index". Auto-substitute with the actual
-    # index_id resolved from the investigation's primary target.
+    # fix §252 — bounded LRU cap. Was an unbounded `dict[str, str]`
+    # leaking ~16 bytes per investigation forever; 100K investigations
+    # = several MB of permanent worker-process residency. 2048 covers
+    # every active investigation in flight comfortably (production
+    # peak observed: 47 concurrent) with LRU eviction for the long
+    # tail of finished/stale ids.
+    _INV_INDEX_CACHE_MAX: int = 2048
+
     _BAD_INDEX_PLACEHOLDERS: frozenset[str] = frozenset({
         "main", "master", "head", "trunk", "current", "latest",
         "default", "tip", "primary", "this", "auto",
@@ -113,11 +116,15 @@ class ToolExecutor:
             "audit_mcp": audit_mcp,
             "android_mcp": android_mcp,
         }
-        # Per-process cache: investigation_id -> resolved audit_mcp index_id
-        # (or empty string when the investigation's target has no source
-        # repo). Filled lazily on first use per investigation, never
-        # invalidated — the index_id of a target doesn't change.
-        self._inv_index_id_cache: dict[str, str] = {}
+        # Per-process LRU: investigation_id -> resolved audit_mcp
+        # index_id (or empty string when the investigation's target has
+        # no source repo). Filled lazily on first use per investigation.
+        # fix §252 — bounded LRU. OrderedDict.move_to_end on hit +
+        # popitem(last=False) on overflow gives true LRU semantics
+        # without functools.lru_cache (which can't wrap async methods
+        # AND can't share state across instances). Cache lives on the
+        # executor instance; created once per investigation loop.
+        self._inv_index_id_cache: OrderedDict[str, str] = OrderedDict()
 
     async def execute(
         self,
@@ -535,14 +542,32 @@ class ToolExecutor:
         )
         return new_args
 
+    def _cache_index_id(self, investigation_id: str, resolved: str) -> str:
+        """Insert or refresh ``investigation_id`` in the LRU index cache.
+
+        fix §252 — moves an existing entry to the MRU end and evicts the
+        LRU entry when the cap is exceeded. Returns ``resolved`` so the
+        caller can ``return self._cache_index_id(inv, value)`` directly.
+        """
+        cache = self._inv_index_id_cache
+        if investigation_id in cache:
+            cache.move_to_end(investigation_id)
+        cache[investigation_id] = resolved
+        while len(cache) > self._INV_INDEX_CACHE_MAX:
+            cache.popitem(last=False)
+        return resolved
+
     async def _resolve_index_id(self, investigation_id: str) -> str:
         """Resolve investigation -> primary target -> audit_mcp_index_id.
 
         Returns empty string when no source-repo target / no audit-mcp
         index for this investigation.
         """
-        if investigation_id in self._inv_index_id_cache:
-            return self._inv_index_id_cache[investigation_id]
+        cache = self._inv_index_id_cache
+        if investigation_id in cache:
+            # fix §252 — LRU touch.
+            cache.move_to_end(investigation_id)
+            return cache[investigation_id]
         try:
             from sqlmodel import select  # noqa: PLC0415
 
@@ -559,24 +584,20 @@ class ToolExecutor:
                     ),
                 )).first()
                 if inv is None or not inv.target_id:
-                    self._inv_index_id_cache[investigation_id] = ""
-                    return ""
+                    return self._cache_index_id(investigation_id, "")
                 target = (await uow.session.exec(
                     select(VRTargetRecord).where(
                         VRTargetRecord.id == inv.target_id,
                     ),
                 )).first()
                 if target is None or not target.mcp_handles_json:
-                    self._inv_index_id_cache[investigation_id] = ""
-                    return ""
-            import json  # noqa: PLC0415
+                    return self._cache_index_id(investigation_id, "")
             try:
                 handles = json.loads(target.mcp_handles_json or "{}")
             except (ValueError, TypeError):
                 handles = {}
             resolved = str(handles.get("audit_mcp_index_id") or "")
-            self._inv_index_id_cache[investigation_id] = resolved
-            return resolved
+            return self._cache_index_id(investigation_id, resolved)
         except Exception as exc:  # noqa: BLE001
             # fix §253 — broadened from (OSError, RuntimeError, ImportError,
             # AttributeError). The auto-correct path must NEVER block the
