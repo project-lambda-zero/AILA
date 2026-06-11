@@ -39,7 +39,11 @@ from typing import Any
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.branch import BranchOperation, BranchStatus
-from aila.modules.vr.db_models import VRInvestigationBranchRecord
+from aila.modules.vr.contracts.investigation import InvestigationStatus
+from aila.modules.vr.db_models import (
+    VRInvestigationBranchRecord,
+    VRInvestigationRecord,
+)
 from aila.platform.contracts._common import utc_now
 from aila.platform.contracts.reasoning import (
     Hypothesis,
@@ -382,6 +386,24 @@ class BranchManager:
     ) -> BranchOpResult:
         """Temporarily stop driving the branch."""
         async with UnitOfWork() as uow:
+            # fix §64 — refuse to pause under a terminal investigation.
+            # Without this guard an operator can pause a branch under
+            # a COMPLETED/FAILED/ABANDONED investigation, leaving an
+            # orphan PAUSED branch the reaper skips and resume()
+            # cannot wake (because the engine never re-enqueues for a
+            # terminal investigation per fix §39). The branch then
+            # sits PAUSED forever.
+            inv = await self._load_parent_investigation(uow)
+            if inv.status in {
+                InvestigationStatus.COMPLETED.value,
+                InvestigationStatus.FAILED.value,
+                InvestigationStatus.ABANDONED.value,
+            }:
+                raise BranchManagerError(
+                    f"cannot pause branch on {inv.status!r} investigation "
+                    f"{self.investigation_id} — branch would orphan",
+                )
+
             branch = await self._load_branch(uow, branch_id)
             if branch.status != BranchStatus.ACTIVE.value:
                 raise BranchManagerError(
@@ -537,6 +559,29 @@ class BranchManager:
                 f"{self.investigation_id}",
             )
         return branch
+
+    async def _load_parent_investigation(
+        self, uow: Any,
+    ) -> VRInvestigationRecord:
+        """Load the parent VRInvestigationRecord for this manager (fix §64).
+
+        Used by pause() to refuse pausing under a terminal investigation.
+        No FOR UPDATE — the check is advisory (a race where the
+        investigation flips terminal between this read and the branch
+        write is harmless: the branch becomes a PAUSED orphan that
+        Phase B's reaper will sweep, same outcome as the current
+        codebase has without this guard).
+        """
+        inv = (await uow.session.exec(
+            _select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == self.investigation_id,
+            ),
+        )).first()
+        if inv is None:
+            raise BranchManagerError(
+                f"investigation {self.investigation_id} not found",
+            )
+        return inv
 
     def _emit_branch_status_event(
         self,
