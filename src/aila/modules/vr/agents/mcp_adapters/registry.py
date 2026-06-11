@@ -4,8 +4,15 @@ Resolution order:
 
   1. Specialized adapter explicitly registered in ``_SPECIALIZED``
      (e.g. ``ida_headless.decompile`` -> ``adapt_decompile``).
-  2. Generic adapter ``adapt_generic`` when the tool name is in
-     ``KNOWN_TOOLS[server_id]`` but no specialized adapter exists.
+  2. Generic adapter ``adapt_generic`` when the tool name is present
+     in the **effective** catalog for ``server_id`` — i.e. the union
+     of the static ``KNOWN_TOOLS[server_id]`` set and the runtime
+     catalog populated by :func:`register_bridge_tools` from each
+     bridge's live ``/tools`` response (fix §244). Stopping at the
+     static list meant adding a tool on the bridge but forgetting to
+     extend ``KNOWN_TOOLS`` caused silent feature drops: the bridge
+     accepted the call, the adapter resolution returned ``None``, and
+     the agent's tool result never reached the message store.
   3. ``None`` when the tool name is unknown — tool_executor surfaces a
      loud error message back to the engine so it can retry with a
      correct name.
@@ -60,6 +67,7 @@ from .known_tools import _VIRTUAL_TOOLS, KNOWN_TOOLS
 
 __all__ = [
     "get_adapter",
+    "register_bridge_tools",
     "registered_tools",
     "specialized_tools",
 ]
@@ -137,18 +145,62 @@ for _server, _tool in (
 del _server, _tool
 
 
+# fix §244 — runtime catalog of tools the engine may invoke, populated
+# from each bridge's live ``/tools`` response (see
+# ``vuln_researcher._fetch_tool_specs`` for the wiring). The static
+# ``KNOWN_TOOLS`` set remains as the import-time fallback so the
+# registry still works when no bridge has been polled yet (tests,
+# narrow imports). Once a bridge has spoken, ``effective_tools(server)``
+# returns the union — additions on the bridge side appear here
+# automatically and the manual ``KNOWN_TOOLS`` list stops being the
+# bottleneck for "is this tool callable?".
+_RUNTIME_BRIDGE_TOOLS: dict[str, set[str]] = {}
+
+
+def register_bridge_tools(server_id: str, tool_names: object) -> None:
+    """Append a bridge's live tool catalog to the runtime registry.
+
+    Called by the bridge spec fetcher once per process (each
+    ``BridgeTool.list_tool_specs`` is cached at the class level so the
+    second call is a no-op). ``tool_names`` is any iterable of strings;
+    invalid entries are silently dropped — a bridge returning an
+    unusable schema shouldn't crash the agent registry.
+    """
+    if not isinstance(server_id, str) or not server_id:
+        return
+    bucket = _RUNTIME_BRIDGE_TOOLS.setdefault(server_id, set())
+    try:
+        for name in tool_names or ():
+            if isinstance(name, str) and name:
+                bucket.add(name)
+    except TypeError:
+        # Non-iterable passed by accident — leave the bucket alone.
+        return
+
+
+def _effective_tools(server_id: str) -> frozenset[str]:
+    """Union of the static + runtime catalogs for one server."""
+    static = KNOWN_TOOLS.get(server_id, frozenset())
+    runtime = _RUNTIME_BRIDGE_TOOLS.get(server_id) or set()
+    if not runtime:
+        return static
+    return frozenset(static | runtime)
+
+
 def get_adapter(server_id: str, tool_name: str) -> AdapterFn | None:
     """Return the adapter for one MCP tool, or None when unknown.
 
     Specialized adapters take priority. Falls back to ``adapt_generic``
-    when the tool is in ``KNOWN_TOOLS[server_id]``. Returns ``None`` for
-    completely unknown server/tool combinations so the executor can
-    surface a 'no such tool' error to the engine.
+    when the tool is in :func:`_effective_tools` (static ``KNOWN_TOOLS``
+    plus any names registered via :func:`register_bridge_tools` —
+    fix §244). Returns ``None`` for completely unknown server/tool
+    combinations so the executor can surface a 'no such tool' error
+    to the engine.
     """
     specific = _SPECIALIZED.get((server_id, tool_name))
     if specific is not None:
         return specific
-    if tool_name in KNOWN_TOOLS.get(server_id, frozenset()):
+    if tool_name in _effective_tools(server_id):
         return adapt_generic
     return None
 
@@ -159,14 +211,19 @@ def registered_tools() -> list[str]:
     Used by diagnostics and as the upper bound for ``specialized_tools``:
     every specialized entry MUST appear here. Includes upstream MCP tools
     listed in ``KNOWN_TOOLS`` AND bridge-side virtual tools listed in
-    ``_VIRTUAL_TOOLS`` (e.g. ``audit_mcp.read_lines``), since the agent
-    can call either via the same ``tool_run`` surface.
+    ``_VIRTUAL_TOOLS`` (e.g. ``audit_mcp.read_lines``) AND any names
+    appended at runtime by :func:`register_bridge_tools` (fix §244),
+    since the agent can call any of them via the same ``tool_run``
+    surface.
     """
     seen: set[str] = set()
     for server, tools in KNOWN_TOOLS.items():
         for tool in tools:
             seen.add(f"{server}.{tool}")
     for server, tools in _VIRTUAL_TOOLS.items():
+        for tool in tools:
+            seen.add(f"{server}.{tool}")
+    for server, tools in _RUNTIME_BRIDGE_TOOLS.items():
         for tool in tools:
             seen.add(f"{server}.{tool}")
     return sorted(seen)
