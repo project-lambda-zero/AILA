@@ -52,7 +52,11 @@ class VRInvestigationBranchRecord(SQLModel, table=True):
     )
 
     status: str = Field(default="active", index=True, max_length=32)
-    persona_voice: str | None = Field(default=None, max_length=32)
+    # fix §180 — NOT NULL with structural-marker default. Backfilled and
+    # tightened by migration ``064_vr_branch_persona_voice_not_null``.
+    # Python writers (§177/§178) always supply a real value; the default
+    # is a defensive net for schema-bypass INSERTs.
+    persona_voice: str = Field(default="unspecified", max_length=32, nullable=False)
     strategy_family: str | None = Field(default=None, max_length=128, index=True)
     fork_reason: str = Field(default="", sa_column=Column(Text))
     fork_at_turn: int | None = Field(default=None)
