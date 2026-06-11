@@ -512,11 +512,12 @@ class ToolExecutor:
             if hasattr(audit_mcp_bridge, "base_url"):
                 try:
                     bridge_base_url = await audit_mcp_bridge.base_url()
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001 — fix §350 DEFENSIVE: bridge URL is fallback path, surface traceback so operator can diagnose Config/registry drift
                     _log.info(
                         "tool_executor: bridge.base_url() failed "
                         "(%s: %s); falling back to default",
                         type(exc).__name__, exc,
+                        exc_info=True,
                     )
                     bridge_base_url = "http://127.0.0.1:18822"
             else:
@@ -537,9 +538,10 @@ class ToolExecutor:
                         "msg=%s",
                         investigation_id, branch_id, tool_name, posted_id,
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 — fix §350 DEFENSIVE: best-effort auto-steering, swallow + log traceback so silent drops are visible
                 _log.warning(
                     "auto_steering failed (best-effort): %s", exc,
+                    exc_info=True,
                 )
 
         _log.info(
@@ -733,10 +735,14 @@ class ToolExecutor:
             # OperationalError, DataError, JSON corruption, schema drift,
             # arbitrary upstream raise) is logged at INFO and falls through
             # to "use args as-is".
+            # fix §350 — surface traceback on the fallback so SQLAlchemy /
+            # schema drift / JSON corruption is grep-able instead of just
+            # the class + truncated message.
             _log.info(
                 "tool_executor._resolve_index_id: failed for inv=%s (%s: %s); "
                 "falling back to caller-supplied args",
                 investigation_id, type(exc).__name__, exc,
+                exc_info=True,
             )
             return ""
 
