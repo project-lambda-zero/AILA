@@ -312,8 +312,17 @@ class AuditMcpBridgeTool(Tool):
             if isinstance(cfg_value, str) and cfg_value.strip():
                 self._resolved_base_url = cfg_value.rstrip("/")
                 return self._resolved_base_url
-        except (ValueError, RuntimeError, ImportError):
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # fix §209 — broadened from (ValueError, RuntimeError,
+            # ImportError). SQLAlchemy OperationalError, ConfigKeyError,
+            # and anything else raised by ConfigRegistry().get used to
+            # propagate and crash the bridge call. URL resolution is a
+            # config lookup — fail-safe to the default.
+            logging.getLogger(__name__).info(
+                "audit_mcp_bridge: ConfigRegistry lookup failed "
+                "(%s: %s) — falling back to default URL",
+                type(exc).__name__, exc,
+            )
         self._resolved_base_url = "http://127.0.0.1:18822"
         return self._resolved_base_url
 

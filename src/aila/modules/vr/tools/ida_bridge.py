@@ -116,8 +116,16 @@ class IDABridgeTool(Tool):
             cfg_value = await ConfigRegistry().get("vr", "ida_headless_url")
             if isinstance(cfg_value, str) and cfg_value.strip():
                 return cfg_value.rstrip("/")
-        except (ValueError, RuntimeError, ImportError):
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # fix §212 — broadened from (ValueError, RuntimeError,
+            # ImportError). SQLAlchemy errors from ConfigRegistry().get
+            # used to propagate and crash the bridge call. URL
+            # resolution is a config lookup — fail-safe to the default.
+            logging.getLogger(__name__).info(
+                "ida_bridge: ConfigRegistry lookup failed "
+                "(%s: %s) — falling back to default URL",
+                type(exc).__name__, exc,
+            )
         return "http://127.0.0.1:18821"
 
     # ── LLM kwarg synonym map (data-driven; see _kwarg_alias.py) ──────
