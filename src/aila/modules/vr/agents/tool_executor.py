@@ -241,7 +241,19 @@ class ToolExecutor:
 
         try:
             raw = await bridge.forward(action=tool_name, **args)
-        except (OSError, TimeoutError, RuntimeError) as exc:
+        except Exception as exc:  # noqa: BLE001
+            # fix §197 — broadened from (OSError, TimeoutError,
+            # RuntimeError). `bridge.forward` reaches into httpx
+            # (httpx.HTTPError, httpx.PoolTimeout — neither inherits
+            # from OSError on every platform), pydantic.ValidationError
+            # for malformed bridge response envelopes, and arbitrary
+            # provider errors from sync→async wrappers. A miss here
+            # used to crash the worker turn instead of writing the
+            # error envelope the engine expects.
+            _log.exception(
+                "tool_executor: bridge.forward raised for %s.%s",
+                server_id, tool_name,
+            )
             err = f"{server_id}.{tool_name} bridge call raised: {exc}"
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
