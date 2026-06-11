@@ -415,13 +415,24 @@ class ToolExecutor:
                 adapter_result.payload["text"] = (
                     existing.rstrip() + "\n\n" + pivot_hint
                 )
-            # Reserved directive observable. Overwrites prior pivot on
-            # every fire so the agent only sees the most recent one;
-            # cleared when the agent finally makes a non-survey call
-            # (see _clear_directive_on_pivot_success below).
+            # fix §199 — keep the single-string `_directive.pivot` for
+            # the prompt renderer (which filters non-string directive
+            # values), AND append a structured entry to the
+            # `_directive.pivot_history` array so the operator (and
+            # forensics) can audit every nudge the agent received on
+            # this branch. Capped to the last 20 entries to keep the
+            # observables blob bounded.
+            existing_history = await self._load_pivot_history(branch_id)
+            existing_history.append({
+                "at_ts": utc_now().isoformat(),
+                "server_id": server_id,
+                "tool_name": tool_name,
+                "hint": pivot_hint,
+            })
             adapter_result.observables_delta = {
                 **(adapter_result.observables_delta or {}),
                 "_directive.pivot": pivot_hint,
+                "_directive.pivot_history": existing_history[-20:],
             }
         else:
             # Clear the pivot directive ONLY when the agent satisfied
@@ -786,6 +797,40 @@ class ToolExecutor:
             if self._classify_contract_error(text) == class_key:
                 count += 1
         return count
+
+    async def _load_pivot_history(
+        self, branch_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return the existing ``_directive.pivot_history`` array for
+        this branch (or an empty list when absent / corrupted).
+
+        fix §199 — used by the survey-streak pivot path to append new
+        entries without losing prior nudges. A separate read because
+        the observables merge happens atomically inside
+        :meth:`_merge_observables`; the pivot site only owns the
+        composition of the new delta.
+        """
+        async with UnitOfWork() as uow:
+            branch = (await uow.session.exec(
+                _select(VRInvestigationBranchRecord).where(
+                    VRInvestigationBranchRecord.id == branch_id,
+                )
+            )).first()
+        if branch is None:
+            return []
+        try:
+            case_state = json.loads(branch.case_state_json or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return []
+        observables = case_state.get("observables")
+        if not isinstance(observables, dict):
+            return []
+        history = observables.get("_directive.pivot_history")
+        if not isinstance(history, list):
+            return []
+        # Defensive copy so the caller can append without aliasing
+        # the DB-side dict.
+        return [dict(entry) for entry in history if isinstance(entry, dict)]
 
     # Tools that present aggregated/ranked metadata over a codebase
     # without revealing function bodies. Calling these repeatedly
