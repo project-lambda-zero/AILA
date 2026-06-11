@@ -89,6 +89,11 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     run_memory = RunMemory()
     cost_tracker = CostTracker(run_memory=run_memory, registry=config_registry)
     runtime_model.cost_tracker = cost_tracker
+    # fix §130 — publish the RunMemory so the hook layer's _on_job_end can
+    # call clear(run_id) on terminal task transitions without importing
+    # PlatformRuntime (which lives in a different scope than the ARQ hook).
+    from .shared import set_shared_run_memory  # noqa: PLC0415
+    set_shared_run_memory(run_memory)
 
     # Register classify pipeline step (Phase 117: Data Classification).
     # Emitter is None at startup -- the per-request ThreadSafeEventEmitter is

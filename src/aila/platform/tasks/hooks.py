@@ -343,6 +343,27 @@ async def _on_job_end(ctx: dict[str, Any]) -> None:
         if terminal_branch == "success":
             await _enqueue_dependents(task_id)
 
+        # fix §130 — terminal state (any branch that wrote completed_at)
+        # is the canonical wire-point for RunMemory.clear(). Without
+        # this, the in-memory token / scratchpad map grows by one entry
+        # per task and never shrinks across worker uptime. Skipped for
+        # retry-signalled / will-retry branches because the run is still
+        # active. Cleared even for cancelled / dead_letter so leaked
+        # workers don't pin orphan run_ids in memory.
+        if terminal_branch is not None:
+            try:
+                from aila.platform.runtime.shared import (  # noqa: PLC0415
+                    get_shared_run_memory,
+                )
+                _run_memory = get_shared_run_memory()
+                if _run_memory is not None:
+                    _run_memory.clear(task_id)
+            except (ImportError, AttributeError) as exc:
+                _log.debug(
+                    "_on_job_end: RunMemory.clear skipped for %s — %s",
+                    task_id, exc,
+                )
+
         if persist_dead_letter:
             try:
                 await _persist_dead_letter(
