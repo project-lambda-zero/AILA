@@ -446,10 +446,18 @@ async def reap_stuck_stages() -> int:
     async with UnitOfWork() as uow:
         rows = (await uow.session.exec(
             _select(VRTargetRecord).where(
-                # fix §324 — drive the filter off the enum value so a
-                # rename of AnalysisState.INGESTING (e.g. to RUNNING)
-                # doesn't silently break the reaper scan.
-                VRTargetRecord.analysis_state == AnalysisState.INGESTING.value,
+                # fix §116 / §324 — broaden the scan to every state
+                # whose rolled-up value can hide a stuck RUNNING stage.
+                # AnalysisState only has 4 values (PENDING / INGESTING /
+                # READY / FAILED); RUNNING stages roll up to INGESTING
+                # unless a sibling stage is FAILED (in which case the row
+                # rolls up to FAILED and the previous reaper missed the
+                # stuck stage entirely). PENDING/READY cannot host a
+                # RUNNING stage so they stay out of the scan.
+                VRTargetRecord.analysis_state.in_([
+                    AnalysisState.INGESTING.value,
+                    AnalysisState.FAILED.value,
+                ]),
             ),
         )).all()
         now = utc_now()
