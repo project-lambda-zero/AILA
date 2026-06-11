@@ -195,9 +195,22 @@ class PatternStore:
             )
             entry_id = store_result.get("entry_id")
 
-            if isinstance(entry_id, int):
-                row.knowledge_entry_id = entry_id
-                uow.session.add(row)
+            # fix §206 — refuse to ship a pattern whose mirror isn't
+            # persisted. Previously this silently left
+            # ``knowledge_entry_id=NULL`` and the caller treated the
+            # pattern as stored — invisible to semantic search. The
+            # whole point of the pair-write is that the back-link
+            # exists; if KnowledgeService.store didn't surface an
+            # entry_id it failed to persist and we MUST roll back the
+            # pattern INSERT (the surrounding UoW does this on raise).
+            if not isinstance(entry_id, int):
+                raise PatternStoreError(
+                    "mirror not persisted: KnowledgeService.store returned "
+                    f"no entry_id (got {entry_id!r}, operation={store_result.get('operation')!r}). "
+                    "Pattern INSERT rolled back via UoW exception path.",
+                )
+            row.knowledge_entry_id = entry_id
+            uow.session.add(row)
 
             await uow.commit()
             await uow.session.refresh(row)
