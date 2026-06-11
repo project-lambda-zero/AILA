@@ -13,8 +13,12 @@ following the same pattern as classify.py.
 
 from __future__ import annotations
 
+import logging
 import re
+import unicodedata
 from dataclasses import dataclass
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Injection pattern dataclass and registry (D-01, D-05)
@@ -28,18 +32,26 @@ class InjectionPattern:
     regex: re.Pattern[str]
 
 
-# Module-level registry -- built-in patterns compiled at import time
-_INJECTION_PATTERNS: list[InjectionPattern] = []
+# Module-level registry -- built-in patterns compiled at import time.
+# Stored as a dict keyed by ``name`` so ``register_injection_pattern``
+# is idempotent for hot-reload / repeated module import (fix §155).
+_INJECTION_PATTERNS: dict[str, InjectionPattern] = {}
 
 
 def register_injection_pattern(name: str, regex: str) -> None:
     """Register a new injection pattern for sanitize_input.
 
-    Patterns are compiled with IGNORECASE. Called at module load time for
-    built-in patterns, and available for runtime extension (D-05).
+    Patterns are compiled with IGNORECASE (fix §153). If ``name`` is
+    already registered the old entry is replaced (fix §155) and a
+    DEBUG line records the replacement — repeated registration is now
+    a no-op for the steady-state list, not a leak.
     """
-    _INJECTION_PATTERNS.append(
-        InjectionPattern(name=name, regex=re.compile(regex, re.IGNORECASE))
+    if name in _INJECTION_PATTERNS:
+        _log.debug(
+            "register_injection_pattern: replacing existing entry %r", name,
+        )
+    _INJECTION_PATTERNS[name] = InjectionPattern(
+        name=name, regex=re.compile(regex, re.IGNORECASE),
     )
 
 
@@ -77,14 +89,32 @@ register_injection_pattern(
 # Input sanitization (D-03)
 # ---------------------------------------------------------------------------
 
+# Match runs of Unicode zero-width / direction-override characters so they
+# can't smuggle injection markers past the ASCII patterns (fix §154).
+# Includes: ZWSP / ZWNJ / ZWJ / RLO / LRO / RLE / LRE / PDF / WORD JOINER /
+# zero-width no-break space. NFKC normalisation handles the rest (fullwidth
+# Latin, compatibility forms, NBSP -> regular space).
+_ZERO_WIDTH_RE: re.Pattern[str] = re.compile(
+    "[\u200b\u200c\u200d\u2060\u202a-\u202e\u2066-\u2069\ufeff]",
+)
+
+
 def sanitize_input(content: str) -> str:
     """Strip known prompt injection patterns from untrusted text.
 
-    Iterates all registered injection patterns and applies regex.sub to
-    remove matches. Idempotent: calling twice produces the same result (D-03).
+    Pre-normalises with NFKC + zero-width strip so unicode look-alikes
+    (fullwidth Latin, zero-width joiners, right-to-left overrides) don't
+    bypass ASCII regex patterns (fix §154). Then iterates all registered
+    injection patterns and applies ``regex.sub`` to remove matches.
+    Idempotent: calling twice produces the same result (D-03).
     """
-    result = content
-    for pattern in _INJECTION_PATTERNS:
+    # NFKC folds fullwidth Latin "ＩＧＮＯＲＥ" to "IGNORE" and decomposes the
+    # NBSP family to regular ASCII space, after which the case-insensitive
+    # ASCII patterns at module load time can match.
+    normalised = unicodedata.normalize("NFKC", content)
+    normalised = _ZERO_WIDTH_RE.sub("", normalised)
+    result = normalised
+    for pattern in _INJECTION_PATTERNS.values():
         result = pattern.regex.sub("", result)
     return result
 
