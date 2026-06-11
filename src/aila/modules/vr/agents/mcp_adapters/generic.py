@@ -26,7 +26,15 @@ __all__ = ["adapt_generic"]
 
 
 def adapt_generic(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
-    """Wrap any MCP response as a TEXT payload with bounded observables."""
+    """Wrap any MCP response as a TEXT payload with bounded observables.
+
+    fix §277 — the per-call observable cap comes from
+    ``_shared.MAX_OBS_DUMP_CHARS`` via :func:`bounded_dump`; there is
+    no local override. After the §271 shrink (100 MB → 32 KiB) this
+    means a 50 MB raw response no longer rides verbatim in
+    ``case_state_json``; the full body still lives in the message
+    store, untruncated, for the operator UI.
+    """
     summary_line = _summarize_raw(raw, ctx)
     preview = bounded_dump(raw)
 
@@ -36,6 +44,21 @@ def adapt_generic(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
         "data": raw,
         "source_provenance": provenance_stamp(ctx),
     }
+
+    # fix §276 — surface upstream error state. The summary line already
+    # mentions ``error=...`` when the MCP response carries it, but the
+    # AdapterResult was kind=TEXT with no other signal so the executor
+    # treated the call as a success and the agent saw an "ok"-marked
+    # tool result with error text embedded. Setting ``is_error: True``
+    # on the payload matches the convention tool_executor already uses
+    # for its own synthesised error messages (see
+    # ``_write_error_message``), so downstream readers (loops scanning
+    # for repeat failures, the prompt builder, the frontend) treat
+    # MCP-reported errors and executor-reported errors the same way.
+    if isinstance(raw, dict) and (
+        "error" in raw or str(raw.get("status") or "").lower() == "error"
+    ):
+        payload["is_error"] = True
 
     return AdapterResult(
         payload_kind=PayloadKind.TEXT,
