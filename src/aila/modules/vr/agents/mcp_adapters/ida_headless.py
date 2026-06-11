@@ -16,6 +16,7 @@ Specialized v0.3 v2 set:
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from aila.modules.vr.contracts import PayloadKind
@@ -70,6 +71,50 @@ def _list_or_empty(raw: dict[str, Any], *keys: str) -> list[Any]:
             return v
     return []
 
+_log = logging.getLogger(__name__)
+
+
+def _assert_binary_id_match(raw: dict[str, Any], ctx: AdapterContext) -> None:
+    """fix §280 — guard against cross-binary contamination.
+
+    IDA-headless tools key cached analysis by ``binary_id``. When the
+    upstream MCP server has a cache-mismatch or wrong-handle bug it
+    can return one binary's data for another binary's request, and
+    every downstream consumer (observables, prompt builder, frontend)
+    silently treats it as the correct branch's result. This helper
+    cross-checks ``raw['binary_id']`` against ``ctx.args['binary_id']``
+    at adapter entry so the contamination surfaces loudly instead of
+    contaminating the agent's case state.
+
+    Behaviour:
+
+      - Request carries no ``binary_id`` (e.g. ``call_graph`` only
+        takes ``address_or_name``) → no-op.
+      - Response omits ``binary_id`` → log a WARNING and continue;
+        the upstream contract didn't make the field available so we
+        can't validate but we can flag the gap for the operator.
+      - Both present and equal → no-op.
+      - Both present and differ → raise ``RuntimeError`` so the
+        tool_executor surfaces an error result to the agent instead
+        of writing wrong-binary data into the branch's observables.
+    """
+    req = ctx.args.get("binary_id") if isinstance(ctx.args, dict) else None
+    if not req:
+        return
+    resp = raw.get("binary_id") if isinstance(raw, dict) else None
+    if resp is None:
+        _log.warning(
+            "ida_headless adapter %s.%s: response omitted binary_id; "
+            "cannot validate against request binary_id=%s",
+            ctx.mcp_server_id, ctx.tool_name, req,
+        )
+        return
+    if str(resp) != str(req):
+        raise RuntimeError(
+            f"binary_id mismatch in {ctx.mcp_server_id}.{ctx.tool_name}: "
+            f"req={req!r} resp={resp!r}",
+        )
+
 
 # ----------------------------------------------------------------------
 # DECOMPILED_FUNCTION
@@ -79,6 +124,8 @@ def _list_or_empty(raw: dict[str, Any], *keys: str) -> list[Any]:
 @is_read_tool("ida_headless", "decompile")
 def adapt_decompile(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``decompile`` response to DECOMPILED_FUNCTION payload."""
+    # fix §280 — guard against cross-binary contamination at entry.
+    _assert_binary_id_match(raw, ctx)
     function_name = str(raw.get("function_name") or raw.get("name") or "<unknown>")
     address = str(raw.get("address") or ctx.args.get("address_or_name") or "")
     pseudocode = str(raw.get("pseudocode") or "")
@@ -139,6 +186,7 @@ def _xref_view_result(
     obs_suffix: str,
     summary_noun: str,
 ) -> AdapterResult:
+    _assert_binary_id_match(raw, ctx)  # fix §280
     refs = _list_or_empty(raw, *list_keys)
     payload: dict[str, Any] = {
         target_field: target,
@@ -239,6 +287,7 @@ def _taint_result(
     obs_suffix: str,
     label: str,
 ) -> AdapterResult:
+    _assert_binary_id_match(raw, ctx)  # fix §280
     paths = _list_or_empty(raw, *list_keys)
     payload: dict[str, Any] = {
         "paths": paths,
@@ -308,6 +357,7 @@ def _graph_result(
     obs_suffix: str,
     label: str,
 ) -> AdapterResult:
+    _assert_binary_id_match(raw, ctx)  # fix §280
     nodes = _list_or_empty(raw, "nodes")
     edges = _list_or_empty(raw, "edges")
     payload: dict[str, Any] = {
@@ -340,6 +390,7 @@ def adapt_call_chain(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``call_chain`` to GRAPH_VIEW payload (chain rooted at a target)."""
     target = str(ctx.args.get("target_function") or "<target>")
     direction = str(ctx.args.get("direction") or "callers")
+    _assert_binary_id_match(raw, ctx)  # fix §280
     chain = _list_or_empty(raw, "chain", "nodes")
     payload: dict[str, Any] = {
         "target": target,
@@ -373,6 +424,7 @@ def _code_pointer_result(
     label: str,
     max_chars: int = MAX_OBS_DUMP_CHARS,
 ) -> AdapterResult:
+    _assert_binary_id_match(raw, ctx)  # fix §280
     body = ""
     for k in body_keys:
         v = raw.get(k)
@@ -450,6 +502,10 @@ def adapt_pseudocode_slice_view(
 
 def adapt_diff_function(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``diff_function`` to PATCH_DIFF payload."""
+    # fix §280 — diff_function may carry separate old/new binary
+    # ids; the helper checks ``ctx.args['binary_id']`` (single) when
+    # present and no-ops otherwise.
+    _assert_binary_id_match(raw, ctx)
     old_name = str(ctx.args.get("address_or_name_old") or "<old>")
     new_name = str(ctx.args.get("address_or_name_new") or "<new>")
     unified = str(raw.get("unified_diff") or raw.get("diff") or "")
@@ -486,6 +542,7 @@ def adapt_diff_function(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResu
 
 def adapt_checksec(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``checksec`` response to TEXT payload (mitigations summary)."""
+    _assert_binary_id_match(raw, ctx)  # fix §280
     flag_keys = ("nx", "aslr", "pie", "canary", "cet", "cfi", "relro_full", "relro_partial")
     flags = {k: raw[k] for k in flag_keys if k in raw}
     sanitizers = raw.get("sanitizers") or []
@@ -533,6 +590,7 @@ def adapt_classify_behavior(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
     """Map ``classify_behavior`` to TEXT payload (ATT&CK-aligned categories)."""
+    _assert_binary_id_match(raw, ctx)  # fix §280
     categories = raw.get("categories") or raw.get("behaviors") or {}
     if not isinstance(categories, dict):
         categories = {}
@@ -564,6 +622,7 @@ def adapt_classify_behavior(
 
 def adapt_capa_scan(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``capa_scan`` to TEXT payload (capability matches)."""
+    _assert_binary_id_match(raw, ctx)  # fix §280
     matches = _list_or_empty(raw, "matches", "results", "capabilities")
     bullets: list[str] = []
     for m in matches[:MAX_LIST_PREVIEW]:
