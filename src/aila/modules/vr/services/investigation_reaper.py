@@ -261,9 +261,13 @@ async def sweep_cap_exceeded_investigations() -> int:
         try:
             reason = await evaluate_cap_for_investigation(str(inv_id))
         except Exception as exc:  # noqa: BLE001 — best-effort per inv
+            # fix §350 — surface traceback so a per-id eval failure
+            # (cap evaluation crash, FK regression) is debuggable from
+            # the cron log instead of only the class name.
             _log.warning(
                 "investigation_reaper: per-id eval failed inv=%s err=%s",
                 inv_id, exc,
+                exc_info=True,
             )
             continue
         if reason is not None:
