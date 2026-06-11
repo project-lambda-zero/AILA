@@ -508,12 +508,42 @@ async def _spawn_persona_siblings_and_enqueue(
 
     This prevents branch accumulation across re-enqueues (the bug where
     each re-enqueue added 6 new branches because parent_branch_id changed).
+
+    Two-phase atomicity contract (fix §292):
+
+    * **Phase 1 (atomic UoW):** reactivate winners, abandon duplicates,
+      AND INSERT new branches for personas without an existing branch
+      — all in ONE \`async with UnitOfWork()\` block, one commit. If any
+      step raises (cap check, integrity violation, parent load failure,
+      transient DB hiccup), the surrounding \`with\` block rolls back
+      every pending change. No half-spawned panel: either all 5
+      sibling branches resolve to a stable id, or none do.
+
+    * **Phase 2 (best-effort):** enqueue one ARQ task per resolved
+      sibling branch_id. Per-task try/except — a single enqueue failure
+      logs + continues; the branch row already persists from phase 1,
+      so a reaper-on-cursor sweep can submit it later. Phase 2 NEVER
+      rolls back phase 1 (the branches are real even if their tasks
+      didn't land).
+
+    The prior implementation called \`BranchManager.fork()\` inside the
+    per-persona enqueue loop, after the phase-1 UoW had already
+    committed. Each fork opened its OWN UoW; partial failure left
+    some siblings born and some missing, with no way to roll back to
+    a consistent panel.
     """
     from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
-    from aila.modules.vr.agents.branch_manager import BranchManager  # noqa: PLC0415
+    from aila.modules.vr.agents.branch_manager import (  # noqa: PLC0415
+        _strip_directives_from_state,
+        _strip_rejected_from_state,
+    )
     from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
 
-    # Find ALL branches for this investigation, keyed by persona
+    # Phase 1 — atomic dedup + reactivate + insert new branches.
+    # On any exception inside the \`async with\` block, the UoW rolls
+    # back: no branch INSERT survives, no status flip persists, and
+    # the operator's next /reopen retries cleanly.
+    sibling_branch_ids: dict[str, str] = {}  # persona_value -> branch_id
     async with UnitOfWork() as uow:
         all_branches = (await uow.session.exec(
             _select(VRInvestigationBranchRecord).where(
@@ -559,33 +589,52 @@ async def _spawn_persona_siblings_and_enqueue(
                         "auto_deliberation: abandoned duplicate %s branch %s (turns=%d, keeping %s)",
                         b.persona_voice, b.id, b.turn_count, best.id,
                     )
+
+        # Phase 1 — INSERT new branches for personas without one. Done
+        # INSIDE this same UoW so the entire panel is all-or-nothing.
+        # Load the primary's case_state once for inheritance via the
+        # strip helpers (matches BranchManager.fork's behaviour).
+        parent = (await uow.session.exec(
+            _select(VRInvestigationBranchRecord).where(
+                VRInvestigationBranchRecord.id == primary_branch_id,
+            )
+        )).first()
+        parent_case_state = (parent.case_state_json or "{}") if parent is not None else "{}"
+        inherited_case_state = _strip_rejected_from_state(
+            _strip_directives_from_state(parent_case_state),
+        )
+
+        for persona in _DELIBERATION_SIBLINGS:
+            existing_branch = best_by_persona.get(persona.value)
+            if existing_branch is not None:
+                sibling_branch_ids[persona.value] = existing_branch.id
+                continue
+            child = VRInvestigationBranchRecord(
+                investigation_id=investigation_id,
+                parent_branch_id=primary_branch_id,
+                status=BranchStatus.ACTIVE.value,
+                persona_voice=persona.value,
+                fork_reason=f"auto_deliberation:{persona.value}",
+                fork_at_turn=0,
+                case_state_json=inherited_case_state,
+                turn_count=0,
+                branch_cost_usd=0.0,
+            )
+            uow.session.add(child)
+            await uow.session.flush()  # populate child.id within the UoW
+            sibling_branch_ids[persona.value] = child.id
+
         await uow.commit()
 
-    manager = BranchManager(investigation_id)
+    # Phase 2 — best-effort enqueue per resolved branch. A single
+    # enqueue failure logs + continues; the branch row persists from
+    # phase 1, so a future reaper-on-cursor sweep can pick it up.
     task_queue = default_task_queue()
     enqueued: list[str] = []
     for persona in _DELIBERATION_SIBLINGS:
-        existing_branch = best_by_persona.get(persona.value)
-        if existing_branch is not None:
-            # Reuse existing branch — continue from where it left off
-            sibling_branch_id = existing_branch.id
-        else:
-            # No branch for this persona — fork a new one
-            try:
-                op = await manager.fork(
-                    primary_branch_id,
-                    persona_voice=persona.value,
-                    fork_reason=f"auto_deliberation:{persona.value}",
-                    at_turn=0,
-                )
-                sibling_branch_id = op.new_branch_id or op.primary_branch_id
-            except Exception as exc:  # noqa: BLE001 — never block primary on sibling fork
-                _log.warning(
-                    "auto_deliberation: fork failed persona=%s err=%s",
-                    persona.value, exc,
-                )
-                continue
-
+        sibling_branch_id = sibling_branch_ids.get(persona.value)
+        if not sibling_branch_id:
+            continue
         try:
             await task_queue.submit(
                 track="vr",
@@ -599,10 +648,11 @@ async def _spawn_persona_siblings_and_enqueue(
                 team_id=team_id,
             )
             enqueued.append(f"{persona.value}={sibling_branch_id[:8]}")
-        except Exception as exc:  # noqa: BLE001 — log + continue, primary still runs
+        except Exception as exc:  # noqa: BLE001 — phase 2 is best-effort
             _log.warning(
-                "auto_deliberation: enqueue failed persona=%s err=%s",
-                persona.value, exc,
+                "auto_deliberation: enqueue failed persona=%s branch=%s "
+                "err=%s (branch row persists; reaper-on-cursor can resubmit)",
+                persona.value, sibling_branch_id, exc,
             )
 
     if enqueued:
