@@ -1370,8 +1370,52 @@ def _set_section(label: str, code: str) -> Flowable:
     return _SectionSetter(label, code)
 
 
+# Markdown → reportlab inline-tag conversion.
+# Agents write their answers in markdown (**bold**, headers, bullets, code
+# fences, etc.). Platypus only interprets a tiny HTML-ish subset (<b>, <i>,
+# <font>, <br/>, etc.), so raw markdown leaks through as literal asterisks
+# and hashes. _md_inline rewrites the safe subset BEFORE the text reaches
+# Paragraph; multi-line constructs (headers, bullets, code fences) are
+# handled in _para_multi which splits on blank lines and per-line.
+
+# **bold** or __bold__  →  <b>bold</b>
+# `code`               →  <font name="Mono">code</font>
+# Single-* italic deliberately NOT handled — too many false positives in
+# agent text (`*ptr`, glob patterns, multiplication, etc.). Same for _italic_
+# (collides with snake_case identifiers like vflocalAccountSessionId).
+_MD_BOLD_RE = re.compile(r"\*\*([^*\n][^*\n]*?)\*\*")
+_MD_BOLD_UNDER_RE = re.compile(r"__([^_\s][^_\n]*?[^_\s])__")
+_MD_CODE_RE = re.compile(r"`([^`\n]+?)`")
+
+
+def _md_inline(escaped: str) -> str:
+    """Convert safe markdown inline patterns to reportlab inline tags.
+
+    Caller is expected to have ALREADY xml-escaped the text. We do not
+    re-escape — the only new markup we add is <b>, </b>, <font ...>,
+    </font> using ascii literals that won't collide with anything an
+    XML escape would have produced.
+    """
+    out = _MD_BOLD_RE.sub(r"<b>\1</b>", escaped)
+    out = _MD_BOLD_UNDER_RE.sub(r"<b>\1</b>", out)
+    out = _MD_CODE_RE.sub(r'<font name="Mono">\1</font>', out)
+    return out
+
+
+# Lines starting with "# ", "## ", "### " are markdown headers. In a finding
+# paragraph block we render them as bold inline text (the surrounding section
+# header in the PDF chrome is already doing the H1/H2 job).
+_MD_HEADER_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+# Lines starting with "- ", "* ", "+ " or "N. " / "N) " are bullet/numbered
+# items. We render each as a paragraph with a leading bullet glyph.
+_MD_BULLET_RE = re.compile(r"^\s*[-*+]\s+(.+)$")
+_MD_NUMBER_RE = re.compile(r"^\s*(\d{1,3})[.)]\s+(.+)$")
+# Triple-backtick code fences open / close a fenced block.
+_MD_FENCE_RE = re.compile(r"^\s*```(.*)$")
+
+
 def _para(text: str, style: ParagraphStyle) -> Paragraph:
-    """Build a Paragraph from text, escaping XML-special characters."""
+    """Build a Paragraph, escaping XML and converting inline markdown."""
     if text is None:
         text = ""
     safe = (
@@ -1379,9 +1423,10 @@ def _para(text: str, style: ParagraphStyle) -> Paragraph:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
-    # collapse runs of whitespace (newlines pulled back to spaces)
     safe = re.sub(r"\s+", " ", safe).strip()
+    safe = _md_inline(safe)
     return Paragraph(safe, style)
+
 
 def _clip(text: str | None, n: int) -> str:
     """Trim ``text`` to ``n`` chars, appending ellipsis if truncated."""
@@ -1402,23 +1447,113 @@ def _para_clipped(text: str | None, style: ParagraphStyle, cap: int = 600) -> Pa
 
 
 def _para_multi(text: str, style: ParagraphStyle) -> list[Flowable]:
-    """Render multi-paragraph prose preserving blank-line splits."""
+    """Render multi-paragraph prose preserving markdown structure.
+
+    Splits on blank lines into "blocks", then within each block:
+      - lines opening with ``# ``/``## ``/``### `` render as bold headers
+      - lines starting with ``- ``/``* ``/``+ `` render as bulleted items
+      - lines starting with ``N.``/``N)`` render as numbered items
+      - triple-backtick fenced blocks render as monospace preformatted text
+      - everything else is normal prose with inline markdown converted
+    """
     if not text:
         return []
-    paras = re.split(r"\n\s*\n", text.strip())
+    blocks = re.split(r"\n\s*\n", text.strip())
     out: list[Flowable] = []
-    for p in paras:
-        if not p.strip():
-            continue
-        # Preserve forced line breaks within paragraph as <br/>.
-        safe = (
-            p.replace("&", "&amp;")
+    mono_style = ParagraphStyle(
+        "MdFence", parent=style, fontName=_font("Mono", "Courier"),
+        fontSize=max(7.0, style.fontSize - 1.0),
+        leading=max(8.5, style.leading - 1.0),
+        backColor=colors.HexColor("#f1ede4"),
+        borderColor=colors.HexColor("#c8c0ac"),
+        borderWidth=0.4,
+        borderPadding=(2, 4, 2, 4),
+    )
+    header_style = ParagraphStyle(
+        "MdHeader", parent=style,
+        fontName=_font("Sans-Bold", "Helvetica-Bold"),
+        fontSize=style.fontSize + 1.0,
+        textColor=COL_ACCENT,
+        spaceBefore=2,
+        spaceAfter=1,
+    )
+    bullet_style = ParagraphStyle(
+        "MdBullet", parent=style,
+        leftIndent=10, firstLineIndent=-10, spaceAfter=0,
+    )
+
+    def _esc_and_inline(line: str) -> str:
+        e = (
+            line.replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
-            .replace("\n", "<br/>")
         )
-        out.append(Paragraph(safe, style))
-        out.append(Spacer(1, 2))
+        return _md_inline(e)
+
+    for block in blocks:
+        if not block.strip():
+            continue
+        lines = block.split("\n")
+        # Detect fenced code block.
+        if _MD_FENCE_RE.match(lines[0]):
+            # collect until closing fence
+            body: list[str] = []
+            for ln in lines[1:]:
+                if _MD_FENCE_RE.match(ln):
+                    break
+                body.append(ln)
+            safe = (
+                "\n".join(body)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\n", "<br/>")
+            )
+            out.append(Paragraph(safe, mono_style))
+            out.append(Spacer(1, 2))
+            continue
+
+        # Otherwise, line-by-line scan for headers / bullets / numbers.
+        # We aggregate consecutive prose lines into one Paragraph so
+        # line-wrapping works inside the prose, but each header / bullet
+        # gets its own Paragraph.
+        prose_buf: list[str] = []
+
+        def _flush_prose() -> None:
+            if not prose_buf:
+                return
+            joined = " ".join(prose_buf)
+            prose_buf.clear()
+            out.append(Paragraph(_esc_and_inline(joined), style))
+            out.append(Spacer(1, 2))
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                _flush_prose()
+                continue
+            mh = _MD_HEADER_RE.match(stripped)
+            mb = _MD_BULLET_RE.match(stripped)
+            mn = _MD_NUMBER_RE.match(stripped)
+            if mh:
+                _flush_prose()
+                out.append(Paragraph(_esc_and_inline(mh.group(2)), header_style))
+                out.append(Spacer(1, 1))
+            elif mb:
+                _flush_prose()
+                out.append(Paragraph(
+                    "&#9679;&nbsp;&nbsp;" + _esc_and_inline(mb.group(1)),
+                    bullet_style,
+                ))
+            elif mn:
+                _flush_prose()
+                out.append(Paragraph(
+                    f"<b>{mn.group(1)}.</b>&nbsp;&nbsp;" + _esc_and_inline(mn.group(2)),
+                    bullet_style,
+                ))
+            else:
+                prose_buf.append(stripped)
+        _flush_prose()
     return out
 
 
@@ -2755,9 +2890,16 @@ def _branches_table(f: FindingRecord, s: dict[str, ParagraphStyle]) -> Flowable:
 
 
 def _html_escape(s: str) -> str:
+    """XML-escape and convert markdown inline patterns (**bold**, `code`).
+
+    Every caller renders the result through Paragraph or a tag-aware
+    string template; nothing downstream needs raw markdown, so converting
+    at the escape boundary fixes every render path uniformly.
+    """
     if not s:
         return ""
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    escaped = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return _md_inline(escaped)
 
 
 # ============================================================================
