@@ -33,6 +33,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlmodel import select as _select
@@ -258,17 +259,19 @@ class BranchManager:
 
             now = utc_now()
             for branch in (a, b):
-                branch.status = BranchStatus.MERGED.value
                 branch.merged_into_branch_id = merged.id
                 branch.closed_reason = merge_reason or "merged"
                 branch.closed_at = now
-                branch.updated_at = now
                 # fix §114 — zero source-branch costs after transfer.
                 # The cost is now carried solely by ``merged``; the
                 # investigation-total aggregator sums all branches
                 # naively and would otherwise double-count.
                 branch.branch_cost_usd = 0.0
-                uow.session.add(branch)
+                # fix §21 — status write routed through chokepoint.
+                self._emit_branch_status_event(
+                    uow, branch, BranchStatus.MERGED,
+                    reason=merge_reason or "merged", at=now,
+                )
             await uow.commit()
 
             return BranchOpResult(
@@ -308,19 +311,23 @@ class BranchManager:
 
             now = utc_now()
             branch.promoted = True
-            branch.status = BranchStatus.PROMOTED.value
             branch.closed_reason = reason or "promoted"
             branch.closed_at = now
-            branch.updated_at = now
-            uow.session.add(branch)
+            # fix §21 — status write routed through chokepoint.
+            self._emit_branch_status_event(
+                uow, branch, BranchStatus.PROMOTED,
+                reason=reason or "promoted", at=now,
+            )
 
             affected: list[str] = [branch_id]
             for sib in siblings:
-                sib.status = BranchStatus.ABANDONED.value
                 sib.closed_reason = f"superseded by promoted branch {branch_id}"
                 sib.closed_at = now
-                sib.updated_at = now
-                uow.session.add(sib)
+                # fix §21 — status write routed through chokepoint.
+                self._emit_branch_status_event(
+                    uow, sib, BranchStatus.ABANDONED,
+                    reason=sib.closed_reason, at=now,
+                )
                 affected.append(sib.id)
             await uow.commit()
 
@@ -351,11 +358,13 @@ class BranchManager:
                 )
 
             now = utc_now()
-            branch.status = BranchStatus.ABANDONED.value
             branch.closed_reason = reason or "abandoned by operator"
             branch.closed_at = now
-            branch.updated_at = now
-            uow.session.add(branch)
+            # fix §21 — status write routed through chokepoint.
+            self._emit_branch_status_event(
+                uow, branch, BranchStatus.ABANDONED,
+                reason=branch.closed_reason, at=now,
+            )
             await uow.commit()
 
             return BranchOpResult(
@@ -378,9 +387,10 @@ class BranchManager:
                 raise BranchManagerError(
                     f"cannot pause branch {branch_id} in status {branch.status!r} — must be ACTIVE",
                 )
-            branch.status = BranchStatus.PAUSED.value
-            branch.updated_at = utc_now()
-            uow.session.add(branch)
+            # fix §21 — status write routed through chokepoint.
+            self._emit_branch_status_event(
+                uow, branch, BranchStatus.PAUSED, reason=reason,
+            )
             await uow.commit()
 
             return BranchOpResult(
@@ -403,9 +413,10 @@ class BranchManager:
                 raise BranchManagerError(
                     f"cannot resume branch {branch_id} in status {branch.status!r} — must be PAUSED",
                 )
-            branch.status = BranchStatus.ACTIVE.value
-            branch.updated_at = utc_now()
-            uow.session.add(branch)
+            # fix §21 — status write routed through chokepoint.
+            self._emit_branch_status_event(
+                uow, branch, BranchStatus.ACTIVE, reason=reason,
+            )
             await uow.commit()
 
             return BranchOpResult(
@@ -526,6 +537,45 @@ class BranchManager:
                 f"{self.investigation_id}",
             )
         return branch
+
+    def _emit_branch_status_event(
+        self,
+        uow: Any,
+        branch: VRInvestigationBranchRecord,
+        new_status: BranchStatus,
+        *,
+        reason: str = "",
+        at: datetime | None = None,
+    ) -> None:
+        """Single chokepoint for branch.status transitions (fix §21).
+
+        Today this is a direct ORM mutation — identical to the inline
+        ``branch.status = …`` writes it replaced. Phase B will swap
+        the body for a workflow-engine transition call so branch.status
+        gains the same SSOT discipline investigation.status has: no
+        parallel writers, every flip landing an audit-trail row +
+        cursor advance atomically.
+
+        Routing every write through one helper means Phase B is a
+        one-line swap, not a hunt across 5 methods. Same chokepoint
+        pattern as outcome_dispatcher._mark_investigation_completed
+        (fix §22, sibling helper at the investigation layer).
+
+        ``reason`` is captured for the future audit row; today it
+        flows into a debug log only. ``at`` lets the caller fix a
+        single ``now`` across multiple status writes in one txn
+        (e.g. promote() updates one chosen branch + N siblings; all
+        of them should land the same closed_at / updated_at value).
+        """
+        now = at if at is not None else utc_now()
+        branch.status = new_status.value
+        branch.updated_at = now
+        uow.session.add(branch)
+        _log.debug(
+            "branch_status_event branch=%s investigation=%s "
+            "new_status=%s reason=%s",
+            branch.id, self.investigation_id, new_status.value, reason,
+        )
 
 def _strip_directives_from_state(raw_json: str) -> str:
     """Strip ``_directive.*`` observables from a case_state JSON blob.
