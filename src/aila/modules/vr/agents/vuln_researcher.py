@@ -2635,7 +2635,12 @@ async def _upsert_canonical_outcome(
     existing = (await uow.session.exec(
         _select(VRInvestigationOutcomeRecord)
         .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
-        .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+        # fix §169 — read NEWEST canonical (was OLDEST). After §168 the
+        # race that could create two canonicals is gone, but if any
+        # legacy duplicate pair exists in older data, merging into the
+        # newer row keeps fresh contributions visible to downstream
+        # readers instead of stranding them on a row nothing else reads.
+        .order_by(VRInvestigationOutcomeRecord.created_at.desc())
         .limit(1),
     )).first()
 
