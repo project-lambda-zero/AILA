@@ -441,7 +441,12 @@ async def post_draft_review_request(
         msg = VRInvestigationMessageRecord(
             investigation_id=investigation_id,
             branch_id=proposing_branch_id,
-            sender_kind=SenderKind.OPERATOR.value,
+            # fix §250 — system-authored. Previously OPERATOR (the only
+            # broadcast-tagged kind). vuln_researcher.py:1077 broadcast
+            # filter expanded to {OPERATOR, SYSTEM} so siblings still see
+            # this message; SenderKind enum + the filter update ship
+            # together in this commit.
+            sender_kind=SenderKind.SYSTEM.value,
             sender_id="outcome_review",
             payload_kind=PayloadKind.TEXT.value,
             payload_json=json.dumps({

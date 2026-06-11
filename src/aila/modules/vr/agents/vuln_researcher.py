@@ -1074,7 +1074,16 @@ class HonestVulnResearcher:
                 _select(VRInvestigationMessageRecord)
                 .where(
                     VRInvestigationMessageRecord.investigation_id == self.investigation_id,
-                    VRInvestigationMessageRecord.sender_kind == SenderKind.OPERATOR.value,
+                    # fix §250 — broaden to SYSTEM so outcome_review
+                    # draft-request broadcasts (formerly tagged OPERATOR)
+                    # still reach every sibling's prompt. The SYSTEM
+                    # enum landed with the outcome_review tag change in
+                    # the same commit; older OPERATOR messages stay
+                    # eligible so prior history is unaffected.
+                    VRInvestigationMessageRecord.sender_kind.in_([
+                        SenderKind.OPERATOR.value,
+                        SenderKind.SYSTEM.value,
+                    ]),
                 )
                 .order_by(VRInvestigationMessageRecord.created_at.desc())
                 .limit(20)
