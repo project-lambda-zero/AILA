@@ -2807,9 +2807,22 @@ async def _upsert_canonical_outcome(
             old_payload["answer"] = new_answer
         changed = True
 
+    # fix §172 — dedupe panel_contributions by (branch_id, at_turn).
+    # Re-enqueues of the same terminal_submit (operator re-runs an
+    # investigation, worker retry, etc.) used to append a duplicate
+    # entry every time, inflating len(panel_contributions) and
+    # breaking quorum thresholds that read it (see
+    # investigation_emit._maybe_trigger_synthesis line 712).
     contributions = old_payload.get("panel_contributions") or []
-    contributions.append(contribution)
-    old_payload["panel_contributions"] = contributions
+    contrib_key = (branch_id, at_turn)
+    already_recorded = any(
+        isinstance(c, dict)
+        and (c.get("branch_id"), c.get("at_turn")) == contrib_key
+        for c in contributions
+    )
+    if not already_recorded:
+        contributions.append(contribution)
+        old_payload["panel_contributions"] = contributions
 
     existing.payload_json = json.dumps(old_payload)
     uow.session.add(existing)
