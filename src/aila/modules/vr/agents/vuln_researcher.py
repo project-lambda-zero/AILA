@@ -1099,6 +1099,11 @@ class HonestVulnResearcher:
             # mark steering as understood; without it, every operator
             # message re-fires on every turn within the wall-clock TTL
             # even after the agent has already acted on it.
+            # fix §333 — funnel both legacy comma-separated string and
+            # canonical list shapes through the shared normalizer.
+            from aila.modules.vr.agents.auto_steering import (  # noqa: PLC0415
+                _normalize_acked_observable,
+            )
             acked_ids: set[str] = set()
             try:
                 branch_row = (await uow.session.exec(
@@ -1109,10 +1114,7 @@ class HonestVulnResearcher:
                 if branch_row is not None:
                     cs = json.loads(branch_row.case_state_json or "{}")
                     acked_raw = (cs.get("observables") or {}).get("_acked_operator_messages")
-                    if isinstance(acked_raw, str) and acked_raw:
-                        acked_ids = {x.strip() for x in acked_raw.split(",") if x.strip()}
-                    elif isinstance(acked_raw, list):
-                        acked_ids = {str(x).strip() for x in acked_raw if x}
+                    acked_ids = set(_normalize_acked_observable(acked_raw))
             except (json.JSONDecodeError, AttributeError):
                 pass
 
@@ -2226,11 +2228,15 @@ def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:
         "",
         "ACK CONTRACT: after you actually act on a steering message,",
         "include its id in your decision's observables under the",
-        "reserved key `_acked_operator_messages` (comma-separated when",
-        "multiple). Acknowledged messages stop appearing on subsequent",
-        "turns. ONLY ACK after acting — premature ACK loses the steering",
-        "forever. Example: observables: {\"_acked_operator_messages\":",
-        "\"<id1>,<id2>\"}",
+        "reserved key `_acked_operator_messages` as a JSON list of",
+        "strings (one id per element). Acknowledged messages stop",
+        "appearing on subsequent turns. ONLY ACK after acting —",
+        "premature ACK loses the steering forever. fix §333 —",
+        "canonical shape is a list; the comma-separated string shape",
+        "is still accepted at read time for legacy case_state rows but",
+        "MUST NOT be emitted by new decisions.",
+        "Example: observables: {\"_acked_operator_messages\":",
+        "[\"<id1>\", \"<id2>\"]}",
         "",
     ]
     for entry in messages:

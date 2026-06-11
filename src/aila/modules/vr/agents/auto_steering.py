@@ -53,6 +53,26 @@ __all__ = ["maybe_post_auto_steering"]
 _log = logging.getLogger(__name__)
 
 
+def _normalize_acked_observable(raw: object) -> list[str]:
+    """Canonicalise the ``_acked_operator_messages`` observable shape.
+
+    fix §333 — the agent prompt historically demonstrated a comma-separated
+    string, but the new canonical shape is a list-of-strings. Both shapes
+    are accepted at read time so legacy case_state rows still resolve;
+    new prompt guidance demonstrates the list shape exclusively.
+
+    Returns a list of stripped, non-empty string ids. Never raises;
+    unrecognised shapes (None, dict, int, …) collapse to ``[]``.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [x.strip() for x in raw.split(",") if x.strip()]
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if x is not None and str(x).strip()]
+    return []
+
+
 # ─────────────────────────────────────────────────────────────────
 # Detectors
 # ─────────────────────────────────────────────────────────────────
@@ -419,6 +439,14 @@ async def _already_posted(
     """De-dupe: skip when an auto-steering with the same key already
     exists for this investigation AND has not yet been acknowledged.
 
+    fix §331 + §332 — query by the new indexed
+    ``auto_steering_key`` column (migration 063) instead of scanning
+    a fixed LIMIT 40 of recent messages and parsing payload_json. The
+    old LIMIT was too small for the 6-branch fan-out where each branch
+    can produce >40 tool calls in one wall-clock minute, so the dedup
+    silently fell off the end of the window. Exact-match indexed
+    lookup is O(log n) and has no recency horizon.
+
     Once the agent ACKs a steering (sets the message's id in any
     branch's ``_acked_operator_messages`` observable), the condition
     is considered addressed. If the same condition recurs later, the
@@ -432,38 +460,32 @@ async def _already_posted(
         rows = (await uow.session.exec(
             _select(VRInvestigationMessageRecord)
             .where(VRInvestigationMessageRecord.investigation_id == investigation_id)
-            .where(VRInvestigationMessageRecord.sender_kind == SenderKind.OPERATOR.value)
-            .where(VRInvestigationMessageRecord.sender_id == "auto_steering")
-            .order_by(VRInvestigationMessageRecord.created_at.desc())
-            .limit(40)
+            .where(VRInvestigationMessageRecord.auto_steering_key == auto_steering_key)
         )).all()
-        matching_ids: list[str] = []
-        for row in rows:
-            try:
-                payload = json.loads(row.payload_json or "{}")
-            except (ValueError, TypeError):
-                continue
-            if payload.get("auto_steering_key") == auto_steering_key:
-                matching_ids.append(row.id)
-        if not matching_ids:
+        if not rows:
             return False
-        # Collect ACK ids across every branch's case_state.
+        matching_ids: list[str] = [row.id for row in rows]
+        # fix §334 — bound the branch scan to the most recent 50 branches
+        # by created_at. Investigations with hundreds of sibling branches
+        # were paying O(N branches × case_state size) on every auto-steering
+        # check; this caps it at 50 which still covers every live persona
+        # plus a wide margin for ACK propagation latency.
         branches = (await uow.session.exec(
-            _select(VRInvestigationBranchRecord).where(
+            _select(VRInvestigationBranchRecord)
+            .where(
                 VRInvestigationBranchRecord.investigation_id == investigation_id,
             )
+            .order_by(VRInvestigationBranchRecord.created_at.desc())
+            .limit(50)
         )).all()
         all_acks: set[str] = set()
         for b in branches:
             try:
                 cs = json.loads(b.case_state_json or "{}")
-                acked_raw = (cs.get("observables") or {}).get("_acked_operator_messages")
-                if isinstance(acked_raw, str):
-                    all_acks.update(x.strip() for x in acked_raw.split(",") if x.strip())
-                elif isinstance(acked_raw, list):
-                    all_acks.update(str(x).strip() for x in acked_raw if x)
             except (json.JSONDecodeError, AttributeError):
                 continue
+            acked_raw = (cs.get("observables") or {}).get("_acked_operator_messages")
+            all_acks.update(_normalize_acked_observable(acked_raw))
         # If any matching steering is still un-ack'd, block re-post
         # (agent hasn't yet acted on the existing one). When ALL
         # matching steerings are ack'd, allow re-post — the agent
@@ -476,14 +498,31 @@ async def _already_posted(
 async def _post(
     investigation_id: str, branch_id: str | None,
     text: str, auto_steering_key: str,
-) -> str:
+) -> str | None:
     """Write the auto-steering as an operator-kind message. Same shape
     the UI's chat composer produces (sender_kind='operator', payload
     is JSON with the message text + auto_steering metadata).
 
     branch_id is the PRIMARY branch so the message is visible to
     every sibling (the message loader treats primary-addressed as
-    broadcast)."""
+    broadcast).
+
+    fix §331/§332 — populate the new ``auto_steering_key`` column on
+    the row itself so :func:`_already_posted` can dedup via an exact
+    indexed lookup. The legacy ``payload_json.auto_steering_key`` is
+    kept for one release so older message renderers still surface
+    the metadata.
+
+    fix §338 — the partial-UNIQUE index on
+    ``(investigation_id, auto_steering_key)`` (migration 063) collapses
+    the fire-then-check race to a database-level no-op: a concurrent
+    second writer that observed an empty ``_already_posted`` will hit
+    ``IntegrityError`` on insert, which is the correct outcome. We
+    catch it and return ``None`` — the first writer wins, the second
+    silently observes the row.
+    """
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
     async with UnitOfWork() as uow:
         # Resolve primary branch for broadcast
         from aila.modules.vr.db_models import VRInvestigationBranchRecord  # noqa: PLC0415
@@ -506,10 +545,21 @@ async def _post(
             payload_kind=PayloadKind.TEXT.value,
             payload_json=json.dumps(payload),
             operator_intent=OperatorIntent.STEERING.value,
+            auto_steering_key=auto_steering_key,
             created_at=utc_now(),
         )
         uow.session.add(msg)
-        await uow.commit()
+        try:
+            await uow.commit()
+        except IntegrityError as exc:
+            # fix §338 — unique constraint on (inv, key) raced us. The
+            # first writer wins; we return None so the caller sees
+            # "already posted". Rollback is automatic on session exit.
+            _log.info(
+                "auto_steering insert race lost inv=%s key=%s err=%s",
+                investigation_id, auto_steering_key, exc,
+            )
+            return None
         await uow.session.refresh(msg)
         return msg.id
 

@@ -124,6 +124,34 @@ def _str_or_none(value: Any) -> str | None:
     return s or None
 
 
+
+
+def _canonical_descriptor_key(descriptor: dict[str, Any] | None) -> str:
+    """Canonical key for fuzz campaign proposal descriptor (fix §263).
+
+    Old code computed the key from a 3-field fallback chain
+    (``harness or function or function_name``) inline at both the
+    read site (matching old rows) and the write site (new row). Any
+    drift between the two formulas — case, whitespace, key choice —
+    silently broke the supersede match. Single normalization function
+    so both sides land on the same string.
+
+    Order of preference matches the original code: explicit harness
+    name > function symbol > legacy ``function_name``. Whitespace
+    stripped and lower-cased so cosmetic differences don't break
+    supersede.
+    """
+    if not isinstance(descriptor, dict):
+        return ""
+    for key in ("harness", "function", "function_name"):
+        raw = descriptor.get(key)
+        if isinstance(raw, str):
+            value = raw.strip().lower()
+            if value:
+                return value
+    return ""
+
+
 def _int_or_none(value: Any) -> int | None:
     if value is None:
         return None
