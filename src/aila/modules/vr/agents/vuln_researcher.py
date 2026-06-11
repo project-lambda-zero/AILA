@@ -671,13 +671,24 @@ class HonestVulnResearcher:
                         knowledge=ServiceFactory().knowledge,
                     )
                     await dispatcher.dispatch(decision.review_outcome_id)
-            except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
-                _log.warning(
+            except Exception as exc:  # noqa: BLE001 — fix §91
+                # Was `(OSError, TimeoutError, RuntimeError, ValueError)`;
+                # SQLAlchemyError, pydantic.ValidationError, KeyError,
+                # AttributeError from upsert_review / evaluate_quorum /
+                # dispatcher.dispatch all fell through silently as the
+                # turn-loop just continued, dropping the vote. Catch
+                # everything, log with the type, then re-raise the
+                # subtypes that the workflow finalizer recognises as
+                # retryable LLM failures so the runner can re-enqueue.
+                _log.exception(
                     "vuln_researcher REVIEW failed inv=%s branch=%s "
-                    "outcome=%s err=%s",
+                    "outcome=%s err=%s: %s",
                     self.investigation_id, self.branch_id,
-                    decision.review_outcome_id, exc,
+                    decision.review_outcome_id,
+                    type(exc).__name__, exc,
                 )
+                if isinstance(exc, VulnResearcherError):
+                    raise
 
         _log.info(
             "vuln_researcher TURN inv=%s branch=%s turn=%d action=%s terminal=%s "
