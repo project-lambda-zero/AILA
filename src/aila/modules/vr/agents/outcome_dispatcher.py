@@ -910,15 +910,15 @@ class OutcomeDispatcher:
                 reason="missing_profile_or_target_descriptor",
             )
 
-        # Best-effort superseded marker: any prior PENDING proposal
-        # for the same investigation + same harness/function gets
-        # demoted so the operator only ever sees the newest.
-        descriptor_key = (
-            target_descriptor.get("harness")
-            or target_descriptor.get("function")
-            or target_descriptor.get("function_name")
-            or ""
-        )
+        # fix §262 + §263 — canonical descriptor key + row-level lock.
+        # Old code computed the descriptor key inline twice (once for
+        # the new row, once per old row) with no shared canonicalizer,
+        # so trivial cosmetic differences ("MyHarness" vs "myharness")
+        # silently broke supersede. _canonical_descriptor_key now owns
+        # the normalization. The SELECT now requests row-level FOR
+        # UPDATE locks on matching pending rows so a concurrent
+        # dispatch can't supersede the same rows twice.
+        descriptor_key = _canonical_descriptor_key(target_descriptor)
 
         async with UnitOfWork() as uow:
             if descriptor_key:
@@ -928,20 +928,14 @@ class OutcomeDispatcher:
                         == investigation_id,
                         VRFuzzCampaignProposalRecord.target_id == target_row.id,
                         VRFuzzCampaignProposalRecord.status == "pending",
-                    ),
+                    ).with_for_update(),
                 )).all()
                 for old in old_rows:
                     try:
                         old_descriptor = json.loads(old.target_descriptor_json or "{}")
                     except (ValueError, TypeError):
                         continue
-                    old_key = (
-                        old_descriptor.get("harness")
-                        or old_descriptor.get("function")
-                        or old_descriptor.get("function_name")
-                        or ""
-                    )
-                    if old_key == descriptor_key:
+                    if _canonical_descriptor_key(old_descriptor) == descriptor_key:
                         old.status = "superseded"
                         old.updated_at = utc_now()
                         uow.session.add(old)
