@@ -502,18 +502,26 @@ class OutcomeDispatcher:
                 uow.session.add(inv_row)
             await uow.session.commit()
 
-        # Bundled variant hunt orders: when the agent's submit payload
-        # carries ``variant_hunt_orders: list[dict]``, spawn each as a
-        # child investigation in the same dispatch pass. This lets a
-        # single submit produce one primary finding + N variant probes
-        # without the loop having to round-trip a separate VARIANT_
-        # HUNT_ORDER outcome (the loop terminates on first submit).
-        spawned_children: list[str] = []
+        # fix §236 — variant spawn loop is non-atomic across child
+        # investigations (each _spawn_variant_child has its own UoW +
+        # ARQ enqueue). A crash mid-loop used to leave N children alive
+        # with no record of what was already spawned, so re-dispatching
+        # the outcome forked another N → 2N. Record each spawned id back
+        # to the outcome payload as we go; re-dispatch skips already-
+        # spawned indices.
+        spawned_indices: set[int] = set(
+            payload.get("_spawned_variant_indices") or [],
+        )
+        spawned_children: list[str] = list(
+            payload.get("_spawned_variant_child_ids") or [],
+        )
         spawn_errors: list[str] = []
         variants = payload.get("variant_hunt_orders")
         if isinstance(variants, list):
-            for raw in variants:
+            for idx, raw in enumerate(variants):
                 if not isinstance(raw, dict):
+                    continue
+                if idx in spawned_indices:
                     continue
                 try:
                     child_id = await self._spawn_variant_child(
@@ -522,6 +530,12 @@ class OutcomeDispatcher:
                         payload=raw,
                     )
                     spawned_children.append(child_id)
+                    spawned_indices.add(idx)
+                    await self._persist_variant_spawn(
+                        outcome_id=outcome_id,
+                        variant_index=idx,
+                        child_id=child_id,
+                    )
                 except (ValueError, RuntimeError) as exc:
                     spawn_errors.append(f"{type(exc).__name__}:{exc}")
         # Variant-child auto-PoC: when this DIRECT_FINDING came from
@@ -744,6 +758,44 @@ class OutcomeDispatcher:
                 child_id, exc,
             )
         return child_id
+
+    async def _persist_variant_spawn(
+        self,
+        *,
+        outcome_id: str,
+        variant_index: int,
+        child_id: str,
+    ) -> None:
+        """Stamp a spawned variant child into the outcome payload.
+
+        Persists ``_spawned_variant_indices`` (list[int]) and
+        ``_spawned_variant_child_ids`` (list[str]) inside the outcome's
+        payload_json so re-dispatch can skip already-spawned variants
+        instead of forking duplicates (fix §236).
+        """
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord).where(
+                    VRInvestigationOutcomeRecord.id == outcome_id,
+                ),
+            )).first()
+            if row is None:
+                return
+            try:
+                stored = json.loads(row.payload_json or "{}")
+            except (ValueError, TypeError):
+                stored = {}
+            indices = list(stored.get("_spawned_variant_indices") or [])
+            ids = list(stored.get("_spawned_variant_child_ids") or [])
+            if variant_index not in indices:
+                indices.append(variant_index)
+            if child_id not in ids:
+                ids.append(child_id)
+            stored["_spawned_variant_indices"] = indices
+            stored["_spawned_variant_child_ids"] = ids
+            row.payload_json = json.dumps(stored)
+            uow.session.add(row)
+            await uow.session.commit()
 
     async def _queue_poc_writer(
         self,
