@@ -49,7 +49,8 @@ import logging
 import os
 from datetime import timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import cast, func, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql.functions import coalesce
 
 from aila.modules.vr._task_queue import default_task_queue
@@ -109,9 +110,12 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
     keeps that pressure bounded.
 
     Why not a column for "enqueued?": adding one needs a migration. The
-    TaskRecord JOIN below uses the existing JSONB cmd-line containment
-    operator, which is fast enough for the per-parent ≤46-child set we
-    sweep once per minute.
+    TaskRecord JOIN below uses a JSONB extract on ``kwargs_json``
+    (`(kwargs_json::jsonb)->>'investigation_id' = inv.id`) so the match
+    is on a typed JSON path, not a substring. Cheap enough for the
+    per-parent ≤46-child set we sweep once per minute, and removes the
+    false-positive class where a different task's kwargs_json happens
+    to embed the same UUID elsewhere (see §41 in MY_VIOLATIONS.md).
     """
     inv = VRInvestigationRecord
     tgt = VRTargetRecord
@@ -175,9 +179,14 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 .where(inv.status == InvestigationStatus.CREATED.value)
                 .where(
                     select(tsk.id)
-                    .where(tsk.kwargs_json.ilike(
-                        func.concat("%", inv.id, "%"),
-                    ))
+                    .where(
+                        # fix §41 — JSONB extract on `investigation_id`
+                        # replaces substring ilike(%uuid%) which matched
+                        # any task whose kwargs_json contained the UUID
+                        # in any field (parent_investigation_id, etc.).
+                        cast(tsk.kwargs_json, JSONB)["investigation_id"]
+                        .astext == inv.id,
+                    )
                     .exists(),
                 ),
             )
@@ -198,9 +207,12 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 .where(inv.status == InvestigationStatus.CREATED.value)
                 .where(
                     ~select(tsk.id)
-                    .where(tsk.kwargs_json.ilike(
-                        func.concat("%", inv.id, "%"),
-                    ))
+                    .where(
+                        # fix §41 — JSONB extract on `investigation_id`
+                        # (see _refill_apk_batches in_flight count above).
+                        cast(tsk.kwargs_json, JSONB)["investigation_id"]
+                        .astext == inv.id,
+                    )
                     .exists(),
                 )
                 .order_by(inv.created_at)
