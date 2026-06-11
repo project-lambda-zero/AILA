@@ -68,12 +68,19 @@ _FINDING_CONFIDENCE_FLOOR: float = 0.6
 # MEDIUM rung lands exactly on the FINDING floor so a MEDIUM-confidence
 # direct_finding still crosses the gate when no verifier_report is
 # present, matching the seed prompt's ≥0.6 cutoff.
+#
+# fix §219 — UNKNOWN is mapped to the FINDING floor (not 0.0) so the
+# default behaviour for an unclassified confidence is "treat as finding
+# pending operator review" rather than "silently demote to inconclusive".
+# The :meth:`dict.get` default below also lands on the floor so a future
+# OutcomeConfidence enum member added without updating this table fails
+# safe in the same direction.
 _ENUM_CONFIDENCE: dict[OutcomeConfidence, float] = {
     OutcomeConfidence.EXACT: 1.0,
     OutcomeConfidence.STRONG: 0.85,
     OutcomeConfidence.MEDIUM: 0.6,
     OutcomeConfidence.CAVEATED: 0.3,
-    OutcomeConfidence.UNKNOWN: 0.0,
+    OutcomeConfidence.UNKNOWN: _FINDING_CONFIDENCE_FLOOR,
 }
 
 
@@ -114,7 +121,10 @@ def child_outcome_to_verdict(
     numeric_conf = (
         verifier_conf
         if verifier_conf is not None
-        else _ENUM_CONFIDENCE.get(outcome.confidence, 0.0)
+        # fix §219 — unknown enum members fall through to the FINDING
+        # floor (not 0.0) so adding a new OutcomeConfidence value defaults
+        # to "treat as finding pending operator review".
+        else _ENUM_CONFIDENCE.get(outcome.confidence, _FINDING_CONFIDENCE_FLOOR)
     )
     agent_summary = _extract_agent_summary(payload)
 
@@ -150,8 +160,25 @@ def child_outcome_to_verdict(
             agent_summary=agent_summary,
         )
 
-    # Branch 3 — direct_finding above the confidence floor.
+    # Branch 3 — direct_finding. Verifier-confirmed dominates the numeric
+    # confidence gate (fix §218); otherwise the float floor decides.
     if outcome.outcome_kind == OutcomeKind.DIRECT_FINDING:
+        # fix §218 — verifier_verdict == 'confirmed' is the canonical
+        # post-synthesis pass for a real finding. Treat it as FINDING
+        # regardless of numeric_conf so a low-confidence-but-confirmed
+        # claim is never demoted to inconclusive on the float gate.
+        if verifier_verdict == "confirmed":
+            return MasvsControlVerdict(
+                control_id=control.id,
+                verdict=MasvsVerdict.FINDING,
+                confidence=numeric_conf,
+                child_investigation_id=child_investigation_id,
+                primary_outcome_id=outcome.id,
+                reason=None,
+                evidence_locations=evidence_locations,
+                evidence_locations_total=evidence_locations_total,
+                agent_summary=agent_summary,
+            )
         if verifier_verdict == "inconclusive":
             return MasvsControlVerdict(
                 control_id=control.id,
