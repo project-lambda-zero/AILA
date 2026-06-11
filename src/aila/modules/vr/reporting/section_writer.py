@@ -264,9 +264,13 @@ async def generate_section(
             team_id=team_id,
         )
     except Exception as exc:  # noqa: BLE001
+        # fix §350 — DEFENSIVE: section synthesis falls back to the raw
+        # agent_summary so the PDF still ships; surface the traceback so
+        # a recurring schema/auth break is grep-able in operator logs.
         _log.warning(
             "section_writer LLM call failed control=%s: %s",
             verdict.control_id, exc,
+            exc_info=True,
         )
         return None
     if response.disabled or response.parsed is None:
