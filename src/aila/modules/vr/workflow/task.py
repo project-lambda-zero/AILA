@@ -65,7 +65,15 @@ async def run_vr_investigate(
     ctx: TaskContext,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Seed — platform dispatch handles workflow execution via VR_INVESTIGATE_V1.
+    """Seed function for the ``VR_INVESTIGATE_V1`` workflow definition.
+
+    fix §83 — this body deliberately contains a single ``...`` Ellipsis.
+    The ``@platform_task`` decorator wraps the function so the platform
+    layer dispatches the workflow engine via the bound ``definition``
+    kwarg above instead of executing this body. The body would only
+    run if the platform decorator were removed; the docstring is the
+    visible contract for readers. Do NOT add logic inside this function
+    — phase-handoff / state transitions live on ``VR_INVESTIGATE_V1``.
 
     Required kwarg: ``investigation_id``. The setup state resolves the
     primary branch from the DB; operator does not provide branch_id.
