@@ -358,10 +358,29 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 branch.persona_voice = _PRIMARY_PERSONA.value
                 uow.session.add(branch)
 
+        # fix §296 — whitelist allowable prior status before flipping
+        # to RUNNING. The prior unconditional flip silently overrode
+        # operator-paused investigations that re-entered setup via a
+        # racing dispatcher. Phase B's cursor SSOT writes '__paused__'
+        # to the cursor; investigation_setup must NOT clobber that.
+        # CREATED + RUNNING are the only legitimate transition sources
+        # (CREATED → RUNNING on first dispatch; RUNNING → RUNNING is
+        # idempotent on resume / re-enqueue).
         now = utc_now()
-        inv.status = InvestigationStatus.RUNNING.value
-        if inv.started_at is None:
-            inv.started_at = now
+        allowed_prior_statuses = {
+            InvestigationStatus.CREATED.value,
+            InvestigationStatus.RUNNING.value,
+        }
+        if inv.status not in allowed_prior_statuses:
+            _log.warning(
+                "investigation_setup REFUSE_FLIP inv=%s prior_status=%s "
+                "(allowed=%s) — operator likely paused mid-setup; preserving",
+                investigation_id, inv.status, sorted(allowed_prior_statuses),
+            )
+        else:
+            inv.status = InvestigationStatus.RUNNING.value
+            if inv.started_at is None:
+                inv.started_at = now
         inv.updated_at = now
         uow.session.add(inv)
         await uow.commit()
