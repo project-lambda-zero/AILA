@@ -203,9 +203,12 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                     resolutions = await resolve_cve_intel(locked_cve_ids)
                     locked_cve_intel = [r.to_dict() for r in resolutions]
             except Exception as exc:  # noqa: BLE001 — never block status-locked exit
+                # fix §350 — surface traceback so a CVE re-fetch failure
+                # on a locked exit is debuggable on first occurrence.
                 _log.warning(
                     "investigation_setup STATUS_LOCKED cve_intel re-fetch "
                     "failed inv=%s: %s", investigation_id, exc,
+                    exc_info=True,
                 )
             _log.info(
                 "investigation_setup STATUS_LOCKED inv=%s status=%s "
@@ -416,17 +419,25 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
         except Exception as exc:  # noqa: BLE001 — never block setup on intel failure
             _CONSECUTIVE_CVE_INTEL_FAILURES += 1
             if _CONSECUTIVE_CVE_INTEL_FAILURES >= _FAILURE_ESCALATION_THRESHOLD:
+                # fix §350 — escalation now carries the traceback so the
+                # on-call line names the failure shape (httpx vs registry
+                # vs schema) without grepping deeper.
                 _log.error(
                     "investigation_setup: CVE intel resolve failed %d times in "
                     "a row (last err: %s) — escalating; check NVD mirror + "
                     "cve_intel_resolver IntelService dependency",
                     _CONSECUTIVE_CVE_INTEL_FAILURES, exc,
+                    exc_info=True,
                 )
             else:
+                # fix §350 — per-occurrence warning includes traceback so
+                # the first transient failure already has its stack on
+                # record (no need to wait for escalation).
                 _log.warning(
                     "investigation_setup: CVE intel resolve failed "
                     "(consecutive=%d): %s",
                     _CONSECUTIVE_CVE_INTEL_FAILURES, exc,
+                    exc_info=True,
                 )
 
     # Knowledge Transfer: query the pattern catalog for techniques
@@ -485,17 +496,23 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     except Exception as exc:  # noqa: BLE001 — never block setup on pattern lookup
         _CONSECUTIVE_PATTERN_LOOKUP_FAILURES += 1
         if _CONSECUTIVE_PATTERN_LOOKUP_FAILURES >= _FAILURE_ESCALATION_THRESHOLD:
+            # fix §350 — escalation now carries the traceback so on-call
+            # sees the failure shape (KnowledgeService, store, DB) in
+            # one line.
             _log.error(
                 "investigation_setup: pattern lookup failed %d times in a "
                 "row (last err: %s) — escalating; check pattern_store + "
                 "KnowledgeService dependency",
                 _CONSECUTIVE_PATTERN_LOOKUP_FAILURES, exc,
+                exc_info=True,
             )
         else:
+            # fix §350 — per-occurrence warning includes traceback.
             _log.warning(
                 "investigation_setup: pattern lookup failed "
                 "(consecutive=%d): %s",
                 _CONSECUTIVE_PATTERN_LOOKUP_FAILURES, exc,
+                exc_info=True,
             )
 
     _log.info(
@@ -677,10 +694,14 @@ async def _spawn_persona_siblings_and_enqueue(
             )
             enqueued.append(f"{persona.value}={sibling_branch_id[:8]}")
         except Exception as exc:  # noqa: BLE001 — phase 2 is best-effort
+            # fix §350 — reaper-on-cursor can resubmit, but the stack
+            # here distinguishes a structural enqueue regression from a
+            # transient Redis blip.
             _log.warning(
                 "auto_deliberation: enqueue failed persona=%s branch=%s "
                 "err=%s (branch row persists; reaper-on-cursor can resubmit)",
                 persona.value, sibling_branch_id, exc,
+                exc_info=True,
             )
 
     if enqueued:
