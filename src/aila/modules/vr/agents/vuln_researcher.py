@@ -409,11 +409,19 @@ class HonestVulnResearcher:
                     response=decision.model_dump(mode="json"),
                 )
 
+        # fix §87 — was a production `assert`; stripped under `-O` and
+        # then a NoneType-has-no-attribute crashes later on the next
+        # decision use. Raise explicitly so the workflow finalizer
+        # marks the investigation FAILED instead of partial-completing.
         # decision must be set by now: either the cache HIT branch
-        # assigned it OR the LLM call branch did. The only escape
-        # path is the raise VulnResearcherError above which exits
-        # the function entirely.
-        assert decision is not None, "decision unbound after both paths — logic bug"
+        # assigned it OR the LLM call branch did. The only escape path
+        # is the raise VulnResearcherError above which exits entirely.
+        if decision is None:
+            raise VulnResearcherError(
+                f"decision unbound after cache + LLM paths "
+                f"(inv={self.investigation_id} branch={self.branch_id} "
+                f"turn={turn_number}) — logic bug",
+            )
 
         # ── variant_hunt submit gate ────────────────────────────────────
         # When the agent terminal-submits on a kind=variant_hunt
