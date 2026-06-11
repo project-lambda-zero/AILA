@@ -102,6 +102,16 @@ _DEFAULT_TIMEOUTS: dict[StageName, float] = {
     StageName.MOBSF_SCAN: 1800.0,
 }
 
+# fix §117 — surface stage-name drift at startup, not via silent 30-min
+# timeouts in production. Every StageName must have an explicit timeout
+# (no fallback to _DEFAULT_TIMEOUTS.get(..., 1800.0) for newly added
+# stages) and the dict cannot list stages that no longer exist.
+assert set(_DEFAULT_TIMEOUTS) == set(StageName), (
+    "stage_tracker._DEFAULT_TIMEOUTS drift: "
+    f"missing={set(StageName) - set(_DEFAULT_TIMEOUTS)} "
+    f"unknown={set(_DEFAULT_TIMEOUTS) - set(StageName)}"
+)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Exceptions
