@@ -83,6 +83,22 @@ _STATUS_LOCKED: frozenset[str] = frozenset({
     InvestigationStatus.FAILED.value,
 })
 
+# fix §293 — module-level consecutive failure counters for the two
+# best-effort lookups (CVE intel, knowledge-transfer pattern store)
+# that surround the main UoW. The prior bare `except Exception` +
+# `_log.warning(...)` swallowed silent infrastructure rot: a broken
+# NVD mirror, a missing IntelService dependency, or a corrupted
+# pattern_store could fail every investigation for hours while only
+# producing WARN noise. After 5 consecutive failures on either path,
+# escalate to _log.error so log destinations (Grafana / Loki) can
+# page on it. Reset to 0 on each success. Module-level state is
+# correct here — counters are per-worker-process and reset on
+# restart, which is the right granularity (an operator that
+# restarts a worker has actively re-checked the integration).
+_CONSECUTIVE_CVE_INTEL_FAILURES: int = 0
+_CONSECUTIVE_PATTERN_LOOKUP_FAILURES: int = 0
+_FAILURE_ESCALATION_THRESHOLD: int = 5
+
 
 async def state_investigation_setup(input: dict[str, Any], services: Any) -> StateResult:
     """Validate + mark RUNNING. Returns input + resolved branch_id.
@@ -364,13 +380,26 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     cve_ids = extract_cve_ids(inv.initial_question)
     cve_intel: list[dict[str, Any]] = []
     if cve_ids:
+        global _CONSECUTIVE_CVE_INTEL_FAILURES  # noqa: PLW0603 — module counter
         try:
             resolutions = await resolve_cve_intel(cve_ids)
             cve_intel = [r.to_dict() for r in resolutions]
+            _CONSECUTIVE_CVE_INTEL_FAILURES = 0  # fix §293 — reset on success
         except Exception as exc:  # noqa: BLE001 — never block setup on intel failure
-            _log.warning(
-                "investigation_setup: CVE intel resolve failed: %s", exc,
-            )
+            _CONSECUTIVE_CVE_INTEL_FAILURES += 1
+            if _CONSECUTIVE_CVE_INTEL_FAILURES >= _FAILURE_ESCALATION_THRESHOLD:
+                _log.error(
+                    "investigation_setup: CVE intel resolve failed %d times in "
+                    "a row (last err: %s) — escalating; check NVD mirror + "
+                    "cve_intel_resolver IntelService dependency",
+                    _CONSECUTIVE_CVE_INTEL_FAILURES, exc,
+                )
+            else:
+                _log.warning(
+                    "investigation_setup: CVE intel resolve failed "
+                    "(consecutive=%d): %s",
+                    _CONSECUTIVE_CVE_INTEL_FAILURES, exc,
+                )
 
     # Knowledge Transfer: query the pattern catalog for techniques
     # extracted from prior investigations on similar targets. Store
@@ -379,6 +408,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     # patterns NEVER blocks setup — every new investigation must still
     # boot even if the pattern store is empty / broken.
     applicable_patterns: list[dict[str, Any]] = []
+    global _CONSECUTIVE_PATTERN_LOOKUP_FAILURES  # noqa: PLW0603 — module counter
     try:
         from aila.modules.vr.db_models import VRTargetRecord  # noqa: PLC0415
         from aila.modules.vr.services.pattern_store import (  # noqa: PLC0415
@@ -406,10 +436,22 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 )
                 for r in results:
                     applicable_patterns.append(r.pattern.model_dump(mode="json"))
+        _CONSECUTIVE_PATTERN_LOOKUP_FAILURES = 0  # fix §293 — reset on success
     except Exception as exc:  # noqa: BLE001 — never block setup on pattern lookup
-        _log.warning(
-            "investigation_setup: pattern lookup failed: %s", exc,
-        )
+        _CONSECUTIVE_PATTERN_LOOKUP_FAILURES += 1
+        if _CONSECUTIVE_PATTERN_LOOKUP_FAILURES >= _FAILURE_ESCALATION_THRESHOLD:
+            _log.error(
+                "investigation_setup: pattern lookup failed %d times in a "
+                "row (last err: %s) — escalating; check pattern_store + "
+                "KnowledgeService dependency",
+                _CONSECUTIVE_PATTERN_LOOKUP_FAILURES, exc,
+            )
+        else:
+            _log.warning(
+                "investigation_setup: pattern lookup failed "
+                "(consecutive=%d): %s",
+                _CONSECUTIVE_PATTERN_LOOKUP_FAILURES, exc,
+            )
 
     _log.info(
         "investigation_setup READY investigation_id=%s branch_id=%s "
