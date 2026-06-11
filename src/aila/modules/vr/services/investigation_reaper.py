@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import timedelta
+from typing import Any
 
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.sql.functions import coalesce
@@ -40,7 +41,10 @@ from aila.modules.vr.db_models import (
 from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["sweep_cap_exceeded_investigations"]
+__all__ = [
+    "evaluate_cap_for_investigation",
+    "sweep_cap_exceeded_investigations",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -61,178 +65,207 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
-async def sweep_cap_exceeded_investigations() -> int:
-    """Find RUNNING investigations past any cap, halt branches, complete,
-    purge their pending ARQ jobs.
+async def _purge_arq_for_completed(completed_ids: list[str]) -> None:
+    """Best-effort ARQ purge for capped investigations.
 
-    Returns the number of investigations transitioned to COMPLETED.
+    Shared between the sweep wrapper and the per-id helper so both
+    paths produce identical post-cap cleanup.
+    """
+    if not completed_ids:
+        return
+    try:
+        from .arq_purge import (  # noqa: PLC0415
+            purge_arq_jobs_for_investigation,
+        )
+    except ImportError:
+        return
+    for inv_id in completed_ids:
+        try:
+            purged = await purge_arq_jobs_for_investigation(
+                inv_id, track="vr",
+            )
+            if purged.get("purged_jobs", 0):
+                _log.info(
+                    "investigation_reaper: arq-purged %d jobs for %s",
+                    purged["purged_jobs"], inv_id,
+                )
+        except (OSError, RuntimeError, ImportError) as exc:
+            _log.warning(
+                "investigation_reaper: arq purge failed inv=%s err=%s",
+                inv_id, exc,
+            )
+
+
+def _breach_reason_for_row(
+    row: Any,
+    now: Any,
+    turn_cap: int,
+    message_cap: int,
+    wallclock_cutoff: Any,
+    wallclock_hours: float,
+    idle_grace_s: float,
+) -> str | None:
+    """Return a breach reason string or ``None`` if the row is healthy.
+
+    Encapsulates the priority order (turn → message → wall-clock with
+    idle grace) so per-id helper and the bulk sweep share the same
+    decision tree. `row` is a tuple-ish (inv_id, clock_start,
+    total_turns, total_messages, latest_act).
+    """
+    _, clock_start, total_turns, total_messages, latest_act = row
+    if clock_start and getattr(clock_start, "tzinfo", None) is None:
+        clock_start = clock_start.replace(tzinfo=now.tzinfo)
+    if latest_act and getattr(latest_act, "tzinfo", None) is None:
+        latest_act = latest_act.replace(tzinfo=now.tzinfo)
+    if total_turns and total_turns >= turn_cap:
+        return f"investigation_turn_cap:{total_turns}/{turn_cap}"
+    if total_messages and total_messages >= message_cap:
+        return f"investigation_message_cap:{total_messages}/{message_cap}"
+    if clock_start and clock_start < wallclock_cutoff:
+        if latest_act is not None:
+            idle_s = (now - latest_act).total_seconds()
+            if idle_s < idle_grace_s:
+                return None  # alive — calendar age doesn't kill
+        age_hours = (now - clock_start).total_seconds() / 3600.0
+        return (
+            f"investigation_wall_clock:{age_hours:.1f}h/"
+            f"{wallclock_hours:.1f}h"
+        )
+    return None
+
+
+async def _flip_branches_and_inv_to_completed(
+    uow: UnitOfWork,
+    inv_id: str,
+    reason: str,
+    now: Any,
+) -> None:
+    """Atomic two-update cascade shared by sweep + per-id paths."""
+    BR = VRInvestigationBranchRecord  # noqa: N806
+    INV = VRInvestigationRecord  # noqa: N806
+    await uow.session.exec(
+        update(BR)
+        .where(
+            BR.investigation_id == inv_id,
+            BR.status == BranchStatus.ACTIVE.value,
+        )
+        .values(
+            status=BranchStatus.ABANDONED.value,
+            closed_reason=f"cap_exceeded:{reason}",
+            closed_at=now,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False),
+    )
+    await uow.session.exec(
+        update(INV)
+        .where(and_(INV.id == inv_id, INV.status == InvestigationStatus.RUNNING.value))
+        .values(
+            status=InvestigationStatus.COMPLETED.value,
+            stopped_at=now,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False),
+    )
+
+
+async def evaluate_cap_for_investigation(investigation_id: str) -> str | None:
+    """Per-id cap check used by :func:`finalize_investigation`.
+
+    Returns the breach reason string (matching the sweep's
+    ``cap_exceeded:<reason>`` format) when the cap fires, ``None``
+    otherwise. On a fired breach, completes the cascade (halt
+    branches + flip investigation + ARQ purge) atomically.
+
+    Phase C extraction: the bulk sweep below now delegates to this
+    function per row, so the sweep + chokepoint produce identical
+    outcomes from one decision tree.
     """
     turn_cap = _int_env("VR_INVESTIGATION_TURN_CAP", 300)
     message_cap = _int_env("VR_INVESTIGATION_MESSAGE_CAP", 1000)
     wallclock_hours = _float_env("VR_INVESTIGATION_WALL_CLOCK_HOURS", 6.0)
     wallclock_cutoff = utc_now() - timedelta(hours=wallclock_hours)
+    idle_grace_s = _float_env("VR_WALL_CLOCK_IDLE_GRACE_S", 900.0)
 
     INV = VRInvestigationRecord  # noqa: N806
     BR = VRInvestigationBranchRecord  # noqa: N806
     MSG = VRInvestigationMessageRecord  # noqa: N806
-
-    completed_ids: list[str] = []
+    now = utc_now()
 
     async with UnitOfWork() as uow:
-        # Per-investigation aggregates. One query returns
-        # (inv_id, clock_start, total_turns, total_messages).
-        # total_turns = sum of all branch.turn_count for that inv.
-        # total_messages = count of vr_investigation_messages.
-        branch_turns = (
-            select(
-                BR.investigation_id.label("inv_id"),
-                coalesce(func.sum(BR.turn_count), 0).label("total_turns"),
-            )
-            .group_by(BR.investigation_id)
-            .subquery()
-        )
-        msg_counts = (
-            select(
-                MSG.investigation_id.label("inv_id"),
-                func.count(MSG.id).label("total_messages"),
-            )
-            .group_by(MSG.investigation_id)
-            .subquery()
-        )
-        # Latest active-branch update across each inv. Used by the
-        # idle-grace gate below — when wall-clock cap fires we check
-        # if any active branch wrote within IDLE_GRACE_S; if yes, the
-        # audit is alive and the cap holds off (operator-mandated:
-        # 'fix abandon mechanism — branches doing real tool calls
-        # shouldn't get killed by calendar age alone').
-        active_acts = (
-            select(
-                BR.investigation_id.label("inv_id"),
-                func.max(BR.updated_at).label("latest_act"),
-            )
-            .where(BR.status == BranchStatus.ACTIVE.value)
-            .group_by(BR.investigation_id)
-            .subquery()
-        )
-        running = (await uow.session.exec(
+        # One row with the same shape the sweep produces.
+        row = (await uow.session.exec(
             select(
                 INV.id,
-                # Clock from started_at (first turn) falling back to
-                # created_at if the worker hasn't stamped it yet. Using
-                # created_at directly punishes investigations that sat
-                # queued during long target ingestion — they'd insta-cap
-                # the moment a worker finally picked them up. See the
-                # 9e99eda0 incident (32h queue wait, all branches cap
-                # killed on turn 1 with zero execution time).
                 coalesce(INV.started_at, INV.created_at).label("clock_start"),
-                coalesce(branch_turns.c.total_turns, 0),
-                coalesce(msg_counts.c.total_messages, 0),
-                active_acts.c.latest_act,
-            )
-            .outerjoin(branch_turns, branch_turns.c.inv_id == INV.id)
-            .outerjoin(msg_counts, msg_counts.c.inv_id == INV.id)
-            .outerjoin(active_acts, active_acts.c.inv_id == INV.id)
-            .where(INV.status == InvestigationStatus.RUNNING.value),
+                (
+                    select(coalesce(func.sum(BR.turn_count), 0))
+                    .where(BR.investigation_id == INV.id)
+                    .scalar_subquery()
+                ),
+                (
+                    select(func.count(MSG.id))
+                    .where(MSG.investigation_id == INV.id)
+                    .scalar_subquery()
+                ),
+                (
+                    select(func.max(BR.updated_at))
+                    .where(
+                        BR.investigation_id == INV.id,
+                        BR.status == BranchStatus.ACTIVE.value,
+                    )
+                    .scalar_subquery()
+                ),
+            ).where(
+                INV.id == investigation_id,
+                INV.status == InvestigationStatus.RUNNING.value,
+            ),
+        )).first()
+        if row is None:
+            return None
+        reason = _breach_reason_for_row(
+            row, now, turn_cap, message_cap, wallclock_cutoff,
+            wallclock_hours, idle_grace_s,
+        )
+        if reason is None:
+            return None
+        await _flip_branches_and_inv_to_completed(uow, investigation_id, reason, now)
+        await uow.commit()
+        _log.warning(
+            "investigation_reaper: cap exceeded — %s reason=%s",
+            investigation_id, reason,
+        )
+    await _purge_arq_for_completed([investigation_id])
+    return reason
+
+
+async def sweep_cap_exceeded_investigations() -> int:
+    """Find RUNNING investigations past any cap, halt branches, complete,
+    purge their pending ARQ jobs.
+
+    Returns the number of investigations transitioned to COMPLETED.
+
+    Phase C: now delegates per-row to
+    :func:`evaluate_cap_for_investigation`. The sweep enumerates
+    candidates; per-id evaluation owns the decision + action so the
+    chokepoint and the cron produce identical outcomes.
+    """
+    INV = VRInvestigationRecord  # noqa: N806
+    async with UnitOfWork() as uow:
+        running_ids = (await uow.session.exec(
+            select(INV.id).where(INV.status == InvestigationStatus.RUNNING.value),
         )).all()
 
-        now = utc_now()
-        idle_grace_s = _float_env("VR_WALL_CLOCK_IDLE_GRACE_S", 900.0)
-        breaches: list[tuple[str, str]] = []
-        for row in running:
-            inv_id, clock_start, total_turns, total_messages, latest_act = row
-            if clock_start and clock_start.tzinfo is None:
-                clock_start = clock_start.replace(tzinfo=now.tzinfo)
-            if latest_act and latest_act.tzinfo is None:
-                latest_act = latest_act.replace(tzinfo=now.tzinfo)
-            reason = None
-            if total_turns and total_turns >= turn_cap:
-                reason = f"investigation_turn_cap:{total_turns}/{turn_cap}"
-            elif total_messages and total_messages >= message_cap:
-                reason = f"investigation_message_cap:{total_messages}/{message_cap}"
-            elif clock_start and clock_start < wallclock_cutoff:
-                # Wall-clock cap is a zombie-state safety net, NOT a
-                # guillotine for live audits. Skip when any active
-                # branch wrote within idle_grace_s — the audit is
-                # alive, calendar age alone doesn't justify killing
-                # it. Operator-observed e1a9e13c: 7 branches got
-                # cap-killed mid-tool-call because the calendar said
-                # 25.9h/24h even though renzo was running
-                # taint_paths_to at the same instant.
-                if latest_act is not None:
-                    idle_s = (now - latest_act).total_seconds()
-                    if idle_s < idle_grace_s:
-                        continue  # alive, skip cap fire
-                age_hours = (now - clock_start).total_seconds() / 3600.0
-                reason = (
-                    f"investigation_wall_clock:{age_hours:.1f}h/"
-                    f"{wallclock_hours:.1f}h"
-                )
-            if reason is not None:
-                breaches.append((str(inv_id), reason))
-
-        if not breaches:
-            return 0
-
-        for inv_id, reason in breaches:
-            # Atomic cascade in two ORM updates:
-            #   1. Flip all active branches to abandoned with the cap reason
-            #   2. Flip the investigation to completed
-            # No raw SQL — both are sqlalchemy update() with .where()
-            # clauses referencing the related table so PostgreSQL
-            # compiles to a single UPDATE ... WHERE per call.
-            await uow.session.exec(
-                update(BR)
-                .where(
-                    BR.investigation_id == inv_id,
-                    BR.status == BranchStatus.ACTIVE.value,
-                )
-                .values(
-                    status=BranchStatus.ABANDONED.value,
-                    closed_reason=f"cap_exceeded:{reason}",
-                    closed_at=now,
-                    updated_at=now,
-                )
-                .execution_options(synchronize_session=False),
-            )
-            await uow.session.exec(
-                update(INV)
-                .where(and_(INV.id == inv_id, INV.status == InvestigationStatus.RUNNING.value))
-                .values(
-                    status=InvestigationStatus.COMPLETED.value,
-                    stopped_at=now,
-                    updated_at=now,
-                )
-                .execution_options(synchronize_session=False),
-            )
-            completed_ids.append(inv_id)
-            _log.warning(
-                "investigation_reaper: cap exceeded — %s reason=%s",
-                inv_id, reason,
-            )
-        await uow.commit()
-
-    # Best-effort ARQ purge so the queued auto-continue tasks for
-    # capped investigations get dropped immediately rather than
-    # waking workers up to short-circuit via STATUS_LOCKED.
-    if completed_ids:
+    completed = 0
+    for inv_id in running_ids:
         try:
-            from .arq_purge import purge_arq_jobs_for_investigation  # noqa: PLC0415
-            for inv_id in completed_ids:
-                try:
-                    purged = await purge_arq_jobs_for_investigation(
-                        inv_id, track="vr",
-                    )
-                    if purged.get("purged_jobs", 0):
-                        _log.info(
-                            "investigation_reaper: arq-purged %d jobs for %s",
-                            purged["purged_jobs"], inv_id,
-                        )
-                except (OSError, RuntimeError, ImportError) as exc:
-                    _log.warning(
-                        "investigation_reaper: arq purge failed inv=%s err=%s",
-                        inv_id, exc,
-                    )
-        except ImportError:
-            pass
-
-    return len(completed_ids)
+            reason = await evaluate_cap_for_investigation(str(inv_id))
+        except Exception as exc:  # noqa: BLE001 — best-effort per inv
+            _log.warning(
+                "investigation_reaper: per-id eval failed inv=%s err=%s",
+                inv_id, exc,
+            )
+            continue
+        if reason is not None:
+            completed += 1
+    return completed
