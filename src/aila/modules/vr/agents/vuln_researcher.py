@@ -668,16 +668,32 @@ class HonestVulnResearcher:
                     quorum.reject_count, quorum.quorum_k,
                 )
                 if quorum.new_state == OUTCOME_STATE_APPROVED:
-                    from aila.modules.vr.agents.outcome_dispatcher import (  # noqa: PLC0415
-                        OutcomeDispatcher,
+                    # fix §90 — enqueue the dispatcher as a separate
+                    # platform task rather than calling
+                    # ``dispatcher.dispatch`` inline from this branch's
+                    # turn. The dispatcher cascades cross-branch (halts
+                    # sibling branches, flips inv to COMPLETED, purges
+                    # ARQ jobs); running that cascade inside one
+                    # branch's turn-execution context made other
+                    # branches' workers observe mid-flight cross-branch
+                    # state outside their own atomic-commit boundary.
+                    # The new ``run_vr_outcome_dispatch`` task runs
+                    # from its own worker context with its own UoW and
+                    # its own retry budget.
+                    from aila.modules.vr._task_queue import (  # noqa: PLC0415
+                        default_task_queue,
                     )
-                    from aila.platform.services.factory import (  # noqa: PLC0415
-                        ServiceFactory,
+                    from aila.modules.vr.workflow.task import (  # noqa: PLC0415
+                        run_vr_outcome_dispatch,
                     )
-                    dispatcher = OutcomeDispatcher(
-                        knowledge=ServiceFactory().knowledge,
+
+                    await default_task_queue().submit(
+                        track="vr",
+                        fn=run_vr_outcome_dispatch,
+                        kwargs={"outcome_id": decision.review_outcome_id},
+                        user_id="system",
+                        group_id="vr_dispatcher",
                     )
-                    await dispatcher.dispatch(decision.review_outcome_id)
             except Exception as exc:  # noqa: BLE001 — fix §91
                 # Was `(OSError, TimeoutError, RuntimeError, ValueError)`;
                 # SQLAlchemyError, pydantic.ValidationError, KeyError,
