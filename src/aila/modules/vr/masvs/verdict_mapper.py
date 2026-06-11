@@ -132,10 +132,14 @@ def child_outcome_to_verdict(
     # signal. The agent has told us the control does not apply to this
     # APK; there is nothing else to weigh.
     if _has_not_applicable_tag(payload):
+        # fix §220 — confidence is meaningless for a binary applicability
+        # statement. Pin to 1.0 so downstream consumers don't read a
+        # low numeric_conf as "we're not sure this is N/A" — the
+        # not_applicable tag is itself the certainty signal.
         return MasvsControlVerdict(
             control_id=control.id,
             verdict=MasvsVerdict.NOT_APPLICABLE,
-            confidence=numeric_conf,
+            confidence=1.0,
             child_investigation_id=child_investigation_id,
             primary_outcome_id=outcome.id,
             reason=None,
