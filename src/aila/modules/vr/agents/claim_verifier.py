@@ -48,6 +48,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any
 
 from sqlmodel import select as _select
@@ -74,7 +75,27 @@ _NEGATIVE_ANSWER_PREFIXES = (
     "NO VARIANTS",
 )
 
-_AUTO_PROMOTE_MIN_CONFIDENCE = 0.70
+# fix §345 — env override for the auto-promote confidence floor.
+# 0.70 is the tuned default (matches the synthesis pipeline's
+# medium/high threshold). Operators can bump it (e.g. 0.85) during
+# noisy investigation campaigns where verifier confirmation is
+# cheap but a false promote ships a wrong DIRECT_FINDING downstream.
+# Read at module load — acceptable for a tuning knob; changing it
+# requires a worker restart, same as every other tunable in this file.
+_AUTO_PROMOTE_MIN_CONFIDENCE_DEFAULT = 0.70
+
+
+def _read_auto_promote_floor() -> float:
+    raw = os.environ.get("VR_CLAIM_VERIFIER_AUTO_PROMOTE_FLOOR")
+    if not raw:
+        return _AUTO_PROMOTE_MIN_CONFIDENCE_DEFAULT
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return _AUTO_PROMOTE_MIN_CONFIDENCE_DEFAULT
+
+
+_AUTO_PROMOTE_MIN_CONFIDENCE = _read_auto_promote_floor()
 
 
 def is_negative_finding_claim(answer: str) -> bool:
