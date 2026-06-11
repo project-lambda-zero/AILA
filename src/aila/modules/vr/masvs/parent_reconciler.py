@@ -166,6 +166,41 @@ def _record_sweep_step_success(step: str) -> None:
         )
 
 
+async def _run_sweep_step(
+    name: str,
+    fn: "object",
+    uow: UnitOfWork,
+    default: object = None,
+) -> object:
+    """Run one sweep step with structured logging and failure tracking.
+
+    fix §4 — consolidates the per-step try/except wrappers in
+    ``sweep_masvs_audit_parents``. Each wrapper used to be 4 hand-
+    written lines (try / await / except / _log.warning) repeated for
+    every step, and the wrapper hand-coded its own log format. The
+    helper centralises:
+      - the broad-except invariant (a failing step must NOT block the
+        next step in the same tick),
+      - the consecutive-failure escalation (see
+        ``_record_sweep_step_failure``),
+      - the recovery log on first clean tick after failures,
+      - a stable return value when the step fails (``default``) so
+        downstream code doesn't have to None-check.
+
+    ``fn`` is the async sweep helper itself, NOT a thunk — the wrapper
+    awaits ``fn(uow)`` directly. Returns the helper's return value on
+    success, ``default`` on failure.
+    """
+    try:
+        result = await fn(uow)  # type: ignore[operator]
+    except Exception as exc:  # noqa: BLE001 — bounded per the helper docstring
+        _record_sweep_step_failure(name, exc)
+        return default
+    _record_sweep_step_success(name)
+    return result
+
+
+
 
 
 def _batch_size() -> int:
@@ -1499,63 +1534,47 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
     completed = 0
 
     async with UnitOfWork() as uow:
+        # Steps 1-7: each runs through _run_sweep_step (fix §4) so the
+        # broad-except + consecutive-failure counter logic lives in
+        # ONE place. Per-step comments explain the local intent; the
+        # generic wrapper handles logging and recovery.
+        #
         # 1. Top up APK batch slots before status transitions.
-        try:
-            refilled = await _refill_apk_batches(uow)
-            _record_sweep_step_success("refill_apk_batches")
-        except Exception as exc:  # noqa: BLE001 — see _record_sweep_step_failure
-            # Broad catch: refill failure on tick N must not block
-            # steps 2-9 on the same tick. The counter helper escalates
-            # to ERROR after _SWEEP_STEP_FAIL_ESCALATE_AFTER consecutive
-            # failures so a permanently-broken refill cannot hide behind
-            # the per-tick WARNING noise.
-            _record_sweep_step_failure("refill_apk_batches", exc)
-            refilled = 0
+        refilled = await _run_sweep_step(
+            "refill_apk_batches", _refill_apk_batches, uow, default=0,
+        )
         # 2. Enforce cumulative-turn cap.
-        try:
-            await _enforce_total_turn_cap(uow)
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("masvs reconciler: turn-cap failed: %s", exc, exc_info=True)
+        await _run_sweep_step(
+            "enforce_total_turn_cap", _enforce_total_turn_cap, uow, default=0,
+        )
         # 3. Escalate stuck drafts (mandatory-vote directive only;
         #    wake-enqueue moved to step 9 — fix §43).
-        try:
-            nudged = await _escalate_stuck_drafts(uow)  # noqa: F841
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("masvs reconciler: stuck-draft escalation failed: %s", exc, exc_info=True)
-            nudged = 0  # noqa: F841
+        await _run_sweep_step(
+            "escalate_stuck_drafts", _escalate_stuck_drafts, uow, default=0,
+        )
         # 4. Close investigations whose primary outcome was REJECTED.
-        try:
-            rejected_closed = await _close_rejected_outcomes(uow)  # noqa: F841
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("masvs reconciler: rejected-close failed: %s", exc, exc_info=True)
-            rejected_closed = 0  # noqa: F841
+        await _run_sweep_step(
+            "close_rejected_outcomes", _close_rejected_outcomes, uow, default=0,
+        )
         # 5. Abandon active branches that stopped making progress.
-        try:
-            stale = await _abandon_stale_branches(uow)  # noqa: F841
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("masvs reconciler: stale-branch abandon failed: %s", exc, exc_info=True)
-            stale = 0  # noqa: F841
-        # 6. Synthesize audit_memo outcomes for any investigation
-        # where all branches are now terminal but no outcome exists.
-        # Runs AFTER step 5 abandonment because that's what creates
-        # the orphan condition. Operator rule: every investigation
-        # MUST end with an outcome.
-        try:
-            synthesized = await _synthesize_no_finding_outcomes(uow)  # noqa: F841
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("masvs reconciler: no-finding synth failed: %s", exc, exc_info=True)
-            synthesized = 0  # noqa: F841
+        await _run_sweep_step(
+            "abandon_stale_branches", _abandon_stale_branches, uow, default=0,
+        )
+        # 6. Synthesize audit_memo outcomes for any investigation where
+        # all branches are now terminal but no outcome exists. Runs
+        # AFTER step 5 abandonment because that's what creates the
+        # orphan condition. Operator rule: every investigation MUST
+        # end with an outcome.
+        await _run_sweep_step(
+            "synthesize_no_finding_outcomes",
+            _synthesize_no_finding_outcomes, uow, default=0,
+        )
         # 7. Reap zombie tasks + stale workflow_state_cursors (D-283).
-        try:
-            reaped = await _reap_zombie_tasks_and_cursors(uow)  # noqa: F841
-            _record_sweep_step_success("reap_zombie_tasks_and_cursors")
-        except Exception as exc:  # noqa: BLE001 — see _record_sweep_step_failure
-            # Broad catch: a failing reaper must not stop the parent
-            # rollup or wake step from running this tick. Persistent
-            # failure escalates to ERROR via the counter helper because
-            # a stuck zombie reaper jams the entire VR queue (D-283).
-            _record_sweep_step_failure("reap_zombie_tasks_and_cursors", exc)
-            reaped = {"zombies_cancelled": 0, "cursors_purged": 0}  # noqa: F841
+        await _run_sweep_step(
+            "reap_zombie_tasks_and_cursors",
+            _reap_zombie_tasks_and_cursors, uow,
+            default={"zombies_cancelled": 0, "cursors_purged": 0},
+        )
         # Candidate parents: kind=masvs_audit, parent_investigation_id
         # IS NULL (true batch root), status in {CREATED, RUNNING}. PAUSED
         # parents are intentionally excluded so an operator who paused
@@ -1678,13 +1697,10 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         # parents the operator put into FAILED/ABANDONED earlier.
         # PAUSED parents are intentionally excluded — operator may
         # resume and expect deferred children to pick back up.
-        try:
-            await _cascade_terminal_to_deferred_children(uow)
-        except Exception as exc:  # noqa: BLE001 — cascade is best-effort
-            _log.warning(
-                "masvs reconciler: cascade-deferred-children failed: %s",
-                exc, exc_info=True,
-            )
+        await _run_sweep_step(
+            "cascade_terminal_to_deferred_children",
+            _cascade_terminal_to_deferred_children, uow, default=0,
+        )
 
         # 9. Side-channel wake LAST (fix §43). Earlier ordering ran
         # the wake inside _escalate_stuck_drafts (step 3); a worker
@@ -1693,13 +1709,9 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         # transitions. Running the wake AFTER every read-and-write
         # step guarantees the sweep tick observes a stable branch
         # snapshot.
-        try:
-            await _wake_stale_branches(uow)
-        except Exception as exc:  # noqa: BLE001 — wake is best-effort
-            _log.warning(
-                "masvs reconciler: wake-stale-branches failed: %s",
-                exc, exc_info=True,
-            )
+        await _run_sweep_step(
+            "wake_stale_branches", _wake_stale_branches, uow, default=0,
+        )
 
     if started or completed or refilled:
         _log.info(
