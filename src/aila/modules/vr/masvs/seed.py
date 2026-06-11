@@ -71,8 +71,15 @@ class MasvsSeedBuilder:
             ``VRInvestigationRecord.initial_question``.
         """
         overview: Mapping[str, Any] = apk_overview or {}
+        # fix §223 — ``overview.get('static_summary')`` may legitimately
+        # return ``None`` (covered by the ``or {}``) but a partially-built
+        # apk_overview from a buggy upstream stage could also stash a list,
+        # string, or other non-Mapping. ``.get('package')`` on those raises
+        # AttributeError; guard the type so this seed builder never crashes
+        # on a malformed overview.
+        static_summary_raw = overview.get("static_summary")
         static_summary: Mapping[str, Any] = (
-            overview.get("static_summary") or {}
+            static_summary_raw if isinstance(static_summary_raw, Mapping) else {}
         )
 
         package = _text_or_unknown(static_summary.get("package"))
