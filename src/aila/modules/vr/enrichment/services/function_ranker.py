@@ -240,12 +240,32 @@ class FunctionRankingDispatcher:
                 "/vr/targets/{id}/analyze or wait for auto-ingestion",
             )
 
+        # fix §230 — parser-sink fan-out in parallel. Each
+        # find_api_call_sites takes ~30 s and we issue 5+ of them; the
+        # sequential loop blocked the binary path for 2.5+ min before
+        # the deep-assess loop even started. Bridge concurrency is
+        # safe (E12 wave-1 fixes verified that the IDA bridge handles
+        # concurrent action dispatch per binary_id).
         bucket: dict[str, dict[str, Any]] = {}
-        for api in _PARSER_SINK_APIS:
-            sites_resp = await self._ida.forward(
-                action="find_api_call_sites", binary_id=binary_id, api_name=api,
-            )
-            if sites_resp.get("status") != "ready":
+        sites_responses = await asyncio.gather(
+            *(
+                self._ida.forward(
+                    action="find_api_call_sites",
+                    binary_id=binary_id,
+                    api_name=api,
+                )
+                for api in _PARSER_SINK_APIS
+            ),
+            return_exceptions=True,  # one stuck API MUST NOT poison the batch
+        )
+        for api, sites_resp in zip(_PARSER_SINK_APIS, sites_responses, strict=True):
+            if isinstance(sites_resp, BaseException):
+                _log.warning(
+                    "_rank_binary: find_api_call_sites api=%s raised %s: %s",
+                    api, type(sites_resp).__name__, sites_resp,
+                )
+                continue
+            if not isinstance(sites_resp, dict) or sites_resp.get("status") != "ready":
                 continue
             for site in sites_resp.get("call_sites", []) or []:
                 fn_addr = site.get("function_address") or site.get("caller_function_address")
@@ -269,21 +289,42 @@ class FunctionRankingDispatcher:
         ordered = sorted(bucket.items(), key=lambda kv: kv[1]["hits"], reverse=True)
         max_hits = ordered[0][1]["hits"] if ordered else 1
 
+        # fix §230 — deep assess_exploitability fan-out in parallel.
+        # Up to _deep_assess_top_n calls × ~30 s each was a serial
+        # 5 min tail on the binary path; concurrent dispatch collapses
+        # it to the worst-case single call (~30 s).
         deep_addresses = [addr for addr, _ in ordered[: self._deep_assess_top_n]]
         deep_verdicts: dict[str, str] = {}
+        deep_tasks: list[tuple[str, Any]] = []  # (addr, awaitable)
         for addr in deep_addresses:
             row = bucket[addr]
             sink = next(iter(row["apis"]), None)
             if not sink:
                 continue
-            verdict_resp = await self._ida.forward(
-                action="assess_exploitability",
-                binary_id=binary_id,
-                address_or_name=addr,
-                sink_function=sink,
-                sink_argument_index=2 if sink in {"memcpy", "memmove"} else 0,
+            deep_tasks.append((
+                addr,
+                self._ida.forward(
+                    action="assess_exploitability",
+                    binary_id=binary_id,
+                    address_or_name=addr,
+                    sink_function=sink,
+                    sink_argument_index=2 if sink in {"memcpy", "memmove"} else 0,
+                ),
+            ))
+        if deep_tasks:
+            verdict_responses = await asyncio.gather(
+                *(awaitable for _, awaitable in deep_tasks),
+                return_exceptions=True,
             )
-            if verdict_resp.get("status") == "ready":
+            for (addr, _aw), verdict_resp in zip(deep_tasks, verdict_responses, strict=True):
+                if isinstance(verdict_resp, BaseException):
+                    _log.warning(
+                        "_rank_binary: assess_exploitability addr=%s raised %s: %s",
+                        addr, type(verdict_resp).__name__, verdict_resp,
+                    )
+                    continue
+                if not isinstance(verdict_resp, dict) or verdict_resp.get("status") != "ready":
+                    continue
                 verdict = verdict_resp.get("verdict") or verdict_resp.get("classification") or ""
                 if verdict:
                     deep_verdicts[addr] = str(verdict)
