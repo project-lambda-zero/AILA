@@ -701,11 +701,24 @@ export function InvestigationDetailPage() {
               if (!confirmed) return;
               resetMut.mutate();
             }}
-            disabled={resetMut.isPending || inv.status === "running"}
+            // fix §25 / §82 — Reset is ALSO disabled while inv.status === 'paused'.
+            // A pause-then-reset would race the cursor archive: reset deletes the
+            // workflow_state_cursor row inside its own transaction, but the archived
+            // paused-state row that 'resume' relies on lives next to it and the
+            // wipe order matters. Operator must resume first (so the cursor leaves
+            // the __paused__ archive), THEN reset from a clean running/created
+            // state. The server-side guard in api_router enforces the same predicate.
+            disabled={
+              resetMut.isPending ||
+              inv.status === "running" ||
+              inv.status === "paused"
+            }
             title={
               inv.status === "running"
                 ? "Pause the investigation first, then reset."
-                : "Wipe history + reset to start. Re-enqueue afterwards to run again."
+                : inv.status === "paused"
+                  ? "Resume first, then reset — pause-then-reset would lose the cursor archive."
+                  : "Wipe history + reset to start. Re-enqueue afterwards to run again."
             }
           />
           <DeleteButton
