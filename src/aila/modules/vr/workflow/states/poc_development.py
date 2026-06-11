@@ -22,13 +22,43 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 from aila.platform.workflows.types import StateResult
 
 __all__ = ["state_poc_development"]
 
 _log = logging.getLogger(__name__)
+
+
+# fix §302 — schema for chat_structured. Replaces the prior
+# brace-counting `find("{")` / `rfind("}")` JSON parse that §301
+# names as a bug — anything resembling a JSON object inside the
+# rationale or a markdown code fence would defeat the parser. The
+# strict json_schema response_format on the LLM side guarantees a
+# valid PoCResponse on success, and chat_structured handles the
+# one-shot correction retry on parse failure.
+class PoCResponse(BaseModel):
+    """Validated PoC emission from the LLM."""
+
+    language: Literal["python", "c"] = Field(
+        description="Source language for the PoC; only python or c are runnable.",
+    )
+    filename: str = Field(
+        description="Filename suggestion, e.g. poc.py or poc.c.",
+        min_length=1,
+        max_length=128,
+    )
+    code: str = Field(
+        description="Full PoC source. Single file. No commentary outside.",
+        min_length=1,
+    )
+    rationale: str = Field(
+        description="One sentence explaining the trigger mechanism.",
+        max_length=512,
+    )
 
 _SYSTEM_PROMPT = """You write proof-of-concept exploits for vulnerability \
 research. Given a root-cause description, vulnerable function, and crash \
@@ -87,23 +117,38 @@ def _build_user_prompt(
     return "\n".join(parts)
 
 
-async def _llm_poc(services: Any, user_prompt: str) -> dict[str, Any]:
-    response = await services.llm_client.chat(
+async def _llm_poc(services: Any, user_prompt: str) -> PoCResponse:
+    """Ask the LLM for one PoC; return a validated PoCResponse.
+
+    fix §302 — swapped `chat` for `chat_structured` against PoCResponse.
+    The strict JSON-schema response_format on the LLM side eliminates
+    the prior `find("{") / rfind("}")` heuristic that §301 flags as
+    fragile: anything resembling a JSON object inside the rationale or
+    a wrapping markdown fence used to land the parser on the wrong
+    boundaries. chat_structured ALSO handles the one-shot retry on
+    parse failure, so a transient JSON malformation no longer aborts
+    a whole attempt.
+    """
+    response = await services.llm_client.chat_structured(
         task_type="vulnerability_research",
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
+        model_class=PoCResponse,
         run_id=services.run_id,
     )
     if response.disabled:
         raise RuntimeError("LLM disabled by operator")
-    raw = response.content or "{}"
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start < 0 or end < 0:
-        raise ValueError(f"LLM returned no JSON object: {raw[:200]}")
-    return json.loads(raw[start : end + 1])
+    # chat_structured guarantees the content matches PoCResponse on
+    # success, but LLMResponse carries it as a JSON string (no
+    # `.parsed` field — see synthesis_agent for the same pattern).
+    try:
+        return PoCResponse.model_validate_json(response.content)
+    except ValueError as exc:
+        raise ValueError(
+            f"LLM returned content that failed PoCResponse schema: {exc}",
+        ) from exc
 
 
 def _has_ssh(integration: Any) -> bool:
@@ -153,8 +198,8 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
                 **input,
                 "poc": _untested_payload(
                     "no SSH integration available",
-                    str(generated.get("code") or ""),
-                    str(generated.get("language") or "python"),
+                    generated.code,
+                    generated.language,
                 ),
             },
         )
@@ -178,11 +223,11 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             })
             continue
 
-        last_language = (generated.get("language") or "python").strip().lower()
-        last_filename = generated.get("filename") or (
+        last_language = generated.language.strip().lower()
+        last_filename = generated.filename or (
             "poc.py" if last_language == "python" else "poc.c"
         )
-        last_code = str(generated.get("code") or "")
+        last_code = generated.code
 
         compile_result = await services.poc_runner.forward(
             action="compile_poc",
