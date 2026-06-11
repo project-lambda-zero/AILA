@@ -45,6 +45,7 @@ canonical outcome's payload. Triggered post-synthesis from
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -457,10 +458,20 @@ class ClaimVerifierAgent:
         )
         preconditions = [p for _, p in preconditions]
 
-        # Stage 2: probe executor — substitute $INDEX_ID + run each probe
+        # Stage 2: probe executor — substitute $INDEX_ID + run each probe.
+        # fix §343 — probes run in parallel via asyncio.gather. The
+        # previous sequential loop paid serial latency for 8 audit-mcp
+        # round-trips (each tool call hits the bridge → HTTP → graph
+        # engine; 200-500ms typical, multi-second on cold semble).
+        # The AuditMcpBridgeTool is concurrency-safe (per-instance
+        # warm-lock + httpx client created per-call), and audit-mcp's
+        # async runtime (per CLAUDE.md notes) deduplicates identical
+        # tool calls — concurrent probes benefit from server-side
+        # dedup as well as wall-clock overlap.
         bridge = AuditMcpBridgeTool()
-        probe_results: list[dict[str, Any]] = []
-        for p in preconditions[: self._MAX_PROBES]:
+        top_preconditions = preconditions[: self._MAX_PROBES]
+
+        async def _run_one_probe(p: dict[str, Any]) -> dict[str, Any]:
             probe_spec = p.get("probe") or {}
             tool = str(probe_spec.get("tool") or "")
             tool_name = tool.split(".", 1)[1] if tool.startswith("audit_mcp.") else ""
@@ -468,34 +479,36 @@ class ClaimVerifierAgent:
             # enforce allowlist — extractor can hallucinate tool names;
             # only run the curated set used for source-level verification
             if tool_name not in _PROBE_TOOL_ALLOWLIST:
-                probe_results.append({
+                return {
                     "id": p.get("id"),
                     "ok": False,
                     "error": f"refused: probe tool {tool!r} not on verifier allowlist",
                     "raw": None,
-                })
-                continue
+                }
             # substitute the index_id placeholder
             for k, v in list(args.items()):
                 if v == "$INDEX_ID":
                     args[k] = index_id
-            action = tool_name
             try:
-                raw = await bridge.forward(action=action, **args)
+                raw = await bridge.forward(action=tool_name, **args)
                 ok = raw.get("status") != "error"
-                probe_results.append({
+                return {
                     "id": p.get("id"),
                     "ok": ok,
                     "error": raw.get("error") if not ok else None,
                     "raw": raw,
-                })
+                }
             except (OSError, RuntimeError, TimeoutError) as exc:
-                probe_results.append({
+                return {
                     "id": p.get("id"),
                     "ok": False,
                     "error": f"{type(exc).__name__}: {exc}",
                     "raw": None,
-                })
+                }
+
+        probe_results: list[dict[str, Any]] = list(
+            await asyncio.gather(*[_run_one_probe(p) for p in top_preconditions])
+        )
 
         # Stage 3: verdict — feed precondition + probe result pairs back
         verdict_input = self._render_verdict_input(preconditions, probe_results)
