@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -119,18 +118,28 @@ class QuorumOutcome:
 def compute_quorum(non_proposing_sibling_count: int) -> int:
     """Approve threshold for a draft outcome.
 
+    fix §148 — derive K from the count of non-proposing branches
+    (a static investigation-level count), NOT from active-only siblings.
+    Stale-abandoned siblings used to reduce the denominator, so a single
+    approve vote could ship an outcome when 4 of 5 siblings had been
+    abandoned. New formula matches the spec: ``max(N_total_personas - 1, 2)``
+    where ``N_total_personas - 1`` is exactly the non-proposing count.
+    Floor of 2 prevents a single rogue approver from auto-shipping; the
+    no-active-voters fallback (later in evaluate_quorum) catches the
+    case where K is unreachable because every voter is dead.
+
     >>> compute_quorum(0)  # single-branch investigation, no siblings
     0
-    >>> compute_quorum(2)  # 3-branch: 2 non-proposing siblings
+    >>> compute_quorum(2)  # 3-branch: 2 non-proposing siblings, K=2
     2
-    >>> compute_quorum(5)  # 6-branch: 5 non-proposing siblings
-    3
+    >>> compute_quorum(5)  # 6-branch: 5 non-proposing siblings, K=5
+    5
+    >>> compute_quorum(1)  # 2-branch: 1 non-proposing, K=2 (unreachable)
+    2
     """
     if non_proposing_sibling_count <= 0:
         return 0
-    # ceil(N/2) with a floor of 2 to prevent a single rogue approver
-    # from auto-shipping when there are 3+ siblings to consult.
-    return max(2, math.ceil(non_proposing_sibling_count / 2))
+    return max(2, non_proposing_sibling_count)
 
 
 async def upsert_review(
