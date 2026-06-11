@@ -362,6 +362,7 @@ class AilaLLMClient:
         tool_executor: Callable[[str, dict[str, Any]], Awaitable[str]] | None = None,
         run_id: str | None = None,
         team_id: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> LLMResponse:
         """Send a chat request with JSON schema enforcement.
 
@@ -377,6 +378,13 @@ class AilaLLMClient:
             tool_executor: Async tool executor callable.
             run_id: Optional run identifier for cost tracking and budget enforcement.
             team_id: Optional team identifier for cost record scoping (Phase 175).
+            max_output_tokens: Optional per-call cap on completion tokens
+                that overrides ``routing.max_tokens``. fix §309 — callers
+                with a known-bounded JSON response shape (e.g. PoC
+                drafts capped at ~1500 tokens of code + rationale) can
+                pass a tight ceiling so a runaway model can't burn 8k
+                tokens producing pages of commentary outside the
+                schema. None preserves the routing-resolved default.
 
         Returns:
             LLMResponse where content is a JSON string matching the schema.
@@ -392,6 +400,15 @@ class AilaLLMClient:
             )
 
         routing = await self._config.resolve_routing(task_type)
+        # fix §309 — apply per-call ceiling by cloning the frozen
+        # LLMRouting dataclass with the smaller max_tokens. Never raise
+        # above the routing-resolved cap (operator's configured ceiling
+        # is authoritative); only narrow it.
+        if max_output_tokens is not None and max_output_tokens > 0:
+            from dataclasses import replace as _dc_replace  # noqa: PLC0415
+            effective_max = min(int(max_output_tokens), int(routing.max_tokens))
+            if effective_max != routing.max_tokens:
+                routing = _dc_replace(routing, max_tokens=effective_max)
 
         strict_schema = _make_strict_schema(schema)
         response_format = {
@@ -430,6 +447,7 @@ class AilaLLMClient:
         tool_executor: Callable[[str, dict[str, Any]], Awaitable[str]] | None = None,
         run_id: str | None = None,
         team_id: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> LLMResponse:
         """Send a chat request and return a validated Pydantic model instance.
 
@@ -450,6 +468,9 @@ class AilaLLMClient:
             tool_executor: Async tool executor callable.
             run_id: Optional run identifier for cost tracking and budget enforcement.
             team_id: Optional team identifier for cost record scoping (Phase 175).
+            max_output_tokens: Optional per-call cap on completion tokens
+                (passed through to chat_json; never raises above the
+                routing-resolved cap). fix §309.
 
         Returns:
             LLMResponse where content is valid JSON and .parsed is the model instance.
@@ -467,6 +488,7 @@ class AilaLLMClient:
             tool_executor=tool_executor,
             run_id=run_id,
             team_id=team_id,
+            max_output_tokens=max_output_tokens,
         )
 
         if response.disabled:
@@ -507,6 +529,7 @@ class AilaLLMClient:
             tool_executor=tool_executor,
             run_id=run_id,
             team_id=team_id,
+            max_output_tokens=max_output_tokens,
         )
 
         if retry_response.disabled:

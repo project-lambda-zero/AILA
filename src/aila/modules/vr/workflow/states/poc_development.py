@@ -179,6 +179,15 @@ async def _llm_poc(
     the attempt loop can pass the cheaper draft task_type for early
     iterations.
     """
+    # fix §309 — cap completion tokens at 2048. The PoCResponse schema
+    # is bounded (filename ≤128 chars, rationale ≤512 chars, code is
+    # the dominant component but a single-file PoC is rarely more
+    # than ~1200-1500 tokens of source). Without a cap, a misbehaving
+    # model can emit pages of commentary outside the schema (chat_json
+    # strips fences but still pays for the burst), or stall on a
+    # truncation-induced JSON error that re-fires the correction
+    # retry. 2048 gives ~1.5× headroom over the expected payload
+    # and short-circuits runaway emissions.
     response = await services.llm_client.chat_structured(
         task_type=task_type,
         messages=[
@@ -187,6 +196,7 @@ async def _llm_poc(
         ],
         model_class=PoCResponse,
         run_id=services.run_id,
+        max_output_tokens=2048,
     )
     if response.disabled:
         raise LLMDisabledByOperatorError("LLM disabled by operator")
