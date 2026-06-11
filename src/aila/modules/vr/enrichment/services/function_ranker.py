@@ -20,9 +20,9 @@ The dispatcher persists the result into
 from __future__ import annotations
 
 import asyncio
-import math  # fix §232 — log-scale normalization in _rank_binary
 import json
 import logging
+import math  # fix §232 — log-scale normalization in _rank_binary
 from typing import Any, Protocol
 
 from sqlmodel import select as _select
