@@ -485,10 +485,17 @@ class ClaimVerifierAgent:
                     "error": f"refused: probe tool {tool!r} not on verifier allowlist",
                     "raw": None,
                 }
-            # substitute the index_id placeholder
+            # substitute the index_id placeholder.
+            # fix §344 — substring substitution. The previous ``v == "$INDEX_ID"``
+            # equality check only worked when the extractor passed
+            # ``$INDEX_ID`` as a bare value. Composed strings like
+            # ``$INDEX_ID/src/foo.c`` (perfectly natural for ``file_path``
+            # args) silently kept the literal placeholder and the probe
+            # hit the bridge with an unresolvable path. ``str.replace``
+            # handles both shapes; non-string values pass through.
             for k, v in list(args.items()):
-                if v == "$INDEX_ID":
-                    args[k] = index_id
+                if isinstance(v, str) and "$INDEX_ID" in v:
+                    args[k] = v.replace("$INDEX_ID", index_id)
             try:
                 raw = await bridge.forward(action=tool_name, **args)
                 ok = raw.get("status") != "error"
