@@ -8,20 +8,47 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from aila.config import Settings
+if TYPE_CHECKING:
+    from aila.modules.forensics.workflow.services import ForensicsWorkflowServices
+    from aila.platform.llm import AilaLLMClient
 
 __all__ = ["ResolverAgent"]
 
 _log = logging.getLogger(__name__)
 
 
+def _llm_client_from_services(services: ForensicsWorkflowServices | None) -> AilaLLMClient:
+    """Return the LLM client from ``services``, falling back to the
+    ServiceFactory singleton when the caller does not have a services
+    bag on hand.
+
+    Fix §24 — every resolver path now shares the memoized
+    ``ServiceFactory.llm_client`` instance instead of constructing a
+    fresh ``AilaLLMClient`` (with its own ConfigRegistry + SecretStore
+    I/O) on every resolution.
+    """
+    if services is not None:
+        return services.llm_client
+    from aila.platform.services.factory import ServiceFactory
+
+    return ServiceFactory().llm_client
+
+
 class ResolverAgent:
     """Maps investigation questions to existing artifacts for resolution."""
 
-    def __init__(self, settings: Settings, project_id: str) -> None:
-        self.settings = settings
+    def __init__(
+        self,
+        services: ForensicsWorkflowServices | None,
+        project_id: str,
+    ) -> None:
+        # fix §24 — services bag carries the memoized AilaLLMClient.
+        # Tests that don't need an LLM may pass services=None; in that
+        # case _attempt_resolution falls back to the ServiceFactory
+        # singleton via _llm_client_from_services.
+        self._services = services
         self.project_id = project_id
 
     async def resolve(self, question: str) -> dict[str, Any]:
@@ -137,14 +164,10 @@ class ResolverAgent:
         )
 
         try:
-            from aila.platform.llm import AilaLLMClient
-            from aila.storage.registry import ConfigRegistry
-            from aila.storage.secrets import SecretStore
-
-            client = AilaLLMClient(
-                registry=ConfigRegistry(),
-                secret_store=SecretStore(),
-            )
+            # fix §24 — share the run-scoped LLM client memoized on
+            # ``services`` instead of building a fresh one (and a
+            # fresh ConfigRegistry / SecretStore) per resolution.
+            client = _llm_client_from_services(self._services)
             resp = await client.chat(
                 task_type="forensics_resolver",
                 messages=[
