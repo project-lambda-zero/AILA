@@ -3496,7 +3496,48 @@ def _build_one_finding(f: FindingRecord, bundle: Bundle, s: dict[str, ParagraphS
         title=f.catalog.get("title", ""),
         page_width=PAGE_W - MARGIN_L - MARGIN_R,
     ))
-    story.append(Spacer(1, 2 * mm))
+    story.append(Spacer(1, 1.5 * mm))
+
+    # TACTICAL HEADER BAND — single-line key-facts strip immediately
+    # below the verdict-coloured FindingHeader bar. The brief proposes
+    # a 20mm right-margin side-rail panel; KeepInFrame two-column
+    # layouts add > 200 LOC of Platypus plumbing for negligible visual
+    # gain. Substitute: a tight one-line tactical header band that
+    # carries the same fact set (control_id · level · group · verdict ·
+    # confidence · author · branches · severity) and lets the reader
+    # scan the page without reading the body text — identical
+    # information surface as the side-rail would have provided.
+    level = (f.catalog.get("level") or "L1")
+    sev = _severity_label(f) or "—"
+    persona = (_dominant_persona(f) or "—").upper()
+    branches_disp = _branch_convergence_summary(f)
+    vcol = VERDICT_COLOR.get(f.verdict_label, COL_NA)
+    vhex = "#%02x%02x%02x" % (
+        int(vcol.red * 255), int(vcol.green * 255), int(vcol.blue * 255),
+    )
+    band_html = (
+        f"<font color='#5b5443'>CTRL</font> <b>{f.control_id}</b>  ·  "
+        f"<font color='#5b5443'>LEVEL</font> <b>{level}</b>  ·  "
+        f"<font color='#5b5443'>GROUP</font> <b>{f.group}</b>  ·  "
+        f"<font color='#5b5443'>VERDICT</font> "
+        f"<font color='{vhex}'><b>{f.verdict_label}</b></font>  ·  "
+        f"<font color='#5b5443'>CONF</font> <b>{f.confidence:.2f}</b>  ·  "
+        f"<font color='#5b5443'>AUTHOR</font> <b>{persona}</b>  ·  "
+        f"<font color='#5b5443'>BRANCHES</font> <b>{branches_disp}</b>  ·  "
+        f"<font color='#5b5443'>SEVERITY</font> <b>{sev}</b>"
+    )
+    band_style = ParagraphStyle(
+        "TacBand", parent=s["body_xs"],
+        fontName=_font("Mono", "Courier"),
+        fontSize=7.2, leading=9.0,
+        textColor=COL_INK,
+        backColor=COL_PAPER_DEEP,
+        borderColor=vcol, borderWidth=0.0,
+        borderPadding=(2, 6, 2, 6),
+        alignment=TA_LEFT,
+    )
+    story.append(Paragraph(band_html, band_style))
+    story.append(Spacer(1, 1.5 * mm))
 
     # Sub-header: control title in serif
     story.append(Paragraph(f.catalog.get("title", ""), s["finding_title"]))
