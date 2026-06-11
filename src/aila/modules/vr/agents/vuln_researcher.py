@@ -2653,7 +2653,14 @@ async def _upsert_canonical_outcome(
         "submitted_at": now.isoformat(),
         "outcome_kind": new_outcome_kind,
         "confidence": new_confidence,
-        "answer_brief": (new_payload.get("answer") or "")[:4000],
+        # fix §171 — keep the full answer text (was [:4000]). The
+        # per-contribution snapshot is the load-bearing audit record
+        # for per-persona analyses; truncating dropped the tail of
+        # any answer >4000 chars, which was recoverable only if the
+        # canonical payload['answer'] still carried the full text —
+        # and §166 explicitly stops overwriting that field on merge,
+        # so a per-persona answer truncated here used to be lost.
+        "answer_brief": new_payload.get("answer") or "",
     }
 
     if existing is None:
