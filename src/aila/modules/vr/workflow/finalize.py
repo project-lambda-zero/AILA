@@ -353,10 +353,10 @@ async def _handle_rejected_quorum(
     )
 
     async with UnitOfWork() as uow:
-        result = await _close_rejected_outcomes(uow)
+        closed = await _close_rejected_outcomes(uow, only_id=investigation_id)
         await uow.commit()
     return (
-        f"rejected_close_swept:closed={result.get('closed', 0)} "
+        f"rejected_close:closed={closed} "
         f"votes={context.get('rejected_votes')}"
     )
 
@@ -404,9 +404,11 @@ async def _handle_all_terminal_no_outcome(
     )
 
     async with UnitOfWork() as uow:
-        result = await _synthesize_no_finding_outcomes(uow)
+        wrote = await _synthesize_no_finding_outcomes(
+            uow, only_id=investigation_id,
+        )
         await uow.commit()
-    return f"audit_memo_synthesized:wrote={result.get('synthesized', 0)}"
+    return f"audit_memo_synthesized:wrote={wrote}"
 
 
 _HANDLERS: dict[str, Any] = {
