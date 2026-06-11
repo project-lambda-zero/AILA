@@ -685,12 +685,17 @@ export function InvestigationDetailPage() {
             label={resetMut.isPending ? "Resetting…" : "Reset"}
             variant="danger"
             onClick={() => {
+              // fix §47 — modal lists the cursor archive bullet so the
+              // operator is told the workflow_state_cursor row is wiped
+              // in the same transaction (not just messages/outcomes).
               const confirmed = window.confirm(
                 `Reset "${inv.title}" to its initial state?\n\n` +
                 `Deletes ALL messages (${inv.message_count}) + ALL outcomes ` +
                 `(${inv.outcome_count}) + forked branches. Root branches reset ` +
-                `to turn 0 with empty case state. Investigation flips back to ` +
-                `CREATED so you can re-enqueue with a fresh history.\n\n` +
+                `to turn 0 with empty case state. The workflow_state_cursor ` +
+                `archive is cleared so the next run starts from setup, not the ` +
+                `archived paused state. Investigation flips back to CREATED so ` +
+                `you can re-enqueue with a fresh history.\n\n` +
                 `THIS CANNOT BE UNDONE.`,
               );
               if (!confirmed) return;
