@@ -1355,6 +1355,31 @@ class OutcomeDispatcher:
         if just_dispatched:
             await self._purge_arq_with_retry(outcome.investigation_id)
 
+    def _mark_investigation_completed(
+        self,
+        uow: UnitOfWork,
+        inv: VRInvestigationRecord,
+    ) -> None:
+        """Single chokepoint for COMPLETED status writes (fix §22).
+
+        Today this is a direct ORM mutation, identical to the inline
+        write it replaced. Phase B will replace the body with a call
+        into the workflow engine's transition API so the dispatcher
+        no longer writes investigation status — engine state handlers
+        own that field per the SSOT contract. Keeping the call site
+        in one place means Phase B is a one-line swap, not a hunt for
+        every COMPLETED writer in the dispatcher.
+        """
+        from aila.modules.vr.contracts import (  # noqa: PLC0415
+            InvestigationStatus,
+        )
+
+        now = utc_now()
+        inv.status = InvestigationStatus.COMPLETED.value
+        inv.stopped_at = now
+        inv.updated_at = now
+        uow.session.add(inv)
+
     async def _purge_arq_with_retry(
         self,
         investigation_id: str,
