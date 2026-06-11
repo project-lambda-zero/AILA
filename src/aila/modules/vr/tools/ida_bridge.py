@@ -219,12 +219,24 @@ class IDABridgeTool(Tool):
                     "status": "error",
                     "error": f"Non-JSON response from {action}: {resp.text[:200]}",
                 }
+            # fix §214 — whitelist known statuses explicitly; unknown values
+            # used to fall through to "ready" when HTTP was 2xx, silently
+            # turning {"status": "queued"} into a success in the call log.
             payload_status = payload.get("status") if isinstance(payload, dict) else None
-            if payload_status in ("ready", "pending", "error"):
-                ctx["status"] = payload_status
-            elif resp.status_code < 400:
+            if payload_status in ("ready", "completed", "ok"):
+                ctx["status"] = "ready"
+            elif payload_status in ("pending", "queued", "running"):
+                ctx["status"] = "pending"
+            elif payload_status == "error":
+                ctx["status"] = "error"
+            elif payload_status is None and resp.status_code < 400:
                 ctx["status"] = "ready"
             else:
+                logging.getLogger(__name__).warning(
+                    "ida_bridge %s: unknown payload status %r (HTTP %d) — "
+                    "coercing to error",
+                    action, payload_status, resp.status_code,
+                )
                 ctx["status"] = "error"
             if ctx["status"] == "error" and isinstance(payload, dict):
                 err = payload.get("error")

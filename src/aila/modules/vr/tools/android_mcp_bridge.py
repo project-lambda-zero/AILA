@@ -312,17 +312,47 @@ class AndroidMcpBridgeTool(Tool):
                     ),
                 }
 
-            if isinstance(payload, dict) and payload.get("status") == "error":
-                # Tool handler returned a structured error envelope
-                # itself (e.g. mobsf_scan when MOBSF_API_KEY missing
-                # before B-14's RuntimeError unification). Honor it.
+            # fix §215 — whitelist known statuses explicitly. Unknown
+            # values used to fall through to "ready" silently, masking
+            # partial-failure envelopes (e.g. {"status": "partial_failure",
+            # "errors": [...]}). Most android-mcp tool handlers return
+            # their result dict directly without a status field; that is
+            # still treated as ready since HTTP 2xx + no status is the
+            # documented success shape.
+            payload_status = payload.get("status") if isinstance(payload, dict) else None
+            if payload_status in ("ready", "completed", "ok"):
+                ctx["status"] = "ready"
+            elif payload_status in ("pending", "queued", "running"):
+                ctx["status"] = "pending"
+            elif payload_status == "error":
+                # Tool handler returned a structured error envelope itself
+                # (e.g. mobsf_scan when MOBSF_API_KEY missing before B-14's
+                # RuntimeError unification). Honor it.
                 ctx["status"] = "error"
-                err = payload.get("error")
+                err = payload.get("error") if isinstance(payload, dict) else None
                 if isinstance(err, str):
                     ctx["error_excerpt"] = err[:400]
                 return payload
+            elif payload_status is None:
+                # android-mcp tools usually return their result dict
+                # directly without an explicit status field; HTTP 2xx
+                # + no status is the documented success shape.
+                ctx["status"] = "ready"
+            else:
+                _log.warning(
+                    "android_mcp_bridge %s: unknown payload status %r "
+                    "(HTTP %d) — coercing to error",
+                    action, payload_status, resp.status_code,
+                )
+                ctx["status"] = "error"
+                return {
+                    "status": "error",
+                    "error": (
+                        f"android-mcp action {action!r} returned unknown "
+                        f"status {payload_status!r}"
+                    ),
+                }
 
-            ctx["status"] = "ready"
             return payload if isinstance(payload, dict) else {
                 "status": "ready", "result": payload,
             }
