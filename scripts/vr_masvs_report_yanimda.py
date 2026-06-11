@@ -1311,8 +1311,14 @@ class ChromeContext:
     # section's chrome because Platypus paints onPage BEFORE flowables
     # draw.
     section_at_page: dict[int, tuple[str, str]] = field(default_factory=dict)
-    # When True, _set_section recording is active (pass A).
+    # When True, _set_section / _set_verdict recording is active (pass A).
     capture_sections: bool = False
+    # page_num → verdict label ("FAIL"/"PASS"/...). Populated on pass A
+    # by VerdictSetter flowables emitted at the top of each per-control
+    # finding page so the pass-B chrome can tint its accents in the
+    # verdict colour. Pages without a recorded verdict use the default
+    # rust accent.
+    verdict_at_page: dict[int, str] = field(default_factory=dict)
 
 
 _CHROME = ChromeContext()
@@ -1339,12 +1345,26 @@ def _draw_chrome(canvas: Canvas, doc: BaseDocTemplate) -> None:
         if best is not None:
             sec_label, sec_code = _CHROME.section_at_page[best]
 
+    # Resolve verdict for this page (if any) — drives the accent colour.
+    accent = COL_ACCENT
+    if _CHROME.verdict_at_page:
+        best_v = None
+        for pn in _CHROME.verdict_at_page:
+            if pn <= page_num and (best_v is None or pn > best_v):
+                best_v = pn
+        if best_v is not None:
+            verdict = _CHROME.verdict_at_page[best_v]
+            accent = VERDICT_COLOR.get(verdict, COL_ACCENT)
+
     # ---- Top header strip ----
     canvas.saveState()
     canvas.setFillColor(COL_NAVY)
     canvas.rect(0, PAGE_H - 14 * mm, PAGE_W, 14 * mm, fill=1, stroke=0)
 
-    canvas.setFillColor(COL_ACCENT)
+    # Thin verdict-coloured rule below the navy bar — operator's first
+    # visual cue for what kind of page this is. Default rust on pages
+    # that have no recorded verdict.
+    canvas.setFillColor(accent)
     canvas.rect(0, PAGE_H - 14.6 * mm, PAGE_W, 0.6 * mm, fill=1, stroke=0)
 
     canvas.setFillColor(COL_NAVY_INK)
@@ -1370,6 +1390,10 @@ def _draw_chrome(canvas: Canvas, doc: BaseDocTemplate) -> None:
                            "SHA-256/" + _CHROME.apk_sha_short)
 
     # ---- Bottom footer strip ----
+    # Thin verdict-coloured rule above the ink footer bar — closes the
+    # visual frame on the page and mirrors the top accent strip.
+    canvas.setFillColor(accent)
+    canvas.rect(0, 7 * mm, PAGE_W, 0.5 * mm, fill=1, stroke=0)
     canvas.setFillColor(COL_INK)
     canvas.rect(0, 0, PAGE_W, 7 * mm, fill=1, stroke=0)
     canvas.setFillColor(COL_PAPER)
@@ -1401,6 +1425,45 @@ def _draw_paper(canvas: Canvas, _doc: BaseDocTemplate) -> None:
 def _draw_page(canvas: Canvas, doc: BaseDocTemplate) -> None:
     _draw_paper(canvas, doc)
     _draw_chrome(canvas, doc)
+
+
+# ============================================================================
+# CONTENT BUILDERS — one function per section
+# ============================================================================
+
+class _VerdictSetter(Flowable):
+    """Side-effect flowable that records the verdict for THIS page.
+
+    Emitted at the top of every per-control finding page. On pass A
+    the setter populates ``_CHROME.verdict_at_page`` so the pass-B
+    chrome can tint its top/bottom accent rules in the verdict colour
+    (FAIL=red, PASS=green, REVIEW=amber, INFO=steel-blue, etc.).
+
+    Pages without an explicit verdict (cover, doc control, exec
+    summary, methodology, glossary) fall through to the default rust
+    accent.
+    """
+
+    def __init__(self, verdict: str) -> None:
+        super().__init__()
+        self.verdict = verdict
+        self.width = 0
+        self.height = 0
+
+    def wrap(self, _aw: float, _ah: float) -> tuple[float, float]:
+        return (0, 0)
+
+    def draw(self) -> None:
+        if _CHROME.capture_sections:
+            page_num = self.canv.getPageNumber()
+            # Only record the FIRST setter on a page — long findings
+            # spill across multiple pages; later setters on the same
+            # page (none, in current layout) must NOT overwrite.
+            _CHROME.verdict_at_page.setdefault(page_num, self.verdict)
+
+
+def _set_verdict(verdict: str) -> Flowable:
+    return _VerdictSetter(verdict)
 
 
 # ============================================================================
@@ -3375,6 +3438,11 @@ def _build_catalog_box(
 def _build_one_finding(f: FindingRecord, bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
     """Return all flowables for one finding page (may span multiple pages)."""
     story: list[Flowable] = []
+    # Record the verdict for this page so the running chrome tints its
+    # accents in the verdict colour. This is a side-effect flowable that
+    # draws nothing visible — the chrome reads from
+    # ``_CHROME.verdict_at_page`` keyed by page number.
+    story.append(_set_verdict(f.verdict_label))
     # Header
     story.append(FindingHeader(
         finding_id=f.finding_id,
@@ -4168,6 +4236,7 @@ def build_pdf(out_path: Path, bundle: Bundle) -> int:
     tmp_path = out_path.with_suffix(".tmp.pdf")
     _CHROME.total_pages = 0
     _CHROME.section_at_page = {}
+    _CHROME.verdict_at_page = {}
     _CHROME.capture_sections = True
     doc_a = TacticalDocTemplate(str(tmp_path))
     doc_a.build(_build_story())
