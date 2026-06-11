@@ -577,7 +577,18 @@ class ToolExecutor:
             resolved = str(handles.get("audit_mcp_index_id") or "")
             self._inv_index_id_cache[investigation_id] = resolved
             return resolved
-        except (OSError, RuntimeError, ImportError, AttributeError):
+        except Exception as exc:  # noqa: BLE001
+            # fix §253 — broadened from (OSError, RuntimeError, ImportError,
+            # AttributeError). The auto-correct path must NEVER block the
+            # underlying tool dispatch, so any failure here (SQLAlchemy
+            # OperationalError, DataError, JSON corruption, schema drift,
+            # arbitrary upstream raise) is logged at INFO and falls through
+            # to "use args as-is".
+            _log.info(
+                "tool_executor._resolve_index_id: failed for inv=%s (%s: %s); "
+                "falling back to caller-supplied args",
+                investigation_id, type(exc).__name__, exc,
+            )
             return ""
 
     async def _write_error_message(
