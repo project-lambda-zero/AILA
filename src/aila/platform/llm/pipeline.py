@@ -24,9 +24,16 @@ logger = logging.getLogger(__name__)
 
 StepFn = Callable[[dict[str, Any], list[dict[str, Any]], LLMRouting], Awaitable[None]]
 
+# Default step order. Operators can override per task_type via
+# ``llm_pipeline_pre_call_steps_{task_type}`` /
+# ``llm_pipeline_post_call_steps_{task_type}`` (comma-separated) in
+# ConfigRegistry — see :meth:`LLMConfigProvider.resolve_step_order` (§157).
+# These constants are still the SOURCE of TRUTH for which step names are
+# even legal: ``register`` rejects any name not present here so a typo in
+# the override config can't silently add a step the pipeline doesn't know.
 PRE_CALL_STEPS: tuple[str, ...] = ("classify",)
 POST_CALL_STEPS: tuple[str, ...] = ("validate", "gate", "verify", "seal")
-
+_KNOWN_STEPS: frozenset[str] = frozenset(PRE_CALL_STEPS + POST_CALL_STEPS)
 
 class PipelineRunner:
     """Fixed-order middleware pipeline for LLM calls."""
@@ -45,9 +52,45 @@ class PipelineRunner:
         Raises:
             ValueError: If name is not a known pipeline step.
         """
-        if name not in (*PRE_CALL_STEPS, *POST_CALL_STEPS):
+        if name not in _KNOWN_STEPS:
             raise ValueError(f"Unknown pipeline step: {name!r}")
         self._steps[name] = step_fn
+
+    async def _resolve_steps(
+        self,
+        *,
+        phase: str,
+        task_type: str,
+        default: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        """Resolve step order for ``phase`` (``pre_call`` / ``post_call``).
+
+        fix §157 — looks up ``llm_pipeline_{phase}_steps_{task_type}`` (a
+        comma-separated list) in ConfigRegistry. Unknown step names are
+        silently dropped — operators get to opt out of a step by name
+        without breaking the run, but cannot inject a slot the pipeline
+        does not handle. Falls back to ``default`` when no override exists.
+        """
+        getter = getattr(self._config, "_registry", None)
+        if getter is None:
+            return default
+        try:
+            raw = await getter.get(
+                "platform", f"llm_pipeline_{phase}_steps_{task_type}",
+            )
+        except Exception:  # noqa: BLE001 — best-effort override; fall through to default
+            return default
+        if not raw:
+            return default
+        wanted = [s.strip() for s in str(raw).split(",") if s.strip()]
+        filtered = tuple(s for s in wanted if s in _KNOWN_STEPS)
+        dropped = [s for s in wanted if s not in _KNOWN_STEPS]
+        if dropped:
+            logger.warning(
+                "pipeline._resolve_steps: dropping unknown step name(s) %r "
+                "for phase=%s task_type=%s", dropped, phase, task_type,
+            )
+        return filtered or default
 
     async def run(
         self,
@@ -78,13 +121,19 @@ class PipelineRunner:
             response = await call_fn(**call_kwargs)
             return response, ctx
 
-        for step_name in PRE_CALL_STEPS:
+        pre_steps = await self._resolve_steps(
+            phase="pre_call", task_type=task_type, default=PRE_CALL_STEPS,
+        )
+        for step_name in pre_steps:
             await self._run_step(step_name, ctx, messages, routing)
 
         response = await call_fn(**call_kwargs)
         ctx["response"] = response
 
-        for step_name in POST_CALL_STEPS:
+        post_steps = await self._resolve_steps(
+            phase="post_call", task_type=task_type, default=POST_CALL_STEPS,
+        )
+        for step_name in post_steps:
             await self._run_step(step_name, ctx, messages, routing)
 
         # Re-read: gate step may have replaced ctx["response"] (D-15, Phase 119).
