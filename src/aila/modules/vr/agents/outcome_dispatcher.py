@@ -1333,28 +1333,61 @@ class OutcomeDispatcher:
                         )
             await uow.commit()
 
-        # If the investigation just completed (no active branches remain
-        # after sibling halt), drop the investigation's pending ARQ jobs
-        # so siblings whose tasks were dispatched but not yet dequeued
-        # don't run a wasted setup pass.
+        # fix §104 — ARQ purge happens after the UoW commit. The purge
+        # touches Redis, not Postgres, so we can't include it in the
+        # SQLAlchemy transaction. Partial-failure semantics:
+        #   1. DB commit succeeded → investigation row reads COMPLETED.
+        #   2. Purge can fail (Redis unreachable, transient ARQ format
+        #      change). We retry up to 3× with exponential backoff so
+        #      a transient Redis blip doesn't leak siblings into the
+        #      queue for a completed investigation.
+        #   3. If all retries fail, log a WARNING and move on. The
+        #      reactive guard in investigation_setup.py is the safety
+        #      net: when a worker dequeues a job for a completed
+        #      investigation, it exits with STATUS_LOCKED instead of
+        #      doing real work. Cost: one wasted dequeue per leaked
+        #      job, not unbounded re-runs.
         if just_dispatched:
+            await self._purge_arq_with_retry(outcome.investigation_id)
+
+    async def _purge_arq_with_retry(
+        self,
+        investigation_id: str,
+        *,
+        attempts: int = 3,
+    ) -> None:
+        """Purge ARQ jobs for ``investigation_id`` with retry on transient errors."""
+        import asyncio  # noqa: PLC0415
+
+        for attempt in range(1, attempts + 1):
             try:
                 from aila.modules.vr.services.arq_purge import (  # noqa: PLC0415
                     purge_arq_jobs_for_investigation,
                 )
                 purged = await purge_arq_jobs_for_investigation(
-                    outcome.investigation_id, track="vr",
+                    investigation_id, track="vr",
                 )
                 if purged.get("purged_jobs", 0) > 0:
                     _log.info(
-                        "outcome_dispatcher ARQ_PURGE inv=%s purged=%d",
-                        outcome.investigation_id, purged["purged_jobs"],
+                        "outcome_dispatcher ARQ_PURGE inv=%s purged=%d attempt=%d",
+                        investigation_id, purged["purged_jobs"], attempt,
                     )
+                return
             except (OSError, RuntimeError, ImportError) as exc:
-                _log.warning(
-                    "outcome_dispatcher ARQ_PURGE failed inv=%s err=%s",
-                    outcome.investigation_id, exc,
+                if attempt == attempts:
+                    _log.warning(
+                        "outcome_dispatcher ARQ_PURGE giving up inv=%s "
+                        "attempt=%d/%d err=%s — investigation_setup safety net "
+                        "catches any leaked dequeues",
+                        investigation_id, attempt, attempts, exc,
+                    )
+                    return
+                _log.info(
+                    "outcome_dispatcher ARQ_PURGE retry inv=%s attempt=%d/%d err=%s",
+                    investigation_id, attempt, attempts, exc,
                 )
+                # Exponential backoff: 0.1s, 0.2s, 0.4s ...
+                await asyncio.sleep(0.1 * (2 ** (attempt - 1)))
 
 
 def _audit_memo_namespace(
