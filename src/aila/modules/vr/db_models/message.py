@@ -48,6 +48,12 @@ class VRInvestigationMessageRecord(SQLModel, table=True):
     operator_intent: str | None = Field(default=None, max_length=32)
     at_turn: int | None = Field(default=None)
     evidence_refs_json: str = Field(default="[]", sa_column=Column(Text))
+    # Exact-key dedup for auto_steering rows (§331/§332/§338). NULL on
+    # every non-auto_steering message. Indexed + partial-UNIQUE in
+    # migration 063.
+    auto_steering_key: str | None = Field(
+        default=None, max_length=128, index=True,
+    )
 
     created_at: datetime = Field(
         default_factory=utc_now, sa_type=DateTime(timezone=True), index=True,

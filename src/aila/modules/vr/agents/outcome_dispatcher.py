@@ -452,6 +452,10 @@ class OutcomeDispatcher:
         crash_signature = payload.get("crash_signature")
         poc_code = payload.get("poc_code")
 
+        # fix §186 + §235 — single UoW atomically inserts the finding
+        # and links it to the investigation. Old code committed after
+        # the insert and again after the link update; a crash between
+        # the two left an orphan VRFindingRecord with no inv pointer.
         async with UnitOfWork() as uow:
             finding = VRFindingRecord(
                 project_id=inv.project_id,
@@ -474,8 +478,7 @@ class OutcomeDispatcher:
                 evidence_refs_json=json.dumps(payload.get("evidence_refs") or []),
             )
             uow.session.add(finding)
-            await uow.session.commit()
-            await uow.session.refresh(finding)
+            await uow.session.flush()
             finding_id = finding.id
 
             inv_row = (await uow.session.exec(
@@ -490,7 +493,7 @@ class OutcomeDispatcher:
                 inv_row.linked_finding_ids_json = json.dumps(ids)
                 inv_row.updated_at = utc_now()
                 uow.session.add(inv_row)
-                await uow.session.commit()
+            await uow.session.commit()
 
         # Bundled variant hunt orders: when the agent's submit payload
         # carries ``variant_hunt_orders: list[dict]``, spawn each as a
