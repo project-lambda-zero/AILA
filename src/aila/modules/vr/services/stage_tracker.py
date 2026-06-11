@@ -483,89 +483,115 @@ async def reap_stuck_stages() -> int:
         )).all()
 
     reaped = 0
+    # fix §118 — collect every per-row failure and log each; previously
+    # the first raise aborted the whole pass and stuck rows past the
+    # failure point waited for the next cron tick (or forever, if the
+    # same row reliably blew up).
+    failures: list[tuple[str, BaseException]] = []
     for target_id in candidates:
-        async with UnitOfWork() as uow:
-            row = (await uow.session.exec(
-                _select(VRTargetRecord).where(VRTargetRecord.id == target_id),
-            )).first()
-            if row is None:
-                # Target deleted between scan and per-row UoW — skip.
-                continue
-            # fix §323 — snapshot the row's stages BEFORE any mutation
-            # so the UPDATE below carries an optimistic-concurrency
-            # WHERE clause keyed on analysis_stages_json. If __aexit__
-            # legitimately completed the stage (or another reaper pass
-            # already flipped it) between our SELECT and our UPDATE,
-            # the JSON string differs and the UPDATE matches zero rows
-            # — the legitimate write survives and we back off.
-            original_stages_json = row.analysis_stages_json
-            stages = parse_stages(original_stages_json)
-            mutated = False
-            now = utc_now()
-            row_reaped = 0
-            for stage_name, status in stages.all_stages():
-                if status.state != StageState.RUNNING:
+        try:
+            async with UnitOfWork() as uow:
+                row = (await uow.session.exec(
+                    _select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                )).first()
+                if row is None:
+                    # Target deleted between scan and per-row UoW — skip.
                     continue
-                timeout_s = _DEFAULT_TIMEOUTS.get(stage_name, 1800.0)
-                started = status.started_at
-                if started is None:
+                # fix §323 — snapshot the row's stages BEFORE any
+                # mutation so the UPDATE below carries an optimistic-
+                # concurrency WHERE clause keyed on
+                # analysis_stages_json. If __aexit__ legitimately
+                # completed the stage (or another reaper pass already
+                # flipped it) between our SELECT and our UPDATE, the
+                # JSON string differs and the UPDATE matches zero rows
+                # — the legitimate write survives and we back off.
+                original_stages_json = row.analysis_stages_json
+                stages = parse_stages(original_stages_json)
+                mutated = False
+                now = utc_now()
+                row_reaped = 0
+                for stage_name, status in stages.all_stages():
+                    if status.state != StageState.RUNNING:
+                        continue
+                    timeout_s = _DEFAULT_TIMEOUTS.get(stage_name, 1800.0)
+                    started = status.started_at
+                    if started is None:
+                        continue
+                    if started.tzinfo is None:
+                        started = started.replace(tzinfo=UTC)
+                    age = (now - started).total_seconds()
+                    if age <= timeout_s:
+                        continue
+                    _log.warning(
+                        "stage_tracker.reaper: target=%s stage=%s RUNNING for %.0fs (> %.0fs) — marking FAILED:timeout",
+                        row.id, stage_name.value, age, timeout_s,
+                    )
+                    stages.set(stage_name, StageStatus(
+                        state=StageState.FAILED,
+                        started_at=status.started_at,
+                        completed_at=now,
+                        attempts=status.attempts,
+                        error=f"reaper: RUNNING for {age:.0f}s (> {timeout_s:.0f}s timeout); resume to retry",
+                    ))
+                    mutated = True
+                    row_reaped += 1
+                if not mutated:
                     continue
-                if started.tzinfo is None:
-                    started = started.replace(tzinfo=UTC)
-                age = (now - started).total_seconds()
-                if age <= timeout_s:
-                    continue
-                _log.warning(
-                    "stage_tracker.reaper: target=%s stage=%s RUNNING for %.0fs (> %.0fs) — marking FAILED:timeout",
-                    row.id, stage_name.value, age, timeout_s,
+
+                rolled = roll_up_overall_state(stages)
+                new_stages_json = serialize_stages(stages)
+                reaped_msgs = [
+                    s.error for _, s in stages.all_stages()
+                    if s.state == StageState.FAILED and s.error
+                ]
+                values: dict[str, Any] = {
+                    "analysis_stages_json": new_stages_json,
+                    "analysis_state": rolled.value,
+                    "updated_at": now,
+                }
+                if reaped_msgs:
+                    values["analysis_state_message"] = reaped_msgs[0]
+
+                # Expunge the ORM-loaded row so the optimistic UPDATE
+                # below is the single source of truth; otherwise
+                # SQLAlchemy may flush the in-memory `row` and clobber
+                # our explicit values.
+                uow.session.expunge(row)
+
+                upd_stmt = (
+                    _update(VRTargetRecord)
+                    .where(VRTargetRecord.id == target_id)
+                    .where(VRTargetRecord.analysis_stages_json == original_stages_json)
+                    .values(**values)
+                    .returning(VRTargetRecord.id)
                 )
-                stages.set(stage_name, StageStatus(
-                    state=StageState.FAILED,
-                    started_at=status.started_at,
-                    completed_at=now,
-                    attempts=status.attempts,
-                    error=f"reaper: RUNNING for {age:.0f}s (> {timeout_s:.0f}s timeout); resume to retry",
-                ))
-                mutated = True
-                row_reaped += 1
-            if not mutated:
-                continue
-
-            rolled = roll_up_overall_state(stages)
-            new_stages_json = serialize_stages(stages)
-            reaped_msgs = [
-                s.error for _, s in stages.all_stages()
-                if s.state == StageState.FAILED and s.error
-            ]
-            values: dict[str, Any] = {
-                "analysis_stages_json": new_stages_json,
-                "analysis_state": rolled.value,
-                "updated_at": now,
-            }
-            if reaped_msgs:
-                values["analysis_state_message"] = reaped_msgs[0]
-
-            # Expire the ORM-loaded row so the optimistic UPDATE below
-            # is the single source of truth; otherwise SQLAlchemy may
-            # flush the in-memory `row` and clobber our explicit values.
-            uow.session.expunge(row)
-
-            upd_stmt = (
-                _update(VRTargetRecord)
-                .where(VRTargetRecord.id == target_id)
-                .where(VRTargetRecord.analysis_stages_json == original_stages_json)
-                .values(**values)
-                .returning(VRTargetRecord.id)
+                upd_result = await uow.session.execute(upd_stmt)
+                if upd_result.first() is None:
+                    _log.info(
+                        "stage_tracker.reaper: target=%s stages mutated between "
+                        "SELECT and UPDATE — backing off (legitimate writer wins)",
+                        target_id,
+                    )
+                    await uow.session.rollback()
+                    continue
+                await uow.session.commit()
+                reaped += row_reaped
+        except Exception as exc:  # noqa: BLE001
+            # fix §118 — log AND collect; the next row still gets a
+            # chance. The collected list drives the post-loop summary
+            # log so an operator scanning the worker log sees how many
+            # rows survived a bad cron tick.
+            _log.error(
+                "stage_tracker.reaper: failed to reap target=%s: %s",
+                target_id, exc,
+                exc_info=True,
             )
-            upd_result = await uow.session.execute(upd_stmt)
-            if upd_result.first() is None:
-                _log.info(
-                    "stage_tracker.reaper: target=%s stages mutated between "
-                    "SELECT and UPDATE — backing off (legitimate writer wins)",
-                    target_id,
-                )
-                await uow.session.rollback()
-                continue
-            await uow.session.commit()
-            reaped += row_reaped
+            failures.append((target_id, exc))
+
+    if failures:
+        _log.warning(
+            "stage_tracker.reaper: %d/%d rows failed to reap this pass "
+            "(reaped=%d stages across surviving rows)",
+            len(failures), len(candidates), reaped,
+        )
     return reaped
