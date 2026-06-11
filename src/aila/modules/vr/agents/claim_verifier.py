@@ -539,11 +539,38 @@ class ClaimVerifierAgent:
         finding lands in vr_findings with a PoC writer task enqueued
         (on variant children). Returns a small dict describing what
         happened for the run() return payload.
+
+        fix §347 — audit-trail preservation. The previous implementation
+        mutated the original ASSESSMENT_REPORT row's ``outcome_kind`` in
+        place, losing the prior kind from the row itself (only the
+        payload's ``promoted_from`` block preserved it). That broke any
+        query that scanned ``outcome_kind`` to count assessment reports
+        vs direct findings and made the kind flip invisible to consumers
+        that only read the column.
+
+        New shape: KEEP BOTH ROWS. The original assessment_report row
+        stays untouched in terms of ``outcome_kind`` / ``dispatch_status``;
+        a NEW direct_finding row is inserted with ``state='approved'``
+        carrying the same payload plus a ``derived_from`` block linking
+        back to the original. The original row's payload gets a
+        ``promoted_to`` block so the audit trail is bi-directional. The
+        dispatcher then operates on the NEW row.
+
+        Choice: approach (a) keep-both-rows rather than (b) alembic
+        migration adding a ``promoted_kind`` column. Alembic on a hot
+        outcomes table during a release wave is heavier than a logical
+        row insert; bi-directional payload links give us the same
+        observability without DDL.
         """
+        from uuid import uuid4  # noqa: PLC0415
+
         from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher  # noqa: PLC0415
         from aila.modules.vr.contracts import (  # noqa: PLC0415
             OutcomeDispatchStatus,
             OutcomeKind,
+        )
+        from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
+            OUTCOME_STATE_APPROVED,
         )
 
         if not isinstance(confidence, (int, float)):
@@ -552,72 +579,102 @@ class ClaimVerifierAgent:
         if conf < _AUTO_PROMOTE_MIN_CONFIDENCE:
             return {"status": "skipped", "reason": f"confidence_below_floor:{conf:.2f}<{_AUTO_PROMOTE_MIN_CONFIDENCE}"}
 
-        # Re-load the canonical outcome row to mutate it transactionally
-        # (the verifier_report write happened in a previous UoW; another
-        # writer could have raced in between, so we re-read + re-check).
+        new_outcome_id = str(uuid4())
         async with UnitOfWork() as uow:
-            row = (await uow.session.exec(
+            original = (await uow.session.exec(
                 _select(VRInvestigationOutcomeRecord).where(
                     VRInvestigationOutcomeRecord.id == canonical_id,
                 )
             )).first()
-            if row is None:
+            if original is None:
                 return {"status": "skipped", "reason": "outcome_disappeared"}
-            if row.outcome_kind != OutcomeKind.ASSESSMENT_REPORT.value:
+            if original.outcome_kind != OutcomeKind.ASSESSMENT_REPORT.value:
                 return {
                     "status": "skipped",
-                    "reason": f"outcome_kind_not_assessment:{row.outcome_kind}",
+                    "reason": f"outcome_kind_not_assessment:{original.outcome_kind}",
                 }
-            if row.dispatch_status != OutcomeDispatchStatus.SKIPPED.value:
+            if original.dispatch_status != OutcomeDispatchStatus.SKIPPED.value:
                 return {
                     "status": "skipped",
-                    "reason": f"dispatch_status_not_skipped:{row.dispatch_status}",
+                    "reason": f"dispatch_status_not_skipped:{original.dispatch_status}",
                 }
             try:
-                payload = json.loads(row.payload_json or "{}")
+                orig_payload = json.loads(original.payload_json or "{}")
             except (ValueError, TypeError):
                 return {"status": "skipped", "reason": "payload_unparseable"}
-            if payload.get("promoted_from"):
+            if orig_payload.get("promoted_to"):
                 return {"status": "skipped", "reason": "already_promoted"}
-            if is_negative_finding_claim(payload.get("answer") or ""):
+            if is_negative_finding_claim(orig_payload.get("answer") or ""):
                 return {
                     "status": "skipped",
                     "reason": "answer_starts_negative_no_bug_to_promote",
                 }
 
-            payload["promoted_from"] = {
+            promotion_ts = utc_now().isoformat()
+            promotion_reason = f"verifier confirmed conf={conf:.2f} | {summary[:300]}"
+
+            # Build new DIRECT_FINDING payload — copy original + link back.
+            new_payload = dict(orig_payload)
+            new_payload["derived_from"] = {
+                "outcome_id": canonical_id,
                 "kind": OutcomeKind.ASSESSMENT_REPORT.value,
-                "at": utc_now().isoformat(),
+                "at": promotion_ts,
                 "by_user_id": "verifier_auto_promote",
-                "reason": f"verifier confirmed conf={conf:.2f} | {summary[:300]}",
-                "prior_dispatch_status": row.dispatch_status,
+                "reason": promotion_reason,
+                "verifier_confidence": conf,
             }
-            row.outcome_kind = OutcomeKind.DIRECT_FINDING.value
-            row.payload_json = json.dumps(payload)
-            row.dispatch_status = OutcomeDispatchStatus.PENDING.value
-            row.dispatch_target = None
-            uow.session.add(row)
+            # Verifier report lives on the ORIGINAL row only; the new
+            # row points at it via derived_from rather than duplicating.
+            new_payload.pop("verifier_report", None)
+
+            new_row = VRInvestigationOutcomeRecord(
+                id=new_outcome_id,
+                investigation_id=original.investigation_id,
+                branch_id=original.branch_id,
+                outcome_kind=OutcomeKind.DIRECT_FINDING.value,
+                payload_json=json.dumps(new_payload),
+                confidence=original.confidence,
+                evidence_refs_json=original.evidence_refs_json,
+                state=OUTCOME_STATE_APPROVED,
+                dispatch_status=OutcomeDispatchStatus.PENDING.value,
+                dispatch_target=None,
+            )
+            uow.session.add(new_row)
+
+            # Bi-directional link on the original row's payload so a
+            # query against the original surfaces the promotion.
+            orig_payload["promoted_to"] = {
+                "outcome_id": new_outcome_id,
+                "kind": OutcomeKind.DIRECT_FINDING.value,
+                "at": promotion_ts,
+                "by_user_id": "verifier_auto_promote",
+                "reason": promotion_reason,
+            }
+            original.payload_json = json.dumps(orig_payload)
+            uow.session.add(original)
             await uow.commit()
 
         try:
             dispatcher = OutcomeDispatcher(knowledge=ServiceFactory().knowledge)
-            result = await dispatcher.dispatch(canonical_id)
+            result = await dispatcher.dispatch(new_outcome_id)
         except (OSError, RuntimeError, ValueError) as exc:
             _log.warning(
-                "auto_promote dispatch FAILED inv=%s outcome=%s err=%s",
-                self.investigation_id, canonical_id, exc,
+                "auto_promote dispatch FAILED inv=%s original=%s new=%s err=%s",
+                self.investigation_id, canonical_id, new_outcome_id, exc,
             )
             return {
                 "status": "promoted_dispatch_failed",
+                "promoted_outcome_id": new_outcome_id,
                 "reason": f"{type(exc).__name__}:{exc}",
             }
         _log.info(
-            "auto_promote OK inv=%s outcome=%s -> %s (%s)",
-            self.investigation_id, canonical_id,
+            "auto_promote OK inv=%s original=%s new=%s -> %s (%s)",
+            self.investigation_id, canonical_id, new_outcome_id,
             result.dispatch_target, result.dispatch_status.value,
         )
         return {
             "status": "promoted",
+            "promoted_outcome_id": new_outcome_id,
             "dispatch_status": result.dispatch_status.value,
             "dispatch_target": result.dispatch_target,
             "dispatch_reason": result.reason[:200],
