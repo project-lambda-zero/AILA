@@ -615,6 +615,13 @@ class HonestVulnResearcher:
                     new_confidence=new_confidence,
                     new_payload=new_payload,
                     at_turn=turn_number,
+                    # fix §173 — explicit terminal-submit contract marker.
+                    # _upsert_canonical_outcome is the ONE canonical-outcome
+                    # write path and asserts this value at function entry;
+                    # any non-terminal write path would have to call this
+                    # from inside its own terminal_submit (no separate
+                    # submit_canonical_addition action exists by design).
+                    action="terminal_submit",
                 )
                 # Close the branch — BranchStatus.COMPLETED + closed_reason
                 # + closed_at — so _maybe_trigger_synthesis can count it
@@ -2661,6 +2668,7 @@ async def _upsert_canonical_outcome(
     new_confidence: str,
     new_payload: dict[str, Any],
     at_turn: int,
+    action: str,
 ) -> str:
     """Merge a branch's terminal submission into the single canonical
     outcome row, creating it on first submission.
@@ -2679,7 +2687,47 @@ async def _upsert_canonical_outcome(
          confidence, answer_brief} — full audit trail
 
     inv.primary_outcome_id always points at the canonical row.
+
+    fix §173 — ONE canonical-outcome write path
+    -------------------------------------------
+    This function is the ONLY supported write path for the canonical
+    outcome row. Branches that want to update the canonical (add
+    affected_components, contribute a PoC, refine variant_hunt_orders,
+    etc.) BEFORE terminating themselves do NOT get a non-terminal
+    ``submit_canonical_addition`` action — the violations log
+    deliberately rejected that shape because it would split the
+    canonical-write contract across two agent actions and double the
+    state-machine surface.
+
+    Instead: any branch that wants to extend the canonical must do so
+    from inside its own ``terminal_submit`` (decision.action ==
+    "submit") path. The branch terminates with the contribution it
+    has — that single termination is the only moment a branch can
+    write to the canonical. The merge logic above is what makes that
+    OK: the branch's contribution lands additively, so terminating
+    early to record the contribution still preserves it in the audit
+    trail and merged downstream view.
+
+    The ``action`` parameter is the explicit contract marker:
+    "terminal_submit" is the only value the function accepts. Any
+    future caller passing a different action (e.g. a hypothetical
+    "submit_canonical_addition" or a misuse from a non-terminal
+    handler) gets an AssertionError at function entry — a clear
+    failure mode rather than a silent canonical write from the
+    wrong code path.
     """
+    # fix §173 — guard: refuse any non-terminal canonical write path.
+    # Hard-fail with a precise message so future contributors who try
+    # to call this from a non-terminal action see EXACTLY which
+    # contract they broke. See the docstring above for the rationale.
+    assert action == "terminal_submit", (
+        f"_upsert_canonical_outcome is the ONE canonical-outcome write "
+        f"path and only accepts action='terminal_submit'; got "
+        f"action={action!r}. To extend a canonical outcome before "
+        f"terminating, do it from inside the branch's terminal_submit "
+        f"path (decision.action == 'submit') — see fix §173 in "
+        f"agents/vuln_researcher._upsert_canonical_outcome docstring."
+    )
     # fix §168 — race-fix: serialize canonical-outcome writes per
     # investigation by taking a row lock on the parent investigation
     # row BEFORE the existence check. Concurrent terminal_submits
