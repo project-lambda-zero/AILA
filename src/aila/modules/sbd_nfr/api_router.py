@@ -828,25 +828,22 @@ async def smart_search(
 
     The LLM receives only filtered session data to prevent cross-user leaking.
     """
-    # Obtain the LLM client from the platform runtime.
-    # Imported lazily to avoid circular import at module load time.
-    from aila.config import get_settings
-    from aila.platform.config import PlatformSettings
-    from aila.platform.llm import AilaLLMClient
-    from aila.storage.registry import ConfigRegistry
-    from aila.storage.secrets import SecretStore
+    # fix §163 / §164 — route through the platform ServiceFactory
+    # singleton instead of constructing a fresh ConfigRegistry +
+    # SecretStore + AilaLLMClient triple per request, and propagate
+    # ``auth.team_id`` so the cost record gets scoped to the caller's
+    # team budget (Phase 175). The factory's llm_client is memoized,
+    # so concurrent /search calls share one underlying client.
+    from aila.platform.services.factory import ServiceFactory
 
-    settings = get_settings()
-    platform_settings = PlatformSettings(settings=settings)
-    config_registry = ConfigRegistry()
-    secret_store = SecretStore(platform_settings)
-    llm_client = AilaLLMClient(registry=config_registry, secret_store=secret_store)
+    llm_client = ServiceFactory().llm_client
 
     return await search_service.smart_search(
         request=body,
         user_id=auth.user_id,
         user_role=auth.role,
         llm_client=llm_client,
+        team_id=auth.team_id,
     )
 
 
