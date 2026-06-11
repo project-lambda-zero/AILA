@@ -191,6 +191,11 @@ COL_NAVY = colors.HexColor("#1c2733")         # banners
 COL_NAVY_INK = colors.HexColor("#f3ead4")     # banner text
 COL_MUTED = colors.HexColor("#5b5443")
 COL_ZEBRA = colors.HexColor("#efe7d0")        # zebra row tint
+# Light-amber tint for the "what the MASVS standard says" catalog box.
+# Visually separates the standard's text from AILA's verdict prose so
+# the reader doesn't read OWASP text as if it were the audit's findings.
+COL_CATALOG_TINT = colors.HexColor("#f1e3b8")   # warm amber, low saturation
+COL_CATALOG_BORDER = colors.HexColor("#c39a3c") # thin amber border rule
 
 VERDICT_COLOR: dict[str, colors.Color] = {
     "FAIL": COL_FAIL,
@@ -3258,6 +3263,115 @@ def _key_takeaway_box(f: FindingRecord, s: dict[str, ParagraphStyle]) -> list[Fl
     return [Spacer(1, 3 * mm), KeepTogether(t), Spacer(1, 2 * mm)]
 
 
+def _build_catalog_box(
+    f: FindingRecord, s: dict[str, ParagraphStyle],
+) -> list[Flowable]:
+    """Render the MASVS catalog excerpt as one tinted amber block.
+
+    Composes the description + verification steps + relevant APIs +
+    evidence hints into a single Table cell so the operator's eye
+    treats the whole block as "what the OWASP standard says". The
+    surrounding text on the finding page (snapshot card above, agent
+    reasoning below) is on the ivory paper background; the catalog
+    excerpt's amber tint and thin amber rule are the only chrome
+    differentiation.
+    """
+    inner_w = PAGE_W - MARGIN_L - MARGIN_R
+    # Slightly tighter inner content width to account for the box's
+    # padding so wrapped table cells don't overflow the rule.
+    pad_h = 6
+    body_sm = ParagraphStyle(
+        "CatBody", parent=s["body_sm"], fontSize=8.0, leading=10.0,
+        textColor=COL_INK, alignment=TA_JUSTIFY,
+    )
+    head_st = ParagraphStyle(
+        "CatH", parent=s["caps"],
+        fontName=_font("Sans-Bold", "Helvetica-Bold"),
+        fontSize=7.4, leading=9.0, letterSpace=2.0,
+        textColor=COL_ACCENT_DEEP,
+    )
+    sub_st = ParagraphStyle(
+        "CatSub", parent=s["caps"],
+        fontName=_font("Sans-Bold", "Helvetica-Bold"),
+        fontSize=6.6, leading=8.6, letterSpace=1.6,
+        textColor=COL_MUTED, spaceBefore=2, spaceAfter=0,
+    )
+    mono_sm = ParagraphStyle(
+        "CatMono", parent=s["mono_sm"], fontSize=7.0, leading=8.6,
+        textColor=COL_INK,
+    )
+    xs = ParagraphStyle(
+        "CatXs", parent=s["body_xs"], fontSize=7.2, leading=8.8,
+        textColor=COL_INK,
+    )
+
+    inner_flowables: list[Flowable] = []
+    inner_flowables.append(Paragraph("CONTROL  ·  WHAT  THE  MASVS  STANDARD  SAYS", head_st))
+    inner_flowables.append(Spacer(1, 1.4 * mm))
+
+    desc = f.catalog.get("description") or ""
+    if desc:
+        for fl in _para_multi(desc, body_sm):
+            inner_flowables.append(fl)
+    else:
+        inner_flowables.append(Paragraph("(no description in catalog)", body_sm))
+    inner_flowables.append(Spacer(1, 2 * mm))
+
+    # Two-column row inside the box: verification steps left, APIs + hints right
+    vs = f.catalog.get("verification_steps") or []
+    apis = f.catalog.get("relevant_apis") or []
+    hints = f.catalog.get("evidence_hints") or []
+
+    col_w = (inner_w - 2 * pad_h - 4 * mm) / 2
+
+    left_block: list[Flowable] = [Paragraph("VERIFICATION  STEPS", sub_st)]
+    if vs:
+        for i, step in enumerate(vs, 1):
+            safe_step = _html_escape(step)
+            left_block.append(Paragraph(f"<b>{i}.</b> {safe_step}", xs))
+    else:
+        left_block.append(Paragraph("(none recorded)", xs))
+
+    right_block: list[Flowable] = [Paragraph("RELEVANT  APIs", sub_st)]
+    if apis:
+        for api in apis:
+            right_block.append(Paragraph(_html_escape(api), mono_sm))
+    else:
+        right_block.append(Paragraph("(none recorded)", xs))
+    right_block.append(Spacer(1, 1.4 * mm))
+    right_block.append(Paragraph("EVIDENCE  HINTS", sub_st))
+    if hints:
+        right_block.append(Paragraph(
+            _html_escape("  ·  ".join(hints)), xs))
+    else:
+        right_block.append(Paragraph("(none recorded)", xs))
+
+    twocol = Table([[left_block, right_block]], colWidths=[col_w, col_w])
+    twocol.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("LINEAFTER", (0, 0), (0, -1), 0.3, COL_CATALOG_BORDER),
+    ]))
+    inner_flowables.append(twocol)
+
+    box = Table([[inner_flowables]], colWidths=[inner_w])
+    box.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), COL_CATALOG_TINT),
+        ("LEFTPADDING", (0, 0), (-1, -1), pad_h),
+        ("RIGHTPADDING", (0, 0), (-1, -1), pad_h),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.4, COL_CATALOG_BORDER),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.4, COL_CATALOG_BORDER),
+        ("LINEBEFORE", (0, 0), (0, -1), 0.4, COL_CATALOG_BORDER),
+        ("LINEAFTER", (-1, 0), (-1, -1), 0.4, COL_CATALOG_BORDER),
+    ]))
+    return [box]
+
+
 def _build_one_finding(f: FindingRecord, bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
     """Return all flowables for one finding page (may span multiple pages)."""
     story: list[Flowable] = []
@@ -3310,47 +3424,12 @@ def _build_one_finding(f: FindingRecord, bundle: Bundle, s: dict[str, ParagraphS
     story.append(Paragraph("  ·  ".join(band_pieces), band_style))
     story.append(Spacer(1, 3 * mm))
 
-    # Control catalog excerpt
-    story.append(_h4("CONTROL — CATALOG DESCRIPTION", s))
-    story.append(Paragraph(f.catalog.get("description") or "", s["body_sm"]))
-    story.append(Spacer(1, 2 * mm))
-
-    # Two-column row: verification steps + relevant APIs
-    vs = f.catalog.get("verification_steps") or []
-    apis = f.catalog.get("relevant_apis") or []
-    hints = f.catalog.get("evidence_hints") or []
-    col_w = (PAGE_W - MARGIN_L - MARGIN_R - 3 * mm) / 2
-    left_block: list[Flowable] = [_h4("VERIFICATION  STEPS", s)]
-    if vs:
-        for i, step in enumerate(vs, 1):
-            safe_step = _html_escape(step)
-            left_block.append(Paragraph(f"<b>{i}.</b> {safe_step}", s["body_xs"]))
-            left_block.append(Spacer(1, 1))
-    else:
-        left_block.append(_para("(none recorded)", s["body_xs"]))
-    right_block: list[Flowable] = [_h4("RELEVANT  APIs", s)]
-    if apis:
-        for api in apis:
-            right_block.append(_para(api, s["mono_sm"]))
-    else:
-        right_block.append(_para("(none recorded)", s["body_xs"]))
-    right_block.append(Spacer(1, 2 * mm))
-    right_block.append(_h4("EVIDENCE  HINTS", s))
-    if hints:
-        right_block.append(_para("  ·  ".join(hints), s["body_xs"]))
-    else:
-        right_block.append(_para("(none recorded)", s["body_xs"]))
-    twocol = Table([[left_block, right_block]],
-                   colWidths=[col_w, col_w])
-    twocol.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ("LINEAFTER", (0, 0), (0, -1), 0.4, COL_THIN),
-    ]))
-    story.append(twocol)
+    # ── Catalog excerpt — tinted "what the MASVS standard says" box ──
+    # The entire OWASP MASVS catalog content for this control (description
+    # + verification steps + relevant APIs + evidence hints) sits inside
+    # one amber-tinted block. The tint plus the smaller body_sm font cue
+    # the reader that this is reference material, NOT AILA's verdict.
+    story.extend(_build_catalog_box(f, s))
     story.append(Spacer(1, 3 * mm))
 
     # Agent's full reasoning
