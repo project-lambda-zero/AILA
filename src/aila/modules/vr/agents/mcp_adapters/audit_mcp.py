@@ -926,11 +926,15 @@ def _adapt_search(tool_label: str) -> Any:
     return _adapter
 
 
+# fix §245 — adapt_search_functions used to be bound here too (factory
+# output) and then overwritten ~80 lines below by the specialised
+# implementation. The factory binding was dead code with refactor risk
+# (delete-either-line silently swaps behaviour). The specialised
+# binding lives at the bottom of the search_functions block instead.
 adapt_search_source = _adapt_search("search_source")
 adapt_search_macros = _adapt_search("search_macros")
 adapt_search_constants = _adapt_search("search_constants")
 adapt_search_types = _adapt_search("search_types")
-adapt_search_functions = _adapt_search("search_functions")
 
 
 def _adapt_search_functions_specialized(
