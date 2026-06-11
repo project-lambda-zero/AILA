@@ -818,8 +818,14 @@ class ToolExecutor:
                 cmd = json.loads(payload.get("command") or "{}")
             except (ValueError, TypeError):
                 break
-            tool_id = (cmd.get("tool") or "").partition(".")
-            key = (tool_id[0], tool_id[2])
+            # fix §257 — keep "server is leftmost segment, tool is the
+            # rest" semantics for multi-segment tool names (e.g. a future
+            # `audit_mcp.utils.read_lines` would split to
+            # ("audit_mcp", "utils.read_lines")). `partition`'s tail
+            # already preserved this, but using split(".", 1) makes the
+            # intent explicit and matches the dispatch site convention.
+            parts = (cmd.get("tool") or "").split(".", 1)
+            key = (parts[0], parts[1] if len(parts) == 2 else "")
             if key in self._SURVEY_TOOLS:
                 prior_surveys += 1
             else:
