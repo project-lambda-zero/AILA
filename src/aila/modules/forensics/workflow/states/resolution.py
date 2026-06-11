@@ -81,7 +81,7 @@ async def state_resolution(
 
             from aila.modules.forensics.agents.resolver_agent import ResolverAgent
 
-            resolver = ResolverAgent(services.settings, project_id)
+            resolver = ResolverAgent(services, project_id)
             families_to_try = sorted(question_families)[:10]
             await services.emitter.emit(
                 "resolution",
