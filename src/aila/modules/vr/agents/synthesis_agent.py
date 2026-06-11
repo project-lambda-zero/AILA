@@ -210,9 +210,13 @@ class SynthesisAgent:
         except Exception as exc:  # noqa: BLE001 — broaden to catch every
             # systemic LLM failure shape; narrow except hid TimeoutError +
             # httpx errors + validation failures (fix §158).
+            # fix §350 — traceback now reaches operator log so transient
+            # LLM transport failures vs. permanent schema/auth failures
+            # are distinguishable from the warning alone.
             _log.warning(
                 "synthesis LLM call failed for inv=%s err=%s",
                 self.investigation_id, exc,
+                exc_info=True,
             )
             return {"status": "failed", "reason": f"llm_error:{type(exc).__name__}"}
         if response.disabled:
