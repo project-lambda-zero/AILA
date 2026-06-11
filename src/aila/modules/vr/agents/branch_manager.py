@@ -165,14 +165,36 @@ class BranchManager:
                 _decode(a.case_state_json), _decode(b.case_state_json),
             )
 
+            # fix §115 — preserve lineage. Pick branch A's parent first
+            # (deterministic on argument order); fall back to B's parent
+            # if A was a root. Result: the branch tree UI walks from
+            # the merged child back to a real ancestor instead of
+            # rendering it as an orphan new root next to a/b.
+            # Closes §40 (speculative survivor-pointer note) as a
+            # side-effect — same code path.
+            inherited_parent = a.parent_branch_id or b.parent_branch_id
+
             merged = VRInvestigationBranchRecord(
                 investigation_id=self.investigation_id,
-                parent_branch_id=None,
+                parent_branch_id=inherited_parent,
                 status=BranchStatus.ACTIVE.value,
                 persona_voice="merge_result",  # fix §177 — structural marker, never null
                 fork_reason=f"merge: {merge_reason}" if merge_reason else "merge",
                 case_state_json=_encode(merged_state),
+                # fix §113 — turn_count carries the higher of the two
+                # source histories. The merged branch "inherits" A+B's
+                # reasoning depth so subsequent turn-cap checks see
+                # the inflated value. This is INTENTIONAL: a merged
+                # branch starting at turn 0 would let the operator
+                # bypass per-branch turn caps by merging then forking.
+                # max() preserves the cap's intent (work-done depth)
+                # without double-counting like a + b would.
                 turn_count=max(a.turn_count, b.turn_count),
+                # fix §114 — cost moves to the survivor. Source-branch
+                # costs are zeroed below so the investigation-level
+                # sum (Σ branches.branch_cost_usd) reads
+                # (a + b) + 0 + 0 = (a + b) instead of double-counted
+                # (a + b) + a + b = 2*(a + b).
                 branch_cost_usd=a.branch_cost_usd + b.branch_cost_usd,
             )
             uow.session.add(merged)
@@ -185,6 +207,11 @@ class BranchManager:
                 branch.closed_reason = merge_reason or "merged"
                 branch.closed_at = now
                 branch.updated_at = now
+                # fix §114 — zero source-branch costs after transfer.
+                # The cost is now carried solely by ``merged``; the
+                # investigation-total aggregator sums all branches
+                # naively and would otherwise double-count.
+                branch.branch_cost_usd = 0.0
                 uow.session.add(branch)
             await uow.commit()
 
