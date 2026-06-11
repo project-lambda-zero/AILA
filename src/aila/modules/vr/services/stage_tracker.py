@@ -332,48 +332,76 @@ class StageTracker:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> bool:
-        # ALWAYS reload before commit — a parallel resume operation
-        # could have mutated other stages while we were running.
-        stages = await load_target_stages(self.target_id)
-        current = stages.get(self.stage)
-        now = utc_now()
+        # fix §321 — re-read under SELECT FOR UPDATE so the reaper and
+        # __aexit__ serialize on the row lock. If the reaper claimed
+        # this stage (FAILED with the `reaper:` prefix that
+        # `reap_stuck_stages` writes) while the work was in-flight,
+        # honor the reaper's verdict: the in-memory result is lost
+        # (acceptable) and we do NOT overwrite the FAILED row.
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _select(VRTargetRecord)
+                .where(VRTargetRecord.id == self.target_id)
+                .with_for_update(),
+            )).first()
+            if row is None:
+                raise StageTrackerError(f"target {self.target_id} not found")
+            stages = parse_stages(row.analysis_stages_json)
+            current = stages.get(self.stage)
+            now = utc_now()
 
-        if exc is None:
-            new_status = StageStatus(
-                state=StageState.DONE,
-                started_at=current.started_at,
-                completed_at=now,
-                attempts=current.attempts,
-                error=None,
-            )
-        else:
-            err_msg = f"{type(exc).__name__}: {exc}"
-            # Truncate long error messages so a single huge stack
-            # trace doesn't blow up the JSON column.
-            new_status = StageStatus(
-                state=StageState.FAILED,
-                started_at=current.started_at,
-                completed_at=now,
-                attempts=current.attempts,
-                error=err_msg[:800],
-            )
+            if (
+                current.state == StageState.FAILED
+                and current.error is not None
+                and current.error.startswith("reaper:")
+            ):
+                _log.warning(
+                    "stage_tracker: %s/%s was reaped while in-flight (%r); "
+                    "honoring reaper verdict and discarding in-memory result",
+                    self.target_id, self.stage.value, current.error,
+                )
+                # Returning False propagates the work exception (if any);
+                # the reaper already persisted FAILED so we leave the row
+                # untouched.
+                return False
 
-        stages.set(self.stage, new_status)
-        try:
-            await save_target_stages(
-                self.target_id,
-                stages,
-                extra_columns=self._extra_columns or None,
-            )
-        except Exception as save_exc:  # noqa: BLE001
-            # We MUST NOT swallow the original work exception just
-            # because the state-commit hiccupped. Log + let original
-            # propagate.
-            _log.error(
-                "stage_tracker: failed to commit stage status for %s/%s: %s",
-                self.target_id, self.stage.value, save_exc,
-                exc_info=True,
-            )
+            if exc is None:
+                new_status = StageStatus(
+                    state=StageState.DONE,
+                    started_at=current.started_at,
+                    completed_at=now,
+                    attempts=current.attempts,
+                    error=None,
+                )
+            else:
+                err_msg = f"{type(exc).__name__}: {exc}"
+                # Truncate long error messages so a single huge stack
+                # trace doesn't blow up the JSON column.
+                new_status = StageStatus(
+                    state=StageState.FAILED,
+                    started_at=current.started_at,
+                    completed_at=now,
+                    attempts=current.attempts,
+                    error=err_msg[:800],
+                )
+
+            stages.set(self.stage, new_status)
+            try:
+                _apply_stages_to_row(
+                    row, stages,
+                    extra_columns=self._extra_columns or None,
+                )
+                uow.session.add(row)
+                await uow.session.commit()
+            except Exception as save_exc:  # noqa: BLE001
+                # We MUST NOT swallow the original work exception just
+                # because the state-commit hiccupped. Log + let original
+                # propagate.
+                _log.error(
+                    "stage_tracker: failed to commit stage status for %s/%s: %s",
+                    self.target_id, self.stage.value, save_exc,
+                    exc_info=True,
+                )
 
         # Returning False/None propagates the exception; True swallows.
         # Never swallow — caller wants to know.
