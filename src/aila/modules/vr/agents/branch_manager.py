@@ -94,6 +94,13 @@ class BranchManager:
         at_turn: int | None = None,
     ) -> BranchOpResult:
         """Spawn a new ACTIVE branch from ``parent_branch_id``."""
+        # fix §178 — default to a known marker so the frontend (and §180
+        # NOT NULL alembic migration) never sees a null persona_voice.
+        # Callers that supply a persona (auto_deliberation, operator
+        # picker) keep their value; callers that don't (older API
+        # paths) get a grep-able structural marker instead of NULL.
+        if not persona_voice or not persona_voice.strip():
+            persona_voice = "fork_unnamed"
         async with UnitOfWork() as uow:
             parent = await self._load_branch(uow, parent_branch_id, for_update=True)
             if parent.status != BranchStatus.ACTIVE.value:
@@ -162,7 +169,7 @@ class BranchManager:
                 investigation_id=self.investigation_id,
                 parent_branch_id=None,
                 status=BranchStatus.ACTIVE.value,
-                persona_voice=None,
+                persona_voice="merge_result",  # fix §177 — structural marker, never null
                 fork_reason=f"merge: {merge_reason}" if merge_reason else "merge",
                 case_state_json=_encode(merged_state),
                 turn_count=max(a.turn_count, b.turn_count),
