@@ -962,6 +962,14 @@ class ChromeContext:
     timestamp: str = ""
     apk_sha_short: str = ""
     total_pages: int = 0           # populated on second pass
+    # page_num → (section_label, section_code) captured on pass A so the
+    # pass-B chrome can label the START of each page correctly. Without
+    # this, the first page of a new section still wears the previous
+    # section's chrome because Platypus paints onPage BEFORE flowables
+    # draw.
+    section_at_page: dict[int, tuple[str, str]] = field(default_factory=dict)
+    # When True, _set_section recording is active (pass A).
+    capture_sections: bool = False
 
 
 _CHROME = ChromeContext()
@@ -971,8 +979,22 @@ def _draw_chrome(canvas: Canvas, doc: BaseDocTemplate) -> None:
     """Top header strip + bottom footer strip drawn on every body page."""
     page_num = doc.page
     if page_num == 1:
-        # Cover page gets its own chrome from CoverDecoration; skip.
+        # Cover page gets its own chrome from _draw_cover_chrome; skip.
         return
+
+    # Resolve the section label/code FOR THIS PAGE from the pre-collected
+    # map (pass A populates it). The map records the first label/code that
+    # the page held; before the first label fires, fall back to the
+    # most-recent prior page.
+    sec_label, sec_code = _CHROME.section_label, _CHROME.section_code
+    if _CHROME.section_at_page:
+        # Find the largest captured page ≤ page_num.
+        best = None
+        for pn in _CHROME.section_at_page:
+            if pn <= page_num and (best is None or pn > best):
+                best = pn
+        if best is not None:
+            sec_label, sec_code = _CHROME.section_at_page[best]
 
     # ---- Top header strip ----
     canvas.saveState()
@@ -997,9 +1019,9 @@ def _draw_chrome(canvas: Canvas, doc: BaseDocTemplate) -> None:
     # second line: section code + label
     canvas.setFillColor(COL_NAVY_INK)
     canvas.setFont(_font("Mono-Bold", "Courier-Bold"), 8.2)
-    canvas.drawString(MARGIN_L, PAGE_H - 11 * mm, _CHROME.section_code)
+    canvas.drawString(MARGIN_L, PAGE_H - 11 * mm, sec_code)
     canvas.setFont(_font("Sans-Bold", "Helvetica-Bold"), 8.2)
-    canvas.drawString(MARGIN_L + 18 * mm, PAGE_H - 11 * mm, _CHROME.section_label)
+    canvas.drawString(MARGIN_L + 18 * mm, PAGE_H - 11 * mm, sec_label)
     canvas.setFont(_font("Mono", "Courier"), 7.0)
     canvas.drawRightString(PAGE_W - MARGIN_R, PAGE_H - 11 * mm,
                            "SHA-256/" + _CHROME.apk_sha_short)
@@ -1042,23 +1064,38 @@ def _draw_page(canvas: Canvas, doc: BaseDocTemplate) -> None:
 # CONTENT BUILDERS — one function per section
 # ============================================================================
 
+class _SectionSetter(Flowable):
+    """Side-effect flowable that updates header chrome state.
+
+    On pass A (``_CHROME.capture_sections = True``) the setter records
+    the page on which it draws into ``_CHROME.section_at_page`` so the
+    pass-B chrome can label the page accurately (Platypus paints
+    ``onPage`` before flowables draw — the chrome would otherwise lag
+    by one page).
+    """
+
+    def __init__(self, label: str, code: str) -> None:
+        super().__init__()
+        self.label = label
+        self.code = code
+        self.width = 0
+        self.height = 0
+
+    def wrap(self, _aw: float, _ah: float) -> tuple[float, float]:
+        return (0, 0)
+
+    def draw(self) -> None:
+        _CHROME.section_label = self.label
+        _CHROME.section_code = self.code
+        if _CHROME.capture_sections:
+            page_num = self.canv.getPageNumber()
+            # Only record the FIRST setter on a given page; later setters
+            # on the same page would override the page's chrome.
+            _CHROME.section_at_page.setdefault(page_num, (self.label, self.code))
+
+
 def _set_section(label: str, code: str) -> Flowable:
-    """Side-effect flowable that updates header chrome state."""
-
-    class _Setter(Flowable):
-        def __init__(self) -> None:
-            super().__init__()
-            self.width = 0
-            self.height = 0
-
-        def wrap(self, _aw: float, _ah: float) -> tuple[float, float]:
-            return (0, 0)
-
-        def draw(self) -> None:
-            _CHROME.section_label = label
-            _CHROME.section_code = code
-
-    return _Setter()
+    return _SectionSetter(label, code)
 
 
 def _para(text: str, style: ParagraphStyle) -> Paragraph:
@@ -1129,26 +1166,18 @@ def build_cover(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
     # The cover chrome (top navy banner, bottom rust bar, tick band) is
     # painted via the "cover" PageTemplate's onPage hook (_draw_cover_chrome).
     # The first flowable just pushes the title block below the banner.
-    story.append(Spacer(1, 14 * mm))
+    story.append(Spacer(1, 8 * mm))
 
-    # CLASSIFICATION banner
-    classif_style = ParagraphStyle(
-        "Classif", parent=s["banner_label"], fontSize=8.0, leading=10.0,
-        textColor=COL_ACCENT_DEEP, letterSpace=3.5,
-    )
-    story.append(Paragraph(
-        "F O R   I N T E R N A L   D I S T R I B U T I O N    ·    V O D A F O N E   T R", classif_style,
-    ))
-    story.append(Spacer(1, 1.5 * mm))
+    # Sigil row directly below the navy banner the onPage hook paints.
     sigil_style = ParagraphStyle(
         "Sigil", parent=s["mono"], fontSize=9.0, leading=10.0,
         textColor=COL_MUTED, letterSpace=4.0,
     )
     story.append(Paragraph(
-        f"DOCUMENT  ·  YANIMDA-MASVS-L1  ·  REVISION {REPORT_VERSION}  ·  COPY  001 of 001",
+        f"DOCUMENT  ·  YANIMDA-MASVS-L1  ·  REVISION {REPORT_VERSION}  ·  COPY  001 OF 001",
         sigil_style,
     ))
-    story.append(Spacer(1, 14 * mm))
+    story.append(Spacer(1, 16 * mm))
 
     # Big title block
     story.append(Paragraph("MASVS L1", s["cover_title"]))
@@ -1218,7 +1247,42 @@ def build_cover(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
     story.append(Paragraph("VERDICT MATRIX", s["caps_accent"]))
     story.append(Spacer(1, 1.5 * mm))
     story.append(VerdictDistroBar(dict(counts), PAGE_W - MARGIN_L - MARGIN_R))
-    story.append(Spacer(1, 4 * mm))
+
+    # Sigil grid — 9 group sigils with per-group verdict tally as a
+    # tactical strip across the bottom of the cover.
+    by_group: dict[str, Counter[str]] = defaultdict(Counter)
+    for f in bundle.findings:
+        by_group[f.group][f.verdict_label] += 1
+    group_order = ["ARCH", "STORAGE", "CRYPTO", "AUTH", "NETWORK",
+                   "PLATFORM", "CODE", "PRIVACY"]
+    sigil_cells: list[Any] = []
+    for grp in group_order:
+        gc = by_group.get(grp) or Counter()
+        total = sum(gc.values())
+        fails = gc.get("FAIL", 0)
+        sig = GROUP_SIGIL.get(grp, grp[:2])
+        sigil_html = (
+            f"<font name='Mono-Bold' color='#c2410c' size='12'>{sig}</font><br/>"
+            f"<font name='Sans-Bold' size='6.5'>{grp}</font><br/>"
+            f"<font name='Mono' color='#5b5443' size='7.5'>n={total} · "
+            f"<font color='#d83b3b'>fail {fails}</font></font>"
+        )
+        sigil_cells.append(Paragraph(sigil_html, ParagraphStyle(
+            "SigGrid", fontName=_font("Sans", "Helvetica"),
+            alignment=TA_CENTER, leading=10.0)))
+    sigil_table = Table([sigil_cells], colWidths=[(PAGE_W - MARGIN_L - MARGIN_R) / len(group_order)] * len(group_order))
+    sigil_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("BACKGROUND", (0, 0), (-1, -1), COL_PAPER_DEEP),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.8, COL_INK),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.8, COL_INK),
+        ("LINEAFTER", (0, 0), (-2, 0), 0.3, COL_THIN),
+    ]))
+    story.append(sigil_table)
+    story.append(Spacer(1, 8 * mm))
 
     # Footnote
     fn_style = ParagraphStyle("CoverFootnote", parent=s["body_xs"],
@@ -1510,7 +1574,7 @@ def build_exec_summary(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flo
 
     # FAIL highlights — the top 5 most severe findings
     fails = [f for f in bundle.findings if f.verdict_label == "FAIL"]
-    fails_sorted = sorted(fails, key=lambda f: -f.confidence)[:8]
+    fails_sorted = sorted(fails, key=lambda f: -f.confidence)[:6]
     if fails_sorted:
         story.append(_h2("02.3  ·  TOP-SEVERITY FINDINGS", s))
         rows = [["FIND.", "CTRL", "GROUP", "CONF.", "TITLE / ONE-LINE"]]
@@ -1988,20 +2052,9 @@ _PERSONA_COLOR: dict[str, colors.Color] = {
 def build_findings(bundle: Bundle, s: dict[str, ParagraphStyle]) -> list[Flowable]:
     story: list[Flowable] = []
     story.append(_set_section("FINDINGS — 53 CONTROLS", "§ 06"))
-    story.append(_h1("§ 06  ·  PER-CONTROL FINDINGS", s))
-    story.append(HorizontalRule(PAGE_W - MARGIN_L - MARGIN_R, thickness=1.4))
-    story.append(Spacer(1, 3 * mm))
-    story.append(Paragraph(
-        "Each of the 53 MASVS L1 controls gets its own finding page (or pages, for "
-        "long agent reasoning). The per-finding header carries the finding id, "
-        "control id, group sigil, control title, verdict pill, and confidence. "
-        "Beneath the header the body block carries the catalog description, the "
-        "agent's full reasoning, per-persona panel attribution, evidence locations, "
-        "affected components, variant hunt orders, and (when present) the "
-        "adversarial verifier report.",
-        s["body"]))
-    story.append(Spacer(1, 3 * mm))
-    story.append(PageBreak())
+    # No standalone section-cover page — the §06 banner is set in the
+    # running chrome, and the first finding's group block carries the
+    # readable explanation of what follows.
 
     # Group findings by MASVS group, then iterate.
     findings_by_group: dict[str, list[FindingRecord]] = defaultdict(list)
@@ -2094,7 +2147,8 @@ def _build_one_finding(f: FindingRecord, bundle: Bundle, s: dict[str, ParagraphS
     left_block: list[Flowable] = [_h4("VERIFICATION  STEPS", s)]
     if vs:
         for i, step in enumerate(vs, 1):
-            left_block.append(_para(f"<b>{i}.</b> {step}", s["body_xs"]))
+            safe_step = _html_escape(step)
+            left_block.append(Paragraph(f"<b>{i}.</b> {safe_step}", s["body_xs"]))
             left_block.append(Spacer(1, 1))
     else:
         left_block.append(_para("(none recorded)", s["body_xs"]))
@@ -2816,17 +2870,19 @@ def build_pdf(out_path: Path, bundle: Bundle) -> int:
         story.extend(build_glossary(bundle, s))
         return story
 
-    # Pass A — count pages
+    # Pass A — count pages & capture section→page map for the chrome.
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(".tmp.pdf")
     _CHROME.total_pages = 0
+    _CHROME.section_at_page = {}
+    _CHROME.capture_sections = True
     doc_a = TacticalDocTemplate(str(tmp_path))
     doc_a.build(_build_story())
-    # Count via pypdf
     page_count = _pdf_page_count(tmp_path)
     _CHROME.total_pages = page_count
+    _CHROME.capture_sections = False
 
-    # Pass B — re-render with correct total
+    # Pass B — re-render with correct total + populated section map.
     doc_b = TacticalDocTemplate(str(out_path))
     doc_b.build(_build_story())
     try:
