@@ -53,9 +53,10 @@ import logging
 from datetime import UTC, timedelta
 from typing import Any
 
-from sqlmodel import select as _select
 from sqlalchemy import update as _update
+from sqlmodel import select as _select
 
+from aila.modules.vr.contracts.target import AnalysisState
 from aila.modules.vr.contracts.target_stages import (
     StageName,
     StageState,
@@ -63,7 +64,6 @@ from aila.modules.vr.contracts.target_stages import (
     TargetAnalysisStages,
     roll_up_overall_state,
 )
-from aila.modules.vr.contracts.target import AnalysisState
 from aila.modules.vr.db_models import VRTargetRecord
 from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork

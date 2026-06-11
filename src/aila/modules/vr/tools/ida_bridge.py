@@ -346,8 +346,8 @@ class IDABridgeTool(Tool):
             f'Content-Disposition: form-data; name="file"; '
             f'filename="{safe_name}"\r\n'
             f"Content-Type: application/octet-stream\r\n\r\n"
-        ).encode("utf-8")
-        epilogue = f"\r\n--{boundary}--\r\n".encode("utf-8")
+        ).encode()
+        epilogue = f"\r\n--{boundary}--\r\n".encode()
         total_length = len(preamble) + file_size + len(epilogue)
 
         async def _stream_body():  # type: ignore[no-untyped-def]
