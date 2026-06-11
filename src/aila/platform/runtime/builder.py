@@ -103,21 +103,23 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     # below after the module registry is built.
 
     # Register gate pipeline step (Phase 119: Confidence Gating).
-    # call_fn is _single_call for consensus retry calls that bypass the pipeline.
-    # Emitter is None at startup -- same reasoning as classify/validate steps above.
+    # §101: inner_call routes through AilaLLMClient._inner_call so the
+    # consensus retries' tokens land in the same cost ledger as the
+    # primary call. Pipeline bypass is structural — _inner_call does not
+    # invoke PipelineRunner.run, so no gate recursion.
     _gate_step = make_gate_step(
         config_provider=runtime_model._config,
-        call_fn=runtime_model._single_call,
+        inner_call=runtime_model._inner_call,
         emitter=None,
     )
     runtime_model.pipeline.register("gate", _gate_step)
 
     # Register verify pipeline step (Phase 174: Second-Model Verification).
-    # call_fn is _single_call for blind verification calls that bypass the pipeline.
-    # Emitter is None at startup -- same reasoning as classify/validate/gate steps above.
+    # §100: same _inner_call wiring as gate — the second-model call now
+    # accumulates against the per-run budget.
     _verify_step = make_verify_step(
         config_provider=runtime_model._config,
-        call_fn=runtime_model._single_call,
+        inner_call=runtime_model._inner_call,
         emitter=None,
     )
     runtime_model.pipeline.register("verify", _verify_step)
