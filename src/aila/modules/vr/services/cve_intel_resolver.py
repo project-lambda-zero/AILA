@@ -188,6 +188,23 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
         return []
     svc = await _get_intel_service()
     if svc is None:
+        # fix §190 — upgrade from silent-WARN to operator-visible ERROR
+        # so a misconfigured worker (--modules vr without vulnerability)
+        # surfaces in log destinations and dashboards. Per the spec a
+        # refuse-to-start is too aggressive (a VR module audit run may
+        # legitimately ship without CVE intel); the right balance is
+        # visibility + degradation. The platform has no generic ops-event
+        # bus reachable from this call site (events.emitter is per-state
+        # WorkflowServices), so the log channel IS the alerting surface.
+        # Use a distinctive marker `cve_intel.module_missing` that log
+        # destinations / Grafana / Loki can grep on.
+        _log.error(
+            "cve_intel.module_missing — vulnerability module not registered "
+            "or runtime not initialized; CVE intel unavailable for %d id(s): %s. "
+            "Agent will see status=error entries and treat the CVEs as unknown. "
+            "Check worker `--modules` argument or platform module registry.",
+            len(cve_ids), ", ".join(cve_ids[:10]) + ("…" if len(cve_ids) > 10 else ""),
+        )
         return [
             CVEResolution(
                 cve_id=cid,
@@ -195,7 +212,8 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
                 error=(
                     "IntelService unavailable — vulnerability module not "
                     "registered or runtime not initialized. Cannot enrich CVE "
-                    "context; agent must treat the id as 'unknown'."
+                    "context; agent must treat the id as 'unknown'. Operator "
+                    "alert raised via cve_intel.module_missing log marker."
                 ),
             )
             for cid in cve_ids
