@@ -268,6 +268,15 @@ class AuditMcpBridgeTool(Tool):
         # never reclaimed).
         self._warmed_indexes: set[str] = set()
         self._warm_locks: dict[str, Any] = {}
+        # fix §208 — cache the resolved base URL on the instance. The
+        # docstring originally promised per-call resolution so an
+        # operator PATCH against /vr/mcp/servers/audit_mcp would take
+        # effect without a restart; in practice every call paid ~5ms
+        # constructing a fresh ConfigRegistry for a 70-call investigation.
+        # The URL is now resolved on first use and reused for the
+        # lifetime of the bridge; call invalidate_base_url() to force
+        # a re-read after operator config changes.
+        self._resolved_base_url: str | None = None
 
     # ── Per-index pre-warm registry ──────────────────────────────────
     #
@@ -289,18 +298,31 @@ class AuditMcpBridgeTool(Tool):
     async def _resolve_base_url(self) -> str:
         if self._fixed_base_url is not None:
             return self._fixed_base_url
+        # fix §208 — cached on the instance for the bridge lifetime.
+        if self._resolved_base_url is not None:
+            return self._resolved_base_url
         env_value = os.environ.get("AUDIT_MCP_URL")
         if env_value:
-            return env_value.rstrip("/")
+            self._resolved_base_url = env_value.rstrip("/")
+            return self._resolved_base_url
         try:
             from aila.storage.registry import ConfigRegistry  # noqa: PLC0415  (lazy: avoid hot-path on cold init)
 
             cfg_value = await ConfigRegistry().get("vr", "audit_mcp_url")
             if isinstance(cfg_value, str) and cfg_value.strip():
-                return cfg_value.rstrip("/")
+                self._resolved_base_url = cfg_value.rstrip("/")
+                return self._resolved_base_url
         except (ValueError, RuntimeError, ImportError):
             pass
-        return "http://127.0.0.1:18822"
+        self._resolved_base_url = "http://127.0.0.1:18822"
+        return self._resolved_base_url
+
+    def invalidate_base_url(self) -> None:
+        """Drop the cached base URL; next call re-resolves via env + config."""
+        # fix §208 — optional escape hatch for operators who PATCH the
+        # server config mid-run. The fixed-url path (test/DI) is
+        # unaffected and stays sticky for the bridge's lifetime.
+        self._resolved_base_url = None
 
     # ── LLM kwarg synonym map ─────────────────────────────────────────
     #
