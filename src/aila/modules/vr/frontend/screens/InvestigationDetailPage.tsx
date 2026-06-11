@@ -50,6 +50,7 @@ import {
   usePromoteOutcomeToFinding,
   useSendOperatorMessage,
 } from "../mutations";
+import { formatBranchDisplayName } from "../branchDisplay";
 import {
   useInvestigation,
   useInvestigationBranches,
@@ -959,7 +960,11 @@ export function InvestigationDetailPage() {
                   <option value="">all branches</option>
                   {branches.map((b) => (
                     <option key={b.id} value={b.id}>
-                      {personaMeta(b.persona_voice).label}
+                      {/* fix §176 — formatBranchDisplayName handles
+                          the merge_result / fork_unnamed / unspecified
+                          markers consistently with BranchTreePage,
+                          EvidenceGraphPage, and queries.useBranchLabel. */}
+                      {formatBranchDisplayName(b)}
                       {b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}
                     </option>
                   ))}
@@ -1175,7 +1180,10 @@ export function InvestigationDetailPage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-sm font-medium text-foreground">
-                                {pm.label}
+                                {/* fix §176 — single helper for the
+                                    persona / marker label. `pm` still
+                                    owns color + avatar styling. */}
+                                {formatBranchDisplayName(b)}
                               </span>
                               <span className="inline-flex items-center gap-1 text-3xs font-mono uppercase tracking-wide text-text-muted">
                                 <span
@@ -1220,7 +1228,7 @@ export function InvestigationDetailPage() {
                       <span className="w-1.5 h-1.5 rounded-full bg-text-muted/40" />
                       {queuedBranches.length} branch{queuedBranches.length === 1 ? "" : "es"} queued
                       <span className="text-text-muted/60">
-                        ({queuedBranches.map((b) => personaMeta(b.persona_voice).label).join(", ")})
+                        ({queuedBranches.map((b) => formatBranchDisplayName(b)).join(", ")})
                       </span>
                     </div>
                   )}
