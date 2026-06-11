@@ -30,6 +30,7 @@ parameters and surfaces upstream errors verbatim.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -42,6 +43,39 @@ from aila.storage.registry import ConfigRegistry
 __all__ = ["AndroidMcpBridgeTool"]
 
 _log = logging.getLogger(__name__)
+
+
+# fix §216 — module-level shared AsyncClient with persistent connection
+# pool. The previous shape constructed a fresh client per forward()
+# call; a 70-call investigation built + tore down 70 pools, each
+# paying TCP-handshake + TLS-not-applicable + DNS-cache miss costs
+# on every call. The shared client keeps connections alive between
+# calls and is safe to share across all bridge instances on the same
+# event loop.
+_SHARED_CLIENT: httpx.AsyncClient | None = None
+_SHARED_CLIENT_LOCK = asyncio.Lock()
+_SHARED_CLIENT_MAX_CONNECTIONS = 100
+_SHARED_CLIENT_KEEPALIVE = 20
+
+
+async def _get_shared_client() -> httpx.AsyncClient:
+    """Return the module-level shared AsyncClient, initializing on first call.
+
+    Per-request ``timeout=`` overrides the client default, so callers
+    keep their existing timeout semantics intact.
+    """
+    global _SHARED_CLIENT  # noqa: PLW0603
+    if _SHARED_CLIENT is not None:
+        return _SHARED_CLIENT
+    async with _SHARED_CLIENT_LOCK:
+        if _SHARED_CLIENT is None:
+            _SHARED_CLIENT = httpx.AsyncClient(
+                limits=httpx.Limits(
+                    max_connections=_SHARED_CLIENT_MAX_CONNECTIONS,
+                    max_keepalive_connections=_SHARED_CLIENT_KEEPALIVE,
+                ),
+            )
+    return _SHARED_CLIENT
 
 
 def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
@@ -248,8 +282,11 @@ class AndroidMcpBridgeTool(Tool):
             server_id="android_mcp", base_url=base, action=action,
         ) as ctx:
             try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.post(url, json=kwargs)
+                # fix §216 — reuse the module-level pooled client
+                # instead of constructing one per call. Per-call
+                # timeout override preserves the prior semantics.
+                client = await _get_shared_client()
+                resp = await client.post(url, json=kwargs, timeout=self._timeout)
             except httpx.ConnectError as exc:
                 ctx["status"] = "error"
                 ctx["error_excerpt"] = str(exc)[:400]
