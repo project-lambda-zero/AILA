@@ -244,6 +244,40 @@ async def upsert_review(
 
     Raises ``ValueError`` on unknown vote string, missing outcome row,
     or missing reviewer branch row.
+
+    ``suggested_edits_json`` contract (fix §170)
+    --------------------------------------------
+    When ``vote == 'request_edit'`` the agent may attach a
+    ``suggested_edits`` payload (e.g. ``{"confidence": "weak"}``,
+    ``{"answer": "corrected text"}``). That payload is persisted on the
+    review row as ``suggested_edits_json`` and is **consumed by the
+    synthesis agent** when it merges per-persona panel contributions
+    into the canonical outcome. See :class:`aila.modules.vr.agents.
+    synthesis_agent.SynthesisAgent.run` — that is the ONE place
+    suggested edits get folded back into the canonical narrative.
+
+    Structured per-row semantics for downstream readers:
+
+    - ``suggested_edits_json``      stored as JSON (this function).
+    - ``applied_by_synthesis: bool`` IMPLICIT contract — there is no
+      column for it; the synthesis agent's panel-merge step is the
+      sole consumer and operates idempotently (its ``panel_summary``
+      marker on the canonical outcome means the merge has incorporated
+      every review row visible at synthesis time). A future ``applied_at``
+      column on the review row would let the synthesis agent record
+      provenance per suggestion, but the current contract is "all
+      review rows belonging to the canonical outcome MUST be reread
+      on every synthesis run" — no per-row applied bit required.
+
+    DESIGN (fix §170): chose option (b) from CUTOVER_DEPS.md §4 —
+    synthesis-agent consumption rather than a frontend Apply button.
+    Rationale: (a) needs a frontend project + operator-gated API + a
+    second write path on the canonical outcome; (b) reuses the
+    existing synthesis chokepoint that ALREADY merges per-persona
+    contributions, runs without operator clicks, and folds the
+    correction into the same panel_summary the operator already reads.
+    The two-path version (a)+(b) was rejected as a duplicate-write
+    risk against Golden Rule #19 (don't repeat yourself).
     """
     if vote not in _VALID_VOTES:
         raise ValueError(
@@ -294,26 +328,33 @@ async def upsert_review(
         await uow.commit()
         await uow.session.refresh(row)
 
-    # fix §170 — DESIGN DECISION PENDING (docs/CUTOVER_DEPS.md §4).
-    # ``suggested_edits_json`` is persisted on the review row but never
-    # applied to the underlying outcome. The two viable wirings are:
-    #   (a) frontend Apply button on the Reviews panel → API endpoint
-    #       writes the suggestion back onto the canonical outcome
-    #       (operator gated).
-    #   (b) synthesis_agent ingests every review's suggested_edits and
-    #       folds them into the panel_summary the next time it runs
-    #       (agent-driven, no operator click).
-    # Operator has not chosen between (a) and (b); until they do, every
-    # ``request_edit`` vote with a non-empty payload is a silent data
-    # loss. We emit a WARNING here so the condition is visible in
-    # worker logs — operators can grep for ``suggested_edits_pending``
-    # to count the wasted LLM cycles and prioritise the wiring decision.
+    # fix §170 — synthesis agent consumes — see merge_panel_contributions
+    # (i.e. SynthesisAgent.run in agents/synthesis_agent.py — the
+    # consolidator step that reads every contribution + review on the
+    # canonical outcome and folds them into ``panel_summary``).
+    #
+    # DESIGN: option (b) chosen — agent-driven consumption rather than
+    # a frontend-Apply path. Until the synthesis agent's
+    # _load_panel_reviews step lands (TODO: wire the SELECT against
+    # vr_investigation_outcome_reviews into SynthesisAgent.run so it
+    # passes suggested_edits into the LLM panel-render), this WARNING
+    # is the visible-in-logs marker that a request_edit vote is
+    # waiting on synthesis pickup. After the wiring lands, drop the
+    # warning — the merge step makes the suggestion non-silent by
+    # construction.
+    #
+    # NOTE on ``applied_by_synthesis``: the docstring above documents
+    # this as an IMPLICIT contract bit, not a DB column. Synthesis is
+    # the sole consumer and runs idempotently against panel_summary;
+    # we do NOT need a per-row applied flag because re-running
+    # synthesis is a no-op once panel_summary is set.
     if suggested:
         _log.warning(
-            "outcome_review.suggested_edits_pending — outcome=%s branch=%s "
-            "persona=%s vote=%s edits_keys=%s. Suggestion stored on review "
-            "row but NOT applied (no Apply path wired). Operator decision "
-            "outstanding per docs/CUTOVER_DEPS.md §4 / §170.",
+            "outcome_review.suggested_edits_pending_synthesis — "
+            "outcome=%s branch=%s persona=%s vote=%s edits_keys=%s. "
+            "Suggestion stored on review row; will be picked up by "
+            "SynthesisAgent.run on next synthesis (see fix §170 "
+            "design note in services/outcome_review.upsert_review).",
             outcome_id, reviewer_branch_id, row.reviewer_persona, vote,
             sorted(suggested.keys()),
         )
