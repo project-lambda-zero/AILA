@@ -156,21 +156,32 @@ _PROBE_TOOL_ALLOWLIST = frozenset({
 })
 
 
-async def _fetch_audit_mcp_signatures() -> str:
+async def _fetch_audit_mcp_signatures() -> tuple[str, bool]:
     """Pull live tool schemas from audit-mcp so the extractor LLM
-    proposes probes with the right argument names. Returns a compact
-    markdown list of ``tool: required_args; optional_args`` for the
-    tools the verifier is allowed to call. Failure-tolerant — returns
-    an empty string so the verifier falls back on the LLM's prior
-    knowledge of audit-mcp instead of crashing.
+    proposes probes with the right argument names. Returns a tuple of
+    ``(markdown_text, ok_flag)``. ``ok_flag`` is True when the fetch
+    succeeded (text may still be empty if no allowlisted tools are
+    exposed); False when the bridge URL could not be resolved or the
+    HTTP / JSON parse failed. Callers use ``ok_flag`` to stamp a
+    ``signatures_fetch_failed`` field in the verifier report so an
+    operator can correlate verifier inconclusiveness with audit-mcp
+    unavailability — previously this swallowed silently and the
+    verifier was inconclusive for unexplained reasons.
+
+    fix §349 — log + return a failure flag instead of returning empty
+    string silently.
     """
     import httpx  # noqa: PLC0415
 
     bridge = AuditMcpBridgeTool()
     try:
         base_url = await bridge._resolve_base_url()
-    except (OSError, RuntimeError):
-        return ""
+    except (OSError, RuntimeError) as exc:
+        _log.warning(
+            "claim_verifier signatures fetch failed (resolve_base_url): %s",
+            exc.__class__.__name__,
+        )
+        return "", False
     # Async HTTP — was urllib.request.urlopen() which is fully sync and
     # blocks the asyncio loop for the call duration. With audit-mcp's
     # /tools serializing 60+ tool schemas the call takes 1-5s; that
@@ -182,11 +193,19 @@ async def _fetch_audit_mcp_signatures() -> str:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{base_url}/tools")
         raw = resp.json()
-    except (httpx.HTTPError, ValueError):
-        return ""
+    except (httpx.HTTPError, ValueError) as exc:
+        _log.warning(
+            "claim_verifier signatures fetch failed (%s): %s",
+            exc.__class__.__name__, exc,
+        )
+        return "", False
     tools = raw.get("tools", raw) if isinstance(raw, dict) else raw
     if not isinstance(tools, list):
-        return ""
+        _log.warning(
+            "claim_verifier signatures fetch returned unexpected shape: %s",
+            type(raw).__name__,
+        )
+        return "", False
     lines: list[str] = []
     for t in tools:
         if not isinstance(t, dict):
@@ -202,7 +221,7 @@ async def _fetch_audit_mcp_signatures() -> str:
         if optional:
             sig += f"   [optional: {', '.join(optional)}]"
         lines.append(sig)
-    return "\n".join(lines)
+    return "\n".join(lines), True
 
 def _render_probe_payload(tool: str, raw: Any) -> str:
     """Format an audit-mcp probe response for the verifier verdict prompt.
@@ -458,7 +477,9 @@ class ClaimVerifierAgent:
 
         # Stage 1: extractor — parse the claim into structured preconditions
         services = ServiceFactory()
-        signatures_block = await _fetch_audit_mcp_signatures()
+        # fix §349 — signatures fetch returns a (text, ok) pair so the
+        # verifier_report can record the failure flag.
+        signatures_block, signatures_ok = await _fetch_audit_mcp_signatures()
         sig_section = (
             f"## Available audit-mcp probes (live signatures)\n\n{signatures_block}\n\n"
             if signatures_block else ""
@@ -594,6 +615,11 @@ class ClaimVerifierAgent:
             "probes_run": len(probe_results),
             "probes_succeeded": sum(1 for p in probe_results if p["ok"]),
             "verified_at": utc_now().isoformat(),
+            # fix §349 — surface signatures-fetch failure so the
+            # operator can correlate an inconclusive verdict with
+            # audit-mcp being briefly unavailable rather than with a
+            # genuinely ambiguous source pattern.
+            "signatures_fetch_failed": not signatures_ok,
         }
 
         async with UnitOfWork() as uow:
