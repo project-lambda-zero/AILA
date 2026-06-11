@@ -98,11 +98,15 @@ def _args_fingerprint(args: dict[str, Any]) -> str:
 def bounded_dump(value: Any, max_chars: int = MAX_OBS_DUMP_CHARS) -> str:
     """Render a JSON-ish preview of ``value`` capped at ``max_chars``.
 
-    Uses indent=2 for readability. Appends a truncation marker when cut.
+    fix §272 — drops ``indent=2`` so the cap budget reflects real data
+    rather than whitespace. Pretty-printed JSON triples byte count
+    over compact form; under the 32 KiB cap that meant the agent saw
+    ~10 KiB of actual content and 22 KiB of indentation. Compact
+    serialisation puts the full budget into structure that matters.
     Falls back to ``repr`` for values json.dumps refuses (e.g. bytes).
     """
     try:
-        text = json.dumps(value, indent=2, default=str)
+        text = json.dumps(value, default=str, separators=(",", ":"))
     except (TypeError, ValueError):
         text = repr(value)
     if len(text) <= max_chars:
