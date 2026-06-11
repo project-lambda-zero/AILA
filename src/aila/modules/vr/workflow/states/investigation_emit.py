@@ -322,7 +322,7 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                     # AFTER stopped_at — renzo was running
                     # taint_paths_to and got mid-call killed.
                     from aila.modules.vr.db_models import (  # noqa: PLC0415
-                        VRInvestigationBranchRecord as _BR2,
+                        VRInvestigationBranchRecord as _BR2,  # noqa: N814 — local alias
                     )
                     idle_grace_s = float(
                         __import__("os").environ.get(

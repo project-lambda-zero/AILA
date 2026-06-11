@@ -115,7 +115,7 @@ class PauseReason:
 
 # fix §26 — bounded broad-except in sweep wrappers.
 #
-# Each ``except Exception:  # noqa: BLE001`` wrapper around a sweep
+# Each ``except Exception`` wrapper (with a ``noqa BLE001``) around a sweep
 # step trades crash-loud-on-first-error for keep-the-cron-alive. That
 # trade is necessary at this layer — a transient DB blip in one step
 # (refill) should NOT stop the next step (zombie reaper) from running
@@ -168,7 +168,7 @@ def _record_sweep_step_success(step: str) -> None:
 
 async def _run_sweep_step(
     name: str,
-    fn: "object",
+    fn: object,
     uow: UnitOfWork,
     default: object = None,
 ) -> object:
