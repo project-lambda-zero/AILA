@@ -150,7 +150,15 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     racing) is worse than no self-heal — it produces exactly the
     "6 branches instead of 3" state we just fixed in 2026-05-28.
     """
-    del services
+    # fix §297 — was \`del services\` (orphaning the bag). The handler
+    # signature is fixed by HandlerFn; keep the bag accessible so
+    # downstream code paths can reach \`services.llm_client\` /
+    # \`services.config\` etc. The current setup-time operations
+    # (CVE intel resolver, KnowledgeService-backed pattern_store) own
+    # their own dependencies because VRWorkflowServices does not yet
+    # carry a \`knowledge\` field; once it does, switch PatternStore
+    # construction below to \`PatternStore(knowledge=services.knowledge)\`.
+    _ = services  # held for future wiring; no-op today, NOT \`del\`.
 
     investigation_id = str(input.get("investigation_id") or "")
     if not investigation_id:
