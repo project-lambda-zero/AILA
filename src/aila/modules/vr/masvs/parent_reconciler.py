@@ -1272,6 +1272,71 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
 
 
 
+async def _cascade_terminal_to_deferred_children(
+    uow: UnitOfWork,
+) -> int:
+    """Cascade parent terminal status to deferred CREATED children.
+
+    fix §52 — when a MASVS audit parent reaches a terminal status
+    (``COMPLETED`` / ``FAILED`` / ``ABANDONED``) the deferred child
+    pool — children that never got an ARQ task because the APK refill
+    cap was already full — used to sit at ``CREATED`` forever. The
+    refill helper only operates on parents in ``CREATED``/``RUNNING``,
+    so once the parent crossed into a terminal state the deferred
+    children were orphaned: no operator UI flipped them, no reaper
+    swept them, and the parent's completion percentage was reported
+    against a child count that no longer made sense.
+
+    ``PAUSED`` parents are NOT included — the operator may resume them
+    and expect the deferred children to pick back up. Only the three
+    irrevocable terminal states cascade.
+
+    Children are flipped to ``ABANDONED`` with ``stopped_at`` /
+    ``updated_at`` set and ``pause_reason`` left untouched (the cascade
+    is not a pause; pause_reason carries only PAUSED-state metadata).
+
+    Returns the number of children cascaded this tick.
+    """
+    inv = VRInvestigationRecord
+    now = utc_now()
+
+    # One UPDATE covers every cascade — joining on the parent's terminal
+    # status keeps the scan cheap and atomic. We don't need a separate
+    # SELECT-then-UPDATE because the WHERE clause already excludes
+    # children whose parent is still in CREATED/RUNNING/PAUSED.
+    parent_alias = inv.__table__.alias("parent_inv")
+    result = await uow.session.exec(
+        update(inv)
+        .where(inv.status == InvestigationStatus.CREATED.value)
+        .where(inv.parent_investigation_id.isnot(None))
+        .where(
+            inv.parent_investigation_id.in_(
+                select(parent_alias.c.id)
+                .where(
+                    parent_alias.c.kind
+                    == InvestigationKind.MASVS_AUDIT.value,
+                )
+                .where(parent_alias.c.status.in_(_TERMINAL_STATUSES)),
+            ),
+        )
+        .values(
+            status=InvestigationStatus.ABANDONED.value,
+            stopped_at=now,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False),
+    )
+    cascaded = getattr(result, "rowcount", 0) or 0
+    if cascaded:
+        await uow.commit()
+        _log.info(
+            "cascade_terminal_to_deferred_children: cascaded=%d "
+            "(parent already terminal, child stuck at CREATED)",
+            cascaded,
+        )
+    return cascaded
+
+
 async def sweep_masvs_audit_parents() -> dict[str, int]:
     """Reconcile parent status for every active MASVS audit batch.
 
@@ -1296,6 +1361,10 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
       7. ``_reap_zombie_tasks_and_cursors`` — cancel stale ``running``
          taskrecords and purge dead workflow_state_cursors.
       8. Parent ``CREATED/RUNNING → COMPLETED`` rollup (inline below).
+      8.5. ``_cascade_terminal_to_deferred_children`` — flip deferred
+         ``CREATED`` children whose parent is already terminal
+         (``COMPLETED`` / ``FAILED`` / ``ABANDONED``) to
+         ``ABANDONED`` so they don't sit orphaned (fix §52).
       9. ``_wake_stale_branches`` — side-channel ARQ wake LAST so
          a freshly-enqueued task cannot race steps 4/5/8's snapshot
          reads (a worker advancing a branch mid-evaluation produced
@@ -1468,6 +1537,20 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
 
         if any_changes:
             await uow.commit()
+
+        # 8.5. Cascade terminal parents → deferred CREATED children
+        # (fix §52). Runs AFTER the parent rollup so the
+        # just-COMPLETED parents from step 8 are included alongside
+        # parents the operator put into FAILED/ABANDONED earlier.
+        # PAUSED parents are intentionally excluded — operator may
+        # resume and expect deferred children to pick back up.
+        try:
+            await _cascade_terminal_to_deferred_children(uow)
+        except Exception as exc:  # noqa: BLE001 — cascade is best-effort
+            _log.warning(
+                "masvs reconciler: cascade-deferred-children failed: %s",
+                exc, exc_info=True,
+            )
 
         # 9. Side-channel wake LAST (fix §43). Earlier ordering ran
         # the wake inside _escalate_stuck_drafts (step 3); a worker
