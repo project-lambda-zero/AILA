@@ -112,6 +112,27 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
 
     Both paths leave a structured log line so the operator can audit
     when the self-heal fired.
+
+    UoW contract (fix §291 — explicit doc of the all-or-nothing
+    invariant that already holds structurally):
+
+    The single ``async with UnitOfWork() as uow`` block that wraps
+    investigation load → STATUS_LOCKED check → primary branch
+    resolve → orphan-abandon → fresh-primary INSERT → status flip
+    → ``uow.commit()`` is an **atomic transaction**. The orphan
+    cleanup (mark sibling ACTIVE/PAUSED branches ABANDONED with
+    ``superseded_by_reenqueue_self_heal:<new>``) and the fresh
+    primary INSERT MUST commit together. If any pre-commit step
+    raises (engine error, integrity violation, transient DB hiccup),
+    the surrounding ``with`` block rolls everything back — orphan
+    rows stay ACTIVE, no fresh primary row leaks, the cursor
+    re-fires next ARQ task wakeup.
+
+    Anyone editing this block: do NOT split the orphan-abandon and
+    fresh-primary INSERT into separate UoWs. The whole point is
+    that a half-applied self-heal (new primary lives, orphans stay
+    racing) is worse than no self-heal — it produces exactly the
+    "6 branches instead of 3" state we just fixed in 2026-05-28.
     """
     del services
 
