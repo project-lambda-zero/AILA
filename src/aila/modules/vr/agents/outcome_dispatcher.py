@@ -585,9 +585,17 @@ class OutcomeDispatcher:
             payload.get("question") or payload.get("hypothesis")
             or f"Find variants of the issue identified in {parent.title}",
         )
+        # fix §234 — parent.cost_budget_usd is sometimes None (legacy
+        # rows or operator-set ad-hoc investigations); `None * 0.5`
+        # raised TypeError outside the narrow except filter, which
+        # blew up dispatch with no result row. Use $5 as parent floor
+        # and ensure the child gets at least $5 to do meaningful work.
+        parent_budget = float(parent.cost_budget_usd or 5.0)
         child_budget = float(
-            payload.get("cost_budget_usd") or (parent.cost_budget_usd * 0.5),
+            payload.get("cost_budget_usd") or (parent_budget * 0.5),
         )
+        if child_budget < 5.0:
+            child_budget = 5.0
 
         async with UnitOfWork() as uow:
             child = VRInvestigationRecord(
@@ -657,9 +665,15 @@ class OutcomeDispatcher:
             payload.get("question") or payload.get("hypothesis")
             or f"Find variants of the issue identified in {parent.title}",
         )
+        # fix §234 — same defensive None handling as
+        # _dispatch_variant_hunt_order; floor at $5 so a child
+        # always has a working budget.
+        parent_budget = float(parent.cost_budget_usd or 5.0)
         child_budget = float(
-            payload.get("cost_budget_usd") or (parent.cost_budget_usd * 0.5),
+            payload.get("cost_budget_usd") or (parent_budget * 0.5),
         )
+        if child_budget < 5.0:
+            child_budget = 5.0
 
         async with UnitOfWork() as uow:
             child = VRInvestigationRecord(
