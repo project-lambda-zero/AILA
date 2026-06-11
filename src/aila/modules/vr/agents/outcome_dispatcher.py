@@ -397,61 +397,56 @@ class OutcomeDispatcher:
         """
         target_row, inv = await self._load_target_for_investigation(investigation_id)
 
-        # Variant-hunt advisory: a DIRECT_FINDING on a kind=variant_hunt
-        # investigation with empty variant_hunt_orders MAY be premature
-        # (agent short-circuited the hunt) or MAY be a legitimate
-        # exhaustion declaration ("variant DEAD", "no variants exist",
-        # "zero callers", "exhaustive negative"). The earlier hard gate
-        # tried to enforce this via string matching on the answer,
-        # marked the outcome SKIPPED, and looped back into another
-        # run_vr_investigate task — but agents kept inventing new
-        # phrasings of "we found nothing" that didn't match the regex,
-        # so the loop never terminated and the investigation got
-        # stuck status=running forever.
-        #
-        # New policy: trust the agent's submission. Log + flag the
-        # outcome's payload with `variant_hunt_advisory` so the operator
-        # (and the synthesis prompt) can see the panel didn't produce
-        # explicit variant orders. The operator can re-enqueue with
-        # steering if they think the agent gave up early — the panel of
-        # 3 personas + critic role + synthesiser is the multi-layered
-        # check, not a single string-match gate.
-        if inv.kind == "variant_hunt":
-            raw_orders = payload.get("variant_hunt_orders")
-            order_count = len(raw_orders) if isinstance(raw_orders, list) else 0
-            if order_count == 0:
-                answer_text = (payload.get("answer") or "").strip().upper()
-                declares_exhaustion = bool(
-                    _VARIANT_EXHAUSTION_PATTERN.search(answer_text[:400]),
-                )
-                advisory = (
-                    "exhaustion_declared"
-                    if declares_exhaustion
-                    else "no_orders_no_exhaustion_phrase"
-                )
-                _log.info(
-                    "variant_hunt advisory inv=%s outcome=%s flag=%s",
-                    investigation_id, outcome_id, advisory,
-                )
-                # Stamp the outcome payload so the operator + synthesis
-                # prompt can see the advisory without changing the
-                # outcome_kind or blocking dispatch.
-                async with UnitOfWork() as uow:
-                    out_row = (await uow.session.exec(
-                        _select(VRInvestigationOutcomeRecord).where(
-                            VRInvestigationOutcomeRecord.id == outcome_id,
-                        )
-                    )).first()
-                    if out_row is not None:
-                        try:
-                            stored = json.loads(out_row.payload_json or "{}")
-                        except (ValueError, TypeError):
-                            stored = {}
-                        stored["variant_hunt_advisory"] = advisory
-                        out_row.payload_json = json.dumps(stored)
-                        uow.session.add(out_row)
-                        await uow.session.commit()
-
+        # fix §239 — variant-hunt advisory now stamps every DIRECT_FINDING
+        # outcome, not only kind=variant_hunt investigations. AUDIT and
+        # NDAY children were silently skipping the stamp; operators saw
+        # blank advisories on findings spawned through those paths. The
+        # advisory remains informational — `exhaustion_declared` when the
+        # agent's answer text declares variants are dead/absent (regex
+        # match), `no_orders_no_exhaustion_phrase` when neither orders
+        # nor a clear exhaustion phrase exist, `orders_present` when the
+        # payload carries one or more variant_hunt_orders.
+        raw_orders = payload.get("variant_hunt_orders")
+        if isinstance(raw_orders, dict):
+            order_count = 1
+        elif isinstance(raw_orders, list):
+            order_count = sum(1 for r in raw_orders if isinstance(r, dict))
+        else:
+            order_count = 0
+        if order_count > 0:
+            advisory = "orders_present"
+        else:
+            answer_text = (payload.get("answer") or "").strip().upper()
+            declares_exhaustion = bool(
+                _VARIANT_EXHAUSTION_PATTERN.search(answer_text[:400]),
+            )
+            advisory = (
+                "exhaustion_declared"
+                if declares_exhaustion
+                else "no_orders_no_exhaustion_phrase"
+            )
+        _log.info(
+            "direct_finding variant_hunt_advisory inv=%s outcome=%s inv_kind=%s flag=%s",
+            investigation_id, outcome_id, inv.kind, advisory,
+        )
+        # Stamp the outcome payload so the operator + synthesis prompt
+        # can see the advisory without changing the outcome_kind or
+        # blocking dispatch.
+        async with UnitOfWork() as uow:
+            out_row = (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord).where(
+                    VRInvestigationOutcomeRecord.id == outcome_id,
+                ),
+            )).first()
+            if out_row is not None:
+                try:
+                    stored = json.loads(out_row.payload_json or "{}")
+                except (ValueError, TypeError):
+                    stored = {}
+                stored["variant_hunt_advisory"] = advisory
+                out_row.payload_json = json.dumps(stored)
+                uow.session.add(out_row)
+                await uow.session.commit()
 
         crash_type = payload.get("crash_type")
         vulnerable_function = payload.get("vulnerable_function")
