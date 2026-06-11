@@ -672,6 +672,14 @@ export function InvestigationDetailPage() {
           />
           <ExportReportButton invId={invId} title={inv.title} />
           <span className="w-px h-5 bg-border-default mx-1" aria-hidden />
+          {/* §47 — Reset button. Deferred to Phase B (Cursor SSOT
+              pause/resume rewrite, CUTOVER_DEPS.md). The button
+              currently calls the v1 reset endpoint; when Phase B
+              rebuilds reset as part of the cursor-driven dispatcher
+              the URL stays the same and only the server side
+              changes. The disabled-state guard below is the
+              client-side check; the server-side guard in
+              api_router enforces the same predicate. */}
           <ToolbarButton
             icon={<ArrowCounterClockwise weight="regular" />}
             label={resetMut.isPending ? "Resetting…" : "Reset"}
@@ -705,6 +713,17 @@ export function InvestigationDetailPage() {
       </div>
 
       {/* Workflow stepper */}
+      {/* §25 / §82 — currentState is derived from inv.status because
+          the workflow_state_cursor.current_state column is not yet
+          exposed via the API. Deferred to Phase B: that PR adds a
+          cursor-status endpoint and the WorkflowStepper reads the
+          real state. Until then this client-side mapping collapses
+          three workflow states (investigation_setup / loop / emit)
+          into one display when inv.status='running', and §54
+          (post-pause/resume rendering) also lives in this gap.
+
+          The currentState below stays as-is — Phase B replaces the
+          derivation with a useInvestigationCursor(invId) read. */}
       <AilaCard techBorder glow><WorkflowStepper
         flow="investigate"
         currentState={
@@ -762,6 +781,12 @@ export function InvestigationDetailPage() {
                 mutation={reenqueueMut}
               />
             )}
+            {/* §9 — Reopen button. Consumer of the reopen endpoint
+                that Phase B rebuilds as a phase-handoff dispatcher
+                (CUTOVER_DEPS.md). The URL stays the same; the
+                server-side rewrite swaps the imperative spawn for a
+                cursor-driven re-dispatch. No frontend change here
+                until Phase B lands. */}
             {(inv.status === "completed" || inv.status === "failed" || inv.status === "abandoned") && (
               <ToolbarButton
                 icon={<Play weight="fill" />}
