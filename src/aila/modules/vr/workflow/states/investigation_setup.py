@@ -138,12 +138,35 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
         # _STATUS_LOCKED at module top for the comment block; surface
         # the skip loudly so the operator can see WHY their pause held.
         if inv.status in _STATUS_LOCKED:
+            # fix §290 — re-resolve cve_intel from the (possibly
+            # operator-edited) initial_question before the early-exit
+            # so investigation_emit + downstream renderers don't lose
+            # CVE context when a paused investigation resumes via
+            # /reopen. Failing intel resolve NEVER blocks the early
+            # exit — empty list is the existing degraded default.
+            locked_initial_question = inv.initial_question or ""
             await uow.commit()  # flush nothing; release UoW cleanly
+            locked_cve_intel: list[dict[str, Any]] = []
+            try:
+                from aila.modules.vr.services.cve_intel_resolver import (  # noqa: PLC0415
+                    extract_cve_ids,
+                    resolve_cve_intel,
+                )
+                locked_cve_ids = extract_cve_ids(locked_initial_question)
+                if locked_cve_ids:
+                    resolutions = await resolve_cve_intel(locked_cve_ids)
+                    locked_cve_intel = [r.to_dict() for r in resolutions]
+            except Exception as exc:  # noqa: BLE001 — never block status-locked exit
+                _log.warning(
+                    "investigation_setup STATUS_LOCKED cve_intel re-fetch "
+                    "failed inv=%s: %s", investigation_id, exc,
+                )
             _log.info(
                 "investigation_setup STATUS_LOCKED inv=%s status=%s "
-                "pause_reason=%s — skipping setup + loop, emitting "
-                "clean exit",
+                "pause_reason=%s cve_intel=%d — skipping setup + loop, "
+                "emitting clean exit",
                 investigation_id, inv.status, inv.pause_reason,
+                len(locked_cve_intel),
             )
             return StateResult(
                 next_state="investigation_emit",
@@ -154,7 +177,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                     "auto_pilot": inv.auto_pilot,
                     "cost_budget_usd": inv.cost_budget_usd,
                     "team_id": inv.team_id,
-                    "cve_intel": [],
+                    "cve_intel": locked_cve_intel,
                     "exit_reason": f"status_locked:{inv.status}",
                     "last_turn_idx": 0,
                     "last_action": "",
