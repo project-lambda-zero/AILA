@@ -513,9 +513,9 @@ async def _spawn_persona_siblings_and_enqueue(
 
     * **Phase 1 (atomic UoW):** reactivate winners, abandon duplicates,
       AND INSERT new branches for personas without an existing branch
-      — all in ONE \`async with UnitOfWork()\` block, one commit. If any
+      — all in ONE `async with UnitOfWork()` block, one commit. If any
       step raises (cap check, integrity violation, parent load failure,
-      transient DB hiccup), the surrounding \`with\` block rolls back
+      transient DB hiccup), the surrounding `with` block rolls back
       every pending change. No half-spawned panel: either all 5
       sibling branches resolve to a stable id, or none do.
 
@@ -526,7 +526,7 @@ async def _spawn_persona_siblings_and_enqueue(
       rolls back phase 1 (the branches are real even if their tasks
       didn't land).
 
-    The prior implementation called \`BranchManager.fork()\` inside the
+    The prior implementation called `BranchManager.fork()` inside the
     per-persona enqueue loop, after the phase-1 UoW had already
     committed. Each fork opened its OWN UoW; partial failure left
     some siblings born and some missing, with no way to roll back to
@@ -540,7 +540,7 @@ async def _spawn_persona_siblings_and_enqueue(
     from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
 
     # Phase 1 — atomic dedup + reactivate + insert new branches.
-    # On any exception inside the \`async with\` block, the UoW rolls
+    # On any exception inside the `async with` block, the UoW rolls
     # back: no branch INSERT survives, no status flip persists, and
     # the operator's next /reopen retries cleanly.
     sibling_branch_ids: dict[str, str] = {}  # persona_value -> branch_id
