@@ -448,60 +448,98 @@ class ToolExecutor:
                     "_directive.pivot": "",
                 }
 
-        msg_id = await self._write_result_message(
+        # fix §203 — single UoW write: tool result message AND the
+        # observables delta land atomically so a concurrent reader
+        # cannot observe one half without the other.
+        msg_id = await self._persist_result_and_observables(
             investigation_id, branch_id,
             payload_kind=adapter_result.payload_kind,
             payload=adapter_result.payload,
+            observables_delta=adapter_result.observables_delta or {},
             at_turn=at_turn,
         )
-        await self._merge_observables(branch_id, adapter_result.observables_delta)
 
-        # Auto-steering: examine raw tool result for known dead-end
-        # patterns (read_lines past EOF, read_function indexer fault).
-        # If a rule fires, post an operator-kind message to the
-        # investigation just like the human operator would — same DB
-        # write, same prompt position on next turn, same ACK contract.
-        # Best-effort; failures here NEVER abort the tool result path.
-        # fix §198 — was hardcoded `http://127.0.0.1:18822`. Pull the
-        # resolved URL from the audit_mcp bridge instance (W1 §208
-        # made it a single attribute lookup after the first call), so
-        # operator config / env overrides propagate to the auto-steering
-        # path without a process restart. Falls back to the hardcoded
-        # default only if the bridge instance lacks the accessor (e.g.
-        # a test stub).
-        from aila.modules.vr.agents.auto_steering import (  # noqa: PLC0415
-            maybe_post_auto_steering,
-        )
-        audit_mcp_bridge = self._bridges.get("audit_mcp")
-        if hasattr(audit_mcp_bridge, "base_url"):
-            try:
-                bridge_base_url = await audit_mcp_bridge.base_url()
-            except Exception as exc:  # noqa: BLE001
-                _log.info(
-                    "tool_executor: bridge.base_url() failed (%s: %s); "
-                    "falling back to default",
-                    type(exc).__name__, exc,
-                )
-                bridge_base_url = "http://127.0.0.1:18822"
-        else:
-            bridge_base_url = "http://127.0.0.1:18822"
-        try:
-            posted_id = await maybe_post_auto_steering(
-                investigation_id=investigation_id,
-                branch_id=branch_id,
-                server_id=server_id,
-                tool_name=tool_name,
-                args=args,
-                raw_result=raw if isinstance(raw, dict) else {},
-                bridge_base_url=bridge_base_url,
+        # fix §81 — auto-steering rule evaluators key off raw_result
+        # shape; a tool that legitimately returns no payload (e.g.
+        # list_indexes on an empty repo, callees_of for a leaf
+        # function) was triggering rule misfires. Skip when the result
+        # is empty AND status is not 'error' (legitimate no-output
+        # case). Errors still flow through so contract-violation rules
+        # (kwarg rejected, file not found) keep firing.
+        result_is_empty = not raw or (
+            isinstance(raw, dict)
+            and not any(
+                k for k in raw.keys()
+                if k not in {"status", "action", "kwargs"}
             )
-            if posted_id:
-                _log.info(
-                    "auto_steering POSTED inv=%s branch=%s tool=%s msg=%s",
-                    investigation_id, branch_id, tool_name, posted_id,
+        )
+        result_status = raw.get("status") if isinstance(raw, dict) else None
+        if result_is_empty and result_status != "error":
+            _log.debug(
+                "auto_steering SKIP (empty result, non-error) inv=%s "
+                "branch=%s tool=%s",
+                investigation_id, branch_id, tool_name,
+            )
+        else:
+            # Auto-steering: examine raw tool result for known dead-end
+            # patterns (read_lines past EOF, read_function indexer
+            # fault). If a rule fires, post an operator-kind message
+            # to the investigation just like the human operator would
+            # — same DB write, same prompt position on next turn,
+            # same ACK contract. Best-effort; failures here NEVER
+            # abort the tool result path.
+            #
+            # fix §80 (PARTIAL) — auto-steering still uses its own
+            # internal UoWs for the operator-message post; full
+            # atomicity with the §203 single UoW above requires
+            # extending ``maybe_post_auto_steering`` to accept an
+            # external session, which is bundled into the E16 cleanup.
+            # The remaining race is theoretical here: the next agent
+            # turn cannot start until execute() returns, so the gap
+            # between the §203 commit and the auto-steering post is
+            # never observable to the agent itself; only an out-of-band
+            # reader (operator UI streaming inv messages) could see
+            # the result-message before the steering operator-message.
+            from aila.modules.vr.agents.auto_steering import (  # noqa: PLC0415
+                maybe_post_auto_steering,
+            )
+            # fix §198 — bridge_base_url comes from the audit_mcp
+            # bridge instance, not a hardcoded literal. See
+            # AuditMcpBridgeTool.base_url(); falls back to default
+            # only when the bridge stub lacks the accessor.
+            audit_mcp_bridge = self._bridges.get("audit_mcp")
+            if hasattr(audit_mcp_bridge, "base_url"):
+                try:
+                    bridge_base_url = await audit_mcp_bridge.base_url()
+                except Exception as exc:  # noqa: BLE001
+                    _log.info(
+                        "tool_executor: bridge.base_url() failed "
+                        "(%s: %s); falling back to default",
+                        type(exc).__name__, exc,
+                    )
+                    bridge_base_url = "http://127.0.0.1:18822"
+            else:
+                bridge_base_url = "http://127.0.0.1:18822"
+            try:
+                posted_id = await maybe_post_auto_steering(
+                    investigation_id=investigation_id,
+                    branch_id=branch_id,
+                    server_id=server_id,
+                    tool_name=tool_name,
+                    args=args,
+                    raw_result=raw if isinstance(raw, dict) else {},
+                    bridge_base_url=bridge_base_url,
                 )
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("auto_steering failed (best-effort): %s", exc)
+                if posted_id:
+                    _log.info(
+                        "auto_steering POSTED inv=%s branch=%s tool=%s "
+                        "msg=%s",
+                        investigation_id, branch_id, tool_name, posted_id,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "auto_steering failed (best-effort): %s", exc,
+                )
 
         _log.info(
             "tool_executor OK server=%s tool=%s args=%s summary=%s",
@@ -533,6 +571,59 @@ class ToolExecutor:
                 evidence_refs_json="[]",
             )
             uow.session.add(msg)
+            await uow.session.commit()
+            await uow.session.refresh(msg)
+            return msg.id
+
+    async def _persist_result_and_observables(
+        self,
+        investigation_id: str,
+        branch_id: str,
+        *,
+        payload_kind: PayloadKind,
+        payload: dict[str, Any],
+        observables_delta: dict[str, Any],
+        at_turn: int | None,
+    ) -> str:
+        """Write the tool result message AND merge observables in ONE UoW.
+
+        fix §203 — was two separate transactions. A concurrent reader
+        (operator UI streaming inv messages, or a sibling branch reading
+        case_state mid-flight) could observe one half of the update
+        without the other. Single UoW eliminates the gap.
+
+        Returns the new message id.
+        """
+        async with UnitOfWork() as uow:
+            msg = VRInvestigationMessageRecord(
+                investigation_id=investigation_id,
+                branch_id=branch_id,
+                sender_kind=SenderKind.ENGINE.value,
+                sender_id="tool_executor",
+                payload_kind=payload_kind.value,
+                payload_json=json.dumps(payload),
+                at_turn=at_turn,
+                evidence_refs_json="[]",
+            )
+            uow.session.add(msg)
+            if observables_delta:
+                branch = (await uow.session.exec(
+                    _select(VRInvestigationBranchRecord).where(
+                        VRInvestigationBranchRecord.id == branch_id,
+                    )
+                )).first()
+                if branch is None:
+                    _log.warning(
+                        "tool_executor: branch %s vanished during "
+                        "combined result+observables write",
+                        branch_id,
+                    )
+                else:
+                    branch.case_state_json = self._apply_observables_delta(
+                        branch.case_state_json, observables_delta,
+                    )
+                    branch.updated_at = utc_now()
+                    uow.session.add(branch)
             await uow.session.commit()
             await uow.session.refresh(msg)
             return msg.id
@@ -1011,11 +1102,63 @@ class ToolExecutor:
     # bounded. `_directive.*` keys are kept regardless of count.
     _MAX_OBSERVABLES: int = 200
 
+    @classmethod
+    def _apply_observables_delta(
+        cls, case_state_json: str | None, delta: dict[str, Any],
+    ) -> str:
+        """Merge ``delta`` into the observables of ``case_state_json``
+        and return the new JSON string.
+
+        Preserves §259 insertion order and caps the result at
+        :attr:`_MAX_OBSERVABLES` entries (directives always kept). Pure
+        helper — does no I/O — so it can run inside any UoW.
+        """
+        try:
+            case_state = json.loads(case_state_json or "{}")
+        # fix §258 — also catch TypeError so a corrupted column
+        # (e.g. integer or null where a JSON string is expected)
+        # never wedges the merge.
+        except (json.JSONDecodeError, TypeError):
+            case_state = {}
+        observables = case_state.get("observables")
+        if not isinstance(observables, dict):
+            observables = {}
+        observables.update({str(k): v for k, v in delta.items()})
+        # Bound the dict size. Eviction strategy: keep ALL
+        # ``_directive.*`` keys (steering must survive), drop the
+        # OLDEST non-directive keys by dict insertion order
+        # (Python 3.7+ guarantees insertion order in dicts).
+        if len(observables) > cls._MAX_OBSERVABLES:
+            # fix §259 — preserve original key insertion order so the
+            # prompt-rendering position of every kept key stays stable
+            # across turns.
+            directive_keys = {
+                k for k in observables if str(k).startswith("_directive.")
+            }
+            non_directive_keys = [
+                k for k in observables if k not in directive_keys
+            ]
+            keep_n = max(0, cls._MAX_OBSERVABLES - len(directive_keys))
+            kept_non_directive_keys = set(non_directive_keys[-keep_n:])
+            kept_or_directive = directive_keys | kept_non_directive_keys
+            observables = {
+                k: v for k, v in observables.items()
+                if k in kept_or_directive
+            }
+        case_state["observables"] = observables
+        return json.dumps(case_state)
+
     async def _merge_observables(
         self,
         branch_id: str,
         delta: dict[str, Any],
     ) -> None:
+        """Standalone observables merge (one UoW).
+
+        Retained for call sites that do not also write a result message
+        (the success path uses :meth:`_persist_result_and_observables`
+        which combines both writes into a single UoW — see fix §203).
+        """
         if not delta:
             return
         async with UnitOfWork() as uow:
@@ -1030,51 +1173,9 @@ class ToolExecutor:
                     branch_id,
                 )
                 return
-            try:
-                case_state = json.loads(branch.case_state_json or "{}")
-            # fix §258 — also catch TypeError so a corrupted column
-            # (e.g. integer or null where a JSON string is expected)
-            # never wedges the merge.
-            except (json.JSONDecodeError, TypeError):
-                case_state = {}
-            observables = case_state.get("observables")
-            if not isinstance(observables, dict):
-                observables = {}
-            observables.update({str(k): v for k, v in delta.items()})
-            # Bound the dict size. Eviction strategy: keep ALL
-            # `_directive.*` keys (steering must survive), drop the
-            # OLDEST non-directive keys by dict insertion order
-            # (Python 3.7+ guarantees insertion order in dicts).
-            if len(observables) > self._MAX_OBSERVABLES:
-                # fix §259 — preserve original key insertion order so
-                # the prompt-rendering position of every kept key stays
-                # stable across turns. The prior implementation rebuilt
-                # observables as {**kept_non_directives, **directives},
-                # which moved every directive to the END regardless of
-                # where it had originally been inserted — turn-to-turn
-                # context drift the agent observed as "the steering
-                # block keeps moving around".
-                #
-                # Build (a) the set of directive keys (always kept) and
-                # (b) the set of non-directive keys we will keep (the
-                # newest N by insertion order), then reconstruct the
-                # dict by walking the original items in order and
-                # keeping each entry that belongs to either set.
-                directive_keys = {
-                    k for k in observables if str(k).startswith("_directive.")
-                }
-                non_directive_keys = [
-                    k for k in observables if k not in directive_keys
-                ]
-                keep_n = max(0, self._MAX_OBSERVABLES - len(directive_keys))
-                kept_non_directive_keys = set(non_directive_keys[-keep_n:])
-                kept_or_directive = directive_keys | kept_non_directive_keys
-                observables = {
-                    k: v for k, v in observables.items()
-                    if k in kept_or_directive
-                }
-            case_state["observables"] = observables
-            branch.case_state_json = json.dumps(case_state)
+            branch.case_state_json = self._apply_observables_delta(
+                branch.case_state_json, delta,
+            )
             branch.updated_at = utc_now()
             uow.session.add(branch)
             await uow.commit()
