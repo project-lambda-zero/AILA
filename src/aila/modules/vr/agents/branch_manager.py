@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -54,6 +55,27 @@ __all__ = [
 ]
 
 _log = logging.getLogger(__name__)
+
+# fix §149 — per-investigation branch cap. 24 = 6 personas * 4 fork
+# generations, comfortable headroom for legitimate operator branching
+# without permitting runaway fork-bombs (each fork enqueues one ARQ
+# task; uncapped fork cycles can exhaust the worker pool). Operator-
+# tunable via VR_MAX_BRANCHES_PER_INVESTIGATION at process start.
+_DEFAULT_MAX_BRANCHES_PER_INVESTIGATION = 24
+
+
+def _max_branches_per_investigation() -> int:
+    raw = os.environ.get("VR_MAX_BRANCHES_PER_INVESTIGATION")
+    if not raw:
+        return _DEFAULT_MAX_BRANCHES_PER_INVESTIGATION
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return _DEFAULT_MAX_BRANCHES_PER_INVESTIGATION
+    # Floor at 1 so a typo doesn't disable forking entirely; the cap
+    # itself is operator policy, but a 0/negative cap is almost
+    # certainly a config mistake (and would brick auto_deliberation).
+    return max(1, parsed)
 
 
 @dataclass(slots=True)
@@ -102,6 +124,30 @@ class BranchManager:
         if not persona_voice or not persona_voice.strip():
             persona_voice = "fork_unnamed"
         async with UnitOfWork() as uow:
+            # fix §149 — branch count cap. Counts ACTIVE branches
+            # (terminal-status rows do not contribute to fork pressure)
+            # and refuses the fork above the cap. The cap is enforced
+            # inside the UoW so concurrent forks racing on the same
+            # investigation see each other's PENDING inserts after the
+            # first commit. Without it, an operator (or runaway agent)
+            # could fork-bomb one investigation into hundreds of
+            # branches, each consuming an ARQ task slot.
+            cap = _max_branches_per_investigation()
+            active_rows = (await uow.session.exec(
+                _select(VRInvestigationBranchRecord).where(
+                    VRInvestigationBranchRecord.investigation_id
+                    == self.investigation_id,
+                    VRInvestigationBranchRecord.status
+                    == BranchStatus.ACTIVE.value,
+                ),
+            )).all()
+            if len(active_rows) >= cap:
+                raise BranchManagerError(
+                    f"branch count cap exceeded: {cap} active branches "
+                    f"on investigation {self.investigation_id} "
+                    f"(tune via VR_MAX_BRANCHES_PER_INVESTIGATION)",
+                )
+
             parent = await self._load_branch(uow, parent_branch_id, for_update=True)
             if parent.status != BranchStatus.ACTIVE.value:
                 raise BranchManagerError(
