@@ -418,6 +418,225 @@ _SEVERITY_RANK: dict[str, int] = {
 }
 
 
+# ─────────────────────────────────────────────────────────────────
+# Text-first verdict analyzer (overrides verdict_mapper)
+# ─────────────────────────────────────────────────────────────────
+#
+# The production mapper ``child_outcome_to_verdict`` keys verdicts off
+# ``outcome_kind`` (DIRECT_FINDING → FINDING → FAIL) and ignores the
+# agent's actual conclusion text. For audit-style outcomes the agent
+# often submits a ``direct_finding`` whose answer text begins with
+# "MSTG-X PASSED" or "COMPLIANCE VERIFIED" — those are PASS for MASVS
+# purposes, not FAIL. The mapper bug is cataloged in MY_VIOLATIONS
+# §218 / §219 / §296 / §346.
+#
+# This analyzer reads ``payload['answer']`` HEAD (first ~400 chars)
+# and BODY, scans against ordered phrase lists, and emits a corrected
+# label. The mapper output is consulted only when the text is empty
+# or genuinely ambiguous (no markers detected).
+
+# Strong PASS markers — explicit agent-stated compliance.
+_PASS_PHRASES_STRONG: tuple[str, ...] = (
+    "PASSED", "PASSES", "PASS.", "PASS:", "PASS —", "PASS�",
+    "PASS WITH", "PASS (",
+    "COMPLIANT", "COMPLIANCE VERIFIED", "COMPLIANCE AFFIRMED",
+    "COMPLIANCE CONFIRMED",
+    "FULLY COMPLIANT", "CONFORMS TO MASVS", "CONFORMS TO THE MASVS",
+    "SATISFIED", "SATISFIES MSTG", "MEETS MSTG", "COMPLIES WITH",
+    "NO VIOLATION", "NO VIOLATIONS",
+    "NO BUG", "NOT VULNERABLE",
+    "PATCH PRESENT", "PATCH IS PRESENT", "PATCH IS IN PLACE",
+    "VARIANT DEAD", "VARIANT IS DEAD", "NO VARIANTS",
+    "NO EXPLOITABLE", "NO INSECURE",
+    "NO FINDING", "NO FINDINGS",
+    "VULNERABILITY DOES NOT APPLY",
+    "NOT EXPLOITABLE IN PRACTICE",
+    "NO APPLICABLE", "NOT APPLICABLE TO",
+    "NO HARDCODED",
+    "ZERO APP-NAMESPACE MATCHES",
+    "ZERO MATCHES IN APP",
+    "ZERO APP-CODE HITS",
+    "ZERO HITS IN APP",
+    "ZERO VIOLATIONS",
+    "NO DEPRECATED",
+    "NO CREDENTIAL-REPLAY",
+    "NO SYMMETRIC KEY",
+    "NO EXTERNALLY REACHABLE",
+    "NO EXTERNALLY-REACHABLE",
+    "NO VULNERABILITY FOUND",
+    "NO VIOLATIONS FOUND",
+    "AUDIT COMPLETE: NO",
+    "AUDIT COMPLETE — NO",
+    "AUDIT COMPLETE: ZERO",
+    "DO NOT PERFORM SENSITIVE",
+    "DO NOT PERFORM ANY SENSITIVE",
+    "PROPERLY ENFORCED",
+    "SECURITY CONTROL PRESENT",
+    "MITIGATION PRESENT",
+    "CONTROL IS ENFORCED", "CONTROL IS MET", "CONTROL MET",
+    "AUDIT RESULT: NO",
+    "AUDIT VERDICT: PASS",
+    "AUDIT VERDICT: COMPLIANT",
+    "NO RATE-LIMIT ENFORCEMENT BYPASS",
+    "SUBSTANTIALLY MEETS",
+    "MEETS THE CONTROL", "MEETS THIS CONTROL",
+    "RATING: COMPLIANT",
+    "VERDICT: COMPLIANT",
+    "VERDICT: PASS",
+)
+
+# Strong FAIL markers — explicit agent-stated violation.
+_FAIL_PHRASES_STRONG: tuple[str, ...] = (
+    "VIOLATION CONFIRMED", "VIOLATION DETECTED",
+    "VIOLATION FOUND", "VIOLATION:", "VIOLATION —", "VIOLATION�",
+    "VIOLATION (FAIL", "VIOLATION (HIGH",
+    "DIRECT_FINDING:", "DIRECT FINDING:",
+    "DIRECT FINDING AFFIRMED", "DIRECT_FINDING AFFIRMED",
+    "FINDING CONFIRMED", "FINDING AFFIRMED",
+    "FAILS.", "FAILS:", "FAIL.", "FAIL:", "FAIL —", "FAIL�",
+    "FAILS WITH", "FAILS (", "FAIL (",
+    "FAIL —", "FAIL,", "FAILURE.",
+    "NON-COMPLIANCE", "NON-COMPLIANT",
+    "NONCOMPLIANCE", "NONCOMPLIANT", "NON_COMPLIANT",
+    "DOES NOT COMPLY", "DOES NOT MEET",
+    "CONTROL NOT MET", "REQUIREMENT NOT MET",
+    "BREACH DETECTED", "BREACH CONFIRMED",
+    "VULNERABILITY CONFIRMED",
+    "EXPLOITABLE VULNERABILITY",
+    "CONTROL BYPASSED", "CONTROL ABSENT",
+    "HARDCODED KEY", "HARDCODED CREDENTIAL", "HARDCODED SECRET",
+    "PLAINTEXT STORAGE", "PLAINTEXT LOGGING",
+    "MISSING FLAG_SECURE",
+    "INSECURE RNG",
+    "AUDIT VERDICT: FAIL",
+    "VERDICT: FAIL", "VERDICT: NON-COMPLIANT",
+    "AUDIT RESULT: FAIL",
+    "AUDIT FAILURE",
+    "CRITICAL GAP",
+)
+
+# Mixed-evidence markers — render as REVIEW (operator should look).
+_REVIEW_PHRASES: tuple[str, ...] = (
+    "PARTIAL COMPLIANCE", "PARTIAL NON-COMPLIANCE",
+    "PARTIAL FINDING", "PARTIALLY COMPLIANT",
+    "WITH HARDENING NOTES", "WITH CAVEATS", "WITH RESERVATIONS",
+    "WITH OPEN QUESTION", "WITH OPEN QUESTIONS",
+    "WITH UNRESOLVED",
+    "MIXED EVIDENCE", "MIXED VERDICT",
+    "INCONCLUSIVE",
+    "REQUIRES MANUAL REVIEW", "MANUAL REVIEW REQUIRED",
+    "OPERATOR MUST CONFIRM", "OPERATOR REVIEW",
+    "NEEDS HUMAN REVIEW",
+    "ASSESSMENT INCOMPLETE",
+    "INSUFFICIENT EVIDENCE",
+    "DOCUMENT_REQUIRED", "DOCUMENTATION REQUIRED",
+    "REQUIRES ARCHITECTURE DOCUMENT",
+    "COMPLIANCE ASSESSMENT:",   # narrative assessment, no verdict word
+    "FINDINGS: (1)", "FINDINGS:\n",  # enumerated findings narrative
+)
+
+# Substrings that look PASS-like but only when NOT in a negation context.
+# e.g. "COMPLIANT" appears inside "NON-COMPLIANT" / "NON_COMPLIANT"; we must
+# skip those matches.
+_PASS_NEGATION_PREFIXES: tuple[str, ...] = ("NON-", "NON_", "NOT ")
+
+
+def _find_first_phrase(
+    phrases: tuple[str, ...], text: str,
+) -> tuple[int, str | None]:
+    """Return (earliest_pos, matching_phrase) or (len(text), None).
+
+    For PASS-side ambiguous substrings (``COMPLIANT``, ``COMPLIANCE``),
+    skip the match when preceded by a negation prefix
+    (``NON-`` / ``NON_`` / ``NOT ``) to avoid the
+    ``NON_COMPLIANT → COMPLIANT`` false-positive.
+    """
+    earliest = (len(text), None)
+    for p in phrases:
+        pos = -1
+        # Scan all occurrences for negation-prefix gating; take first valid.
+        start = 0
+        while True:
+            i = text.find(p, start)
+            if i < 0:
+                break
+            # Gate on negation prefix for PASS-side ambiguous substrings.
+            if p in ("COMPLIANT", "COMPLIANCE"):
+                if i >= 4 and text[i - 4: i] in _PASS_NEGATION_PREFIXES:
+                    start = i + 1
+                    continue
+                # also gate "NOT " (3 chars) prefix
+                if i >= 4 and text[i - 4: i] == "NOT ":
+                    start = i + 1
+                    continue
+            pos = i
+            break
+        if pos >= 0 and pos < earliest[0]:
+            earliest = (pos, p)
+    return earliest
+
+
+def _analyze_verdict_from_text(
+    payload: dict[str, Any],
+    fallback_label: str,
+) -> tuple[str, str]:
+    """Read the agent's answer text and return (label, reason).
+
+    Priority order (head = first 400 chars, body = full text):
+      1. Empty/missing answer → INCONCLUSIVE.
+      2. HEAD has REVIEW marker → REVIEW.
+      3. HEAD has both PASS and FAIL — EARLIEST POSITION wins (the
+         first verdict statement is canonical; later text just elaborates).
+      4. HEAD has only PASS marker → PASS.
+      5. HEAD has only FAIL marker → FAIL.
+      6. BODY has REVIEW marker → REVIEW.
+      7. BODY has both PASS and FAIL → REVIEW (genuinely mixed).
+      8. BODY has only PASS → PASS.
+      9. BODY has only FAIL → FAIL.
+      10. Otherwise → fallback to mapper label.
+    """
+    raw = (payload.get("answer") or payload.get("answer_brief") or "").strip()
+    if not raw or raw.upper() == "N/A":
+        return ("INCONCLUSIVE", "no_answer_text")
+
+    upper = raw.upper()
+    head = upper[:400]
+
+    head_review_pos, head_review_match = _find_first_phrase(_REVIEW_PHRASES, head)
+    if head_review_match:
+        return ("REVIEW", f"head_review:{head_review_match!r}")
+
+    head_fail_pos, head_fail_match = _find_first_phrase(_FAIL_PHRASES_STRONG, head)
+    head_pass_pos, head_pass_match = _find_first_phrase(_PASS_PHRASES_STRONG, head)
+
+    if head_fail_match and head_pass_match:
+        # Earliest position wins — the first verdict statement is canonical.
+        if head_fail_pos <= head_pass_pos:
+            return ("FAIL", f"head_fail_earlier:{head_fail_match!r}@{head_fail_pos}")
+        return ("PASS", f"head_pass_earlier:{head_pass_match!r}@{head_pass_pos}")
+    if head_fail_match:
+        return ("FAIL", f"head_fail:{head_fail_match!r}")
+    if head_pass_match:
+        return ("PASS", f"head_pass:{head_pass_match!r}")
+
+    # Head clean — fall to body.
+    body_review_pos, body_review_match = _find_first_phrase(_REVIEW_PHRASES, upper)
+    if body_review_match:
+        return ("REVIEW", f"body_review:{body_review_match!r}")
+
+    body_fail_pos, body_fail_match = _find_first_phrase(_FAIL_PHRASES_STRONG, upper)
+    body_pass_pos, body_pass_match = _find_first_phrase(_PASS_PHRASES_STRONG, upper)
+
+    if body_fail_match and body_pass_match:
+        return ("REVIEW", f"body_mixed:p={body_pass_match!r}@{body_pass_pos},f={body_fail_match!r}@{body_fail_pos}")
+    if body_pass_match:
+        return ("PASS", f"body_pass:{body_pass_match!r}")
+    if body_fail_match:
+        return ("FAIL", f"body_fail:{body_fail_match!r}")
+
+    return (fallback_label, f"fallback_mapper:{fallback_label.lower()}")
+
+
 def _verdict_for_child(
     catalog: dict[str, dict[str, Any]],
     child: dict[str, Any],
@@ -452,15 +671,24 @@ def _verdict_for_child(
     verdict_obj: MasvsControlVerdict = child_outcome_to_verdict(
         summary, control, child_investigation_id=child["id"],
     )
-    label = _VERDICT_LABEL[verdict_obj.verdict]
+    mapper_label = _VERDICT_LABEL[verdict_obj.verdict]
     # Reclassify by REVIEW vs INCONCLUSIVE: the mapper folds both
     # low-confidence-direct-findings and "ran out of time" into the
     # same enum (INCONCLUSIVE). For operator clarity we promote the
     # ones with a payload + reasoning to REVIEW (operator should look)
     # and keep the no-outcome / no-evidence ones as INCONCLUSIVE.
-    if label == "REVIEW" and not (payload.get("answer") or payload.get("reasoning")):
-        label = "INCONCLUSIVE"
-    return (label, verdict_obj.confidence or 0.0, verdict_obj.reason, payload, primary)
+    if mapper_label == "REVIEW" and not (payload.get("answer") or payload.get("reasoning")):
+        mapper_label = "INCONCLUSIVE"
+
+    # Text-first override: read the agent's actual conclusion text and
+    # correct the mapper when it mis-labels a compliance verdict as a
+    # finding (see MY_VIOLATIONS §218/§219/§296/§346).
+    text_label, text_reason = _analyze_verdict_from_text(payload, mapper_label)
+    if text_label != mapper_label:
+        reason = f"text_override:{text_reason} (mapper_said:{mapper_label.lower()})"
+    else:
+        reason = verdict_obj.reason or text_reason
+    return (text_label, verdict_obj.confidence or 0.0, reason, payload, primary)
 
 
 def load_bundle(report_dir: Path) -> Bundle:
