@@ -83,6 +83,7 @@ async def smart_search(
     user_id: str,
     user_role: str,
     llm_client: AilaLLMClient,
+    team_id: str | None = None,
 ) -> SmartSearchResponse:
     """LLM-powered semantic search over NFR assessment sessions.
 
@@ -96,6 +97,10 @@ async def smart_search(
         user_id: ApiKeyRecord.id of the authenticated caller.
         user_role: Role string from the JWT ("admin" | "operator" | "reader").
         llm_client: Injected AilaLLMClient instance from the platform runtime.
+        team_id: Optional team identifier for cost-record scoping (Phase 175).
+            None when the caller is an admin token (TEAM-06 god tier). Fix
+            §164 — was previously not propagated, so /smart-search bypassed
+            per-team budget accounting.
 
     Returns:
         SmartSearchResponse with ranked results and LLM query interpretation.
@@ -195,6 +200,7 @@ async def smart_search(
             task_type="search",
             messages=messages,
             model_class=_LLMSearchResult,
+            team_id=team_id,  # fix §164 — per-team cost scoping (Phase 175).
         )
         if llm_response.disabled:
             _log.warning("smart_search: LLM is disabled, returning empty results")
