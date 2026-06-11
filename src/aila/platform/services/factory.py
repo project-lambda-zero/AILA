@@ -135,7 +135,13 @@ class ServiceFactory:
         if self._reasoning_engine_override is not None:
             return self._reasoning_engine_override
         if self._reasoning_engine_cache is None:
-            self._reasoning_engine_cache = CyberReasoningEngine(self.llm_client)
+            # Pass the memoized registry so the reasoning engine can read
+            # operator-supplied domain profiles (§131) without spinning up
+            # its own ConfigRegistry.
+            self._reasoning_engine_cache = CyberReasoningEngine(
+                self.llm_client,
+                config_registry=self._get_config_registry(),
+            )
         return self._reasoning_engine_cache
 
     @property

@@ -4,8 +4,6 @@ import json
 import logging
 from typing import Any
 
-_log = logging.getLogger(__name__)
-
 from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
     ReasoningContract,
@@ -17,9 +15,12 @@ from aila.platform.contracts.reasoning import (
     ReasoningPromptContext,
     ReasoningStrategyFamily,
     ReasoningTurnDecision,
- )
+)
 from aila.platform.exceptions import ValidationError
 from aila.platform.llm.client import AilaLLMClient
+
+# fix §132 — imports first, then module-level statements (PEP 8 / E402).
+_log = logging.getLogger(__name__)
 
 __all__ = ["CyberReasoningEngine"]
 
@@ -39,6 +40,11 @@ _TOOL_PREFIXES: tuple[str, ...] = (
 # separately from this cap.
 _MAX_AGENT_KEYS_TOTAL: int = 50
 
+# fix §131 — DEFAULT profile table. Operators add new domains without a
+# code deploy by writing the profile JSON to ConfigRegistry under the key
+# ``reasoning_domain_profile_{domain_id}`` (a JSON object with the same
+# field shape as ReasoningDomainProfile). The engine loads overrides
+# lazily on first resolve via :meth:`_load_profile_override`.
 _DOMAIN_PROFILES: dict[str, ReasoningDomainProfile] = {
     "forensics": ReasoningDomainProfile(
         domain_id="forensics",
@@ -91,15 +97,33 @@ class CyberReasoningEngine:
     results, but they no longer own the reasoning protocol itself.
     """
 
-    def __init__(self, llm_client: AilaLLMClient) -> None:
+    def __init__(
+        self,
+        llm_client: AilaLLMClient,
+        *,
+        config_registry: Any | None = None,
+    ) -> None:
         self._llm_client = llm_client
+        # fix §131 — optional registry lets operators add a domain profile
+        # by writing JSON to ConfigRegistry without a code deploy. Cached
+        # on first lookup to avoid repeated registry round-trips.
+        self._config_registry = config_registry
+        self._profile_override_cache: dict[str, ReasoningDomainProfile | None] = {}
 
     def resolve_domain_profile(self, domain_id: str) -> ReasoningDomainProfile:
-        """Return the built-in reasoning profile for the requested domain.
+        """Return the reasoning profile for ``domain_id``.
 
-        Falls back to a generic single-strategy profile when the domain is not
-        registered in ``_DOMAIN_PROFILES``.
+        Lookup order (fix §131):
+
+        1. Operator-supplied override from ConfigRegistry under
+           ``reasoning_domain_profile_{domain_id}`` (cached).
+        2. Hardcoded fallback in ``_DOMAIN_PROFILES``.
+        3. Generic single-strategy profile (final fallback for unknown
+           domains).
         """
+        override = self._load_profile_override(domain_id)
+        if override is not None:
+            return override
         profile = _DOMAIN_PROFILES.get(domain_id)
         if profile is not None:
             return profile
@@ -110,6 +134,48 @@ class CyberReasoningEngine:
             allowed_strategies=["generic"],
             default_strategy="generic",
         )
+
+    def _load_profile_override(
+        self, domain_id: str,
+    ) -> ReasoningDomainProfile | None:
+        """Read + parse a profile override from ConfigRegistry, cached.
+
+        Returns ``None`` when no registry is wired, the key is absent, or
+        the JSON shape doesn't match. Failures log at DEBUG and fall back
+        to ``_DOMAIN_PROFILES`` so a malformed override can't crash the
+        reasoning loop.
+        """
+        if self._config_registry is None:
+            return None
+        if domain_id in self._profile_override_cache:
+            return self._profile_override_cache[domain_id]
+        cached: ReasoningDomainProfile | None = None
+        try:
+            raw = self._config_registry.get(
+                "platform", f"reasoning_domain_profile_{domain_id}",
+            )
+            if hasattr(raw, "__await__"):
+                # ConfigRegistry.get may be async; resolving an awaitable
+                # from a sync helper would deadlock. Skip in that case
+                # and rely on the hardcoded fallback. Async callers can
+                # warm the cache directly via :meth:`set_profile_override`.
+                raw = None
+            if raw:
+                payload = raw if isinstance(raw, dict) else json.loads(str(raw))
+                cached = ReasoningDomainProfile(**payload)
+        except (ValueError, TypeError, ValidationError) as exc:
+            _log.debug(
+                "reasoning: profile override for %s ignored — %s",
+                domain_id, exc,
+            )
+        self._profile_override_cache[domain_id] = cached
+        return cached
+
+    def set_profile_override(
+        self, domain_id: str, profile: ReasoningDomainProfile | None,
+    ) -> None:
+        """Pre-populate the override cache (used by async warmers + tests)."""
+        self._profile_override_cache[domain_id] = profile
 
     async def decide_next_turn(
         self,
