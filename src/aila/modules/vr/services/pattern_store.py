@@ -124,8 +124,17 @@ class PatternStore:
 
         The mirror's content is ``summary + body`` so both surface in
         semantic search. dedup_key derived from (workspace, kind,
-        summary) so re-inserting an identical pattern updates instead of
-        proliferating.
+        summary-hash) so re-inserting an identical pattern updates
+        instead of proliferating.
+
+        fix §204 — all three writes (pattern INSERT, knowledge mirror
+        INSERT, knowledge_entry_id back-link UPDATE) now happen in ONE
+        UnitOfWork. Previously a crash between writes left orphaned
+        rows (pattern without mirror, or mirror without back-link).
+        Requires KnowledgeService.store to flush so ``entry_id`` is
+        populated before we read it back for the link UPDATE — handled
+        by the matching §204 flush in
+        ``aila/platform/services/knowledge.py``.
         """
         scope = body.scope
         namespace = _scope_namespace(body.workspace_id, team_id, scope)
@@ -151,42 +160,38 @@ class PatternStore:
                 scope=scope.value,
             )
             uow.session.add(row)
-            await uow.session.commit()
-            await uow.session.refresh(row)
+            # Flush so row.id is populated for the metadata payload and
+            # the back-link UPDATE below — but no commit yet.
+            await uow.session.flush()
             pattern_id = row.id
 
-        # Knowledge mirror in its own transaction so KnowledgeService.store()
-        # commits and we get an entry_id back (it only returns one when it
-        # owns the session).
-        store_result = await self._knowledge.store(
-            namespace=namespace,
-            content=content,
-            metadata={
-                "pattern_id": pattern_id,
-                "workspace_id": body.workspace_id,
-                "investigation_id": body.investigation_id,
-                "kind": body.kind.value,
-                "scope": scope.value,
-                "confidence": body.confidence.value,
-                "applicability": body.applicability,
-            },
-            dedup_key=dedup_key,
-        )
-        entry_id = store_result.get("entry_id")
+            # Mirror through KnowledgeService on the SAME session so the
+            # whole create is one atomic transaction. KnowledgeService
+            # internally flushes (§204) so entry_id is populated even
+            # though we own the session.
+            store_result = await self._knowledge.store(
+                namespace=namespace,
+                content=content,
+                metadata={
+                    "pattern_id": pattern_id,
+                    "workspace_id": body.workspace_id,
+                    "investigation_id": body.investigation_id,
+                    "kind": body.kind.value,
+                    "scope": scope.value,
+                    "confidence": body.confidence.value,
+                    "applicability": body.applicability,
+                },
+                dedup_key=dedup_key,
+                session=uow.session,
+            )
+            entry_id = store_result.get("entry_id")
 
-        async with UnitOfWork() as uow:
-            row = (await uow.session.exec(
-                _select(VRPatternRecord).where(VRPatternRecord.id == pattern_id),
-            )).first()
-            if row is None:
-                raise PatternStoreError(
-                    f"pattern {pattern_id} vanished between insert and read",
-                )
-            if isinstance(entry_id, int) and entry_id != row.knowledge_entry_id:
+            if isinstance(entry_id, int):
                 row.knowledge_entry_id = entry_id
                 uow.session.add(row)
-                await uow.session.commit()
-                await uow.session.refresh(row)
+
+            await uow.commit()
+            await uow.session.refresh(row)
             return _record_to_summary(row)
 
     async def get(
