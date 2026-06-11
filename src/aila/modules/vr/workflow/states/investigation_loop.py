@@ -71,13 +71,38 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
 
     max_turns = int(input.get("max_turns") or _DEFAULT_MAX_TURNS)
 
+    # fix §289 — strict input validation. cve_intel + applicable_patterns
+    # flow through state input dicts and the workflow engine persists
+    # them as JSON; a corrupted resume (e.g. a hand-edited state row
+    # turning the list into a string, or a non-JSON-safe value sneaking
+    # in) used to silently degrade via \`input.get(...) or []\`, dropping
+    # CVE intel and pattern context without any signal. Loud rejection
+    # surfaces the corruption at task entry where the operator can
+    # correlate it against the responsible state transition.
+    raw_cve_intel = input.get("cve_intel")
+    if raw_cve_intel is None:
+        raw_cve_intel = []
+    if not isinstance(raw_cve_intel, list):
+        raise ValueError(
+            f"investigation_loop: cve_intel must be a list, got "
+            f"{type(raw_cve_intel).__name__}: {raw_cve_intel!r:.200}",
+        )
+    raw_patterns = input.get("applicable_patterns")
+    if raw_patterns is None:
+        raw_patterns = []
+    if not isinstance(raw_patterns, list):
+        raise ValueError(
+            f"investigation_loop: applicable_patterns must be a list, got "
+            f"{type(raw_patterns).__name__}: {raw_patterns!r:.200}",
+        )
+
     engine = CyberReasoningEngine(services.llm_client)
     researcher = HonestVulnResearcher(
         reasoning_engine=engine,
         investigation_id=investigation_id,
         branch_id=branch_id,
-        cve_intel=input.get("cve_intel") or [],
-        applicable_patterns=input.get("applicable_patterns") or [],
+        cve_intel=raw_cve_intel,
+        applicable_patterns=raw_patterns,
     )
     executor = ToolExecutor(
         ida=IDABridgeTool(),
