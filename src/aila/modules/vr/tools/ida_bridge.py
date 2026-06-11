@@ -315,6 +315,7 @@ class IDABridgeTool(Tool):
         if not file_path:
             return {"status": "error", "error": "file_path is required for upload"}
         import asyncio  # noqa: PLC0415
+        import uuid  # noqa: PLC0415
         from pathlib import Path  # noqa: PLC0415
         target = Path(file_path)
         # is_file() does a sync stat — wrap so we don't stall the loop
@@ -323,18 +324,52 @@ class IDABridgeTool(Tool):
             return {"status": "error", "error": f"File not found: {file_path}"}
         base = await self._resolve_base_url()
         url = f"{base}/upload"
+
+        # fix §213 — stream the file in 64KB chunks instead of slurping
+        # the entire binary into memory. The previous read_bytes()
+        # approach required N bytes of resident worker RAM for an
+        # N-byte upload; a 4GB binary could OOM the worker and kill
+        # every in-flight investigation. We now build the multipart
+        # envelope by hand and yield chunks from disk, capping memory
+        # at one chunk regardless of binary size.
+        chunk_size = 65536
         try:
-            # Read the full file into memory in a thread first, then
-            # ship it. Previous version opened the file handle on the
-            # main loop and held it through the async POST — for
-            # multi-GB binaries that meant slow disk reads happening
-            # synchronously between every chunk httpx sent.
-            file_bytes = await asyncio.to_thread(target.read_bytes)
+            file_size = (await asyncio.to_thread(target.stat)).st_size
+        except OSError as exc:
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        boundary = uuid.uuid4().hex
+        # Sanitize filename for the Content-Disposition header — double
+        # quotes inside filenames would break the multipart framing.
+        safe_name = target.name.replace('"', "_").replace("\r", "_").replace("\n", "_")
+        preamble = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; '
+            f'filename="{safe_name}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode("utf-8")
+        epilogue = f"\r\n--{boundary}--\r\n".encode("utf-8")
+        total_length = len(preamble) + file_size + len(epilogue)
+
+        async def _stream_body():  # type: ignore[no-untyped-def]
+            yield preamble
+            fh = await asyncio.to_thread(open, target, "rb")
+            try:
+                while True:
+                    chunk = await asyncio.to_thread(fh.read, chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                await asyncio.to_thread(fh.close)
+            yield epilogue
+
+        headers = {
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(total_length),
+        }
+        try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(
-                    url,
-                    files={"file": (target.name, file_bytes, "application/octet-stream")},
-                )
+                resp = await client.post(url, content=_stream_body(), headers=headers)
             return resp.json()
         except httpx.ConnectError:
             return {"status": "error", "error": f"Cannot reach {base}"}
