@@ -20,6 +20,7 @@ The dispatcher persists the result into
 from __future__ import annotations
 
 import asyncio
+import math  # fix §232 — log-scale normalization in _rank_binary
 import json
 import logging
 from typing import Any, Protocol
@@ -384,7 +385,13 @@ class FunctionRankingDispatcher:
 
         top_k: list[RankedFunction] = []
         for rank_pos, (addr, row) in enumerate(ordered[: self._top_k], start=1):
-            normalized = row["hits"] / max_hits if max_hits else 0.0
+            # fix §232 — log1p compression keeps high-hit functions
+            # distinguishable from low-hit ones (linear ratio collapsed
+            # 100 vs 50 to the same band as 2 vs 1, blurring the top-K
+            # signal). log1p(0) == 0 so the zero-hit branch is still 0.
+            normalized = (
+                math.log1p(row["hits"]) / math.log1p(max_hits) if max_hits else 0.0
+            )
             reasons = [f"{row['hits']} parser-sink callsite(s): {', '.join(sorted(row['apis']))}"]
             if addr in deep_verdicts:
                 reasons.append(f"IDA assess_exploitability verdict: {deep_verdicts[addr]}")
