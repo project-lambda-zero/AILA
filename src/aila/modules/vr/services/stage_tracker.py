@@ -54,6 +54,7 @@ from datetime import UTC, timedelta
 from typing import Any
 
 from sqlmodel import select as _select
+from sqlalchemy import update as _update
 
 from aila.modules.vr.contracts.target_stages import (
     StageName,
@@ -490,7 +491,15 @@ async def reap_stuck_stages() -> int:
             if row is None:
                 # Target deleted between scan and per-row UoW — skip.
                 continue
-            stages = parse_stages(row.analysis_stages_json)
+            # fix §323 — snapshot the row's stages BEFORE any mutation
+            # so the UPDATE below carries an optimistic-concurrency
+            # WHERE clause keyed on analysis_stages_json. If __aexit__
+            # legitimately completed the stage (or another reaper pass
+            # already flipped it) between our SELECT and our UPDATE,
+            # the JSON string differs and the UPDATE matches zero rows
+            # — the legitimate write survives and we back off.
+            original_stages_json = row.analysis_stages_json
+            stages = parse_stages(original_stages_json)
             mutated = False
             now = utc_now()
             row_reaped = 0
@@ -519,23 +528,44 @@ async def reap_stuck_stages() -> int:
                 ))
                 mutated = True
                 row_reaped += 1
-            if mutated:
-                # Re-roll + commit. We mutate the row directly rather
-                # than routing back through save_target_stages so we
-                # don't open a second UoW for the same row.
-                rolled = roll_up_overall_state(stages)
-                row.analysis_stages_json = serialize_stages(stages)
-                row.analysis_state = rolled.value
-                # Pick the first reaped error for the legacy message
-                # one-liner.
-                reaped_msgs = [
-                    s.error for _, s in stages.all_stages()
-                    if s.state == StageState.FAILED and s.error
-                ]
-                if reaped_msgs:
-                    row.analysis_state_message = reaped_msgs[0]
-                row.updated_at = now
-                uow.session.add(row)
-                await uow.session.commit()
-                reaped += row_reaped
+            if not mutated:
+                continue
+
+            rolled = roll_up_overall_state(stages)
+            new_stages_json = serialize_stages(stages)
+            reaped_msgs = [
+                s.error for _, s in stages.all_stages()
+                if s.state == StageState.FAILED and s.error
+            ]
+            values: dict[str, Any] = {
+                "analysis_stages_json": new_stages_json,
+                "analysis_state": rolled.value,
+                "updated_at": now,
+            }
+            if reaped_msgs:
+                values["analysis_state_message"] = reaped_msgs[0]
+
+            # Expire the ORM-loaded row so the optimistic UPDATE below
+            # is the single source of truth; otherwise SQLAlchemy may
+            # flush the in-memory `row` and clobber our explicit values.
+            uow.session.expunge(row)
+
+            upd_stmt = (
+                _update(VRTargetRecord)
+                .where(VRTargetRecord.id == target_id)
+                .where(VRTargetRecord.analysis_stages_json == original_stages_json)
+                .values(**values)
+                .returning(VRTargetRecord.id)
+            )
+            upd_result = await uow.session.execute(upd_stmt)
+            if upd_result.first() is None:
+                _log.info(
+                    "stage_tracker.reaper: target=%s stages mutated between "
+                    "SELECT and UPDATE — backing off (legitimate writer wins)",
+                    target_id,
+                )
+                await uow.session.rollback()
+                continue
+            await uow.session.commit()
+            reaped += row_reaped
     return reaped
