@@ -357,7 +357,14 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                     )
             # Primary persona: researcher. Idempotent — only set when
             # the operator didn't pick a persona explicitly.
-            if not branch.persona_voice:
+            # fix §177/§178 — promote primary branches with no persona OR
+            # alembic-064's 'unspecified' default to the lead-researcher
+            # persona so the frontend renders 'Halvar' instead of
+            # 'Unnamed branch'.
+            if (
+                not branch.persona_voice
+                or branch.persona_voice == PersonaVoice.UNSPECIFIED.value
+            ):
                 branch.persona_voice = _PRIMARY_PERSONA.value
                 uow.session.add(branch)
 
