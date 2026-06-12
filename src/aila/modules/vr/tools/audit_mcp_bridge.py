@@ -150,6 +150,41 @@ def _suggest_nearest_paths(
     return suggestions
 
 
+# Method names that exist on dozens-to-hundreds of classes in any
+# typical Android / Java codebase. read_function with one of these
+# as the bare name has no way to disambiguate against the function
+# index. The bridge refuses the call BEFORE the HTTP roundtrip + tells
+# the agent to use search_functions(pattern=...) or extract_class
+# instead. Observed live on the SampleApp audit: 100% of recent
+# read_function-not-indexed errors were name='init', 857 wasted
+# attempts in 48h across 80 distinct branches.
+_GENERIC_JAVA_NAMES: frozenset[str] = frozenset({
+    # Constructors + lifecycle
+    "init", "<init>", "<clinit>",
+    "onCreate", "onStart", "onResume", "onPause", "onStop", "onDestroy",
+    "onAttach", "onDetach", "onActivityCreated", "onActivityResult",
+    "onConfigurationChanged", "onSaveInstanceState", "onRestoreInstanceState",
+    "onNewIntent", "onBackPressed", "onCreateView", "onViewCreated",
+    # Common entry points / overrides
+    "main", "run", "start", "stop", "close", "dispose", "shutdown",
+    "apply", "call", "execute", "perform", "invoke", "handle",
+    # Object overrides
+    "toString", "equals", "hashCode", "clone", "finalize",
+    # Generic getters/setters
+    "get", "set", "getValue", "setValue", "getId", "setId",
+    # Coroutine / reactive
+    "subscribe", "unsubscribe", "next", "onNext", "onComplete", "onError",
+    "emit", "collect", "flow",
+    # Common Android callback names
+    "onClick", "onLongClick", "onCheckedChanged", "onItemClick",
+    "onItemSelected", "onTextChanged", "afterTextChanged",
+    "beforeTextChanged", "onFocusChange", "onTouch",
+    # JSON / parcel / serialize
+    "fromJson", "toJson", "readFromParcel", "writeToParcel",
+    "describeContents", "serialize", "deserialize",
+})
+
+
 def _looks_like_class_basename(name: str, file_path: str) -> bool:
     """True iff ``name`` looks like the class declared in ``file_path``.
 
@@ -434,6 +469,40 @@ class AuditMcpBridgeTool(Tool):
         validation_error = await self._validate_kwargs(action, normalized_kwargs)
         if validation_error is not None:
             return validation_error
+        # fix: generic-name pre-refuse for read_function. 857 wasted
+        # attempts in 48h on the SampleApp audit, 100% targeting
+        # name='init' across 80 distinct branches. The bridge's
+        # _suggest_function_names DID attach NEAREST hints to the
+        # error but agents ignored them — the agent's prompt structure
+        # treats 'error' as transient and keeps trying. Refuse the
+        # generic-name call WITHOUT a roundtrip + with a STRONG
+        # directive pointing at search_functions(pattern=...) +
+        # extract_class as the correct paths. Same idea as the
+        # pipeline-only fix: turn a retryable error into a 'use a
+        # different tool' terminal response.
+        if action == "read_function":
+            requested_name = normalized_kwargs.get("name") or ""
+            if isinstance(requested_name, str) and requested_name.strip() in _GENERIC_JAVA_NAMES:
+                clean = requested_name.strip()
+                return {
+                    "status": "error",
+                    "error": (
+                        f"audit_mcp.read_function rejected: {clean!r} is a "
+                        f"generic Java method/constructor name that exists "
+                        f"on hundreds of classes in any Android app — the "
+                        f"function index can't disambiguate. Possible "
+                        f"next moves:\n"
+                        f"  (1) audit_mcp.search_functions(pattern='\\\\b{clean}\\\\b') "
+                        f"to enumerate every class that defines {clean};\n"
+                        f"  (2) audit_mcp.extract_class(file_path=...) when "
+                        f"you already know which class's {clean} you want;\n"
+                        f"  (3) audit_mcp.read_lines(file_path=..., start=, end=) "
+                        f"to read the body directly.\n"
+                        f"Do NOT retry read_function with the bare name "
+                        f"{clean!r} — the result will be identical."
+                    ),
+                    "_bridge_policy": "generic_name_blocked",
+                }
 
         # Pre-warm fan-out: when this is the FIRST call seen for the
         # index_id in this process, fire 16 parallel cheap requests to
