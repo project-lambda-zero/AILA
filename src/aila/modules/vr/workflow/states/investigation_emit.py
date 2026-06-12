@@ -466,6 +466,31 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                     inv.primary_outcome_id = str(outcome_id)
                 inv.updated_at = now
                 uow.session.add(inv)
+                # Phase C surgical (BLOCK fix): when this commit will
+                # land a terminal inv.status, close any orphan
+                # ``active`` branches in the same UoW so the operator
+                # never sees a completed investigation with a branch
+                # chip still pulsing. See services/branch_cleanup.py
+                # for the rationale + the operator-observed bug
+                # (inv a23eb6ae / wei branch).
+                if inv.status in (
+                    InvestigationStatus.COMPLETED.value,
+                    InvestigationStatus.FAILED.value,
+                    InvestigationStatus.ABANDONED.value,
+                ):
+                    from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
+                        close_orphan_branches_on_terminal,
+                    )
+                    _reason_map = {
+                        InvestigationStatus.COMPLETED.value: "investigation_completed",
+                        InvestigationStatus.FAILED.value: "investigation_failed",
+                        InvestigationStatus.ABANDONED.value: "investigation_abandoned",
+                    }
+                    await close_orphan_branches_on_terminal(
+                        uow, investigation_id,
+                        reason=_reason_map[inv.status],
+                        now=now,
+                    )
                 await uow.commit()
 
     # Draft outcome workflow: when an outcome row exists, post a

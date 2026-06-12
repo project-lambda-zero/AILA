@@ -396,4 +396,81 @@ async def test_finalize_investigation_carries_inv_id() -> None:
     assert result.inv_id == inv_id
 
 
+
+# ─────────────────────────────────────────────────────────────────
+# Orphan-branch close on terminal flip (BLOCK regression — Phase C
+# surgical bug fix for inv a23eb6ae-76bf-413d-a179-c930ad1cf2a0)
+# ─────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_close_orphan_branches_on_terminal_closes_active() -> None:
+    """services.branch_cleanup must flip 'active' branches to 'abandoned'.
+
+    Direct unit test of the helper. Closes the BLOCK operator-observed
+    bug: investigation 'completed' while one branch (wei) stayed
+    'active' with growing turn_count. The helper called from every
+    completion site forbids that combination from now on.
+    """
+    from aila.modules.vr.services.branch_cleanup import (
+        close_orphan_branches_on_terminal,
+    )
+
+    target_id = await _seed_workspace_and_target("orph1")
+    inv_id = await _seed_investigation(
+        target_id=target_id, status=InvestigationStatus.RUNNING,
+    )
+    # 5 terminal + 1 active (the BLOCK shape)
+    branch_ids = await _seed_branches(
+        investigation_id=inv_id,
+        statuses=["completed", "completed", "completed", "completed", "completed", "active"],
+    )
+
+    async with UnitOfWork() as uow:
+        n = await close_orphan_branches_on_terminal(uow, inv_id)
+        await uow.commit()
+    assert n == 1, "exactly one active branch should have been closed"
+
+    async with UnitOfWork() as uow:
+        rows = (await uow.session.exec(
+            select(VRInvestigationBranchRecord)
+            .where(VRInvestigationBranchRecord.investigation_id == inv_id),
+        )).all()
+    statuses = sorted(r.status for r in rows)
+    assert statuses == ["abandoned", "completed", "completed", "completed", "completed", "completed"]
+    # The closed branch carries the synth reason
+    closed = [r for r in rows if r.status == "abandoned"]
+    assert len(closed) == 1
+    assert "investigation_completed" in (closed[0].closed_reason or "")
+    assert closed[0].closed_at is not None
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_close_orphan_does_not_touch_terminal_branches() -> None:
+    """abandoned / merged / promoted / paused MUST be left alone."""
+    from aila.modules.vr.services.branch_cleanup import (
+        close_orphan_branches_on_terminal,
+    )
+
+    target_id = await _seed_workspace_and_target("orph2")
+    inv_id = await _seed_investigation(
+        target_id=target_id, status=InvestigationStatus.RUNNING,
+    )
+    await _seed_branches(
+        investigation_id=inv_id,
+        statuses=["abandoned", "merged", "promoted", "paused"],
+    )
+
+    async with UnitOfWork() as uow:
+        n = await close_orphan_branches_on_terminal(uow, inv_id)
+        await uow.commit()
+    assert n == 0, "non-active branches must not be touched"
+
+    async with UnitOfWork() as uow:
+        rows = (await uow.session.exec(
+            select(VRInvestigationBranchRecord)
+            .where(VRInvestigationBranchRecord.investigation_id == inv_id),
+        )).all()
+    assert sorted(r.status for r in rows) == ["abandoned", "merged", "paused", "promoted"]
+
 pytestmark = pytest.mark.asyncio

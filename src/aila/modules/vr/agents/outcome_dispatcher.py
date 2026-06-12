@@ -1377,7 +1377,7 @@ class OutcomeDispatcher:
                         # swap. The dispatcher MUST NOT remain the
                         # writer of investigation.status per the SSOT
                         # contract — engine state handlers own it.
-                        self._mark_investigation_completed(uow, inv)
+                        await self._mark_investigation_completed(uow, inv)
                         _log.info(
                             "outcome_dispatcher COMPLETE investigation=%s "
                             "(dispatched, no active branches remain)",
@@ -1402,7 +1402,7 @@ class OutcomeDispatcher:
         if just_dispatched:
             await self._purge_arq_with_retry(outcome.investigation_id)
 
-    def _mark_investigation_completed(
+    async def _mark_investigation_completed(
         self,
         uow: UnitOfWork,
         inv: VRInvestigationRecord,
@@ -1420,12 +1420,21 @@ class OutcomeDispatcher:
         from aila.modules.vr.contracts import (  # noqa: PLC0415
             InvestigationStatus,
         )
+        from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
+            close_orphan_branches_on_terminal,
+        )
 
         now = utc_now()
         inv.status = InvestigationStatus.COMPLETED.value
         inv.stopped_at = now
         inv.updated_at = now
         uow.session.add(inv)
+        # Phase C surgical (BLOCK fix): keep branches projection in
+        # lockstep with the inv terminal flip. See
+        # services/branch_cleanup.py.
+        await close_orphan_branches_on_terminal(
+            uow, inv.id, reason="investigation_completed", now=now,
+        )
 
     async def _purge_arq_with_retry(
         self,

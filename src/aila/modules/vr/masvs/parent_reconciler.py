@@ -500,14 +500,21 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
                 has_draft = True
 
         if not has_draft and target_inv:
+            now = utc_now()
             target_inv.status = InvestigationStatus.COMPLETED.value
             # fix §19 — bounded enum value (<=32 chars, validates
             # against InvestigationPauseReason); detail moves to the
             # log line below so the API serializer doesn't 500.
             target_inv.pause_reason = PauseReason.TURN_CAP
-            target_inv.stopped_at = utc_now()
-            target_inv.updated_at = utc_now()
+            target_inv.stopped_at = now
+            target_inv.updated_at = now
             uow.session.add(target_inv)
+            from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
+                close_orphan_branches_on_terminal,
+            )
+            await close_orphan_branches_on_terminal(
+                uow, inv_id, reason="investigation_completed", now=now,
+            )
 
         force_closed += 1
         _log.warning(
@@ -1234,6 +1241,21 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
                 if (getattr(result, "rowcount", 0) or 0) > 0:
                     completed += 1
                     any_changes = True
+                    # When the parent flips to COMPLETED, every still-
+                    # active branch directly under THIS parent (rare;
+                    # MASVS parents rarely have their own branches but
+                    # cap rows for the parent's own primary branch
+                    # exist) is orphaned. Close them so the projection
+                    # is consistent. See services/branch_cleanup.py
+                    # for the operator-observed BLOCK bug.
+                    from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
+                        close_orphan_branches_on_terminal,
+                    )
+                    await close_orphan_branches_on_terminal(
+                        uow, parent_id,
+                        reason="investigation_completed",
+                        now=now,
+                    )
             elif (
                 parent_status == InvestigationStatus.CREATED.value
                 and created_children < total_children
