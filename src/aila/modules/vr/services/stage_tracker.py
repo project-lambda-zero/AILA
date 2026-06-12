@@ -550,8 +550,15 @@ async def reap_stuck_stages() -> int:
 
                 rolled = roll_up_overall_state(stages)
                 new_stages_json = serialize_stages(stages)
+                # fix §118 — when several stages fail in one reap pass,
+                # concatenate every failure into the legacy single-column
+                # analysis_state_message instead of silently dropping all
+                # but the first. Operators reading the legacy column now
+                # see every stage that timed out, in stage iteration order,
+                # capped at 800 chars to match the per-stage error budget.
                 reaped_msgs = [
-                    s.error for _, s in stages.all_stages()
+                    f"{name.value}: {s.error}"
+                    for name, s in stages.all_stages()
                     if s.state == StageState.FAILED and s.error
                 ]
                 values: dict[str, Any] = {
@@ -560,7 +567,7 @@ async def reap_stuck_stages() -> int:
                     "updated_at": now,
                 }
                 if reaped_msgs:
-                    values["analysis_state_message"] = reaped_msgs[0]
+                    values["analysis_state_message"] = " | ".join(reaped_msgs)[:800]
 
                 # Expunge the ORM-loaded row so the optimistic UPDATE
                 # below is the single source of truth; otherwise
