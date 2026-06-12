@@ -296,6 +296,28 @@ def _register_vr_periodic_sweeps() -> None:
     )
     register_periodic_sweep("vr.finalize", sweep_finalizable_investigations)
 
+    # vr.stall_recovery — recovery backstop for tasks killed mid-
+    # execution by CancelledError, worker restart, or host kill.
+    # Every other cutover fix assumes the task body returns or
+    # raises through Exception; CancelledError inherits from
+    # BaseException and slips past all of them. This sweep finds
+    # investigations stuck in status=running (or created if the
+    # first enqueue was lost) with zero in-flight tasks, then re-
+    # enqueues run_vr_investigate (or run_vr_nday for n_day kind)
+    # per active branch. See services/stall_recovery.py for the
+    # full rate-model rationale + env-tuning knobs.
+    #
+    # Cron interval is the same 1-minute reaper tick as every other
+    # VR sweep. Per-tick submit cap defaults to 6 (env-tunable via
+    # AILA_VR_STALL_RECOVERY_LIMIT). Idle threshold defaults to 15
+    # minutes (env: AILA_VR_STALL_RECOVERY_IDLE_MIN).
+    from .services.stall_recovery import (  # noqa: PLC0415
+        sweep_stalled_investigations,
+    )
+    register_periodic_sweep(
+        "vr.stall_recovery", sweep_stalled_investigations,
+    )
+
 
 # Module-load-time registration. Imports are deferred inside the
 # function so a `from aila.modules.vr.module import VRModule` for

@@ -81,14 +81,13 @@ def test_all_periodic_sweeps_returns_copy_not_reference() -> None:
 
 
 def test_vr_module_registers_expected_sweep_names() -> None:
-    """The VR module's create_module() registers four sweeps.
-
-    Phase C dropped vr.investigation_reaper (finalize covers its work)
+    """The VR module's create_module() registers five sweeps.
     so the expected set is exactly:
       - vr.stage_tracker
       - vr.branch_reaper
       - vr.masvs_parent_reconciler
       - vr.finalize
+      - vr.stall_recovery
     """
     from aila.modules.vr.module import create_module  # noqa: PLC0415
     create_module()
@@ -98,6 +97,7 @@ def test_vr_module_registers_expected_sweep_names() -> None:
         "vr.branch_reaper",
         "vr.masvs_parent_reconciler",
         "vr.finalize",
+        "vr.stall_recovery",
     }
     # vr.finalize must come AFTER the other VR sweeps so that finalize's
     # per-id helper delegates run after the lower-level reapers update
@@ -107,6 +107,15 @@ def test_vr_module_registers_expected_sweep_names() -> None:
         assert names.index(peer) < finalize_idx, (
             f"{peer} must register before vr.finalize (got order {names})"
         )
+    # vr.stall_recovery is the recovery backstop — must run AFTER vr.finalize
+    # so finalize gets the first crack at every inv. stall_recovery only
+    # re-enqueues invs that finalize chose not to terminate (still in
+    # status=running with no live task).
+    stall_idx = names.index("vr.stall_recovery")
+    assert finalize_idx < stall_idx, (
+        f"vr.stall_recovery must register AFTER vr.finalize "
+        f"(got order {names})"
+    )
 
 
 def test_vr_module_create_module_is_idempotent() -> None:
