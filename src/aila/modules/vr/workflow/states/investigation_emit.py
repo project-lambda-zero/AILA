@@ -166,6 +166,13 @@ async def _enqueue_next_investigation_run(
         user_id="system",
         group_id="vr_auto_continue",
         team_id=team_id,
+        # AUTO_CONTINUE submits from INSIDE a running task body. Without
+        # this flag, dedup_session matches the caller's own
+        # TaskRecord (status='running'), returns its id without
+        # enqueueing a new task, the worker exits, the queue stays
+        # empty, and the branch idles forever. Diagnosed 2026-06-12
+        # on inv bc194403 maddie branch 20367ea3.
+        bypass_dedup=True,
     )
 
 
