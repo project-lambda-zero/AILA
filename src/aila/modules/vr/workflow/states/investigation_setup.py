@@ -395,10 +395,25 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
         uow.session.add(inv)
         await uow.commit()
 
-    # Auto-deliberation: spawn sibling branches and enqueue per-sibling
-    # tasks ONLY on the primary task. Sibling tasks (explicit_branch_id
-    # set) skip this block — they just run their assigned branch's loop.
-    if not explicit_branch_id and _is_auto_deliberation_enabled():
+    # Auto-deliberation: ensure the full 6-persona panel exists for
+    # this investigation. Called on EVERY setup invocation (regardless
+    # of whether the caller passed an explicit branch_id) because the
+    # spawn function is idempotent: it reads all current branches,
+    # keeps the best-turn-count per persona, abandons duplicates, and
+    # inserts missing personas. Phase 2's task enqueue uses the queue
+    # dedup so existing in-flight sibling tasks aren't duplicated.
+    #
+    # Prior to 2026-06-13, this was gated on `not explicit_branch_id`.
+    # That gate caused a structural bug where any caller that passed
+    # branch_id (`_wake_stale_branches`, the stall-recovery sweep when
+    # an inv had 1+ active branches, MASVS re-enqueue paths after the
+    # first task got killed mid-setup) skipped panel spawn entirely.
+    # The investigation got stuck single-persona forever even though
+    # the operator-configured auto_deliberation panel was supposed to
+    # land. Diagnosed on MASVS inv df6345ce / 4b831a74 / 2c527537 —
+    # all three stuck at 1 branch (halvar) after stall-recovery
+    # re-enqueued them with branch_id.
+    if _is_auto_deliberation_enabled():
         await _spawn_persona_siblings_and_enqueue(
             investigation_id=investigation_id,
             primary_branch_id=branch.id,
@@ -597,6 +612,22 @@ async def _spawn_persona_siblings_and_enqueue(
     # the operator's next /reopen retries cleanly.
     sibling_branch_ids: dict[str, str] = {}  # persona_value -> branch_id
     async with UnitOfWork() as uow:
+        # Serialize concurrent spawn calls per-investigation. Without
+        # this lock, when the primary task and N sibling tasks land in
+        # parallel workers (all pass through investigation_setup ->
+        # spawn), each one reads all_branches at the same moment, all
+        # see "noor missing", all INSERT a noor branch. The next spawn
+        # tick's group-by-persona logic abandons N-1 duplicates as
+        # "duplicate_persona_cleanup" but the write amplification is
+        # wasteful and confuses the operator. SELECT FOR UPDATE on the
+        # inv row gives spawn a per-investigation mutex.
+        from sqlalchemy import text as _sql_text  # noqa: PLC0415
+        await uow.session.execute(
+            _sql_text(
+                "SELECT id FROM vr_investigations WHERE id = :id FOR UPDATE"
+            ).bindparams(id=investigation_id),
+        )
+
         all_branches = (await uow.session.exec(
             _select(VRInvestigationBranchRecord).where(
                 VRInvestigationBranchRecord.investigation_id == investigation_id,

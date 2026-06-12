@@ -251,32 +251,43 @@ class LLMResponse:
     disabled: bool = False
     finish_reason: str = ""
     # Pipeline metadata (Phase 116) -- default None, transparent to existing callers
-    classification: str | None = None
-    confidence: str | None = None
-    seal_id: str | None = None
-    pipeline_metadata: dict[str, Any] | None = None
-
-
-# Maximum retry attempts for transient errors (on top of SDK built-in retries).
-# Raised from 3→8→100. Investigations were dying on brief consecutive LLM
-# failures (429 rate-limit, 502/503 provider overload). With 8 retries and
-# 30s backoff cap the total tolerated outage was only ~121s — a single
-# provider hiccup longer than that propagated as researcher_error_retryable
-# through investigation_loop → investigation_emit and the run was either
-# re-enqueued (expensive) or finalised FAILED.
+# Retry budget — TIGHT BY DESIGN.
 #
-# With _MAX_RETRIES=100 and capped 30s backoff:
-#   attempts 0-4:  1s, 2s, 4s, 8s, 16s
-#   attempts 5-99: 30s each (capped)
-# Total tolerated outage ≈ 31 + 95*30 ≈ 2881s (~48 min). Long enough to
-# ride out sustained provider degradation (OmniRoute restarts, rate-limit
-# storms, regional outages) without losing in-flight investigations.
+# Background (the change shipped on 2026-06-13 after operator
+# diagnosed the maddie / bc194403 stall on inv 86307908 et al):
 #
-# Both knobs are env-configurable so operators can tune per host:
-#   AILA_LLM_MAX_RETRIES        — attempts cap (default 100)
-#   AILA_LLM_RETRY_BASE_DELAY_S — first-attempt backoff seconds (default 1.0)
-#   AILA_LLM_RETRY_MAX_DELAY_S  — per-attempt backoff cap seconds (default 30)
-_MAX_RETRIES = max(1, int(os.environ.get("AILA_LLM_MAX_RETRIES", "100")))
+# The old budget was _MAX_RETRIES=100 × up-to-30s backoff = ~48 min
+# of in-task retry burn. That meant a single worker process would
+# pin itself on ONE task's retry loop for nearly an hour during any
+# sustained provider degradation (NVIDIA NIM 40 RPM throttling,
+# OpenRouter 503, OmniRoute restart). All other queued tasks
+# starved behind that worker, which was the operator-observed
+# "113 tasks queued, no progress" symptom right after the stall-
+# recovery sweep landed.
+#
+# New model: fail FAST inside the task body, let ARQ retry the
+# whole task with its own exponential backoff. ARQ's retry budget
+# is per-task-attempt, not per-LLM-call, so it doesn't pin the
+# worker on retry-spin. The final raise still carries
+# ``retryable=True`` so ARQ knows the task can resume; cursor SSOT
+# preserves the workflow state between attempts.
+#
+# With _MAX_RETRIES=3 and capped 30s backoff:
+#   attempts 1-3: 1s, 2s, 4s
+# Total in-task budget ≈ 7 seconds. Anything longer is the queue
+# layer's job, not the in-call retry loop.
+#
+# For ``RateLimitError`` specifically: when the provider sends a
+# ``Retry-After`` header, honour it (capped at _RETRY_MAX_DELAY).
+# That lets us delay-and-retry within the existing 3-attempt
+# budget instead of failing immediately on a known-recoverable
+# 429 with a "try again in N seconds" signal.
+#
+# Env knobs (defaults landed for the new fast-fail behavior):
+#   AILA_LLM_MAX_RETRIES        — in-call attempts cap (default 3)
+#   AILA_LLM_RETRY_BASE_DELAY_S — first-attempt backoff (default 1.0s)
+#   AILA_LLM_RETRY_MAX_DELAY_S  — per-attempt backoff cap (default 30.0s)
+_MAX_RETRIES = max(1, int(os.environ.get("AILA_LLM_MAX_RETRIES", "3")))
 _RETRY_BASE_DELAY = max(0.1, float(os.environ.get("AILA_LLM_RETRY_BASE_DELAY_S", "1.0")))
 _RETRY_MAX_DELAY = max(_RETRY_BASE_DELAY, float(os.environ.get("AILA_LLM_RETRY_MAX_DELAY_S", "30.0")))
 
@@ -801,7 +812,39 @@ class AilaLLMClient:
 
                 _record_llm_ok()
                 return _enrich_response(response, ctx)
-            except (APIConnectionError, APITimeoutError, RateLimitError) as exc:
+            except RateLimitError as exc:
+                # Honour Retry-After when the provider tells us how
+                # long to wait. NVIDIA NIM, OpenRouter, OpenAI all send
+                # this header on 429s — it's the most accurate delay we
+                # can pick. Fallback to exponential backoff (capped at
+                # _RETRY_MAX_DELAY) when the header is missing.
+                _record_llm_error()
+                last_error = exc
+                retry_after_s: float | None = None
+                resp = getattr(exc, "response", None)
+                headers = getattr(resp, "headers", None) if resp is not None else None
+                if headers is not None:
+                    raw = headers.get("Retry-After") or headers.get("retry-after")
+                    if raw is not None:
+                        try:
+                            retry_after_s = float(raw)
+                        except (TypeError, ValueError):
+                            retry_after_s = None
+                if retry_after_s is not None:
+                    delay = min(max(retry_after_s, 0.1), _RETRY_MAX_DELAY)
+                else:
+                    delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
+                logger.warning(
+                    "LLM rate-limit (attempt %d/%d): %s -- retrying in %.1fs "
+                    "(retry_after_hdr=%s)",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    type(exc).__name__,
+                    delay,
+                    retry_after_s,
+                )
+                await asyncio.sleep(delay)
+            except (APIConnectionError, APITimeoutError) as exc:
                 _record_llm_error()
                 last_error = exc
                 delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
