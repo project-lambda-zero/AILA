@@ -335,7 +335,14 @@ export type BranchStatus =
   | "abandoned";
 
 export type PersonaVoice =
-  | "halvar" | "maddie" | "yuki" | "renzo" | "noor" | "wei";
+  | "halvar" | "maddie" | "yuki" | "renzo" | "noor" | "wei"
+  // Phase E §177/§178/§180 — synthetic voices written by branch_manager
+  // when no agent persona is meaningful. Backend's PersonaVoice enum
+  // gained these values + alembic 064 sets the column DEFAULT to
+  // 'unspecified' and NOT NULL. The frontend MUST accept them so
+  // serialized branches with these voices don't fail runtime
+  // validation.
+  | "unspecified" | "merge_result" | "fork_unnamed";
 
 export type SenderKind = "engine" | "operator";
 
@@ -419,8 +426,15 @@ export interface VRBranchSummary {
   created_at?: string | null;
   updated_at?: string | null;
   strategy_family?: string | null;
+  // Phase B cursor SSOT (cutover): the branch's workflow_state_cursor
+  // current_state and archived_state. Backend joins workflow_state_cursor
+  // on run_id == branch.id when serializing. Use these (not `status`)
+  // to distinguish operator-paused (cursor_state='__paused__') from
+  // task-crashed (cursor_state='__crashed__'); status collapses both
+  // to PAUSED for the UI tile.
+  cursor_state?: string | null;
+  cursor_archived_state?: string | null;
 }
-
 export interface VRMessageSummary {
   id: string;
   investigation_id: string;
