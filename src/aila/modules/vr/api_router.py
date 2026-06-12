@@ -1340,7 +1340,7 @@ def create_vr_router() -> APIRouter:
                             "investigation_id": o.investigation_id,
                             "payload": {
                                 "id": o.id,
-                                "kind": o.kind,
+                                "kind": o.outcome_kind,
                                 "branch_id": o.branch_id,
                             },
                         },
@@ -5550,7 +5550,7 @@ def create_vr_router() -> APIRouter:
             nodes.append(EvidenceGraphNode(
                 id=f"outcome:{o.id}",
                 kind="outcome",
-                label=str(o.kind),
+                label=str(o.outcome_kind),
                 state=str(o.dispatch_status),
                 x=x,
                 y=y,
