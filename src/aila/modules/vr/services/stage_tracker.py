@@ -103,15 +103,12 @@ _DEFAULT_TIMEOUTS: dict[StageName, float] = {
     StageName.MOBSF_SCAN: 1800.0,
 }
 
-# fix §117 — surface stage-name drift at startup, not via silent 30-min
-# timeouts in production. Every StageName must have an explicit timeout
-# (no fallback to _DEFAULT_TIMEOUTS.get(..., 1800.0) for newly added
-# stages) and the dict cannot list stages that no longer exist.
-assert set(_DEFAULT_TIMEOUTS) == set(StageName), (
-    "stage_tracker._DEFAULT_TIMEOUTS drift: "
-    f"missing={set(StageName) - set(_DEFAULT_TIMEOUTS)} "
-    f"unknown={set(_DEFAULT_TIMEOUTS) - set(StageName)}"
-)
+# fix §117 — runtime asserts at each lookup site (see __init__ and
+# reap_stuck_stages below) fail loudly in the worker log on the first
+# call against an unregistered stage. The previous import-time check
+# only fired during module load; a stage added without a timeout entry
+# would now blow up the worker that picks up the first task for it,
+# which is the operator-visible event we actually want to alert on.
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -269,11 +266,17 @@ class StageTracker:
     ) -> None:
         self.target_id = target_id
         self.stage = stage
-        self.stage_timeout_s = (
-            stage_timeout_s
-            if stage_timeout_s is not None
-            else _DEFAULT_TIMEOUTS.get(stage, 1800.0)
-        )
+        # fix §117 — fail loudly in the worker log on first use of a
+        # stage missing from _DEFAULT_TIMEOUTS; never silently fall back
+        # to a 30-min cap that would mask drift in production.
+        if stage_timeout_s is not None:
+            self.stage_timeout_s = stage_timeout_s
+        else:
+            assert stage in _DEFAULT_TIMEOUTS, (
+                f"stage_tracker: no _DEFAULT_TIMEOUTS entry for {stage!r}; "
+                "add one to _DEFAULT_TIMEOUTS in services/stage_tracker.py"
+            )
+            self.stage_timeout_s = _DEFAULT_TIMEOUTS[stage]
         self._extra_columns: dict[str, Any] = {}
         self._stages: TargetAnalysisStages | None = None
 
@@ -513,7 +516,14 @@ async def reap_stuck_stages() -> int:
                 for stage_name, status in stages.all_stages():
                     if status.state != StageState.RUNNING:
                         continue
-                    timeout_s = _DEFAULT_TIMEOUTS.get(stage_name, 1800.0)
+                    # fix §117 — same runtime guard as StageTracker.__init__;
+                    # an unregistered stage drift surfaces in the reaper log
+                    # instead of silently inheriting the 30-min cap.
+                    assert stage_name in _DEFAULT_TIMEOUTS, (
+                        f"stage_tracker.reaper: no _DEFAULT_TIMEOUTS entry "
+                        f"for {stage_name!r}; add one to _DEFAULT_TIMEOUTS"
+                    )
+                    timeout_s = _DEFAULT_TIMEOUTS[stage_name]
                     started = status.started_at
                     if started is None:
                         continue
