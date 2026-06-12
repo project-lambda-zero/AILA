@@ -28,6 +28,7 @@ import hashlib
 import inspect
 import json
 import logging
+import uuid
 from collections.abc import Callable
 from datetime import UTC
 from graphlib import CycleError, TopologicalSorter
@@ -86,6 +87,7 @@ class TaskQueue:
         user_id: str = "system",
         group_id: str = "system",
         team_id: str | None = None,
+        bypass_dedup: bool = False,
     ) -> TaskHandle:
         """Submit a background task. Returns a TaskHandle for status polling.
 
@@ -129,11 +131,27 @@ class TaskQueue:
         # semantically different kwarg sets (Decimal("1.0") vs "1.0", UUID
         # vs UUID-string, datetime vs ISO string) no longer stringify-collide
         # into the same dedup hash. Callers must pass JSON-clean kwargs.
+        #
+        # bypass_dedup = True path (2026-06-12, maddie stall fix): when the
+        # caller is mid-task and wants to enqueue a continuation, the dedup
+        # query would match the caller's own still-running TaskRecord and
+        # return its id WITHOUT enqueueing a new task. The caller thinks
+        # success; the worker exits; nothing's in the queue. The branch
+        # idles forever.
+        # Diagnosed on inv bc194403 maddie branch 20367ea3: AUTO_CONTINUE
+        # from investigation_emit hit dedup against its own running task.
+        # Mix a UUID into the hash input when bypass_dedup is set so the
+        # dedup query never matches the caller (different hash) AND the
+        # §72 partial UNIQUE index on input_hash WHERE status IN
+        # (queued, running, waiting) doesn't reject the insert.
+        # The persisted kwargs_json stays clean (no UUID leakage into
+        # worker's view of arguments).
         try:
+            _hash_payload: dict[str, object] = {"fn": fn_path, "kwargs": kwargs}
+            if bypass_dedup:
+                _hash_payload["_continue_seq"] = uuid.uuid4().hex
             input_hash = hashlib.sha256(
-                json.dumps(
-                    {"fn": fn_path, "kwargs": kwargs}, sort_keys=True,
-                ).encode()
+                json.dumps(_hash_payload, sort_keys=True).encode(),
             ).hexdigest()
         except (TypeError, ValueError) as exc:
             raise ValueError(
@@ -141,15 +159,20 @@ class TaskQueue:
                 f"(strict mode — §73): {exc}",
             ) from exc
 
-        async with async_session_scope() as dedup_session:
-            existing = (await dedup_session.exec(
-                select(TaskRecord)
-                .where(TaskRecord.input_hash == input_hash)
-                .where(TaskRecord.status.in_(["queued", "running", "waiting"]))  # type: ignore[union-attr]
-            )).first()
-            if existing is not None:
-                _log.info("Task dedup: returning existing task %s for hash %s", existing.id, input_hash[:12])
-                return TaskHandle(task_id=str(existing.id))
+        if not bypass_dedup:
+            async with async_session_scope() as dedup_session:
+                existing = (await dedup_session.exec(
+                    select(TaskRecord)
+                    .where(TaskRecord.input_hash == input_hash)
+                    .where(TaskRecord.status.in_(["queued", "running", "waiting"]))  # type: ignore[union-attr]
+                )).first()
+                if existing is not None:
+                    _log.info(
+                        "Task dedup: returning existing task %s for hash %s",
+                        existing.id, input_hash[:12],
+                    )
+                    return TaskHandle(task_id=str(existing.id))
+
 
         # Fail-fast Redis reachability check (no DB record written yet). This
         # is the single source of truth for "broker is usable" — if the check
