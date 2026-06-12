@@ -175,6 +175,12 @@ async def synthesize_no_finding_outcomes(
                         updated_at=now,
                     ),
                 )
+                from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
+                    close_orphan_branches_on_terminal,
+                )
+                await close_orphan_branches_on_terminal(
+                    uow, inv_id, reason="investigation_completed", now=now,
+                )
                 synthesized += 1
             except Exception as exc:  # noqa: BLE001
                 _log.warning(
@@ -268,6 +274,12 @@ async def synthesize_no_finding_outcomes(
                     stopped_at=now,
                     updated_at=now,
                 ),
+            )
+            from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
+                close_orphan_branches_on_terminal,
+            )
+            await close_orphan_branches_on_terminal(
+                uow, inv_id, reason="investigation_completed", now=now,
             )
             synthesized += 1
         except Exception as exc:  # noqa: BLE001

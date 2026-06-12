@@ -308,6 +308,17 @@ class SynthesisAgent:
             # via the shared helper (fix §162).
             _mark_investigation_completed(inv_row)
             uow.session.add(inv_row)
+            # Phase C surgical (BLOCK fix): close orphan active branches
+            # so the projection stays in lockstep with inv.status. See
+            # services/branch_cleanup.py for the rationale.
+            from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
+                close_orphan_branches_on_terminal,
+            )
+            await close_orphan_branches_on_terminal(
+                uow, self.investigation_id,
+                reason="investigation_completed",
+                now=inv_row.updated_at,
+            )
             await uow.commit()
 
         _log.info(
