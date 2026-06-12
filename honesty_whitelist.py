@@ -101,6 +101,21 @@ HONESTY_WHITELIST = [
     ("vr/agents/outcome_dispatcher.py", "_int_or_none", "inlining"),
     ("vr/api_router.py", "_fuzz_proposal_summary", "inlining"),
 
+    # Category (b): Phase C surgical (orphan-branch close on terminal flip).
+    # services/branch_cleanup.py is imported inline at every COMPLETED/FAILED/
+    # ABANDONED transition site so the helper lands in the SAME UoW that the
+    # caller already opened. Top-level import would force every caller to
+    # import it, and the helper has a circular dependency risk via
+    # vr.contracts (which branch_cleanup deliberately avoids by reading
+    # status enum values directly from the platform contract layer).
+    # See commit 42a5ef8 for the operator-observed BLOCK bug rationale.
+    ("vr/workflow/states/investigation_emit.py", "state_investigation_emit", "noqa"),
+    ("vr/services/investigation_finalizers.py", "synthesize_no_finding_outcomes", "noqa"),
+    ("vr/masvs/parent_reconciler.py", "_enforce_total_turn_cap", "noqa"),
+    ("vr/masvs/parent_reconciler.py", "sweep_masvs_audit_parents", "noqa"),
+    ("vr/agents/outcome_dispatcher.py", "_mark_investigation_completed", "noqa"),
+    ("vr/agents/synthesis_agent.py", "run", "noqa"),
+
     # Category (b): builtin disclosure tracks must share a uniform render()
     # signature even when a specific track doesn't consume embargo_days
     # (blog_post defers timing to the operator outside the embargo system).
