@@ -5,6 +5,7 @@ import { authorizedRequestJson } from "@platform/api/http";
 import type {
   DisclosureTrackInfo,
   Envelope,
+  InvestigationStatus,
   MasvsAuditAggregate,
   McpServerSummary,
   McpCallLogEntry,
@@ -24,6 +25,37 @@ import type {
 } from "./types";
 
 import { formatBranchDisplayName } from "./branchDisplay";
+
+/** Investigation statuses where backend may still be producing new
+ *  messages, branches, outcomes, or fuzz proposals. Polling the per-
+ *  investigation REST endpoints is only useful for these. Everything
+ *  else (paused, completed, failed, abandoned) is terminal-or-paused
+ *  from the worker's perspective — no new rows will appear without
+ *  an operator action (resume / reopen / re-enqueue), and that
+ *  action's mutation already invalidates the affected query keys.
+ *
+ *  Treating `paused` as non-live is deliberate: when the operator
+ *  pauses, they want the UI to settle, not keep hammering the
+ *  backend at 3-5s cadence (D-310 — operator reported "it cant
+ *  stop calling" on a paused investigation; backend access log
+ *  showed 99 GETs to /vr/investigations/{id} in the recent
+ *  window). The Resume mutation invalidates the investigation
+ *  query, which triggers one refetch; the next refetch sees
+ *  status=running and polling resumes automatically. */
+const _LIVE_INVESTIGATION_STATUSES: ReadonlySet<InvestigationStatus> = new Set([
+  "created",
+  "running",
+]);
+
+export function isInvestigationLive(
+  status: InvestigationStatus | string | null | undefined,
+): boolean {
+  // Default to LIVE when status is unknown: the page just mounted and
+  // hasn't fetched the investigation yet — better one wasted poll
+  // than a missed first paint of an actually-running investigation.
+  if (status == null) return true;
+  return _LIVE_INVESTIGATION_STATUSES.has(status as InvestigationStatus);
+}
 
 export function useVRProjects(offset = 0, limit = 20) {
   return useQuery({
@@ -230,7 +262,17 @@ export function useInvestigation(investigationId: string) {
         )
       ).data,
     enabled: !!investigationId,
-    refetchInterval: 3000,
+    // Self-aware polling: stop fetching once the investigation reaches
+    // a non-live state (paused / completed / failed / abandoned). When
+    // the operator pauses, no new work appears server-side, so polling
+    // every 3s just burns network. The Pause and Resume mutations
+    // invalidate this query key, which forces one refetch; if the
+    // server then returns status=running, this callback re-evaluates
+    // and polling resumes. See `isInvestigationLive` above.
+    refetchInterval: (q) => {
+      const status = (q.state.data as VRInvestigationSummary | undefined)?.status;
+      return isInvestigationLive(status) ? 3000 : false;
+    },
   });
 }
 
@@ -281,7 +323,17 @@ export function useInvestigationMessages(
   });
 }
 
-export function useInvestigationBranches(investigationId: string) {
+/** Per-investigation branch list polling.
+ *
+ *  Polls at 5s while the investigation is `live` (running / created).
+ *  Stops polling on paused / completed / failed / abandoned — the
+ *  parent screen passes `live: isInvestigationLive(inv?.status)` so
+ *  paused-and-completed views settle instead of hammering. */
+export function useInvestigationBranches(
+  investigationId: string,
+  opts: { live?: boolean } = {},
+) {
+  const live = opts.live ?? true;
   return useQuery({
     queryKey: ["vr", "investigation-branches", investigationId],
     queryFn: async () =>
@@ -289,11 +341,18 @@ export function useInvestigationBranches(investigationId: string) {
         `/vr/investigations/${encodeURIComponent(investigationId)}/branches`,
       ),
     enabled: !!investigationId,
-    refetchInterval: 5000,
+    refetchInterval: live ? 5000 : false,
   });
 }
 
-export function useInvestigationOutcomes(investigationId: string) {
+/** Per-investigation outcome list polling.
+ *
+ *  See `useInvestigationBranches` — same `{ live }` contract. */
+export function useInvestigationOutcomes(
+  investigationId: string,
+  opts: { live?: boolean } = {},
+) {
+  const live = opts.live ?? true;
   return useQuery({
     queryKey: ["vr", "investigation-outcomes", investigationId],
     queryFn: async () =>
@@ -301,7 +360,7 @@ export function useInvestigationOutcomes(investigationId: string) {
         `/vr/investigations/${encodeURIComponent(investigationId)}/outcomes`,
       ),
     enabled: !!investigationId,
-    refetchInterval: 5000,
+    refetchInterval: live ? 5000 : false,
   });
 }
 
@@ -318,7 +377,14 @@ export interface HypothesisProjection {
   resolved_in_branches: string[];
 }
 
-export function useInvestigationHypotheses(investigationId: string) {
+/** Per-investigation hypothesis projection polling.
+ *
+ *  See `useInvestigationBranches` — same `{ live }` contract. */
+export function useInvestigationHypotheses(
+  investigationId: string,
+  opts: { live?: boolean } = {},
+) {
+  const live = opts.live ?? true;
   return useQuery({
     queryKey: ["vr", "investigation-hypotheses", investigationId],
     queryFn: async () =>
@@ -326,7 +392,7 @@ export function useInvestigationHypotheses(investigationId: string) {
         `/vr/investigations/${encodeURIComponent(investigationId)}/hypotheses`,
       ),
     enabled: !!investigationId,
-    refetchInterval: 8000,
+    refetchInterval: live ? 8000 : false,
   });
 }
 
@@ -790,8 +856,13 @@ export function useFuzzProposals(opts?: {
   investigationId?: string;
   targetId?: string;
   status?: FuzzProposalStatus;
+  /** When false, stop polling. Pass from the per-investigation page
+   *  using `isInvestigationLive(inv?.status)`; default true preserves
+   *  the target-wide and project-wide proposals views that have no
+   *  single investigation status to gate on. */
+  live?: boolean;
 }) {
-  const { investigationId, targetId, status } = opts ?? {};
+  const { investigationId, targetId, status, live = true } = opts ?? {};
   return useQuery({
     queryKey: [
       "vr",
@@ -810,7 +881,7 @@ export function useFuzzProposals(opts?: {
         Envelope<VRFuzzCampaignProposalSummary[]>
       >(`/vr/fuzz/proposals${qs ? `?${qs}` : ""}`);
     },
-    refetchInterval: 8000,
+    refetchInterval: live ? 8000 : false,
   });
 }
 

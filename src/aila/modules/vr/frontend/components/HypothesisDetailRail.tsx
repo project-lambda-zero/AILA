@@ -78,10 +78,15 @@ function saveState(investigationId: string, next: RailState): void {
 
 export function HypothesisDetailRail({
   investigationId,
+  live = true,
 }: {
   investigationId: string;
+  /** Forwarded to `useInvestigationHypotheses` — false stops the 8s
+   *  polling on paused / completed / failed investigations. The
+   *  parent page derives this from `isInvestigationLive(inv?.status)`. */
+  live?: boolean;
 }) {
-  const { data, isLoading } = useInvestigationHypotheses(investigationId);
+  const { data, isLoading } = useInvestigationHypotheses(investigationId, { live });
   const items: HypothesisProjection[] = data?.data ?? [];
 
   const [state, setStateRaw] = useState<RailState>(() => loadState(investigationId));
