@@ -238,6 +238,85 @@ async def test_pause_handles_unknown_reason() -> None:
     assert inv.pause_reason == "operator"
 
 
+
+@pytest.mark.usefixtures("test_db")
+async def test_pause_flips_active_branches_to_paused() -> None:
+    """Pause must flip every active branch's projection status to paused.
+
+    Phase B operator-observed bug: UI rendered investigation as paused
+    but every branch chip stayed green-and-pulsing because the cursor
+    SSOT was correct but ``vr_investigation_branches.status`` was never
+    touched.
+    """
+    target_id = await _seed_target("pa_br_flip")
+    inv_id = await _seed_inv(target_id)
+    # Seed 3 active branches + 1 completed branch (completed must stay)
+    active_ids = [await _seed_branch(inv_id) for _ in range(3)]
+    async with UnitOfWork() as uow:
+        finished = VRInvestigationBranchRecord(
+            investigation_id=inv_id,
+            status="completed",
+            turn_count=10,
+            fork_reason="primary",
+            closed_reason="terminal_submit",
+        )
+        uow.session.add(finished)
+        await uow.session.commit()
+        await uow.session.refresh(finished)
+        finished_id = finished.id
+
+    summary = await pause_investigation_atomic(
+        inv_id, user_id="op", reason="operator",
+    )
+    assert summary["paused_branches"] == 3
+
+    async with UnitOfWork() as uow:
+        rows = (await uow.session.exec(
+            select(VRInvestigationBranchRecord)
+            .where(VRInvestigationBranchRecord.investigation_id == inv_id),
+        )).all()
+    statuses = {r.id: r.status for r in rows}
+    for bid in active_ids:
+        assert statuses[bid] == "paused", f"branch {bid} should be paused"
+    assert statuses[finished_id] == "completed", "completed branch must not flip"
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_resume_flips_paused_branches_back_to_active() -> None:
+    """Resume must reverse pause's branch-status flip.
+
+    Symmetric with ``test_pause_flips_active_branches_to_paused`` —
+    closes the operator-visible UI gap where resume left branch chips
+    stuck on the paused colour.
+    """
+    target_id = await _seed_target("re_br_flip")
+    inv_id = await _seed_inv(target_id)
+    active_ids = [await _seed_branch(inv_id) for _ in range(2)]
+    # Seed cursors so the resume path has something to fan out
+    for bid in active_ids:
+        await _seed_cursor(bid, current_state="investigation_loop")
+
+    await pause_investigation_atomic(
+        inv_id, user_id="op", reason="operator",
+    )
+    # All 2 branches should now be paused (verified by previous test).
+
+    fake_queue = AsyncMock()
+    fake_queue.submit = AsyncMock(return_value=None)
+    summary = await resume_investigation_atomic(
+        inv_id, user_id="op",
+        task_queue=fake_queue,
+        auth_user_id="op", auth_role="operator", auth_team_id="admin",
+    )
+    assert summary["resumed_branches"] == 2
+    async with UnitOfWork() as uow:
+        rows = (await uow.session.exec(
+            select(VRInvestigationBranchRecord)
+            .where(VRInvestigationBranchRecord.investigation_id == inv_id),
+        )).all()
+    for r in rows:
+        assert r.status == "active", f"branch {r.id} should be active again"
+
 # ----------------------------------------------------------------------
 # resume_investigation_atomic
 # ----------------------------------------------------------------------
