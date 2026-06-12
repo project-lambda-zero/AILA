@@ -213,6 +213,32 @@ async def pause_investigation_atomic(
             cancel_result = await uow.session.exec(cancel_stmt)
             summary["cancelled_tasks"] = cancel_result.rowcount or 0
 
+        # 3.5. Flip every active branch's projection status to ``paused``
+        # so the UI doesn't display a paused investigation with 6
+        # branches still marked ``active`` (operator-observed bug on
+        # inv 659018db — UI rendered the pause acknowledgment but each
+        # branch chip stayed green and pulsing because branch.status
+        # was never touched). The cursor SSOT remains the SSOT for
+        # "is the worker running"; this is the operator-facing
+        # projection so chip colour matches investigation chip colour.
+        # Resume in step 4 below reverses this (paused → active).
+        if branch_ids:
+            branch_pause_stmt = _sql_text(
+                "UPDATE vr_investigation_branches "
+                "SET status = :paused, updated_at = :ts "
+                "WHERE investigation_id = :inv "
+                "  AND status = :active"
+            ).bindparams(
+                paused="paused",
+                active="active",
+                inv=investigation_id,
+                ts=now,
+            )
+            branch_pause_result = await uow.session.exec(branch_pause_stmt)
+            summary["paused_branches"] = branch_pause_result.rowcount or 0
+        else:
+            summary["paused_branches"] = 0
+
         # 4. Flip the investigation status derived projection.
         inv.status = InvestigationStatus.PAUSED.value
         inv.pause_reason = pause_reason
@@ -354,6 +380,27 @@ async def resume_investigation_atomic(
                 )
                 await uow.session.exec(upd_stmt)
             summary["resumed_cursors"] = len(resumed_run_ids)
+
+        # 2.5. Flip projection status of every branch previously paused
+        # back to ``active``. Symmetric with pause's step 3.5 — the UI
+        # chip stays in lockstep with the investigation chip without
+        # the operator having to refresh. We DO NOT touch branches
+        # whose status is something other than ``paused`` (a branch
+        # that finished mid-pause with ``completed`` / ``abandoned``
+        # / ``merged`` MUST stay where it is).
+        resumed_branch_count_stmt = _sql_text(
+            "UPDATE vr_investigation_branches "
+            "SET status = :active, updated_at = :ts "
+            "WHERE investigation_id = :inv "
+            "  AND status = :paused"
+        ).bindparams(
+            active="active",
+            paused="paused",
+            inv=investigation_id,
+            ts=now,
+        )
+        resumed_branch_result = await uow.session.exec(resumed_branch_count_stmt)
+        summary["resumed_branches"] = resumed_branch_result.rowcount or 0
 
         # 3. Flip inv.status back to RUNNING.
         inv.status = InvestigationStatus.RUNNING.value
