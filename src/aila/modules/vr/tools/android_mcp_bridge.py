@@ -132,6 +132,29 @@ _PIPELINE_ONLY_TOOLS: frozenset[str] = frozenset((
     "mobsf_scan",
 ))
 
+# Each tool here REQUIRES a host CLI on PATH. When the CLI is missing
+# the tool call fails inside android-mcp with `RuntimeError: <cli> not
+# on PATH`. Agents see a transient-looking error and retry — 94 wasted
+# attempts in 48h on the live SampleApp audit, mostly verify_apk_signing
+# (apksigner) and drozer_scan_apk (drozer). Bridge-side: probe each
+# CLI at catalog-load time + DROP the tool from the catalog when its
+# binary isn't resolvable. The agent never sees the tool name → never
+# tries to call it.
+#
+# The check uses shutil.which on the operator's PATH (in-process; the
+# bridge inherits the worker's environment). If the operator installs
+# the CLI later they restart workers — same lifecycle as other
+# catalog-cache invalidations.
+_ENV_GATED_TOOLS: dict[str, str] = {
+    "verify_apk_signing": "apksigner",
+    "drozer_scan_apk": "drozer",
+    "frida_attach_and_trace_calls": "frida",
+    "frida_dump_process_modules": "frida",
+    "frida_list_running_devices": "frida",
+    "objection_patch_apk": "objection",
+    "objection_explore": "objection",
+}
+
 
 class AndroidMcpBridgeTool(Tool):
     """HTTP bridge for android-mcp.
@@ -255,20 +278,45 @@ class AndroidMcpBridgeTool(Tool):
         # TargetAnalysisService bypasses this guard via the
         # internal _agent_bypass=True kwarg (popped before forward).
         _agent_bypass = kwargs.pop("_agent_bypass", False)
+        # fix: pipeline-only blocks USED to return status='error' which
+        # the agent treats as a transient failure and retries. 338
+        # wasted attempts in 48h on the live SampleApp audit. Now we
+        # return status='ready' with a clear `_bridge_note` so the
+        # agent reads "already done, look elsewhere" as a TERMINAL
+        # outcome instead of a retry-able error. Empty payload fields
+        # signal there is no fresh data; the note tells the agent
+        # where the cached output lives.
         if action in _PIPELINE_ONLY_TOOLS and not _agent_bypass:
             return {
-                "status": "error",
-                "error": (
-                    f"{action!r} is a pipeline-only tool — the APK ingestion "
-                    "stage already ran it once. Its output is in the target "
-                    "summary (apk_overview.decompiled_dir for jadx_decompile, "
-                    "apk_overview.decoded_dir for apktool_decode, "
-                    "apk_overview.audit_mcp_index_id for source-level search). "
-                    "Use audit_mcp.* tools (semantic_search, read_function, "
-                    "search_constants, etc.) against the index to inspect the "
-                    "decompiled Java/smali — do NOT re-run the pipeline."
+                "status": "ready",
+                "matches": [],
+                "results": [],
+                "_bridge_note": (
+                    f"{action!r} is pipeline-only — the APK ingestion stage "
+                    f"ran it once during target analysis. The output is on "
+                    f"the target row's mcp_handles_json (apk_overview.* "
+                    f"fields point at decompiled_dir / decoded_dir / "
+                    f"audit_mcp_index_id). Do NOT re-run the pipeline; "
+                    f"use audit_mcp.semantic_search / read_function / "
+                    f"search_constants against the index to inspect "
+                    f"decompiled Java + smali. This call has been "
+                    f"acknowledged as policy-blocked; retrying it produces "
+                    f"this same response and burns budget — pivot to an "
+                    f"audit_mcp tool."
                 ),
+                "_bridge_policy": "pipeline_only_blocked",
             }
+
+        # fix: schema-validate kwargs against the live tool catalog
+        # BEFORE the HTTP roundtrip. 56 wasted attempts in 48h with
+        # 'TypeError: register.<locals>.<tool>() got an unexpected
+        # keyword argument' — each attempt pays the full 30-min
+        # bridge timeout when classify_behavior is the target, OR
+        # at minimum one HTTP roundtrip + an LLM turn to read the
+        # error. The validator runs in <1 ms locally.
+        validation_error = await self._validate_kwargs(action, kwargs)
+        if validation_error is not None:
+            return validation_error
 
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
@@ -439,17 +487,111 @@ class AndroidMcpBridgeTool(Tool):
         # the cache (prompt builder, agent dispatcher, status UI) sees
         # the agent-safe subset. The pipeline still calls these via
         # bridge.forward directly, which bypasses the catalog.
+        #
+        # Also drop env-gated tools whose host CLI is missing. Agents
+        # that never see the tool in /tools never try to call it; the
+        # operator can install the CLI + restart workers to bring the
+        # tool back online.
+        import shutil  # noqa: PLC0415
+        missing_cli = {
+            tool_name
+            for tool_name, cli in _ENV_GATED_TOOLS.items()
+            if shutil.which(cli) is None
+        }
         self.__class__._SPEC_CACHE = [
             _compact_spec(t) for t in raw
             if isinstance(t, dict)
             and t.get("name") not in _PIPELINE_ONLY_TOOLS
+            and t.get("name") not in missing_cli
         ]
         _log.info(
-            "android_mcp_bridge: catalog loaded — %d tools (%d hidden as pipeline-only)",
+            "android_mcp_bridge: catalog loaded — %d tools "
+            "(%d hidden as pipeline-only, %d dropped for missing CLI: %s)",
             len(self.__class__._SPEC_CACHE),
             sum(1 for t in raw if isinstance(t, dict) and t.get("name") in _PIPELINE_ONLY_TOOLS),
+            len(missing_cli),
+            sorted(missing_cli) if missing_cli else "[]",
         )
         return self.__class__._SPEC_CACHE
+
+    async def _validate_kwargs(
+        self,
+        action: str,
+        kwargs: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Validate ``kwargs`` against the live JSON Schema for ``action``.
+
+        Mirror of :meth:`AuditMcpBridgeTool._validate_kwargs`. Returns
+        None when the call is valid (or when validation must be skipped
+        — empty catalog, unknown action). Returns a structured error
+        dict suitable for direct return from :meth:`forward` when the
+        call would fail at android-mcp anyway. The error message names
+        the offending kwarg + the closest valid kwarg via
+        ``difflib.get_close_matches`` so the agent's next turn can
+        self-correct without burning a retry.
+
+        Skipped for actions whose schema is missing (pseudo-actions or
+        catalog-not-yet-loaded scenarios) so the call still forwards to
+        android-mcp and the server's own error message surfaces.
+        """
+        import difflib  # noqa: PLC0415
+
+        specs = await self.list_tool_specs()
+        if not specs:
+            return None
+        match = next((s for s in specs if s.get("name") == action), None)
+        if match is None:
+            _log.info(
+                "android_mcp_bridge: action %r not in /tools catalog "
+                "(%d known) — forwarding anyway",
+                action, len(specs),
+            )
+            return None
+
+        known_param_names = {p["name"] for p in (match.get("params") or [])}
+        required = set(match.get("required") or [])
+
+        unknown = [k for k in kwargs if k not in known_param_names]
+        if unknown:
+            suggestions = {}
+            for bad in unknown:
+                close = difflib.get_close_matches(
+                    bad, sorted(known_param_names), n=1, cutoff=0.5,
+                )
+                if close:
+                    suggestions[bad] = close[0]
+            valid_list = sorted(known_param_names)
+            hint_parts = [
+                f"'{bad}' (did you mean '{suggestions[bad]}'?)"
+                if bad in suggestions else f"'{bad}'"
+                for bad in unknown
+            ]
+            error_msg = (
+                f"android_mcp.{action} rejected: unknown kwarg(s) "
+                f"{', '.join(hint_parts)}. "
+                f"Valid params: {valid_list}. "
+                f"Required: {sorted(required)}."
+            )
+            _log.warning(
+                "android_mcp_bridge: blocked %s call with unknown kwargs %s "
+                "(suggestions: %s)", action, unknown, suggestions,
+            )
+            return {"status": "error", "error": error_msg}
+
+        missing = sorted(required - set(kwargs))
+        if missing:
+            valid_list = sorted(known_param_names)
+            error_msg = (
+                f"android_mcp.{action} rejected: missing required kwarg(s) "
+                f"{missing}. Valid params: {valid_list}."
+            )
+            _log.warning(
+                "android_mcp_bridge: blocked %s call missing required %s",
+                action, missing,
+            )
+            return {"status": "error", "error": error_msg}
+
+        return None
 
     async def health(self) -> dict:
         """Quick reachability check for machine readiness verification."""
