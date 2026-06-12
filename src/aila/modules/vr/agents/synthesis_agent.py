@@ -354,10 +354,20 @@ def _synthesis_confidence(panel: list[dict[str, Any]]) -> OutcomeConfidence:
     conf_rank = {"exact": 0, "strong": 1, "medium": 2, "caveated": 3, "unknown": 4}
     ranks = sorted(conf_rank.get(p.get("confidence", "unknown"), 4) for p in panel)
     median = ranks[len(ranks) // 2]
-    # Disagreement penalty: any kind mismatch downgrades by 1.
+    # fix §327 — graduated disagreement penalty: the notch downgrade
+    # scales with the number of distinct outcome_kinds in the panel.
+    # Unanimous (1 kind): no penalty. 2-way split (e.g. critic dissents
+    # from researcher on PATCH_PRESENT vs DIRECT_FINDING): one notch —
+    # the prior flat penalty. 3-way split (one persona finds a bug, one
+    # sees a patch, one writes an audit-memo): two notches because a
+    # panel that cannot even agree on whether anything was found is
+    # fundamentally less confident than a panel arguing degree. For a
+    # 3-persona panel this matches round(Shannon entropy in bits) of
+    # the kind distribution.
     kinds = {p.get("outcome_kind") for p in panel}
-    if len(kinds) > 1:
-        median = min(median + 1, 4)
+    disagreement = max(len(kinds) - 1, 0)
+    if disagreement:
+        median = min(median + disagreement, 4)
     return rank_to_conf.get(median, OutcomeConfidence.MEDIUM)
 
 
