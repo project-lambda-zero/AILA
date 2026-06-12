@@ -60,6 +60,17 @@ _log = logging.getLogger(__name__)
 # loud message on the next turn instead of an empty rendering.
 _SUCCESS_STATUSES: frozenset[str] = frozenset({"ready", "completed", "ok"})
 
+# Hard cap on identical-call retries within one branch. When the same
+# (server.tool, canonical args) has failed this many times consecutively
+# on the SAME branch, the executor refuses to dispatch any further
+# attempt and returns a synthetic 'HARD-BLOCKED' error. Limit is
+# generous (3) so legitimately-transient errors (httpx pool exhaustion,
+# audit-mcp cold rebuild) still get retried. Tunable via env without
+# code change.
+_HARD_BLOCK_REPEAT_LIMIT: int = int(
+    __import__("os").environ.get("VR_TOOL_EXECUTOR_HARD_BLOCK_REPEAT", "3"),
+)
+
 # fix §254 — single source of truth for the malformed-command marker.
 # Emitted by the executor (see line 159) and matched by the consecutive-
 # malformed counter (see _count_consecutive_malformed). Drift between
@@ -233,6 +244,50 @@ class ToolExecutor:
         # ['index_id']".
         if server_id == "audit_mcp":
             args = await self._maybe_correct_index_id(investigation_id, args)
+        # fix: HARD-BLOCK identical retries BEFORE the bridge call.
+        # The circuit-breaker text (line 314+) augments the error
+        # message after the call lands, but agents still issue the
+        # same call up to 51 times per branch (observed live on
+        # branch 630246f4 → 63× read_function('init')). The
+        # augmented warning is no deterrent because each retry
+        # produces a new turn worth of LLM thinking that re-derives
+        # 'this might work this time'.
+        #
+        # New rule: when the SAME (server.tool, canonical args)
+        # has failed in this branch ≥ _HARD_BLOCK_REPEAT_LIMIT
+        # times consecutively, refuse the dispatch entirely and
+        # return a synthetic error response WITHOUT making the
+        # network call. The agent burns one LLM turn reading the
+        # block notice; the bridge / upstream MCP roundtrip is
+        # saved. Limit is intentionally generous (3) so legitimately-
+        # transient errors (httpx pool exhaustion, audit-mcp cold
+        # rebuild) still get retried.
+        hard_block_count = await self._count_prior_failures(
+            branch_id, server_id, tool_name, args,
+        )
+        if hard_block_count >= _HARD_BLOCK_REPEAT_LIMIT:
+            err = (
+                f"{server_id}.{tool_name} HARD-BLOCKED: this exact call "
+                f"(args={sorted(args)}) has failed {hard_block_count} "
+                f"times in this branch. The bridge will NOT execute "
+                f"this call again — every retry produces the same "
+                f"failure pattern. Choose a different tool OR a "
+                f"different args shape OR submit terminal_submit "
+                f"declaring you cannot proceed on this lead."
+            )
+            msg_id = await self._write_error_message(
+                investigation_id, branch_id, err, at_turn,
+            )
+            _log.warning(
+                "tool_executor HARD-BLOCK %s.%s after %d prior failures "
+                "(branch=%s args=%s)",
+                server_id, tool_name, hard_block_count, branch_id[:8],
+                sorted(args),
+            )
+            return ToolExecutionResult(
+                server_id=server_id, tool_name=tool_name,
+                message_id=msg_id, success=False, error=err,
+            )
 
         try:
             raw = await bridge.forward(action=tool_name, **args)
