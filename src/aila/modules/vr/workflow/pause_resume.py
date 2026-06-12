@@ -401,9 +401,11 @@ async def resume_investigation_atomic(
                 user_id=auth_user_id or user_id,
                 group_id=auth_role,
                 team_id=auth_team_id,
-                idempotency_key=(
-                    f"resume:{investigation_id}:{run_id}:{now.isoformat()}"
-                ),
+                # dedup via the TaskRecord.input_hash UNIQUE index
+                # (alembic 065): re-submitting the same (track, fn,
+                # canonical kwargs) within the active window raises
+                # IntegrityError which the caller catches as 'already
+                # queued'.
             )
             submitted += 1
         except IntegrityError:
@@ -423,6 +425,62 @@ async def resume_investigation_atomic(
                 investigation_id, run_id, exc,
                 exc_info=True,
             )
+    # Legacy-branch fallback: investigations spawned before Phase B's
+    # cursor SSOT shipped (alembic 067 introduced workflow_state_cursor
+    # for VR runs) have no cursor rows. The cursor-driven fan-out above
+    # finds zero rows and dispatches zero tasks; resume becomes a no-op
+    # for those branches and they sit in status='active' with no
+    # in-flight task — observed live on a23eb6ae (renzo + wei branches
+    # zombie after operator pause/resume).
+    #
+    # When the cursor path resumed nothing, scan for any branches in
+    # ACTIVE status on this investigation + dispatch run_vr_investigate
+    # for each. The new tasks pick up wherever the branch left off
+    # (its turn_count and case_state_json are persisted across
+    # pause/resume — only the in-flight worker disappears).
+    if not resumed_run_ids:
+        async with UnitOfWork() as uow:
+            active_branches = (await uow.session.exec(
+                select(VRInvestigationBranchRecord.id)
+                .where(
+                    VRInvestigationBranchRecord.investigation_id == investigation_id,
+                    VRInvestigationBranchRecord.status == "active",
+                ),
+            )).all()
+        legacy_ids = [str(b) for b in active_branches]
+        if legacy_ids:
+            _log.info(
+                "resume_investigation_atomic LEGACY_FALLBACK inv=%s "
+                "active_branches=%d (no cursors found — pre-Phase-B "
+                "investigation; dispatching one task per branch)",
+                investigation_id, len(legacy_ids),
+            )
+        for br_id in legacy_ids:
+            try:
+                await task_queue.submit(
+                    track="vr",
+                    fn=run_vr_investigate,
+                    kwargs={
+                        "investigation_id": investigation_id,
+                        "branch_id": br_id,
+                    },
+                    user_id=auth_user_id or user_id,
+                    group_id=auth_role,
+                    team_id=auth_team_id,
+                    # see note above on dedup via input_hash UNIQUE index
+                )
+                submitted += 1
+            except IntegrityError:
+                _log.info(
+                    "resume_investigation_atomic LEGACY dedup inv=%s br=%s",
+                    investigation_id, br_id,
+                )
+            except Exception as exc:  # noqa: BLE001 — best-effort per branch
+                _log.warning(
+                    "resume_investigation_atomic LEGACY submit failed "
+                    "inv=%s br=%s err=%s",
+                    investigation_id, br_id, exc, exc_info=True,
+                )
 
     summary["submitted_tasks"] = submitted
     return summary
