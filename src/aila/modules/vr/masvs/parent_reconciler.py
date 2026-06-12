@@ -956,7 +956,27 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
     orphan_result = await uow.session.exec(orphan_sql, params={"cap": batch_cap})
     orphan_purged = getattr(orphan_result, "rowcount", 0) or 0
 
-    # 3. Purge cursors whose TaskRecord is terminal.
+    # 3. Purge cursors whose TaskRecord is terminal AND whose cursor
+    #    state is also a reserved terminal.
+    #
+    #    Earlier this clause deleted any cursor whose TaskRecord was
+    #    cancelled/done/failed/dead_letter regardless of cursor state.
+    #    That fires a race with ARQ retry: when a task's first
+    #    attempt fails (e.g. LLM parse failure), ARQ flips its
+    #    TaskRecord to 'failed' and schedules a retry. If this sweep
+    #    runs between attempts, it deletes the cursor while the
+    #    workflow row is still mid-state. The retry then hits
+    #    cursor_missing_during_commit in the engine's _commit_and_
+    #    advance lock probe, raises WorkflowConflictError, and the
+    #    job expires after exhausting retries -- AUTO_CONTINUE never
+    #    fires, investigation stalls.
+    #
+    #    Aligning this step with cursor_reaper.sweep_orphan_crashed_
+    #    cursors: ONLY delete cursors whose state is one of the four
+    #    reserved workflow terminals. Cursors mid-state stay, ARQ
+    #    retry sees them, the workflow recovers.
+    #
+    #    Diagnosed on inv bc194403 / 659018db, 2026-06-12.
     terminal_sql = text(
         """
         DELETE FROM workflow_state_cursor
@@ -964,6 +984,10 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
             SELECT c.run_id FROM workflow_state_cursor c
             JOIN taskrecord t ON t.id::text = c.run_id::text
             WHERE t.status IN ('cancelled', 'done', 'failed', 'dead_letter')
+              AND c.current_state IN (
+                  '__crashed__', '__failed__',
+                  '__cancelled__', '__succeeded__'
+              )
             LIMIT :cap
         )
         """,

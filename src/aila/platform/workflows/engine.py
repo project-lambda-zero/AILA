@@ -970,17 +970,53 @@ class DurableStateMachine:
             lock_result = await session.execute(lock_stmt)
             current_version_row = lock_result.first()
             if current_version_row is None:
-                # Cursor vanished -- treat as conflict so ARQ retries.
+                # Cursor vanished between task start (where it was
+                # created) and this commit. Historical handler raised
+                # WorkflowConflictError -> ARQ retried the same task ->
+                # cursor was still missing -> retry exhausted -> job
+                # expired without AUTO_CONTINUE. Investigation stalled.
+                #
+                # Diagnosed 2026-06-12 on inv bc194403 / 659018db: the
+                # parent_reconciler step-3 sweep deletes cursors whose
+                # TaskRecord is terminal regardless of cursor state.
+                # When ARQ marks a TaskRecord 'failed' between retry
+                # attempts and the reconciler runs in that window, the
+                # mid-state cursor disappears and every retry hits this
+                # branch. parent_reconciler step 3 has been narrowed to
+                # only delete terminal-state cursors; this branch is
+                # the defensive backstop for any future cursor-delete
+                # path that races commit.
+                #
+                # Recovery: INSERT the cursor with the new state +
+                # version 1, commit, continue as if nothing happened.
+                # The transition audit still lands (write_exited runs
+                # below) so the state machine's log is intact. The
+                # advance proceeds and AUTO_CONTINUE fires from the
+                # caller as designed.
                 _log.warning(
-                    "workflow.cursor_missing_during_commit",
+                    "workflow.cursor_missing_during_commit_recreating",
                     run_id=run_id,
                     loaded_version=loaded_state.version,
+                    new_state=new_state.current,
                 )
-                raise WorkflowConflictError(
-                    "Concurrent workflow modification detected"
+                new_row = WorkflowStateCursor(
+                    run_id=run_id,
+                    current_state=new_state.current,
+                    state_input=new_state.input,
+                    retries_in_state=new_state.retries_in_state,
+                    definition_id=definition.definition_id,
+                    version=1,
                 )
-            current_version = int(current_version_row[0])
-            if current_version != loaded_state.version:
+                session.add(new_row)
+                # Skip the version check + UPDATE below; we just
+                # created a fresh cursor row. write_exited still runs
+                # for the audit trail. Use a flag to short-circuit.
+                _cursor_recreated = True
+                current_version = 0
+            else:
+                _cursor_recreated = False
+                current_version = int(current_version_row[0])
+            if not _cursor_recreated and current_version != loaded_state.version:
                 _log.warning(
                     "workflow.cursor_version_mismatch",
                     run_id=run_id,
@@ -1005,32 +1041,34 @@ class DurableStateMachine:
                 error_message=audit_error_message,
             )
 
-            # Cursor UPDATE with RETURNING (fix 12).
-            upd_stmt = (
-                sa.update(WorkflowStateCursor)
-                .where(WorkflowStateCursor.run_id == run_id)  # type: ignore[arg-type]
-                .where(WorkflowStateCursor.version == loaded_state.version)  # type: ignore[arg-type]
-                .values(
-                    current_state=new_state.current,
-                    state_input=new_state.input,
-                    retries_in_state=new_state.retries_in_state,
-                    definition_id=definition.definition_id,
-                    version=loaded_state.version + 1,
+            # Cursor UPDATE with RETURNING (fix 12). Skipped when we
+            # just session.add()'d a fresh row above (recovery path).
+            if not _cursor_recreated:
+                upd_stmt = (
+                    sa.update(WorkflowStateCursor)
+                    .where(WorkflowStateCursor.run_id == run_id)  # type: ignore[arg-type]
+                    .where(WorkflowStateCursor.version == loaded_state.version)  # type: ignore[arg-type]
+                    .values(
+                        current_state=new_state.current,
+                        state_input=new_state.input,
+                        retries_in_state=new_state.retries_in_state,
+                        definition_id=definition.definition_id,
+                        version=loaded_state.version + 1,
+                    )
+                    .returning(WorkflowStateCursor.__table__.c.run_id)  # type: ignore[attr-defined]
                 )
-                .returning(WorkflowStateCursor.__table__.c.run_id)  # type: ignore[attr-defined]
-            )
-            upd_result = await session.execute(upd_stmt)
-            if upd_result.first() is None:
-                # Should not happen given FOR UPDATE lock above, but
-                # defend anyway.
-                _log.warning(
-                    "workflow.cursor_update_affected_zero_rows",
-                    run_id=run_id,
-                    loaded_version=loaded_state.version,
-                )
-                raise WorkflowConflictError(
-                    "Concurrent workflow modification detected"
-                )
+                upd_result = await session.execute(upd_stmt)
+                if upd_result.first() is None:
+                    # Should not happen given FOR UPDATE lock above, but
+                    # defend anyway.
+                    _log.warning(
+                        "workflow.cursor_update_affected_zero_rows",
+                        run_id=run_id,
+                        loaded_version=loaded_state.version,
+                    )
+                    raise WorkflowConflictError(
+                        "Concurrent workflow modification detected"
+                    )
 
             # Best-effort heartbeat: update TaskRecord.heartbeat_at so the
             # reaper can distinguish actively-progressing jobs from zombies.
