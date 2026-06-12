@@ -179,6 +179,85 @@ class DisclosureUpdate(BaseModel):
     patch_version: str | None = Field(default=None, max_length=64)
 
 
+class _ReenqueueBody(BaseModel):
+    """Optional body for the re-enqueue endpoint.
+
+    Module-scoped (not nested inside ``create_vr_router``) so that the
+    forward reference ``_ReenqueueBody | None`` in the route handler's
+    body parameter resolves against module globals at OpenAPI schema
+    generation time. ``from __future__ import annotations`` defers
+    every annotation to string form; pydantic's TypeAdapter then
+    evaluates the string against the function's module globals when
+    FastAPI builds the route's body validator. A class scoped INSIDE
+    ``create_vr_router`` is invisible at that point and pydantic
+    raises ``PydanticUserError: '...' is not fully defined`` — which
+    fails ``/openapi.json`` with 500 (operator-observed after the
+    cutover restart).
+
+    When ``kind`` is supplied, the investigation's kind is updated
+    BEFORE the task is submitted. Lets the operator convert a
+    finished discovery into a variant_hunt without going through the
+    DB, or vice versa. ``strategy_family`` moves with it via the
+    kind -> strategy default map in ``_KIND_DEFAULT_STRATEGY``.
+    """
+    model_config = ConfigDict(extra="forbid")
+    kind: InvestigationKind | None = Field(default=None)
+
+
+class _BranchOpBody(BaseModel):
+    """Common base for branch operation bodies (fork / merge).
+
+    Hoisted to module scope so the forward references in route
+    handlers resolve under ``from __future__ import annotations``.
+    See ``_ReenqueueBody`` above for the full rationale.
+    """
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(default="", max_length=1024)
+
+
+class _ForkBody(_BranchOpBody):
+    persona_voice: PersonaVoice | None = Field(default=None)
+    at_turn: int | None = Field(default=None, ge=0)
+
+
+class _MergeBody(_BranchOpBody):
+    other_branch_id: str = Field(min_length=1, max_length=64)
+
+
+class _DisclosureSectionsPatch(BaseModel):
+    """Operator-edited section bodies (08_FRONTEND_UX.md §1.8).
+
+    Module-scoped per the same forward-ref resolution rule.
+    """
+    model_config = ConfigDict(extra="forbid")
+    sections: dict[str, str]
+
+
+class _LaunchResponse(BaseModel):
+    """Output of POST /vr/fuzz/campaigns/{id}/launch."""
+    model_config = ConfigDict(extra="forbid")
+    campaign_id: str
+    status: str
+    remote_pid: int | None = None
+    remote_corpus_dir: str | None = None
+    remote_crashes_dir: str | None = None
+    description: str | None = None
+    task_id: str | None = None
+
+
+class _ProposalAcceptResponse(BaseModel):
+    """Output of POST /vr/fuzz/proposals/{id}/accept."""
+    model_config = ConfigDict(extra="forbid")
+    proposal_id: str
+    campaign_id: str
+    workdir: str
+    harness_path: str | None
+    seeds_written: int
+    dictionary_written: bool
+    auto_launched: bool
+    build_log: str
+
+
 def _summary_from_record(
     record: Any,
     finding_count: int = 0,
@@ -4592,17 +4671,6 @@ def create_vr_router() -> APIRouter:
 
         return DataEnvelope(data=_investigation_summary(inv))
 
-    class _ReenqueueBody(BaseModel):
-        """Optional body for the re-enqueue endpoint.
-
-        When ``kind`` is supplied, the investigation's kind is
-        updated BEFORE the task is submitted. Lets the operator
-        convert a finished discovery into a variant_hunt without
-        going through the DB, or vice versa. ``strategy_family``
-        moves with it via the kind→strategy default map.
-        """
-        model_config = ConfigDict(extra="forbid")
-        kind: InvestigationKind | None = Field(default=None)
 
     @router.post(
         "/investigations/{investigation_id}/re-enqueue",
@@ -5612,16 +5680,6 @@ def create_vr_router() -> APIRouter:
                 )
             return inv, branch
 
-    class _BranchOpBody(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-        reason: str = Field(default="", max_length=1024)
-
-    class _ForkBody(_BranchOpBody):
-        persona_voice: PersonaVoice | None = Field(default=None)
-        at_turn: int | None = Field(default=None, ge=0)
-
-    class _MergeBody(_BranchOpBody):
-        other_branch_id: str = Field(min_length=1, max_length=64)
 
     async def _wrap_branch_op_call(
         coro: Any, op_name: str,
@@ -6215,12 +6273,6 @@ def create_vr_router() -> APIRouter:
             ) from exc
         return DataEnvelope(data=rendered)
 
-    class _DisclosureSectionsPatch(BaseModel):
-        """Operator-edited section bodies (08_FRONTEND_UX.md §1.8)."""
-
-        model_config = ConfigDict(extra="forbid")
-
-        sections: dict[str, str]
 
     @router.patch(
         "/disclosures/{submission_id}/sections",
@@ -6477,18 +6529,6 @@ def create_vr_router() -> APIRouter:
             ) from exc
         return DataEnvelope(data=summary)
 
-    class _LaunchResponse(BaseModel):
-        """Output of POST /vr/fuzz/campaigns/{id}/launch."""
-
-        model_config = ConfigDict(extra="forbid")
-
-        campaign_id: str
-        status: str
-        remote_pid: int | None = None
-        remote_corpus_dir: str | None = None
-        remote_crashes_dir: str | None = None
-        description: str | None = None
-        task_id: str | None = None
 
     @router.post(
         "/fuzz/campaigns/{campaign_id}/launch",
@@ -6714,16 +6754,6 @@ def create_vr_router() -> APIRouter:
                 )
         return DataEnvelope(data=_fuzz_proposal_summary(row))
 
-    class _ProposalAcceptResponse(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-        proposal_id: str
-        campaign_id: str
-        workdir: str
-        harness_path: str | None
-        seeds_written: int
-        dictionary_written: bool
-        auto_launched: bool
-        build_log: str
 
     @router.post(
         "/fuzz/proposals/{proposal_id}/accept",
