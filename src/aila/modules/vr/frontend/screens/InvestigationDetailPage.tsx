@@ -117,10 +117,21 @@ const BRANCH_STATUS_META: Record<
 // colored initial circle so operators can scan a branch list and read
 // "who" before they read "what." Mirror this scheme in TurnCard later
 // for full visual consistency across the page.
-const PERSONA_META: Record<
-  PersonaVoice | "default",
-  { color: string; bg: string; initial: string; label: string }
-> = {
+// Persona visual identity — each researcher persona gets a stable
+// colored initial circle so operators can scan a branch list and read
+// "who" before they read "what." Mirror this scheme in TurnCard later
+// for full visual consistency across the page.
+//
+// The Record is `Partial` so synthetic persona voices added by
+// branch_manager (`unspecified` / `merge_result` / `fork_unnamed` —
+// Phase E §177/§178/§180) don't require explicit entries; the
+// `personaMeta()` lookup falls back to PERSONA_META.default for any
+// voice without a dedicated swatch.
+const PERSONA_META: Partial<
+  Record<PersonaVoice, { color: string; bg: string; initial: string; label: string }>
+> & {
+  default: { color: string; bg: string; initial: string; label: string };
+} = {
   halvar:  { color: "#f0a8c7", bg: "color-mix(in srgb, #f0a8c7 16%, transparent)", initial: "H", label: "Halvar" },
   maddie:  { color: "#af87d7", bg: "color-mix(in srgb, #af87d7 16%, transparent)", initial: "M", label: "Maddie" },
   renzo:   { color: "#97dbbe", bg: "color-mix(in srgb, #97dbbe 16%, transparent)", initial: "R", label: "Renzo"  },
