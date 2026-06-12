@@ -634,6 +634,18 @@ class AuditMcpBridgeTool(Tool):
                             "NEAREST INDEXED FUNCTION NAMES:")
                         note_lines.extend(f"  - {s}" for s in suggestions)
                     payload["_bridge_note"] = "\n".join(note_lines)
+            # fix: audit-mcp tools return clean payloads WITHOUT a top-level
+            # `status` field (e.g. search_functions returns
+            # {"matches": [...], "total": N}). The bridge classifies the
+            # response via ctx["status"] but didn't propagate that to the
+            # payload itself. The consumer (tool_executor) keys success
+            # off raw.get("status") in _SUCCESS_STATUSES and treats
+            # missing status as error → "returned error: ''" with no
+            # detail. Inject the normalized status so the consumer sees
+            # the right shape regardless of which audit-mcp tool produced
+            # the payload.
+            if isinstance(payload, dict) and "status" not in payload:
+                payload["status"] = ctx.get("status") or "ready"
             return payload
 
     async def _suggest_function_names(
