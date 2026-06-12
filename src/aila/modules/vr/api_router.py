@@ -3152,6 +3152,12 @@ def create_vr_router() -> APIRouter:
                     investigation_id=child.id,
                     status=BranchStatus.ACTIVE.value,
                     fork_reason="primary",
+                    # Phase E §177/§178 — every primary branch carries
+                    # the lead-researcher persona ('halvar'). Without
+                    # this, alembic 064 defaults the NULL write to
+                    # 'unspecified' and the frontend renders "Unnamed
+                    # branch" for every fresh investigation.
+                    persona_voice=PersonaVoice.HALVAR.value,
                 )
                 uow.session.add(primary_branch)
 
@@ -3583,6 +3589,10 @@ def create_vr_router() -> APIRouter:
                 investigation_id=record.id,
                 status=BranchStatus.ACTIVE.value,
                 fork_reason="primary",
+                # fix §177/§178 — primary persona is HALVAR (lead
+                # researcher). Auto-deliberation siblings cover the
+                # other 5 personas (noor/maddie/yuki/renzo/wei).
+                persona_voice=PersonaVoice.HALVAR.value,
             )
             uow.session.add(primary_branch)
 
@@ -4411,6 +4421,11 @@ def create_vr_router() -> APIRouter:
                 investigation_id=inv.id,
                 status=BranchStatus.ACTIVE.value,
                 fork_reason=f"operator_reopen:{auth.user_id}",
+                # fix §177/§178 — reopen creates a fresh primary that
+                # carries the lead-researcher persona; without this,
+                # the reopened investigation's frontend shows "Unnamed
+                # branch" until auto-deliberation populates siblings.
+                persona_voice=PersonaVoice.HALVAR.value,
             )
             uow.session.add(new_branch)
             await uow.session.commit()
