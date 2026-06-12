@@ -25,12 +25,18 @@ import { SyntaxHighlighter } from "./SyntaxHighlighter";
  */
 export function FuzzProposalsPanel({
   investigationId,
+  live = true,
 }: {
   investigationId: string;
+  /** Forwarded to `useFuzzProposals` — false stops the 8s polling
+   *  on paused / completed / failed investigations. The parent
+   *  page derives this from `isInvestigationLive(inv?.status)`. */
+  live?: boolean;
 }) {
   const { data, isLoading } = useFuzzProposals({
     investigationId,
     status: "pending",
+    live,
   });
   const proposals: VRFuzzCampaignProposalSummary[] = data?.data ?? [];
 

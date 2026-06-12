@@ -52,6 +52,7 @@ import {
 } from "../mutations";
 import { formatBranchDisplayName } from "../branchDisplay";
 import {
+  isInvestigationLive,
   useInvestigation,
   useInvestigationBranches,
   useInvestigationMessages,
@@ -412,10 +413,17 @@ export function InvestigationDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: inv, isLoading } = useInvestigation(invId);
-  const { data: branchesResult } = useInvestigationBranches(invId);
+  // `isLive` gates polling on the per-investigation REST endpoints
+  // (branches / outcomes / hypotheses / fuzz proposals) so a paused
+  // or completed investigation lets the page settle instead of
+  // hammering the backend at 3-5s cadence. `useInvestigation` itself
+  // is self-aware (see queries.ts) and stops polling once it has
+  // already observed a terminal status.
+  const isLive = isInvestigationLive(inv?.status);
+  const { data: branchesResult } = useInvestigationBranches(invId, { live: isLive });
   const { data: messagesResult } = useInvestigationMessages(invId);
   const { status: liveStatus } = useInvestigationMessagesStream(invId);
-  const { data: outcomesResult } = useInvestigationOutcomes(invId);
+  const { data: outcomesResult } = useInvestigationOutcomes(invId, { live: isLive });
   const targetName = useTargetName(inv?.target_id);
 
   const pauseMut = usePauseInvestigation(invId);
@@ -1153,9 +1161,9 @@ export function InvestigationDetailPage() {
             scroll up past the timeline to here. */}
         <aside className="space-y-3 min-w-0 order-1">
           {/* Hypothesis projection (08_FRONTEND_UX.md §2.3) */}
-          <HypothesisDetailRail investigationId={invId} />
+          <HypothesisDetailRail investigationId={invId} live={isLive} />
           {/* Fuzz proposals queue (operator-in-the-loop) */}
-          <FuzzProposalsPanel investigationId={invId} />
+          <FuzzProposalsPanel investigationId={invId} live={isLive} />
 
 
           {/* Branches summary */}
