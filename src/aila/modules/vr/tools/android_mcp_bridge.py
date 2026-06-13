@@ -476,6 +476,31 @@ class AndroidMcpBridgeTool(Tool):
             )
             self.__class__._SPEC_CACHE = []
             return []
+        # android-mcp returns `{"tools": [...]}` (FastAPI envelope).
+        # Earlier versions of the codec returned a bare list at the
+        # top level; accept either shape. When neither matches, drop
+        # to the empty-catalog warning so the validator can't compare
+        # against a None catalog.
+        #
+        # Operator-observed before the fix: bridge silently downgraded
+        # to empty catalog -> validator passed every agent kwarg
+        # through unchecked -> android-mcp raised TypeError on every
+        # call (`androguard_summary() got an unexpected keyword
+        # argument 'index_id'`, `find_secrets()` rejecting `apk_path`,
+        # etc.) -> tool_executor HARD-BLOCK after 3 failures per tool
+        # per branch. Diagnosed on inv 78d4a594 turn 23+ at 01:36:44.
+        if isinstance(raw, dict):
+            inner = raw.get("tools")
+            if isinstance(inner, list):
+                raw = inner
+            else:
+                _log.warning(
+                    "android_mcp_bridge: /tools dict envelope missing "
+                    "'tools' key (got %s) — treating as empty catalog",
+                    sorted(raw.keys())[:8],
+                )
+                self.__class__._SPEC_CACHE = []
+                return []
         if not isinstance(raw, list):
             _log.warning(
                 "android_mcp_bridge: /tools returned non-list payload "
