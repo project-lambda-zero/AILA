@@ -447,6 +447,24 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
 
     inv = VRInvestigationRecord
 
+    # Count turns SINCE the most recent operator_reopen branch was created.
+    # An ``operator_reopen:<userid>`` branch is the operator explicitly
+    # resetting the investigation budget — without this filter the cap
+    # fires immediately on the next sweep tick because old abandoned
+    # branches still carry their pre-reopen turn count, undoing the
+    # operator's intent. When no operator_reopen branch exists the
+    # subquery returns NULL and the WHERE clause degenerates to
+    # ``created_at >= NULL`` which the COALESCE turns into the inv's
+    # own creation time (epoch baseline), counting every turn.
+    reopen_cutoff = (
+        select(func.max(VRInvestigationBranchRecord.created_at))
+        .where(VRInvestigationBranchRecord.investigation_id == inv.id)
+        .where(
+            VRInvestigationBranchRecord.fork_reason.like("operator_reopen:%"),
+        )
+        .correlate(inv)
+        .scalar_subquery()
+    )
     over_cap_rows = (
         await uow.session.exec(
             select(
@@ -462,6 +480,12 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
             )
             .where(inv.parent_investigation_id.isnot(None))
             .where(inv.status == InvestigationStatus.RUNNING.value)
+            .where(
+                # Either no operator_reopen has happened (cutoff is NULL,
+                # count everything) or the branch is post-cutoff.
+                (reopen_cutoff.is_(None))
+                | (VRInvestigationBranchRecord.created_at >= reopen_cutoff),
+            )
             .group_by(inv.id)
             .having(
                 func.coalesce(

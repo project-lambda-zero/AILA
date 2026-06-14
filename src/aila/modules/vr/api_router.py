@@ -4474,6 +4474,24 @@ def create_vr_router() -> APIRouter:
             inv.pause_reason = None
             inv.stopped_at = None
             inv.updated_at = now
+            # Clear primary_outcome_id so investigation_emit treats the
+            # next branch's terminal_submit as a fresh outcome to land,
+            # not as a redundant re-close of the already-approved one.
+            # The old outcome row stays in vr_investigation_outcomes
+            # for audit trail (and as a contribution to the eventual
+            # multi-outcome synthesis) but the investigation no longer
+            # points to it as the canonical answer. Without this, the
+            # operator-reopen task's first emit pass sees a complete
+            # primary outcome, resolves to COMPLETED with no active
+            # siblings (turn_count > 0 excludes the brand-new branch
+            # itself), and immediately re-closes the investigation —
+            # observed live on inv 70f454ad-..., 3 seconds between
+            # /reopen API call and inv.status flipping back to
+            # COMPLETED. Operator reopens are explicit intent to
+            # discard the prior verdict; the old outcome row stays as
+            # history but the inv pointer is reset.
+            prior_outcome_id = inv.primary_outcome_id
+            inv.primary_outcome_id = None
             uow.session.add(inv)
 
             # Spawn a fresh primary branch — old branches stay as
@@ -4496,11 +4514,10 @@ def create_vr_router() -> APIRouter:
 
             _log.info(
                 "reopen_investigation inv=%s by=%s new_branch=%s "
-                "(prior_status=%s)",
+                "prior_outcome_id=%s (cleared primary pointer; row "
+                "preserved for audit)",
                 inv.id, auth.user_id, new_branch.id,
-                # status before flip is gone now; log a marker that
-                # operators can grep for in the audit trail.
-                "terminal",
+                prior_outcome_id or "none",
             )
 
         # Submit fresh task for the new branch — same code path as
