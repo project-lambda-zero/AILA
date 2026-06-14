@@ -51,6 +51,7 @@ import logging
 import os
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.investigation import InvestigationStatus
@@ -533,7 +534,7 @@ class ClaimVerifierAgent:
         # engine; 200-500ms typical, multi-second on cold semble).
         # The AuditMcpBridgeTool is concurrency-safe (per-instance
         # warm-lock + httpx client created per-call), and audit-mcp's
-        # async runtime (per CLAUDE.md notes) deduplicates identical
+        # asynchronous runtime (per CLAUDE.md notes) deduplicates identical
         # tool calls — concurrent probes benefit from server-side
         # dedup as well as wall-clock overlap.
         bridge = AuditMcpBridgeTool()
@@ -652,7 +653,7 @@ class ClaimVerifierAgent:
         #     dispatch=skipped trap (the routing dead-end fixed by the
         #     operator-promote endpoint; this path closes the loop so
         #     the operator doesn't have to click the button by hand
-        #     for every confirmed finding)
+        #     on every confirmed finding)
         #   - agent's answer doesn't open with NEGATIVE / PATCH
         #     PRESENT / NO VULNERABILITY / etc. (a confirmed-negative
         #     means "confirmed no bug", which must not be promoted)
@@ -813,7 +814,7 @@ class ClaimVerifierAgent:
         # exception not caught by the dispatcher (or the broad-but-
         # finite tuple here missed the actual class), the new row was
         # left dispatch_status=PENDING with no reaper, indistinguishable
-        # from a row legitimately mid-flight.
+        # versus a row legitimately mid-flight.
         #
         # New shape: catch ALL exceptions around dispatch, and on any
         # uncaught failure REVERT the promotion atomically — delete the
@@ -830,7 +831,10 @@ class ClaimVerifierAgent:
         try:
             dispatcher = OutcomeDispatcher(knowledge=ServiceFactory().knowledge)
             result = await dispatcher.dispatch(new_outcome_id)
-        except Exception as exc:  # noqa: BLE001 — see comment above
+        except (
+            SQLAlchemyError, OSError, RuntimeError,
+            ValueError, TypeError, AttributeError, KeyError,
+        ) as exc:  # noqa: BLE001 — wide tuple is intentional; see comment above
             # fix §350 — traceback surfaces here because the revert path
             # is the last line of defense; if the dispatcher crashed
             # out-of-protocol the operator needs the full stack to
@@ -986,7 +990,10 @@ class ClaimVerifierAgent:
                 return []
             try:
                 obj = json.loads(text[start : end + 1])
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as exc:
+                _log.warning(
+                    "claim_verifier preconditions parse FAILED reason=%s", exc,
+                )
                 return []
         pre = obj.get("preconditions") if isinstance(obj, dict) else None
         return pre if isinstance(pre, list) else []
@@ -1058,5 +1065,8 @@ class ClaimVerifierAgent:
                 return None
             try:
                 return json.loads(text[start : end + 1])
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as exc:
+                _log.warning(
+                    "claim_verifier verdict parse FAILED reason=%s", exc,
+                )
                 return None

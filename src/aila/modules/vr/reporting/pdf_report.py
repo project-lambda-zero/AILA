@@ -500,7 +500,8 @@ def _resolve_audit_metadata(
                 capture_output=True, text=True,
                 timeout=timeout, check=False,
             )
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError) as exc:
+            _log.warning("git subcommand %s FAILED reason=%s", args, exc)
             return None
         if result.returncode != 0:
             return None
@@ -605,7 +606,11 @@ def _sum_active_task_runtime(investigation_id: str) -> int | None:
             row = cur.fetchone()
             secs = int(row[0]) if row and row[0] else 0
             return secs if secs > 0 else None
-    except (OSError, ValueError, RuntimeError, ImportError):
+    except (OSError, ValueError, RuntimeError, ImportError) as exc:
+        _log.warning(
+            "active-runtime taskrecord query FAILED investigation_id=%s reason=%s",
+            investigation_id, exc,
+        )
         return None
 
 
@@ -786,7 +791,7 @@ _SEVERITY_COLOR = {
 #
 # Tahoma for body / headings (clean, no serifs, ships everywhere)
 # and a developer-grade mono (Cascadia Mono → Consolas → Courier)
-# for code blocks — fits the security-research / editor aesthetic.
+# used for code blocks — fits the security-research / editor aesthetic.
 # Registration is best-effort: missing font files fall through to
 # the next candidate and ultimately to ReportLab's built-in
 # Helvetica / Courier so the report still renders on any host.

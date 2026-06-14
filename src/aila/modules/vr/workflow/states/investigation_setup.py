@@ -10,6 +10,7 @@ import logging
 import os
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.branch import BranchStatus, PersonaVoice
@@ -19,6 +20,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
 )
 from aila.platform.contracts._common import utc_now
+from aila.platform.exceptions import WorkerUnreachableError
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
 
@@ -202,7 +204,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 if locked_cve_ids:
                     resolutions = await resolve_cve_intel(locked_cve_ids)
                     locked_cve_intel = [r.to_dict() for r in resolutions]
-            except Exception as exc:  # noqa: BLE001 — never block status-locked exit
+            except (ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — never block status-locked exit
                 # fix §350 — surface traceback so a CVE re-fetch failure
                 # on a locked exit is debuggable on first occurrence.
                 _log.warning(
@@ -438,7 +440,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
             resolutions = await resolve_cve_intel(cve_ids)
             cve_intel = [r.to_dict() for r in resolutions]
             _CONSECUTIVE_CVE_INTEL_FAILURES = 0  # fix §293 — reset on success
-        except Exception as exc:  # noqa: BLE001 — never block setup on intel failure
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — never block setup on intel failure
             _CONSECUTIVE_CVE_INTEL_FAILURES += 1
             if _CONSECUTIVE_CVE_INTEL_FAILURES >= _FAILURE_ESCALATION_THRESHOLD:
                 # fix §350 — escalation now carries the traceback so the
@@ -515,7 +517,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 for r in results:
                     applicable_patterns.append(r.pattern.model_dump(mode="json"))
         _CONSECUTIVE_PATTERN_LOOKUP_FAILURES = 0  # fix §293 — reset on success
-    except Exception as exc:  # noqa: BLE001 — never block setup on pattern lookup
+    except (SQLAlchemyError, ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — never block setup on pattern lookup
         _CONSECUTIVE_PATTERN_LOOKUP_FAILURES += 1
         if _CONSECUTIVE_PATTERN_LOOKUP_FAILURES >= _FAILURE_ESCALATION_THRESHOLD:
             # fix §350 — escalation now carries the traceback so on-call
@@ -731,7 +733,7 @@ async def _spawn_persona_siblings_and_enqueue(
                 team_id=team_id,
             )
             enqueued.append(f"{persona.value}={sibling_branch_id[:8]}")
-        except Exception as exc:  # noqa: BLE001 — phase 2 is best-effort
+        except (WorkerUnreachableError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — phase 2 is best-effort
             # fix §350 — reaper-on-cursor can resubmit, but the stack
             # here distinguishes a structural enqueue regression from a
             # transient Redis blip.

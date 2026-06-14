@@ -42,7 +42,7 @@ import logging
 from typing import Any
 
 from sqlalchemy import text as _sql_text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import select
 
 from aila.modules.vr.contracts.investigation import (
@@ -144,7 +144,7 @@ async def pause_investigation_atomic(
             return summary
 
         # 1. Find every active branch (its `id` equals the workflow run_id
-        #    for the per-branch task). SELECT FOR UPDATE on the cursors so
+        #    of the per-branch task). SELECT FOR UPDATE on the cursors so
         #    a concurrent task can't flip current_state under us.
         branch_rows = (await uow.session.exec(
             select(VRInvestigationBranchRecord.id)
@@ -259,7 +259,7 @@ async def pause_investigation_atomic(
         await purge_arq_jobs_for_investigation(
             investigation_id, track="vr",
         )
-    except Exception as exc:  # noqa: BLE001 — best-effort
+    except (OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort
         # fix §350 — surface traceback. ARQ purge is best-effort because
         # cursor SSOT already blocks surviving jobs at next pickup; the
         # stack distinguishes Redis transport blips from a structural
@@ -279,7 +279,7 @@ async def pause_investigation_atomic(
             cancel_for_investigation,
         )
         cancel_for_investigation(investigation_id)
-    except Exception as exc:  # noqa: BLE001 — best-effort
+    except (OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort
         _log.warning(
             "pause_investigation_atomic CANCEL_TOKEN failed inv=%s err=%s",
             investigation_id, exc,
@@ -422,7 +422,7 @@ async def resume_investigation_atomic(
             clear_for_investigation,
         )
         clear_for_investigation(investigation_id)
-    except Exception as exc:  # noqa: BLE001 — best-effort
+    except (OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort
         _log.warning(
             "resume_investigation_atomic CLEAR_TOKEN failed inv=%s err=%s",
             investigation_id, exc,
@@ -462,7 +462,7 @@ async def resume_investigation_atomic(
                 "resume_investigation_atomic dedup inv=%s run=%s",
                 investigation_id, run_id,
             )
-        except Exception as exc:  # noqa: BLE001 — best-effort per branch
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort per branch
             # fix §350 — traceback surfaces ARQ/dedup-table regression vs
             # transient Redis failure; the resume submit retries on the
             # next operator action, but the operator needs the stack to
@@ -474,15 +474,15 @@ async def resume_investigation_atomic(
             )
     # Legacy-branch fallback: investigations spawned before Phase B's
     # cursor SSOT shipped (alembic 067 introduced workflow_state_cursor
-    # for VR runs) have no cursor rows. The cursor-driven fan-out above
+    # covering VR runs) have no cursor rows. The cursor-driven fan-out above
     # finds zero rows and dispatches zero tasks; resume becomes a no-op
-    # for those branches and they sit in status='active' with no
+    # leaving those branches at status='active' with no
     # in-flight task — observed live on a23eb6ae (renzo + wei branches
     # zombie after operator pause/resume).
     #
     # When the cursor path resumed nothing, scan for any branches in
     # ACTIVE status on this investigation + dispatch run_vr_investigate
-    # for each. The new tasks pick up wherever the branch left off
+    # to each. The new tasks pick up wherever the branch left off
     # (its turn_count and case_state_json are persisted across
     # pause/resume — only the in-flight worker disappears).
     if not resumed_run_ids:
@@ -522,7 +522,7 @@ async def resume_investigation_atomic(
                     "resume_investigation_atomic LEGACY dedup inv=%s br=%s",
                     investigation_id, br_id,
                 )
-            except Exception as exc:  # noqa: BLE001 — best-effort per branch
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort per branch
                 _log.warning(
                     "resume_investigation_atomic LEGACY submit failed "
                     "inv=%s br=%s err=%s",

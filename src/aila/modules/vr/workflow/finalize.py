@@ -50,7 +50,9 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.functions import coalesce
 from sqlmodel import select
 
@@ -397,6 +399,7 @@ async def _handle_all_terminal_no_outcome(
     ``parent_reconciler._synthesize_no_finding_outcomes`` until the next
     refactor moves it physically.
     """
+    del context  # dispatch contract: all _HANDLERS share (inv_id, context) signature
     from ..services.investigation_finalizers import (  # noqa: PLC0415
         synthesize_no_finding_for_investigation,
     )
@@ -437,7 +440,7 @@ async def finalize_investigation(investigation_id: str) -> FinalizeResult:
     handler = _HANDLERS[trigger]
     try:
         action = await handler(investigation_id, context)
-    except Exception as exc:  # noqa: BLE001 — log + surface in result
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError, httpx.HTTPError) as exc:  # noqa: BLE001 — log + surface in result; tuple covers DB + LLM (httpx) + ARQ/Redis (OSError/RuntimeError) + queue serialization
         _log.warning(
             "finalize_investigation HANDLER_FAILED inv=%s trigger=%s err=%s",
             investigation_id, trigger, exc,
@@ -482,7 +485,7 @@ async def sweep_finalizable_investigations() -> dict[str, int]:
     for inv_id in running_ids:
         try:
             result = await finalize_investigation(inv_id)
-        except Exception as exc:  # noqa: BLE001 — best-effort per inv
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError, httpx.HTTPError) as exc:  # noqa: BLE001 — best-effort per inv; tuple covers DB + LLM (httpx) + ARQ/Redis (OSError/RuntimeError) + queue serialization
             # fix §350 — surface traceback so a recurring per-inv
             # finalize failure (handler crash, DB unreachable) is
             # debuggable from the cron log alone.
