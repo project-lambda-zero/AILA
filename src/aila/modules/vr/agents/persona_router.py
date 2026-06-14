@@ -20,9 +20,12 @@ which model (Claude vs GPT-5), what temperature, what context window.
 """
 from __future__ import annotations
 
+import logging
 from enum import StrEnum
 
 from aila.modules.vr.contracts.branch import PersonaVoice
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "PersonaRole",
@@ -77,7 +80,8 @@ def persona_to_role(persona: PersonaVoice | str | None) -> PersonaRole | None:
     if isinstance(persona, str):
         try:
             persona = PersonaVoice(persona)
-        except ValueError:
+        except ValueError as exc:
+            _log.warning("FAILED reason=%s", exc)
             return None
     return _PERSONA_ROLE.get(persona)
 

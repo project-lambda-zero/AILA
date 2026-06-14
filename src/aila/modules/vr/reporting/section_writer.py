@@ -40,6 +40,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from aila.modules.vr.contracts.masvs import MasvsControlVerdict, MasvsVerdict
 from aila.modules.vr.masvs.models import MasvsControl
 from aila.platform.llm.client import AilaLLMClient
+from aila.platform.llm.errors import LLMError
 
 _log = logging.getLogger(__name__)
 
@@ -263,7 +264,7 @@ async def generate_section(
             run_id=run_id,
             team_id=team_id,
         )
-    except Exception as exc:  # noqa: BLE001
+    except LLMError as exc:
         # fix §350 — DEFENSIVE: section synthesis falls back to the raw
         # agent_summary so the PDF still ships; surface the traceback so
         # a recurring schema/auth break is grep-able in operator logs.

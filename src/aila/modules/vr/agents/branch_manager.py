@@ -228,7 +228,7 @@ class BranchManager:
 
             # fix §115 — preserve lineage. Pick branch A's parent first
             # (deterministic on argument order); fall back to B's parent
-            # if A was a root. Result: the branch tree UI walks from
+            # when A was a root. Result: the branch tree UI walks from
             # the merged child back to a real ancestor instead of
             # rendering it as an orphan new root next to a/b.
             # Closes §40 (speculative survivor-pointer note) as a

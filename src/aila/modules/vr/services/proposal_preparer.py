@@ -299,7 +299,8 @@ class ProposalPreparer:
                 return None
             try:
                 profile = json.loads(target.capability_profile_json or "{}")
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as exc:
+                _log.warning("FAILED reason=%s", exc)
                 return None
             engines = profile.get("applicable_fuzzing_engines") or []
             return engines[0] if engines else None

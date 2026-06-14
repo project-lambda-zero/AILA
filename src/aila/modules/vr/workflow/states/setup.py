@@ -216,7 +216,7 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
 async def _wait_until_ready(ida_bridge: Any, binary_id: str) -> dict[str, Any]:
     """Poll an existing binary_id until analysis is ready or budget exhausts."""
     # fix §299 — wall-clock via time.monotonic() (see _upload_and_wait
-    # for the full rationale; same shape, no upload payload to seed).
+    # covering the full rationale; same shape, no upload payload to seed).
     # fix §300 — \`current\` naming consistent with _upload_and_wait.
     start = time.monotonic()
     current: dict[str, Any] = {}

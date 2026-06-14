@@ -311,7 +311,7 @@ class CapabilityProfileBuilder:
                     )
 
                 # Rule engine produces applicable_* lists deterministically
-                # from (kind, language) tuples. No MCP calls in this step.
+                # based on (kind, language) tuples. No MCP calls in this step.
                 profile = self._compose_profile(target_row, signals)
 
                 # Build the merged capability_profile_json that the persist

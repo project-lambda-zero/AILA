@@ -506,7 +506,7 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
             if new_state == OUTCOME_STATE_APPROVED:
                 for sibling in active_siblings:
                     # fix §78 — defensive guard: skip PAUSED branches
-                    # if they ever appear in active_siblings (the filter
+                    # should they ever appear in active_siblings (the filter
                     # above currently excludes them, but a future change
                     # could broaden it). Operator-paused branches must
                     # NOT be flipped to ABANDONED here — the pause is
