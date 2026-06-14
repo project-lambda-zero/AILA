@@ -163,8 +163,12 @@ async def _is_loop_alive(investigation_id: str, branch_id: str) -> tuple[bool, s
         )
         if get_cancellation_token(investigation_id).is_cancelled():
             return False, "cancellation_token_set"
-    except Exception:  # noqa: BLE001 — best-effort
-        pass
+    except (ImportError, AttributeError, RuntimeError, ValueError, TypeError) as exc:
+        _log.warning(
+            "loop_alive cancellation_token check failed reason=%s",
+            exc,
+            exc_info=True,
+        )
 
     return True, "alive"
 

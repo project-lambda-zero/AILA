@@ -52,6 +52,7 @@ class MSRCTrack(DisclosureTrack):
         severity_rating: str | None,
         embargo_days: int | None,
     ) -> str:
+        del poc_tier  # part of DisclosureTrack.render contract; unused here
         parts: list[str] = [
             _common_header(finding_payload, severity_rating),
             _section(
@@ -104,6 +105,7 @@ class MozillaBBTrack(DisclosureTrack):
         severity_rating: str | None,
         embargo_days: int | None,
     ) -> str:
+        del poc_tier  # part of DisclosureTrack.render contract; unused here
         parts: list[str] = [
             _common_header(finding_payload, severity_rating),
             _section("Summary", str(finding_payload.get("summary") or "")),
@@ -152,6 +154,7 @@ class AppleSecurityTrack(DisclosureTrack):
         severity_rating: str | None,
         embargo_days: int | None,
     ) -> str:
+        del poc_tier  # part of DisclosureTrack.render contract; unused here
         parts: list[str] = [
             _common_header(finding_payload, severity_rating),
             _section(
@@ -207,6 +210,7 @@ class GitHubBugBountyTrack(DisclosureTrack):
         severity_rating: str | None,
         embargo_days: int | None,
     ) -> str:
+        del poc_tier  # part of DisclosureTrack.render contract; unused here
         cvss = severity_rating or "(operator to compute)"
         parts: list[str] = [
             _common_header(finding_payload, severity_rating),
@@ -254,6 +258,7 @@ class ZDITrack(DisclosureTrack):
         severity_rating: str | None,
         embargo_days: int | None,
     ) -> str:
+        del poc_tier  # part of DisclosureTrack.render contract; unused here
         parts: list[str] = [
             _common_header(finding_payload, severity_rating),
             _section("Affected product", str(finding_payload.get("affected_component") or "")),
@@ -306,6 +311,7 @@ class CertCCTrack(DisclosureTrack):
         severity_rating: str | None,
         embargo_days: int | None,
     ) -> str:
+        del poc_tier  # part of DisclosureTrack.render contract; unused here
         parts: list[str] = [
             _common_header(finding_payload, severity_rating),
             _section(
@@ -358,6 +364,7 @@ class ConferenceCfpTrack(DisclosureTrack):
         severity_rating: str | None,
         embargo_days: int | None,
     ) -> str:
+        del poc_tier, severity_rating, embargo_days  # part of DisclosureTrack.render contract; unused here
         parts: list[str] = [
             f"# Talk proposal: {finding_payload.get('title') or 'untitled'}",
             "",

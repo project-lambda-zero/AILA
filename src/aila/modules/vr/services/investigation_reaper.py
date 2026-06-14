@@ -30,6 +30,7 @@ from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import and_, func, select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.functions import coalesce
 
 from aila.modules.vr.contracts import BranchStatus, InvestigationStatus
@@ -77,7 +78,10 @@ async def _purge_arq_for_completed(completed_ids: list[str]) -> None:
         from .arq_purge import (  # noqa: PLC0415
             purge_arq_jobs_for_investigation,
         )
-    except ImportError:
+    except ImportError as exc:
+        _log.warning(
+            "investigation_reaper: arq_purge import FAILED reason=%s", exc,
+        )
         return
     for inv_id in completed_ids:
         try:
@@ -260,7 +264,7 @@ async def sweep_cap_exceeded_investigations() -> int:
     for inv_id in running_ids:
         try:
             reason = await evaluate_cap_for_investigation(str(inv_id))
-        except Exception as exc:  # noqa: BLE001 — best-effort per inv
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort per inv
             # fix §350 — surface traceback so a per-id eval failure
             # (cap evaluation crash, FK regression) is debuggable from
             # the cron log instead of only the class name.

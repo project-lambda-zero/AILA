@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.outcome import OutcomeKind
@@ -152,14 +154,14 @@ class PatternExtractor:
                 ],
                 schema=_EXTRACTION_SCHEMA,
             )
-        except Exception as exc:  # noqa: BLE001 — fix §191
+        except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — fix §191
             # Broaden the narrow ``(OSError, TimeoutError, RuntimeError)``
             # filter. Pattern instance — every LLM call site that catches
             # narrowly was missing httpx errors, pydantic validation
             # failures, JSON-decode errors raised before reaching the
             # outer parser, and provider-specific shapes. Log + re-raise
             # as PatternExtractorError so the caller sees the failure
-            # class instead of crashing the worker.
+            # type instead of crashing the worker.
             _log.warning(
                 "pattern_extractor: LLM call failed outcome_id=%s err=%s",
                 outcome_id, exc,
@@ -531,7 +533,7 @@ async def _emit_skip_event(
             )
             uow.session.add(msg)
             await uow.commit()
-    except Exception as exc:  # noqa: BLE001 — visibility helper must not crash caller
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — visibility helper must not crash caller
         # fix §350 — surface traceback. The skip-event emit is best-effort
         # but a recurring failure here means the operator-visible engine
         # message channel is broken, which needs the stack to diagnose.
