@@ -337,7 +337,6 @@ def _detect_primary_language_from_path(
     it (remote MCP setup). Caller should fall back to whatever signal
     is available in that case.
     """
-    import os  # noqa: PLC0415
 
     if not repo_path or not os.path.isdir(repo_path):
         return None, []
