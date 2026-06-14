@@ -508,32 +508,75 @@ class AndroidMcpBridgeTool(Tool):
             )
             self.__class__._SPEC_CACHE = []
             return []
-        # Drop pipeline-only tools BEFORE caching so every consumer of
-        # the cache (prompt builder, agent dispatcher, status UI) sees
-        # the agent-safe subset. The pipeline still calls these via
-        # bridge.forward directly, which bypasses the catalog.
+        # android-mcp's /tools returns only {name, description,
+        # schema_url} per tool. The actual JSON Schema for each tool
+        # lives at the separate /tools/{name}/schema endpoint. Without
+        # following schema_url, _compact_spec sees no `parameters` or
+        # `inputSchema` field, falls through to schema={}, and
+        # produces a spec with required=[] / properties={} that the
+        # validator cannot reject anything against.
         #
-        # Also drop env-gated tools whose host CLI is missing. Agents
-        # that never see the tool in /tools never try to call it; the
-        # operator can install the CLI + restart workers to bring the
-        # tool back online.
+        # Diagnosed 2026-06-14 on inv 78d4a594: agent was firing
+        # `androguard_summary()` without `apk_path` (75x), calling
+        # `find_secrets(apk_path=...)` when the tool actually wants
+        # `decompiled_dir` (9x), missing `device_serial`+`service` on
+        # adb_dumpsys (75x), etc. All would have been caught by the
+        # validator if the schemas had been loaded.
+        #
+        # Fetch every schema in parallel via asyncio.gather to keep
+        # cold-start under 1s. On per-tool fetch failure, fall back to
+        # an empty schema for that tool (keep it in catalog, just lose
+        # validation for it). Cached for the worker's lifetime.
+        async def _fetch_schema(client: httpx.AsyncClient,
+                                name: str) -> dict[str, Any]:
+            try:
+                schema_resp = await client.get(f"{base}/tools/{name}/schema")
+                schema_data = schema_resp.json()
+                return schema_data if isinstance(schema_data, dict) else {}
+            except (httpx.ConnectError, httpx.TimeoutException,
+                    httpx.HTTPError, ValueError) as exc:
+                _log.warning(
+                    "android_mcp_bridge: schema fetch failed for %s: %s "
+                    "(tool kept in catalog without validation)", name, exc,
+                )
+                return {}
+
+        # Drop pipeline-only tools BEFORE fetching schemas so we don't
+        # waste round-trips on tools the agent will never see.
         import shutil  # noqa: PLC0415
         missing_cli = {
             tool_name
             for tool_name, cli in _ENV_GATED_TOOLS.items()
             if shutil.which(cli) is None
         }
-        self.__class__._SPEC_CACHE = [
-            _compact_spec(t) for t in raw
+        visible_raw = [
+            t for t in raw
             if isinstance(t, dict)
             and t.get("name") not in _PIPELINE_ONLY_TOOLS
             and t.get("name") not in missing_cli
         ]
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            schemas = await asyncio.gather(*[
+                _fetch_schema(client, str(t.get("name")))
+                for t in visible_raw
+            ])
+        # Inject the fetched schema into each tool dict before
+        # _compact_spec consumes it.
+        for t, schema in zip(visible_raw, schemas, strict=True):
+            t["parameters"] = schema
+        self.__class__._SPEC_CACHE = [_compact_spec(t) for t in visible_raw]
+        # Stats for the log line
+        n_with_schema = sum(
+            1 for t in visible_raw if t.get("parameters", {}).get("properties")
+        )
         _log.info(
             "android_mcp_bridge: catalog loaded — %d tools "
-            "(%d hidden as pipeline-only, %d dropped for missing CLI: %s)",
+            "(%d with schemas, %d hidden as pipeline-only, %d dropped "
+            "for missing CLI: %s)",
             len(self.__class__._SPEC_CACHE),
-            sum(1 for t in raw if isinstance(t, dict) and t.get("name") in _PIPELINE_ONLY_TOOLS),
+            n_with_schema,
+            sum(1 for t in raw if isinstance(t, dict)
+                and t.get("name") in _PIPELINE_ONLY_TOOLS),
             len(missing_cli),
             sorted(missing_cli) if missing_cli else "[]",
         )

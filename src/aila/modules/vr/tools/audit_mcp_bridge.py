@@ -1197,13 +1197,21 @@ class AuditMcpBridgeTool(Tool):
                 # the parent's children for a ``p\d+<seg>`` match
                 # and rewrite the path in place. If the rewrite
                 # succeeds and the resulting file exists, use it.
+                # `root` is a str from _INDEX_ROOTS.get(); wrap with
+                # Path() so the helper's `cursor / part` doesn't crash
+                # on str/str divide. Diagnosed 2026-06-14: 104 read_
+                # function calls in 16h died on this exact bug; the
+                # excerpt landed in vr_mcp_call_log as
+                # `TypeError("unsupported operand type(s) for /:
+                # 'str' and 'str'")` because mcp_call_logger captures
+                # repr(exc) and the exception escaped its try-block.
                 rewritten = await asyncio.to_thread(
-                    _resolve_jadx_prefixes, root, file_path,
+                    _resolve_jadx_prefixes, Path(root), file_path,
                 )
                 if rewritten is not None and await asyncio.to_thread(
                     rewritten.is_file,
                 ):
-                    new_rel = str(rewritten.relative_to(root)).replace("\\", "/")
+                    new_rel = str(rewritten.relative_to(Path(root))).replace("\\", "/")
                     logging.getLogger(__name__).info(
                         "read_lines JADX_REWRITE %s → %s", file_path, new_rel,
                     )
@@ -1215,7 +1223,7 @@ class AuditMcpBridgeTool(Tool):
                     # listing its children that share the requested
                     # leaf name (with JADX prefix stripped).
                     suggestions = await asyncio.to_thread(
-                        _suggest_nearest_paths, root, file_path,
+                        _suggest_nearest_paths, Path(root), file_path,
                     )
                     hint = (
                         f" NEAREST INDEXED PATHS: {', '.join(suggestions)}"
