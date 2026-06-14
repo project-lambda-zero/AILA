@@ -1010,7 +1010,7 @@ class DurableStateMachine:
                 session.add(new_row)
                 # Skip the version check + UPDATE below; we just
                 # created a fresh cursor row. write_exited still runs
-                # for the audit trail. Use a flag to short-circuit.
+                # covering the audit trail. Use a flag to short-circuit.
                 _cursor_recreated = True
                 current_version = 0
             else:

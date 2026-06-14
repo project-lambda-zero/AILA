@@ -359,7 +359,7 @@ def _synthesis_confidence(panel: list[dict[str, Any]]) -> OutcomeConfidence:
     # fix §327 — graduated disagreement penalty: the notch downgrade
     # scales with the number of distinct outcome_kinds in the panel.
     # Unanimous (1 kind): no penalty. 2-way split (e.g. critic disagrees
-    # with researcher on PATCH_PRESENT vs DIRECT_FINDING): one notch —
+    # against researcher on PATCH_PRESENT vs DIRECT_FINDING): one notch —
     # the prior flat penalty. 3-way split (one persona finds a bug, one
     # sees a patch, one writes an audit-memo): two notches because a
     # panel that cannot even agree on whether anything was found is

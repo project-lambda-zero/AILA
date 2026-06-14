@@ -156,7 +156,7 @@ class CyberReasoningEngine:
             )
             if hasattr(raw, "__await__"):
                 # ConfigRegistry.get may be async; resolving an awaitable
-                # from a sync helper would deadlock. Skip in that case
+                # via a sync helper would deadlock. Skip in that case
                 # and rely on the hardcoded fallback. Async callers can
                 # warm the cache directly via :meth:`set_profile_override`.
                 raw = None

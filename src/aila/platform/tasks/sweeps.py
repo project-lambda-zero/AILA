@@ -59,7 +59,7 @@ def register_periodic_sweep(name: str, sweep: PeriodicSweep) -> None:
     in a test fixture). Tests that genuinely need to re-register
     should clear the entry first.
     """
-    if not name or not isinstance(name, str):
+    if not name:
         raise ValueError(
             f"register_periodic_sweep: name must be a non-empty string, got {name!r}",
         )

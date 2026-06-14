@@ -164,7 +164,7 @@ async def _on_job_start(ctx: dict[str, Any]) -> None:
         )
 
         # Phase 181 audit trail (D-13 + D-38 from 178): populate plan_json
-        # for the timeline page snapshot. fix §84 — always overwrite on
+        # covering the timeline page snapshot. fix §84 — always overwrite on
         # job_try == 1 instead of skipping when plan_json IS NOT NULL.
         # A phase-handoff that reused the run_id with a fresh definition
         # previously left the prior definition's plan_json behind, so the
