@@ -629,6 +629,24 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 investigation_id, exc,
             )
 
+    # Adversarial verifier trigger — fires for EVERY investigation that
+    # lands in a terminal state with a canonical outcome, not just the
+    # multi-branch synthesis case. Single-branch variant_hunts and
+    # MASVS per-control audits previously never triggered verifier
+    # because the only enqueue site lived inside _maybe_trigger_synthesis
+    # which gated on len(branches) >= 2. _maybe_trigger_verifier
+    # self-gates on inv.status terminal + canonical outcome present
+    # + no prior verifier_report — same idempotency contract as the
+    # synthesis trigger, fires from the same emit chokepoint so cron
+    # sweeps never need to re-enqueue.
+    try:
+        await _maybe_trigger_verifier(investigation_id)
+    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+        _log.warning(
+            "investigation_emit VERIFIER_TRIGGER FAILED inv=%s err=%s",
+            investigation_id, exc,
+        )
+
     # Independent of outcome_id: call finalize. Cheap when no trigger
     # fires (single SELECT + branch/outcome aggregate, no action).
     try:
@@ -692,7 +710,6 @@ async def _maybe_trigger_synthesis(investigation_id: str) -> None:
         VRInvestigationRecord,
     )
     from aila.modules.vr.workflow.task import (  # noqa: PLC0415
-        run_vr_claim_verifier,
         run_vr_synthesis,
     )
 
@@ -785,11 +802,81 @@ async def _maybe_trigger_synthesis(investigation_id: str) -> None:
         group_id="vr_synthesis",
         team_id=team_id,
     )
-    # Adversarial verifier — runs in parallel with synthesis. Both are
-    # idempotent and operate on the canonical outcome; whichever lands
-    # last just sees its predecessor's marker key in the payload and
-    # bails. The verifier's verdict ends up alongside panel_summary so
-    # the operator sees an independent confirmed/refuted classification.
+    _log.info(
+        "investigation_emit SYNTHESIS queued investigation_id=%s",
+        investigation_id,
+    )
+
+
+async def _maybe_trigger_verifier(investigation_id: str) -> None:
+    """Enqueue the adversarial claim verifier when the investigation
+    is in a terminal state and has a canonical outcome the verifier
+    can chew on.
+
+    Independent of :func:`_maybe_trigger_synthesis`: synthesis only
+    fires for multi-branch panel investigations once every persona
+    has contributed. The verifier should run on EVERY investigation
+    that lands a claim, including single-branch audits and variant
+    hunts — those skip synthesis entirely but still produce findings
+    that benefit from adversarial probing.
+
+    Idempotent on three levels:
+      1. ``inv.status`` must be terminal — we never verify a moving
+         target (this hook also fires from the partial-branch emit
+         call, where the investigation is still RUNNING; bail).
+      2. A canonical outcome row must exist — nothing to verify
+         without one.
+      3. ``verifier_report`` must not already be present on the
+         payload — :class:`ClaimVerifierAgent` re-asserts the same
+         gate, but checking here saves a queue submission +
+         worker tick.
+
+    Race-safe against synthesis: when synthesis fires too, both
+    tasks load the canonical outcome, modify the payload, and save.
+    Last writer wins on the payload field but each writes a
+    different key (``panel_summary`` vs ``verifier_report``), so
+    the only true collision is one overwriting the other's NEW
+    field — handled at the agent layer by re-reading + merging.
+    """
+    from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
+    from aila.modules.vr.db_models import (  # noqa: PLC0415
+        VRInvestigationOutcomeRecord,
+        VRInvestigationRecord,
+    )
+    from aila.modules.vr.workflow.task import (  # noqa: PLC0415
+        run_vr_claim_verifier,
+    )
+
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            _select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == investigation_id,
+            )
+        )).first()
+        if inv is None:
+            return
+        if inv.status not in (
+            InvestigationStatus.COMPLETED.value,
+            InvestigationStatus.FAILED.value,
+        ):
+            return  # still running — sibling branches not done yet
+        canonical = (await uow.session.exec(
+            _select(VRInvestigationOutcomeRecord)
+            .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+            .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+            .limit(1),
+        )).first()
+        if canonical is None:
+            return  # nothing to verify
+        try:
+            payload = json.loads(canonical.payload_json or "{}")
+        except (ValueError, TypeError):
+            payload = {}
+        if payload.get("verifier_report"):
+            return  # already verified — agent gate would skip too
+        team_id = inv.team_id
+
+    task_queue = default_task_queue()
     await task_queue.submit(
         track="vr",
         fn=run_vr_claim_verifier,
@@ -799,7 +886,7 @@ async def _maybe_trigger_synthesis(investigation_id: str) -> None:
         team_id=team_id,
     )
     _log.info(
-        "investigation_emit SYNTHESIS+VERIFIER queued investigation_id=%s",
+        "investigation_emit VERIFIER queued investigation_id=%s",
         investigation_id,
     )
 
