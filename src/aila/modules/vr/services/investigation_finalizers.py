@@ -37,6 +37,7 @@ import uuid as _uuid
 from datetime import timedelta
 
 from sqlalchemy import Integer, func, text, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.functions import coalesce
 from sqlmodel import select
 
@@ -182,7 +183,7 @@ async def synthesize_no_finding_outcomes(
                     uow, inv_id, reason="investigation_completed", now=now,
                 )
                 synthesized += 1
-            except Exception as exc:  # noqa: BLE001
+            except (SQLAlchemyError, ImportError, RuntimeError) as exc:
                 _log.warning(
                     "orphan close (with existing outcome) failed inv=%s: %s",
                     inv_id, exc, exc_info=True,
@@ -282,7 +283,7 @@ async def synthesize_no_finding_outcomes(
                 uow, inv_id, reason="investigation_completed", now=now,
             )
             synthesized += 1
-        except Exception as exc:  # noqa: BLE001
+        except (SQLAlchemyError, ImportError, RuntimeError) as exc:
             _log.warning(
                 "synthesize_no_finding failed inv=%s: %s", inv_id, exc, exc_info=True,
             )

@@ -94,4 +94,5 @@ class DisclosureTrack:
         human-readable Markdown rendering — the operator pastes/uploads
         the actual format separately when needed.
         """
+        del finding_payload, poc_tier, severity_rating, embargo_days
         raise NotImplementedError("Subclass must implement render()")

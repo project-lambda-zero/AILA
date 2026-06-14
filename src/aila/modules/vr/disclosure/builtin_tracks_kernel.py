@@ -63,6 +63,7 @@ class LinuxDistrosTrack(DisclosureTrack):
         severity_rating: str | None,
         embargo_days: int | None,
     ) -> str:
+        del poc_tier  # part of DisclosureTrack.render contract; unused here
         days = embargo_days or cls.embargo_default_days
         # linux-distros wants a specific subject prefix
         subj_prefix = "[vs] " if days <= 7 else "[next-day] "
@@ -127,6 +128,7 @@ class OssSecurityTrack(DisclosureTrack):
         severity_rating: str | None,
         embargo_days: int | None,
     ) -> str:
+        del poc_tier, embargo_days  # part of DisclosureTrack.render contract; unused here
         cve = finding_payload.get("assigned_cve_id") or "(CVE pending)"
         parts: list[str] = [
             f"Subject: {finding_payload.get('title') or 'kernel finding'} [{cve}]",
@@ -185,6 +187,7 @@ class KernelOrgSecurityTrack(DisclosureTrack):
         severity_rating: str | None,
         embargo_days: int | None,
     ) -> str:
+        del poc_tier  # part of DisclosureTrack.render contract; unused here
         days = embargo_days or cls.embargo_default_days
         parts: list[str] = [
             f"Subject: [SECURITY] {finding_payload.get('title') or 'kernel finding'}",

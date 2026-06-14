@@ -56,8 +56,8 @@ _log = logging.getLogger(__name__)
 # ida_bridge, §215 android_mcp_bridge): success statuses are normalised
 # to exactly one of {"ready", "completed", "ok"}. The async progression
 # values {"pending", "queued", "running"} mean the bridge returned
-# without a final result — from the executor's POV that is indistinguishable
-# from an error because there is no payload to render. Any other value
+# without a final result — the executor treats those identically
+# to an error because there is no payload to render. Any other value
 # (unknown / malformed) is coerced to error here so the engine sees a
 # loud message on the next turn instead of an empty rendering.
 _SUCCESS_STATUSES: frozenset[str] = frozenset({"ready", "completed", "ok"})
@@ -155,7 +155,7 @@ class ToolExecutor:
         if parsed is None:
             # fix §201 — count TOTAL malformed-command errors on the
             # last 50 engine messages from this branch (was: consecutive
-            # from the tail). Alternating empty→good→empty→good→empty
+            # starting at the tail). Alternating empty→good→empty→good→empty
             # legitimately means the agent cannot stabilise on a valid
             # tool_run shape and should be force-stopped; the prior
             # consecutive-only counter reset on every single good call
@@ -258,7 +258,7 @@ class ToolExecutor:
         # New rule: when the SAME (server.tool, canonical args)
         # has failed in this branch ≥ _HARD_BLOCK_REPEAT_LIMIT
         # times consecutively, refuse the dispatch entirely and
-        # return a synthetic error response WITHOUT making the
+        # hand back a synthetic error response WITHOUT making the
         # network call. The agent burns one LLM turn reading the
         # block notice; the bridge / upstream MCP roundtrip is
         # saved. Limit is intentionally generous (3) so legitimately-
@@ -296,9 +296,9 @@ class ToolExecutor:
         except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001
             # fix §197 — broadened from (OSError, TimeoutError,
             # RuntimeError). `bridge.forward` reaches into httpx
-            # (httpx.HTTPError, httpx.PoolTimeout — neither inherits
-            # from OSError on every platform), pydantic.ValidationError
-            # for malformed bridge response envelopes, and arbitrary
+            # (httpx.HTTPError, httpx.PoolTimeout — neither one is
+            # an OSError subclass on every platform), pydantic.ValidationError
+            # covering malformed bridge response envelopes, and arbitrary
             # provider errors from sync→async wrappers. A miss here
             # used to crash the worker turn instead of writing the
             # error envelope the engine expects.
@@ -357,7 +357,7 @@ class ToolExecutor:
             #     same call without varying anything.
             #
             # (2) Error-class match: same (server, tool) call failed
-            #     with the SAME ERROR PREFIX N times on this branch
+            #     sharing the SAME ERROR PREFIX N times on this branch
             #     regardless of args. Catches the "fuzzing_targets
             #     keeps getting unknown-kwarg 'threshold' / 'cutoff' /
             #     'min_score'" pattern where the agent varies the bad
@@ -839,7 +839,7 @@ class ToolExecutor:
                 .where(
                     VRInvestigationMessageRecord.branch_id == branch_id,
                     # fix §256 — was the literal "engine"; drift hazard
-                    # if SenderKind.ENGINE's value ever changes.
+                    # should SenderKind.ENGINE's value ever change.
                     VRInvestigationMessageRecord.sender_kind == SenderKind.ENGINE.value,
                 )
                 .order_by(VRInvestigationMessageRecord.created_at.desc())
@@ -1044,7 +1044,7 @@ class ToolExecutor:
     # been imported in the current process (e.g. a narrow unit test
     # that constructs a ToolExecutor with stub bridges and never
     # exercises the dispatch path). Production code paths always
-    # import the adapters first via ``get_adapter`` at line 218.
+    # pull in the adapters first via ``get_adapter`` at line 218.
     _READ_TOOLS_FALLBACK: frozenset[tuple[str, str]] = frozenset({
         ("audit_mcp", "read_function"),
         ("audit_mcp", "read_lines"),         # bridge-side verbatim slice
