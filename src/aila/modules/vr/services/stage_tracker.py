@@ -54,6 +54,7 @@ from datetime import UTC, timedelta
 from typing import Any
 
 from sqlalchemy import update as _update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.target import AnalysisState
@@ -159,9 +160,6 @@ def parse_stages(stages_json: str | None) -> TargetAnalysisStages:
     return TargetAnalysisStages.model_validate_json(stages_json)
 
 
-def serialize_stages(stages: TargetAnalysisStages) -> str:
-    return stages.model_dump_json()
-
 
 async def load_target_stages(target_id: str) -> TargetAnalysisStages:
     """Read-only convenience — load stages without entering a tracker."""
@@ -196,7 +194,7 @@ def _apply_stages_to_row(
         f"{failing[0][0].value}: {failing[0][1]}" if failing else None
     )
     now = utc_now()
-    row.analysis_stages_json = serialize_stages(stages)
+    row.analysis_stages_json = stages.model_dump_json()
     row.analysis_state = rolled.value
     row.analysis_state_message = rolled_message
 
@@ -272,10 +270,11 @@ class StageTracker:
         if stage_timeout_s is not None:
             self.stage_timeout_s = stage_timeout_s
         else:
-            assert stage in _DEFAULT_TIMEOUTS, (
-                f"stage_tracker: no _DEFAULT_TIMEOUTS entry for {stage!r}; "
-                "add one to _DEFAULT_TIMEOUTS in services/stage_tracker.py"
-            )
+            if stage not in _DEFAULT_TIMEOUTS:
+                raise RuntimeError(
+                    f"stage_tracker: no _DEFAULT_TIMEOUTS entry for {stage!r}; "
+                    "add one to _DEFAULT_TIMEOUTS in services/stage_tracker.py",
+                )
             self.stage_timeout_s = _DEFAULT_TIMEOUTS[stage]
         self._extra_columns: dict[str, Any] = {}
         self._stages: TargetAnalysisStages | None = None
@@ -346,7 +345,7 @@ class StageTracker:
         self._stages = stages
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> bool:
+    async def __aexit__(self, _exc_type, exc, _tb) -> bool:
         # fix §321 — re-read under SELECT FOR UPDATE so the reaper and
         # __aexit__ serialize on the row lock. If the reaper claimed
         # this stage (FAILED with the `reaper:` prefix that
@@ -408,7 +407,7 @@ class StageTracker:
                 )
                 uow.session.add(row)
                 await uow.session.commit()
-            except Exception as save_exc:  # noqa: BLE001
+            except (SQLAlchemyError, OSError, RuntimeError) as save_exc:  # noqa: BLE001
                 # fix §322 — if the work itself succeeded (exc is None)
                 # but the state-commit failed, the caller MUST know:
                 # otherwise they treat the stage as DONE while the DB
@@ -519,10 +518,11 @@ async def reap_stuck_stages() -> int:
                     # fix §117 — same runtime guard as StageTracker.__init__;
                     # an unregistered stage drift surfaces in the reaper log
                     # instead of silently inheriting the 30-min cap.
-                    assert stage_name in _DEFAULT_TIMEOUTS, (
-                        f"stage_tracker.reaper: no _DEFAULT_TIMEOUTS entry "
-                        f"for {stage_name!r}; add one to _DEFAULT_TIMEOUTS"
-                    )
+                    if stage_name not in _DEFAULT_TIMEOUTS:
+                        raise RuntimeError(
+                            f"stage_tracker.reaper: no _DEFAULT_TIMEOUTS entry "
+                            f"for {stage_name!r}; add one to _DEFAULT_TIMEOUTS",
+                        )
                     timeout_s = _DEFAULT_TIMEOUTS[stage_name]
                     started = status.started_at
                     if started is None:
@@ -549,7 +549,7 @@ async def reap_stuck_stages() -> int:
                     continue
 
                 rolled = roll_up_overall_state(stages)
-                new_stages_json = serialize_stages(stages)
+                new_stages_json = stages.model_dump_json()
                 # fix §118 — when several stages fail in one reap pass,
                 # concatenate every failure into the legacy single-column
                 # analysis_state_message instead of silently dropping all
@@ -593,7 +593,7 @@ async def reap_stuck_stages() -> int:
                     continue
                 await uow.session.commit()
                 reaped += row_reaped
-        except Exception as exc:  # noqa: BLE001
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001
             # fix §118 — log AND collect; the next row still gets a
             # chance. The collected list drives the post-loop summary
             # log so an operator scanning the worker log sees how many

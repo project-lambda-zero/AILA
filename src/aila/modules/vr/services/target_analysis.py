@@ -505,7 +505,7 @@ class TargetAnalysisService:
 
                 if kind in _NO_INGEST_KINDS:
                     # Nothing to ingest — stage just records "done"
-                    # with empty handles; downstream stages can run.
+                    # leaving handles empty; downstream stages can run.
                     tracker.record_output(mcp_handles_json=json.dumps({}))
                     return
 
@@ -749,6 +749,7 @@ class TargetAnalysisService:
         current_handles: dict[str, Any],
         tracker: StageTracker,
     ) -> None:
+        del current_handles, tracker  # dispatch contract; consumed by sibling stages
         apk_path = self._resolve_apk_path(descriptor)
         # force=True so a retried stage doesn't trip apktool's
         # "destination directory already exists" check against a partial
@@ -789,6 +790,7 @@ class TargetAnalysisService:
         current_handles: dict[str, Any],
         tracker: StageTracker,
     ) -> None:
+        del current_handles, tracker  # dispatch contract; consumed by sibling stages
         apk_path = self._resolve_apk_path(descriptor)
         # fix §267 — mirror apktool_decode's force=True. Without it, a
         # retry after partial JADX failure trips JADX's "destination
@@ -852,6 +854,7 @@ class TargetAnalysisService:
         bad APK). Records ``{"skipped": "no jadx output"}`` instead of
         raising so the chain proceeds to STATIC_SUMMARY.
         """
+        del tracker  # dispatch contract; state owned by _run_android_stage
         # Validate the descriptor invariant up-front: every android_apk
         # target carries apk_path in its descriptor (POST /vr/targets/
         # upload-apk writes it). Failing fast here gives a clearer
@@ -931,6 +934,7 @@ class TargetAnalysisService:
         current_handles: dict[str, Any],
         tracker: StageTracker,
     ) -> None:
+        del current_handles, tracker  # dispatch contract; consumed by sibling stages
         apk_path = self._resolve_apk_path(descriptor)
         resp = await self._android_mcp.forward(
             action="androguard_summary", apk_path=apk_path,
@@ -992,6 +996,7 @@ class TargetAnalysisService:
         ``prompt_safe=False`` marker so any future prompt-builder
         that lands on this key has an unambiguous denial in shape.
         """
+        del current_handles, tracker  # dispatch contract; consumed by sibling stages
         mobsf_api_key = os.environ.get("MOBSF_API_KEY", "").strip()
         if not mobsf_api_key:
             _log.info(

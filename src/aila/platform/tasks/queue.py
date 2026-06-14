@@ -135,7 +135,7 @@ class TaskQueue:
         # bypass_dedup = True path (2026-06-12, maddie stall fix): when the
         # caller is mid-task and wants to enqueue a continuation, the dedup
         # query would match the caller's own still-running TaskRecord and
-        # return its id WITHOUT enqueueing a new task. The caller thinks
+        # hand back its id WITHOUT enqueueing a new task. The caller thinks
         # success; the worker exits; nothing's in the queue. The branch
         # idles forever.
         # Diagnosed on inv bc194403 maddie branch 20367ea3: AUTO_CONTINUE
