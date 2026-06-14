@@ -72,7 +72,7 @@ class MasvsSeedBuilder:
         """
         overview: Mapping[str, Any] = apk_overview or {}
         # fix §223 — ``overview.get('static_summary')`` may legitimately
-        # return ``None`` (covered by the ``or {}``) but a partially-built
+        # hand back ``None`` (covered by the ``or {}``) but a partially-built
         # apk_overview from a buggy upstream stage could also stash a list,
         # string, or other non-Mapping. ``.get('package')`` on those raises
         # AttributeError; guard the type so this seed builder never crashes

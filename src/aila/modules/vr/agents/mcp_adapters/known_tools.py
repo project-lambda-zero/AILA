@@ -306,7 +306,7 @@ _VIRTUAL_TOOLS: dict[str, frozenset[str]] = {
 LANGUAGE_UNRELIABLE_TOOLS: dict[str, frozenset[str]] = {
     # primary_language (normalized lowercase) → audit_mcp tool names
     # we MUST suppress because their result is systematically wrong
-    # for that language. Keys are matched against the normalized
+    # covering that language. Keys are matched against the normalized
     # lowercase form of ``VRTargetRecord.primary_language``.
     lang: _CALL_GRAPH_FRAGILE_TOOLS
     for lang in _DYNAMIC_DISPATCH_HEAVY_LANGUAGES

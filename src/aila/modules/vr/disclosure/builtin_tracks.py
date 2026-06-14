@@ -272,6 +272,7 @@ class CnaGithubGsaTrack(DisclosureTrack):
         severity_rating: str | None,
         embargo_days: int | None,
     ) -> str:
+        del poc_tier  # base-class kwarg; CnaGithubGsaTrack omits it from output
         affected = finding_payload.get("affected_component") or "(unspecified)"
         fixed = finding_payload.get("fixed_version") or "(unreleased)"
         cvss = severity_rating or "7.5 (placeholder — operator to compute)"

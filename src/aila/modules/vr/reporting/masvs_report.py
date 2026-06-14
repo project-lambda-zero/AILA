@@ -355,12 +355,12 @@ async def collect_findings(parent_id: str) -> MasvsAuditAggregate:
 # black text on the cell so badge contrast holds up even when the
 # reader prints the PDF on a monochrome printer — the text reads
 # either way).
-# Verdict colors: red for vulnerabilities, green for compliant, grey
-# for inapplicable, amber for not-yet-conclusive. Picked so a tired
-# reviewer skimming the report at 3am can't confuse "we found a
-# vulnerability" with "we found that this is fine" — the older labels
-# both contained the word "finding" and read the same on a similar-
-# toned badge.
+# Verdict colors: red for vulnerabilities; green for compliant;
+# grey for inapplicable; amber for not-yet-conclusive. Picked so a
+# tired reviewer skimming the report at 3am can't confuse "we found
+# a vulnerability" with "we found that this is fine" — the older
+# labels both contained the word "finding" and read the same on a
+# similar-toned badge.
 _VERDICT_COLOR: dict[MasvsVerdict, colors.Color] = {
     MasvsVerdict.FINDING: colors.HexColor("#d83b3b"),         # hard red
     MasvsVerdict.NO_FINDING: colors.HexColor("#2e9b5a"),      # solid green
@@ -369,12 +369,13 @@ _VERDICT_COLOR: dict[MasvsVerdict, colors.Color] = {
 }
 
 # Verdict → uppercase label used on badges and in count headers. The
-# words must read unambiguously at a glance. "FINDING" and "NO FINDING"
-# both contained the word "finding" and were visually indistinguishable
-# from each other when a reviewer scanned a long report. Switching to
-# the security-audit standard PASS / FAIL / N/A / REVIEW so the badge
-# verbatim tells the reviewer "this control is good", "this control is
-# broken", "doesn't apply to this APK", or "we couldn't determine".
+# words must read unambiguously at a glance. "FINDING" and "NO
+# FINDING" both contained the word "finding" and were visually
+# indistinguishable from each other when a reviewer scanned a long
+# report. Switching to the security-audit standard PASS / FAIL /
+# N/A / REVIEW so the badge verbatim tells the reviewer "this
+# control is good", "this control is broken", "doesn't apply to
+# this APK", or "we couldn't determine".
 _VERDICT_LABEL: dict[MasvsVerdict, str] = {
     MasvsVerdict.FINDING: "FAIL",
     MasvsVerdict.NO_FINDING: "PASS",

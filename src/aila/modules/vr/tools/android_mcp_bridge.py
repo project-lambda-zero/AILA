@@ -281,7 +281,7 @@ class AndroidMcpBridgeTool(Tool):
         # fix: pipeline-only blocks USED to return status='error' which
         # the agent treats as a transient failure and retries. 338
         # wasted attempts in 48h on the live VF Yanimda audit. Now we
-        # return status='ready' with a clear `_bridge_note` so the
+        # hand back status='ready' with a clear `_bridge_note` so the
         # agent reads "already done, look elsewhere" as a TERMINAL
         # outcome instead of a retry-able error. Empty payload fields
         # signal there is no fresh data; the note tells the agent

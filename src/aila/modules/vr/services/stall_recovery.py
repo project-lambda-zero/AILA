@@ -108,7 +108,7 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 # Default idle threshold (minutes). Slow turns shouldn't be mistaken
-# for stalls; 15 minutes is wider than any legitimate turn timing
+# as stalls; 15 minutes is wider than any legitimate turn timing
 # observed in worker logs.
 _DEFAULT_IDLE_MIN = 15
 
