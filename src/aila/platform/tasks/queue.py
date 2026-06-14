@@ -30,11 +30,13 @@ import json
 import logging
 import uuid
 from collections.abc import Callable
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from graphlib import CycleError, TopologicalSorter
 
+from arq.connections import RedisSettings, create_pool
+from sqlalchemy import delete as _delete
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from sqlmodel import func, select
 
 from aila.api.constants import MODULE_ID_PLATFORM
 from aila.platform.exceptions import WorkerUnreachableError
@@ -45,6 +47,7 @@ from aila.platform.tasks.constants import (
 )
 from aila.platform.tasks.models import TaskHandle, TaskRecord, TaskStatus
 from aila.storage.database import async_session_scope
+from aila.storage.db_models import WorkflowStateCursor
 
 __all__ = ["TaskQueue"]
 
@@ -307,8 +310,6 @@ class TaskQueue:
         task count for the same investigation. Returns 0 when the
         submission is not investigation-scoped or under the cap.
         """
-        from sqlmodel import func  # noqa: PLC0415
-
         inv_id = kwargs.get("investigation_id") if isinstance(kwargs, dict) else None
         if not isinstance(inv_id, str) or not inv_id:
             return 0.0
@@ -330,8 +331,6 @@ class TaskQueue:
 
     async def depth(self) -> dict[str, int]:
         """Return task counts grouped by status."""
-        from sqlmodel import func
-
         async with async_session_scope() as session:
             rows = (await session.exec(
                 select(TaskRecord.status, func.count(TaskRecord.id))
@@ -341,8 +340,6 @@ class TaskQueue:
 
     async def drain(self) -> int:
         """Pause new submissions and return pending task count."""
-        from sqlmodel import func
-
         self._draining = True
         async with async_session_scope() as session:
             count = (await session.exec(
@@ -363,8 +360,6 @@ class TaskQueue:
         Returns:
             Number of tasks requeued.
         """
-        from datetime import datetime, timedelta
-
         cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
         async with async_session_scope() as session:
             failed = (await session.exec(
@@ -449,9 +444,6 @@ class TaskQueue:
         cursor for the cursor reaper to pick up on a later sweep.
         """
         try:
-            from sqlalchemy import delete as _delete  # noqa: PLC0415
-
-            from aila.storage.db_models import WorkflowStateCursor  # noqa: PLC0415
             async with async_session_scope() as session:
                 await session.execute(
                     _delete(WorkflowStateCursor).where(
@@ -528,8 +520,6 @@ class TaskQueue:
             # RuntimeError from get_running_loop() means no loop present — safe to proceed.
 
         async def _enqueue() -> bool:
-            from arq.connections import RedisSettings, create_pool
-
             settings = RedisSettings.from_dsn(redis_url)
             pool = await create_pool(settings)
             try:
@@ -590,9 +580,6 @@ class TaskQueue:
         seconds in the future. Used by the per-investigation backpressure
         gate to avoid one investigation monopolising the worker pool.
         """
-        from datetime import timedelta  # noqa: PLC0415
-
-        from arq.connections import RedisSettings, create_pool  # noqa: PLC0415
         pool = None
         try:
             settings = RedisSettings.from_dsn(redis_url)

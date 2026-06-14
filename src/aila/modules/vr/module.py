@@ -28,9 +28,14 @@ from aila.platform.modules import (
     action_id_for,
 )
 from aila.platform.runtime import ToolRegistry
+from aila.platform.tasks.sweeps import all_periodic_sweeps, register_periodic_sweep
 
 from .capabilities import CAPABILITY_DESCRIPTION, CAPABILITY_EXAMPLES
+from .masvs.parent_reconciler import sweep_masvs_audit_parents
 from .runtime import VRRuntime
+from .services.branch_reaper import sweep_orphan_active_branches
+from .services.stage_tracker import reap_stuck_stages
+from .services.stall_recovery import sweep_stalled_investigations
 from .tool_keys import (
     ALL_TOOL_KEYS,
     TOOL_ADVISORY_BUILDER,
@@ -39,6 +44,7 @@ from .tool_keys import (
     TOOL_PATCH_DIFFER,
     TOOL_POC_RUNNER,
 )
+from .workflow.finalize import sweep_finalizable_investigations
 
 __all__ = ["VRModule", "create_module"]
 
@@ -237,18 +243,12 @@ def _register_vr_periodic_sweeps() -> None:
     in an autouse fixture automatically re-register on the next
     create_module() call.
     """
-    from aila.platform.tasks.sweeps import (  # noqa: PLC0415
-        all_periodic_sweeps,
-        register_periodic_sweep,
-    )
-
     if "vr.finalize" in all_periodic_sweeps():
         return
 
     # vr.stage_tracker — reaps stuck target-analysis stages whose
     # workers never recorded a terminal transition. Returns an int
     # count of stages reaped.
-    from .services.stage_tracker import reap_stuck_stages  # noqa: PLC0415
     register_periodic_sweep("vr.stage_tracker", reap_stuck_stages)
 
     # vr.branch_reaper — flips orphan ACTIVE branches whose parent
@@ -258,18 +258,12 @@ def _register_vr_periodic_sweeps() -> None:
     # terminated via some other path (operator DB action, legacy code
     # paths that completed an investigation without cascading to its
     # branches).
-    from .services.branch_reaper import (  # noqa: PLC0415
-        sweep_orphan_active_branches,
-    )
     register_periodic_sweep("vr.branch_reaper", sweep_orphan_active_branches)
 
     # vr.masvs_parent_reconciler — drives the parent batch state
     # machine (CREATED → RUNNING → COMPLETED) for MASVS audits.
     # MASVS-SPECIFIC: this sweep walks parent investigations of kind
     # masvs_audit and rolls up child statuses.
-    from .masvs.parent_reconciler import (  # noqa: PLC0415
-        sweep_masvs_audit_parents,
-    )
     register_periodic_sweep(
         "vr.masvs_parent_reconciler",
         sweep_masvs_audit_parents,
@@ -291,9 +285,6 @@ def _register_vr_periodic_sweeps() -> None:
     # vr/services/branch_reaper.py remain importable so any operator
     # tooling that hits them directly still works, but they no longer
     # run on the cron.
-    from .workflow.finalize import (  # noqa: PLC0415
-        sweep_finalizable_investigations,
-    )
     register_periodic_sweep("vr.finalize", sweep_finalizable_investigations)
 
     # vr.stall_recovery — recovery backstop for tasks killed mid-
@@ -311,18 +302,16 @@ def _register_vr_periodic_sweeps() -> None:
     # VR sweep. Per-tick submit cap defaults to 6 (env-tunable via
     # AILA_VR_STALL_RECOVERY_LIMIT). Idle threshold defaults to 15
     # minutes (env: AILA_VR_STALL_RECOVERY_IDLE_MIN).
-    from .services.stall_recovery import (  # noqa: PLC0415
-        sweep_stalled_investigations,
-    )
     register_periodic_sweep(
         "vr.stall_recovery", sweep_stalled_investigations,
     )
 
 
-# Module-load-time registration. Imports are deferred inside the
-# function so a `from aila.modules.vr.module import VRModule` for
-# the protocol type doesn't fire the registration; only the platform's
-# `create_module()` call triggers it.
+# Module-load-time registration. _register_vr_periodic_sweeps() is only
+# invoked from create_module(); a `from aila.modules.vr.module import VRModule`
+# for the protocol type pulls the supporting imports but does NOT fire
+# registration (the side-effect lives in the function call, gated by the
+# `vr.finalize` sentinel for idempotency).
 
 
 def create_module() -> ModuleProtocol:
