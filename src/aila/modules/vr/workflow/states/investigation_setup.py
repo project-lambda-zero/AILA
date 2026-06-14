@@ -627,13 +627,24 @@ async def _spawn_persona_siblings_and_enqueue(
             )
         )).all()
 
-        # Group by persona — pick the one with the most turns
+        # Group by persona — pick the one the operator most recently
+        # asked to drive. An ``operator_reopen:<userid>`` branch ALWAYS
+        # wins regardless of turn_count: the operator explicitly created
+        # it via POST /investigations/{id}/reopen to drive a fresh pass,
+        # and abandoning it in favour of a higher-turn-count old branch
+        # silently undoes that intent. Falls back to the most-turns
+        # winner for the regular re-enqueue case where no operator
+        # reset has happened.
+        def _branch_priority(b: VRInvestigationBranchRecord) -> tuple[int, int]:
+            is_reopen = (b.fork_reason or "").startswith("operator_reopen:")
+            return (1 if is_reopen else 0, b.turn_count)
+
         best_by_persona: dict[str, VRInvestigationBranchRecord] = {}
         for b in all_branches:
             if not b.persona_voice:
                 continue
             existing = best_by_persona.get(b.persona_voice)
-            if existing is None or b.turn_count > existing.turn_count:
+            if existing is None or _branch_priority(b) > _branch_priority(existing):
                 best_by_persona[b.persona_voice] = b
 
         # Reactivate best branch per persona, ABANDON duplicates
