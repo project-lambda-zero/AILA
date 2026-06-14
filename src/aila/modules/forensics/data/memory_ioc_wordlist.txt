@@ -1,0 +1,113 @@
+# Memory-strings IOC wordlist — consumed by windows.strings.Strings
+# One literal per line. Lines starting with '#' are ignored.
+# Keep this short; every entry costs a scan pass across the dump.
+
+# C2 / beacon protocol markers (Cobalt Strike, Metasploit, Sliver, Havoc)
+beacon.x64.dll
+beacon.x86.dll
+ReflectiveLoader
+MZARUH
+/submit.php?id=
+spawn_to_x86
+spawn_to_x64
+%COMSPEC% /c
+meterpreter
+stdapi_railgun_api
+stdapi_sys_process_execute
+metsrv.dll
+sliver-server
+HavocDemon
+havoc-c2
+
+# PowerShell Empire / Covenant / PoshC2
+Invoke-Empire
+EmpireProject
+Covenant.Task
+poshc2
+PowerShellRunner
+
+# Mimikatz / creds canaries
+mimikatz
+sekurlsa::logonpasswords
+sekurlsa::wdigest
+lsadump::sam
+kerberos::list
+kerberos::golden
+kerberos::ptt
+KiwiAndRegistryTools
+
+# LOLBIN abuse strings
+DownloadString(
+IEX(New-Object Net.WebClient
+iex (New-Object Net.WebClient
+-EncodedCommand
+FromBase64String(
+WinHttp.WinHttpRequest
+System.Management.Automation
+Add-MpPreference -ExclusionPath
+Set-MpPreference -DisableRealtimeMonitoring
+bitsadmin /transfer
+certutil -urlcache
+certutil -decode
+regsvr32 /s /i:http
+mshta http://
+mshta https://
+rundll32.exe javascript:
+
+# Common attacker tooling / persistence
+nltest /domain_trusts
+whoami /all
+net user /add
+net localgroup administrators /add
+schtasks /create
+wmic process call create
+psexec \\
+
+# Known RAT / loader strings
+SharpHound
+BloodHound
+gorilla-helper
+cobaltstrike
+cobaltstrike-beacon
+hancitor
+dridex
+emotet-loader
+trickbot
+qakbot
+icedid
+smokeloader
+remcos
+agent-tesla
+formbook
+
+# Tor / proxy markers often in C2 channels
+.onion
+TOR_SKIP_EXIT
+socks5://
+ngrok.io
+localtunnel.me
+
+# Specific strings linked to EDR-evasion primitives
+NtTestAlert
+EarlyBirdAPCInjection
+QueueUserAPC
+NtCreateThreadEx
+RtlCreateUserThread
+NtMapViewOfSection
+SetWindowsHookEx
+WriteProcessMemory
+VirtualAllocEx
+VirtualProtectEx
+CreateRemoteThread
+HellsGate
+HalosGate
+TartarusGate
+DirectSyscall
+IndirectSyscall
+
+# Kernel driver / rootkit markers
+\\Device\\PhysicalMemory
+\\Driver\\
+server.ko
+module_init
+register_kprobe

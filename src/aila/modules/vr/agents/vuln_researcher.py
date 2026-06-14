@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr.agents.mcp_adapters import (
@@ -356,7 +357,7 @@ class HonestVulnResearcher:
                     "(skipped duplicate LLM call)",
                     self.investigation_id, self.branch_id, turn_number,
                 )
-            except Exception as exc:  # noqa: BLE001 — catch pydantic
+            except (ValueError, TypeError, KeyError, AttributeError) as exc:  # noqa: BLE001 — catch pydantic
                 # ValidationError, KeyError, AttributeError, or any
                 # other cache-shape mismatch. We fall through to the
                 # API path; the bad cache row stays in DB but will be
@@ -378,7 +379,7 @@ class HonestVulnResearcher:
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                 )
-            except Exception as exc:  # noqa: BLE001 — any engine/LLM failure
+            except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:  # noqa: BLE001 — any engine/LLM failure
                 # must surface as VulnResearcherError so the loop catches
                 # it, marks exit_reason='researcher_error:<msg>', and
                 # the workflow finalises with status=FAILED instead of
@@ -705,7 +706,7 @@ class HonestVulnResearcher:
                         user_id="system",
                         group_id="vr_dispatcher",
                     )
-            except Exception as exc:  # noqa: BLE001 — fix §91
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError, VulnResearcherError) as exc:  # noqa: BLE001 — fix §91
                 # Was `(OSError, TimeoutError, RuntimeError, ValueError)`;
                 # SQLAlchemyError, pydantic.ValidationError, KeyError,
                 # AttributeError from upsert_review / evaluate_quorum /
@@ -2732,7 +2733,7 @@ async def _upsert_canonical_outcome(
     "terminal_submit" is the only value the function accepts. Any
     future caller passing a different action (e.g. a hypothetical
     "submit_canonical_addition" or a misuse from a non-terminal
-    handler) gets an AssertionError at function entry — a clear
+    handler) gets a ValueError at function entry — a clear
     failure mode rather than a silent canonical write from the
     wrong code path.
     """
@@ -2740,14 +2741,15 @@ async def _upsert_canonical_outcome(
     # Hard-fail with a precise message so future contributors who try
     # to call this from a non-terminal action see EXACTLY which
     # contract they broke. See the docstring above for the rationale.
-    assert action == "terminal_submit", (
-        f"_upsert_canonical_outcome is the ONE canonical-outcome write "
-        f"path and only accepts action='terminal_submit'; got "
-        f"action={action!r}. To extend a canonical outcome before "
-        f"terminating, do it from inside the branch's terminal_submit "
-        f"path (decision.action == 'submit') — see fix §173 in "
-        f"agents/vuln_researcher._upsert_canonical_outcome docstring."
-    )
+    if action != "terminal_submit":
+        raise ValueError(
+            f"_upsert_canonical_outcome is the ONE canonical-outcome write "
+            f"path and only accepts action='terminal_submit'; got "
+            f"action={action!r}. To extend a canonical outcome before "
+            f"terminating, do it from inside the branch's terminal_submit "
+            f"path (decision.action == 'submit') — see fix §173 in "
+            f"agents/vuln_researcher._upsert_canonical_outcome docstring.",
+        )
     # fix §168 — race-fix: serialize canonical-outcome writes per
     # investigation by taking a row lock on the parent investigation
     # row BEFORE the existence check. Concurrent terminal_submits

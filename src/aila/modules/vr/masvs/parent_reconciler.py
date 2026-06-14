@@ -50,6 +50,7 @@ import os
 
 from sqlalchemy import cast, func, select, update
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.functions import coalesce
 
 from aila.modules.vr._task_queue import default_task_queue
@@ -208,7 +209,7 @@ async def _run_sweep_step(
     """
     try:
         result = await fn(uow)  # type: ignore[operator]
-    except Exception as exc:  # noqa: BLE001 — bounded per the helper docstring
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:  # noqa: BLE001 — bounded per the helper docstring
         _record_sweep_step_failure(name, exc)
         return default
     _record_sweep_step_success(name)
@@ -293,7 +294,11 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 return 0
             try:
                 return int(row[0]) if hasattr(row, "__getitem__") else int(row)
-            except (TypeError, ValueError, IndexError):
+            except (TypeError, ValueError, IndexError) as exc:
+                _log.warning(
+                    "masvs_batch_refill: unexpected count row shape (%r): %s",
+                    row, exc,
+                )
                 return 0
 
         in_flight_row = (
@@ -377,7 +382,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                     team_id=None,
                 )
                 enqueued_total += 1
-            except Exception as exc:  # noqa: BLE001 — submission is best-effort
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:  # noqa: BLE001 — submission is best-effort
                 # fix §350 — traceback surfaces ARQ/Redis transport vs
                 # dedup-table regression vs idempotency-key collision
                 # without forcing a second tick to compare.
@@ -807,7 +812,7 @@ async def _wake_stale_branches(uow: UnitOfWork) -> int:
                 group_id="vr_escalator_wake",
             )
             enqueued += 1
-        except Exception as exc:  # noqa: BLE001 — submit is best-effort;
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:  # noqa: BLE001 — submit is best-effort;
             # dedup misses and Redis blips are tolerable, the next tick retries.
             # fix §350 — traceback surfaces so a structural break (auth
             # bind, dedup table drift) isn't silenced behind a transient
@@ -909,13 +914,15 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
 
     # fix §42 — single-session-scope invariant. The caller's UnitOfWork
     # implicitly begins a transaction on first session use; a stand-
-    # alone session that has not yet executed any statement will assert
-    # False here and surface the misuse loudly rather than silently
-    # losing the step-1→step-3 visibility chain.
-    assert uow.session.in_transaction(), (  # noqa: S101
-        "_reap_zombie_tasks_and_cursors must run inside a single "
-        "transaction so step 3's JOIN observes step 1's UPDATE"
-    )
+    # alone session that has not yet executed any statement raises
+    # here and surfaces the misuse loudly rather than silently
+    # losing the step-1→step-3 visibility chain. Explicit raise (not
+    # assert) so the invariant holds under ``python -O``.
+    if not uow.session.in_transaction():
+        raise RuntimeError(
+            "_reap_zombie_tasks_and_cursors must run inside a single "
+            "transaction so step 3's JOIN observes step 1's UPDATE",
+        )
 
     heartbeat_min = int(os.environ.get("VR_ZOMBIE_TASK_HEARTBEAT_MIN", "10"))
     batch_cap = int(os.environ.get("VR_CURSOR_CLEANUP_BATCH", "5000"))
@@ -1270,8 +1277,8 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
                     # MASVS parents rarely have their own branches but
                     # cap rows for the parent's own primary branch
                     # exist) is orphaned. Close them so the projection
-                    # is consistent. See services/branch_cleanup.py
-                    # for the operator-observed BLOCK bug.
+                    # is consistent. branch_cleanup.py documents the
+                    # BLOCK-state cleanup bug this guards against.
                     from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
                         close_orphan_branches_on_terminal,
                     )
@@ -1320,7 +1327,7 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         # 9. Side-channel wake LAST (fix §43). Earlier ordering ran
         # the wake inside _escalate_stuck_drafts (step 3); a worker
         # picking up that fresh task could advance a branch's cursor
-        # while steps 4/5/8 were mid-evaluation, producing torn
+        # during step 4/5/8 evaluation, producing torn
         # transitions. Running the wake AFTER every read-and-write
         # step guarantees the sweep tick observes a stable branch
         # snapshot.

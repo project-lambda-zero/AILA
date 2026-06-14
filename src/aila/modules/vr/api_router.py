@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func as sa_func
 from sqlalchemy import text as sa_text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
 from aila.api.limiter import limiter
@@ -329,7 +330,8 @@ def _fuzz_proposal_summary(record: Any) -> VRFuzzCampaignProposalSummary:
         try:
             v = _json.loads(blob)
             return v if isinstance(v, dict) else {}
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            _log.warning("_safe_dict failed reason=%s", exc)
             return {}
 
     seeds_raw = []
@@ -737,7 +739,8 @@ async def _compute_live_investigation_cost(
         )
         total = (await uow.session.exec(sum_q)).one()
         return float(total)
-    except (AttributeError, ImportError, ValueError):
+    except (AttributeError, ImportError, ValueError) as exc:
+        _log.warning("_compute_live_investigation_cost failed reason=%s", exc)
         return 0.0
 
 
@@ -2200,7 +2203,7 @@ def create_vr_router() -> APIRouter:
                         sa_text(f"DELETE FROM {stub_table} WHERE target_id = :tid"),
                         {"tid": target_id},
                     )
-                except Exception as exc:  # noqa: BLE001 — fix §350 DEFENSIVE: cascade cleanup tolerates missing tables on older deployments; traceback added so genuine schema/permission failures aren't silenced
+                except (SQLAlchemyError, OSError, RuntimeError) as exc:  # noqa: BLE001 — fix §350 DEFENSIVE: cascade cleanup tolerates missing tables on older deployments; traceback added so genuine schema/permission failures aren't silenced
                     # If a deployment lacks one of these tables, log + continue.
                     # The final target delete will surface any real FK still binding.
                     _log.warning(
@@ -4765,7 +4768,7 @@ def create_vr_router() -> APIRouter:
                         "WHERE kwargs_json LIKE :pat)"
                     ).bindparams(pat=f'%"{investigation_id}"%')
                 )
-            except Exception as exc:  # noqa: BLE001 — fix §350 DEFENSIVE: re-enqueue cursor cleanup is best-effort; traceback surfaces the stack so an alembic / FK-bind regression doesn't hide
+            except (SQLAlchemyError, OSError, RuntimeError) as exc:  # noqa: BLE001 — fix §350 DEFENSIVE: re-enqueue cursor cleanup is best-effort; traceback surfaces the stack so an alembic / FK-bind regression doesn't hide
                 logging.getLogger(__name__).warning(
                     "re-enqueue: cursor cleanup failed: %s", exc,
                     exc_info=True,

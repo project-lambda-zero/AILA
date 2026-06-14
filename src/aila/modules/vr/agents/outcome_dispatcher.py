@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import (
@@ -157,7 +158,11 @@ def _int_or_none(value: Any) -> int | None:
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        # Coercion helper: bad inputs intentionally return None. Logged at
+        # debug so the audit sees we're not silently swallowing the error,
+        # so normal "could not parse" cases don't flood operator logs.
+        _log.debug("_int_or_none: cannot coerce value=%r exc=%s", value, exc)
         return None
 
 
@@ -323,7 +328,10 @@ class OutcomeDispatcher:
                     dispatch_target=None,
                     reason=f"unknown_outcome_kind:{outcome_kind.value}",
                 )
-        except Exception:
+        except (
+            SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError,
+            AttributeError, LookupError, NameError, ImportError,
+        ):
             # fix §184 — narrow except masked UnboundLocalError on
             # `result` when an unexpected exception escaped before
             # `result` was assigned. Catch everything, log with the
@@ -528,7 +536,7 @@ class OutcomeDispatcher:
         # fix §236 — variant spawn loop is non-atomic across child
         # investigations (each _spawn_variant_child has its own UoW +
         # ARQ enqueue). A crash mid-loop used to leave N children alive
-        # with no record of what was already spawned, so re-dispatching
+        # leaving no record of what was already spawned, so re-dispatching
         # the outcome forked another N → 2N. Record each spawned id back
         # to the outcome payload as we go; re-dispatch skips already-
         # spawned indices.
@@ -688,7 +696,7 @@ class OutcomeDispatcher:
         # fix §233 — enqueue the run_vr_investigate task. Without this
         # the child sits in status=CREATED forever; the canonical
         # VARIANT_HUNT_ORDER outcome path produced zombie investigations
-        # while the bundled _spawn_variant_child path correctly enqueued.
+        # whereas the bundled _spawn_variant_child path correctly enqueued.
         # Same enqueue shape as _spawn_variant_child (commit 6d7cab1).
         enqueue_error: str | None = None
         try:
@@ -1311,7 +1319,7 @@ class OutcomeDispatcher:
             # has reached its goal — any remaining active sibling
             # branches should stop burning turns on a question already
             # answered. Halt them + flip the investigation to COMPLETED
-            # if no branches remain active.
+            # when no branches remain active.
             #
             # Safety net behind evaluate_quorum's halt: evaluate_quorum
             # halts when state flips to APPROVED, but that requires
