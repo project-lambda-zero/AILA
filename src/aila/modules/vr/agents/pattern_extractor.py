@@ -25,6 +25,7 @@ import httpx
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
+from aila.modules.vr.contracts import PayloadKind, SenderKind
 from aila.modules.vr.contracts.outcome import OutcomeKind
 from aila.modules.vr.contracts.pattern import (
     PatternConfidence,
@@ -33,12 +34,14 @@ from aila.modules.vr.contracts.pattern import (
     VRPatternCreate,
 )
 from aila.modules.vr.db_models import (
+    VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
     VRTargetRecord,
 )
 from aila.modules.vr.services.pattern_store import PatternStore
+from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
@@ -500,9 +503,6 @@ async def _emit_skip_event(
     engine's events. Best-effort: any failure inside this helper is
     swallowed so a logging failure can't derail the extraction caller.
     """
-    from aila.modules.vr.contracts import PayloadKind, SenderKind  # noqa: PLC0415
-    from aila.modules.vr.db_models import VRInvestigationBranchRecord  # noqa: PLC0415
-    from aila.platform.contracts._common import utc_now  # noqa: PLC0415
 
     try:
         async with UnitOfWork() as uow:

@@ -29,6 +29,7 @@ import httpx
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
+from aila.modules.vr.agents.auto_steering import maybe_post_auto_steering
 from aila.modules.vr.agents.mcp_adapters import (
     AdapterContext,
     get_adapter,
@@ -38,6 +39,8 @@ from aila.modules.vr.contracts import PayloadKind, SenderKind
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
+    VRInvestigationRecord,
+    VRTargetRecord,
 )
 from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
 from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
@@ -558,9 +561,6 @@ class ToolExecutor:
             # never observable to the agent itself; only an out-of-band
             # reader (operator UI streaming inv messages) could see
             # the result-message before the steering operator-message.
-            from aila.modules.vr.agents.auto_steering import (  # noqa: PLC0415
-                maybe_post_auto_steering,
-            )
             # fix §198 — bridge_base_url comes from the audit_mcp
             # bridge instance, not a hardcoded literal. See
             # AuditMcpBridgeTool.base_url(); falls back to default
@@ -721,8 +721,7 @@ class ToolExecutor:
             return args
         new_args = dict(args)
         new_args["index_id"] = resolved
-        from logging import getLogger  # noqa: PLC0415
-        getLogger(__name__).info(
+        _log.info(
             "tool_executor: auto-corrected index_id inv=%s "
             "from %r to %r (saves an LLM round-trip)",
             investigation_id, current, resolved,
@@ -756,24 +755,16 @@ class ToolExecutor:
             cache.move_to_end(investigation_id)
             return cache[investigation_id]
         try:
-            from sqlmodel import select  # noqa: PLC0415
-
-            from aila.modules.vr.db_models import (  # noqa: PLC0415
-                VRInvestigationRecord,
-                VRTargetRecord,
-            )
-            from aila.platform.uow import UnitOfWork  # noqa: PLC0415
-
             async with UnitOfWork() as uow:
                 inv = (await uow.session.exec(
-                    select(VRInvestigationRecord).where(
+                    _select(VRInvestigationRecord).where(
                         VRInvestigationRecord.id == investigation_id,
                     ),
                 )).first()
                 if inv is None or not inv.target_id:
                     return self._cache_index_id(investigation_id, "")
                 target = (await uow.session.exec(
-                    select(VRTargetRecord).where(
+                    _select(VRTargetRecord).where(
                         VRTargetRecord.id == inv.target_id,
                     ),
                 )).first()

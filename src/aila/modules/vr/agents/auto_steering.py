@@ -37,7 +37,7 @@ import json
 import logging
 
 import httpx
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts import (
@@ -45,7 +45,10 @@ from aila.modules.vr.contracts import (
     PayloadKind,
     SenderKind,
 )
-from aila.modules.vr.db_models import VRInvestigationMessageRecord
+from aila.modules.vr.db_models import (
+    VRInvestigationBranchRecord,
+    VRInvestigationMessageRecord,
+)
 from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
 
@@ -469,8 +472,6 @@ async def _already_posted(
     first auto-steering blocked every future steering on the same
     condition forever.
     """
-    from aila.modules.vr.db_models import VRInvestigationBranchRecord  # noqa: PLC0415
-
     async with UnitOfWork() as uow:
         rows = (await uow.session.exec(
             _select(VRInvestigationMessageRecord)
@@ -536,11 +537,8 @@ async def _post(
     catch it and return ``None`` — the first writer wins, the second
     silently observes the row.
     """
-    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
-
     async with UnitOfWork() as uow:
         # Resolve primary branch for broadcast
-        from aila.modules.vr.db_models import VRInvestigationBranchRecord  # noqa: PLC0415
         primary_id = (await uow.session.exec(
             _select(VRInvestigationBranchRecord.id)
             .where(VRInvestigationBranchRecord.investigation_id == investigation_id)

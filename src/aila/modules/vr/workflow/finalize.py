@@ -56,11 +56,19 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.functions import coalesce
 from sqlmodel import select
 
+from aila.modules.vr._task_queue import default_task_queue
 from aila.modules.vr.contracts import BranchStatus, InvestigationStatus
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
+)
+from aila.modules.vr.services.investigation_finalizers import (
+    close_rejected_for_investigation,
+    synthesize_no_finding_for_investigation,
+)
+from aila.modules.vr.services.investigation_reaper import (
+    evaluate_cap_for_investigation,
 )
 from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
@@ -324,7 +332,6 @@ async def _handle_all_outcomes(
     outcome. We call the same enqueue here so finalize and the emit
     path produce identical behavior.
     """
-    from .._task_queue import default_task_queue  # noqa: PLC0415
     from .task import run_vr_synthesis  # noqa: PLC0415
 
     task_queue = default_task_queue()
@@ -350,10 +357,6 @@ async def _handle_rejected_quorum(
     the underlying body lives in ``parent_reconciler._close_rejected_outcomes``
     until the next refactor moves it physically.
     """
-    from ..services.investigation_finalizers import (  # noqa: PLC0415
-        close_rejected_for_investigation,
-    )
-
     closed = await close_rejected_for_investigation(investigation_id)
     return (
         f"rejected_close:closed={closed} "
@@ -373,10 +376,6 @@ async def _handle_wall_clock_idle_grace(
     scoped to one inv id, so finalize doesn't pay the O(N) sweep cost
     when triggered per-investigation.
     """
-    from ..services.investigation_reaper import (  # noqa: PLC0415
-        evaluate_cap_for_investigation,
-    )
-
     reason = await evaluate_cap_for_investigation(investigation_id)
     if reason is None:
         return (
@@ -400,10 +399,6 @@ async def _handle_all_terminal_no_outcome(
     refactor moves it physically.
     """
     del context  # dispatch contract: all _HANDLERS share (inv_id, context) signature
-    from ..services.investigation_finalizers import (  # noqa: PLC0415
-        synthesize_no_finding_for_investigation,
-    )
-
     wrote = await synthesize_no_finding_for_investigation(investigation_id)
     return f"audit_memo_synthesized:wrote={wrote}"
 
