@@ -20,7 +20,7 @@ import httpx
 # (which loads only ``<module>/workflow/task.py``) picks them up and
 # registers them with the ARQ function table. Without these re-exports
 # the API can enqueue rank/profile jobs but the worker rejects them
-# with ``function 'run_function_ranking' not found``.
+# saying ``function 'run_function_ranking' not found``.
 from aila.modules.vr.enrichment.workers import (  # noqa: F401  (re-export for ARQ registration)
     run_capability_profile_build,
     run_function_ranking,
@@ -205,16 +205,22 @@ async def run_vr_draft_poc(
     investigation_id: str,
     **_: Any,
 ) -> dict[str, Any]:
-    """Draft a PoC for a confirmed VR finding via PocWriter agent.
+    """Draft a PoC for a confirmed VR finding via the PocWriter agent.
 
     Loads facts from the source investigation (via pdf_report's
     ``_collect_facts`` so PoC + PDF report see identical input),
-    runs the writer, persists the result onto ``VRFindingRecord.
-    poc_code`` + ``poc_language``.
+    runs the writer, then commits ``poc_code``, ``poc_language``,
+    and a structured ``poc_draft_metadata`` entry into
+    ``VRFindingRecord.evidence_refs_json``.
 
-    Failures are caught + logged onto the finding's
-    ``draft_error_text`` field so operator sees what went wrong
-    rather than a silent miss.
+    If the canonical outcome's ``verifier_report`` verdict is
+    ``refuted``, skips drafting entirely and stamps the finding's
+    ``poc_skip_reason`` so operators see why no PoC exists.
+
+    Writer-side failures (RuntimeError / ValueError) are logged via
+    ``log.warning`` and returned in the result dict with
+    ``status='writer_error'``; the finding row is left untouched in
+    that case.
     """
     del ctx
     import json as _json  # noqa: PLC0415

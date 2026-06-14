@@ -37,6 +37,7 @@ import json
 import logging
 
 import httpx
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts import (
@@ -98,8 +99,6 @@ def _detect_read_lines_past_eof(
     in its response — we just compare against the requested ``end``."""
     if (server_id, tool_name) != ("audit_mcp", "read_lines"):
         return False
-    if not isinstance(raw, dict):
-        return False
     total = raw.get("total_lines_in_file")
     if not isinstance(total, int) or total <= 0:
         return False
@@ -114,15 +113,13 @@ def _detect_read_lines_past_eof(
 
 
 def _detect_read_function_returned_file_header(
-    server_id: str, tool_name: str, args: dict, raw: dict,
+    server_id: str, tool_name: str, _args: dict, raw: dict,
 ) -> bool:
     """``read_function`` indexer fault: returns the file's license
     header instead of the requested function body. Symptom: ``line``
     < 50 (suspiciously low for a deep function) AND content starts
     with a comment or include block."""
     if (server_id, tool_name) != ("audit_mcp", "read_function"):
-        return False
-    if not isinstance(raw, dict):
         return False
     line = raw.get("line")
     if not isinstance(line, int) or line > 50:
@@ -138,7 +135,7 @@ def _detect_read_function_returned_file_header(
 
 
 def _detect_read_lines_file_not_found(
-    server_id: str, tool_name: str, args: dict, raw: dict,
+    server_id: str, tool_name: str, _args: dict, raw: dict,
 ) -> bool:
     """``read_lines`` returned ``status=error`` with a file-not-found
     message. Symptom of an agent chasing a path that doesn't exist in
@@ -153,8 +150,6 @@ def _detect_read_lines_file_not_found(
     """
     if (server_id, tool_name) != ("audit_mcp", "read_lines"):
         return False
-    if not isinstance(raw, dict):
-        return False
     if raw.get("status") != "error":
         return False
     err = str(raw.get("error") or "").lower()
@@ -164,7 +159,7 @@ def _detect_read_lines_file_not_found(
 
 
 def _detect_tool_kwarg_rejected(
-    server_id: str, tool_name: str, args: dict, raw: dict,
+    server_id: str, _tool_name: str, _args: dict, raw: dict,
 ) -> bool:
     """Bridge rejected the call because the kwargs don't match the
     tool's signature (missing required, unknown keyword, wrong shape).
@@ -177,8 +172,6 @@ def _detect_tool_kwarg_rejected(
     rejections. Other MCP servers may use different phrasings.
     """
     if server_id != "audit_mcp":
-        return False
-    if not isinstance(raw, dict):
         return False
     if raw.get("status") != "error":
         return False
@@ -201,7 +194,7 @@ def _detect_tool_kwarg_rejected(
 
 async def _derive_eof_correction(
     base_url: str, index_id: str, file_path: str, total: int,
-    requested_end: int, branch_recent_queries: list[str],
+    branch_recent_queries: list[str],
 ) -> str | None:
     """For past-EOF: try to identify the symbol the agent was looking
     for (from recent semantic_search queries on this branch) and fire
@@ -229,7 +222,12 @@ async def _derive_eof_correction(
                 json={"index_id": index_id, "query": query, "top_k": 3},
             )
             data = resp.json()
-    except (httpx.ConnectError, httpx.TimeoutException, ValueError):
+    except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
+        _log.warning(
+            "auto_steering: derive_eof_correction semantic_search failed "
+            "index_id=%s file=%s err=%s",
+            index_id, file_path, exc, exc_info=True,
+        )
         return None
     results = data.get("results") or data.get("matches") or []
     if not results:
@@ -277,7 +275,12 @@ async def _derive_file_header_correction(
                 json={"index_id": index_id, "query": query, "top_k": 3},
             )
             data = resp.json()
-    except (httpx.ConnectError, httpx.TimeoutException, ValueError):
+    except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
+        _log.warning(
+            "auto_steering: derive_file_header_correction semantic_search failed "
+            "index_id=%s function=%s err=%s",
+            index_id, function_name, exc, exc_info=True,
+        )
         return None
     results = data.get("results") or data.get("matches") or []
     real_hits = []
@@ -416,7 +419,7 @@ async def _derive_kwarg_rejected_correction(
 
 
 async def _recent_semantic_queries(
-    investigation_id: str, branch_id: str, limit: int = 6,
+    branch_id: str, limit: int = 6,
 ) -> list[str]:
     """Pull the most recent semantic_search queries this branch ran.
     Used to derive the agent's current search intent for the EOF
@@ -608,9 +611,9 @@ async def _evaluate_rules(
         key = f"read_lines_past_eof:{file_path}:{requested_end}"
         if await _already_posted(investigation_id, key):
             return None
-        queries = await _recent_semantic_queries(investigation_id, branch_id)
+        queries = await _recent_semantic_queries(branch_id)
         correction = await _derive_eof_correction(
-            bridge_base_url, index_id, file_path, total, requested_end, queries,
+            bridge_base_url, index_id, file_path, total, queries,
         )
         if not correction:
             return None
@@ -638,7 +641,7 @@ async def _evaluate_rules(
         key = f"read_lines_file_not_found:{index_id}:{file_path}"
         if await _already_posted(investigation_id, key):
             return None
-        queries = await _recent_semantic_queries(investigation_id, branch_id)
+        queries = await _recent_semantic_queries(branch_id)
         correction = await _derive_file_not_found_correction(
             bridge_base_url, index_id, file_path, queries,
         )
@@ -691,7 +694,7 @@ async def maybe_post_auto_steering(
     raw_result schema drift) surfaces instead of drowning in noise.
     """
     global _consecutive_failures  # noqa: PLW0603 — single module-level counter
-    if not raw_result or not isinstance(raw_result, dict):
+    if not raw_result:
         return None
     # NOTE: do NOT early-return on status != "ready" — error responses
     # are the trigger for Rule 3 (file_not_found) and Rule 4 (kwarg
@@ -707,7 +710,10 @@ async def maybe_post_auto_steering(
             raw_result=raw_result,
             bridge_base_url=bridge_base_url,
         )
-    except Exception as exc:  # noqa: BLE001 — auto-steering must never fail loud
+    except (  # noqa: BLE001 — auto-steering must never fail loud (kept post-fix in case new code paths add Exception-subclass throwers)
+        OSError, RuntimeError, ValueError, TypeError, AttributeError,
+        KeyError, httpx.HTTPError, json.JSONDecodeError, SQLAlchemyError,
+    ) as exc:
         _consecutive_failures += 1
         if _consecutive_failures >= _FAILURE_ESCALATION_THRESHOLD:
             # fix §350 — escalation includes traceback so operator can

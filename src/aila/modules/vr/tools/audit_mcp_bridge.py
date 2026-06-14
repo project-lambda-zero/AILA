@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from sqlalchemy.exc import SQLAlchemyError
 
 from aila.platform.tools._common import Tool
 
@@ -83,7 +84,11 @@ def _resolve_jadx_prefixes(root: Path, file_path: str) -> Path | None:
                 if entry.name.endswith(part)
                 and _JADX_PREFIX_RE.match(entry.name)
             ]
-        except OSError:
+        except OSError as exc:
+            logging.getLogger(__name__).warning(
+                "_resolve_jadx_prefixes: iterdir FAILED for %s: %s",
+                cursor, exc,
+            )
             return None
         if len(matches) != 1:
             return None
@@ -347,7 +352,14 @@ class AuditMcpBridgeTool(Tool):
             if isinstance(cfg_value, str) and cfg_value.strip():
                 self._resolved_base_url = cfg_value.rstrip("/")
                 return self._resolved_base_url
-        except Exception as exc:  # noqa: BLE001
+        except (
+            ImportError,
+            SQLAlchemyError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+        ) as exc:  # noqa: BLE001
             # fix §209 — broadened from (ValueError, RuntimeError,
             # ImportError). SQLAlchemy OperationalError, ConfigKeyError,
             # and anything else raised by ConfigRegistry().get used to
