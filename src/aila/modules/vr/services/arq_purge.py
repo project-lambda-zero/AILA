@@ -35,12 +35,15 @@ zrem/delete pair below is the canonical mitigation reference.
 from __future__ import annotations
 
 import logging
+import os
 import pickle
 from typing import Any
 
 from aila.platform.tasks.constants import (
     ARQ_JOB_PREFIX,
     ARQ_QUEUE_KEY_TEMPLATE,
+    CONFIG_KEY_REDIS_URL,
+    CONFIG_NS_PLATFORM,
 )
 
 _log = logging.getLogger(__name__)
@@ -65,16 +68,11 @@ async def purge_arq_jobs_for_investigation(
     miss here, so a partial purge is safe.
     """
     if redis_url is None:
-        import os  # noqa: PLC0415
         redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
         if not redis_url:
             try:
                 from aila.platform.services.config_registry import (  # noqa: PLC0415
                     ConfigRegistry,
-                )
-                from aila.platform.tasks.constants import (  # noqa: PLC0415
-                    CONFIG_KEY_REDIS_URL,
-                    CONFIG_NS_PLATFORM,
                 )
                 registry = ConfigRegistry()
                 redis_url = await registry.get(

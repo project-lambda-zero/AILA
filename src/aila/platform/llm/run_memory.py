@@ -31,7 +31,12 @@ import logging
 import threading
 from typing import Any
 
+from sqlalchemy import select as _select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.sql import func as _func
+
+from aila.platform.llm.cost_record import LLMCostRecord
+from aila.storage.database import async_session_scope
 
 _log = logging.getLogger(__name__)
 
@@ -132,12 +137,6 @@ class RunMemory:
         if self.get(run_id, _SEED_FLAG, False):
             return
         try:
-            from sqlalchemy import select as _select  # noqa: PLC0415
-            from sqlalchemy.sql import func as _func  # noqa: PLC0415
-
-            from aila.platform.llm.cost_record import LLMCostRecord  # noqa: PLC0415
-            from aila.storage.database import async_session_scope  # noqa: PLC0415
-
             async with async_session_scope() as session:
                 row = (
                     await session.execute(

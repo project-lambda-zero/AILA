@@ -53,7 +53,13 @@ from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationRecord,
 )
+from aila.modules.vr.services.arq_purge import purge_arq_jobs_for_investigation
+from aila.modules.vr.workflow.task import run_vr_investigate
 from aila.platform.contracts._common import utc_now
+from aila.platform.llm.cancellation import (
+    cancel_for_investigation,
+    clear_for_investigation,
+)
 from aila.platform.tasks.models import TaskStatus
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import RESERVED_PAUSED
@@ -253,9 +259,6 @@ async def pause_investigation_atomic(
     #    cursor on next pickup, see __paused__, exit clean. We log
     #    failures but never propagate — the cursor SSOT is enough.
     try:
-        from aila.modules.vr.services.arq_purge import (  # noqa: PLC0415
-            purge_arq_jobs_for_investigation,
-        )
         await purge_arq_jobs_for_investigation(
             investigation_id, track="vr",
         )
@@ -275,9 +278,6 @@ async def pause_investigation_atomic(
     # check (cancel_for_investigation is a no-op if no token exists
     # in this process — the cursor SSOT is the cross-process synchronizer).
     try:
-        from aila.platform.llm.cancellation import (  # noqa: PLC0415
-            cancel_for_investigation,
-        )
         cancel_for_investigation(investigation_id)
     except (OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort
         _log.warning(
@@ -418,9 +418,6 @@ async def resume_investigation_atomic(
     # get_cancellation_token(investigation_id) and receive a freshly-
     # minted token, not the cancelled-from-pause one.
     try:
-        from aila.platform.llm.cancellation import (  # noqa: PLC0415
-            clear_for_investigation,
-        )
         clear_for_investigation(investigation_id)
     except (OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort
         _log.warning(
@@ -430,7 +427,6 @@ async def resume_investigation_atomic(
         )
     # 4. AFTER commit: fan-out one ARQ task per resumed cursor. Closes
     #    §34 — every branch (not just the primary) gets a worker pickup.
-    from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
 
     submitted = 0
     for run_id in resumed_run_ids:

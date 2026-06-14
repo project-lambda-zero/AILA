@@ -24,6 +24,7 @@ from aila.modules.vr.agents import (
     VulnResearcherError,
 )
 from aila.modules.vr.agents.tool_executor import ToolExecutor
+from aila.modules.vr.contracts.branch import BranchStatus
 from aila.modules.vr.contracts.investigation import InvestigationStatus
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
@@ -32,9 +33,15 @@ from aila.modules.vr.db_models import (
 from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
 from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
 from aila.modules.vr.tools.ida_bridge import IDABridgeTool
+from aila.platform.llm.cancellation import get_cancellation_token
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
-from aila.platform.workflows.types import StateResult
+from aila.platform.workflows.types import (
+    RESERVED_PAUSED,
+    RESERVED_TERMINAL_STATES,
+    StateResult,
+)
+from aila.storage.db_models import WorkflowStateCursor
 
 __all__ = ["state_investigation_loop"]
 
@@ -113,12 +120,6 @@ async def _is_loop_alive(investigation_id: str, branch_id: str) -> tuple[bool, s
       * branch.status not in dead states
       * inv.status == RUNNING
     """
-    from aila.modules.vr.contracts.branch import BranchStatus  # noqa: PLC0415
-    from aila.platform.workflows.types import (  # noqa: PLC0415
-        RESERVED_PAUSED,
-        RESERVED_TERMINAL_STATES,
-    )
-    from aila.storage.db_models import WorkflowStateCursor  # noqa: PLC0415
 
     async with UnitOfWork() as uow:
         inv = (await uow.session.exec(
@@ -158,9 +159,6 @@ async def _is_loop_alive(investigation_id: str, branch_id: str) -> tuple[bool, s
     # so the next turn's alive check exits clean instead of paying
     # the LLM cost.
     try:
-        from aila.platform.llm.cancellation import (  # noqa: PLC0415
-            get_cancellation_token,
-        )
         if get_cancellation_token(investigation_id).is_cancelled():
             return False, "cancellation_token_set"
     except (ImportError, AttributeError, RuntimeError, ValueError, TypeError) as exc:
