@@ -548,6 +548,30 @@ async def _on_startup(ctx: dict[str, Any]) -> None:
     _db_module._ASYNC_ENGINES.clear()
     _log.debug("ARQ on_startup: cleared %d stale async engine(s) (Windows loop migration)", len(engines))
 
+    # Trigger every builtin module's create_module() so module-owned
+    # periodic sweeps (vr.stage_tracker, vr.branch_reaper,
+    # vr.masvs_parent_reconciler, vr.finalize, vr.stall_recovery, etc.)
+    # register themselves with the platform sweep registry. Without
+    # this, the worker process only sees platform-level sweeps; module
+    # sweeps never fire on the cron, even though the SAME registration
+    # works in the backend (which calls register_builtin_modules via
+    # build_platform_runtime).
+    #
+    # Diagnosed 2026-06-14: 15 SampleApp investigations stalled for 11+
+    # hours because vr.stall_recovery never fired in any worker. Cron
+    # reaper was iterating an EMPTY list of VR sweeps. Manual call to
+    # the sweep function showed examined=15 / enqueued=90 would have
+    # been ready — sweep was correct, just never triggered.
+    try:
+        from aila.platform.modules import load_builtin_modules  # noqa: PLC0415
+        load_builtin_modules()
+        _log.info("ARQ on_startup: registered builtin module sweeps")
+    except Exception as exc:  # noqa: BLE001 — non-fatal, worker still runs
+        _log.warning(
+            "ARQ on_startup: builtin module registration failed: %s",
+            exc, exc_info=True,
+        )
+
     await _sweep_orphan_running_tasks()
 
 
