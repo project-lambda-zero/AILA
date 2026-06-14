@@ -4,8 +4,34 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-data/
-reports/
+# These two patterns are anchored to the repo root only. Without the
+# leading slash, they used to match every `data/` and `reports/`
+# directory anywhere in the tree — including legitimate module-side
+# config (cvss_templates.json, cwe_mappings.json, tool_requirements.json,
+# seed_*.json, etc.) which silently dropped from git. Issue #7
+# surfaced this for the VR module.
+/data/
+/reports/
+
+# Forensics offline-bundle binary distributions — multi-100 MB
+# vendor tools (jadx-win.zip ~116 MB, python installers, hashcat,
+# etc.) shipped via release artifacts / external download, NEVER
+# git. Module's prepare_offline_bundles.py expects users to
+# populate this dir locally per the README inside it.
+src/aila/modules/forensics/data/offline_bundles/
+
+# Defensive: any of these binary-blob extensions anywhere under
+# src/aila/modules/*/data/. Module data should be JSON / YAML /
+# small text fixtures — never installers, archives, wheels, or
+# spreadsheets shipped through git.
+src/aila/modules/*/data/**/*.zip
+src/aila/modules/*/data/**/*.7z
+src/aila/modules/*/data/**/*.tar.gz
+src/aila/modules/*/data/**/*.tgz
+src/aila/modules/*/data/**/*.exe
+src/aila/modules/*/data/**/*.msi
+src/aila/modules/*/data/**/*.whl
+src/aila/modules/*/data/**/*.xlsx
 
 src/data/
 src/reports/

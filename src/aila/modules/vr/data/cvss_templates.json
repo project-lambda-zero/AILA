@@ -1,0 +1,122 @@
+{
+  "overflow_stack": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Assumes network-reachable stack overflow leading to RCE. Adjust AV to L/A/P if local-only or adjacent. Drop C/I to N if exploitation is DoS-only."
+  },
+  "overflow_heap": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Assumes network-reachable heap overflow with RCE potential. Heap shaping may justify AC:H. Drop to A:H only if no code-exec primitive proven."
+  },
+  "uaf": {
+    "AV": "N", "AC": "H", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "AC:H reflects typical race window or allocator-shaping requirement. Lower to AC:L if reliably triggered without timing constraints."
+  },
+  "double_free": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Assumes double free leading to allocator corruption and RCE. Drop C/I to N and A:H only if outcome is purely DoS."
+  },
+  "type_confusion": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Assumes confused type yields read/write primitive into adjacent objects. Set UI:R for browser/JIT-bound type confusions."
+  },
+  "format_string": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Format string with attacker-controlled specifier supports both read (C:H) and write (I:H/A:H) primitives. Drop I/A to N for read-only %s/%x leaks."
+  },
+  "integer_overflow": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Treated as a stepping stone to memory corruption. Re-score against the downstream primitive (overflow/oob_write) once chain is established."
+  },
+  "null_deref": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "N", "I": "N", "A": "H",
+    "notes": "DoS only unless the platform allows mapping the NULL page (then re-score against the resulting RCE primitive)."
+  },
+  "oob_read": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "N", "A": "L",
+    "notes": "Information disclosure with possible adjacent crash. Drop C to L if leak granularity is byte-level only; A:N if reads cannot fault."
+  },
+  "oob_write": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Out-of-bounds write generally yields integrity loss and code exec potential. Reduce to A:H only if target memory is non-control data."
+  },
+  "arw": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "C",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Full arbitrary read+write primitive. S:C reflects ability to cross security boundaries (kernel objects, sandboxed processes)."
+  },
+  "aar": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "N", "A": "N",
+    "notes": "Read primitive only. Pure information disclosure; pair with a write primitive to reach RCE."
+  },
+  "aaw": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "L", "I": "H", "A": "H",
+    "notes": "Write-what-where primitive. C:L because writes can clobber observable data; raise to S:C if write crosses trust boundary."
+  },
+  "rip_control": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Direct instruction-pointer hijack equates to RCE in target context. Set S:C if hijack pivots into a more privileged context."
+  },
+  "leak_stack": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "N", "A": "N",
+    "notes": "Stack memory disclosure. Drop C to L if leaked bytes are bounded and not believed to contain secrets/canaries."
+  },
+  "leak_heap": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "N", "A": "N",
+    "notes": "Heap memory disclosure. C:H by default because heap commonly holds session tokens, keys, and pointers."
+  },
+  "leak_libc": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "L", "I": "N", "A": "N",
+    "notes": "libc base disclosure undermines ASLR but leaks no user data on its own. Re-score against the chained exploit it enables."
+  },
+  "leak_pie": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "L", "I": "N", "A": "N",
+    "notes": "PIE base disclosure undermines ASLR. Standalone impact is low; treat as a chain ingredient."
+  },
+  "info_disclosure": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "N", "A": "N",
+    "notes": "Generic sensitive-data exposure. Calibrate C against what is actually leaked (credentials, PII, internal addresses)."
+  },
+  "cmd_injection": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "OS command injection in the service context. Set S:C if injection reaches a more privileged shell or container host."
+  },
+  "deser_gadget": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Untrusted deserialization with a known gadget chain leading to RCE. PR:L if the deserialization endpoint requires authentication."
+  },
+  "ssti": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Server-side template injection yielding code execution in the renderer context. Drop to C:H/I:N/A:N for read-only sandboxed engines."
+  },
+  "sqli": {
+    "AV": "N", "AC": "L", "PR": "N", "UI": "N", "S": "U",
+    "C": "H", "I": "H", "A": "H",
+    "notes": "Default assumes pre-auth SQLi with full DB read/write. Set PR:L for authenticated-only injection; A:L if writes are restricted."
+  },
+  "ssrf": {
+    "AV": "N", "AC": "L", "PR": "L", "UI": "N", "S": "C",
+    "C": "H", "I": "L", "A": "N",
+    "notes": "Authenticated SSRF reaching internal services. S:C reflects crossing the network trust boundary; set PR:N for unauth SSRF."
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "linux": [
+    {"name": "gcc", "check": "gcc --version", "required": true, "install_commands": ["apt install -y gcc"]},
+    {"name": "g++", "check": "g++ --version", "required": true, "install_commands": ["apt install -y g++"]},
+    {"name": "make", "check": "make --version", "required": true, "install_commands": ["apt install -y make"]},
+    {"name": "gdb", "check": "gdb --version", "required": true, "install_commands": ["apt install -y gdb"]},
+    {"name": "python3", "check": "python3 --version", "required": true, "install_commands": []},
+    {"name": "pwntools", "check": "python3 -c 'import pwn'", "required": true, "install_commands": ["pip3 install pwntools"]},
+    {"name": "ropper", "check": "python3 -c 'import ropper'", "required": false, "install_commands": ["pip3 install ropper"]},
+    {"name": "checksec", "check": "checksec --version", "required": false, "install_commands": ["apt install -y checksec"]},
+    {"name": "patchelf", "check": "patchelf --version", "required": false, "install_commands": ["apt install -y patchelf"]},
+    {"name": "afl-fuzz", "check": "afl-fuzz --help", "required": false, "install_commands": ["apt install -y afl++"]},
+    {"name": "honggfuzz", "check": "honggfuzz --help", "required": false, "install_commands": ["apt install -y honggfuzz"]},
+    {"name": "semgrep", "check": "semgrep --version", "required": false, "install_commands": ["pip3 install semgrep"]},
+    {"name": "radare2", "check": "r2 -v", "required": false, "install_commands": ["apt install -y radare2"]},
+    {"name": "binwalk", "check": "binwalk --help", "required": false, "install_commands": ["apt install -y binwalk"]},
+    {"name": "strace", "check": "strace -V", "required": false, "install_commands": ["apt install -y strace"]},
+    {"name": "ltrace", "check": "ltrace -V", "required": false, "install_commands": ["apt install -y ltrace"]},
+    {"name": "valgrind", "check": "valgrind --version", "required": false, "install_commands": ["apt install -y valgrind"]},
+    {"name": "qemu-user", "check": "qemu-x86_64 --version", "required": false, "install_commands": ["apt install -y qemu-user qemu-user-static"]},
+    {"name": "git", "check": "git --version", "required": true, "install_commands": ["apt install -y git"]}
+  ],
+  "windows": [
+    {"name": "gcc", "check": "gcc --version", "required": true, "install_commands": ["choco install -y mingw"]},
+    {"name": "make", "check": "make --version", "required": false, "install_commands": ["choco install -y make"]},
+    {"name": "python3", "check": "python --version", "required": true, "install_commands": ["choco install -y python"]},
+    {"name": "pwntools", "check": "python -c \"import pwn\"", "required": true, "install_commands": ["pip install pwntools"]},
+    {"name": "ropper", "check": "python -c \"import ropper\"", "required": false, "install_commands": ["pip install ropper"]},
+    {"name": "semgrep", "check": "semgrep --version", "required": false, "install_commands": ["pip install semgrep"]},
+    {"name": "windbg", "check": "where windbg", "required": false, "install_commands": ["winget install Microsoft.WinDbg"]},
+    {"name": "git", "check": "git --version", "required": true, "install_commands": ["choco install -y git"]}
+  ]
+}

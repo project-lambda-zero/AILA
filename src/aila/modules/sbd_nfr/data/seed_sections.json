@@ -1,0 +1,227 @@
+[
+  {
+    "section_key": "scope",
+    "label": "Scope Classification",
+    "description": "Classify the application being assessed to determine which conditional sections apply.",
+    "display_order": 0,
+    "depends_on_question_id": null,
+    "expected_when": null,
+    "is_active": true,
+    "subgroups": [
+      {
+        "subgroup_key": "scope_classification",
+        "label": "Application Classification",
+        "display_order": 0
+      }
+    ]
+  },
+  {
+    "section_key": "identity_auth",
+    "label": "Identity and Authentication",
+    "description": "Controls and practices for credential management, multi-factor authentication, and session security. Maps to STRIDE: Spoofing.",
+    "display_order": 1,
+    "depends_on_question_id": null,
+    "expected_when": null,
+    "is_active": true,
+    "subgroups": [
+      {
+        "subgroup_key": "identity_auth_credentials",
+        "label": "Credential Management",
+        "display_order": 0
+      },
+      {
+        "subgroup_key": "identity_auth_session",
+        "label": "Session and MFA",
+        "display_order": 1
+      }
+    ]
+  },
+  {
+    "section_key": "authorization",
+    "label": "Authorization and Access Control",
+    "description": "Controls and practices for role-based access, least privilege, and enforcement boundaries. Maps to STRIDE: Elevation of Privilege.",
+    "display_order": 2,
+    "depends_on_question_id": null,
+    "expected_when": null,
+    "is_active": true,
+    "subgroups": [
+      {
+        "subgroup_key": "authorization_rbac",
+        "label": "Role-Based Access",
+        "display_order": 0
+      },
+      {
+        "subgroup_key": "authorization_enforcement",
+        "label": "Enforcement and Boundaries",
+        "display_order": 1
+      }
+    ]
+  },
+  {
+    "section_key": "data_protection",
+    "label": "Data Protection",
+    "description": "Controls and practices for data classification, encryption at rest and in transit, and privacy handling. Maps to STRIDE: Information Disclosure.",
+    "display_order": 3,
+    "depends_on_question_id": null,
+    "expected_when": null,
+    "is_active": true,
+    "subgroups": [
+      {
+        "subgroup_key": "data_protection_classification",
+        "label": "Data Classification",
+        "display_order": 0
+      },
+      {
+        "subgroup_key": "data_protection_encryption",
+        "label": "Encryption",
+        "display_order": 1
+      },
+      {
+        "subgroup_key": "data_protection_handling",
+        "label": "Data Handling and Privacy",
+        "display_order": 2
+      }
+    ]
+  },
+  {
+    "section_key": "input_validation",
+    "label": "Input Validation",
+    "description": "Controls and practices for sanitization, encoding, and injection prevention. Maps to STRIDE: Tampering.",
+    "display_order": 4,
+    "depends_on_question_id": null,
+    "expected_when": null,
+    "is_active": true,
+    "subgroups": [
+      {
+        "subgroup_key": "input_validation_sanitization",
+        "label": "Sanitization and Encoding",
+        "display_order": 0
+      },
+      {
+        "subgroup_key": "input_validation_injection",
+        "label": "Injection Prevention",
+        "display_order": 1
+      }
+    ]
+  },
+  {
+    "section_key": "audit_logging",
+    "label": "Audit and Logging",
+    "description": "Controls and practices for security event logging, tamper-proof audit trails, and incident detection. Maps to STRIDE: Repudiation.",
+    "display_order": 5,
+    "depends_on_question_id": null,
+    "expected_when": null,
+    "is_active": true,
+    "subgroups": [
+      {
+        "subgroup_key": "audit_logging_main",
+        "label": "Security Event Logging",
+        "display_order": 0
+      }
+    ]
+  },
+  {
+    "section_key": "availability",
+    "label": "Availability and Resilience",
+    "description": "Controls and practices for rate limiting, disaster recovery, and graceful degradation. Maps to STRIDE: Denial of Service.",
+    "display_order": 6,
+    "depends_on_question_id": null,
+    "expected_when": null,
+    "is_active": true,
+    "subgroups": [
+      {
+        "subgroup_key": "availability_main",
+        "label": "Availability Controls",
+        "display_order": 0
+      }
+    ]
+  },
+  {
+    "section_key": "api_security",
+    "label": "API Security",
+    "description": "Controls and practices for API authentication, input validation, rate limiting, and versioning. Grounded in OWASP API Security Top 10.",
+    "display_order": 7,
+    "depends_on_question_id": null,
+    "expected_when": null,
+    "is_active": true,
+    "condition_expr_json": "{\"op\": \"or\", \"conditions\": [{\"question_id\": \"SCOPE-04\", \"expected\": \"api_consumer\"}, {\"question_id\": \"SCOPE-04\", \"expected\": \"api_provider\"}, {\"question_id\": \"SCOPE-04\", \"expected\": \"both\"}]}",
+    "subgroups": [
+      {
+        "subgroup_key": "api_security_auth",
+        "label": "API Authentication and Keys",
+        "display_order": 0
+      },
+      {
+        "subgroup_key": "api_security_validation",
+        "label": "API Input Validation and Rate Limiting",
+        "display_order": 1
+      }
+    ]
+  },
+  {
+    "section_key": "web_mobile",
+    "label": "Web and Mobile Security",
+    "description": "Controls for XSS, CSRF, CSP, secure headers, and session management for user-facing applications. Grounded in OWASP Web Top 10.",
+    "display_order": 8,
+    "depends_on_question_id": null,
+    "expected_when": null,
+    "is_active": true,
+    "condition_expr_json": "{\"op\": \"or\", \"conditions\": [{\"question_id\": \"SCOPE-05\", \"expected\": \"external_users\"}, {\"question_id\": \"SCOPE-05\", \"expected\": \"both_users\"}]}",
+    "subgroups": [
+      {
+        "subgroup_key": "web_mobile_client",
+        "label": "Client-Side Protections",
+        "display_order": 0
+      },
+      {
+        "subgroup_key": "web_mobile_headers",
+        "label": "Secure Headers and CSP",
+        "display_order": 1
+      }
+    ]
+  },
+  {
+    "section_key": "supply_chain",
+    "label": "Supply Chain Security",
+    "description": "Controls for third-party dependency management, SCA, SBOM, and vendor assessment. Triggered when the application has non-trivial third-party dependencies.",
+    "display_order": 9,
+    "depends_on_question_id": null,
+    "expected_when": null,
+    "is_active": true,
+    "condition_expr_json": "{\"op\": \"or\", \"conditions\": [{\"question_id\": \"SCOPE-06\", \"expected\": \"managed_services\"}, {\"question_id\": \"SCOPE-06\", \"expected\": \"vendor_software\"}, {\"question_id\": \"SCOPE-06\", \"expected\": \"custom_integrations\"}]}",
+    "subgroups": [
+      {
+        "subgroup_key": "supply_chain_deps",
+        "label": "Dependency Management and SCA",
+        "display_order": 0
+      },
+      {
+        "subgroup_key": "supply_chain_vendor",
+        "label": "Vendor and SBOM Assessment",
+        "display_order": 1
+      }
+    ]
+  },
+  {
+    "section_key": "governance",
+    "label": "Governance and Compliance",
+    "description": "Security ownership, incident response, compliance obligations, and security training. Applies to all applications.",
+    "display_order": 10,
+    "depends_on_question_id": null,
+    "expected_when": null,
+    "is_active": true,
+    "condition_expr_json": null,
+    "subgroups": [
+      {
+        "subgroup_key": "governance_ownership",
+        "label": "Security Ownership and Incident Response",
+        "display_order": 0
+      },
+      {
+        "subgroup_key": "governance_compliance",
+        "label": "Compliance and Training",
+        "display_order": 1
+      }
+    ]
+  }
+]

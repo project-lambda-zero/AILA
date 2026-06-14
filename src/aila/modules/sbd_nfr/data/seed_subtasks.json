@@ -1,0 +1,227 @@
+[
+  {
+    "key": "access_point_integration",
+    "label": "Access Point Integration",
+    "category": "integration",
+    "description": "Integrate the system with the network access point infrastructure.",
+    "icon_hint": "wifi",
+    "display_order": 1,
+    "is_active": true
+  },
+  {
+    "key": "application_logging",
+    "label": "Application Logging",
+    "category": "logging",
+    "description": "Implement centralised application-level logging to the SIEM platform.",
+    "icon_hint": "file-text",
+    "display_order": 2,
+    "is_active": true
+  },
+  {
+    "key": "archer_inventory_update",
+    "label": "Archer Inventory Update",
+    "category": "governance",
+    "description": "Register and update the asset inventory record in Archer GRC.",
+    "icon_hint": "database",
+    "display_order": 3,
+    "is_active": true
+  },
+  {
+    "key": "arcsight_new_update_alert_request",
+    "label": "ArcSight - New Update Alert Request",
+    "category": "logging",
+    "description": "Submit a new or updated alert rule request to the ArcSight SIEM team.",
+    "icon_hint": "bell",
+    "display_order": 4,
+    "is_active": true
+  },
+  {
+    "key": "container_native_firewall",
+    "label": "Container Native Firewall",
+    "category": "container",
+    "description": "Configure and enforce container-native firewall policies.",
+    "icon_hint": "shield",
+    "display_order": 5,
+    "is_active": true
+  },
+  {
+    "key": "container_security_scan",
+    "label": "Container Security Scan",
+    "category": "container",
+    "description": "Run automated container image scanning for vulnerabilities and misconfigurations.",
+    "icon_hint": "search",
+    "display_order": 6,
+    "is_active": true
+  },
+  {
+    "key": "cyberark_epm",
+    "label": "Cyberark-EPM",
+    "category": "identity",
+    "description": "Enrol endpoints into CyberArk Endpoint Privilege Manager (EPM).",
+    "icon_hint": "lock",
+    "display_order": 7,
+    "is_active": true
+  },
+  {
+    "key": "dast",
+    "label": "DAST",
+    "category": "assurance",
+    "description": "Execute dynamic application security testing (DAST) against the running application.",
+    "icon_hint": "bug",
+    "display_order": 8,
+    "is_active": true
+  },
+  {
+    "key": "database_logging",
+    "label": "Database Logging",
+    "category": "logging",
+    "description": "Enable database-level audit logging forwarded to the central SIEM.",
+    "icon_hint": "database",
+    "display_order": 9,
+    "is_active": true
+  },
+  {
+    "key": "file_integrity_monitoring_integration",
+    "label": "File Integrity Monitoring Integration",
+    "category": "runtime",
+    "description": "Integrate file integrity monitoring (FIM) for critical system paths.",
+    "icon_hint": "file-check",
+    "display_order": 10,
+    "is_active": true
+  },
+  {
+    "key": "network_segment_placement",
+    "label": "Network Segment & Placement",
+    "category": "architecture",
+    "description": "Define and validate the correct network segment and zoning placement.",
+    "icon_hint": "network",
+    "display_order": 11,
+    "is_active": true
+  },
+  {
+    "key": "onetrust_supplier_security_assesment",
+    "label": "OneTrust Supplier Security Assessment",
+    "category": "third_party",
+    "description": "Complete the OneTrust supplier security assessment for third-party vendors.",
+    "icon_hint": "clipboard-check",
+    "display_order": 12,
+    "is_active": true
+  },
+  {
+    "key": "operating_system_logging_unix",
+    "label": "Operating System Logging (Unix)",
+    "category": "logging",
+    "description": "Configure Unix OS-level audit logging forwarded to the central SIEM.",
+    "icon_hint": "terminal",
+    "display_order": 13,
+    "is_active": true
+  },
+  {
+    "key": "operating_system_logging_windows",
+    "label": "Operating System Logging (Windows)",
+    "category": "logging",
+    "description": "Configure Windows OS-level audit logging forwarded to the central SIEM.",
+    "icon_hint": "monitor",
+    "display_order": 14,
+    "is_active": true
+  },
+  {
+    "key": "penetration_testing",
+    "label": "Penetration Testing",
+    "category": "validation",
+    "description": "Schedule and execute penetration testing before go-live.",
+    "icon_hint": "crosshair",
+    "display_order": 15,
+    "is_active": true
+  },
+  {
+    "key": "privileged_user_access_management_integrations_cyberark",
+    "label": "Privileged user access management/integrations (Cyberark)",
+    "category": "identity",
+    "description": "Integrate privileged accounts with CyberArk PAM.",
+    "icon_hint": "key",
+    "display_order": 16,
+    "is_active": true
+  },
+  {
+    "key": "proxy_definition",
+    "label": "Proxy Definition",
+    "category": "integration",
+    "description": "Define and configure the outbound proxy for the service.",
+    "icon_hint": "layers",
+    "display_order": 17,
+    "is_active": true
+  },
+  {
+    "key": "risk_assesment",
+    "label": "Risk Assessment",
+    "category": "architecture",
+    "description": "Complete a formal risk assessment covering the system threat model.",
+    "icon_hint": "alert-triangle",
+    "display_order": 18,
+    "is_active": true
+  },
+  {
+    "key": "sast",
+    "label": "SAST",
+    "category": "assurance",
+    "description": "Run static application security testing (SAST) on the source code.",
+    "icon_hint": "code",
+    "display_order": 19,
+    "is_active": true
+  },
+  {
+    "key": "scs",
+    "label": "SCS",
+    "category": "assurance",
+    "description": "Complete the Supplier Cyber Security questionnaire for vendor involvement.",
+    "icon_hint": "shield-check",
+    "display_order": 20,
+    "is_active": true
+  },
+  {
+    "key": "secure_by_design_assesment",
+    "label": "Secure by Design Assessment",
+    "category": "architecture",
+    "description": "Conduct the Secure by Design assessment with the security architect.",
+    "icon_hint": "settings",
+    "display_order": 21,
+    "is_active": true
+  },
+  {
+    "key": "software_composition_analysis_sca",
+    "label": "Software Composition Analysis (SCA)",
+    "category": "assurance",
+    "description": "Analyse third-party software components for known vulnerabilities (SCA).",
+    "icon_hint": "package",
+    "display_order": 22,
+    "is_active": true
+  },
+  {
+    "key": "vulnerability_scan_tenable",
+    "label": "Vulnerability Scan (Tenable)",
+    "category": "validation",
+    "description": "Run an authenticated vulnerability scan using Tenable.",
+    "icon_hint": "scan",
+    "display_order": 23,
+    "is_active": true
+  },
+  {
+    "key": "waf_integration",
+    "label": "WAF Integration",
+    "category": "runtime",
+    "description": "Integrate the web application firewall (WAF) in front of the service.",
+    "icon_hint": "filter",
+    "display_order": 24,
+    "is_active": true
+  },
+  {
+    "key": "web_certificate_request",
+    "label": "Web Certificate Request",
+    "category": "integration",
+    "description": "Request and configure a valid TLS certificate for the service.",
+    "icon_hint": "certificate",
+    "display_order": 25,
+    "is_active": true
+  }
+]
