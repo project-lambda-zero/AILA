@@ -28,6 +28,7 @@ What this commit does NOT do:
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import logging
 import re
@@ -38,10 +39,13 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
+from aila.modules.vr._task_queue import default_task_queue
+from aila.modules.vr.agents.auto_steering import _normalize_acked_observable
 from aila.modules.vr.agents.mcp_adapters import (
     KNOWN_TOOLS,
     specialized_tools,
 )
+from aila.modules.vr.agents.mcp_adapters.known_tools import tools_for_language
 from aila.modules.vr.agents.persona_router import resolve_task_type
 from aila.modules.vr.contracts import (
     OutcomeConfidence,
@@ -55,7 +59,15 @@ from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
     VRInvestigationOutcomeRecord,
+    VRInvestigationOutcomeReviewRecord,
     VRInvestigationRecord,
+    VRTargetRecord,
+)
+from aila.modules.vr.services.outcome_review import (
+    OUTCOME_STATE_APPROVED,
+    OUTCOME_STATE_DRAFT,
+    evaluate_quorum,
+    upsert_review,
 )
 from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
 from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
@@ -66,6 +78,11 @@ from aila.platform.contracts.reasoning import (
     ReasoningContract,
     ReasoningTurnDecision,
     ResolvedHypothesis,
+)
+from aila.platform.llm.idempotency_cache import (
+    lookup_cached_response,
+    make_request_key,
+    store_response,
 )
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
@@ -292,12 +309,11 @@ class HonestVulnResearcher:
         # vuln_researcher logger at DEBUG when they want to see the
         # bloat distribution.
         if _log.isEnabledFor(logging.DEBUG):
-            import json as _json_diag  # noqa: PLC0415
             sys_chars = len(system_prompt or "")
             usr_chars = len(user_prompt or "")
-            tools_chars = len(_json_diag.dumps(tool_specs) if tool_specs else "")
-            snap_chars = len(_json_diag.dumps(target_snapshot) if target_snapshot else "")
-            cs_chars = len(_json_diag.dumps(case_state.model_dump() if hasattr(case_state, "model_dump") else {}))
+            tools_chars = len(json.dumps(tool_specs) if tool_specs else "")
+            snap_chars = len(json.dumps(target_snapshot) if target_snapshot else "")
+            cs_chars = len(json.dumps(case_state.model_dump() if hasattr(case_state, "model_dump") else {}))
             _log.debug(
                 "PROMPT_SIZE_DIAG inv=%s branch=%s turn=%d persona=%s "
                 "sys=%d user=%d tools=%d snap=%d case=%d TOTAL=%d (~%dK tok)",
@@ -317,18 +333,7 @@ class HonestVulnResearcher:
         # prior attempt completed the LLM call but crashed before the
         # tool result was durably saved, the retry replays the cached
         # decision instead of paying for a duplicate Claude call.
-        import hashlib as _hashlib  # noqa: PLC0415
-
-        from aila.platform.contracts.reasoning import (  # noqa: PLC0415
-            ReasoningTurnDecision,
-        )
-        from aila.platform.llm.idempotency_cache import (  # noqa: PLC0415
-            lookup_cached_response,
-            make_request_key,
-            store_response,
-        )
-
-        prompt_hash = _hashlib.sha256(
+        prompt_hash = hashlib.sha256(
             (system_prompt + "\x00" + user_prompt).encode()
         ).hexdigest()
         request_key = make_request_key(
@@ -655,12 +660,6 @@ class HonestVulnResearcher:
         # rather than waiting for the next worker poll.
         review_state: str | None = None
         if decision.action == "submit_outcome_review" and decision.review_outcome_id:
-            from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
-                OUTCOME_STATE_APPROVED,
-                evaluate_quorum,
-                upsert_review,
-            )
-
             try:
                 await upsert_review(
                     outcome_id=decision.review_outcome_id,
@@ -692,9 +691,6 @@ class HonestVulnResearcher:
                     # The new ``run_vr_outcome_dispatch`` task runs
                     # starting in its own worker context with its own UoW and
                     # its own retry budget.
-                    from aila.modules.vr._task_queue import (  # noqa: PLC0415
-                        default_task_queue,
-                    )
                     from aila.modules.vr.workflow.task import (  # noqa: PLC0415
                         run_vr_outcome_dispatch,
                     )
@@ -761,8 +757,6 @@ class HonestVulnResearcher:
           mcp_handles (audit_mcp_index_id / binary_id) so the agent
           knows what to pass to the bridge.
         """
-        from aila.modules.vr.db_models import VRTargetRecord  # noqa: PLC0415
-
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
                 _select(VRInvestigationRecord).where(
@@ -1138,9 +1132,6 @@ class HonestVulnResearcher:
             # even after the agent has already acted on it.
             # fix §333 — funnel both legacy comma-separated string and
             # canonical list shapes through the shared normalizer.
-            from aila.modules.vr.agents.auto_steering import (  # noqa: PLC0415
-                _normalize_acked_observable,
-            )
             acked_ids: set[str] = set()
             try:
                 branch_row = (await uow.session.exec(
@@ -1519,21 +1510,9 @@ class HonestVulnResearcher:
         already submitted its own and gone to status=completed (which
         cannot vote, see ``vr_investigation_branches.status``).
         """
-        from sqlmodel import select as _select_local  # noqa: PLC0415
-
-        from aila.modules.vr.db_models.outcome import (  # noqa: PLC0415
-            VRInvestigationOutcomeRecord,
-        )
-        from aila.modules.vr.db_models.outcome_review import (  # noqa: PLC0415
-            VRInvestigationOutcomeReviewRecord,
-        )
-        from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
-            OUTCOME_STATE_DRAFT,
-        )
-
         async with UnitOfWork() as uow:
             drafts = (await uow.session.exec(
-                _select_local(VRInvestigationOutcomeRecord)
+                _select(VRInvestigationOutcomeRecord)
                 .where(
                     VRInvestigationOutcomeRecord.investigation_id
                     == self.investigation_id,
@@ -1557,7 +1536,7 @@ class HonestVulnResearcher:
             voted_on: set[str] = set()
             for d in other_drafts:
                 review = (await uow.session.exec(
-                    _select_local(VRInvestigationOutcomeReviewRecord)
+                    _select(VRInvestigationOutcomeReviewRecord)
                     .where(
                         VRInvestigationOutcomeReviewRecord.outcome_id
                         == d.id,
@@ -1659,16 +1638,10 @@ class HonestVulnResearcher:
         independent evidence). Includes a directive observable so the next
         prompt makes the same instruction visible to the agent.
         """
-        from sqlmodel import select as _select_local  # noqa: PLC0415
-
-        from aila.modules.vr.db_models.outcome_review import (  # noqa: PLC0415
-            VRInvestigationOutcomeReviewRecord,
-        )
-
         outcome_id = decision.review_outcome_id
         async with UnitOfWork() as uow:
             existing = (await uow.session.exec(
-                _select_local(VRInvestigationOutcomeReviewRecord)
+                _select(VRInvestigationOutcomeReviewRecord)
                 .where(
                     VRInvestigationOutcomeReviewRecord.outcome_id == outcome_id,
                 )
@@ -2385,10 +2358,6 @@ async def _fetch_tool_specs(
     the trailmark graph even though the runtime calls them via
     vtable / monomorphization / dynamic dispatch.
     """
-    from aila.modules.vr.agents.mcp_adapters.known_tools import (  # noqa: PLC0415
-        tools_for_language,
-    )
-
     applicable = _applicable_servers_for_kind(target_kind)
     out: dict[str, list[dict[str, Any]]] = {}
     if "audit_mcp" in applicable:
@@ -2486,9 +2455,6 @@ def _render_available_tools_section(
             # primary_language (drops tools known-broken on this
             # target's language, e.g. dead_code on C++). Agent will
             # know which tools exist; it just won't see signatures.
-            from aila.modules.vr.agents.mcp_adapters.known_tools import (  # noqa: PLC0415
-                tools_for_language,
-            )
             tool_names = sorted(tools_for_language(server, primary_language))
             parts.append(
                 f"\n## {server} ({len(tool_names)} tools — "

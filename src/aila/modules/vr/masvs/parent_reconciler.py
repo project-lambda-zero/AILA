@@ -45,10 +45,11 @@ reconciler must not flip into ``COMPLETED`` with nothing underneath.
 """
 from __future__ import annotations
 
+import json as _json_local
 import logging
 import os
 
-from sqlalchemy import cast, func, select, update
+from sqlalchemy import cast, func, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.functions import coalesce
@@ -61,7 +62,14 @@ from aila.modules.vr.contracts import (
     InvestigationStatus,
 )
 from aila.modules.vr.contracts.target import TargetKind
-from aila.modules.vr.db_models import VRInvestigationRecord, VRTargetRecord
+from aila.modules.vr.db_models import (
+    VRInvestigationBranchRecord,
+    VRInvestigationOutcomeRecord,
+    VRInvestigationRecord,
+    VRTargetRecord,
+)
+from aila.modules.vr.db_models.outcome_review import VRInvestigationOutcomeReviewRecord
+from aila.modules.vr.services.branch_cleanup import close_orphan_branches_on_terminal
 
 # Phase C moved the implementations of these helpers out of this
 # MASVS-specific module into the canonical
@@ -78,6 +86,7 @@ from aila.modules.vr.services.investigation_finalizers import (
 from aila.modules.vr.services.investigation_finalizers import (
     synthesize_no_finding_outcomes as _synthesize_no_finding_outcomes,
 )
+from aila.modules.vr.services.outcome_review import evaluate_quorum
 from aila.modules.vr.workflow.task import run_vr_investigate
 from aila.platform.contracts._common import utc_now
 from aila.platform.tasks.models import TaskRecord
@@ -437,9 +446,6 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
     cap = max(50, cap)  # floor so a typo doesn't kill everything
 
     inv = VRInvestigationRecord
-    from aila.modules.vr.db_models import (  # noqa: PLC0415
-        VRInvestigationBranchRecord,
-    )
 
     over_cap_rows = (
         await uow.session.exec(
@@ -492,9 +498,6 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
         ).first()
         has_draft = False
         if target_inv and target_inv.primary_outcome_id:
-            from aila.modules.vr.db_models import (  # noqa: PLC0415
-                VRInvestigationOutcomeRecord,
-            )
             o = (await uow.session.exec(
                 select(VRInvestigationOutcomeRecord).where(
                     VRInvestigationOutcomeRecord.id
@@ -514,9 +517,6 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
             target_inv.stopped_at = now
             target_inv.updated_at = now
             uow.session.add(target_inv)
-            from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
-                close_orphan_branches_on_terminal,
-            )
             await close_orphan_branches_on_terminal(
                 uow, inv_id, reason="investigation_completed", now=now,
             )
@@ -532,9 +532,6 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
     # Kick the quorum re-eval for any exhausted investigation that had
     # a draft outcome so the auto_approved_no_active_voters branch fires
     # this tick.
-    from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
-        evaluate_quorum,
-    )
     for inv_id, _ in over_cap_rows:
         target_inv = (
             await uow.session.exec(
@@ -587,15 +584,6 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
     tick. Idempotent: re-setting the same directive on the same branch
     is a no-op for the agent (already sees it on next turn).
     """
-    import json as _json_local  # noqa: PLC0415
-
-    from aila.modules.vr.db_models import (  # noqa: PLC0415
-        VRInvestigationBranchRecord,
-        VRInvestigationOutcomeRecord,
-    )
-    from aila.modules.vr.db_models.outcome_review import (  # noqa: PLC0415
-        VRInvestigationOutcomeReviewRecord,
-    )
 
     inv = VRInvestigationRecord
     out = VRInvestigationOutcomeRecord
@@ -773,11 +761,6 @@ async def _wake_stale_branches(uow: UnitOfWork) -> int:
 
     Returns the count of branches newly enqueued this tick.
     """
-    from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
-    from aila.modules.vr.db_models import (  # noqa: PLC0415
-        VRInvestigationBranchRecord,
-    )
-    from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
 
     inv = VRInvestigationRecord
     branch = VRInvestigationBranchRecord
@@ -910,7 +893,6 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
     Documentation-only change otherwise — no statement reordering, no
     new commits.
     """
-    from sqlalchemy import text  # noqa: PLC0415
 
     # fix §42 — single-session-scope invariant. The caller's UnitOfWork
     # implicitly begins a transaction on first session use; a stand-
@@ -1279,9 +1261,6 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
                     # exist) is orphaned. Close them so the projection
                     # is consistent. branch_cleanup.py documents the
                     # BLOCK-state cleanup bug this guards against.
-                    from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
-                        close_orphan_branches_on_terminal,
-                    )
                     await close_orphan_branches_on_terminal(
                         uow, parent_id,
                         reason="investigation_completed",

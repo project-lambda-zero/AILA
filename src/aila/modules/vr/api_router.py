@@ -11,10 +11,14 @@ D-26; total counts go in ``meta`` via ``PaginatedMeta``.
 from __future__ import annotations
 
 import asyncio
+import json
+import json as _json
 import logging
+import os as _os
 from collections.abc import AsyncGenerator
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,12 +27,19 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
+from aila.api.deps import get_task_queue
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.platform.contracts._common import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
+from aila.platform.llm.cost_record import LLMCostRecord
+from aila.platform.services.factory import ServiceFactory
+from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.platform.uow import UnitOfWork
+from aila.storage.db_models import WorkflowStateCursor
 
+from ._task_queue import default_task_queue
+from .agents.outcome_dispatcher import OutcomeDispatcher
 from .contracts import (
     AnalysisState,
     BranchStatus,
@@ -108,6 +119,13 @@ from .contracts import (
     WorkspaceStatus,
     WorkspaceTheme,
 )
+from .db_models import (
+    VRInvestigationBranchRecord,
+    VRInvestigationMessageRecord,
+    VRInvestigationOutcomeRecord,
+    VRInvestigationRecord,
+)
+from .workflow.task import run_vr_claim_verifier, run_vr_investigate
 
 # SSE polling cadence for the messages stream — 1s feels live without
 # hammering the DB. Heartbeat every 15s keeps proxies from idling out.
@@ -721,10 +739,7 @@ async def _compute_live_investigation_cost(
     the stored zero rather than crashing the read path).
     """
     try:
-        from sqlalchemy import func as sa_func  # noqa: PLC0415
 
-        from aila.platform.llm.cost_record import LLMCostRecord  # noqa: PLC0415
-        from aila.platform.tasks.models import TaskRecord  # noqa: PLC0415
 
         # Find all run_ids belonging to this investigation
         task_ids_q = select(TaskRecord.id).where(
@@ -2447,8 +2462,6 @@ def create_vr_router() -> APIRouter:
         """
         import json as _json
 
-        import httpx  # noqa: PLC0415  (transit-only proxy; see whitelist)
-
         from .db_models import VRTargetRecord
         from .services.mcp_registry import McpRegistryService
 
@@ -2679,7 +2692,6 @@ def create_vr_router() -> APIRouter:
                 detail="file.filename is required.",
             )
 
-        import httpx  # noqa: PLC0415  (transit-only proxy; see whitelist)
 
         bridge = IDABridgeTool()
         base_url = await bridge._resolve_base_url()  # noqa: SLF001
@@ -3267,7 +3279,6 @@ def create_vr_router() -> APIRouter:
         # because their per-child LLM cost is small enough to not strain
         # the proxy (no jadx graph traversal, no 64K-token contexts).
         # Operator-tunable batch size; deferred import per file convention.
-        import os as _os  # noqa: PLC0415
         try:
             _batch_size_raw = int(
                 _os.environ.get("MASVS_AUDIT_BATCH_SIZE", "5"),
@@ -3458,7 +3469,6 @@ def create_vr_router() -> APIRouter:
                 detail=str(exc),
             ) from exc
 
-        import json  # noqa: PLC0415
         handles_dict: dict[str, Any] = {}
         try:
             if target.mcp_handles_json:
@@ -3750,13 +3760,7 @@ def create_vr_router() -> APIRouter:
         # appeared empty on the list — and there was no way to see at
         # a glance whether an investigation had landed a finding.
         if rows:
-            import json as _json  # noqa: PLC0415
 
-            from .db_models import (  # noqa: PLC0415
-                VRInvestigationBranchRecord,
-                VRInvestigationMessageRecord,
-                VRInvestigationOutcomeRecord,
-            )
             row_ids = [r.id for r in rows]
             primary_ids = {r.id: r.primary_outcome_id for r in rows if r.primary_outcome_id}
 
@@ -3914,7 +3918,6 @@ def create_vr_router() -> APIRouter:
                 if primary is not None:
                     primary_outcome_kind = primary.outcome_kind
                     primary_outcome_confidence = primary.confidence
-                    import json as _json  # noqa: PLC0415
                     try:
                         payload = _json.loads(primary.payload_json or "{}")
                     except (ValueError, TypeError):
@@ -3967,7 +3970,6 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
         del request
-        from .db_models import VRInvestigationRecord  # noqa: PLC0415
 
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
@@ -4007,14 +4009,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> dict[str, Any]:
         del request
-        import json as _json  # noqa: PLC0415
 
-        from ._task_queue import default_task_queue  # noqa: PLC0415
-        from .db_models import (  # noqa: PLC0415
-            VRInvestigationOutcomeRecord,
-            VRInvestigationRecord,
-        )
-        from .workflow.task import run_vr_claim_verifier  # noqa: PLC0415
 
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
@@ -4097,16 +4092,8 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[PromoteOutcomeResponse]:
         del request
-        import json as _json  # noqa: PLC0415
 
-        from aila.platform.services.factory import ServiceFactory  # noqa: PLC0415
 
-        from .agents.outcome_dispatcher import OutcomeDispatcher  # noqa: PLC0415
-        from .contracts import OutcomeDispatchStatus, OutcomeKind  # noqa: PLC0415
-        from .db_models import (  # noqa: PLC0415
-            VRInvestigationOutcomeRecord,
-            VRInvestigationRecord,
-        )
 
         reason_note = ""
         if isinstance(body, dict):
@@ -4450,14 +4437,7 @@ def create_vr_router() -> APIRouter:
         investigation_id: str,
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
-        from aila.api.deps import get_task_queue  # noqa: PLC0415
-        from aila.platform.contracts._common import utc_now  # noqa: PLC0415
 
-        from .db_models import (  # noqa: PLC0415
-            VRInvestigationBranchRecord,
-            VRInvestigationRecord,
-        )
-        from .workflow.task import run_vr_investigate  # noqa: PLC0415
 
         _reopenable = (
             InvestigationStatus.COMPLETED.value,
@@ -4562,14 +4542,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
         del request
-        from aila.platform.contracts._common import utc_now  # noqa: PLC0415
 
-        from .db_models import (  # noqa: PLC0415
-            VRInvestigationBranchRecord,
-            VRInvestigationMessageRecord,
-            VRInvestigationOutcomeRecord,
-            VRInvestigationRecord,
-        )
 
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
@@ -4737,7 +4710,6 @@ def create_vr_router() -> APIRouter:
             # crashed leaving its TaskRecord in 'running' without a
             # live arq job, every re-enqueue silently no-op'd. Operator
             # sees status=created, clicks 'Start', nothing happens.
-            from aila.platform.tasks.models import TaskRecord, TaskStatus  # noqa: PLC0415
 
             stale_q = select(TaskRecord).where(
                 TaskRecord.fn_path.like("%run_vr_investigate%"),
@@ -4758,7 +4730,6 @@ def create_vr_router() -> APIRouter:
             # crashed cursors persist forever and re-enqueue fires a new
             # TaskRecord but the engine refuses to resume cleanly. I had
             # to manually DELETE 219 such orphan crashed cursors today.
-            from sqlalchemy import text as sa_text  # noqa: PLC0415
             try:
                 await uow.session.exec(  # type: ignore[call-arg]
                     sa_text(
@@ -5195,7 +5166,6 @@ def create_vr_router() -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Investigation {investigation_id} not found.",
             )
-        from aila.storage.db_models import WorkflowStateCursor  # noqa: PLC0415
 
         from .db_models import VRInvestigationBranchRecord
 

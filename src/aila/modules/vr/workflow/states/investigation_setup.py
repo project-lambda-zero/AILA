@@ -10,17 +10,30 @@ import logging
 import os
 from typing import Any
 
+from sqlalchemy import text as _sql_text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
+from aila.modules.vr._task_queue import default_task_queue
+from aila.modules.vr.agents.branch_manager import (
+    _strip_directives_from_state,
+    _strip_rejected_from_state,
+)
 from aila.modules.vr.contracts.branch import BranchStatus, PersonaVoice
 from aila.modules.vr.contracts.investigation import InvestigationStatus
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationRecord,
+    VRTargetRecord,
 )
+from aila.modules.vr.services.cve_intel_resolver import (
+    extract_cve_ids,
+    resolve_cve_intel,
+)
+from aila.modules.vr.services.pattern_store import PatternStore
 from aila.platform.contracts._common import utc_now
 from aila.platform.exceptions import WorkerUnreachableError
+from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
 
@@ -196,10 +209,6 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
             await uow.commit()  # flush nothing; release UoW cleanly
             locked_cve_intel: list[dict[str, Any]] = []
             try:
-                from aila.modules.vr.services.cve_intel_resolver import (  # noqa: PLC0415
-                    extract_cve_ids,
-                    resolve_cve_intel,
-                )
                 locked_cve_ids = extract_cve_ids(locked_initial_question)
                 if locked_cve_ids:
                     resolutions = await resolve_cve_intel(locked_cve_ids)
@@ -428,10 +437,6 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     # IntelService path used by the vulnerability module's read
     # endpoint, but produces a structured list the prompt builder
     # renders explicitly.
-    from aila.modules.vr.services.cve_intel_resolver import (  # noqa: PLC0415
-        extract_cve_ids,
-        resolve_cve_intel,
-    )
     cve_ids = extract_cve_ids(inv.initial_question)
     cve_intel: list[dict[str, Any]] = []
     if cve_ids:
@@ -473,14 +478,6 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     applicable_patterns: list[dict[str, Any]] = []
     global _CONSECUTIVE_PATTERN_LOOKUP_FAILURES  # noqa: PLW0603 — module counter
     try:
-        from aila.modules.vr.db_models import VRTargetRecord  # noqa: PLC0415
-        from aila.modules.vr.services.pattern_store import (  # noqa: PLC0415
-            PatternStore,
-        )
-        from aila.platform.services.knowledge import (  # noqa: PLC0415
-            KnowledgeService,
-        )
-
         # fix §294 — read every needed target column into local vars
         # BEFORE the UoW closes. The prior code dereferenced
         # target.workspace_id / target.kind / target.primary_language
@@ -601,11 +598,6 @@ async def _spawn_persona_siblings_and_enqueue(
     some siblings born and some missing, with no way to roll back to
     a consistent panel.
     """
-    from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
-    from aila.modules.vr.agents.branch_manager import (  # noqa: PLC0415
-        _strip_directives_from_state,
-        _strip_rejected_from_state,
-    )
     from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
 
     # Phase 1 — atomic dedup + reactivate + insert new branches.
@@ -623,7 +615,6 @@ async def _spawn_persona_siblings_and_enqueue(
         # "duplicate_persona_cleanup" but the write amplification is
         # wasteful and confuses the operator. SELECT FOR UPDATE on the
         # inv row gives spawn a per-investigation mutex.
-        from sqlalchemy import text as _sql_text  # noqa: PLC0415
         await uow.session.execute(
             _sql_text(
                 "SELECT id FROM vr_investigations WHERE id = :id FOR UPDATE"
