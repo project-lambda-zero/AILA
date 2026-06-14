@@ -12,9 +12,21 @@ and nothing else.
 """
 from __future__ import annotations
 
+import json as _json
+import logging
 from typing import Any
 
 import httpx
+from sqlmodel import select
+
+from aila.modules.vr._task_queue import (
+    default_task_queue,
+    enqueue_downstream_target_stages,
+)
+from aila.modules.vr.agents.claim_verifier import ClaimVerifierAgent
+from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
+from aila.modules.vr.agents.synthesis_agent import SynthesisAgent
+from aila.modules.vr.db_models import VRFindingRecord, VRInvestigationOutcomeRecord
 
 # Re-export enrichment-pipeline tasks so the platform worker bootstrap
 # (which loads only ``<module>/workflow/task.py``) picks them up and
@@ -25,9 +37,16 @@ from aila.modules.vr.enrichment.workers import (  # noqa: F401  (re-export for A
     run_capability_profile_build,
     run_function_ranking,
 )
+from aila.modules.vr.reporting.pdf_report import _collect_facts
+from aila.modules.vr.reporting.poc_writer import PocWriter
+from aila.modules.vr.services import TargetAnalysisService
+from aila.modules.vr.services.fuzz_service import FuzzCampaignService
 from aila.modules.vr.workflow.definitions import VR_INVESTIGATE_V1, VR_NDAY_V1
+from aila.platform.contracts._common import utc_now
+from aila.platform.services.factory import ServiceFactory
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
+from aila.platform.uow import UnitOfWork
 
 # fix §141 + §142 — explicit transient-error tuple for @platform_task
 # retries on this module's seeds. Without retriable_on, the @platform_task
@@ -142,13 +161,6 @@ async def run_target_analysis(
     previously the operator had to re-hit ``/resume-analysis`` for
     each downstream stage to start. See ``_task_queue.enqueue_downstream_target_stages``.
     """
-    from aila.modules.vr.services import TargetAnalysisService  # noqa: PLC0415  (lazy: avoids cycle)
-
-    from .._task_queue import (  # noqa: PLC0415
-        default_task_queue,
-        enqueue_downstream_target_stages,
-    )
-
     svc = TargetAnalysisService()
     await svc.analyze(target_id)
 
@@ -185,10 +197,6 @@ async def run_fuzz_campaign_launch(
     back via PATCH /fuzz/campaigns/{id} + POST /fuzz/crashes.
     """
     del ctx
-    from aila.modules.vr.services.fuzz_service import (  # noqa: PLC0415
-        FuzzCampaignService,
-    )
-
     svc = FuzzCampaignService()
     return await svc.launch_campaign(campaign_id)
 
@@ -223,19 +231,6 @@ async def run_vr_draft_poc(
     that case.
     """
     del ctx
-    import json as _json  # noqa: PLC0415
-    import logging  # noqa: PLC0415
-
-    from sqlmodel import select  # noqa: PLC0415
-
-    from aila.modules.vr.db_models import VRFindingRecord  # noqa: PLC0415
-    from aila.modules.vr.reporting.pdf_report import (  # noqa: PLC0415
-        _collect_facts,
-    )
-    from aila.modules.vr.reporting.poc_writer import PocWriter  # noqa: PLC0415
-    from aila.platform.contracts._common import utc_now  # noqa: PLC0415
-    from aila.platform.uow import UnitOfWork  # noqa: PLC0415
-
     log = logging.getLogger(__name__)
 
     # Gate: if the verifier already refuted this investigation's finding,
@@ -243,10 +238,6 @@ async def run_vr_draft_poc(
     # burns ~3 LLM round-trips on code that cannot reproduce a non-bug,
     # and the resulting "PoC" misleads operators into trusting the
     # finding. Mark the finding row with the skip reason instead.
-
-    from aila.modules.vr.db_models import (  # noqa: PLC0415
-        VRInvestigationOutcomeRecord,
-    )
 
     async with UnitOfWork() as uow:
         canonical = (await uow.session.exec(
@@ -391,9 +382,6 @@ async def run_vr_synthesis(
     set (synthesis already ran).
     """
     del ctx
-    from aila.modules.vr.agents.synthesis_agent import (  # noqa: PLC0415
-        SynthesisAgent,
-    )
     agent = SynthesisAgent(investigation_id=investigation_id)
     return await agent.run()
 
@@ -422,9 +410,6 @@ async def run_vr_claim_verifier(
     the canonical payload.
     """
     del ctx
-    from aila.modules.vr.agents.claim_verifier import (  # noqa: PLC0415
-        ClaimVerifierAgent,
-    )
     agent = ClaimVerifierAgent(investigation_id=investigation_id)
     return await agent.run()
 
@@ -454,13 +439,6 @@ async def run_vr_outcome_dispatch(
     inside its own UoW, against its own retry budget.
     """
     del ctx
-    from aila.modules.vr.agents.outcome_dispatcher import (  # noqa: PLC0415
-        OutcomeDispatcher,
-    )
-    from aila.platform.services.factory import (  # noqa: PLC0415
-        ServiceFactory,
-    )
-
     dispatcher = OutcomeDispatcher(knowledge=ServiceFactory().knowledge)
     result = await dispatcher.dispatch(outcome_id)
     return {

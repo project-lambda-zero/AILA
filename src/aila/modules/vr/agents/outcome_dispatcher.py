@@ -25,6 +25,7 @@ fuzzing module; SubInvestigation needs M3.R-5 branching).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -37,12 +38,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import (
-    default_task_queue as _build_default_task_queue,
-)
-from aila.modules.vr._task_queue import (
+    default_task_queue,
     enqueue_vr_nday,
 )
-from aila.modules.vr.contracts import OutcomeDispatchStatus, OutcomeKind
+from aila.modules.vr._task_queue import (
+    default_task_queue as _build_default_task_queue,
+)
+from aila.modules.vr.contracts import BranchStatus, OutcomeDispatchStatus, OutcomeKind
 from aila.modules.vr.contracts.investigation import (
     InvestigationKind,
     InvestigationStatus,
@@ -54,6 +56,15 @@ from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
     VRTargetRecord,
+)
+from aila.modules.vr.services.arq_purge import purge_arq_jobs_for_investigation
+from aila.modules.vr.services.branch_cleanup import close_orphan_branches_on_terminal
+from aila.modules.vr.services.outcome_review import (
+    OUTCOME_STATE_APPROVED,
+    OUTCOME_STATE_DISPATCHED,
+    OUTCOME_STATE_DRAFT,
+    OUTCOME_STATE_REJECTED,
+    set_outcome_state,
 )
 from aila.platform.contracts._common import utc_now
 from aila.platform.services.knowledge import KnowledgeService
@@ -209,12 +220,6 @@ class OutcomeDispatcher:
         already shipped (re-dispatch is a no-op). The state machine
         lives in ``aila.modules.vr.services.outcome_review``.
         """
-        from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
-            OUTCOME_STATE_APPROVED,
-            OUTCOME_STATE_DISPATCHED,
-            OUTCOME_STATE_DRAFT,
-            OUTCOME_STATE_REJECTED,
-        )
 
         async with UnitOfWork() as uow:
             outcome = (await uow.session.exec(
@@ -700,7 +705,6 @@ class OutcomeDispatcher:
         # Same enqueue shape as _spawn_variant_child (commit 6d7cab1).
         enqueue_error: str | None = None
         try:
-            from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
             from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
             task_queue = default_task_queue()
             await task_queue.submit(
@@ -821,7 +825,6 @@ class OutcomeDispatcher:
         # status=CREATED forever waiting for someone to drive it.
         # Same pattern as the API's create_investigation endpoint.
         try:
-            from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
             from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
             task_queue = default_task_queue()
             await task_queue.submit(
@@ -892,7 +895,6 @@ class OutcomeDispatcher:
         block dispatch on PoC generation (writer call is ~10-30s of
         LLM time) — finding lands immediately, PoC trickles in.
         """
-        from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
         from aila.modules.vr.workflow.task import run_vr_draft_poc  # noqa: PLC0415
 
         task_queue = default_task_queue()
@@ -1270,19 +1272,6 @@ class OutcomeDispatcher:
             return target, inv
 
     async def _update_outcome_status(self, result: OutcomeDispatchResult) -> None:
-        from aila.modules.vr.contracts import (  # noqa: PLC0415
-            BranchStatus,
-            InvestigationStatus,
-        )
-        from aila.modules.vr.db_models import (  # noqa: PLC0415
-            VRInvestigationBranchRecord,
-            VRInvestigationRecord,
-        )
-        from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
-            OUTCOME_STATE_DISPATCHED,
-            set_outcome_state,
-        )
-        from aila.platform.contracts._common import utc_now  # noqa: PLC0415
 
         async with UnitOfWork() as uow:
             outcome = (await uow.session.exec(
@@ -1425,12 +1414,6 @@ class OutcomeDispatcher:
         in one place means Phase B is a one-line swap, not a hunt for
         every COMPLETED writer in the dispatcher.
         """
-        from aila.modules.vr.contracts import (  # noqa: PLC0415
-            InvestigationStatus,
-        )
-        from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
-            close_orphan_branches_on_terminal,
-        )
 
         now = utc_now()
         inv.status = InvestigationStatus.COMPLETED.value
@@ -1451,13 +1434,9 @@ class OutcomeDispatcher:
         attempts: int = 3,
     ) -> None:
         """Purge ARQ jobs for ``investigation_id`` with retry on transient errors."""
-        import asyncio  # noqa: PLC0415
 
         for attempt in range(1, attempts + 1):
             try:
-                from aila.modules.vr.services.arq_purge import (  # noqa: PLC0415
-                    purge_arq_jobs_for_investigation,
-                )
                 purged = await purge_arq_jobs_for_investigation(
                     investigation_id, track="vr",
                 )

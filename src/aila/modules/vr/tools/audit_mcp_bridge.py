@@ -20,16 +20,20 @@ with ``action='poll_task'`` until ``status='ready'`` — see
 from __future__ import annotations
 
 import asyncio
+import difflib
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
 import httpx
 from sqlalchemy.exc import SQLAlchemyError
 
+from aila.modules.vr.tools._kwarg_alias import build_alias_map, normalize_kwargs
 from aila.platform.tools._common import Tool
+from aila.storage.registry import ConfigRegistry
 
 __all__ = ["AuditMcpBridgeTool"]
 
@@ -346,8 +350,6 @@ class AuditMcpBridgeTool(Tool):
             self._resolved_base_url = env_value.rstrip("/")
             return self._resolved_base_url
         try:
-            from aila.storage.registry import ConfigRegistry  # noqa: PLC0415  (lazy: avoid hot-path on cold init)
-
             cfg_value = await ConfigRegistry().get("vr", "audit_mcp_url")
             if isinstance(cfg_value, str) and cfg_value.strip():
                 self._resolved_base_url = cfg_value.rstrip("/")
@@ -438,8 +440,6 @@ class AuditMcpBridgeTool(Tool):
         cls, action: str, kwargs: dict[str, Any],
     ) -> tuple[dict[str, Any], list[str]]:
         """Delegate to the shared resolver against the live alias map."""
-        from aila.modules.vr.tools._kwarg_alias import normalize_kwargs  # noqa: PLC0415
-
         return normalize_kwargs(action, kwargs, cls._AUTO_ALIAS_MAP)
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
@@ -750,7 +750,6 @@ class AuditMcpBridgeTool(Tool):
         seen: set[str] = set()
         probes = [name, name[:6], name[:4]]
         # Add CamelCase-stem variants: 'ensureStrBuf' -> 'StrBuf'
-        import re  # noqa: PLC0415
         camel_parts = re.findall(r"[A-Z][a-z]+", name)
         probes.extend(camel_parts[-2:])
         try:
@@ -818,8 +817,7 @@ class AuditMcpBridgeTool(Tool):
         concurrent fetches may both hit the server on cold start;
         each sets the same value so the cache converges.
         """
-        import time as _time  # noqa: PLC0415
-        now = _time.monotonic()
+        now = time.monotonic()
         cached_at = self.__class__._SPEC_CACHE_FETCHED_AT
         if (
             self.__class__._SPEC_CACHE is not None
@@ -888,8 +886,6 @@ class AuditMcpBridgeTool(Tool):
         })
         # Derive the per-action alias map from the live schema. Every
         # subsequent _normalize_kwargs call resolves through this map.
-        from aila.modules.vr.tools._kwarg_alias import build_alias_map  # noqa: PLC0415
-
         self.__class__._AUTO_ALIAS_MAP = build_alias_map(
             self.__class__._SPEC_CACHE,
             self._KW_FAMILIES,
@@ -926,8 +922,6 @@ class AuditMcpBridgeTool(Tool):
         audit-mcp is down or the index is broken, the real call that
         follows will surface a proper error.
         """
-        import asyncio  # noqa: PLC0415
-
         if index_id in self._warmed_indexes:
             return
         # Skip pre-warm on single-worker deployments — see docstring.
@@ -1016,8 +1010,6 @@ class AuditMcpBridgeTool(Tool):
         the catalog hasn't loaded it) or genuinely unknown tools that
         the upstream server is best placed to reject.
         """
-        import difflib  # noqa: PLC0415
-
         specs = await self.list_tool_specs()
         if not specs:
             return None
@@ -1116,8 +1108,6 @@ class AuditMcpBridgeTool(Tool):
         Required kwargs: index_id, file_path, start, end.
         Optional: max_lines (cap, default 500, hard ceiling 1500).
         """
-        from pathlib import Path  # noqa: PLC0415
-
         index_id = str(kwargs.get("index_id") or "").strip()
         file_path = str(kwargs.get("file_path") or "").strip()
         try:

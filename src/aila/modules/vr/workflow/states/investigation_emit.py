@@ -23,17 +23,33 @@ import logging
 from datetime import UTC
 from typing import Any
 
+from sqlalchemy import func as _func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
+from aila.modules.vr._task_queue import default_task_queue
 from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
 from aila.modules.vr.agents.pattern_extractor import (
     PatternExtractionResult,
     PatternExtractor,
 )
+from aila.modules.vr.contracts.branch import BranchStatus
 from aila.modules.vr.contracts.investigation import InvestigationStatus
-from aila.modules.vr.db_models import VRInvestigationBranchRecord, VRInvestigationRecord
+from aila.modules.vr.db_models import (
+    VRInvestigationBranchRecord,
+    VRInvestigationMessageRecord,
+    VRInvestigationOutcomeRecord,
+    VRInvestigationRecord,
+)
+from aila.modules.vr.services.arq_purge import purge_arq_jobs_for_investigation
+from aila.modules.vr.services.branch_cleanup import close_orphan_branches_on_terminal
+from aila.modules.vr.services.outcome_review import (
+    OUTCOME_STATE_APPROVED,
+    evaluate_quorum,
+    post_draft_review_request,
+)
 from aila.modules.vr.services.pattern_store import PatternStore
+from aila.modules.vr.workflow.finalize import finalize_investigation
 from aila.platform.contracts._common import utc_now
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
@@ -153,7 +169,6 @@ async def _enqueue_next_investigation_run(
     Imports are deferred so this module stays import-safe — the worker
     boots before its ARQ client surface is wired through.
     """
-    from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
     from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
 
     kwargs: dict[str, Any] = {"investigation_id": investigation_id}
@@ -256,11 +271,7 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
     # waiting for each one to independently trip.
     if investigation_id:
 
-        from sqlalchemy import func as _func  # noqa: PLC0415
 
-        from .investigation_setup import (  # noqa: PLC0415
-            VRInvestigationBranchRecord as _BranchRec3,
-        )
 
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
@@ -270,16 +281,13 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
             )).first()
             if inv is not None and inv.status == InvestigationStatus.RUNNING.value:
                 total_turns_row = await uow.session.exec(
-                    _select(_func.coalesce(_func.sum(_BranchRec3.turn_count), 0))
-                    .where(_BranchRec3.investigation_id == investigation_id)
+                    _select(_func.coalesce(_func.sum(VRInvestigationBranchRecord.turn_count), 0))
+                    .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
                 )
                 total_turns = int(total_turns_row.first() or 0)
-                from aila.modules.vr.db_models import (  # noqa: PLC0415
-                    VRInvestigationMessageRecord as _MsgRec,
-                )
                 msg_count_row = await uow.session.exec(
-                    _select(_func.count(_MsgRec.id)).where(
-                        _MsgRec.investigation_id == investigation_id,
+                    _select(_func.count(VRInvestigationMessageRecord.id)).where(
+                        VRInvestigationMessageRecord.investigation_id == investigation_id,
                     )
                 )
                 total_messages = int(msg_count_row.first() or 0)
@@ -329,9 +337,6 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                     # 7 branches with the most-recent updated_at 30s
                     # AFTER stopped_at — renzo was running
                     # taint_paths_to and got mid-call killed.
-                    from aila.modules.vr.db_models import (  # noqa: PLC0415
-                        VRInvestigationBranchRecord as _BR2,  # noqa: N814 — local alias
-                    )
                     idle_grace_s = float(
                         __import__("os").environ.get(
                             "VR_WALL_CLOCK_IDLE_GRACE_S", "900",
@@ -339,9 +344,9 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                     )
                     latest_act_row = (
                         await uow.session.exec(
-                            _select(_func.max(_BR2.updated_at))
-                            .where(_BR2.investigation_id == investigation_id)
-                            .where(_BR2.status == "active"),
+                            _select(_func.max(VRInvestigationBranchRecord.updated_at))
+                            .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
+                            .where(VRInvestigationBranchRecord.status == "active"),
                         )
                     ).first()
                     if latest_act_row is not None:
@@ -378,9 +383,9 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
 
                 if breach is not None:
                     actives = (await uow.session.exec(
-                        _select(_BranchRec3).where(
-                            _BranchRec3.investigation_id == investigation_id,
-                            _BranchRec3.status == "active",
+                        _select(VRInvestigationBranchRecord).where(
+                            VRInvestigationBranchRecord.investigation_id == investigation_id,
+                            VRInvestigationBranchRecord.status == "active",
                         )
                     )).all()
                     halt_now = utc_now()
@@ -398,9 +403,6 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                     # Drop the investigation's pending ARQ jobs so they
                     # don't keep waking the worker post cap-exceeded.
                     try:
-                        from aila.modules.vr.services.arq_purge import (  # noqa: PLC0415
-                            purge_arq_jobs_for_investigation,
-                        )
                         purged = await purge_arq_jobs_for_investigation(
                             investigation_id, track="vr",
                         )
@@ -448,13 +450,12 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                     # turns have submitted. Otherwise this is just one branch
                     # finishing — the investigation stays RUNNING until all
                     # persona branches converge.
-                    from .investigation_setup import VRInvestigationBranchRecord as _BranchRec  # noqa: PLC0415
                     active_siblings = (await uow.session.exec(
-                        _select(_BranchRec).where(
-                            _BranchRec.investigation_id == investigation_id,
-                            _BranchRec.status == "active",
-                            _BranchRec.turn_count > 0,
-                            _BranchRec.id != (branch_id or ""),
+                        _select(VRInvestigationBranchRecord).where(
+                            VRInvestigationBranchRecord.investigation_id == investigation_id,
+                            VRInvestigationBranchRecord.status == "active",
+                            VRInvestigationBranchRecord.turn_count > 0,
+                            VRInvestigationBranchRecord.id != (branch_id or ""),
                         )
                     )).all()
                     if active_siblings:
@@ -486,9 +487,6 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                     InvestigationStatus.FAILED.value,
                     InvestigationStatus.ABANDONED.value,
                 ):
-                    from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
-                        close_orphan_branches_on_terminal,
-                    )
                     _reason_map = {
                         InvestigationStatus.COMPLETED.value: "investigation_completed",
                         InvestigationStatus.FAILED.value: "investigation_failed",
@@ -513,18 +511,8 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
     dispatch_reason: str | None = None
     if outcome_id:
         try:
-            from aila.modules.vr.db_models import (  # noqa: PLC0415
-                VRInvestigationOutcomeRecord,
-            )
-            from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
-                OUTCOME_STATE_APPROVED,
-                evaluate_quorum,
-                post_draft_review_request,
-            )
 
-            from .investigation_setup import (  # noqa: PLC0415
-                VRInvestigationBranchRecord as _BranchRec2,
-            )
+
 
             async with UnitOfWork() as uow:
                 outcome_row = (await uow.session.exec(
@@ -535,8 +523,8 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 proposing_branch = None
                 if outcome_row is not None:
                     proposing_branch = (await uow.session.exec(
-                        _select(_BranchRec2).where(
-                            _BranchRec2.id == outcome_row.branch_id,
+                        _select(VRInvestigationBranchRecord).where(
+                            VRInvestigationBranchRecord.id == outcome_row.branch_id,
                         ),
                     )).first()
 
@@ -651,7 +639,6 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
     # Independent of outcome_id: call finalize. Cheap when no trigger
     # fires (single SELECT + branch/outcome aggregate, no action).
     try:
-        from ..finalize import finalize_investigation  # noqa: PLC0415
         result = await finalize_investigation(investigation_id)
         if result.trigger not in ("no_trigger", "not_running"):
             _log.info(
@@ -704,12 +691,6 @@ async def _maybe_trigger_synthesis(investigation_id: str) -> None:
     synthesis task itself dedupes by checking primary_outcome_id at
     its own start, so the second one becomes a no-op.
     """
-    from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
-    from aila.modules.vr.db_models import (  # noqa: PLC0415
-        VRInvestigationBranchRecord,
-        VRInvestigationOutcomeRecord,
-        VRInvestigationRecord,
-    )
     from aila.modules.vr.workflow.task import (  # noqa: PLC0415
         run_vr_synthesis,
     )
@@ -752,7 +733,6 @@ async def _maybe_trigger_synthesis(investigation_id: str) -> None:
         # relied on per-branch outcome rows that no longer exist —
         # synthesis NEVER fired in the new architecture, leaving the
         # investigation status stuck at RUNNING forever.
-        from aila.modules.vr.contracts.branch import BranchStatus  # noqa: PLC0415
 
         canonical = (await uow.session.exec(
             _select(VRInvestigationOutcomeRecord)
@@ -839,11 +819,6 @@ async def _maybe_trigger_verifier(investigation_id: str) -> None:
     the only true collision is one overwriting the other's NEW
     field — handled at the agent layer by re-reading + merging.
     """
-    from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
-    from aila.modules.vr.db_models import (  # noqa: PLC0415
-        VRInvestigationOutcomeRecord,
-        VRInvestigationRecord,
-    )
     from aila.modules.vr.workflow.task import (  # noqa: PLC0415
         run_vr_claim_verifier,
     )
@@ -899,7 +874,6 @@ async def _run_pattern_extraction(outcome_id: str) -> PatternExtractionResult:
     extractor with platform LLM client + PatternStore, and runs one pass.
     Errors propagate to the caller's try/except for status logging.
     """
-    from aila.modules.vr.db_models import VRInvestigationOutcomeRecord  # noqa: PLC0415
 
     async with UnitOfWork() as uow:
         outcome = (await uow.session.exec(
