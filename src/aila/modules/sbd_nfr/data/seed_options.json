@@ -1,0 +1,219 @@
+[
+  {
+    "question_id": "__BINARY__",
+    "value": "Yes",
+    "label": "Yes",
+    "description": "Control is fully in place",
+    "display_order": 1
+  },
+  {
+    "question_id": "__BINARY__",
+    "value": "No",
+    "label": "No",
+    "description": "Control is not implemented",
+    "display_order": 2
+  },
+  {
+    "question_id": "__BINARY__",
+    "value": "NA",
+    "label": "Not Applicable",
+    "description": "Control does not apply to this application",
+    "display_order": 3
+  },
+  {
+    "question_id": "__MATURITY_TIER__",
+    "value": "0",
+    "label": "Not Implemented",
+    "description": "No documented practice exists",
+    "display_order": 1
+  },
+  {
+    "question_id": "__MATURITY_TIER__",
+    "value": "1",
+    "label": "Ad-hoc",
+    "description": "Informal, undocumented, inconsistently applied",
+    "display_order": 2
+  },
+  {
+    "question_id": "__MATURITY_TIER__",
+    "value": "2",
+    "label": "Defined",
+    "description": "Documented process, partially automated, consistently applied",
+    "display_order": 3
+  },
+  {
+    "question_id": "__MATURITY_TIER__",
+    "value": "3",
+    "label": "Managed",
+    "description": "Fully automated, continuously verified, measured and improved",
+    "display_order": 4
+  },
+  {
+    "question_id": "SCOPE-01",
+    "value": "new_service",
+    "label": "New Service",
+    "description": "Building a new application or service from scratch",
+    "display_order": 1
+  },
+  {
+    "question_id": "SCOPE-01",
+    "value": "enhancement",
+    "label": "Enhancement",
+    "description": "Modifying or extending an existing application",
+    "display_order": 2
+  },
+  {
+    "question_id": "SCOPE-01",
+    "value": "infrastructure",
+    "label": "Infrastructure",
+    "description": "Infrastructure, platform, or tooling component",
+    "display_order": 3
+  },
+  {
+    "question_id": "SCOPE-01",
+    "value": "data_pipeline",
+    "label": "Data Pipeline",
+    "description": "Data processing, ETL, or analytics pipeline",
+    "display_order": 4
+  },
+  {
+    "question_id": "SCOPE-02",
+    "value": "public",
+    "label": "Public",
+    "description": "No sensitive data processed or stored",
+    "display_order": 1
+  },
+  {
+    "question_id": "SCOPE-02",
+    "value": "internal",
+    "label": "Internal",
+    "description": "Internal business data, no PII or regulated data",
+    "display_order": 2
+  },
+  {
+    "question_id": "SCOPE-02",
+    "value": "confidential",
+    "label": "Confidential (PII)",
+    "description": "Personally identifiable information or customer data",
+    "display_order": 3
+  },
+  {
+    "question_id": "SCOPE-02",
+    "value": "restricted",
+    "label": "Restricted (PHI/Financial)",
+    "description": "Protected health information, financial, or regulated data",
+    "display_order": 4
+  },
+  {
+    "question_id": "SCOPE-03",
+    "value": "internal_only",
+    "label": "Internal Only",
+    "description": "Accessible only within the corporate network",
+    "display_order": 1
+  },
+  {
+    "question_id": "SCOPE-03",
+    "value": "dmz",
+    "label": "DMZ",
+    "description": "Deployed in a demilitarized zone with controlled access",
+    "display_order": 2
+  },
+  {
+    "question_id": "SCOPE-03",
+    "value": "internet_facing",
+    "label": "Internet-Facing",
+    "description": "Directly accessible from the public internet",
+    "display_order": 3
+  },
+  {
+    "question_id": "SCOPE-03",
+    "value": "hybrid",
+    "label": "Hybrid",
+    "description": "Mixed internal and internet-facing components",
+    "display_order": 4
+  },
+  {
+    "question_id": "SCOPE-04",
+    "value": "standalone",
+    "label": "Standalone",
+    "description": "No external API integrations",
+    "display_order": 1
+  },
+  {
+    "question_id": "SCOPE-04",
+    "value": "api_consumer",
+    "label": "API Consumer",
+    "description": "Consumes external APIs or third-party services",
+    "display_order": 2
+  },
+  {
+    "question_id": "SCOPE-04",
+    "value": "api_provider",
+    "label": "API Provider",
+    "description": "Exposes APIs for other systems to consume",
+    "display_order": 3
+  },
+  {
+    "question_id": "SCOPE-04",
+    "value": "both",
+    "label": "Both",
+    "description": "Both consumes and provides APIs",
+    "display_order": 4
+  },
+  {
+    "question_id": "SCOPE-05",
+    "value": "service_accounts",
+    "label": "Service Accounts Only",
+    "description": "Machine-to-machine, no human users",
+    "display_order": 1
+  },
+  {
+    "question_id": "SCOPE-05",
+    "value": "internal_users",
+    "label": "Internal Users",
+    "description": "Corporate employees and contractors only",
+    "display_order": 2
+  },
+  {
+    "question_id": "SCOPE-05",
+    "value": "external_users",
+    "label": "External Users",
+    "description": "Customers, partners, or public users",
+    "display_order": 3
+  },
+  {
+    "question_id": "SCOPE-05",
+    "value": "both_users",
+    "label": "Both",
+    "description": "Internal and external users",
+    "display_order": 4
+  },
+  {
+    "question_id": "SCOPE-06",
+    "value": "none",
+    "label": "None",
+    "description": "No significant third-party dependencies",
+    "display_order": 1
+  },
+  {
+    "question_id": "SCOPE-06",
+    "value": "managed_services",
+    "label": "Managed Services",
+    "description": "Cloud-managed services (AWS, Azure, GCP)",
+    "display_order": 2
+  },
+  {
+    "question_id": "SCOPE-06",
+    "value": "vendor_software",
+    "label": "Vendor Software",
+    "description": "Third-party vendor software or libraries",
+    "display_order": 3
+  },
+  {
+    "question_id": "SCOPE-06",
+    "value": "custom_integrations",
+    "label": "Custom Integrations",
+    "description": "Custom integrations with vendor systems",
+    "display_order": 4
+  }
+]
