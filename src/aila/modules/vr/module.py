@@ -309,7 +309,7 @@ def _register_vr_periodic_sweeps() -> None:
 
 # Module-load-time registration. _register_vr_periodic_sweeps() is only
 # invoked from create_module(); a `from aila.modules.vr.module import VRModule`
-# for the protocol type pulls the supporting imports but does NOT fire
+# covering the protocol type pulls the supporting imports but does NOT fire
 # registration (the side-effect lives in the function call, gated by the
 # `vr.finalize` sentinel for idempotency).
 
