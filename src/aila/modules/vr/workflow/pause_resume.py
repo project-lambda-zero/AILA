@@ -262,7 +262,7 @@ async def pause_investigation_atomic(
         await purge_arq_jobs_for_investigation(
             investigation_id, track="vr",
         )
-    except (OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort
+    except (OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:
         # fix §350 — surface traceback. ARQ purge is best-effort because
         # cursor SSOT already blocks surviving jobs at next pickup; the
         # stack distinguishes Redis transport blips from a structural
@@ -279,7 +279,7 @@ async def pause_investigation_atomic(
     # in this process — the cursor SSOT is the cross-process synchronizer).
     try:
         cancel_for_investigation(investigation_id)
-    except (OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort
+    except (OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:
         _log.warning(
             "pause_investigation_atomic CANCEL_TOKEN failed inv=%s err=%s",
             investigation_id, exc,
@@ -419,7 +419,7 @@ async def resume_investigation_atomic(
     # minted token, not the cancelled-from-pause one.
     try:
         clear_for_investigation(investigation_id)
-    except (OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort
+    except (OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:
         _log.warning(
             "resume_investigation_atomic CLEAR_TOKEN failed inv=%s err=%s",
             investigation_id, exc,
@@ -458,7 +458,7 @@ async def resume_investigation_atomic(
                 "resume_investigation_atomic dedup inv=%s run=%s",
                 investigation_id, run_id,
             )
-        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort per branch
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
             # fix §350 — traceback surfaces ARQ/dedup-table regression vs
             # transient Redis failure; the resume submit retries on the
             # next operator action, but the operator needs the stack to
@@ -518,7 +518,7 @@ async def resume_investigation_atomic(
                     "resume_investigation_atomic LEGACY dedup inv=%s br=%s",
                     investigation_id, br_id,
                 )
-            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort per branch
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
                 _log.warning(
                     "resume_investigation_atomic LEGACY submit failed "
                     "inv=%s br=%s err=%s",

@@ -645,7 +645,7 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 "investigation_emit FINALIZE inv=%s trigger=%s action=%s",
                 investigation_id, result.trigger, result.action_taken,
             )
-    except (ImportError, SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — preserved during sweep; comment intentionally retained
+    except (ImportError, SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
         # fix §350 — finalize is best-effort because the emit terminal
         # already wrote the cursor; the traceback surfaces a structural
         # finalize regression (handler crash, DB unreachable) on every

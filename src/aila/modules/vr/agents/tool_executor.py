@@ -296,7 +296,7 @@ class ToolExecutor:
 
         try:
             raw = await bridge.forward(action=tool_name, **args)
-        except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001
+        except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:
             # fix §197 — broadened from (OSError, TimeoutError,
             # RuntimeError). `bridge.forward` reaches into httpx
             # (httpx.HTTPError, httpx.PoolTimeout — neither one is
@@ -569,7 +569,7 @@ class ToolExecutor:
             if hasattr(audit_mcp_bridge, "base_url"):
                 try:
                     bridge_base_url = await audit_mcp_bridge.base_url()
-                except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:  # noqa: BLE001 — fix §350 DEFENSIVE: bridge URL is fallback path, surface traceback so operator can diagnose Config/registry drift
+                except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
                     _log.info(
                         "tool_executor: bridge.base_url() failed "
                         "(%s: %s); falling back to default",
@@ -595,7 +595,7 @@ class ToolExecutor:
                         "msg=%s",
                         investigation_id, branch_id, tool_name, posted_id,
                     )
-            except (OSError, RuntimeError, ValueError, TypeError, AttributeError, SQLAlchemyError, httpx.HTTPError) as exc:  # noqa: BLE001 — fix §350 DEFENSIVE: best-effort auto-steering, swallow + log traceback so silent drops are visible
+            except (OSError, RuntimeError, ValueError, TypeError, AttributeError, SQLAlchemyError, httpx.HTTPError) as exc:
                 _log.warning(
                     "auto_steering failed (best-effort): %s", exc,
                     exc_info=True,
@@ -776,7 +776,7 @@ class ToolExecutor:
                 handles = {}
             resolved = str(handles.get("audit_mcp_index_id") or "")
             return self._cache_index_id(investigation_id, resolved)
-        except (SQLAlchemyError, OSError, RuntimeError, ImportError, AttributeError, ValueError, TypeError) as exc:  # noqa: BLE001
+        except (SQLAlchemyError, OSError, RuntimeError, ImportError, AttributeError, ValueError, TypeError) as exc:
             # fix §253 — broadened from (OSError, RuntimeError, ImportError,
             # AttributeError). The auto-correct path must NEVER block the
             # underlying tool dispatch, so any failure here (SQLAlchemy

@@ -120,7 +120,7 @@ class IDABridgeTool(Tool):
             cfg_value = await ConfigRegistry().get("vr", "ida_headless_url")
             if isinstance(cfg_value, str) and cfg_value.strip():
                 return cfg_value.rstrip("/")
-        except (SQLAlchemyError, OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:  # noqa: BLE001
+        except (SQLAlchemyError, OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:
             # fix §212 — broadened from (ValueError, RuntimeError,
             # ImportError). SQLAlchemy errors from ConfigRegistry().get
             # used to propagate and crash the bridge call. URL

@@ -264,7 +264,7 @@ async def sweep_cap_exceeded_investigations() -> int:
     for inv_id in running_ids:
         try:
             reason = await evaluate_cap_for_investigation(str(inv_id))
-        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — best-effort per inv
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
             # fix §350 — surface traceback so a per-id eval failure
             # (cap evaluation crash, FK regression) is debuggable from
             # the cron log instead of only the class name.

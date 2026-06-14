@@ -361,7 +361,7 @@ class AuditMcpBridgeTool(Tool):
             RuntimeError,
             ValueError,
             TypeError,
-        ) as exc:  # noqa: BLE001
+        ) as exc:
             # fix §209 — broadened from (ValueError, RuntimeError,
             # ImportError). SQLAlchemy OperationalError, ConfigKeyError,
             # and anything else raised by ConfigRegistry().get used to

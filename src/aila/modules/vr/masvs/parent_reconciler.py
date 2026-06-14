@@ -218,7 +218,7 @@ async def _run_sweep_step(
     """
     try:
         result = await fn(uow)  # type: ignore[operator]
-    except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:  # noqa: BLE001 — bounded per the helper docstring
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:
         _record_sweep_step_failure(name, exc)
         return default
     _record_sweep_step_success(name)
@@ -391,7 +391,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                     team_id=None,
                 )
                 enqueued_total += 1
-            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:  # noqa: BLE001 — submission is best-effort
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:
                 # fix §350 — traceback surfaces ARQ/Redis transport vs
                 # dedup-table regression vs idempotency-key collision
                 # without forcing a second tick to compare.
@@ -795,7 +795,7 @@ async def _wake_stale_branches(uow: UnitOfWork) -> int:
                 group_id="vr_escalator_wake",
             )
             enqueued += 1
-        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:  # noqa: BLE001 — submit is best-effort;
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:
             # dedup misses and Redis blips are tolerable, the next tick retries.
             # fix §350 — traceback surfaces so a structural break (auth
             # bind, dedup table drift) isn't silenced behind a transient
