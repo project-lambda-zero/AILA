@@ -26,10 +26,13 @@ import json
 import logging
 import os
 import re
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
+import psycopg
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import LETTER
@@ -53,14 +56,18 @@ from reportlab.platypus import (
 from sqlmodel import func as _sa_func
 from sqlmodel import select as _select
 
+from aila.config import get_settings
 from aila.modules.vr.db_models import (
+    VRFindingRecord,
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
     VRTargetRecord,
 )
+from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.reporting.writer_agent import ReportContent, ReportWriter
+from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["render_investigation_pdf"]
@@ -118,7 +125,6 @@ async def _draft_poc_inline(facts: dict[str, Any]) -> dict[str, Any] | None:
     Returns None when the writer fails — the report renders without
     the Reproduction section rather than aborting the whole PDF.
     """
-    from aila.modules.vr.reporting.poc_writer import PocWriter  # noqa: PLC0415
 
     poc_facts = {
         **facts,
@@ -260,7 +266,6 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         # PARENT, the report should describe every variant the system
         # has explored — including PoC status. When the user exports
         # a child, this list is empty (children don't spawn variants).
-        from aila.modules.vr.db_models import VRFindingRecord  # noqa: PLC0415
         children = (await uow.session.exec(
             _select(VRInvestigationRecord)
             .where(VRInvestigationRecord.parent_investigation_id == investigation_id)
@@ -467,8 +472,6 @@ def _resolve_audit_metadata(
     is gone or git fails, returns ``commit_hash=None`` and the PDF
     falls back to showing just the ref.
     """
-    import subprocess  # noqa: PLC0415
-    from urllib.parse import urlparse  # noqa: PLC0415
 
     started = inv.created_at
     stopped = inv.stopped_at or inv.updated_at
@@ -580,12 +583,6 @@ def _sum_active_task_runtime(investigation_id: str) -> int | None:
     be read (so the report still renders without the field).
     """
     try:
-        from urllib.parse import urlparse  # noqa: PLC0415
-
-        import psycopg  # noqa: PLC0415
-
-        from aila.config import get_settings  # noqa: PLC0415
-
         url = get_settings().database_url.replace("postgresql+asyncpg://", "postgresql://")
         parsed = urlparse(url)
         with psycopg.connect(
@@ -667,7 +664,6 @@ async def _resolve_code_excerpts(
             if fp and fn:
                 normalized.append((fp, fn))
 
-    from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool  # noqa: PLC0415
     bridge = AuditMcpBridgeTool()
     excerpts: list[dict[str, Any]] = []
     for fp, fn in normalized:

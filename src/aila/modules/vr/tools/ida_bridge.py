@@ -14,14 +14,19 @@ Timeout:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
 from sqlalchemy.exc import SQLAlchemyError
 
+from aila.modules.vr.tools._kwarg_alias import build_alias_map, normalize_kwargs
 from aila.platform.tools._common import Tool
+from aila.storage.registry import ConfigRegistry
 
 __all__ = ["IDABridgeTool"]
 
@@ -112,8 +117,6 @@ class IDABridgeTool(Tool):
         if env_value:
             return env_value.rstrip("/")
         try:
-            from aila.storage.registry import ConfigRegistry  # noqa: PLC0415  (lazy: avoid hot-path on cold init)
-
             cfg_value = await ConfigRegistry().get("vr", "ida_headless_url")
             if isinstance(cfg_value, str) and cfg_value.strip():
                 return cfg_value.rstrip("/")
@@ -173,8 +176,6 @@ class IDABridgeTool(Tool):
         self, action: str, kwargs: dict[str, Any],
     ) -> tuple[dict[str, Any], list[str]]:
         """Delegate to the shared resolver against the live alias map."""
-        from aila.modules.vr.tools._kwarg_alias import normalize_kwargs  # noqa: PLC0415
-
         return normalize_kwargs(action, kwargs, self._auto_alias_map)
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
@@ -289,8 +290,6 @@ class IDABridgeTool(Tool):
         self._spec_cache = [_compact_spec(t) for t in raw]
         # Derive the per-action alias map from the live schema. Every
         # subsequent _normalize_kwargs call resolves through this map.
-        from aila.modules.vr.tools._kwarg_alias import build_alias_map  # noqa: PLC0415
-
         self._auto_alias_map = build_alias_map(
             self._spec_cache,
             self._KW_FAMILIES,
@@ -318,9 +317,6 @@ class IDABridgeTool(Tool):
         """
         if not file_path:
             return {"status": "error", "error": "file_path is required for upload"}
-        import asyncio  # noqa: PLC0415
-        import uuid  # noqa: PLC0415
-        from pathlib import Path  # noqa: PLC0415
         target = Path(file_path)
         # is_file() does a sync stat — wrap so we don't stall the loop
         # when the file lives on a slow volume.

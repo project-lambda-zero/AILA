@@ -28,12 +28,17 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import structlog
+from arq import create_pool as _create_pool
+from arq.connections import RedisSettings as _RedisSettings
 from sqlalchemy import update as sa_update
 from sqlmodel import select
 
 from aila.api.metrics import TASK_DEAD_LETTER_TOTAL
 from aila.platform.contracts._common import utc_now
+from aila.platform.runtime.shared import get_shared_run_memory
+from aila.platform.tasks.constants import ARQ_QUEUE_KEY_TEMPLATE
 from aila.platform.tasks.models import TaskRecord, TaskStatus
+from aila.storage.database import async_session_scope
 
 # Internal module: every callable here (``_on_job_start``, ``_on_job_end``,
 # ``_stash_outcome``, ``_pop_outcome``) is sibling-internal and is imported
@@ -352,9 +357,6 @@ async def _on_job_end(ctx: dict[str, Any]) -> None:
         # workers don't pin orphan run_ids in memory.
         if terminal_branch is not None:
             try:
-                from aila.platform.runtime.shared import (  # noqa: PLC0415
-                    get_shared_run_memory,
-                )
                 _run_memory = get_shared_run_memory()
                 if _run_memory is not None:
                     _run_memory.clear(task_id)
@@ -457,11 +459,6 @@ async def _enqueue_dependents(completed_task_id: str) -> None:
     """
     import json
 
-    from aila.platform.tasks.constants import (  # noqa: PLC0415
-        ARQ_QUEUE_KEY_TEMPLATE,
-    )
-    from aila.storage.database import async_session_scope  # noqa: PLC0415
-
     promoted_records: list[TaskRecord] = []
     async with async_session_scope() as session:
         # fix §135 — narrow candidate set with a substring LIKE so the
@@ -520,9 +517,6 @@ async def _enqueue_dependents(completed_task_id: str) -> None:
             len(promoted_records),
         )
         return
-
-    from arq import create_pool as _create_pool  # noqa: PLC0415
-    from arq.connections import RedisSettings as _RedisSettings  # noqa: PLC0415
 
     pool = None
     try:

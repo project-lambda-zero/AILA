@@ -50,15 +50,21 @@ import json
 import logging
 import os
 from typing import Any
+from uuid import uuid4
 
+import httpx
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
+from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
+from aila.modules.vr.contracts import OutcomeDispatchStatus, OutcomeKind
 from aila.modules.vr.contracts.investigation import InvestigationStatus
 from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
+    VRTargetRecord,
 )
+from aila.modules.vr.services.outcome_review import OUTCOME_STATE_APPROVED
 from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
 from aila.platform.contracts._common import utc_now
 from aila.platform.services.factory import ServiceFactory
@@ -172,8 +178,6 @@ async def _fetch_audit_mcp_signatures() -> tuple[str, bool]:
     fix §349 — log + return a failure flag instead of returning empty
     string silently.
     """
-    import httpx  # noqa: PLC0415
-
     bridge = AuditMcpBridgeTool()
     try:
         base_url = await bridge._resolve_base_url()
@@ -716,17 +720,6 @@ class ClaimVerifierAgent:
         row insert; bi-directional payload links give us the same
         observability without DDL.
         """
-        from uuid import uuid4  # noqa: PLC0415
-
-        from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher  # noqa: PLC0415
-        from aila.modules.vr.contracts import (  # noqa: PLC0415
-            OutcomeDispatchStatus,
-            OutcomeKind,
-        )
-        from aila.modules.vr.services.outcome_review import (  # noqa: PLC0415
-            OUTCOME_STATE_APPROVED,
-        )
-
         if not isinstance(confidence, (int, float)):
             return {"status": "skipped", "reason": "no_numeric_confidence"}
         conf = float(confidence)
@@ -914,8 +907,6 @@ class ClaimVerifierAgent:
             )
 
     async def _load_context(self) -> dict[str, Any]:
-        from aila.modules.vr.db_models import VRTargetRecord  # noqa: PLC0415
-
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
                 _select(VRInvestigationRecord).where(

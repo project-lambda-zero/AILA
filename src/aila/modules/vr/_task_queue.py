@@ -8,6 +8,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from aila.modules.vr.contracts.target_stages import StageName, StageState
+from aila.modules.vr.enrichment.workers import (
+    run_capability_profile_build,
+    run_function_ranking,
+)
+from aila.modules.vr.services.stage_tracker import load_target_stages
+from aila.platform.tasks.queue import TaskQueue
 from aila.storage.registry import ConfigRegistry
 
 __all__ = [
@@ -18,13 +25,7 @@ __all__ = [
 
 
 def default_task_queue() -> Any:
-    """Construct a platform TaskQueue bound to the ``vr`` module.
-
-    Imports are lazy to avoid pulling the platform-tasks module on import
-    of contracts/dispatcher modules at test collection time.
-    """
-    from aila.platform.tasks.queue import TaskQueue  # noqa: PLC0415
-
+    """Construct a platform TaskQueue bound to the ``vr`` module."""
     return TaskQueue(
         config_registry=ConfigRegistry(),
         module_id="vr",
@@ -98,14 +99,6 @@ async def enqueue_downstream_target_stages(
     and returns cleanly, so a stale duplicate enqueue is wasteful but
     not corrupting.
     """
-    from aila.modules.vr.contracts.target_stages import StageName, StageState  # noqa: PLC0415
-    from aila.modules.vr.services.stage_tracker import load_target_stages  # noqa: PLC0415
-
-    from .enrichment.workers import (  # noqa: PLC0415
-        run_capability_profile_build,
-        run_function_ranking,
-    )
-
     stages = await load_target_stages(target_id)
     if stages.ingestion.state != StageState.DONE:
         # Ingestion not finished yet — caller is responsible for

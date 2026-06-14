@@ -10,21 +10,27 @@ from urllib.parse import urlparse
 
 from arq import cron
 from arq.connections import RedisSettings
+from redis import asyncio as aioredis
 from sqlmodel import select
 
 from aila.api.metrics import TASK_ZOMBIES_REAPED_TOTAL
 from aila.platform.contracts._common import utc_now
+from aila.platform.llm.idempotency_cache import run_purge_expired_cron
+from aila.platform.modules import load_builtin_modules
 from aila.platform.tasks.constants import (
     ARQ_DEAD_LETTER_KEY_TEMPLATE,
     ARQ_IN_PROGRESS_PREFIX,
     ARQ_JOB_PREFIX,
+    ARQ_JOB_TIMEOUT_S,
     ARQ_QUEUE_KEY_TEMPLATE,
     ARQ_RETRY_PREFIX,
     REAPER_HEARTBEAT_THRESHOLD_S,
     REAPER_ZOMBIE_THRESHOLD_S,
 )
+from aila.platform.tasks.cursor_reaper import sweep_orphan_crashed_cursors
 from aila.platform.tasks.hooks import _on_job_end, _on_job_start
 from aila.platform.tasks.models import TaskRecord, TaskStatus
+from aila.platform.tasks.sweeps import all_periodic_sweeps
 from aila.platform.tasks.template import _REGISTRY
 from aila.storage.database import async_session_scope
 
@@ -119,9 +125,6 @@ async def _sweep_orphan_queued_tasks() -> None:
     redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
     if not redis_url:
         return
-
-    import redis.asyncio as aioredis  # noqa: PLC0415
-
     client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
     try:
         # fix §61 — collect job_ids per ARQ queue track instead of one
@@ -280,7 +283,6 @@ async def reaper(ctx: dict[str, object]) -> None:
     # The platform worker has zero awareness of which modules own which
     # sweeps; this restores the "platform never imports from modules"
     # invariant (CLAUDE.md non-negotiable rule #5).
-    from .sweeps import all_periodic_sweeps  # noqa: PLC0415
     for sweep_name, sweep_fn in all_periodic_sweeps().items():
         try:
             result = await sweep_fn()
@@ -306,7 +308,6 @@ async def reaper(ctx: dict[str, object]) -> None:
     try:
         # fix §58 — sweep covers ALL FOUR reserved terminal cursor states,
         # not just __crashed__.
-        from .cursor_reaper import sweep_orphan_crashed_cursors  # noqa: PLC0415
         cleared = await sweep_orphan_crashed_cursors()
         if cleared:
             _log.info("reaper: cleared %d orphan terminal cursors", cleared)
@@ -316,9 +317,6 @@ async def reaper(ctx: dict[str, object]) -> None:
     # cron loop so the table doesn't accumulate stale rows forever. The
     # purge is best-effort and never crashes the cron tick.
     try:
-        from aila.platform.llm.idempotency_cache import (  # noqa: PLC0415
-            run_purge_expired_cron,
-        )
         purged = await run_purge_expired_cron()
         if purged:
             _log.info(
@@ -563,7 +561,6 @@ async def _on_startup(ctx: dict[str, Any]) -> None:
     # the sweep function showed examined=15 / enqueued=90 would have
     # been ready — sweep was correct, just never triggered.
     try:
-        from aila.platform.modules import load_builtin_modules  # noqa: PLC0415
         load_builtin_modules()
         _log.info("ARQ on_startup: registered builtin module sweeps")
     except Exception as exc:  # noqa: BLE001 — non-fatal, worker still runs
@@ -797,7 +794,6 @@ async def _sweep_orphan_running_tasks(
                             started_norm = started.replace(tzinfo=UTC)
                         else:
                             started_norm = started
-                        from aila.platform.tasks.constants import ARQ_JOB_TIMEOUT_S  # noqa: PLC0415
                         arq_giveup_cutoff = now - timedelta(
                             seconds=ARQ_JOB_TIMEOUT_S + 120,
                         )
@@ -817,7 +813,6 @@ async def _sweep_orphan_running_tasks(
                 # one heartbeat at T+30s, then the worker died; reaper
                 # skipped it for 174 min because hb was not None.
                 if hb is not None:
-                    from aila.platform.tasks.constants import ARQ_JOB_TIMEOUT_S  # noqa: PLC0415
                     if hb.tzinfo is None:
                         hb_norm = hb.replace(tzinfo=UTC)
                     else:
