@@ -1,13 +1,13 @@
-# AILA core dependencies — generated from pyproject.toml [project.dependencies]
+# AILA core dependencies ï¿½ generated from pyproject.toml [project.dependencies]
 # Source of truth is pyproject.toml. Regenerate via:
 #   python -c "import tomllib;print(chr(10).join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" > requirements.txt
 # For dev/test deps install via: pip install -e .[dev]
 croniter==6.2.2
-cryptography==46.0.5
+cryptography==46.0.7
 filelock==3.25.2
 fastapi==0.135.3
 httpx==0.28.1
-paramiko==4.0.0
+paramiko==5.0.0
 pwdlib[bcrypt]==0.3.0
 argon2-cffi==25.1.0
 slowapi==0.1.9
