@@ -362,7 +362,7 @@ class HonestVulnResearcher:
                     "(skipped duplicate LLM call)",
                     self.investigation_id, self.branch_id, turn_number,
                 )
-            except (ValueError, TypeError, KeyError, AttributeError) as exc:  # noqa: BLE001 — catch pydantic
+            except (ValueError, TypeError, KeyError, AttributeError) as exc:
                 # ValidationError, KeyError, AttributeError, or any
                 # other cache-shape mismatch. We fall through to the
                 # API path; the bad cache row stays in DB but will be
@@ -384,7 +384,7 @@ class HonestVulnResearcher:
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                 )
-            except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:  # noqa: BLE001 — any engine/LLM failure
+            except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
                 # must surface as VulnResearcherError so the loop catches
                 # it, marks exit_reason='researcher_error:<msg>', and
                 # the workflow finalises with status=FAILED instead of
@@ -702,7 +702,7 @@ class HonestVulnResearcher:
                         user_id="system",
                         group_id="vr_dispatcher",
                     )
-            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError, VulnResearcherError) as exc:  # noqa: BLE001 — fix §91
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError, VulnResearcherError) as exc:
                 # Was `(OSError, TimeoutError, RuntimeError, ValueError)`;
                 # SQLAlchemyError, pydantic.ValidationError, KeyError,
                 # AttributeError from upsert_review / evaluate_quorum /

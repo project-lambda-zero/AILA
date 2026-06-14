@@ -154,7 +154,7 @@ async def _get_intel_service() -> Any | None:
         from aila.platform.runtime.orchestrator import (  # noqa: PLC0415
             get_worker_platform,
         )
-    except (ImportError, AttributeError) as exc:  # noqa: BLE001
+    except (ImportError, AttributeError) as exc:
         # fix §350 — DEFENSIVE: bootstrap import failure must not crash
         # the resolver; surface the traceback so packaging or circular-import
         # regression is diagnosable from a single warning.
@@ -165,7 +165,7 @@ async def _get_intel_service() -> Any | None:
         return None
     try:
         platform = await get_worker_platform()
-    except (OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
         # fix §350 — DEFENSIVE: platform.get_worker_platform() races on
         # cold start; surface traceback so a non-transient init failure
         # (config registry crash, DB unreachable) is debuggable.
@@ -235,7 +235,7 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
     for cve_id in cve_ids:
         try:
             knowledge = await svc.fetch_cve_intel(cve_id)
-        except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001  defensive — classify by type then collapse
+        except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:
             # fix §188 — classify error type by exception class instead of
             # string-matching the message. A genuine NVD 404 reaches us as
             # httpx.HTTPStatusError(.response.status_code==404); transport

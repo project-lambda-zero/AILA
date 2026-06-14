@@ -827,7 +827,7 @@ class ClaimVerifierAgent:
         except (
             SQLAlchemyError, OSError, RuntimeError,
             ValueError, TypeError, AttributeError, KeyError,
-        ) as exc:  # noqa: BLE001 — wide tuple is intentional; see comment above
+        ) as exc:
             # fix §350 — traceback surfaces here because the revert path
             # is the last line of defense; if the dispatcher crashed
             # out-of-protocol the operator needs the full stack to

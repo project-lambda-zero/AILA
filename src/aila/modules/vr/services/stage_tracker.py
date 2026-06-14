@@ -407,7 +407,7 @@ class StageTracker:
                 )
                 uow.session.add(row)
                 await uow.session.commit()
-            except (SQLAlchemyError, OSError, RuntimeError) as save_exc:  # noqa: BLE001
+            except (SQLAlchemyError, OSError, RuntimeError) as save_exc:
                 # fix §322 — if the work itself succeeded (exc is None)
                 # but the state-commit failed, the caller MUST know:
                 # otherwise they treat the stage as DONE while the DB
@@ -593,7 +593,7 @@ async def reap_stuck_stages() -> int:
                     continue
                 await uow.session.commit()
                 reaped += row_reaped
-        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
             # fix §118 — log AND collect; the next row still gets a
             # chance. The collected list drives the post-loop summary
             # log so an operator scanning the worker log sees how many

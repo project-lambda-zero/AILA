@@ -157,7 +157,7 @@ class PatternExtractor:
                 ],
                 schema=_EXTRACTION_SCHEMA,
             )
-        except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — fix §191
+        except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:
             # Broaden the narrow ``(OSError, TimeoutError, RuntimeError)``
             # filter. Pattern instance — every LLM call site that catches
             # narrowly was missing httpx errors, pydantic validation
@@ -533,7 +533,7 @@ async def _emit_skip_event(
             )
             uow.session.add(msg)
             await uow.commit()
-    except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — visibility helper must not crash caller
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
         # fix §350 — surface traceback. The skip-event emit is best-effort
         # but a recurring failure here means the operator-visible engine
         # message channel is broken, which needs the stack to diagnose.

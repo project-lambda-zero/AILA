@@ -208,7 +208,7 @@ class SynthesisAgent:
             )
         except BudgetExceededError:
             raise
-        except (httpx.HTTPError, LLMError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — fix §158
+        except (httpx.HTTPError, LLMError, OSError, RuntimeError, ValueError, TypeError) as exc:
             # Catch systemic LLM failure shapes (TimeoutError is a subclass
             # of OSError; httpx transport errors, LLM client errors, JSON
             # decode errors via ValueError, schema validation failures).
