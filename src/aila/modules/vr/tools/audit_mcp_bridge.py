@@ -1185,6 +1185,53 @@ class AuditMcpBridgeTool(Tool):
                 abs_path = swap_path
                 file_path = file_path.rsplit(".", 1)[0] + abs_path.suffix
             else:
+                # JADX sibling resources fallback: many APK
+                # investigations want to read XML layouts, AndroidManifest,
+                # strings.xml, etc. JADX (when run with -r, which the
+                # standard target ingestion does) emits these under a
+                # sibling `resources/` directory next to `sources/`.
+                # The audit_mcp index typically points at `sources/`
+                # (Java/Kotlin) only — so a request for
+                # `res/layout/foo.xml` resolves to `sources/res/...`
+                # which doesn't exist. Walk up to the parent and try
+                # `resources/<path>` before declaring the file missing.
+                #
+                # Diagnosed 2026-06-14 from inv 27cf9c85: 124 turns
+                # across 6 personas died on this exact gap. Agent
+                # correctly identified read_lines as the right tool
+                # but the index root was wrong for resource files;
+                # they then hallucinated tool names like
+                # `android_mcp.read_layout_xml`, `read_resource_xml`,
+                # `apktool_decode_resource` looking for an alternative.
+                resources_root = Path(root).parent / "resources"
+                if rel.startswith(("res/", "assets/", "AndroidManifest.xml")):
+                    alt_path = (resources_root / rel).resolve()
+                    try:
+                        alt_resolved_ok = (
+                            alt_path.relative_to(resources_root.resolve())
+                            and await asyncio.to_thread(alt_path.is_file)
+                        )
+                    except ValueError:
+                        alt_resolved_ok = False
+                    if alt_resolved_ok:
+                        logging.getLogger(__name__).info(
+                            "read_lines RESOURCES_FALLBACK %s -> %s",
+                            file_path, alt_path,
+                        )
+                        abs_path = alt_path
+                        # skip the JADX-prefix walker and "did you mean"
+                        # block below — we found the file.
+                        # Fall through to the slice/return path.
+                        pass
+                    else:
+                        # didn't find via resources fallback either —
+                        # continue into JADX-prefix walker
+                        pass
+            # If we still haven't resolved abs_path to a real file, the
+            # JADX-prefix walker + "did you mean" block runs next. We
+            # check is_file once more so the walker only fires if
+            # resources fallback ALSO missed.
+            if not await asyncio.to_thread(abs_path.is_file):
                 # JADX rename fuzzy match (p182ui pattern). JADX
                 # rewrites package segments that collide with Java
                 # keywords / numerics / its own naming rules by
