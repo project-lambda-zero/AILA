@@ -18,6 +18,7 @@ import json
 import logging
 from typing import Any
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select as _select
 
@@ -30,7 +31,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
 )
 from aila.platform.contracts._common import utc_now
-from aila.platform.llm.errors import BudgetExceededError
+from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.llm.sanitize import sanitize_input
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
@@ -207,9 +208,10 @@ class SynthesisAgent:
             )
         except BudgetExceededError:
             raise
-        except Exception as exc:  # noqa: BLE001 — broaden to catch every
-            # systemic LLM failure shape; narrow except hid TimeoutError +
-            # httpx errors + validation failures (fix §158).
+        except (httpx.HTTPError, LLMError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — fix §158
+            # Catch systemic LLM failure shapes (TimeoutError is a subclass
+            # of OSError; httpx transport errors, LLM client errors, JSON
+            # decode errors via ValueError, schema validation failures).
             # fix §350 — traceback now reaches operator log so transient
             # LLM transport failures vs. permanent schema/auth failures
             # are distinguishable from the warning alone.
@@ -356,8 +358,8 @@ def _synthesis_confidence(panel: list[dict[str, Any]]) -> OutcomeConfidence:
     median = ranks[len(ranks) // 2]
     # fix §327 — graduated disagreement penalty: the notch downgrade
     # scales with the number of distinct outcome_kinds in the panel.
-    # Unanimous (1 kind): no penalty. 2-way split (e.g. critic dissents
-    # from researcher on PATCH_PRESENT vs DIRECT_FINDING): one notch —
+    # Unanimous (1 kind): no penalty. 2-way split (e.g. critic disagrees
+    # with researcher on PATCH_PRESENT vs DIRECT_FINDING): one notch —
     # the prior flat penalty. 3-way split (one persona finds a bug, one
     # sees a patch, one writes an audit-memo): two notches because a
     # panel that cannot even agree on whether anything was found is

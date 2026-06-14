@@ -23,6 +23,8 @@ they become useful in real investigations.
 """
 from __future__ import annotations
 
+import logging
+
 from .audit_mcp import (
     adapt_attack_surface,
     adapt_callees_of,
@@ -71,6 +73,8 @@ __all__ = [
     "registered_tools",
     "specialized_tools",
 ]
+
+_log = logging.getLogger(__name__)
 
 
 # Specialized adapters. Keys: (server_id, tool_name).
@@ -146,7 +150,7 @@ del _server, _tool
 
 
 # fix §244 — runtime catalog of tools the engine may invoke, populated
-# from each bridge's live ``/tools`` response (see
+# by each bridge's live ``/tools`` response (see
 # ``vuln_researcher._fetch_tool_specs`` for the wiring). The static
 # ``KNOWN_TOOLS`` set remains as the import-time fallback so the
 # registry still works when no bridge has been polled yet (tests,
@@ -166,15 +170,15 @@ def register_bridge_tools(server_id: str, tool_names: object) -> None:
     invalid entries are silently dropped — a bridge returning an
     unusable schema shouldn't crash the agent registry.
     """
-    if not isinstance(server_id, str) or not server_id:
+    if not server_id:
         return
     bucket = _RUNTIME_BRIDGE_TOOLS.setdefault(server_id, set())
     try:
         for name in tool_names or ():
             if isinstance(name, str) and name:
                 bucket.add(name)
-    except TypeError:
-        # Non-iterable passed by accident — leave the bucket alone.
+    except TypeError as exc:
+        _log.warning("register_bridge_tools FAILED reason=%s", exc)
         return
 
 

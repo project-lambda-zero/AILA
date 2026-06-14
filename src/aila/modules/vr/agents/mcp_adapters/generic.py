@@ -51,9 +51,9 @@ def adapt_generic(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     # treated the call as a success and the agent saw an "ok"-marked
     # tool result with error text embedded. Setting ``is_error: True``
     # on the payload matches the convention tool_executor already uses
-    # for its own synthesised error messages (see
+    # covering its own synthesised error messages (see
     # ``_write_error_message``), so downstream readers (loops scanning
-    # for repeat failures, the prompt builder, the frontend) treat
+    # covering repeat failures, the prompt builder, the frontend) treat
     # MCP-reported errors and executor-reported errors the same way.
     if isinstance(raw, dict) and (
         "error" in raw or str(raw.get("status") or "").lower() == "error"

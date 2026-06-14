@@ -419,7 +419,7 @@ class HonestVulnResearcher:
         # turn-budget bump (c912d5b: 25→60→70) + branch-aware auto-
         # continue (fba2a08) landed, agents started investigating
         # candidates inline for the whole 60+ turn budget and submitting
-        # with `variant_hunt_orders=[]` AND no exhaustion declaration —
+        # carrying `variant_hunt_orders=[]` AND no exhaustion declaration —
         # collapsing the variant-hunt fan-out from ~120 children/day to
         # ~2/day overnight (5-21 → 5-22). The submit was technically
         # valid but it produced ZERO downstream investigations on
@@ -624,7 +624,7 @@ class HonestVulnResearcher:
                     # _upsert_canonical_outcome is the ONE canonical-outcome
                     # write path and asserts this value at function entry;
                     # any non-terminal write path would have to call this
-                    # from inside its own terminal_submit (no separate
+                    # starting inside its own terminal_submit (no separate
                     # submit_canonical_addition action exists by design).
                     action="terminal_submit",
                 )
@@ -690,7 +690,7 @@ class HonestVulnResearcher:
                     # branches' workers observe mid-flight cross-branch
                     # state outside their own atomic-commit boundary.
                     # The new ``run_vr_outcome_dispatch`` task runs
-                    # from its own worker context with its own UoW and
+                    # starting in its own worker context with its own UoW and
                     # its own retry budget.
                     from aila.modules.vr._task_queue import (  # noqa: PLC0415
                         default_task_queue,
@@ -879,7 +879,7 @@ class HonestVulnResearcher:
                 key_obs: dict[str, Any] = {}
                 # Tool-prefix cache observables: surface them all so this
                 # branch sees what siblings already fetched (function bodies
-                # from audit_mcp:read_function.source.*, semantic_search
+                # covering audit_mcp:read_function.source.*, semantic_search
                 # results, etc.). Each value preview-capped to 600 chars
                 # so the sibling section doesn't dominate the prompt;
                 # full body remains in the SIBLING's own case_state.
@@ -940,7 +940,7 @@ class HonestVulnResearcher:
             apk_path = descriptor.get("apk_path")
             if isinstance(apk_path, str) and apk_path:
                 handles["android_mcp_apk_path"] = apk_path
-        # Operator-mandated: MobSF output NEVER enters LLM prompts.
+        # Hard rule: MobSF output NEVER enters LLM prompts.
         # Even the digest form is forbidden — agents should query
         # android_mcp.mobsf_scan as a tool when they need it, not have
         # it preloaded into context. Strip the key entirely.
@@ -2461,10 +2461,10 @@ def _render_available_tools_section(
     for server in sorted(KNOWN_TOOLS):
         if server not in applicable:
             # Silently skip — listing "NOT APPLICABLE: ida_headless"
-            # for a source_repo target just gives the agent a hook to
-            # think about IDA tools it shouldn't be considering at all.
-            # Operator was rightly furious when source-repo prompts
-            # surfaced ida_headless as a sibling section.
+            # against a source_repo target just gives the agent a hook
+            # to think about IDA tools it shouldn't be considering at
+            # all. Surfacing ida_headless on source-repo prompts was
+            # reported as wrong and is corrected here.
             continue
 
         live_specs = specs_by_server.get(server) or []
@@ -2788,7 +2788,7 @@ async def _upsert_canonical_outcome(
         "confidence": new_confidence,
         # fix §171 — keep the full answer text (was [:4000]). The
         # per-contribution snapshot is the load-bearing audit record
-        # for per-persona analyses; truncating dropped the tail of
+        # covering per-persona analyses; truncating dropped the tail of
         # any answer >4000 chars, which was recoverable only if the
         # canonical payload['answer'] still carried the full text —
         # and §166 explicitly stops overwriting that field on merge,
@@ -2919,7 +2919,7 @@ async def _upsert_canonical_outcome(
     # replaced thereafter, so the original answer survives forever
     # and the report/frontend has a stable text field to render.
     # Operator can read merge_log to see every persona's full answer
-    # with provenance (and panel_contributions[i].answer_brief still
+    # carrying provenance (and panel_contributions[i].answer_brief still
     # carries each per-persona text per §171).
     old_answer = old_payload.get("answer") or ""
     new_answer = new_payload.get("answer") or ""
