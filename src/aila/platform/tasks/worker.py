@@ -35,7 +35,7 @@ __all__ = ["WorkerSettings", "reaper"]
 # ``datetime.utcnow()``. The pattern is enforced by importing ONLY
 # ``timedelta`` and the platform's tz-aware ``utc_now`` from
 # ``contracts._common``; bare ``datetime`` is intentionally absent
-# from the imports so a future re-introduction of tz-naive comparisons
+# at module scope, so any future re-introduction of tz-naive comparisons
 # triggers an immediate import-time failure.
 
 # fix §44 — grace seconds for the cron reaper are env-driven. The
@@ -154,7 +154,7 @@ async def _sweep_orphan_queued_tasks() -> None:
         # grace window. fix §45 — at boot the api_router may have INSERTed
         # the row but not yet pushed to ARQ Redis (ZADD races the INSERT
         # commit). Skipping rows younger than 10s prevents the boot sweep
-        # from reaping legitimate in-flight submissions.
+        # against reaping legitimate in-flight submissions.
         recency_cutoff = utc_now() - timedelta(seconds=60)
         boot_grace_cutoff = utc_now() - timedelta(seconds=10)
         async with async_session_scope() as session:
@@ -259,8 +259,8 @@ async def reaper(ctx: dict[str, object]) -> None:
         # Cron context: env-driven grace (default 600s, override with
         # PLATFORM_WORKER_HEARTBEAT_GRACE_S — fix §44) AND skip
         # heartbeat=None tasks. ARQ doesn't auto-extend the in-progress
-        # lock for tasks that don't call ctx.heartbeat() during a long
-        # await — single-shot tool calls like run_function_ranking (one
+        # lock for tasks that don't call ctx.heartbeat() during a long await
+        # — single-shot tool calls like run_function_ranking (one
         # ~5-min audit_mcp HTTP request) end up with lock_missing +
         # heartbeat=None mid-flight even though the worker is still
         # healthily awaiting the response. Killing them there destroyed
@@ -647,7 +647,7 @@ async def _sweep_orphan_running_tasks(
             # considered orphan-evidence. ``grace_seconds`` is 30s at boot
             # (no live worker can have touched anything older than itself,
             # narrow window OK) and longer (300s) when called periodically
-            # from the cron — a freshly-claimed task may sit at
+            # by the cron — a freshly-claimed task may sit at
             # status=RUNNING with heartbeat=NULL for several seconds before
             # the worker's first heartbeat lands, and a 30s window risks
             # killing it before it gets a chance to write one.

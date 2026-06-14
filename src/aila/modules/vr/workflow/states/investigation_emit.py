@@ -23,6 +23,7 @@ import logging
 from datetime import UTC
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
@@ -210,7 +211,7 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
             # bubbles into the workflow engine which redacts it to a
             # bare class name and parks the cursor in __crashed__
             # without any forward progress — branch sits "active"
-            # with turn_count stuck and operator has no visibility.
+            # leaving turn_count stuck and the operator with no visibility.
             # Mark the cursor crashed loudly + log the full traceback
             # to the worker log so the operator can see why.
             _log.exception(
@@ -478,7 +479,7 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 # ``active`` branches in the same UoW so the operator
                 # never sees a completed investigation with a branch
                 # chip still pulsing. See services/branch_cleanup.py
-                # for the rationale + the operator-observed bug
+                # describing the rationale and the reported bug
                 # (inv a23eb6ae / wei branch).
                 if inv.status in (
                     InvestigationStatus.COMPLETED.value,
@@ -657,7 +658,7 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 "investigation_emit FINALIZE inv=%s trigger=%s action=%s",
                 investigation_id, result.trigger, result.action_taken,
             )
-    except Exception as exc:  # noqa: BLE001 — best-effort, never blocks emit
+    except (ImportError, SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:  # noqa: BLE001 — preserved during sweep; comment intentionally retained
         # fix §350 — finalize is best-effort because the emit terminal
         # already wrote the cursor; the traceback surfaces a structural
         # finalize regression (handler crash, DB unreachable) on every
