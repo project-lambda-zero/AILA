@@ -93,7 +93,7 @@ async def sweep_orphan_crashed_cursors() -> int:
             )
             result = await session.exec(stmt)
             # fix §69 — some drivers (asyncpg in certain modes, ODBC)
-            # return -1 from result.rowcount when the deleted count is
+            # emit -1 from result.rowcount when the deleted count is
             # unknown. ``or 0`` evaluated -1 as truthy, so the commit
             # fired and the log line said "cleared -1 orphan cursors".
             # Clamp at zero before logging / committing.
@@ -111,7 +111,7 @@ async def sweep_orphan_crashed_cursors() -> int:
     except (SQLAlchemyError, DBAPIError) as exc:
         # fix §56 (companion): a DB hiccup here used to crash the entire
         # reaper tick; now we log + return zero so the cron continues
-        # with the remaining sub-sweeps.
+        # alongside the remaining sub-sweeps.
         _log.warning("cursor_reaper: db error during sweep: %s", exc)
         return 0
     if deleted:

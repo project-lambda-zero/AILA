@@ -31,6 +31,8 @@ import logging
 import threading
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
+
 _log = logging.getLogger(__name__)
 
 # Cost counter keys (mirrored from ``cost.py`` for the DB-seed path).
@@ -149,7 +151,7 @@ class RunMemory:
                         ).where(LLMCostRecord.run_id == run_id)
                     )
                 ).first()
-        except Exception as exc:  # noqa: BLE001 — best-effort seed
+        except (SQLAlchemyError, OSError, RuntimeError) as exc:
             _log.debug(
                 "run_memory.ensure_cost_seeded: seed failed for %s: %s",
                 run_id, exc,

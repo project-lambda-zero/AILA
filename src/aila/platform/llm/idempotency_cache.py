@@ -141,7 +141,11 @@ async def lookup_cached_response(
         return None
     try:
         return json.loads(row.response_json)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
+        _log.warning(
+            "idempotency_cache: cached response parse FAILED key=%s reason=%s",
+            request_key, exc,
+        )
         return None
 
 

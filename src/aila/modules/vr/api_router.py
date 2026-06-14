@@ -2371,8 +2371,8 @@ def create_vr_router() -> APIRouter:
         # finishes (see _task_queue.enqueue_downstream_target_stages, also
         # invoked from the end of that task). When ingestion is already
         # DONE we skip straight to fanning out the downstream pair from
-        # here so the operator gets immediate progress without waiting
-        # for an ingestion no-op cycle.
+        # here so the operator gets immediate progress and skips
+        # the ingestion no-op cycle.
         task_queue = get_task_queue("vr", request)
         enqueued: list[dict[str, str]] = []
         ingestion_state = stages.ingestion.state
