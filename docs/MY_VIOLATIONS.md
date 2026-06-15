@@ -2044,8 +2044,16 @@ pick is whichever happened to sort first. The other gets
 An operator who was about to interact with the abandoned one sees
 it gone.
 
-**Fix**: Tie-break on `created_at ASC` (oldest stays). Document
-the rule.
+**Fix**: Tertiary tiebreaker on `created_at.timestamp()` so the
+newest sibling wins (matches the operator-intent semantic of
+`operator_reopen`: the most recent reopen is always what the
+operator is currently waiting on).
+
+**Resolved**: `92836e1` added `is_reopen` as the primary tuple
+element; `d5acc24` (followup) added `created_at` as the tertiary
+element so two operator_reopen branches with equal turn_count no
+longer fall back to iteration order. CHANGELOG `[Unreleased]
+Fixed` entry.
 
 ---
 
