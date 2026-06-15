@@ -635,9 +635,20 @@ async def _spawn_persona_siblings_and_enqueue(
         # silently undoes that intent. Falls back to the most-turns
         # winner for the regular re-enqueue case where no operator
         # reset has happened.
-        def _branch_priority(b: VRInvestigationBranchRecord) -> tuple[int, int]:
+        def _branch_priority(
+            b: VRInvestigationBranchRecord,
+        ) -> tuple[int, int, float]:
             is_reopen = (b.fork_reason or "").startswith("operator_reopen:")
-            return (1 if is_reopen else 0, b.turn_count)
+            # `created_at` as tertiary tiebreaker: when two operator_reopen
+            # branches coexist with the same turn_count (operator pressed
+            # /reopen twice, OR a prior reopen branch was killed by the
+            # wall-clock reaper and a fresh /reopen spawned a new one),
+            # iteration-order fallback would silently pick the older row
+            # and abandon the new one as 'duplicate_persona_cleanup',
+            # undoing the most recent operator intent. The newest reopen
+            # always represents what the operator is currently waiting on.
+            created_ts = b.created_at.timestamp() if b.created_at else 0.0
+            return (1 if is_reopen else 0, b.turn_count, created_ts)
 
         best_by_persona: dict[str, VRInvestigationBranchRecord] = {}
         for b in all_branches:

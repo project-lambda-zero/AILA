@@ -153,6 +153,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `vr` module: persona-dedup tiebreaker. When two `operator_reopen`
+  branches coexisted with equal `turn_count=0` (operator pressed
+  `/reopen` twice, OR a prior reopen aborted via the wall-clock
+  reaper and a fresh `/reopen` followed), `_branch_priority()` in
+  `_spawn_persona_siblings_and_enqueue` returned the same tuple for
+  both, and the iteration-order fallback picked the older row,
+  abandoning the new operator-intent branch with
+  `closed_reason=duplicate_persona_cleanup` within a few seconds.
+  Tiebreaker now includes `created_at.timestamp()` as the tertiary
+  element so the most recent reopen always wins. Completes the
+  three-front re-open fix landed in `92836e1`.
+
 - `audit-mcp` `read_function` / `extract_class` AST-only resolution
   via `TypeResolver` — eliminates three classes of failure: Windows
   path slash mismatch, K&R-style multi-line definitions, and matching
