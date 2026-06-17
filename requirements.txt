@@ -3,7 +3,7 @@
 #   python -c "import tomllib;print(chr(10).join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" > requirements.txt
 # For dev/test deps install via: pip install -e .[dev]
 croniter==6.2.2
-cryptography==46.0.7
+cryptography==48.0.1
 filelock==3.25.2
 fastapi==0.135.3
 httpx==0.28.1
