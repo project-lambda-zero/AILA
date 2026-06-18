@@ -1138,9 +1138,21 @@ class AuditMcpBridgeTool(Tool):
     # caps the in-flight count so peak resident memory stays at
     # cap × slab_size instead of N × slab_size.
     #
-    # Cheap tools (read_function, read_lines, semantic_search,
-    # search_functions, callers_of) are NOT bounded — they're the
-    # interactive call hot-path the agent reasons through.
+    # ``semantic_search`` joins the heavy list because semble's dense
+    # backend materialises a (embedding_dim × N_chunks) float64
+    # similarity matrix per query. On a typical small-codebase index
+    # (~30-60k chunks) that's ~60-120 MiB and uncapped is fine. On a
+    # large unified-staging index (Android APK with Java + smali +
+    # decompiled RN slices can hit ~300k chunks) the matrix balloons
+    # to ~600 MiB per query. With N personas × multiple queries per
+    # turn each demanding ~600 MiB transient, audit-mcp's worker
+    # crashes with numpy._ArrayMemoryError. Cap at 3 in-flight keeps
+    # peak transient at ~1.8 GiB, well inside a 24 GiB box's budget
+    # after the pickle + model resident footprint.
+    #
+    # Cheap tools (read_function, read_lines, search_functions,
+    # callers_of) stay unbounded — they're the interactive call
+    # hot-path the agent reasons through.
     _HEAVY_TOOL_CAPS: dict[str, int] = {
         "fuzzing_targets":     2,
         "complexity_hotspots": 2,
@@ -1149,6 +1161,7 @@ class AuditMcpBridgeTool(Tool):
         "dead_code":           2,
         "scan_and_correlate":  2,
         "blast_radius_batch":  2,
+        "semantic_search":     3,
     }
     _TOOL_SEMAPHORES: dict[str, asyncio.BoundedSemaphore] = {}
 
