@@ -92,6 +92,9 @@ export function LoginPage() {
 
         <div className="login-form-card">
           <h1 className="login-form-card__heading">Sign in</h1>
+          <p className="login-form-card__subtitle">
+            Welcome back! Sign in to continue.
+          </p>
 
           {error ? (
             <div className="login-error" role="alert">
@@ -206,15 +209,26 @@ export function LoginPage() {
           font-family: var(--font-sans);
         }
 
-        /* Right panel */
+        /* Right panel — adapted from Aceternity's "premium-auth-split"
+           block. Aceternity uses raw Tailwind utility classes; we map
+           every visual token (h-11 inputs, ring-1 elevation, soft
+           shadows, lg-radius, gradient primary button, gap-y-8 form
+           rhythm) to AILA's CSS-variable theme tokens so the styling
+           inherits every theme (synthwave, vendetta, matrix, etc.)
+           without literal color values. Only borders + input/button
+           shells + spacing were adapted; left panel (FaultyTerminal
+           bg) is intentionally untouched per operator constraint. */
         .login-right {
           flex: 1;
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          padding: 2rem 1.5rem;
+          padding: 2.5rem 1.5rem;
           background: var(--color-surface);
+        }
+        @media (min-width: 768px) {
+          .login-right { padding: 2.5rem 3rem; }
         }
 
         .login-mobile-logo {
@@ -229,108 +243,164 @@ export function LoginPage() {
           .login-mobile-logo { display: none; }
         }
 
+        /* Card: max-w-md, centered heading + subtitle, gap-y-8 stack */
         .login-form-card {
           width: 100%;
-          max-width: 380px;
+          max-width: 28rem;
         }
         .login-form-card__heading {
           font-family: var(--font-display);
-          font-size: 1.5rem;
+          font-size: 1.875rem;
           font-weight: 600;
+          letter-spacing: -0.025em;
           color: var(--color-text);
-          margin-bottom: 1.5rem;
+          text-align: center;
+          margin: 0 0 0.5rem;
+        }
+        .login-form-card__subtitle {
+          font-size: 0.875rem;
+          color: var(--color-text-muted);
+          text-align: center;
+          margin: 0 0 2rem;
         }
 
+        /* Inline alert that still respects the new visual rhythm. */
         .login-error {
-          margin-bottom: 1rem;
+          margin-bottom: 1.25rem;
           padding: 0.75rem 1rem;
-          border: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
-          border-radius: var(--radius-md);
+          border: 1px solid transparent;
+          border-radius: 0.5rem;
           background: color-mix(in srgb, var(--color-accent) 10%, transparent);
           color: var(--color-accent);
           font-size: 0.875rem;
+          box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 30%, transparent);
         }
 
+        /* Field stack: label above input, gap-y-2 between, gap-y-5
+           between consecutive fields. */
         .login-field {
           display: flex;
           flex-direction: column;
-          gap: 0.375rem;
-          margin-bottom: 1rem;
+          gap: 0.5rem;
+          margin-bottom: 1.25rem;
         }
         .login-field__label {
           font-size: 0.875rem;
           font-weight: 500;
-          color: var(--color-text-muted);
+          color: var(--color-text);
         }
+
+        /* h-11 (44px) input with the ring-1 elevation look. Border is
+           transparent so a focus ring can grow without layout shift;
+           the resting ring is a flat 1px box-shadow tinted with the
+           theme text color, matching Aceternity's
+           'ring-1 ring-black/10 dark:ring-white/10'. */
         .login-field__input {
-          padding: 0.625rem 0.875rem;
+          height: 2.75rem;
+          padding: 0 0.875rem;
           background: var(--color-base);
-          border: 1px solid var(--color-border);
-          border-radius: var(--radius-md);
+          border: 1px solid transparent;
+          border-radius: 0.5rem;
           color: var(--color-text);
           font-size: 0.9375rem;
           font-family: var(--font-sans);
-          transition: border-color 150ms ease;
           outline: none;
+          box-shadow:
+            0 0 0 1px color-mix(in srgb, var(--color-text) 12%, transparent),
+            0 1px 2px color-mix(in srgb, #000 10%, transparent);
+          transition: box-shadow 150ms ease, background-color 150ms ease;
+        }
+        .login-field__input::placeholder {
+          color: color-mix(in srgb, var(--color-text-muted) 70%, transparent);
         }
         .login-field__input:focus {
-          border-color: var(--color-accent);
+          box-shadow:
+            0 0 0 2px color-mix(in srgb, var(--color-accent) 45%, transparent),
+            0 1px 2px color-mix(in srgb, #000 10%, transparent);
         }
         .login-field__input:disabled {
           opacity: 0.5;
+          cursor: not-allowed;
         }
 
+        /* Primary button: h-11, full width, vertical gradient on the
+           accent color, soft drop shadow tinted with the same accent.
+           Active-press uses a scale to match Aceternity's
+           'active:scale-98'. */
         .login-submit-btn {
           width: 100%;
-          padding: 0.75rem 1rem;
-          background: var(--color-accent);
-          color: var(--primary-foreground, #000);
+          height: 2.75rem;
+          padding: 0 1rem;
+          background: linear-gradient(
+            to bottom,
+            var(--color-accent),
+            color-mix(in srgb, var(--color-accent) 82%, #000)
+          );
+          color: var(--primary-foreground, #fff);
           font-family: var(--font-sans);
           font-weight: 600;
           font-size: 0.9375rem;
           border: none;
-          border-radius: var(--radius-md);
+          border-radius: 0.5rem;
           cursor: pointer;
-          transition: opacity 150ms ease;
           margin-top: 0.5rem;
+          box-shadow: 0 8px 24px color-mix(in srgb, var(--color-accent) 30%, transparent);
+          transition: filter 150ms ease, transform 80ms ease, opacity 150ms ease;
         }
-        .login-submit-btn:hover:not(:disabled) { opacity: 0.88; }
+        .login-submit-btn:hover:not(:disabled) { filter: brightness(1.06); }
+        .login-submit-btn:active:not(:disabled) { transform: scale(0.98); }
         .login-submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+        /* Divider with hairlines on both sides + small "or" centered. */
         .login-divider {
           display: flex;
           align-items: center;
           gap: 0.75rem;
-          margin: 1.5rem 0 1rem;
+          margin: 1.75rem 0 1.25rem;
           color: var(--color-text-muted);
           font-size: 0.75rem;
+          text-transform: lowercase;
         }
         .login-divider::before,
         .login-divider::after {
           content: "";
           flex: 1;
           height: 1px;
-          background: var(--color-border);
+          background: color-mix(in srgb, var(--color-text) 12%, transparent);
         }
 
+        /* Secondary button (SSO). Same h-11 shell and ring elevation as
+           the input field so the visual rhythm reads as a single stack
+           rather than disconnected pieces. */
         .login-sso-link {
-          display: block;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
           width: 100%;
-          padding: 0.625rem 1rem;
-          background: transparent;
-          border: 1px solid var(--color-border);
-          border-radius: var(--radius-md);
-          color: var(--color-text-muted);
+          height: 2.75rem;
+          padding: 0 1rem;
+          background: var(--color-base);
+          border: 1px solid transparent;
+          border-radius: 0.5rem;
+          color: var(--color-text);
           font-family: var(--font-sans);
+          font-weight: 500;
           font-size: 0.875rem;
           cursor: pointer;
-          transition: border-color 150ms ease, color 150ms ease;
-          text-align: center;
+          box-shadow:
+            0 0 0 1px color-mix(in srgb, var(--color-text) 12%, transparent),
+            0 1px 2px color-mix(in srgb, #000 10%, transparent);
+          transition: filter 150ms ease, transform 80ms ease,
+                      box-shadow 150ms ease, background-color 150ms ease;
         }
         .login-sso-link:hover:not(:disabled) {
-          border-color: var(--color-border-hover);
-          color: var(--color-text);
+          background: color-mix(in srgb, var(--color-elevated) 70%, var(--color-base));
+          box-shadow:
+            0 0 0 1px color-mix(in srgb, var(--color-text) 18%, transparent),
+            0 2px 4px color-mix(in srgb, #000 12%, transparent);
         }
+        .login-sso-link:active:not(:disabled) { transform: scale(0.98); }
         .login-sso-link:disabled { opacity: 0.5; cursor: not-allowed; }
       `}</style>
     </div>

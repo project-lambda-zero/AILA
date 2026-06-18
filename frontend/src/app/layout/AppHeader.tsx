@@ -151,7 +151,7 @@ export function AppHeader() {
   }, []);
 
   return (
-    <header className="flex h-14 min-w-0 w-full shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4 overflow-hidden">
+    <header className="flex h-14 min-w-0 w-full shrink-0 items-center justify-between gap-3 border-b border-border bg-background px-4 overflow-hidden">
       {/* Left side: hamburger toggle + separator + breadcrumbs */}
       <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
         <SidebarTrigger className="-ml-1" />
