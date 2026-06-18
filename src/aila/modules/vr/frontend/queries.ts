@@ -80,6 +80,62 @@ export function useVRProject(projectId: string) {
   });
 }
 
+export interface AllFindingsFilters {
+  projectId?: string;
+  disclosureStatus?: string;
+  crashType?: string;
+  offset?: number;
+  limit?: number;
+}
+
+/** Global findings explorer hook (hits GET /vr/findings, team-scoped). */
+export function useAllFindings(filters: AllFindingsFilters = {}) {
+  const {
+    projectId,
+    disclosureStatus,
+    crashType,
+    offset = 0,
+    limit = 100,
+  } = filters;
+  return useQuery({
+    queryKey: [
+      "vr",
+      "all-findings",
+      projectId ?? null,
+      disclosureStatus ?? null,
+      crashType ?? null,
+      offset,
+      limit,
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        offset: String(offset),
+        limit: String(limit),
+      });
+      if (projectId) params.set("project_id", projectId);
+      if (disclosureStatus) params.set("disclosure_status", disclosureStatus);
+      if (crashType) params.set("crash_type", crashType);
+      return await authorizedRequestJson<Envelope<VRFinding[]>>(
+        `/vr/findings?${params.toString()}`,
+      );
+    },
+  });
+}
+
+/** Project-agnostic single-finding fetch — used by the project-less
+ *  FindingDetailPage route so findings with no linked project still
+ *  open from the global explorer. */
+export function useVRFindingById(findingId: string) {
+  return useQuery({
+    queryKey: ["vr", "finding-by-id", findingId],
+    queryFn: async () =>
+      (await authorizedRequestJson<Envelope<VRFinding>>(
+        `/vr/findings/${encodeURIComponent(findingId)}`,
+      )).data,
+    enabled: !!findingId,
+  });
+}
+
 export function useVRFindings(projectId: string, offset = 0, limit = 50) {
   return useQuery({
     queryKey: ["vr", "findings", projectId, offset, limit],

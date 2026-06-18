@@ -1,4 +1,5 @@
 import { Briefcase } from "@phosphor-icons/react/dist/csr/Briefcase";
+import { Bookmarks } from "@phosphor-icons/react/dist/csr/Bookmarks";
 import { Bug } from "@phosphor-icons/react/dist/csr/Bug";
 import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
 import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
@@ -56,6 +57,15 @@ export const nav: NavContribution[] = [
     order: 72,
     description: "Reusable patterns extracted from successful investigations",
     icon: Pulse,
+  },
+  {
+    id: "vr.findings",
+    slot: "sidebar.main" as const,
+    label: "Findings",
+    to: "/vr/findings",
+    order: 72.5,
+    description: "Browse every finding across projects with evidence + CVSS at a glance",
+    icon: Bookmarks,
   },
   {
     id: "vr.disclosures",

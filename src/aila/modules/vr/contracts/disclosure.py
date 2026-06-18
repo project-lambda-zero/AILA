@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
     "ArtifactTier",
@@ -100,11 +100,41 @@ class VRDisclosureSubmissionCreate(BaseModel):
     Operator chooses a track at creation time; the track determines the
     initial validation rules + template. Subsequent state transitions go
     through PATCH.
+
+    The submission can be anchored on EITHER:
+      * an existing finding (`finding_id`) — the original path; the
+        service binds the disclosure to that finding row, OR
+      * an investigation (`investigation_id`) — the operator-friendly
+        path: the service resolves the investigation's
+        ``linked_finding_ids``. Exactly one linked finding promotes to
+        the disclosure; zero auto-creates a stub finding from the
+        investigation's primary outcome; multiple raises an error
+        asking the operator to specify ``finding_id`` directly.
+
+    Exactly one of the two must be set; both-set / neither-set raise
+    validation errors. This lets the new dropdown-driven UI submit an
+    investigation id without forcing every caller to know the
+    finding-derivation rules.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    finding_id: str = Field(min_length=1, max_length=64)
+    finding_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        description="Existing finding id to bind to. Mutually exclusive with investigation_id.",
+    )
+    investigation_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        description=(
+            "Investigation id whose linked finding (or stub finding "
+            "created from its primary outcome) the disclosure attaches "
+            "to. Mutually exclusive with finding_id."
+        ),
+    )
     track_id: str = Field(
         min_length=1,
         max_length=64,
@@ -127,6 +157,20 @@ class VRDisclosureSubmissionCreate(BaseModel):
         ),
     )
     notes: str = ""
+
+    @model_validator(mode="after")
+    def _exactly_one_anchor(self) -> VRDisclosureSubmissionCreate:
+        # `extra='forbid'` already blocks unknown keys; this guard catches
+        # the both-set / neither-set cases. The service layer would also
+        # crash on a missing finding lookup but the error message would
+        # be less actionable than this surface-level rejection.
+        has_finding = bool(self.finding_id)
+        has_investigation = bool(self.investigation_id)
+        if has_finding == has_investigation:
+            raise ValueError(
+                "exactly one of finding_id or investigation_id must be set",
+            )
+        return self
 
 
 class VRDisclosureSubmissionPatch(BaseModel):

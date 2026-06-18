@@ -9,7 +9,7 @@ import { CVSSBreakdown } from "../components/CVSSBadge";
 import { AdjudicationBanner } from "../components/AdjudicationBanner";
 import { ObligationChecklist } from "../components/ObligationChecklist";
 import { SyntaxHighlighter } from "../components/SyntaxHighlighter";
-import { useVRFinding } from "../queries";
+import { useVRFinding, useVRFindingById } from "../queries";
 import type { DisclosureStatus } from "../types";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
@@ -46,15 +46,37 @@ const disclosureColor: Record<
  *  contract yet. Sections render their headers with "backend pending"
  *  placeholders so the surface is honest about what's wired. */
 export function FindingDetailPage() {
+  // Two routes resolve into this page:
+  //   /vr/projects/:projectId/findings/:findingId  → projectId set
+  //   /vr/findings/:findingId                       → projectId empty
+  // Findings without a project (e.g. stubs auto-created by the
+  // disclosure-from-investigation flow) reach the page only via the
+  // second route. We pick the right query hook based on which param
+  // is present; both return the same shape.
   const { projectId = "", findingId = "" } = useParams<{
     projectId: string;
     findingId: string;
   }>();
   const navigate = useNavigate();
-  const { data: finding, isLoading, isError } = useVRFinding(projectId, findingId);
+  const scopedQuery = useVRFinding(projectId, findingId);
+  const globalQuery = useVRFindingById(projectId ? "" : findingId);
+  const { data: finding, isLoading, isError } = projectId
+    ? scopedQuery
+    : globalQuery;
+
+  // Fallback title chain: vulnerable_function (real triage),
+  // root_cause's first line (audit-derived findings often carry a
+  // narrative-only root cause), then the placeholder. The list page
+  // uses the same chain so rows aren't a sea of "(unknown function)".
+  const titleFallback = (() => {
+    if (!finding) return undefined;
+    if (finding.vulnerable_function) return finding.vulnerable_function;
+    const firstLine = (finding.root_cause || "").split("\n")[0].trim();
+    return firstLine.slice(0, 140) || "(unknown function)";
+  })();
 
   useUpdatePageHeader({
-    title: finding?.vulnerable_function || (finding ? '(unknown function)' : undefined),
+    title: titleFallback,
     subtitle: undefined,
     status: null,
   });
