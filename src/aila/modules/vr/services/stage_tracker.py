@@ -99,6 +99,7 @@ _DEFAULT_TIMEOUTS: dict[StageName, float] = {
     # depending on the rule set and the APK's library count.
     StageName.APK_DECODE: 600.0,
     StageName.JADX_DECOMPILE: 900.0,
+    StageName.REACT_NATIVE_EXTRACT: 900.0,
     StageName.INDEX_DECOMPILED: 3600.0,
     StageName.STATIC_SUMMARY: 300.0,
     StageName.MOBSF_SCAN: 1800.0,

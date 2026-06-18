@@ -399,6 +399,7 @@ _LEGACY_STAGES: frozenset[StageName] = frozenset({
 _ANDROID_STAGES: frozenset[StageName] = frozenset({
     StageName.APK_DECODE,
     StageName.JADX_DECOMPILE,
+    StageName.REACT_NATIVE_EXTRACT,
     StageName.INDEX_DECOMPILED,
     StageName.STATIC_SUMMARY,
     StageName.MOBSF_SCAN,
@@ -414,6 +415,177 @@ def _applicable_stages_for(kind: TargetKind) -> frozenset[StageName]:
 
 class TargetAnalysisError(Exception):
     """Raised when ingestion cannot proceed (bad descriptor, MCP unreachable)."""
+
+
+# ─── React Native unification helpers ─────────────────────────────────
+
+_DEFAULT_APK_WORKDIR = Path(
+    os.environ.get("ANDROID_MCP_WORKDIR", "~/.android-mcp/work"),
+).expanduser()
+
+
+def _hash_path_for_cache(apk_path: str) -> str:
+    """Cache-key the APK path itself when no SHA was persisted on the
+    handle row. Used as a fallback for the unified staging dir name."""
+    return hashlib.sha256(apk_path.encode("utf-8")).hexdigest()[:16]
+
+
+def _build_unified_staging(
+    apk_sha: str,
+    java_dir: str | None,
+    react_dir: str | None,
+    apktool_dir: str | None = None,
+) -> str:
+    """Create the unified staging tree at
+    ``~/.android-mcp/work/apk-unified-<sha>/`` with junction/symlink
+    entries pointing at the jadx Java output, the RN decompile output,
+    and the apktool extract (manifest + res/ + smali). Returns the
+    absolute staging path.
+
+    Idempotent — running twice on the same APK rebuilds the staging
+    layout against the current source dirs (which may have moved if
+    the operator force-rebuilt any of them).
+
+    Junction strategy: on Windows uses ``os.symlink`` first (succeeds
+    when developer mode is on), then falls back to
+    ``ctypes.CreateSymbolicLinkW`` with the ALLOW_UNPRIVILEGED flag,
+    finally to ``shutil.copytree``. All three leave the original tree
+    in place; only the link entry consumes filesystem state. On POSIX
+    ``os.symlink`` always succeeds without admin.
+    """
+    staging = _DEFAULT_APK_WORKDIR / f"apk-unified-{apk_sha[:16]}"
+    if staging.exists():
+        import shutil as _shutil  # noqa: PLC0415
+        _shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    if java_dir:
+        _link_dir(Path(java_dir), staging / "java")
+    if react_dir:
+        _link_dir(Path(react_dir), staging / "react")
+    if apktool_dir:
+        # apktool tree contains AndroidManifest.xml, res/, smali — not
+        # source-code per audit-mcp's FastIndexer (XML/smali ignored
+        # by extension) but read_lines needs them in scope for
+        # manifest-driven MSTG-ARCH audits.
+        _link_dir(Path(apktool_dir), staging / "apktool")
+    return str(staging)
+
+
+def _link_dir(source: Path, target: Path) -> None:
+    """Cross-platform directory junction.
+
+    Windows: ``mklink /J`` via ``subprocess`` is the standard but
+    operator banned subprocess.run — we use ``_winapi.CreateJunction``
+    when available (Python 3.13+ exposes it under ctypes.windll.kernel32)
+    via ``os.symlink`` with ``target_is_directory=True``. When that
+    fails (no developer-mode + no admin) we fall back to bulk copy via
+    ``shutil.copytree`` — slower one-time, then the staging dir persists.
+    POSIX: ``os.symlink`` always works.
+    """
+    if not source.exists():
+        return
+    try:
+        os.symlink(source, target, target_is_directory=True)
+        return
+    except (OSError, NotImplementedError):
+        # Symlink failed — Windows often denies non-admin symlinks.
+        # Fall through to junction or copy.
+        pass
+    if os.name == "nt":
+        # Try Windows native junction via ctypes (no subprocess).
+        try:
+            import ctypes  # noqa: PLC0415
+            kernel32 = ctypes.windll.kernel32
+            kernel32.CreateSymbolicLinkW.restype = ctypes.c_ubyte
+            # SYMBOLIC_LINK_FLAG_DIRECTORY=0x1, ALLOW_UNPRIVILEGED=0x2
+            ok = kernel32.CreateSymbolicLinkW(
+                str(target), str(source), 0x3,
+            )
+            if ok:
+                return
+        except OSError:
+            pass
+    # Last-resort: copy. Slower but always works.
+    import shutil as _shutil  # noqa: PLC0415
+    _shutil.copytree(source, target, symlinks=False, dirs_exist_ok=False)
+
+
+# Maps file extensions to audit-mcp / trailmark language names. Mirrors
+# trailmark's FastIndexer._build_ext_map (java, kotlin, javascript,
+# typescript, c, cpp, objc, swift). Listed here so we don't have to
+# import the indexer just to ask "what language is .kt?". Add new
+# entries as audit-mcp grows its supported set.
+_STAGING_EXT_TO_LANG: dict[str, str] = {
+    ".java": "java",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".js": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
+    ".hh": "cpp",
+    ".cxx": "cpp",
+    ".m": "objc",
+    ".mm": "objc",
+    ".swift": "swift",
+    ".go": "go",
+    ".rs": "rust",
+}
+
+# Directory names to skip during the extension probe — mirrors the
+# FastIndexer's own skip list so we don't claim "we have ruby" because
+# some vendored gem shipped a .rb under node_modules/.
+_STAGING_SKIP_DIRS: frozenset[str] = frozenset({
+    ".git", ".svn", "node_modules", "vendor", "venv", ".venv",
+    "__pycache__", "build", "out", "dist", "target",
+    ".tox", ".mypy_cache",
+})
+
+# Early-exit once every supported language has been seen — we don't
+# need to enumerate every file just to build a set. An APK staging
+# easily holds 100k+ files; pure os.walk over a tree that deep is
+# only a few seconds but bailing as soon as we've covered the full
+# set keeps the common case sub-second.
+_STAGING_PROBE_MAX_LANGS: int = len(set(_STAGING_EXT_TO_LANG.values()))
+
+
+def _detect_staging_languages(staging: Path) -> list[str]:
+    """Walk ``staging`` and return the audit-mcp language names whose
+    file extensions are present.
+
+    Used to build the explicit ``language=...`` argument for
+    ``audit_mcp.index_codebase``. Skipping ``auto`` (which lets
+    trailmark's ``detect_languages`` majority-vote minority languages
+    out — an APK's RN bundle slices lose to its Java class count and
+    get dropped) means every language we actually have on disk gets
+    indexed. Walks the full tree by default and returns the union of
+    languages present; bails early once every supported language has
+    been seen at least once so the common Java+Kotlin+JS APK case
+    stays sub-second.
+    """
+    if not staging.exists():
+        return []
+    seen: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(staging):
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in _STAGING_SKIP_DIRS and not d.startswith(".")
+        ]
+        for fn in filenames:
+            ext = os.path.splitext(fn)[1].lower()
+            lang = _STAGING_EXT_TO_LANG.get(ext)
+            if lang is not None:
+                seen.add(lang)
+        if len(seen) >= _STAGING_PROBE_MAX_LANGS:
+            return sorted(seen)
+    return sorted(seen)
 
 
 class TargetAnalysisService:
@@ -628,6 +800,9 @@ class TargetAnalysisService:
         # asyncio.gather propagates the FIRST exception and cancels
         # outstanding tasks; that matches the existing sequential chain's
         # "stop on first failure" contract.
+        # REACT_NATIVE_EXTRACT runs in this group too: it reads the APK
+        # directly (no apktool dependency) and produces decompiled JS
+        # the unified-index stage joins with the jadx Java tree.
         await asyncio.gather(
             self._run_android_stage(
                 target_id, StageName.APK_DECODE, self._android_apk_decode,
@@ -636,14 +811,21 @@ class TargetAnalysisService:
                 target_id, StageName.JADX_DECOMPILE, self._android_jadx_decompile,
             ),
             self._run_android_stage(
+                target_id, StageName.REACT_NATIVE_EXTRACT,
+                self._android_react_native_extract,
+            ),
+            self._run_android_stage(
                 target_id, StageName.STATIC_SUMMARY, self._android_static_summary,
             ),
             self._run_android_stage(
                 target_id, StageName.MOBSF_SCAN, self._android_mobsf_scan,
             ),
         )
-        # GROUP 2: depends on JADX_DECOMPILE having written
-        # ``android_mcp_decompiled_dir``; runs strictly after group 1.
+        # GROUP 2: unified index over BOTH the jadx Java tree AND the
+        # React Native decompile (when present). Personas see ONE
+        # index_id whose semantic_search / read_function / callers_of
+        # span both languages — no per-language index juggling at the
+        # bridge or in the system prompt.
         await self._run_android_stage(
             target_id, StageName.INDEX_DECOMPILED, self._android_index_decompiled,
         )
@@ -827,6 +1009,76 @@ class TargetAnalysisService:
             target_id, sources_dir, resp.get("class_count"),
         )
 
+    async def _android_react_native_extract(
+        self,
+        target_id: str,
+        descriptor: dict[str, Any],
+        current_handles: dict[str, Any],
+        tracker: StageTracker,
+    ) -> None:
+        """Extract + decompile + slice the React Native JS bundle from
+        the APK, when one exists.
+
+        Calls android-mcp's ``react_native_extract`` tool which reads
+        the APK directly (no dependency on apktool output) and writes
+        per-module / per-slice JS files into a content-addressed
+        staging dir. The returned ``decompiled_dir`` lands in the
+        target's handles under ``android_mcp_rn_decompiled_dir`` so
+        ``_android_index_decompiled`` can junction it into the unified
+        staging tree.
+
+        Soft-skips when the APK contains no RN bundle — the tool
+        returns ``decompiled_dir=None`` and we record that as a
+        ``{"skipped": "no rn bundle"}`` handle entry so the unified
+        index stage knows to only feed the jadx tree.
+        """
+        del current_handles, tracker  # dispatch contract; consumed elsewhere
+        apk_path = self._resolve_apk_path(descriptor)
+        resp = await self._android_mcp.forward(
+            action="react_native_extract",
+            apk_path=apk_path,
+            force=True,
+            _agent_bypass=True,
+        )
+        if not isinstance(resp, dict) or resp.get("status") == "error":
+            err = resp.get("error") if isinstance(resp, dict) else resp
+            raise TargetAnalysisError(
+                f"android-mcp.react_native_extract failed: {err}",
+            )
+        decompiled_dir = resp.get("decompiled_dir")
+        bundles_found = resp.get("bundles_found") or []
+        if not decompiled_dir:
+            await self._merge_handles_locked(
+                target_id,
+                {"android_mcp_rn_extract": {
+                    "skipped": "no rn bundle",
+                    "bundles_found": 0,
+                }},
+            )
+            _log.info(
+                "vr.android.react_native_extract target=%s — no RN bundle in APK",
+                target_id,
+            )
+            return
+        new_keys: dict[str, Any] = {
+            "android_mcp_rn_decompiled_dir": decompiled_dir,
+            "android_mcp_rn_extract": {
+                "bundles_found": len(bundles_found),
+                "bundle_kinds": [b.get("kind") for b in bundles_found],
+                "js_module_count": resp.get("js_module_count"),
+                "sourcemap_used": resp.get("sourcemap_used"),
+                "cache_hit": resp.get("cache_hit"),
+            },
+        }
+        await self._merge_handles_locked(target_id, new_keys)
+        _log.info(
+            "vr.android.react_native_extract target=%s decompiled_dir=%s "
+            "bundles=%d modules=%d sourcemap=%s cache_hit=%s",
+            target_id, decompiled_dir, len(bundles_found),
+            resp.get("js_module_count"), resp.get("sourcemap_used"),
+            resp.get("cache_hit"),
+        )
+
     async def _android_index_decompiled(
         self,
         target_id: str,
@@ -834,53 +1086,90 @@ class TargetAnalysisService:
         current_handles: dict[str, Any],
         tracker: StageTracker,
     ) -> None:
-        """Hand the jadx Java tree to audit-mcp's ``index_codebase``.
+        """Build ONE audit-mcp index over both the jadx Java tree AND
+        the React Native JS decompile (when present).
 
-        Reads ``android_mcp_decompiled_dir`` (written by JADX_DECOMPILE)
-        out of the current handles, kicks off
-        ``audit_mcp.index_codebase(path=<dir>, language="java")``,
-        polls until READY via the existing ``_poll_audit_mcp`` helper,
-        and writes ``audit_mcp_decompiled_index_id`` +
-        ``audit_mcp_decompiled_indexed_at`` into ``mcp_handles_json``.
+        Personas see a single ``audit_mcp_decompiled_index_id`` whose
+        semantic_search / read_function / callers_of span both
+        languages. No prompt-side index-id juggling, no bridge fan-out
+        — audit-mcp's own FastIndexer recognises ``.java`` / ``.kt`` /
+        ``.js`` / ``.jsx`` / ``.ts`` / ``.tsx`` by extension and the
+        ``language="auto"`` switch turns on multi-language detection.
 
-        After this stage runs, VR personas auditing an APK target get
-        the same source-graph surface (``semantic_search``,
-        ``callers_of``, ``read_function``) as personas auditing
-        source-repo targets — they just point at the Java methods
-        recovered by jadx instead of the original handwritten source.
+        Implementation: builds a per-target staging dir at
+        ``~/.android-mcp/work/apk-unified-<sha[:16]>/`` and drops a
+        junction (Windows) or symlink (POSIX) into it pointing at each
+        source tree:
 
-        Soft-skips when JADX_DECOMPILE didn't write a decompiled dir
-        (operator may have force-marked JADX_DECOMPILE DONE on a
-        bad APK). Records ``{"skipped": "no jadx output"}`` instead of
-        raising so the chain proceeds to STATIC_SUMMARY.
+            staging/java/   -> jadx output (always, when jadx ran)
+            staging/react/  -> RN decompile (only when bundle present)
+
+        audit-mcp's FastIndexer recurses through the links; the
+        combined index has functions, call-graphs, embeddings spanning
+        both languages. Junctions are zero-copy and free on disk.
+
+        Soft-skips when neither java nor react dir is present.
         """
         del tracker  # dispatch contract; state owned by _run_android_stage
-        # Validate the descriptor invariant up-front: every android_apk
-        # target carries apk_path in its descriptor (POST /vr/targets/
-        # upload-apk writes it). Failing fast here gives a clearer
-        # error than letting audit-mcp reject a stray call later.
         apk_path = self._resolve_apk_path(descriptor)
-
-        decompiled_dir = current_handles.get("android_mcp_decompiled_dir")
-        if not isinstance(decompiled_dir, str) or not decompiled_dir:
+        java_dir = current_handles.get("android_mcp_decompiled_dir")
+        react_dir = current_handles.get("android_mcp_rn_decompiled_dir")
+        # The apktool extract holds AndroidManifest.xml + res/ + smali —
+        # MSTG-ARCH-* audits literally need to read the manifest, and
+        # MSTG-PLATFORM / MSTG-STORAGE audits need res/xml/ +
+        # res/values/. audit-mcp's FastIndexer skips non-source files
+        # by extension so junctioning the dir adds zero index nodes,
+        # but `read_lines` walks any file under the index root — so
+        # manifest + resources become reachable via the same index_id
+        # the personas already use. Without this an ARCH-1 audit dies
+        # on `read_lines: file_path escapes index root`.
+        apktool_dir = current_handles.get("android_mcp_decoded_dir")
+        if not (isinstance(java_dir, str) and java_dir) and \
+           not (isinstance(react_dir, str) and react_dir):
             await self._merge_handles_locked(
                 target_id,
-                {"audit_mcp_decompiled_index": {"skipped": "no jadx output"}},
+                {"audit_mcp_decompiled_index": {
+                    "skipped": "no jadx or rn output",
+                }},
             )
             _log.warning(
                 "vr.android.index_decompiled target=%s apk=%s skipped — "
-                "no android_mcp_decompiled_dir in handles",
+                "no java or react decompile dir in handles",
                 target_id, apk_path,
             )
             return
 
+        # Build the unified staging dir. Cache-key on the APK sha so a
+        # re-run on the same APK reuses the same staging path (the
+        # junctions inside re-resolve to the current jadx + rn dirs).
+        apk_sha = current_handles.get("android_mcp_apk_sha256") or \
+            _hash_path_for_cache(apk_path)
+        staging = await asyncio.to_thread(
+            _build_unified_staging,
+            apk_sha=str(apk_sha),
+            java_dir=java_dir if isinstance(java_dir, str) else None,
+            react_dir=react_dir if isinstance(react_dir, str) else None,
+            apktool_dir=apktool_dir if isinstance(apktool_dir, str) else None,
+        )
+
+        # Probe the staging dir for present source extensions and pass
+        # the union of languages explicitly. Passing ``auto`` lets
+        # trailmark's detect_languages drop minority languages (an
+        # APK's 691 decompiled JS slices lose to its 13k Java classes
+        # + 45k smali files, so .js gets filtered out and the cached
+        # Java-only graph is returned). Anything the staging actually
+        # contains we want indexed, regardless of count, so Kotlin
+        # source / native JNI / TypeScript bundles all show up too.
+        langs = _detect_staging_languages(Path(staging))
         kickoff = await self._audit_mcp.forward(
-            action="index_codebase", path=decompiled_dir, language="java",
+            action="index_codebase",
+            path=staging,
+            language=",".join(langs) if langs else "auto",
         )
         if not isinstance(kickoff, dict) or kickoff.get("status") == "error":
             err = kickoff.get("error") if isinstance(kickoff, dict) else kickoff
             raise TargetAnalysisError(
-                f"audit_mcp.index_codebase (decompiled) failed: {err}",
+                f"audit_mcp.index_codebase (unified) failed: {err}",
             )
         index_id = (
             kickoff.get("index_id")
@@ -891,40 +1180,22 @@ class TargetAnalysisService:
                 f"audit_mcp.index_codebase returned no index_id: {kickoff!r}",
             )
 
-        # fix §270 — long-tail audit-mcp indexing on a jadx Java tree
-        # (trailmark + semble cold-build over ~100k decompiled classes)
-        # can run for hours, bounded by _POLL_TIMEOUT_SECONDS (default
-        # 4h, operator-overridable via VR_INGESTION_POLL_TIMEOUT_S).
-        #
-        # Ideal fix: re-enter this state every 60s via a
-        # ``next_state=index_decompiled_wait`` workflow continuation
-        # so the ARQ worker slot frees up between polls. The platform
-        # workflow engine doesn't expose a WakeOn / timer-based
-        # re-entry primitive today (``aila.platform.workflows`` only
-        # routes state results forward; ``aila.platform.automation``
-        # is cron-based, not per-task), and ``run_target_analysis``
-        # itself is a single ``@platform_task`` rather than a
-        # ``DurableStateMachine``. Spec authoring + plumbing a new
-        # WakeOn surface is out of scope for §270.
-        #
-        # Fallback per the §270 acceptance: keep the inline await but
-        # pace it at 60s instead of 3s. ``asyncio.sleep`` already
-        # yields cooperatively (other coroutines on the same worker
-        # event loop interleave during the wait); the 20x interval
-        # bump trades poll resolution (worst case the stage notices
-        # READY 57s late) for 20x less HTTP traffic to audit-mcp and
-        # 20x quieter worker logs over the 4h budget.
+        # fix §270 — long-tail audit-mcp indexing on a unified Java +
+        # React tree can run for hours, bounded by _POLL_TIMEOUT_SECONDS
+        # (default 4h, operator-overridable via VR_INGESTION_POLL_TIMEOUT_S).
+        # Inline poll at 60s intervals — see prior §270 fallback note.
         await self._poll_audit_mcp(index_id, interval_s=60.0)
 
-        # fix §240 — locked merge (group-2 single stage, but pattern
-        # stays uniform across all android workers).
         await self._merge_handles_locked(target_id, {
             "audit_mcp_decompiled_index_id": index_id,
             "audit_mcp_decompiled_indexed_at": utc_now().isoformat(),
+            "audit_mcp_unified_staging_dir": staging,
         })
         _log.info(
-            "vr.android.index_decompiled target=%s apk=%s index_id=%s path=%s",
-            target_id, apk_path, index_id, decompiled_dir,
+            "vr.android.index_decompiled target=%s apk=%s index_id=%s "
+            "staging=%s java=%s react=%s",
+            target_id, apk_path, index_id, staging,
+            bool(java_dir), bool(react_dir),
         )
 
     async def _android_static_summary(

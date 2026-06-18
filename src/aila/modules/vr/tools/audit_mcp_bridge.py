@@ -532,37 +532,52 @@ class AuditMcpBridgeTool(Tool):
         from aila.modules.vr.services.mcp_call_logger import record_call  # noqa: PLC0415
 
         async with record_call(server_id="audit_mcp", base_url=base, action=action) as ctx:
+            # Bound concurrency on memory-heavy tools. The semaphore is
+            # class-level so every bridge instance in this worker process
+            # shares the cap; if the tool is not heavy the helper returns
+            # None and the call runs unbounded. Hold the semaphore across
+            # the HTTP send AND the response body read — that's the
+            # window during which audit-mcp is allocating the float32
+            # blast-radius matrix on its side. Release after JSON parse
+            # so the rest of the response processing runs unbounded.
+            sem = self.__class__._tool_semaphore(action)
             try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.post(url, json=normalized_kwargs)
-            except httpx.ConnectError as exc:
-                ctx["status"] = "error"
-                ctx["error_excerpt"] = str(exc)[:400]
-                return {
-                    "status": "error",
-                    "error": (
-                        f"Cannot reach audit-mcp at {base}. "
-                        "Ensure the HTTP server is running "
-                        "(audit-mcp --mode http or python -m audit_mcp --mode http)."
-                    ),
-                }
-            except httpx.TimeoutException as exc:
-                ctx["status"] = "error"
-                ctx["error_excerpt"] = str(exc)[:400]
-                return {
-                    "status": "error",
-                    "error": f"Timeout ({self._timeout}s) calling {action}.",
-                }
-            ctx["http_status"] = resp.status_code
-            try:
-                payload = resp.json()
-            except ValueError as exc:
-                ctx["status"] = "error"
-                ctx["error_excerpt"] = str(exc)[:400]
-                return {
-                    "status": "error",
-                    "error": f"Non-JSON response from {action}: {resp.text[:200]}",
-                }
+                if sem is not None:
+                    await sem.acquire()
+                try:
+                    async with httpx.AsyncClient(timeout=self._timeout) as client:
+                        resp = await client.post(url, json=normalized_kwargs)
+                except httpx.ConnectError as exc:
+                    ctx["status"] = "error"
+                    ctx["error_excerpt"] = str(exc)[:400]
+                    return {
+                        "status": "error",
+                        "error": (
+                            f"Cannot reach audit-mcp at {base}. "
+                            "Ensure the HTTP server is running "
+                            "(audit-mcp --mode http or python -m audit_mcp --mode http)."
+                        ),
+                    }
+                except httpx.TimeoutException as exc:
+                    ctx["status"] = "error"
+                    ctx["error_excerpt"] = str(exc)[:400]
+                    return {
+                        "status": "error",
+                        "error": f"Timeout ({self._timeout}s) calling {action}.",
+                    }
+                ctx["http_status"] = resp.status_code
+                try:
+                    payload = resp.json()
+                except ValueError as exc:
+                    ctx["status"] = "error"
+                    ctx["error_excerpt"] = str(exc)[:400]
+                    return {
+                        "status": "error",
+                        "error": f"Non-JSON response from {action}: {resp.text[:200]}",
+                    }
+            finally:
+                if sem is not None:
+                    sem.release()
             payload_status = payload.get("status") if isinstance(payload, dict) else None
             if payload_status in ("ready", "pending", "error"):
                 ctx["status"] = payload_status
@@ -1028,6 +1043,41 @@ class AuditMcpBridgeTool(Tool):
         known_param_names = {p["name"] for p in (match.get("params") or [])}
         required = set(match.get("required") or [])
 
+        # Auto-translate index_id → path for tools that take a path on
+        # disk (audit-mcp's `detect_languages`, `classify_strings`, etc).
+        # Callers across AILA pass index_id uniformly; rewriting them all
+        # to look up the root_path themselves would touch every site,
+        # so the bridge does it transparently here. Only fires when the
+        # tool spec wants `path` and lacks `index_id` — leaves
+        # path-already-set or index_id-already-accepted cases alone.
+        if (
+            "path" in known_param_names
+            and "index_id" not in known_param_names
+            and "path" not in kwargs
+            and isinstance(kwargs.get("index_id"), str)
+            and kwargs["index_id"]
+        ):
+            iid = kwargs["index_id"]
+            if iid not in self.__class__._INDEX_ROOTS:
+                await self._refresh_index_roots()
+            root = self.__class__._INDEX_ROOTS.get(iid)
+            if root:
+                # Mutate the caller's dict in place so forward()'s POST
+                # uses the translated kwargs. Rebinding (`kwargs = ...`)
+                # only swapped the local name and left the upstream
+                # `normalized_kwargs` reference unchanged.
+                del kwargs["index_id"]
+                kwargs["path"] = root
+            else:
+                return {
+                    "status": "error",
+                    "error": (
+                        f"audit_mcp.{action} needs a `path` argument; the "
+                        f"caller passed index_id={iid!r} but no root_path "
+                        f"is cached for it. Known indexes: "
+                        f"{sorted(self.__class__._INDEX_ROOTS)}."
+                    ),
+                }
         # Unknown kwargs first — they're the loud LLM-hallucination case.
         unknown = [k for k in kwargs if k not in known_param_names]
         if unknown:
@@ -1076,6 +1126,49 @@ class AuditMcpBridgeTool(Tool):
     # Index root cache. Maps index_id -> absolute root_path on disk.
     # Populated lazily from list_indexes; refreshed on a miss.
     _INDEX_ROOTS: dict[str, str] = {}
+
+    # Per-tool concurrency caps. The `fuzzing_targets` /
+    # `complexity_hotspots` / `attack_surface` / `preanalysis` /
+    # `dead_code` calls walk the entire index call-graph and allocate
+    # ~67 MiB float32 slabs per batch (one slab per N_candidates ÷ 64).
+    # Concurrent fan-out (10 in-flight investigations × 16-call prewarm
+    # × the FunctionRanker + CapabilityProfileBuilder enrichment hops)
+    # piles slabs onto a fragmented Python heap and audit-mcp OOMs with
+    # "Unable to allocate 67.1 MiB". A bounded semaphore per heavy tool
+    # caps the in-flight count so peak resident memory stays at
+    # cap × slab_size instead of N × slab_size.
+    #
+    # Cheap tools (read_function, read_lines, semantic_search,
+    # search_functions, callers_of) are NOT bounded — they're the
+    # interactive call hot-path the agent reasons through.
+    _HEAVY_TOOL_CAPS: dict[str, int] = {
+        "fuzzing_targets":     2,
+        "complexity_hotspots": 2,
+        "attack_surface":      3,
+        "preanalysis":         3,
+        "dead_code":           2,
+        "scan_and_correlate":  2,
+        "blast_radius_batch":  2,
+    }
+    _TOOL_SEMAPHORES: dict[str, asyncio.BoundedSemaphore] = {}
+
+    @classmethod
+    def _tool_semaphore(cls, tool: str) -> asyncio.BoundedSemaphore | None:
+        """Return the bounded semaphore for `tool` if it's heavy.
+
+        Lazy-instantiated per tool name. Returns None for tools that
+        aren't in the heavy list so the caller can skip the
+        `async with` cleanly. Class-level so all bridge instances in
+        the worker process share the cap (one investigation can't
+        bypass it by constructing a fresh bridge)."""
+        cap = cls._HEAVY_TOOL_CAPS.get(tool)
+        if cap is None:
+            return None
+        sem = cls._TOOL_SEMAPHORES.get(tool)
+        if sem is None:
+            sem = asyncio.BoundedSemaphore(cap)
+            cls._TOOL_SEMAPHORES[tool] = sem
+        return sem
 
     async def _refresh_index_roots(self) -> None:
         """Fetch list_indexes and cache index_id -> root_path mapping."""
@@ -1151,14 +1244,39 @@ class AuditMcpBridgeTool(Tool):
                 ),
             }
 
-        # Normalize file_path and ensure resolved path stays under root
-        # (prevent ../../ escapes).
+        # Normalize file_path and ensure the resolved path stays under
+        # the index root.
         rel = file_path.lstrip("/\\").replace("\\", "/")
         abs_path = (Path(root) / rel).resolve()
         root_resolved = Path(root).resolve()
         try:
             abs_path.relative_to(root_resolved)
+            in_scope = True
         except ValueError:
+            in_scope = False
+
+        # Second chance for APK targets: the index root often points at
+        # one slice of the operator's android workdir (jadx/<sha>/ or
+        # apk-unified-<sha>/), but MSTG-ARCH / MSTG-PLATFORM audits
+        # need to read AndroidManifest.xml + res/ + smali from the
+        # SIBLING apktool/<sha>/ dir. All four trees are operator-
+        # owned under ~/.android-mcp/work/, so when the index ALREADY
+        # lives there it's safe to extend the allow-list to any path
+        # under the same workspace parent. Without this an ARCH-1
+        # audit dies on "read_lines: file_path escapes index root"
+        # the moment it tries to read the manifest.
+        if not in_scope:
+            workdir = Path(os.environ.get(
+                "ANDROID_MCP_WORKDIR", "~/.android-mcp/work",
+            )).expanduser().resolve()
+            try:
+                root_resolved.relative_to(workdir)
+                abs_path.relative_to(workdir)
+                in_scope = True
+            except ValueError:
+                pass
+
+        if not in_scope:
             return {
                 "status": "error",
                 "error": f"read_lines: file_path escapes index root: {file_path}",

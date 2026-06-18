@@ -92,6 +92,7 @@ class StageName(StrEnum):
     FUNCTION_RANKING = "function_ranking"
     APK_DECODE = "apk_decode"
     JADX_DECOMPILE = "jadx_decompile"
+    REACT_NATIVE_EXTRACT = "react_native_extract"
     INDEX_DECOMPILED = "index_decompiled"
     STATIC_SUMMARY = "static_summary"
     MOBSF_SCAN = "mobsf_scan"
@@ -145,6 +146,7 @@ class TargetAnalysisStages(BaseModel):
     function_ranking: StageStatus = Field(default_factory=StageStatus)
     apk_decode: StageStatus = Field(default_factory=StageStatus)
     jadx_decompile: StageStatus = Field(default_factory=StageStatus)
+    react_native_extract: StageStatus = Field(default_factory=StageStatus)
     index_decompiled: StageStatus = Field(default_factory=StageStatus)
     static_summary: StageStatus = Field(default_factory=StageStatus)
     mobsf_scan: StageStatus = Field(default_factory=StageStatus)
