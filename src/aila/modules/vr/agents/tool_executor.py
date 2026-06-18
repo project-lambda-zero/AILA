@@ -399,7 +399,37 @@ class ToolExecutor:
                         "  - try a shorter / broader pattern",
                     ])
 
-                if triggered_by_class:
+                # Pick the breaker text based on which CLASS the error
+                # falls into. Wrong-kwarg / missing-kwarg / type-mismatch
+                # all share "the arg shape is wrong, re-read signature"
+                # advice. resource_not_found is the opposite — arg shape
+                # is fine, the VALUE is wrong (typo, stale identifier,
+                # path the agent copied from somewhere stale). Telling
+                # the agent to "re-read the tool signature" in that case
+                # sends them down the wrong rabbit hole.
+                err_class = self._classify_contract_error(raw_err) if triggered_by_class else None
+                if err_class == "resource_not_found":
+                    err += (
+                        f"\n\n*** REPEAT-FAILURE CIRCUIT BREAKER (resource-not-found) ***\n"
+                        f"You have called {server_id}.{tool_name} {error_class_count + 1} times "
+                        f"in this branch and EACH attempt failed because the resource "
+                        f"identifier (path / id / file) you passed does not exist on disk "
+                        f"or in the index. The arg NAMES are fine — the VALUE is wrong. "
+                        f"Typing a new typo of the same identifier will not help: every "
+                        f"version you've tried so far has missed.\n\n"
+                        f"Likely root cause: you are reconstructing a long identifier "
+                        f"(SHA-derived APK path, hex index id, GUID) from memory and "
+                        f"corrupting it each time. SHA-256 paths are 64 hex chars + extension; "
+                        f"a single dropped char or stray space breaks the lookup.\n\n"
+                        f"PIVOT — do NOT call {server_id}.{tool_name} with another typed "
+                        f"identifier. Pull the canonical value from an existing observable "
+                        f"in this branch's case_state (a prior tool result, target metadata, "
+                        f"or the initial-question text), copy it byte-for-byte, OR pivot to "
+                        f"a different tool that takes a logical identifier (target_id, "
+                        f"investigation_id) instead of a raw filesystem path."
+                        + "\nOR submit a finding noting the obstacle."
+                    )
+                elif triggered_by_class:
                     # Contract-violation path: the error itself names
                     # the wrong kwarg / missing arg. The bridge
                     # validator (audit_mcp_bridge._validate_kwargs)
@@ -1138,6 +1168,19 @@ class ToolExecutor:
                               TypeError about an unexpected keyword
           - "missing_kwarg"  — required kwarg not provided
           - "type_mismatch"  — wrong type passed
+          - "resource_not_found" — agent is passing a path / id /
+                              identifier the tool cannot resolve. Once
+                              an APK / index / file lookup misses, the
+                              same lookup with slightly different bytes
+                              keeps missing — the agent typo-drifts the
+                              identifier (LLM transcription error on
+                              long SHA-derived paths) and the
+                              args-identical breaker never matches
+                              because each typo is "fresh". Treating
+                              this as a contract class so the
+                              error-class breaker fires after N misses
+                              regardless of which specific path was
+                              passed.
         """
         low = text.lower()
         if (
@@ -1150,6 +1193,17 @@ class ToolExecutor:
             return "missing_kwarg"
         if "type mismatch" in low or "argument of type" in low:
             return "type_mismatch"
+        if (
+            "filenotfounderror" in low
+            or "no such file or directory" in low
+            or "apk not found" in low
+            or "path not found" in low
+            or "unknown index" in low
+            or "index not found" in low
+            or "index_id not found" in low
+            or "does not exist" in low and ("path" in low or "file" in low or "apk" in low or "index" in low)
+        ):
+            return "resource_not_found"
         return None
 
 
