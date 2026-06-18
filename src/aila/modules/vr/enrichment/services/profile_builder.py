@@ -383,13 +383,26 @@ class CapabilityProfileBuilder:
         else:
             failed += 1
 
+        # fix — audit_mcp's `attack_surface` response shape is
+        # `{"entrypoints": [{node_id, trust_level, kind, asset_value,
+        # description, framework?}, ...]}`. There is no `status` key on
+        # the success path and no `frameworks` / `entrypoint_count`
+        # top-level keys, so the prior `status == "ready"` gate always
+        # failed for source repos and `signals["frameworks"]` /
+        # `signals["entrypoint_count"]` were never populated. Use the
+        # real keys and derive both fields from the entrypoint list.
         attempted += 1
         surface_resp = await self._audit_mcp.forward(action="attack_surface", index_id=index_id)
-        if surface_resp.get("status") == "ready":
-            signals["frameworks"] = list(surface_resp.get("frameworks") or [])
-            signals["entrypoint_count"] = int(surface_resp.get("entrypoint_count") or 0)
+        entrypoints = surface_resp.get("entrypoints") or []
+        if isinstance(entrypoints, list) and entrypoints:
+            signals["source_entrypoints"] = entrypoints
+            signals["entrypoint_count"] = len(entrypoints)
+            signals["frameworks"] = sorted({
+                str(e.get("framework")) for e in entrypoints
+                if isinstance(e, dict) and e.get("framework")
+            })
             signals["raw_attack_surface"] = surface_resp
-        else:
+        elif surface_resp.get("status") in ("error", "failed"):
             failed += 1
 
         attempted += 1
@@ -398,6 +411,21 @@ class CapabilityProfileBuilder:
             signals["blast_radius_top"] = prean_resp.get("blast_radius_top") or []
             signals["raw_preanalysis"] = prean_resp
         else:
+            failed += 1
+
+        # fix — pull the fuzz-target ranking directly so the profile builder
+        # does NOT depend on the function_ranking stage having finished first.
+        # The data is the same as what FunctionRanker persists, but the order
+        # of stage completion isn't guaranteed; reading it here keeps the
+        # composer's `attack_surface_items` seedable from `top_k` regardless.
+        attempted += 1
+        fuzz_resp = await self._audit_mcp.forward(
+            action="fuzzing_targets", index_id=index_id, limit=50, min_complexity=10,
+        )
+        ranked = fuzz_resp.get("targets") or []
+        if isinstance(ranked, list) and ranked:
+            signals["ranked_targets"] = ranked
+        elif fuzz_resp.get("status") in ("error", "failed"):
             failed += 1
 
         return signals, attempted, failed
@@ -542,7 +570,11 @@ class CapabilityProfileBuilder:
                 applicable_strategies.extend(["differential", "fuzzilli", "v8MapInference"])
 
         # §1.4 — Attack surface tab projects:
-        # source targets → audit-mcp `frameworks` + entrypoint summary,
+        # source targets → audit-mcp `frameworks` + actual `entrypoints`
+        #                  list + top-10 `ranked_targets` (the closest
+        #                  proxy we have for libnghttp2 / libevent /
+        #                  dispatch-table callbacks that the static
+        #                  call-graph walker cannot follow from main).
         # binary targets → IDA `behavior_categories` + checksec hints.
         attack_surface_items: list[dict[str, Any]] = []
         for fw in (signals.get("frameworks") or []):
@@ -559,6 +591,43 @@ class CapabilityProfileBuilder:
                 "location": "",
                 "severity_hint": "medium",
             })
+        # Source-target entrypoints (CLI mains, exposed binaries, etc).
+        # audit_mcp returns at minimum the `main()` entries; framework-
+        # aware indexing will eventually expand this set.
+        for ep in (signals.get("source_entrypoints") or [])[:20]:
+            if not isinstance(ep, dict):
+                continue
+            attack_surface_items.append({
+                "kind": "entrypoint",
+                "name": str(ep.get("node_id") or ep.get("description") or "?"),
+                "location": str(ep.get("kind") or ""),
+                "severity_hint": (
+                    "high" if ep.get("trust_level") == "untrusted_network"
+                    else "medium" if ep.get("asset_value") in ("high", "critical")
+                    else "info"
+                ),
+            })
+        # Top-10 ranked targets — until audit_mcp's `attack_surface` is
+        # framework-aware enough to surface libnghttp2 / libevent /
+        # dispatch-table handlers, the fuzz-target ranking is the best
+        # proxy for the real attack surface of a network daemon.
+        for entry in (signals.get("ranked_targets") or [])[:10]:
+            if not isinstance(entry, dict):
+                continue
+            file_path = str(entry.get("file_path") or entry.get("file") or "")
+            line = entry.get("line")
+            attack_surface_items.append({
+                "kind": "ranked_target",
+                "name": str(entry.get("name") or "?"),
+                "location": (
+                    f"{file_path}:{line}" if file_path and line is not None
+                    else file_path
+                ),
+                "severity_hint": "medium",
+                "complexity": entry.get("complexity"),
+                "blast_radius": entry.get("blast_radius_downstream"),
+                "fuzz_priority_score": entry.get("fuzz_priority_score"),
+            })
         # Entry points (binary targets) collapse to a single row when
         # large — the operator drills into the IDA MCP for the full list.
         entry_points = signals.get("entry_points") or []
@@ -569,7 +638,6 @@ class CapabilityProfileBuilder:
                 "location": "binary header",
                 "severity_hint": "info",
             })
-
         return TargetCapabilityProfile(
             target_kind=kind,
             primary_language=primary_language,
