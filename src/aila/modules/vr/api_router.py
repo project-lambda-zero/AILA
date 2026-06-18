@@ -4626,23 +4626,25 @@ def create_vr_router() -> APIRouter:
             uow.session.add(inv)
 
             # Abandon any prior halvar branches still in a non-terminal
-            # state (active, paused, created) before spawning the new
-            # one. Without this, repeated reopen/re-enqueue cycles
-            # accumulate multiple halvar branches on the same
-            # investigation — each cycle (operator pause → reopen, or
-            # crashed-then-reenqueued) leaves the prior halvar alive,
-            # and downstream consumers (parent_reconciler's branch
-            # priority, sibling-consensus quorum, BranchTreePage)
+            # state (active or paused) before spawning the new one.
+            # BranchStatus values: ACTIVE / PAUSED / MERGED / PROMOTED
+            # / ABANDONED / COMPLETED — only ACTIVE and PAUSED are
+            # "live" for our purposes. Without this, repeated reopen /
+            # re-enqueue cycles accumulate multiple halvar branches on
+            # the same investigation — each cycle (operator pause →
+            # reopen, or crashed-then-reenqueued) leaves the prior
+            # halvar alive, and downstream consumers (parent_reconciler
+            # branch priority, sibling-consensus quorum, BranchTreePage)
             # double-count. Branches in already-terminal states
-            # (abandoned, completed, failed) stay untouched — those
-            # are real history.
+            # (abandoned, completed, merged, promoted) stay untouched —
+            # those are real history.
             from aila.modules.vr.contracts.branch import BranchStatus as _BS  # noqa: PLC0415
             _live_halvars = (await uow.session.exec(
                 select(VRInvestigationBranchRecord).where(
                     VRInvestigationBranchRecord.investigation_id == inv.id,
                     VRInvestigationBranchRecord.persona_voice == PersonaVoice.HALVAR.value,
                     VRInvestigationBranchRecord.status.in_((  # type: ignore[attr-defined]
-                        _BS.ACTIVE.value, _BS.PAUSED.value, _BS.CREATED.value,
+                        _BS.ACTIVE.value, _BS.PAUSED.value,
                     )),
                 ),
             )).all()
