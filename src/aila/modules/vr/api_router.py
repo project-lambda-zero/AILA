@@ -4625,9 +4625,27 @@ def create_vr_router() -> APIRouter:
             inv.primary_outcome_id = None
             uow.session.add(inv)
 
-            # Spawn a fresh primary branch — old branches stay as
-            # historical record. fork_reason makes the lineage obvious
-            # in BranchTreePage + audit log.
+            # Abandon any prior halvar branches still in a non-terminal
+            # state (active, paused, created) before spawning the new
+            # one. Without this, repeated reopen/re-enqueue cycles
+            # accumulate multiple halvar branches on the same
+            # investigation — each cycle (operator pause → reopen, or
+            # crashed-then-reenqueued) leaves the prior halvar alive,
+            # and downstream consumers (parent_reconciler's branch
+            # priority, sibling-consensus quorum, BranchTreePage)
+            # double-count. Branches in already-terminal states
+            # (abandoned, completed, failed) stay untouched — those
+            # are real history.
+            from aila.modules.vr.contracts.branch import BranchStatus as _BS  # noqa: PLC0415
+            _live_halvars = (await uow.session.exec(
+                select(VRInvestigationBranchRecord).where(
+                    VRInvestigationBranchRecord.investigation_id == inv.id,
+                    VRInvestigationBranchRecord.persona_voice == PersonaVoice.HALVAR.value,
+                    VRInvestigationBranchRecord.status.in_((  # type: ignore[attr-defined]
+                        _BS.ACTIVE.value, _BS.PAUSED.value, _BS.CREATED.value,
+                    )),
+                ),
+            )).all()
             new_branch = VRInvestigationBranchRecord(
                 investigation_id=inv.id,
                 status=BranchStatus.ACTIVE.value,
@@ -4639,6 +4657,13 @@ def create_vr_router() -> APIRouter:
                 persona_voice=PersonaVoice.HALVAR.value,
             )
             uow.session.add(new_branch)
+            await uow.session.flush()
+            for _prior in _live_halvars:
+                _prior.status = _BS.ABANDONED.value
+                _prior.closed_reason = f"superseded_by_reopen:{new_branch.id}"
+                _prior.closed_at = now
+                _prior.updated_at = now
+                uow.session.add(_prior)
             await uow.session.commit()
             await uow.session.refresh(inv)
             await uow.session.refresh(new_branch)
