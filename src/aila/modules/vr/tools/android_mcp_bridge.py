@@ -129,6 +129,7 @@ def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
 _PIPELINE_ONLY_TOOLS: frozenset[str] = frozenset((
     "apktool_decode",
     "jadx_decompile",
+    "react_native_extract",
     "mobsf_scan",
 ))
 
