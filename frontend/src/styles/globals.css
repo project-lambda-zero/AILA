@@ -4639,12 +4639,20 @@ a:hover {
   --font-sans: "Geist", system-ui, sans-serif;
   --font-mono: "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
 
-  /* Surfaces — warm charcoal lineage. NOT pure black; #121212 reads
-     warm because of the cream text contrast. */
+  /* Surfaces — true neutral charcoal, matching the upstream
+     midnight-cloud-8 vim palette by echel0n
+     (github.com/aila-sh/midnight-cloud-8-neovim). The vim theme
+     uses #121212 for every surface; on the web we need three
+     elevation tiers, so we step up in pure-neutral grays
+     (R = G = B) instead of inventing a hue. No warm tint, no cool
+     tint — the only warmth in the theme comes from the cream text
+     (#ffd7af), the only saturation from the hot-pink accent
+     (#ff5f87). The earlier #1c1a18 / #26221f browns were a
+     gruvbox-dark elevation ladder, not from this theme. */
   --color-base: #121212;
-  --color-surface: #1c1a18;
-  --color-elevated: #26221f;
-  --color-border: #3c3836;
+  --color-surface: #181818;
+  --color-elevated: #1f1f1f;
+  --color-border: #2f2f2f;
   --color-border-hover: #ff5f87;
 
   /* Foreground — the signature warm cream. Reads as parchment over
@@ -4694,25 +4702,28 @@ a:hover {
      mapping shape so the audit stays trivial across themes. */
   --background: #121212;
   --foreground: #ffd7af;
-  --card: #1c1a18;
+  --card: #181818;
   --card-foreground: #ffd7af;
-  --popover: #26221f;
+  --popover: #1f1f1f;
   --popover-foreground: #ffd7af;
   --primary: #ff5f87;
-  --primary-foreground: #121212;     /* WCAG: charcoal text on hot pink — 5.93:1, passes AA */
-  --secondary: #26221f;
+  --primary-foreground: #121212;     /* WCAG: charcoal text on hot pink, 5.93:1, passes AA */
+  --secondary: #1f1f1f;
   --secondary-foreground: #ffd7af;
-  --muted: #1c1a18;
+  --muted: #181818;
   --muted-foreground: #af8c6c;
   --destructive: #ff5f87;
-  --border: #3c3836;
-  --input: #3c3836;
+  --border: #2f2f2f;
+  --input: #2f2f2f;
   --ring: #ff5f87;
   --radius: 0.375rem;
 
-  /* Sidebar uses the elevated charcoal so it sits a hair above the
-     base without competing with the cards. */
-  --sidebar-background: var(--color-elevated);
+  /* Sidebar uses the base tier so the chrome sits behind the content
+     area rather than above it. Earlier this tracked --color-elevated
+     which read as "lifted" against the main content; the swap to
+     --color-base recedes the sidebar into the deepest tier so cards
+     and the main reading area pop forward. */
+  --sidebar-background: var(--color-base);
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-accent);
   --sidebar-primary-foreground: var(--color-badge-text);
@@ -4722,6 +4733,19 @@ a:hover {
   --sidebar-ring: var(--color-focus-ring);
 }
 
+
+/* Sidebar + header bg under midnight-cloud-8 — direct override.
+   The Tailwind v4 `@theme inline` rule that powers `bg-sidebar` /
+   `bg-background` bakes the var value at build time and Vite HMR
+   does not re-bake when the theme block changes. A higher-specificity
+   rule with `var()` resolved at runtime guarantees the chrome tier
+   actually swaps when --sidebar-background or --background switches. */
+[data-theme="midnight-cloud-8"] [data-sidebar="sidebar"] {
+  background-color: var(--sidebar-background);
+}
+[data-theme="midnight-cloud-8"] header {
+  background-color: var(--background);
+}
 /* Midnight Cloud 8 — atmospheric body: charcoal with subtle horizontal
    scanlines + a soft pink dusk-glow at the bottom of the viewport. */
 [data-theme="midnight-cloud-8"] body {
