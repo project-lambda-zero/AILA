@@ -130,3 +130,11 @@ tmpollama-installer.exe
 
 # Local IDA / build caches — never commit
 cache/
+
+# Session-local operator scratch — memory palette artifacts, Redis
+# (Memurai) log, ad-hoc one-off scripts that shouldn't follow the
+# repo around. The .txt extension dodges the `*.log` rule above,
+# so memurai-log.txt is named explicitly.
+local/
+memurai-log.txt
+orig_findings.py
