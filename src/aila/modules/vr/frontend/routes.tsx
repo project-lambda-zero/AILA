@@ -18,6 +18,7 @@ import { PatternsPage } from "./screens/PatternsPage";
 import { McpServersPage } from "./screens/McpServersPage";
 import { McpCallLogPage } from "./screens/McpCallLogPage";
 import { FindingDetailPage } from "./screens/FindingDetailPage";
+import { FindingsListPage } from "./screens/FindingsListPage";
 import { NdayPage } from "./screens/NdayPage";
 import { AuditLogPage } from "./screens/AuditLogPage";
 
@@ -137,6 +138,26 @@ export const routes = [
     minRole: "reader",
     slot: "page.full" as const,
     breadcrumb: "Pattern",
+  },
+  {
+    id: "vr.findings",
+    path: "/vr/findings",
+    page: FindingsListPage,
+    title: "Findings",
+    nav: true,
+    minRole: "reader",
+    slot: "page.full" as const,
+    breadcrumb: "Findings",
+  },
+  {
+    id: "vr.finding-detail-global",
+    path: "/vr/findings/:findingId",
+    page: FindingDetailPage,
+    title: "Finding Detail",
+    nav: false,
+    minRole: "reader",
+    slot: "page.full" as const,
+    breadcrumb: "Finding",
   },
   {
     id: "vr.disclosures",

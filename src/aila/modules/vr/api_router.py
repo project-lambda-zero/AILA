@@ -317,7 +317,28 @@ def _finding_from_record(record: Any) -> VRFinding:
             language=record.poc_language or "python",
             asan_report=record.asan_report or "",
         )
-    crash_type = CrashType(record.crash_type) if record.crash_type else None
+    # Older finding rows may carry a crash_type the current CrashType
+    # enum does not recognise (extensions added by experimental tools,
+    # imports from prior schemas, etc). Fall back to None rather than
+    # crashing the whole listing on a single rogue value.
+    if record.crash_type:
+        try:
+            crash_type = CrashType(record.crash_type)
+        except ValueError:
+            crash_type = None
+    else:
+        crash_type = None
+    # Derive evidence count from the underlying JSON list once, so the
+    # global findings explorer can render an "evidence" column without
+    # forcing every caller to parse the JSON itself.
+    import json as _json
+    try:
+        evidence_list = _json.loads(record.evidence_refs_json or "[]")
+    except (TypeError, ValueError):
+        evidence_list = []
+    evidence_count = (
+        len(evidence_list) if isinstance(evidence_list, list) else 0
+    )
     return VRFinding(
         id=record.id,
         project_id=record.project_id,
@@ -333,6 +354,10 @@ def _finding_from_record(record: Any) -> VRFinding:
         embargo_until=record.embargo_until.isoformat() if record.embargo_until else None,
         assigned_cve_id=record.assigned_cve_id,
         patch_version=record.patch_version,
+        cvss_score=record.cvss_score,
+        cvss_vector=record.cvss_vector,
+        cwe_id=record.cwe_id,
+        evidence_count=evidence_count,
     )
 
 
@@ -1538,6 +1563,112 @@ def create_vr_router() -> APIRouter:
             await uow.session.commit()
 
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.get(
+        "/findings",
+        response_model=DataEnvelope[list[VRFinding]],
+        summary="List every finding the caller can see (team-scoped, filterable).",
+    )
+    @limiter.limit("60/minute")
+    async def list_findings_global(
+        request: Request,
+        auth: AuthContext = Depends(require_auth),
+        project_id: str | None = Query(default=None),
+        disclosure_status: str | None = Query(default=None),
+        crash_type: str | None = Query(default=None),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> DataEnvelope[list[VRFinding]]:
+        """Global findings explorer endpoint.
+
+        The project-scoped sibling `GET /projects/{id}/findings` still
+        exists for the per-project drill-down; this endpoint is what the
+        operator's standalone Findings explorer hits so they can browse
+        every finding (across all VR projects in their team) without
+        navigating through a project chooser first.
+
+        Tenancy: only rows with team_id matching `auth.team_id` are
+        returned. The optional filters narrow the list further but do
+        NOT widen the team scope. `limit` defaults to 100 (vs 50 on the
+        scoped sibling) because the explorer is the catalogue view.
+        """
+        del request
+        from .db_models import VRFindingRecord
+
+        async with UnitOfWork() as uow:
+            stmt = select(VRFindingRecord)
+            count_stmt = select(sa_func.count()).select_from(VRFindingRecord)
+            if auth.team_id is not None:
+                stmt = stmt.where(VRFindingRecord.team_id == auth.team_id)
+                count_stmt = count_stmt.where(
+                    VRFindingRecord.team_id == auth.team_id,
+                )
+            if project_id:
+                stmt = stmt.where(VRFindingRecord.project_id == project_id)
+                count_stmt = count_stmt.where(
+                    VRFindingRecord.project_id == project_id,
+                )
+            if disclosure_status:
+                stmt = stmt.where(
+                    VRFindingRecord.disclosure_status == disclosure_status,
+                )
+                count_stmt = count_stmt.where(
+                    VRFindingRecord.disclosure_status == disclosure_status,
+                )
+            if crash_type:
+                stmt = stmt.where(VRFindingRecord.crash_type == crash_type)
+                count_stmt = count_stmt.where(
+                    VRFindingRecord.crash_type == crash_type,
+                )
+
+            total = int((await uow.session.exec(count_stmt)).one())
+            rows = (await uow.session.exec(
+                stmt.order_by(VRFindingRecord.created_at.desc())
+                .offset(offset).limit(limit),
+            )).all()
+
+        items = [_finding_from_record(r) for r in rows]
+        meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump()
+        return DataEnvelope(data=items, meta=meta)
+
+    @router.get(
+        "/findings/{finding_id}",
+        response_model=DataEnvelope[VRFinding],
+        summary="Get a single finding by id (project-agnostic, team-scoped).",
+    )
+    @limiter.limit("120/minute")
+    async def get_finding_global(
+        request: Request,
+        finding_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFinding]:
+        """Project-agnostic finding fetch.
+
+        The sibling project-scoped endpoint
+        `GET /projects/{project_id}/findings/{finding_id}` keeps
+        existing deep-link semantics; this endpoint is what the global
+        Findings explorer routes click into so findings with a null
+        project_id (stubs auto-created by the disclosure-from-
+        investigation flow, or imports that didn't carry a project
+        link) still open in the detail page. Tenancy: only the
+        caller's team_id sees the row.
+        """
+        del request
+        from .db_models import VRFindingRecord
+
+        async with UnitOfWork() as uow:
+            stmt = select(VRFindingRecord).where(
+                VRFindingRecord.id == finding_id,
+            )
+            if auth.team_id is not None:
+                stmt = stmt.where(VRFindingRecord.team_id == auth.team_id)
+            row = (await uow.session.exec(stmt)).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Finding {finding_id!r} not found.",
+                )
+        return DataEnvelope(data=_finding_from_record(row))
 
     @router.get(
         "/projects/{project_id}/findings",

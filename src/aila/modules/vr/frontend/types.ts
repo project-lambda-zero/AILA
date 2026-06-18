@@ -257,7 +257,7 @@ export interface PoCResult {
 
 export interface VRFinding {
   id?: string | null;
-  project_id: string;
+  project_id?: string | null;
   crash_type?: CrashType | null;
   crash_signature?: CrashSignature | null;
   root_cause: string;
@@ -270,6 +270,12 @@ export interface VRFinding {
   embargo_until?: string | null;
   assigned_cve_id?: string | null;
   patch_version?: string | null;
+  // Triage classification + evidence count, added for the global
+  // findings explorer.
+  cvss_score?: number | null;
+  cvss_vector?: string | null;
+  cwe_id?: string | null;
+  evidence_count?: number;
 }
 
 export interface DisclosureUpdate {

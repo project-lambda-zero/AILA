@@ -96,7 +96,7 @@ class VRFinding(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str | None = None
-    project_id: str
+    project_id: str | None = None
     crash_type: CrashType | None = None
     crash_signature: CrashSignature | None = None
     root_cause: str = ""
@@ -111,3 +111,13 @@ class VRFinding(BaseModel):
     embargo_until: str | None = None
     assigned_cve_id: str | None = None
     patch_version: str | None = None
+
+    # Triage classification + evidence — surfaced for the global
+    # findings explorer so the operator can tell at a glance which
+    # finding carries which evidence without paging through every
+    # FindingDetailPage. evidence_count is a derived field: length of
+    # the underlying evidence_refs_json list.
+    cvss_score: float | None = None
+    cvss_vector: str | None = None
+    cwe_id: str | None = None
+    evidence_count: int = 0

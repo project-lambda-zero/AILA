@@ -701,7 +701,11 @@ export function usePatchPattern(patternId: string) {
 // ─── Disclosures ────────────────────────────────────────────────────────────
 
 export interface DisclosureCreateBody {
-  finding_id: string;
+  /** Exactly one of finding_id or investigation_id MUST be set. */
+  finding_id?: string;
+  /** Investigation anchor: the service resolves the investigation's
+   *  single linked finding, OR auto-creates a stub if none exists. */
+  investigation_id?: string;
   track_id: string;
   workspace_id: string;
   poc_tier?: ArtifactTier;

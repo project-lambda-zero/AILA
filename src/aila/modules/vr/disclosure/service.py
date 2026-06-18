@@ -44,6 +44,7 @@ from aila.modules.vr.contracts.disclosure import (
 from aila.modules.vr.db_models import (
     VRDisclosureSubmissionRecord,
     VRFindingRecord,
+    VRInvestigationRecord,
 )
 from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
@@ -138,12 +139,84 @@ class DisclosureService:
             )
 
         async with UnitOfWork() as uow:
+            # Resolve the disclosure's anchor finding. Two paths:
+            #   1. caller gave finding_id directly — load it.
+            #   2. caller gave investigation_id — look up the
+            #      investigation, then resolve its linked_finding_ids:
+            #        * exactly 1 linked → use it
+            #        * 0 linked        → auto-create a stub finding
+            #          from the investigation so the operator can still
+            #          file a disclosure for a still-bare investigation
+            #          outcome (the stub carries the investigation id
+            #          and team scope so it can be enriched later via
+            #          the existing FindingDetailPage editor).
+            #        * 2+ linked       → reject; the operator must
+            #          specify finding_id directly because we can't
+            #          guess which one they meant.
+            resolved_finding_id = body.finding_id
+            if resolved_finding_id is None:
+                assert body.investigation_id is not None  # validator gate
+                inv = (await uow.session.exec(
+                    _select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == body.investigation_id,
+                    ),
+                )).first()
+                if inv is None:
+                    raise DisclosureServiceError(
+                        f"investigation {body.investigation_id} not found",
+                    )
+                try:
+                    linked = json.loads(inv.linked_finding_ids_json or "[]")
+                except (TypeError, ValueError):
+                    linked = []
+                if not isinstance(linked, list):
+                    linked = []
+                linked = [str(x) for x in linked if x]
+
+                if len(linked) == 1:
+                    resolved_finding_id = linked[0]
+                elif len(linked) > 1:
+                    raise DisclosureServiceError(
+                        f"investigation {body.investigation_id} has "
+                        f"{len(linked)} linked findings; specify "
+                        f"finding_id directly instead of investigation_id",
+                    )
+                else:
+                    # Zero linked findings — auto-create a stub. The stub
+                    # carries the investigation's project + workspace
+                    # context so the disclosure has something concrete
+                    # to bind to; downstream the operator can flesh it
+                    # out via the FindingDetailPage editor.
+                    stub = VRFindingRecord(
+                        project_id=inv.project_id,
+                        team_id=team_id,
+                        crash_type=None,
+                        crash_signature=None,
+                        root_cause=(
+                            f"stub finding auto-created for "
+                            f"investigation {inv.id}; enrich via "
+                            f"FindingDetailPage before publication."
+                        ),
+                        vulnerable_function=None,
+                    )
+                    uow.session.add(stub)
+                    await uow.session.flush()
+                    resolved_finding_id = stub.id
+                    # Mirror the new finding back into the
+                    # investigation's linked list so subsequent calls
+                    # find it via the same one-linked-finding shortcut.
+                    linked.append(stub.id)
+                    inv.linked_finding_ids_json = json.dumps(linked)
+                    uow.session.add(inv)
+
             finding = (await uow.session.exec(
-                _select(VRFindingRecord).where(VRFindingRecord.id == body.finding_id),
+                _select(VRFindingRecord).where(
+                    VRFindingRecord.id == resolved_finding_id,
+                ),
             )).first()
             if finding is None:
                 raise DisclosureServiceError(
-                    f"finding {body.finding_id} not found",
+                    f"finding {resolved_finding_id} not found",
                 )
             # Allow operator to disclose findings from any workspace they
             # have access to; we don't enforce finding.workspace_id ==
@@ -172,7 +245,7 @@ class DisclosureService:
             now = utc_now()
             record = VRDisclosureSubmissionRecord(
                 team_id=team_id,
-                finding_id=body.finding_id,
+                finding_id=resolved_finding_id,
                 workspace_id=body.workspace_id,
                 track_id=body.track_id,
                 kind=track_cls.kind.value,
