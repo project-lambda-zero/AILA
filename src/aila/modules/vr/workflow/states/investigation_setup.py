@@ -698,9 +698,33 @@ async def _spawn_persona_siblings_and_enqueue(
                         _strip_directives_from_state(b.case_state_json or "{}"),
                     )
                     uow.session.add(b)
+                    # Also delete prior tool_call + error-text messages
+                    # from this branch's history. Without this, the
+                    # tool_executor's repeat-failure circuit breaker
+                    # (_count_prior_failures, line 849 of tool_executor)
+                    # keeps counting yesterday's tool failures against
+                    # today's tries — every reactivated branch is
+                    # already at 3+ failures for the bridge calls that
+                    # were broken in the prior round, so any retry of
+                    # those same calls returns HARD-BLOCKED before
+                    # ever reaching the bridge. Bridge-side fixes
+                    # (apk_path auto-resolver, etc.) then can't help
+                    # because the call short-circuits at the executor.
+                    # Reactivation = "fresh start with this persona
+                    # slot" — the per-message round history goes with
+                    # it. Branch row stays (id, fork_reason,
+                    # created_at, parent_branch_id preserved) so the
+                    # audit trail of WHICH rounds this slot participated
+                    # in remains intact.
+                    await uow.session.execute(
+                        _sql_text(
+                            "DELETE FROM vr_investigation_messages "
+                            "WHERE branch_id = :bid"
+                        ).bindparams(bid=b.id),
+                    )
                     _log.info(
                         "auto_deliberation: reactivated %s branch %s "
-                        "(turn_count + case_state reset to fresh)",
+                        "(turn_count + case_state + breaker reset to fresh)",
                         b.persona_voice, b.id,
                     )
             else:
