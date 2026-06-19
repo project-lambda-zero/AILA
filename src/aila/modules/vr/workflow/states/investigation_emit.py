@@ -96,7 +96,19 @@ def _resolve_final_status(exit_reason: str) -> str | None:
         return InvestigationStatus.COMPLETED.value
     if exit_reason == "max_turns":
         return InvestigationStatus.COMPLETED.value
-    if exit_reason.startswith("status_flipped:"):
+    if exit_reason.startswith(("status_flipped:", "inv_status_flipped:", "branch_status_flipped:")):
+        # Loop saw the investigation OR branch flipped underneath it
+        # mid-execution — e.g. operator just paused, sibling just hit
+        # terminal_submit, etc. The new status is already authoritative;
+        # do NOT overwrite it with a fresh COMPLETED here. The historical
+        # bug: only ``status_flipped:`` (no ``inv_`` prefix) was matched,
+        # so every ``inv_status_flipped:completed`` reason fell through
+        # to the default fallback and triggered a second flip to
+        # COMPLETED. Harmless when the prior status WAS completed, but
+        # catastrophic on operator reopen — the moment any worker saw
+        # the freshly-set RUNNING state and exited with a transient
+        # flipped reason, this path re-flipped to COMPLETED, closing
+        # the reopen window inside the same second.
         return None
     if exit_reason.startswith("status_locked:"):
         # Setup hit a PAUSED / COMPLETED / FAILED row and short-circuited.
@@ -280,15 +292,45 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 )
             )).first()
             if inv is not None and inv.status == InvestigationStatus.RUNNING.value:
+                # Cap math counts ONLY turns/messages from branches that
+                # are still live (ACTIVE or PAUSED). Abandoned and
+                # completed branches are sunk cost — their work has
+                # already happened, their cost has already been paid,
+                # and counting them against the live cap permanently
+                # locks out any operator reopen.
+                #
+                # Observed live on PRIVACY-1 (5a358890): original run
+                # burned 305 turns / 1641 messages with all 6 branches
+                # OOM-stalled and auto-abandoned. Every operator-reopen
+                # then spawned 6 fresh branches at turn_count=0, but
+                # the cap query summed across ALL branches (including
+                # the 5 abandoned ones at 25-84 turns each) and
+                # CAP_EXCEEDED fired within 7 seconds, ARQ-purging the
+                # fresh branches before they could make a single LLM
+                # call. The investigation was permanently dead because
+                # the cap counter never reset.
+                #
+                # Filtering to live branches makes reopen actually
+                # work: the fresh batch starts with 0 inherited turns,
+                # has the full 300-turn / 1000-message budget, and
+                # only re-trips the cap when the NEW round itself
+                # exceeds it.
+                _live_statuses = ("active", "paused")
                 total_turns_row = await uow.session.exec(
                     _select(_func.coalesce(_func.sum(VRInvestigationBranchRecord.turn_count), 0))
                     .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
+                    .where(VRInvestigationBranchRecord.status.in_(_live_statuses))  # type: ignore[attr-defined]
                 )
                 total_turns = int(total_turns_row.first() or 0)
                 msg_count_row = await uow.session.exec(
-                    _select(_func.count(VRInvestigationMessageRecord.id)).where(
-                        VRInvestigationMessageRecord.investigation_id == investigation_id,
-                    )
+                    _select(_func.count(VRInvestigationMessageRecord.id))
+                    .where(VRInvestigationMessageRecord.investigation_id == investigation_id)
+                    .where(VRInvestigationMessageRecord.branch_id.in_(  # type: ignore[attr-defined]
+                        _select(VRInvestigationBranchRecord.id).where(
+                            VRInvestigationBranchRecord.investigation_id == investigation_id,
+                            VRInvestigationBranchRecord.status.in_(_live_statuses),  # type: ignore[attr-defined]
+                        )
+                    ))
                 )
                 total_messages = int(msg_count_row.first() or 0)
                 # Clock the wall-clock cap from when work ACTUALLY began
@@ -446,15 +488,24 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
             if inv is not None:
                 now = utc_now()
                 if final_status == InvestigationStatus.COMPLETED.value:
-                    # Only set COMPLETED if ALL non-abandoned branches with
-                    # turns have submitted. Otherwise this is just one branch
-                    # finishing — the investigation stays RUNNING until all
-                    # persona branches converge.
+                    # Only set COMPLETED if NO other branches are still live.
+                    # The historical query required turn_count > 0, which
+                    # excluded freshly-spawned branches sitting at turn 0
+                    # waiting for their first worker pickup. Effect: when
+                    # a reactivated branch reached terminal_submit before
+                    # the new sibling panel had executed any turns, the
+                    # check found zero qualifying siblings and flipped
+                    # the investigation to COMPLETED — closing the
+                    # reopen window the moment auto_deliberation spawned
+                    # fresh personas. Dropping the turn_count > 0 filter
+                    # makes any non-abandoned sibling count as live; the
+                    # investigation stays RUNNING until the freshly-
+                    # spawned panel either submits or abandons on its
+                    # own.
                     active_siblings = (await uow.session.exec(
                         _select(VRInvestigationBranchRecord).where(
                             VRInvestigationBranchRecord.investigation_id == investigation_id,
                             VRInvestigationBranchRecord.status == "active",
-                            VRInvestigationBranchRecord.turn_count > 0,
                             VRInvestigationBranchRecord.id != (branch_id or ""),
                         )
                     )).all()
