@@ -126,6 +126,169 @@ def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
 # Hidden from the agent-visible catalog. TargetAnalysisService still
 # calls them directly via bridge.forward(action=...) — the denylist is
 # only applied in list_tool_specs() (what the prompt builder pulls).
+# Tools that take an ``apk_path`` argument that the agent reconstructs
+# from memory each call. The path is the 64-hex SHA256 of the APK
+# bytes plus ``.apk`` extension, dropped into the operator's shared
+# uploads directory (``~/.android-mcp/uploads/shared/`` by default,
+# overridable via ``ANDROID_MCP_UPLOADS_DIR``). The LLM consistently
+# typo-drifts these long identifiers — observed corruptions on the
+# live PRIVACY-1 audit:
+#
+#   b810b2bbec0bb9217e090 fb82773d80fefdd12576b449b3d126f49dd9a159c39.apk
+#                        ^^^ stray space mid-SHA
+#
+#   b810b2bb9217e090fb82773d80fefdd12576b449b3d126f49dd9a159c39.apk
+#         ^^^ dropped "ec0bb" characters
+#
+# Each typo produces FileNotFoundError, the bridge passes that through,
+# the agent retries with a fresh typo, the args-identical breaker never
+# matches because each typo'd path canonicalises to a different args
+# dict. The resource_not_found error-class breaker eventually fires
+# (after 3 distinct typos) but only AFTER the per-branch HARD-BLOCK
+# limit is also hit. Net effect: agents burn ~5 turns per branch
+# typo-drifting before the block lands, and even then they have no
+# alternative tool to pivot to (verify_capabilities is the only path
+# from declared permissions to actual API call sites for the privacy
+# domain).
+#
+# Auto-resolver below intercepts the call before HTTP. It normalises
+# whitespace from the apk_path, then if the exact path doesn't exist
+# on disk it prefix-matches the SHA portion against the shared
+# directory using progressively shorter prefixes (32 → 16 → 8 chars).
+# Unique match wins (with a soft warning logged). Ambiguous match
+# falls through to the original behaviour so the LLM still sees the
+# error and can pivot or escalate.
+_APK_PATH_KWARGS: frozenset[str] = frozenset(("apk_path", "apk", "path"))
+
+
+def _shared_apks_dir() -> "Path":  # noqa: F821 — Path imported in helper
+    """Return the directory that holds operator-uploaded APKs.
+
+    Default: ``~/.android-mcp/uploads/shared/``. Env override:
+    ``ANDROID_MCP_UPLOADS_DIR`` (full directory path, not just a parent).
+    """
+    from pathlib import Path  # noqa: PLC0415
+    env = os.environ.get("ANDROID_MCP_UPLOADS_DIR")
+    if env:
+        return Path(env)
+    return Path.home() / ".android-mcp" / "uploads" / "shared"
+
+
+def _resolve_apk_path(raw_path: str) -> tuple[str, str | None]:
+    """Resolve an agent-supplied apk_path to the canonical on-disk path.
+
+    Returns a ``(canonical_path, note)`` tuple. ``note`` is non-None
+    when the resolver substituted something; it carries the human-
+    readable correction for logging. Original behaviour when the
+    path resolves cleanly or no candidate matches: ``(raw_path, None)``.
+
+    The resolver runs three passes:
+      1. ``.strip()`` + strip surrounding quotes. Catches whitespace
+         typos that don't change the SHA at all.
+      2. If still missing, extract the basename without ``.apk`` and
+         walk progressively shorter prefixes (32, 24, 16, 12, 8 hex
+         chars) against the shared uploads directory. First unique
+         match wins. 8 chars = ~32 bits; collision unlikely with
+         < ~65k APKs in shared.
+      3. If still ambiguous OR zero matches, return the normalised
+         path unchanged so the upstream FileNotFoundError still fires
+         (so the breaker can engage and the agent can pivot).
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    normalised = raw_path.strip().strip('"').strip("'")
+    if Path(normalised).is_file():
+        if normalised == raw_path:
+            return normalised, None
+        return normalised, f"trimmed whitespace from apk_path"
+
+    shared = _shared_apks_dir()
+    if not shared.is_dir():
+        return raw_path, None
+
+    base = Path(normalised).name
+    if not base.lower().endswith(".apk"):
+        return raw_path, None
+    sha = base[:-4]  # strip .apk
+    # Only the hex portion of the SHA is reliable. Stop at the first
+    # non-hex character so paths with prefixes (e.g. "test-<sha>.apk")
+    # still get a usable lookup key.
+    hex_chars = []
+    for c in sha:
+        if c in "0123456789abcdefABCDEF":
+            hex_chars.append(c.lower())
+        else:
+            break
+    if len(hex_chars) < 8:
+        return raw_path, None
+    sha_hex = "".join(hex_chars)
+
+    candidates_all = sorted(shared.glob("*.apk"))
+    candidate_shas = {
+        p: p.name[:-4].lower() for p in candidates_all if p.name.lower().endswith(".apk")
+    }
+
+    # Pass 1 — prefix match. Try progressively shorter prefixes of the
+    # agent's SHA. First unique hit wins. Catches typos where the
+    # agent dropped trailing chars or stuck a stray space mid-SHA.
+    for n in (min(32, len(sha_hex)), 24, 16, 12, 8):
+        if n > len(sha_hex):
+            continue
+        prefix = sha_hex[:n]
+        matches = [p for p in candidates_all if candidate_shas[p].startswith(prefix)]
+        if len(matches) == 1:
+            canonical = str(matches[0])
+            return canonical, (
+                f"apk_path typo recovered via {n}-char SHA prefix: "
+                f"agent passed {raw_path!r}, resolved to {canonical!r}"
+            )
+        if len(matches) == 0:
+            continue
+        # >1 matches at this prefix length means real ambiguity at
+        # the head. Don't keep going wider — the next pass uses a
+        # different match strategy entirely.
+        break
+
+    # Pass 2 — substring match against the longer of (candidate SHA,
+    # agent SHA). Catches the inverse typo: the agent dropped the
+    # LEADING characters and only kept the middle/tail. Observed live
+    # on PRIVACY-1 (5a358890): real SHA b810b2bbec0bb9217e090fb82...,
+    # agent passed ec0bb9217e090fb82... — no shared prefix at all,
+    # but the agent's SHA IS a substring of the real one. Same
+    # principle works either way (agent SHA in candidate, or
+    # candidate SHA in agent SHA), but require a minimum overlap of
+    # 8 hex chars so we don't pick up coincidental short hex strings.
+    if len(sha_hex) >= 8:
+        sub_matches: list[tuple[int, "Path"]] = []  # noqa: F821
+        for cand, cand_sha in candidate_shas.items():
+            if sha_hex in cand_sha:
+                sub_matches.append((len(sha_hex), cand))
+            elif cand_sha in sha_hex:
+                sub_matches.append((len(cand_sha), cand))
+        if len(sub_matches) == 1:
+            _, cand = sub_matches[0]
+            canonical = str(cand)
+            return canonical, (
+                f"apk_path typo recovered via SHA substring: "
+                f"agent passed {raw_path!r}, resolved to {canonical!r}"
+            )
+        if len(sub_matches) > 1:
+            # Multiple APKs contain (or are contained in) the agent's
+            # SHA. Pick the LONGEST overlap as the most specific
+            # match. Tie at longest = give up and let the LLM see the
+            # error — operator probably needs to rename test fixtures.
+            sub_matches.sort(key=lambda pair: -pair[0])
+            if len(sub_matches) >= 2 and sub_matches[0][0] > sub_matches[1][0]:
+                _, cand = sub_matches[0]
+                canonical = str(cand)
+                return canonical, (
+                    f"apk_path typo recovered via longest SHA substring: "
+                    f"agent passed {raw_path!r}, resolved to {canonical!r}"
+                )
+
+    return raw_path, None
+
+
 _PIPELINE_ONLY_TOOLS: frozenset[str] = frozenset((
     "apktool_decode",
     "jadx_decompile",
@@ -319,6 +482,25 @@ class AndroidMcpBridgeTool(Tool):
         if validation_error is not None:
             return validation_error
 
+        # Auto-resolve any apk_path-like kwarg from typo'd input to
+        # the canonical on-disk path BEFORE the HTTP roundtrip. See
+        # the _APK_PATH_KWARGS comment block at module scope for the
+        # full rationale — TL;DR: agents typo-drift long SHA-derived
+        # paths every retry, FileNotFoundError fires, breaker
+        # eventually engages but burns turns first AND leaves the
+        # agent with no working alternative because verify_capabilities
+        # is the only path from manifest permissions to actual API
+        # call sites for the privacy + platform audits. Recovering
+        # the typo here lets the call actually succeed.
+        for _k in _APK_PATH_KWARGS:
+            _raw = kwargs.get(_k)
+            if not isinstance(_raw, str) or not _raw:
+                continue
+            _canonical, _note = _resolve_apk_path(_raw)
+            if _note is not None:
+                kwargs[_k] = _canonical
+                _log.warning("android_mcp_bridge: %s", _note)
+
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
 
@@ -439,9 +621,25 @@ class AndroidMcpBridgeTool(Tool):
                     ),
                 }
 
-            return payload if isinstance(payload, dict) else {
-                "status": "ready", "result": payload,
-            }
+            # Inject ``status: "ready"`` when the dict response has
+            # no envelope. android-mcp tool handlers usually return
+            # their result dict directly (verify_capabilities,
+            # analyze_native_libs, find_secrets, etc.) without an
+            # explicit status field — HTTP 2xx + no status IS the
+            # documented success shape per the upstream contract.
+            # But the AILA-side tool_executor's positive whitelist
+            # at investigation_emit reads payload.get("status") to
+            # decide success vs failure; absent status falls outside
+            # ("ready", "completed", "ok") and gets treated as an
+            # error envelope with empty error message. The bridge's
+            # ctx["status"] = "ready" set above doesn't reach the
+            # executor — only the payload does. Wrapping here means
+            # the executor sees a clean ready envelope.
+            if isinstance(payload, dict):
+                if "status" not in payload:
+                    payload["status"] = "ready"
+                return payload
+            return {"status": "ready", "result": payload}
 
     async def _list_tools(self) -> dict:
         """Return android-mcp's tool catalog with parsed schemas."""
