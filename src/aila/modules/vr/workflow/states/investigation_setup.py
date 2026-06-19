@@ -666,15 +666,42 @@ async def _spawn_persona_siblings_and_enqueue(
             if best is None:
                 continue
             if b.id == best.id:
-                # This is the winner — reactivate if needed
+                # This is the winner — reactivate if needed AND reset
+                # the per-branch run state. Treating reactivation as
+                # "fresh start with this persona slot" instead of
+                # "resume yesterday's run" prevents three failure modes
+                # observed on PRIVACY-1 (5a358890):
+                #   (1) the historical turn_count accumulates against
+                #       _INVESTIGATION_TURN_CAP — 6 personas restored
+                #       at 9/25/40/63/79/84 turns = 300 total trips the
+                #       cap immediately on the next emit pass.
+                #   (2) _directive.sibling_consensus_rejection +
+                #       _directive.terminal_submit + similar steering
+                #       directives from the prior round carry over;
+                #       the persona's first turn sees old verdicts and
+                #       converges to abandon without re-evaluating.
+                #   (3) rejected/resolved hypothesis lists from the
+                #       prior round carry over; sibling-consensus
+                #       rejection counts each prior reject toward the
+                #       new quorum (vuln_researcher), killing live
+                #       hypotheses the new run hasn't even seen yet.
+                # Mirror what _strip_rejected_from_state +
+                # _strip_directives_from_state do for FRESH siblings
+                # (line 701 below) so reactivated personas start from
+                # the same baseline as never-existed ones.
                 if b.status in ("abandoned", "completed"):
                     b.status = "active"
                     b.closed_reason = ""
                     b.closed_at = None
+                    b.turn_count = 0
+                    b.case_state_json = _strip_rejected_from_state(
+                        _strip_directives_from_state(b.case_state_json or "{}"),
+                    )
                     uow.session.add(b)
                     _log.info(
-                        "auto_deliberation: reactivated %s branch %s (turns=%d)",
-                        b.persona_voice, b.id, b.turn_count,
+                        "auto_deliberation: reactivated %s branch %s "
+                        "(turn_count + case_state reset to fresh)",
+                        b.persona_voice, b.id,
                     )
             else:
                 # This is a duplicate — abandon it
