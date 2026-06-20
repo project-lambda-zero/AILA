@@ -138,3 +138,6 @@ cache/
 local/
 memurai-log.txt
 orig_findings.py
+
+# Ralph autonomous-loop scratch (redaction scripts, prompts, scan outputs)
+.ralph/
