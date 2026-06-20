@@ -389,7 +389,6 @@ The OpenAPI document is the source of truth for the route surface; the
 | [docs/PRODUCTION_RUBRIC.md](docs/PRODUCTION_RUBRIC.md)                      | Readiness rubric for shipping a module to production                    |
 | [docs/vr/](docs/vr/)                                                        | VR engine internals: reasoning loop, IDA Headless MCP, exploit automation |
 | [docs/VR_INSTALLATION_GUIDE.md](docs/VR_INSTALLATION_GUIDE.md)              | Standing up audit-mcp + IDA Headless MCP next to AILA                    |
-| [docs/ADR/](docs/ADR/)                                                      | Architecture Decision Records (point-in-time)                           |
 | [CHANGELOG.md](CHANGELOG.md)                                                | Version history                                                         |
 
 ## License

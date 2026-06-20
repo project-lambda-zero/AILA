@@ -115,7 +115,6 @@ Test conduct:
 | Module README | `src/aila/modules/<name>/README.md` reflects the current contracts, routes, and tools. |
 | Top-level docs | If the change shifts an externally-visible contract (auth surface, error envelope, LLM behaviour), `docs/SECURITY_MODEL.md`, `docs/API_ERRORS.md`, `docs/LLM_INTEGRATION.md`, or `docs/DATA_PROTECTION.md` are updated in the same PR. |
 | Env vars | Any new env var lands in `.env.example` with a default appropriate for local development and a comment if production needs a different value. Windows operators run via `start.sh`, which injects `.env` vars into PowerShell-spawned workers via a `set KEY=VAL && ` cmd-line prefix — so the var name must be a literal in `.env` (the sed-with-no-key footgun: a missing key is silently ignored; use the append pattern from `docs/ENV_VARS.md`). |
-| Decision record | A new architectural decision lands as an ADR under `docs/ADR/` rather than a paragraph in a module README. |
 | PR description | Lists the gates that ran green, the migrations involved, and the operator actions required at deploy (env vars to add, workers to restart). |
 
 ---
