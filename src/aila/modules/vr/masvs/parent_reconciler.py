@@ -264,7 +264,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
     is on a typed JSON path, not a substring. Cheap enough for the
     per-parent ≤46-child set we sweep once per minute, and removes the
     false-positive class where a different task's kwargs_json happens
-    to embed the same UUID elsewhere (see §41 in MY_VIOLATIONS.md).
+    to embed the same UUID elsewhere.
     """
     inv = VRInvestigationRecord
     tgt = VRTargetRecord

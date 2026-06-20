@@ -1,6 +1,6 @@
 # honesty_whitelist.py
 # Suppressions for known false positives in the AILA honesty audit.
-# See also docs/MODULE_AI_CONTEXT.md §18 for absolute rules.
+# See also docs/MODULE_AGENT_GUIDE.md §18 for absolute rules.
 # Run: python -m aila.tools.honesty_audit src/ --whitelist honesty_whitelist.py
 # Exit code 0 = no findings (clean).
 # Exit code 1 = findings exist (investigate before ignoring).

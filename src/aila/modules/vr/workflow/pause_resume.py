@@ -5,7 +5,7 @@ Promotes ``workflow_state_cursor`` to the single source of truth for
 wrote ``inv.status = PAUSED`` directly from the API handler, leaving
 three sources of truth unsynchronized (``TaskRecord.status``,
 ``workflow_state_cursor.current_state``, ``arq:in-progress:<id>``).
-Per ``docs/CUTOVER_DEPS.md §2`` Phase B closes items §3, §30-§33,
+Per `prior design notes` Phase B closes items §3, §30-§33,
 §46, §47, §156, §287, §288, §296.
 
 Three operations expose the same atomic-transaction shape:

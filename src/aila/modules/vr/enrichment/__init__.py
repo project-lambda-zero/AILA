@@ -1,6 +1,6 @@
 """Target enrichment subpackage.
 
-Per the M3.T scope (VR_V03_REASONING_PLAN.md): AILA does not implement
+Per the M3.T scope: AILA does not implement
 heuristics. The IDA Headless MCP and audit-mcp servers already implement
 graph-aware enrichment (fuzzing_targets, attack_surface, capa_scan,
 find_api_call_sites, assess_exploitability, etc.). This subpackage

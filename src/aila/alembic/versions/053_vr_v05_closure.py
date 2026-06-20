@@ -1,7 +1,7 @@
 """053 — VR v0.5 promise-audit closure schema additions.
 
 Adds columns required to close the remaining gap clusters from
-``docs/VR_FRONTEND_PROMISE_AUDIT.md``:
+`prior design notes`:
 
 - ``vr_projects.created_by`` — string id of the operator that opened
   the project. Populated from ``AuthContext.user_id`` on

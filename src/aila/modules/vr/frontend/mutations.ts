@@ -119,7 +119,7 @@ export function usePauseInvestigation(investigationId: string) {
  * up with the wall-clock worker pickup latency observed in production
  * (typically <1s; 2s is generous headroom).
  *
- * TODO(Phase B / CUTOVER_DEPS.md): once the API exposes
+ * TODO: once the API exposes
  * workflow_state_cursor.current_state, replace the hard-coded 2s
  * with a subscription that resolves when the cursor leaves
  * '__paused__'. That is the real SSOT for "worker has picked up

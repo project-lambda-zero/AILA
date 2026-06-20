@@ -269,7 +269,7 @@ async def upsert_review(
       review rows belonging to the canonical outcome MUST be reread
       on every synthesis run" — no per-row applied bit required.
 
-    DESIGN (fix §170): chose option (b) from CUTOVER_DEPS.md §4 —
+    DESIGN (fix §170): chose option (b) from prior design notes §4 —
     synthesis-agent consumption rather than a frontend Apply button.
     Rationale: (a) needs a frontend project + operator-gated API + a
     second write path on the canonical outcome; (b) reuses the

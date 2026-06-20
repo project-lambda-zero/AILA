@@ -366,7 +366,7 @@ The OpenAPI document is the source of truth for the route surface; the
 | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)                                | Contributor workflow, branch policy, review expectations                |
 | [docs/MODULE_STANDARD.md](docs/MODULE_STANDARD.md)                          | Required module layout, contracts, and lifecycle (v2.1)                 |
 | [docs/MODULE_TUTORIAL.md](docs/MODULE_TUTORIAL.md)                          | Step-by-step authoring of a new module                                  |
-| [docs/MODULE_AI_CONTEXT.md](docs/MODULE_AI_CONTEXT.md)                      | Module context conventions for LLM-driven flows                         |
+| [docs/MODULE_AGENT_GUIDE.md](docs/MODULE_AGENT_GUIDE.md)                      | Module context conventions for LLM-driven flows                         |
 | [docs/FRONTEND_MODULE_STANDARD.md](docs/FRONTEND_MODULE_STANDARD.md)        | Frontend shell and per-module UI contribution contract                  |
 | [docs/forensics/](docs/forensics/)                                          | Forensics module domain reference and design history                     |
 | [docs/DB_SCHEMA.md](docs/DB_SCHEMA.md)                                      | Database tables, relationships, and ownership                           |

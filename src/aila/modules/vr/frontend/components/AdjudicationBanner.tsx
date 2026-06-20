@@ -1,6 +1,6 @@
 import { AilaBadge } from "@/components/aila/AilaBadge";
 
-/** Adjudication banner from VR_FRONTEND_UX_DISCUSSION.md Topic 8.
+/** Adjudication banner Topic 8.
  *
  *  Three verdicts:
  *    accepted   → green banner with check

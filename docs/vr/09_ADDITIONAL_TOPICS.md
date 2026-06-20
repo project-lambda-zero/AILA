@@ -9,9 +9,7 @@ Cross-references:
 - `docs/vr/02_IDA_HEADLESS_MCP.md` — the binary-database query layer
 - `docs/vr/03_EXPLOIT_AUTOMATION.md` — what the LLM can and cannot do at exploitation time
 - `docs/vr/04_MULTI_TARGET.md` — product decomposition and project-level evidence
-- `docs/VR_MODULE_DECISIONS.md` (D-01 .. D-06)
 - `docs/VR_MODULE_TOOLCHAIN.md`
-- `docs/VR_MODULE_METIS_INSPIRATIONS.md` — evidence obligations and adjudication
 
 ---
 

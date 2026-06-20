@@ -26,7 +26,6 @@ const disclosureColor: Record<
 };
 
 /** Finding Detail page — 10-section layout from 08_FRONTEND_UX.md §1.6 /
- *  VR_FRONTEND_UX_DISCUSSION.md Topic 4.
  *
  *  Sections:
  *    1. Root cause
@@ -390,7 +389,7 @@ export function FindingDetailPage() {
       <AilaCard  techBorder glow><Section title="Evidence obligations" />
       <ObligationChecklist
         obligations={[]}
-        emptyHint="No obligation API yet — see Tier 2 of docs/VR_FRONTEND_GAP_AUDIT.md."
+        emptyHint="No obligation API yet — see Tier 2 of docs/prior design notes."
       /></AilaCard>
 
       <p className="text-3xs text-text-muted text-center">

@@ -387,7 +387,7 @@ This makes "find a kernel exploit chain" a tractable, decomposed research goal r
 
 Confirming a chain end-to-end requires a test environment that runs all involved binaries. This is where the appliance image / container matters: the module must be able to deploy `mqttd + update-helper + appliance.ko` together (often it's the whole firmware in QEMU) and replay the chain. The chain confirmation artifact is one continuous trace from network packet to ring-0 execution, not three separate per-binary PoCs.
 
-This is also where exploit isolation (Open Question #2 in `VR_MODULE_DECISIONS.md`) gets real: you cannot test a kernel-corruption chain on the research workstation. The module must spin up a target VM that mirrors the appliance, push the chain into it, and observe.
+This is also where exploit isolation (Open Question #2 in prior design notes) gets real: you cannot test a kernel-corruption chain on the research workstation. The module must spin up a target VM that mirrors the appliance, push the chain into it, and observe.
 
 ### Naming the artifact
 

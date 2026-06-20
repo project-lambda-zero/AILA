@@ -162,7 +162,7 @@ _DEFAULT_REASONING_STRATEGY: dict[tuple[str, str], str] = {
 
 # target_kind → default disclosure tracks suggested at finding promotion.
 # Workspace-level overrides land in M3.D-* disclosure orchestrator (D-49 +
-# VR_V03_DISCLOSURE_LIFECYCLE_PLAN.md). These are the per-target priors.
+# These are the per-target priors.
 _DEFAULT_DISCLOSURE_TRACKS: dict[str, list[str]] = {
     TargetKind.NATIVE_BINARY.value:   ["vendor_direct", "blog_post"],
     TargetKind.SOURCE_REPO.value:     ["cna_github_gsa", "vendor_direct", "blog_post"],
@@ -189,7 +189,7 @@ _DEFAULT_DISCLOSURE_TRACKS: dict[str, list[str]] = {
     ],
 }
 
-# All pattern kinds defined in VR_V03_KNOWLEDGE_TRANSFER_PLAN.md GA-41 apply
+# All pattern kinds defined GA-41 apply
 # to most binary + source targets. Refine when usage feedback warrants.
 _DEFAULT_PATTERN_KINDS = [
     "exploitation_technique",

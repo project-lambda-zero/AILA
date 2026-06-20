@@ -4,7 +4,7 @@
  *  numbered steps with active highlight + completed checkmarks. The
  *  current state is outlined; completed states get a green check;
  *  pending states stay muted. This is the "live progress" widget from
- *  08_FRONTEND_UX.md §Topic 6 / VR_FRONTEND_UX_DISCUSSION.md.
+ *  08_FRONTEND_UX.md §Topic 6 /
  *
  *  Use:
  *    <WorkflowStepper

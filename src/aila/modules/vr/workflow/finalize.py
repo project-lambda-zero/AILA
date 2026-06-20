@@ -1,7 +1,7 @@
 """Phase C (cutover): single ``investigation_finalize`` chokepoint.
 
 The previous topology spread investigation finalization across four
-race-prone paths (per docs/CUTOVER_DEPS.md §2 Phase C):
+race-prone paths:
 
   1. ``investigation_emit._maybe_trigger_synthesis`` fired ``all_outcomes``
      when every active branch had a terminal outcome.

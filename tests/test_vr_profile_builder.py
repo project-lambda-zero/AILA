@@ -145,7 +145,7 @@ class TestRuleTables:
             )
 
     def test_default_pattern_kinds_match_d43(self) -> None:
-        # GA-41 in VR_V03_KNOWLEDGE_TRANSFER_PLAN.md defined 5 kinds
+        # GA-41 defined 5 kinds
         assert set(_DEFAULT_PATTERN_KINDS) == {
             "exploitation_technique",
             "fuzzing_strategy",

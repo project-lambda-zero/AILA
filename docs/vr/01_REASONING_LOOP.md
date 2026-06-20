@@ -3,10 +3,6 @@
 Reference on the turn-by-turn reasoning loop. This is the engine of the module: how the LLM thinks about finding bugs, what it sees each turn, what it produces, and how the platform keeps it honest. Brainstorm-grade exploration — every gray area I can find, surfaced and named.
 
 Cross-references:
-- `docs/VR_MODULE_DECISIONS.md` (D-01 .. D-06) — closed scope
-- `docs/VR_MODULE_METIS_INSPIRATIONS.md` — evidence obligations, bounded packs, adjudication
-- `docs/VR_MODULE_TRAILMARK_INSPIRATIONS.md` — code graph, taint, entrypoints
-- `docs/VR_MODULE_PHAROS_INSPIRATIONS.md` — angr, OOAnalyzer, function hashing
 - `docs/VR_MODULE_TOOLCHAIN.md` — full tool matrix
 - `src/aila/platform/services/reasoning.py` — the existing `CyberReasoningEngine`
 - `src/aila/platform/contracts/reasoning.py` — `ReasoningTurnDecision` / `ReasoningCaseState`

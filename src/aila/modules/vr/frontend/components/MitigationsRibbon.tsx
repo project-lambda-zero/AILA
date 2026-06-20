@@ -1,6 +1,6 @@
 import { AilaBadge } from "@/components/aila/AilaBadge";
 
-/** Mitigations ribbon from 08_FRONTEND_UX.md §1.4 / VR_FRONTEND_UX_DISCUSSION.md.
+/** Mitigations ribbon from 08_FRONTEND_UX.md §1.4 /
  *
  *  Renders one badge per protection (NX/ASLR/PIE/Canary/CFI/CET/RELRO)
  *  with green/red/gray tone reflecting present/absent/unknown. Hover

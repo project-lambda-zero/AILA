@@ -1,6 +1,6 @@
 """067 — workflow_state_cursor archived_state column for Phase B pause SSOT.
 
-Phase B (per docs/MY_VIOLATIONS.md tail + docs/CUTOVER_DEPS.md §2) promotes
+Phase B promotes
 ``workflow_state_cursor`` to the single source of truth for "is this
 investigation paused right now". The cursor table gains one nullable
 column, ``archived_state``, which preserves the prior ``current_state``

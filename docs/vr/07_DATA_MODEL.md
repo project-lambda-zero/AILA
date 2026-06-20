@@ -3,7 +3,7 @@
 The complete persistent shape of the VR module: every table, every relationship, every state machine, every query the runtime is expected to run, every migration that gets us there. Brainstorm-grade — what the data should look like if all the prior docs land coherently.
 
 Cross-references:
-- `docs/VR_MODULE_DECISIONS.md` (D-01 .. D-06) — closed scope decisions
+- prior design notes (D-01 .. D-06) — closed scope decisions
 - `docs/vr/01_REASONING_LOOP.md` — what `VRCaseState` and obligations look like at runtime
 - `docs/vr/03_EXPLOIT_AUTOMATION.md` — exploit tier model that drives `VRExploit` fields
 - `docs/vr/04_MULTI_TARGET.md` — the project graph this data model has to materialize

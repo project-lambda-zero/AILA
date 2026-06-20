@@ -693,7 +693,7 @@ export function InvestigationDetailPage() {
           <ExportReportButton invId={invId} title={inv.title} />
           <span className="w-px h-5 bg-border-default mx-1" aria-hidden />
           {/* §47 — Reset button. Deferred to Phase B (Cursor SSOT
-              pause/resume rewrite, CUTOVER_DEPS.md). The button
+              pause/resume rewrite, prior design notes). The button
               currently calls the v1 reset endpoint; when Phase B
               rebuilds reset as part of the cursor-driven dispatcher
               the URL stays the same and only the server side
@@ -755,7 +755,7 @@ export function InvestigationDetailPage() {
           of truth is workflow_state_cursor.current_state, which is not
           yet exposed via the API.
 
-          TODO(Phase B / CUTOVER_DEPS.md): once
+          TODO: once
           /vr/investigations/{id}/cursor exposes cursor.current_state on
           the wire, replace this domain-status mapping with the cursor
           read. The Phase B contract: GET returns
@@ -837,8 +837,8 @@ export function InvestigationDetailPage() {
               />
             )}
             {/* §9 — Reopen button. Consumer of the reopen endpoint
-                that Phase B rebuilds as a phase-handoff dispatcher
-                (CUTOVER_DEPS.md). The URL stays the same; the
+                that Phase B rebuilds as a phase-handoff dispatcher.
+                The URL stays the same; the
                 server-side rewrite swaps the imperative spawn for a
                 cursor-driven re-dispatch. No frontend change here
                 until Phase B lands. */}
