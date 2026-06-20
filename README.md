@@ -260,7 +260,7 @@ common pitfalls, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 |-----------------|---------------------------------------------------------------------------------------------------|------------|
 | `vulnerability` | SSH package inventory, distro-aware advisory resolution, CVE enrichment, scoring, and reporting.  | production |
 | `forensics`     | Remote forensic evidence triage over SSH: disk images, memory dumps, PCAPs, write-up generation.  | production |
-| `sbd_nfr`       | Security-by-Design NFR assessment: questionnaire-driven workbook generation and Jira handoff.     | production |
+| `sbd_nfr`       | Security-by-Design NFR assessment: questionnaire-driven workbook generation and Jira handoff.     | broken — in progress |
 | `vr`            | Vulnerability research: graph-aware source/binary audit (audit-mcp + IDA Headless MCP), hypothesis-driven reasoning, fuzz campaign proposals (audit→fuzz pipeline), enterprise PDF reports with LLM writer agent, automatic exploit/PoC drafting, variant hunting with child-investigation spawning. | production |
 | `hello_world`   | Minimal reference module proving the `ModuleProtocol` contract end-to-end.                        | example    |
 
