@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -131,7 +132,7 @@ class TestConstantsHaveConsumers:
             ],
             capture_output=True,
             text=True,
-            cwd="C:/Users/OPERATOR/Documents/Playground",
+            cwd=str(Path(__file__).resolve().parents[2]),
         )
         count = int(result.stdout.strip()) if result.stdout.strip() else 0
         assert count >= 1, f"Constant {name} has 0 consumers outside constants.py -- orphaned!"

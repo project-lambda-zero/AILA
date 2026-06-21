@@ -7,7 +7,7 @@ an angry OSS standards developer, an AI slop detector, and a Reddit basher.
 
 ---
 
-## Six Operator Non-Negotiables
+## Six Non-Negotiables
 
 These six rules sit above everything else in this document. They are the
 operator-stated baseline (`.claude/CLAUDE.md`) and override style preferences,

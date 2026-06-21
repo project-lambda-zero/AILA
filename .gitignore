@@ -66,7 +66,7 @@ packages/*/node_modules/
 # Storybook static output
 storybook-static/
 
-# Operator-machine artifacts — UI tour scripts, screenshot dumps,
+# Local dev artifacts — UI tour scripts, screenshot dumps,
 # service logs/pids spawned by start.sh. None of this belongs in
 # version control; keeping it tracked once made every commit drag
 # stale binaries + logs into review.
@@ -131,7 +131,7 @@ tmpollama-installer.exe
 # Local IDA / build caches — never commit
 cache/
 
-# Session-local operator scratch — memory palette artifacts, Redis
+# Session-local dev scratch — memory palette artifacts, Redis
 # (Memurai) log, ad-hoc one-off scripts that shouldn't follow the
 # repo around. The .txt extension dodges the `*.log` rule above,
 # so memurai-log.txt is named explicitly.
