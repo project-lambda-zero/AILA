@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "croniter==6.2.2",
-  "cryptography==46.0.7",  # CVE-fix bump (PYSEC-2026-35/36); androguard also wants >=46.0.6
+  "cryptography==48.0.1",  # CVE-fix bump (GHSA: vulnerable OpenSSL in cryptography wheels < 48.0.1)
   "filelock==3.25.2",
   "fastapi==0.135.3",
   "httpx==0.28.1",

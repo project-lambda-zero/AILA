@@ -3,6 +3,31 @@ packages:
   - packages/*
   - src/aila/modules/*/frontend
 
+# pnpm 10+ reads overrides from this file's top-level `overrides:` key;
+# the equivalent `pnpm.overrides` block in package.json is silently ignored.
+overrides:
+  string-width-cjs: "npm:string-width@^4.2.3"
+  strip-ansi-cjs: "npm:strip-ansi@^6.0.1"
+  wrap-ansi-cjs: "npm:wrap-ansi@^7.0.0"
+  axios: ">=1.16.0"
+  hono: ">=4.12.21"
+  dompurify: ">=3.4.11"
+  react-router: ">=7.15.0"
+  fast-uri: ">=3.1.2"
+  joi: ">=17.13.4"
+  qs: ">=6.15.2"
+  ws: ">=8.20.1"
+  brace-expansion: ">=5.0.6"
+  ip-address: ">=10.1.1"
+  postcss: ">=8.5.10"
+  follow-redirects: ">=1.16.0"
+  uuid: ">=11.1.1"
+  storybook>esbuild: ">=0.28.1"
+  undici: ">=7.28.0"
+  form-data: ">=4.0.6"
+  js-yaml: ">=4.2.0"
+  "@babel/core": ">=7.29.6"
+
 catalog:
   typescript: 6.0.2
 
