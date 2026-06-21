@@ -48,7 +48,7 @@ The foundation fixture. Every test that touches the database depends on `test_db
 **What it does:**
 1. Targets PostgreSQL via `AILA_TEST_DATABASE_URL` (default `postgresql+asyncpg://postgres:admin@localhost:5432/aila_test`). The session-scoped `_session_async_engine` fixture drops and recreates every table once per pytest session so TSVECTOR and pgvector columns load natively.
 2. Overrides `AILA_DATABASE_URL` for the test, clears the Settings `lru_cache`, and registers the session engine in `_ASYNC_ENGINES` / `_INITIALIZED_URLS` so application code resolves to the test DB.
-3. Imports every module's `db_models` so `SQLModel.metadata` is complete (platform + vr + vulnerability + sbd_nfr + forensics).
+3. Imports every module's `db_models` so `SQLModel.metadata` is complete (platform + vr + vulnerability + forensics).
 4. On teardown, truncates every table to isolate the next test, then restores the prior `AILA_DATABASE_URL` value.
 
 **Scope:** `function`. The engine is session-scoped (one connection pool for the whole pytest run); per-test isolation is via `TRUNCATE`, not by reconnecting.

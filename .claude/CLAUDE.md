@@ -39,8 +39,6 @@ AILA/
 │   │   │   └── ...
 │   │   ├── forensics/            # production -- DFIR investigation
 │   │   │   └── frontend/         # @aila/forensics-frontend
-│   │   ├── sbd_nfr/              # production -- Security by Design NFR assessment
-│   │   │   └── frontend/         # @aila/sbd-nfr-frontend
 │   │   ├── hello_world/          # reference -- minimal module proving the contract
 │   │   │   └── frontend/         # @aila/hello-world-frontend
 │   │   └── _template/            # scaffold -- copy to start a new module
@@ -69,7 +67,6 @@ pnpm dev                                              # frontend at http://local
 python -m aila worker                                # default worker queue
 python -m aila worker -q vulnerability               # vulnerability queue
 python -m aila worker -q forensics                   # forensics queue
-python -m aila worker -q sbd_nfr                     # sbd_nfr queue
 
 # Quality gates (all must pass before submitting changes)
 python -m ruff check src/aila/                       # lint
@@ -111,7 +108,6 @@ The frontend is a pnpm workspace. Every package and module declares its own deps
 | `@aila/typescript-config`          | `packages/typescript-config/`              | Shared tsconfigs: `./base`, `./react-vite`, `./react-module` |
 | `@aila/hello-world-frontend`       | `src/aila/modules/hello_world/frontend/`   | Reference module                                    |
 | `@aila/vulnerability-frontend`     | `src/aila/modules/vulnerability/frontend/` | Vulnerability module UI                             |
-| `@aila/sbd-nfr-frontend`           | `src/aila/modules/sbd_nfr/frontend/`       | SBD NFR module UI                                   |
 | `@aila/forensics-frontend`         | `src/aila/modules/forensics/frontend/`     | Forensics module UI                                 |
 
 ### Catalogs
@@ -248,7 +244,7 @@ Multi-step behavior uses staged workflows with named states, not nested conditio
 
 14. **Hand-editing `pnpm-lock.yaml`** -- Always re-run `pnpm install` to regenerate. The lockfile format is structured but not designed for manual edits.
 
-15. **Tailwind classes in module frontends have no CSS rules** -- Tailwind v4 scans content starting from the directory containing `frontend/src/styles/globals.css`. Module frontends live OUTSIDE `frontend/src/` (under `src/aila/modules/<name>/frontend/`), reached only via pnpm symlinks in `node_modules/@aila/*` which Tailwind ignores by default. A class added in a module-side file gets NO CSS rule generated unless that same class is also used somewhere inside `frontend/src/`. Symptom: `position: fixed` with `bottom-6 right-6` renders at flow position because the inset rules don't exist. Fix: add `@source "../../../src/aila/modules/<name>/frontend/**/*.{ts,tsx}";` to `frontend/src/styles/globals.css` for every module. Already wired for vr, vulnerability, forensics, sbd_nfr, hello_world.
+15. **Tailwind classes in module frontends have no CSS rules** -- Tailwind v4 scans content starting from the directory containing `frontend/src/styles/globals.css`. Module frontends live OUTSIDE `frontend/src/` (under `src/aila/modules/<name>/frontend/`), reached only via pnpm symlinks in `node_modules/@aila/*` which Tailwind ignores by default. A class added in a module-side file gets NO CSS rule generated unless that same class is also used somewhere inside `frontend/src/`. Symptom: `position: fixed` with `bottom-6 right-6` renders at flow position because the inset rules don't exist. Fix: add `@source "../../../src/aila/modules/<name>/frontend/**/*.{ts,tsx}";` to `frontend/src/styles/globals.css` for every module. Already wired for vr, vulnerability, forensics, hello_world.
 
 ## Verification Checklist
 

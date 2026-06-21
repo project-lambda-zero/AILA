@@ -118,7 +118,7 @@ fix/<module>/<description>      # bug fix in a module
 docs/<description>              # documentation-only change
 ```
 
-`<module>` is the module id (`forensics`, `hello_world`, `sbd_nfr`, `vr`,
+`<module>` is the module id (`forensics`, `hello_world`, `vr`,
 `vulnerability`) or `platform` for platform-wide work. `<description>` is
 kebab-case and short.
 
@@ -351,8 +351,8 @@ See `src/aila/modules/hello_world/frontend/` for a working example.
 | `start-linux.sh` | Linux / macOS | `./start-linux.sh` / `./start-linux.sh stop` |
 | `make dev` | Any (prints instructions) | `make backend`, `make frontend`, `make worker` in separate terminals |
 
-The startup scripts load `.env`, start audit-mcp, the FastAPI backend, 5 ARQ
-workers (default, vr, vulnerability, forensics, sbd_nfr), and the Vite frontend.
+The startup scripts load `.env`, start audit-mcp, the FastAPI backend, 4 ARQ
+workers (default, vr, vulnerability, forensics), and the Vite frontend.
 Logs go to `.run/<slug>.log` (e.g. `.run/backend.log`, `.run/worker-vr.log`).
 
 ---

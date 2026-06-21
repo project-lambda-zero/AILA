@@ -39,8 +39,6 @@ AILA/
 │   │   │   └── ...
 │   │   ├── forensics/            # production -- DFIR investigation
 │   │   │   └── frontend/         # @aila/forensics-frontend
-│   │   ├── sbd_nfr/              # production -- Security by Design NFR assessment
-│   │   │   └── frontend/         # @aila/sbd-nfr-frontend
 │   │   ├── hello_world/          # reference -- minimal module proving the contract
 │   │   │   └── frontend/         # @aila/hello-world-frontend
 │   │   └── _template/            # scaffold -- copy to start a new module
@@ -69,7 +67,6 @@ pnpm dev                                              # frontend at http://local
 python -m aila worker                                # default worker queue
 python -m aila worker -q vulnerability               # vulnerability queue
 python -m aila worker -q forensics                   # forensics queue
-python -m aila worker -q sbd_nfr                     # sbd_nfr queue
 
 # Quality gates (all must pass before submitting changes)
 python -m ruff check src/aila/                       # lint
@@ -111,7 +108,6 @@ The frontend is a pnpm workspace. Every package and module declares its own deps
 | `@aila/typescript-config`          | `packages/typescript-config/`              | Shared tsconfigs: `./base`, `./react-vite`, `./react-module` |
 | `@aila/hello-world-frontend`       | `src/aila/modules/hello_world/frontend/`   | Reference module                                    |
 | `@aila/vulnerability-frontend`     | `src/aila/modules/vulnerability/frontend/` | Vulnerability module UI                             |
-| `@aila/sbd-nfr-frontend`           | `src/aila/modules/sbd_nfr/frontend/`       | SBD NFR module UI                                   |
 | `@aila/forensics-frontend`         | `src/aila/modules/forensics/frontend/`     | Forensics module UI                                 |
 
 ### Catalogs

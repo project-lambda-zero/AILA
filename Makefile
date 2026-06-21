@@ -85,9 +85,6 @@ worker-vuln: dev-up db-init
 worker-forensics: dev-up db-init
 	python -m aila worker -q forensics
 
-worker-sbd: dev-up db-init
-	python -m aila worker -q sbd_nfr
-
 worker-vr: dev-up db-init
 	python -m aila worker -q vr
 

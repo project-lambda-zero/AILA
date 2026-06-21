@@ -474,8 +474,7 @@ module right after the `@import "tailwindcss";` block:
 @source "../../../src/aila/modules/my_module/frontend/**/*.{ts,tsx}";
 ```
 
-Already wired for `vr`, `vulnerability`, `forensics`, `sbd_nfr`, and
-`hello_world`.
+Already wired for `vr`, `vulnerability`, `forensics`, and `hello_world`.
 
 **Run `pnpm install`** — relinks the workspace so the shell can resolve the
 new package and pnpm strict mode validates every bare import:

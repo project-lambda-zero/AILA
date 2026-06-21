@@ -13,7 +13,7 @@ the change is shippable.
 
 "Module" means a package under `src/aila/modules/<name>/` that the platform
 discovers via `pkgutil.iter_modules`. The reference module is
-`hello_world`; the production set today is `forensics`, `sbd_nfr`, `vr`,
+`hello_world`; the production set today is `forensics`, `vr`,
 `vulnerability`. Platform-level changes (`src/aila/platform/*`,
 `src/aila/api/*`) use the same gates but additionally require sign-off
 from a code-reviewer agent.

@@ -91,7 +91,7 @@ def main() -> int:
     )
 
     # 5. Start workers
-    for name, queue in [("worker", "default"), ("vuln", "vulnerability"), ("forensic", "forensics"), ("sbd", "sbd_nfr"), ("vr", "vr")]:
+    for name, queue in [("worker", "default"), ("vuln", "vulnerability"), ("forensic", "forensics"), ("vr", "vr")]:
         cmd = [sys.executable, "-m", "aila", "worker"]
         if queue != "default":
             cmd += ["-q", queue]
@@ -99,10 +99,10 @@ def main() -> int:
 
     # 6. Wait — Ctrl+C kills all
     print(f"\n\033[97m{'='*60}")
-    print("  AILA running \u2014 7 services")
+    print("  AILA running \u2014 6 services")
     print("  Backend:  http://localhost:8000")
     print("  Frontend: http://localhost:3000")
-    print("  Workers:  default, vulnerability, forensics, sbd_nfr, vr")
+    print("  Workers:  default, vulnerability, forensics, vr")
     print("  Press Ctrl+C to stop everything")
     print(f"{'='*60}{RESET}\n")
 

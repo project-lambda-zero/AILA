@@ -11,11 +11,10 @@ import type { WidgetCategory } from "./types";
 const CATEGORY_LABELS: Record<WidgetCategory, string> = {
   platform: "Platform",
   vulnerability: "Vulnerability",
-  sbd_nfr: "SbD NFR",
   vr: "Vulnerability Research",
 };
 
-const CATEGORY_ORDER: WidgetCategory[] = ["platform", "vulnerability", "vr", "sbd_nfr"];
+const CATEGORY_ORDER: WidgetCategory[] = ["platform", "vulnerability", "vr"];
 
 export interface WidgetPickerDialogProps {
   open: boolean;

@@ -132,52 +132,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "produces a SQL WHERE clause; `is True` would break ORM query generation.",
     ),
 
-    # modules/sbd_nfr/services/answer_service.py — SbdNfrQuestionRecord, SbdNfrSectionRecord, SbdNfrSubgroupRecord
-    (
-        "aila/modules/sbd_nfr/services/answer_service.py",
-        "E712",
-        "SQLAlchemy column expressions: SbdNfrQuestionRecord.is_active == True, "
-        "SbdNfrSectionRecord.is_active == True, SbdNfrSubgroupRecord.is_active == True — "
-        "all produce SQL WHERE clauses; `is True` would break ORM query generation.",
-    ),
 
-    # modules/sbd_nfr/services/schema_service.py — SbdNfrSubtaskComponentRecord, SbdNfrSectionRecord, SbdNfrSubgroupRecord, SbdNfrQuestionRecord
-    (
-        "aila/modules/sbd_nfr/services/schema_service.py",
-        "E712",
-        "SQLAlchemy column expressions: SbdNfrSubtaskComponentRecord.is_active == True, "
-        "SbdNfrSectionRecord.is_active == True, SbdNfrSubgroupRecord.is_active == True, "
-        "SbdNfrQuestionRecord.is_active == True — all produce SQL WHERE clauses; "
-        "`is True` would break ORM query generation.",
-    ),
-
-    # modules/sbd_nfr/services/search_service.py — SbdNfrSessionRecord.is_deleted
-    (
-        "aila/modules/sbd_nfr/services/search_service.py",
-        "E712",
-        "SQLAlchemy column expression: SbdNfrSessionRecord.is_deleted == False produces "
-        "a SQL WHERE clause; `is False` would break ORM query generation.",
-    ),
-
-    # modules/sbd_nfr/services/session_service.py — SbdNfrSectionRecord, SbdNfrSubgroupRecord, SbdNfrQuestionRecord, SbdNfrSessionRecord
-    (
-        "aila/modules/sbd_nfr/services/session_service.py",
-        "E712",
-        "SQLAlchemy column expressions: SbdNfrSectionRecord.is_active == True, "
-        "SbdNfrSubgroupRecord.is_active == True, SbdNfrQuestionRecord.is_active == True, "
-        "SbdNfrSessionRecord.is_deleted == False, SbdNfrSessionRecord.is_template == filters.is_template — "
-        "all produce SQL WHERE clauses; `is True/False` would break ORM query generation.",
-    ),
-
-    # modules/sbd_nfr/services/stats_service.py — SbdNfrSessionRecord.is_deleted
-    (
-        "aila/modules/sbd_nfr/services/stats_service.py",
-        "E712",
-        "SQLAlchemy column expression: SbdNfrSessionRecord.is_deleted == False produces "
-        "a SQL WHERE clause; `is False` would break ORM query generation.",
-    ),
-
-    # modules/vulnerability/api_router.py — LatestFindingRecord.is_kev
     (
         "aila/modules/vulnerability/api_router.py",
         "E712",
@@ -285,32 +240,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "circular import cycle (module -> db_models -> module).",
     ),
 
-    # modules/sbd_nfr/module.py
-    (
-        "aila/modules/sbd_nfr/module.py",
-        "PLC0415",
-        "Intentional lazy-load: sbd_nfr db_models and tool imports deferred inside "
-        "methods to break circular import cycle (module -> db_models -> module).",
-    ),
 
-    # modules/sbd_nfr/reporting/pdf_service.py
-    (
-        "aila/modules/sbd_nfr/reporting/pdf_service.py",
-        "PLC0415",
-        "Intentional lazy-load: weasyprint is an optional heavy dependency; imported "
-        "inside the PDF generation function so the module remains importable without it.",
-    ),
-
-    # modules/sbd_nfr/scripts/force_reseed.py — CLI script
-    (
-        "aila/modules/sbd_nfr/scripts/force_reseed.py",
-        "PLC0415",
-        "CLI script with lazy-load pattern: database and platform imports deferred inside "
-        "async functions to allow script to start and parse arguments before connecting "
-        "to DB.",
-    ),
-
-    # modules/vulnerability/adapters/arch.py
     (
         "aila/modules/vulnerability/adapters/arch.py",
         "PLC0415",
@@ -685,34 +615,6 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
     # They expose async def wrappers to callers; the asyncio.to_thread call is
     # correctly placed here, not in their callers. Documented in 183-08-BOUNDARY-MAP.md.
     # -------------------------------------------------------------------------
-    (
-        "aila/modules/sbd_nfr/reporting/excel_service.py",
-        "asyncio_in_module",
-        "threading belongs to the platform layer",
-        # Designated bridge: wraps sync openpyxl (_build_workbook) for async callers.
-        # asyncio.to_thread correctly isolated inside the module's own reporting layer.
-    ),
-    (
-        "aila/modules/sbd_nfr/reporting/pdf_service.py",
-        "asyncio_in_module",
-        "threading belongs to the platform layer",
-        # Designated bridge: wraps sync weasyprint for async callers.
-        # asyncio.to_thread correctly isolated inside the module's own reporting layer.
-    ),
-    (
-        "aila/modules/sbd_nfr/scripts/force_reseed.py",
-        "asyncio_in_module",
-        "threading belongs to the platform layer",
-        # CLI script entrypoint: asyncio.run(main()) at the __main__ guard is the
-        # conventional async entry point for a standalone script — not a service call.
-    ),
-    (
-        "aila/modules/sbd_nfr/services/event_stream.py",
-        "asyncio_in_module",
-        "threading belongs to the platform layer",
-        # Designated bridge: wraps sync redis-py client for SSE streaming.
-        # catchup_async and astream_events correctly isolate asyncio.to_thread here.
-    ),
     (
         "aila/modules/vulnerability/adapters/ghsa.py",
         "asyncio_in_module",

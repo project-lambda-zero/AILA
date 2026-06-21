@@ -73,15 +73,6 @@ describe("router structure", () => {
     expect(tree).toMatch(/ScansRedirect/);
   });
 
-  it("redirects /sbd_nfr/documents and wildcard to /assessments (D-09)", () => {
-    const a = findRoute("sbd_nfr/documents");
-    const b = findRoute("sbd_nfr/documents/*");
-    expect(a).toBeDefined();
-    expect(b).toBeDefined();
-    expect(renderToString(a!.element)).toMatch(/Navigate/);
-    expect(renderToString(b!.element)).toMatch(/Navigate/);
-  });
-
   it("registers /console and /console/:runId", () => {
     expect(findRoute("console")).toBeDefined();
     expect(findRoute("console/:runId")).toBeDefined();

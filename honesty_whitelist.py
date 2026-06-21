@@ -167,14 +167,6 @@ HONESTY_WHITELIST = [
     ("tools/scoring_audit.py", "scoring_audit", "settings"),
     ("tools/verify_remediation.py", "verify_remediation", "settings"),
 
-    # ── SbD NFR module ─────────────────────────────────────────
-    # CLI script entrypoint: ``asyncio.run(main())`` at the ``__main__`` guard is
-    # the conventional async entry point for a standalone destructive dev script.
-    # The async DB layer (UnitOfWork) requires an event loop; bootstrapping it at
-    # the script boundary is not a service-layer threading concern.
-    ("sbd_nfr/scripts/force_reseed.py", "asyncio_in_module", "threading belongs to the platform layer"),
-
-
     # Category (g): IDABridgeTool IS the platform HTTP bridge for binary analysis.
     # httpx is its transport layer — same role as paramiko in SSHService.
     ("vr/tools/ida_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
@@ -195,7 +187,6 @@ HONESTY_WHITELIST = [
     ("_template/module.py", "placeholder_return", "returns empty"),
     ("hello_world/module.py", "placeholder_return", "returns empty"),
     ("forensics/module.py", "placeholder_return", "returns empty"),
-    ("sbd_nfr/module.py", "placeholder_return", "returns empty"),
     ("vr/module.py", "placeholder_return", "returns empty"),
     ("vr/agents/nday_researcher.py", "placeholder_return", "returns empty"),
 
@@ -263,12 +254,6 @@ HONESTY_WHITELIST = [
     # platform-level keyring service does not break the API at startup.
     ("storage/secrets.py", "broad_exception_catch", "catches everything"),
 
-    # modules/ — best-effort SSE emission failure boundaries. SbD-NFR session
-    # completion notifications are non-critical; SILENT_FAILURE_TOTAL counter is
-    # incremented and a warning is logged so the operator can investigate without
-    # blocking the resolution workflow.
-    ("sbd_nfr/services/resolution_service.py", "broad_exception_catch", "catches everything"),
-
     # ──────────────────────────────────────────────────────────────────
     # Category (h): except_return_default — mechanical typed catches whose
     # documented contract IS the empty default. These are pure parser /
@@ -292,10 +277,6 @@ HONESTY_WHITELIST = [
     ("workflow/states/collectors/memory.py", "except_return_default", "silently hides failures"),
     ("workflow/states/collectors/memory_enrich.py", "except_return_default", "silently hides failures"),
     ("workflow/states/collectors/network.py", "except_return_default", "silently hides failures"),
-
-    # SbD NFR scoring: numeric-string answer parser; non-numeric is
-    # documented as "excluded from average" — returning None is the rule.
-    ("sbd_nfr/services/scoring_service.py", "except_return_default", "silently hides failures"),
 
     # VR n-day researcher: structured-output JSON extraction. Failure means
     # the LLM produced unparseable text; the caller treats None as "no

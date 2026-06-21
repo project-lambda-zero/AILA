@@ -79,7 +79,7 @@ Notes:
 
 The frontend is a pnpm workspace. Every module's `frontend/` directory is its own workspace package consumed by `@aila/shell` via `workspace:*`.
 
-Current module frontend packages: `@aila/hello-world-frontend`, `@aila/vulnerability-frontend`, `@aila/forensics-frontend`, `@aila/sbd-nfr-frontend`, `@aila/vr-frontend`.
+Current module frontend packages: `@aila/hello-world-frontend`, `@aila/vulnerability-frontend`, `@aila/forensics-frontend`, `@aila/vr-frontend`.
 
 ### Required workspace files
 
@@ -510,7 +510,7 @@ Add one line per module to `frontend/src/styles/globals.css` (right after the `@
 @source "../../../src/aila/modules/<your_module>/frontend/**/*.{ts,tsx}";
 ```
 
-Already wired for: `vr`, `vulnerability`, `forensics`, `sbd_nfr`, `hello_world`. If you copy `_template/` to start a new module, add the line at the same time.
+Already wired for: `vr`, `vulnerability`, `forensics`, `hello_world`. If you copy `_template/` to start a new module, add the line at the same time.
 
 Verify by curl on the running dev server: `curl http://localhost:3000/src/styles/globals.css | grep "\.your-new-class"` — if the rule exists, Tailwind is scanning correctly.
 

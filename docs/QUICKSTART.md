@@ -56,7 +56,7 @@ pip install -e ".[dev]"
 corepack enable && pnpm install
 ```
 
-The frontend is a pnpm workspace at the repo root; `pnpm install` wires up `@aila/shell`, `@aila/typescript-config`, and the five module packages (`@aila/forensics-frontend`, `@aila/hello-world-frontend`, `@aila/sbd-nfr-frontend`, `@aila/vr-frontend`, `@aila/vulnerability-frontend`) in one pass.
+The frontend is a pnpm workspace at the repo root; `pnpm install` wires up `@aila/shell`, `@aila/typescript-config`, and the four module packages (`@aila/forensics-frontend`, `@aila/hello-world-frontend`, `@aila/vr-frontend`, `@aila/vulnerability-frontend`) in one pass.
 
 > **Verify the venv is activated**: `which uvicorn` should print a path inside `.venv/bin/`. If it prints `~/.local/bin/uvicorn` or `/usr/bin/uvicorn`, your venv is not active and uvicorn will fail to import `aila` (because system Python doesn't have it installed).
 Or:
@@ -133,7 +133,7 @@ Or, in one terminal:
 make dev-all
 ```
 
-`make dev-all` brings up dev infra and all seven services (backend, frontend, five workers) under one supervisor (Ctrl+C stops everything). `make dev` by itself only prints the canonical workflow above — it does not start anything.
+`make dev-all` brings up dev infra and all six services (backend, frontend, four workers) under one supervisor (Ctrl+C stops everything). `make dev` by itself only prints the canonical workflow above — it does not start anything.
 
 ---
 
@@ -160,7 +160,6 @@ The default worker subscribes to the `default` queue. Module-heavy workloads (vu
 python -m aila worker -q vr                  # vulnerability research (audit-mcp + IDA Headless MCP)
 python -m aila worker -q vulnerability       # vulnerability scans (CVE, scoring, remediation)
 python -m aila worker -q forensics           # DFIR investigations, evidence analysis
-python -m aila worker -q sbd_nfr             # Security-by-Design NFR assessments
 ```
 
 Or via Make:
@@ -170,7 +169,6 @@ make worker            # default queue
 make worker-vr         # vr queue
 make worker-vuln       # vulnerability queue
 make worker-forensics  # forensics queue
-make worker-sbd        # sbd_nfr queue
 ```
 
 Each worker process subscribes to one queue (`arq:queue:<name>`). For multi-module deployments, run one worker per queue.
@@ -196,7 +194,7 @@ python -m compileall -q src/aila
 make security-scan                       # pip-audit + bandit
 
 # Frontend (from repo root)
-pnpm -r run type-check                   # TypeScript across shell + all 5 modules
+pnpm -r run type-check                   # TypeScript across shell + all 4 modules
 pnpm -r run test                         # vitest across shell + modules
 pnpm --filter @aila/shell run build      # production build
 ```

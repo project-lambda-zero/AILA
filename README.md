@@ -28,9 +28,9 @@ and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.
 |                     |                  |                    |
 |  routing/           |                  |  forensics/        |
 |  runtime/           | <-- ModuleProto. |  hello_world/      |
-|  services/          |     contracts -> |  sbd_nfr/          |
-|  contracts/         |                  |  vr/               |
-|  tools/             |                  |  vulnerability/    |
+|  services/          |     contracts -> |  vr/               |
+|  contracts/         |                  |  vulnerability/    |
+|  tools/             |                  |                    |
 |  llm/               |                  |                    |
 |  tasks/   (ARQ)     |                  |  Each module owns  |
 |  workflows/         |                  |  its own runtime,  |
@@ -50,8 +50,8 @@ and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.
 | ARQ    |   | SQLModel + |                | queue tracks:   |
 | queues |   | Alembic +  |                | default, vr,    |
 |        |   | pgvector   |                | vulnerability,  |
-+--------+   +------------+                | forensics,      |
-             src/aila/storage/             | sbd_nfr         |
++--------+   +------------+                | forensics       |
+             src/aila/storage/             |                 |
                                            +-----------------+
 ```
 
@@ -64,10 +64,9 @@ and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.
   self-contained package implementing `ModuleProtocol`. One module never
   imports from another. Layout is fixed by `docs/MODULE_STANDARD.md`.
   Current modules: `vulnerability` (CVE/CWE scanning + intel),
-  `forensics` (DFIR investigations), `sbd_nfr` (Security-by-Design NFR
-  assessments), `vr` (vulnerability research — graph-aware audit, fuzz
-  campaign proposals, enterprise PDF reports, exploit/PoC writer
-  agent), and the `hello_world` reference module.
+  `forensics` (DFIR investigations), `vr` (vulnerability research —
+  graph-aware audit, fuzz campaign proposals, enterprise PDF reports,
+  exploit/PoC writer agent), and the `hello_world` reference module.
 - **API** (`src/aila/api/`) -- FastAPI application (`aila.api.app:app`).
   Modules contribute additional routers via `api_router.py`.
 - **Frontend** (`frontend/`) -- top-level Vite + React + TypeScript shell.
@@ -78,7 +77,7 @@ and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.
   config registry, secret store. Vector search uses pgvector with
   384-dimensional embeddings.
 - **Task queue** -- ARQ on Redis, with per-module queue tracks (default,
-  vulnerability, forensics, vr, sbd_nfr) so long-running jobs don't
+  vulnerability, forensics, vr) so long-running jobs don't
   starve each other.
 
 For deeper detail see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -247,10 +246,9 @@ For day-to-day MCP operations and the full VR agent design see [docs/vr/](docs/v
    make worker-vr           # vulnerability research
    make worker-vuln         # vulnerability scans
    make worker-forensics    # DFIR investigations
-   make worker-sbd          # Security-by-Design NFR
    ```
 
-   On Windows, `bash start.sh` brings up audit-mcp + backend + 5 workers + frontend in a single command.
+   On Windows, `bash start.sh` brings up audit-mcp + backend + 4 workers + frontend in a single command.
 
 For the expanded walkthrough including admin user creation, smoke tests, and
 common pitfalls, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
@@ -261,7 +259,6 @@ common pitfalls, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 |-----------------|---------------------------------------------------------------------------------------------------|------------|
 | `vulnerability` | SSH package inventory, distro-aware advisory resolution, CVE enrichment, scoring, and reporting.  | production |
 | `forensics`     | Remote forensic evidence triage over SSH: disk images, memory dumps, PCAPs, write-up generation.  | production |
-| `sbd_nfr`       | Security-by-Design NFR assessment: questionnaire-driven workbook generation and Jira handoff.     | broken — in progress |
 | `vr`            | Vulnerability research: graph-aware source/binary audit (audit-mcp + IDA Headless MCP), hypothesis-driven reasoning, fuzz campaign proposals (audit→fuzz pipeline), enterprise PDF reports with LLM writer agent, automatic exploit/PoC drafting, variant hunting with child-investigation spawning. | production |
 | `hello_world`   | Minimal reference module proving the `ModuleProtocol` contract end-to-end.                        | example    |
 
@@ -293,10 +290,9 @@ Common targets in the root `Makefile`:
 | `make worker-vr`        | `python -m aila worker -q vr`                                             |
 | `make worker-vuln`      | `python -m aila worker -q vulnerability`                                  |
 | `make worker-forensics` | `python -m aila worker -q forensics`                                      |
-| `make worker-sbd`       | `python -m aila worker -q sbd_nfr`                                        |
 | `make dev-all`          | Bring up all services in one terminal (Ctrl+C stops everything)           |
-| `bash start.sh`         | Spawn audit-mcp + backend + 5 workers + frontend in one shot (Windows: Git Bash + PowerShell) |
-| `docker compose -f infra/utilities/docker-compose.full.yml up --build` | Full-stack containers: postgres + redis + api + 5 workers + frontend. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
+| `bash start.sh`         | Spawn audit-mcp + backend + 4 workers + frontend in one shot (Windows: Git Bash + PowerShell) |
+| `docker compose -f infra/utilities/docker-compose.full.yml up --build` | Full-stack containers: postgres + redis + api + 4 workers + frontend. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
 | `make test`             | `pytest`, excluding `tests/test_e2e*.py`                                  |
 | `make test-e2e`         | `pytest tests/test_e2e.py -v` (requires live infrastructure)              |
 | `make test-frontend`    | `pnpm --filter @aila/shell run test` (shell package only; module frontends use `pnpm -r run test`) |

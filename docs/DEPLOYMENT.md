@@ -28,8 +28,7 @@ How to deploy AILA in production with FastAPI, ARQ worker, and Redis.
                                 | one per queue:    |
                                 |  default, vr,     |
                                 |  vulnerability,   |
-                                |  forensics,       |
-                                |  sbd_nfr          |
+                                |  forensics        |
                                 +-------------------+
 ```
 
@@ -194,7 +193,6 @@ export AILA_API_PORT=8000
 export WORKER_COUNT_VR=5
 export WORKER_COUNT_VULNERABILITY=1
 export WORKER_COUNT_FORENSICS=1
-export WORKER_COUNT_SBD_NFR=1
 
 # Structured JSON logs (ELK / Datadog / CloudWatch)
 export AILA_JSON_LOGS=1
@@ -237,7 +235,7 @@ On first start:
 1. `make db-init` (or the container entrypoint when using `docker-compose.full.yml`) creates every SQLModel-registered table and stamps Alembic at the current head (`067_workflow_state_cursor_archived_state`).
 2. If `AILA_ADMIN_PASSWORD` is set and no `UserRecord` row exists, the lifespan hook creates the `admin` user with that password (argon2id-hashed). When neither condition is met, startup raises `RuntimeError` to refuse an unprotected admin account.
 3. If `AILA_BOOTSTRAP_KEY` is set and no `ApiKeyRecord` row exists, an admin API key is created from the bootstrap value.
-4. The platform discovers and loads every installed module (`default`, `vr`, `vulnerability`, `forensics`, `sbd_nfr`, plus `hello_world` as the reference).
+4. The platform discovers and loads every installed module (`default`, `vr`, `vulnerability`, `forensics`, plus `hello_world` as the reference).
 
 After first start, remove `AILA_ADMIN_PASSWORD` (and `AILA_BOOTSTRAP_KEY` if set) from the environment.
 
@@ -253,11 +251,10 @@ python -m aila worker -q default
 python -m aila worker -q vr
 python -m aila worker -q vulnerability
 python -m aila worker -q forensics
-python -m aila worker -q sbd_nfr
 ```
 
 The Make targets (`make worker`, `make worker-vr`, `make worker-vuln`,
-`make worker-forensics`, `make worker-sbd`) wrap the same calls and also bring
+`make worker-forensics`) wrap the same calls and also bring
 up the dev infra (`make dev-up`) + run `make db-init` if needed.
 
 Workers process:

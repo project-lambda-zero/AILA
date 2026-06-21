@@ -541,27 +541,6 @@ Owned by `aila.modules.forensics.db_models`. Every table is prefixed with
 
 ---
 
-## SBD NFR Module Tables
-
-Owned by `aila.modules.sbd_nfr.db_models`. Tables are created by `make db-init`
-from the SQLModel metadata (no per-module Alembic init; later columns land via
-migrations like 007 / 008).
-
-- **SBDSchemaVersionRecord** (`sbd_nfr_schema_version_record`) — workbook schema version pin.
-- **SBDSectionRecord** (`sbd_nfr_section_record`) — top-level workbook section. `condition_expr_json` added in migration 008.
-- **SBDSubgroupRecord** (`sbd_nfr_subgroup_record`) — section subgroup.
-- **SBDQuestionRecord** (`sbd_nfr_question_record`) — workbook question. `condition_expr_json` added in migration 008.
-- **SBDQuestionOptionRecord** (`sbd_nfr_question_option_record`) — option for a multiple-choice question.
-- **SBDSubtaskComponentRecord** (`sbd_nfr_subtask_component_record`) — Jira subtask component template.
-- **SBDQuestionSubtaskMap** (`sbd_nfr_question_subtask_map`) — many-to-many between questions and subtask components. UNIQUE on `(question_id, subtask_key)`.
-- **SBDSessionRecord** (`sbd_nfr_session_record`) — operator-facing workbook session. `report_hash_sha256` + `report_hash_generated_at` added in migration 007.
-- **SBDAnswerRecord** (`sbd_nfr_answer_record`) — per-session answer. UNIQUE on `(session_id, question_id)`.
-- **SBDActivityRecord** (`sbd_nfr_activity_record`) — session activity log.
-- **SBDSessionSystemRecord** (`sbd_nfr_session_system_record`) — session ↔ managed-system link. UNIQUE on `(session_id, system_id)`.
-- **SBDResolutionResultRecord** (`sbd_nfr_resolution_result_record`) — LLM-driven subtask resolution result. UNIQUE on `(session_id, subtask_key)`.
-
----
-
 ## Vulnerability Research (VR) Module Tables
 
 Owned by `aila.modules.vr.db_models`. Created and evolved by migrations 040 + 042 + 044 + 045 + 046 + 047 + 048 + 050 + 052 + 053 + 055 + 060 + 061 + 062. See those migration files for the canonical DDL.
@@ -604,7 +583,6 @@ Counts reflect the Alembic head `067_workflow_state_cursor_archived_state` (2026
 | Automation schedules | Platform | 1 |
 | Vulnerability module (findings, asset tags, remediation, distribution profile, inventory, scoring policy, scheduled scans, cache, finding feedback) | Vulnerability | 10 |
 | Forensics module | Forensics | 11 |
-| SBD NFR module | SBD NFR | 12 |
 | Vulnerability Research module | VR | 20 |
 
 The `hello_world` module ships as a reference and does not own any DB tables.

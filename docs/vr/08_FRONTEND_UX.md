@@ -249,7 +249,7 @@ Considered alternatives:
 - d3-force directly — total control, but every interaction (click, hover, drag, multi-select, edge routing) is ours to build. Three weeks of UI work before the first useful feature.
 - Cytoscape.js — strong graph library, weaker React integration, custom node renderers awkward.
 - Graphviz on the server, render as SVG client-side — non-interactive, not viable.
-- ReactFlow — already in `package.json` (sbd_nfr uses it for `BlueprintCanvas`). React-native, custom nodes are JSX components, built-in pan/zoom/selection/edge routing. Well-maintained.
+- ReactFlow \u2014 already in `package.json`. React-native, custom nodes are JSX components, built-in pan/zoom/selection/edge routing. Well-maintained.
 
 Decision: ReactFlow, with one caveat — graphs above ~500 nodes start to lag. For projects that exceed that, the UI auto-clusters by target (each target collapses into a super-node; expanding it shows its sub-graph). The cluster threshold and the cluster behaviour are controlled by a feature flag so we can tune it once we have real engagements.
 
@@ -345,7 +345,7 @@ export const frontendSpec = {
 } satisfies ModuleFrontendSpec;
 ```
 
-`nav` contributes one entry: `{ id: "vr.projects", slot: "sidebar.main", label: "Vulnerability Research", to: "/vr", order: 70 }` — placed after forensics (60) and before sbd_nfr.
+`nav` contributes one entry: `{ id: "vr.projects", slot: "sidebar.main", label: "Vulnerability Research", to: "/vr", order: 70 }` \u2014 placed after forensics (60).
 
 `routes` lists the 12 page routes from §1, each with `slot: "page.full"` and an explicit `breadcrumb` (so the header doesn't synthesize phantom intermediate paths).
 

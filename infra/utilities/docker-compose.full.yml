@@ -157,23 +157,6 @@ services:
         condition: service_healthy
     command: ["worker", "-q", "forensics"]
 
-  worker-sbd-nfr:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-    container_name: aila-worker-sbd-nfr
-    restart: unless-stopped
-    env_file:
-      - ../../.env
-    environment:
-      <<: *aila-env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: ["worker", "-q", "sbd_nfr"]
-
   frontend:
     image: node:20-bookworm-slim
     container_name: aila-frontend

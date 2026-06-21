@@ -46,7 +46,6 @@ async def _session_async_engine() -> AsyncGenerator[object, None]:
     TSVECTOR and pgvector columns (both supported natively by PostgreSQL).
     """
     # Import all model modules to populate SQLModel.metadata
-    import aila.modules.sbd_nfr.db_models  # noqa: F401
     import aila.modules.vr.db_models  # noqa: F401
     import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.storage.database as _db_module

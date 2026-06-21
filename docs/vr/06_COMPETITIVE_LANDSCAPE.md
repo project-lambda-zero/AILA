@@ -105,7 +105,7 @@ When a customer asks "why use AILA when Anthropic has Mythos?" the honest answer
 If Anthropic releases their internal harness as a product, the VR module's value proposition narrows. The scenarios:
 
 - **They release a SaaS harness.** Self-hosted requirements (defense, regulated industries, classified targets) still need our deployment model. Our integration with on-prem tooling (IDA license, internal source mirrors, air-gapped fuzzing) survives.
-- **They release a self-hosted harness.** This is the existential threat. Mitigations: we ship multi-model routing (a customer can use any frontier provider), tighter integration with reverse-engineering tooling than a model lab is likely to invest in, and module-level customization (forensics, vulnerability, SBD-NFR sharing infra and operator habits).
+- **They release a self-hosted harness.** This is the existential threat. Mitigations: we ship multi-model routing (a customer can use any frontier provider), tighter integration with reverse-engineering tooling than a model lab is likely to invest in, and module-level customization (forensics, vulnerability sharing infra and operator habits).
 - **They release neither, ever.** Most likely. Frontier labs sell models, not workflows. Workflows are where the operator economics live, and that's our market.
 
 We design as if scenario 2 is plausible and we lose if we depend on it not happening.
@@ -394,7 +394,7 @@ Most likely to come from Anthropic given their disclosed Mythos work. If they sh
 Mitigation surface:
 - Multi-model routing reduces lock-in if the harness is model-bound.
 - Self-hosted, on-prem, air-gapped use cases are unlikely to be a model lab's priority.
-- Module-level integration (forensics, vulnerability, SBD-NFR sharing infra) is broader than VR alone.
+- Module-level integration (forensics, vulnerability sharing infra) is broader than VR alone.
 
 If we lose VR-only customers to a hypothetical Anthropic harness, we still win the platform play if the rest of AILA's modules are valued.
 
@@ -421,7 +421,7 @@ If LLM capability stops improving rapidly, the calibration baselines in §1 (Myt
 
 Mitigation surface:
 - Even at current capability, the workflow productivity gain is real (D-01 calibration: hours of work per finding goes from 40+ to 5–10 on Tier 1 bugs).
-- Module-level utility (forensics, SBD-NFR) is independent of frontier-model improvements.
+- Module-level utility (forensics) is independent of frontier-model improvements.
 
 ### Risk 5 — Open-source scaffolds emerge and commoditize the orchestration layer
 

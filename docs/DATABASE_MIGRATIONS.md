@@ -54,7 +54,7 @@ Or the Make wrappers:
 - `make db-init` — fresh database only. Creates every SQLModel-registered table via `metadata.create_all()`, then stamps `alembic_version` at the current head. Run once on a brand-new database.
 - `make migrate` — every subsequent run. Plain `alembic upgrade head`.
 
-The split exists because the early module tables (vulnerability, sbd_nfr, forensics) predate the Alembic baseline (`001_baseline_stamp` is intentionally empty) and are still created via `metadata.create_all()` on first boot. `make db-init` covers the bootstrap; `make migrate` covers every column/index/table added after the baseline.
+The split exists because the early module tables (vulnerability, forensics) predate the Alembic baseline (`001_baseline_stamp` is intentionally empty) and are still created via `metadata.create_all()` on first boot. `make db-init` covers the bootstrap; `make migrate` covers every column/index/table added after the baseline.
 
 ---
 
@@ -277,8 +277,6 @@ Modules that need their own tables follow these rules:
 forensics_projects
 forensics_artifacts
 forensics_investigations
-sbd_nfr_questions
-sbd_nfr_sections
 vulnerability_scoring_policy  (hypothetical)
 ```
 

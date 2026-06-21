@@ -134,19 +134,6 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
         }
 
         // ------------------------------------------------------------------ //
-        // sbd_complete — Security by Design LLM analysis finished              //
-        // ------------------------------------------------------------------ //
-        case "sbd_complete": {
-          void queryClient.invalidateQueries({ queryKey: ["sbd-nfr"] });
-          void queryClient.invalidateQueries({ queryKey: ["notifications"] });
-          toast.success("SbD resolution complete", {
-            description: "Security by Design analysis finished.",
-            duration: 5_000,
-          });
-          break;
-        }
-
-        // ------------------------------------------------------------------ //
         // system_unreachable — managed host went offline                       //
         // ------------------------------------------------------------------ //
         case "system_unreachable": {

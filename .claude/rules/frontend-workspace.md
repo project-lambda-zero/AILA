@@ -48,7 +48,7 @@ Module-specific deps may use literals only if they're truly used by ONE module. 
 Modules declare `react`, `react-dom`, `react-router`, `@tanstack/react-query`, and any shell-owned design-system package (`@phosphor-icons/react`, `motion`, `sonner`, etc.) as `peerDependencies`. The shell provides the single canonical copy. Direct deps would create duplicate React instances and break rules-of-hooks.
 
 ### 5. Module-specific deps are direct dependencies
-Packages that only one module uses (e.g., `@dnd-kit/*` for vulnerability, `@xyflow/react` for sbd_nfr) live in that module's `dependencies`. The shell does NOT carry them.
+Packages that only one module uses (e.g., `@dnd-kit/*` for vulnerability) live in that module's `dependencies`. The shell does NOT carry them.
 
 ### 6. Dev/test deps are devDependencies
 `@testing-library/*`, `@storybook/*`, `vitest` go in `devDependencies` of each module that uses them.

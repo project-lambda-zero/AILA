@@ -44,7 +44,6 @@ API Server (uvicorn)              ARQ Worker (aila worker)
 make worker            # python -m aila worker            (queue: default)
 make worker-vuln       # python -m aila worker -q vulnerability
 make worker-forensics  # python -m aila worker -q forensics
-make worker-sbd        # python -m aila worker -q sbd_nfr
 make worker-vr         # python -m aila worker -q vr
 ```
 
@@ -64,7 +63,7 @@ Source: `src/aila/cli.py:269-358`. The CLI also accepts `--redis-url` to overrid
 
 ### ARQ queue tracks
 
-`default` (PlatformModule and cross-cutting tasks), `vulnerability`, `forensics`, `sbd_nfr`, `vr`. One ARQ queue per track. Workers subscribe to exactly one queue.
+`default` (PlatformModule and cross-cutting tasks), `vulnerability`, `forensics`, `vr`. One ARQ queue per track. Workers subscribe to exactly one queue.
 
 ### Direct ARQ (legacy callers)
 
@@ -102,7 +101,6 @@ Per-queue worker count is set by `WORKER_COUNT_<UPPER_QUEUE>` env vars. Defaults
 | `default` | `1` |
 | `vulnerability` | `1` |
 | `forensics` | `1` |
-| `sbd_nfr` | `1` |
 
 `bash start.sh restart-worker <queue>` (`start.sh:513-558`) calls `restart_pool`, which kills the legacy single pidfile `worker-<q>.pid` AND every indexed pidfile `worker-<q>-*.pid`, then spawns `WORKER_COUNT_<q>` fresh workers via `spawn worker-<q>-<i> -m aila worker -q <q>`.
 

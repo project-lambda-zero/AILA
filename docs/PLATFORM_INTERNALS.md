@@ -91,7 +91,7 @@ Worker picks up job:
   -> on_job_end hook: TaskRecord -> DONE (or DEAD_LETTER on failure)
 ```
 
-The API path decouples submission from execution. The caller polls `GET /tasks/{task_id}` for status. Long-running scans (minutes) use this path. ARQ runs five queues (`default | vulnerability | forensics | sbd_nfr | vr`), selected via the `track=` argument on `TaskQueue.submit()`.
+The API path decouples submission from execution. The caller polls `GET /tasks/{task_id}` for status. Long-running scans (minutes) use this path. ARQ runs four queues (`default | vulnerability | forensics | vr`), selected via the `track=` argument on `TaskQueue.submit()`.
 
 ### What TaskQueue.submit() does
 

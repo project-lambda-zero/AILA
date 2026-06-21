@@ -22,7 +22,6 @@
   "dependencies": {
     "@aila/forensics-frontend": "workspace:*",
     "@aila/hello-world-frontend": "workspace:*",
-    "@aila/sbd-nfr-frontend": "workspace:*",
     "@aila/vulnerability-frontend": "workspace:*",
     "@aila/vr-frontend": "workspace:*",
     "@base-ui/react": "catalog:ui",

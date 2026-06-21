@@ -95,7 +95,7 @@ def get_task_queue(module_id: str, request: Request) -> AsyncTaskQueue:
     come from one place.
 
     Args:
-        module_id: The calling module's ID (e.g. "sbd_nfr").
+        module_id: The calling module's ID (e.g. "vulnerability").
         request: FastAPI Request providing access to app.state.platform.
 
     Returns:

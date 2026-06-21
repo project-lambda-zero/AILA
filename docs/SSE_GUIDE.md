@@ -18,7 +18,6 @@ AILA exposes nine SSE surfaces across the platform and the production modules:
 | `/forensics/projects/{project_id}/readiness-check/stream` | GET | forensics | Tool readiness probe stream |
 | `/vr/projects/{project_id}/events?since_iso=...` | GET | vr | Typed VR envelopes multiplexed across the project |
 | `/vr/investigations/{investigation_id}/messages/stream?since_iso=...&branch_id=...` | GET | vr | Per-investigation message tail |
-| `/sbd_nfr/sessions/{session_id}/events` | GET | sbd_nfr | Session progress |
 
 All require a valid JWT Bearer token. SSE responses use `Content-Type: text/event-stream` with `Cache-Control: no-cache` and `X-Accel-Buffering: no`.
 
@@ -282,16 +281,6 @@ Fields:
 - `ts` -- ISO-8601 UTC timestamp.
 - `project_id`, `investigation_id`, `campaign_id`, `branch_id` -- scope identifiers (nullable depending on event type).
 - `payload` -- type-specific JSON body.
-
----
-
-## 6. SBD NFR Session Events
-
-```
-GET /sbd_nfr/sessions/{session_id}/events?last_id=0
-```
-
-Same `ProgressStream`-backed shape as scan / task events. Emits `{event, stage, message, percent, timestamp}` per event. Bearer JWT.
 
 ---
 

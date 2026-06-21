@@ -333,16 +333,6 @@ export const routeObjects: RouteObject[] = [
         element: protectPage("Docs", DocsPage),
         handle: { breadcrumb: "Docs" },
       },
-      // D-09: SbD NFR workspace redirects. Deprecated document endpoints
-      // were removed in v2.2; /assessments is the live workspace.
-      {
-        path: "sbd_nfr/documents",
-        element: <Navigate to="/assessments" replace />,
-      },
-      {
-        path: "sbd_nfr/documents/*",
-        element: <Navigate to="/assessments" replace />,
-      },
       {
         path: "admin/users",
         element: protectPage("Users", UsersPage, "admin"),

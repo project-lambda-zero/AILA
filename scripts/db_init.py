@@ -44,7 +44,6 @@ from sqlmodel import SQLModel  # noqa: E402
 # "relation 'X' does not exist".
 from aila.storage import db_models as _platform_models  # noqa: F401, E402
 from aila.modules.vulnerability import db_models as _vuln_models  # noqa: F401, E402
-from aila.modules.sbd_nfr import db_models as _sbd_models  # noqa: F401, E402
 from aila.modules.forensics import db_models as _forensics_models  # noqa: F401, E402
 from aila.modules.vr import db_models as _vr_models  # noqa: F401, E402
 

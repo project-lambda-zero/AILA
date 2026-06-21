@@ -53,8 +53,7 @@ export interface HealthResponse {
  * staleTime: 30_000 prevents redundant refetches between SSE events.
  *
  * Used by: RiskScoreWidget, FleetCoverageWidget, ActiveScansWidget,
- *           SeverityChartWidget, TopFindingsWidget, MttrWidget, TrendWidget,
- *           SbdOverviewWidget.
+ *           SeverityChartWidget, TopFindingsWidget, MttrWidget, TrendWidget.
  */
 export function useDashboardData() {
   const { data, isLoading, isError, error } = useQuery<DashboardEnvelope>({

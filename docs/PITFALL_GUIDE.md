@@ -740,7 +740,7 @@ Only a dep that no other workspace package consumes is allowed a literal version
 @source "../../../src/aila/modules/<your_module>/frontend/**/*.{ts,tsx}";
 ```
 
-Already wired for: `vr`, `vulnerability`, `forensics`, `sbd_nfr`, `hello_world`. When you copy `_template/` to start a new module, add the `@source` line in the same change.
+Already wired for: `vr`, `vulnerability`, `forensics`, `hello_world`. When you copy `_template/` to start a new module, add the `@source` line in the same change.
 
 Verify with a curl against the dev server:
 

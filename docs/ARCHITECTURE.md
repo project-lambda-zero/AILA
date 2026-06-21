@@ -30,10 +30,10 @@ must hold for the system to behave correctly.
 |    Platform    |  |    Modules     |  |    Storage     |
 |  routing       |  |  vulnerability |  |  SQLModel/PG   |
 |  runtime       |  |  forensics     |  |  Alembic       |
-|  services      |  |  sbd_nfr       |  |  pgvector      |
-|  contracts     |  |  vr            |  +----------------+
-|  tools         |  |  hello_world   |
-|  llm           |  +----------------+
+|  services      |  |  vr            |  |  pgvector      |
+|  contracts     |  |  hello_world   |  +----------------+
+|  tools         |  +----------------+
+|  llm           |
 |  tasks (ARQ)   |           |
 |  workflows     |  +--------v-------+
 +----------------+  |  Redis / ARQ   |
@@ -44,7 +44,7 @@ must hold for the system to behave correctly.
 The frontend talks only to the FastAPI layer. FastAPI delegates to the
 platform's service and runtime layers. The platform owns infrastructure;
 modules own domain logic. Long-running work is dispatched onto ARQ
-queues (default, vulnerability, forensics, sbd_nfr, vr) backed by
+queues (default, vulnerability, forensics, vr) backed by
 Redis. Persistent state lives in PostgreSQL through SQLModel, with
 schema managed by Alembic and vector search backed by pgvector.
 
@@ -92,7 +92,7 @@ All model calls flow through this package so policy and cost controls
 apply uniformly.
 
 **`tasks/`** is the ARQ integration: queue definitions (default,
-vulnerability, forensics, sbd_nfr, vr), worker entry points wired into
+vulnerability, forensics, vr), worker entry points wired into
 `aila worker -q <queue>`, and `TaskRecord` persistence.
 
 **`workflows/`** provides the explicit state-machine primitives modules

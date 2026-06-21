@@ -26,7 +26,7 @@
 #   FRONTEND_PORT         default 3000
 #   AUDIT_MCP_PORT        default 18822
 #   IDA_HEADLESS_PORT     default 18821
-#   WORKERS               default "default vr vulnerability forensics sbd_nfr"
+#   WORKERS               default "default vr vulnerability forensics"
 #   AUDIT_MCP_DIR         default ../audit-mcp (relative to repo root)
 #   IDA_HEADLESS_DIR      default ../ida-headless-mcp-exp (relative to repo root)
 #   AILA_START_FRONTEND   1/0 (default 1)
@@ -43,7 +43,7 @@ COMMAND="${1:-start}"
 : "${FRONTEND_PORT:=3000}"
 : "${AUDIT_MCP_PORT:=18822}"
 : "${IDA_HEADLESS_PORT:=18821}"
-: "${WORKERS:=default vr vulnerability forensics sbd_nfr}"
+: "${WORKERS:=default vr vulnerability forensics}"
 # Per-queue worker concurrency. The vr queue runs LLM-heavy investigations
 # with multi-minute LLM retries; one worker per queue serializes them
 # behind whichever investigation is mid-call. Default vr=5 so the queue
@@ -53,7 +53,6 @@ COMMAND="${1:-start}"
 : "${WORKER_COUNT_DEFAULT:=1}"
 : "${WORKER_COUNT_VULNERABILITY:=1}"
 : "${WORKER_COUNT_FORENSICS:=1}"
-: "${WORKER_COUNT_SBD_NFR:=1}"
 : "${AUDIT_MCP_DIR:=../audit-mcp}"
 : "${IDA_HEADLESS_DIR:=../ida-headless-mcp-exp}"
 : "${AILA_START_FRONTEND:=1}"
@@ -478,7 +477,7 @@ restart_one() {
 # Resolve a queue name to its configured worker count.
 # Reads WORKER_COUNT_<QUEUE_UPPER> env var, defaulting to 1.
 # Non-alnum chars in the queue name are translated to underscore so
-# "sbd_nfr" -> WORKER_COUNT_SBD_NFR.
+# "vr" -> WORKER_COUNT_VR.
 worker_count_for() {
   local q="$1"
   local varname

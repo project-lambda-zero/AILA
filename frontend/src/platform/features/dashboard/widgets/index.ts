@@ -7,7 +7,6 @@ import { SeverityChartWidget } from "./SeverityChartWidget";
 import { TopFindingsWidget } from "./TopFindingsWidget";
 import { MttrWidget } from "./MttrWidget";
 import { TrendWidget } from "./TrendWidget";
-import { SbdOverviewWidget } from "./SbdOverviewWidget";
 import { VIZ_WIDGETS } from "@platform/features/viz/vizWidgets";
 
 // Re-export all widget components for external use
@@ -20,7 +19,6 @@ export {
   TopFindingsWidget,
   MttrWidget,
   TrendWidget,
-  SbdOverviewWidget,
 };
 
 let registered = false;
@@ -106,16 +104,6 @@ export function registerAllPlatformWidgets(): void {
     category: "vulnerability",
     defaultSize: { w: 6, h: 3, minW: 4, minH: 2 },
     component: TrendWidget,
-  });
-
-  // SbD NFR widget (D-07)
-  registerWidget({
-    id: "sbd.overview",
-    name: "SbD NFR Overview",
-    description: "Active sessions, pending reviews, and recent completions",
-    category: "sbd_nfr",
-    defaultSize: { w: 4, h: 3, minW: 3, minH: 2 },
-    component: SbdOverviewWidget,
   });
 
   // Viz widgets (Phase 144 VIZ-01, VIZ-02)

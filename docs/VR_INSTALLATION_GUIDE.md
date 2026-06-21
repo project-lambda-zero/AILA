@@ -260,7 +260,7 @@ This starts all services:
 - audit-mcp server (port 18822)
 - ida-headless-mcp server (port 18821, if available)
 - AILA backend (uvicorn, port 8000)
-- AILA workers (one per queue: default, vr, vulnerability, forensics, sbd_nfr)
+- AILA workers (one per queue: default, vr, vulnerability, forensics)
 - AILA frontend (Vite dev server, port 3000)
 
 `start.sh` does **not** currently spawn android-mcp — the operator

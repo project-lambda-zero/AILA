@@ -212,9 +212,6 @@ importers:
       '@aila/hello-world-frontend':
         specifier: workspace:*
         version: link:../src/aila/modules/hello_world/frontend
-      '@aila/sbd-nfr-frontend':
-        specifier: workspace:*
-        version: link:../src/aila/modules/sbd_nfr/frontend
       '@aila/vr-frontend':
         specifier: workspace:*
         version: link:../src/aila/modules/vr/frontend
@@ -443,52 +440,6 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 6.0.2
-
-  src/aila/modules/sbd_nfr/frontend:
-    dependencies:
-      '@dnd-kit/core':
-        specifier: catalog:dnd
-        version: 6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@dnd-kit/sortable':
-        specifier: catalog:dnd
-        version: 10.0.0(@dnd-kit/core@6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
-      '@dnd-kit/utilities':
-        specifier: catalog:dnd
-        version: 3.2.2(react@19.2.7)
-      '@phosphor-icons/react':
-        specifier: catalog:ui
-        version: 2.1.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@tanstack/react-query':
-        specifier: catalog:query
-        version: 5.101.0(react@19.2.7)
-      '@xyflow/react':
-        specifier: catalog:flow
-        version: 12.11.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(immer@11.1.8)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      motion:
-        specifier: catalog:ui
-        version: 12.40.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      react:
-        specifier: catalog:react19
-        version: 19.2.7
-      react-router:
-        specifier: '>=7.15.0'
-        version: 7.17.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      sonner:
-        specifier: catalog:ui
-        version: 2.0.7(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-    devDependencies:
-      '@aila/typescript-config':
-        specifier: workspace:*
-        version: link:../../../../../packages/typescript-config
-      '@types/react':
-        specifier: catalog:react19
-        version: 19.2.17
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.2
-      vitest:
-        specifier: catalog:vite
-        version: 4.1.8(@types/node@24.7.2)(@vitest/coverage-v8@4.1.8)(jsdom@29.1.1(@noble/hashes@1.8.0))(msw@2.14.5(@types/node@24.7.2)(typescript@6.0.2))(vite@8.0.16(@types/node@24.7.2)(esbuild@0.28.1)(jiti@2.7.0))
 
   src/aila/modules/vr/frontend:
     dependencies:

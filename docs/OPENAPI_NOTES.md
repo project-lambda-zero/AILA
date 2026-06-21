@@ -134,7 +134,7 @@ these tags:
 
 Feature modules contribute additional routers via `route_specs()`
 (`_mount_module_routers()` in `app.py`). The current production set
-(`forensics`, `sbd_nfr`, `vr`, `vulnerability`) each add at least one
+(`forensics`, `vr`, `vulnerability`) each add at least one
 routed prefix; `hello_world` adds the reference module surface.
 
 ### Summaries
