@@ -106,7 +106,7 @@ exceeding 10 MB with the `ErrorResponse` shape and `code="PAYLOAD_TOO_LARGE"`.
 
 ### Tags
 
-Each router sets `tags=[<name>]` for OpenAPI grouping. The 30 platform-owned
+Each router sets `tags=[<name>]` for OpenAPI grouping. The 29 platform-owned
 routers mounted in `src/aila/api/app.py` (in `include_router` order) carry
 these tags:
 

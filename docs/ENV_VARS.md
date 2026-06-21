@@ -16,7 +16,7 @@ have. Required keys block boot when missing.
 | `AILA_PLATFORM_REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis URL | ConfigRegistry override (`platform.redis_url`) |
 | `AILA_JWT_SECRET_KEY` | random 32-byte hex (regenerated per process if unset) | hex string | `config.py` |
 | `AILA_ADMIN_PASSWORD` | *(unset — required on first boot)* | string | `api/app.py` |
-| `AILA_CORS_ORIGINS` | `http://localhost:3000` | comma-separated URLs | `api/app.py` |
+| `AILA_CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173` | comma-separated URLs | `api/app.py` |
 | `OPENAI_API_KEY` | *(unset)* | string | LLM client |
 | `AILA_PLATFORM_LLM_DEFAULT_MODEL` | `openai/gpt-4o-mini` (fallback) | string | ConfigRegistry override (`platform.llm_default_model`) |
 | `AILA_PLATFORM_LLM_BASE_URL` | `https://openrouter.ai/api/v1` (fallback) | URL | ConfigRegistry override (`platform.llm_base_url`) |
@@ -172,7 +172,7 @@ through PowerShell.
 
 ### AILA_CORS_ORIGINS
 
-- **Default:** `http://localhost:3000`
+- **Default:** `http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173`
 - **Type:** Comma-separated list of URLs
 - **Used in:** `src/aila/api/app.py` (`create_app()`)
 - **Production guidance:** Set to the exact origin(s) of your frontend. Example: `AILA_CORS_ORIGINS=https://aila.example.com,https://admin.example.com`. Never use `*` in production -- it disables credential-based CORS security.
@@ -238,6 +238,73 @@ All fields from `PlatformConfigSchema` (registered under namespace `platform`):
 
 ---
 
+## Recently added (2026-06-21)
+
+### `AILA_ENV`
+
+- **Default:** `development`
+- **Type:** String
+- **Used in:** `src/aila/logging_config.py:34`, `src/aila/api/app.py:625`
+- **Production guidance:** Controls log renderer selection and startup mode. Values like `production`, `staging` trigger JSON structlog output; `dev`, `development`, `local`, `test` use human-readable console output.
+
+### `AILA_MAX_REQUEST_BYTES`
+
+- **Default:** `10485760` (10 MB)
+- **Type:** Integer (bytes)
+- **Used in:** `src/aila/api/app.py:457`
+- **Production guidance:** Overrides the `_reject_oversized_requests` middleware body-size limit. Bump for forensics dumps and other large-payload modules; keep at the default unless you measure rejected legitimate traffic.
+
+### `AILA_LLM_MAX_RETRIES`
+
+- **Default:** `3`
+- **Type:** Integer
+- **Used in:** `src/aila/platform/llm/client.py:290`
+- **Production guidance:** Maximum retry attempts for transient LLM API failures (429, 500, 502, 503, 504). Total in-task retry budget ~7 s; sustained provider degradation is handled at the ARQ task level with cursor preservation, not in the in-call retry loop.
+
+### `AILA_LLM_RETRY_BASE_DELAY_S`
+
+- **Default:** `1.0`
+- **Type:** Float (seconds)
+- **Used in:** `src/aila/platform/llm/client.py:291`
+- **Production guidance:** Base delay in seconds for exponential backoff on LLM retries (1 s, 2 s, 4 s, capped at `AILA_LLM_RETRY_MAX_DELAY_S`).
+
+### `AILA_LLM_RETRY_MAX_DELAY_S`
+
+- **Default:** `30.0`
+- **Type:** Float (seconds)
+- **Used in:** `src/aila/platform/llm/client.py:292`
+- **Production guidance:** Maximum per-attempt backoff cap for LLM retries.
+
+### `AILA_FORENSICS_RETRIEVE_MAX_BYTES`
+
+- **Default:** `_DEFAULT_MAX_BYTES` (500 MB)
+- **Type:** Integer (bytes)
+- **Used in:** `src/aila/modules/forensics/services/file_retriever.py:52`
+- **Production guidance:** Maximum file size for forensics evidence file retrieval. Raise when investigating large disk images or memory dumps; lower in shared-tenant deployments to bound per-call memory.
+
+### `PLATFORM_WORKER_HEARTBEAT_GRACE_S`
+
+- **Default:** `600`
+- **Type:** Integer (seconds)
+- **Used in:** `src/aila/platform/tasks/worker.py:39-43`
+- **Production guidance:** Grace window for the cron-tick reaper before considering a heartbeat stale. The boot-path reaper uses a fixed 30 s regardless. Increase only when long single-shot tool calls (e.g. audit-mcp `index_codebase`) routinely park coroutines past 10 minutes without heartbeat.
+
+### `VR_WALL_CLOCK_IDLE_GRACE_S`
+
+- **Default:** `900`
+- **Type:** Integer (seconds)
+- **Used in:** `src/aila/modules/vr/services/investigation_reaper.py:192`
+- **Production guidance:** Idle grace before the VR wall-clock reaper acts on an investigation that has stopped producing turns.
+
+### `VR_INVESTIGATION_TURN_CAP`
+
+- **Default:** `300`
+- **Type:** Integer
+- **Used in:** `src/aila/modules/vr/services/investigation_reaper.py:188`, `src/aila/modules/vr/workflow/finalize.py:160`
+- **Production guidance:** Per-investigation hard turn ceiling enforced by the reaper and per-turn cap. Tune in concert with `VR_INVESTIGATION_WALL_CLOCK_HOURS` and `VR_INVESTIGATION_MESSAGE_CAP`.
+
+---
+
 ## Internal Constants (Not Environment Variables)
 
 These Python constants match the `AILA_*` pattern but are **not** environment variables:
@@ -274,4 +341,4 @@ Before deploying to production, verify these are set:
 ---
 
 *Generated from source: `src/aila/config.py`, `src/aila/platform/config.py`, `src/aila/platform/llm/`, `src/aila/api/app.py`, `.env.example`, `start.sh`.*
-*Last updated: 2026-06-07 (head: `062_vr_outcome_review`).*
+*Last updated: 2026-06-21 (head: `067_workflow_state_cursor_archived_state`).*

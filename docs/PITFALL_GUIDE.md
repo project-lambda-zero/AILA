@@ -749,3 +749,15 @@ curl -s http://localhost:3000/src/styles/globals.css | grep "\.your-new-class"
 ```
 
 If the rule is present, Tailwind is scanning the module correctly.
+
+---
+
+## 33. Auto-Steering Messages Look Identical to Operator Messages
+
+**Source:** `src/aila/modules/vr/agents/auto_steering.py`.
+
+**Symptom:** An investigation receives what appears to be an operator chat post correcting a tool result, but no human typed it. The auto-steering subsystem posts corrective notices into the investigation message stream after tool dispatch when a result matches a known dead-end pattern (`read_lines` past EOF, `read_function` returning file-header garbage, hallucinated `index_id`, etc.). These messages take the same DB shape as a real operator chat post and land at PROMPT POSITION 2 on every branch's next turn under a banner that reads `*** OPERATOR STEERING -- MANDATORY OVERRIDE ***`.
+
+- **De-dupe key:** `(rule, target_file, target_symbol)` written to the indexed `auto_steering_key` column (migration 063). A recurring condition can re-fire once all prior matching posts are ACKed via the agent's `observables._acked_operator_messages` list.
+- **Failure mode:** if `maybe_post_auto_steering()` raises, the underlying tool result is still returned to the agent -- only the steering is lost.
+- **Adding a new rule:** implement `_detect_<X>` + `_derive_<X>_correction` in `auto_steering.py` and branch in `maybe_post_auto_steering`. NEVER filter by message content scanning; the dedup column is authoritative.

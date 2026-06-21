@@ -133,7 +133,7 @@ Or, in one terminal:
 make dev-all
 ```
 
-`make dev-all` brings up dev infra and all three processes under one supervisor (Ctrl+C stops everything). `make dev` by itself only prints the canonical workflow above — it does not start anything.
+`make dev-all` brings up dev infra and all seven services (backend, frontend, five workers) under one supervisor (Ctrl+C stops everything). `make dev` by itself only prints the canonical workflow above — it does not start anything.
 
 ---
 
@@ -181,7 +181,7 @@ Each worker process subscribes to one queue (`arq:queue:<name>`). For multi-modu
 
 ```bash
 make test           # backend unit tests (excludes E2E suites)
-make test-frontend  # frontend unit tests across shell + modules
+make test-frontend  # frontend unit tests (shell only). For all modules: pnpm -r run test
 make check          # full quality gates: ruff, honesty, compileall, typecheck
 ```
 

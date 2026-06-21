@@ -187,8 +187,8 @@ without knowing which submodule defines it. Internal helpers shared between subm
 The platform automatically discovers and registers:
 
 - Tools listed in `required_tools()` via `capabilities.py`
-- DB schemas via `register_schema()` in `module.py`
-- Config schemas via `register_config()` in `module.py`
+- DB schemas via `schema_registry.push(SCHEMA_REGISTRATION)` called inside `register_tools()`
+- Config schemas via `registry.register(spec)` called inside `register_tools()`
 - Seed data via `seed_data()` in `module.py`
 - The module itself via `create_module()` in `module.py`
 
@@ -271,6 +271,8 @@ async def register_tools(
     for spec in iter_tool_specs():
         tool_registry.register(spec.key(), spec.factory(settings))
 ```
+
+Note: the Protocol declares `settings: ApplicationSettings`; the concrete `Settings` class in `aila.config` satisfies the protocol.
 
 See "SchemaRegistry Usage" and "Tool Registration Pattern" sections below.
 
@@ -590,6 +592,7 @@ class ModuleRouteSpec:
 | `tool_keys` | `tuple[str, ...]` | No | Tool keys this module registers, surfaced via `GET /tools`. Use `tuple()` not `list()` because the dataclass is frozen. |
 | `config_namespace` | `str \| None` | No | Config namespace this module owns, surfaced via `GET/PUT /config`. `None` if the module has no config. |
 | `payload_type` | `str \| None` | No | Name of the discriminated-union payload type (optional). |
+| `auth_required` | `bool` | No | When False, skip the global `require_user_or_api_key` dependency. Default `True`. |
 
 ### Example: Vulnerability Module
 

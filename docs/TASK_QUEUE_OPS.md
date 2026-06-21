@@ -74,7 +74,7 @@ arq aila.platform.tasks.worker.WorkerSettings
 
 ### Worker configuration
 
-`WorkerSettings` in `src/aila/platform/tasks/worker.py:766-789`:
+`WorkerSettings` in `src/aila/platform/tasks/worker.py:867-890`:
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
@@ -92,7 +92,7 @@ arq aila.platform.tasks.worker.WorkerSettings
 
 ## start.sh + pidfile interplay
 
-`start.sh` is the canonical Windows-host launcher. It spawns each worker via PowerShell `Start-Process` and records the spawned PID in `${RUN_DIR_ABS}/${slug}.pid` via the `record_pid` helper (`start.sh:163-176`). The worker slug is `worker-<queue>-<i>`, so PID files land in `.run/worker-<queue>-<i>.pid`.
+`start.sh` is the canonical Windows-host launcher. It spawns each worker via PowerShell `Start-Process` and records the spawned PID in `${RUN_DIR_ABS}/${slug}.pid` via the `record_pid` helper (`start.sh:216-229`). The worker slug is `worker-<queue>-<i>`, so PID files land in `.run/worker-<queue>-<i>.pid`.
 
 Per-queue worker count is set by `WORKER_COUNT_<UPPER_QUEUE>` env vars. Defaults in `start.sh:50-56`:
 
@@ -104,7 +104,7 @@ Per-queue worker count is set by `WORKER_COUNT_<UPPER_QUEUE>` env vars. Defaults
 | `forensics` | `1` |
 | `sbd_nfr` | `1` |
 
-`bash start.sh restart-worker <queue>` (`start.sh:465-469`) calls `restart_pool`, which kills the legacy single pidfile `worker-<q>.pid` AND every indexed pidfile `worker-<q>-*.pid`, then spawns `WORKER_COUNT_<q>` fresh workers via `spawn worker-<q>-<i> -m aila worker -q <q>`.
+`bash start.sh restart-worker <queue>` (`start.sh:513-558`) calls `restart_pool`, which kills the legacy single pidfile `worker-<q>.pid` AND every indexed pidfile `worker-<q>-*.pid`, then spawns `WORKER_COUNT_<q>` fresh workers via `spawn worker-<q>-<i> -m aila worker -q <q>`.
 
 ### Recovery when a stuck worker has no pidfile
 
@@ -274,7 +274,7 @@ cap: turn count, message count, or wall-clock budget. Wall-clock is now
 clocked from `coalesce(started_at, created_at)` (commit `b47dd65`), so an
 investigation that sits in queue for hours doesn't insta-kill at turn 1 the
 moment a worker picks it up. The cap defaults to
-`VR_INVESTIGATION_WALL_CLOCK_HOURS` (24 h after the worker stamps
+`VR_INVESTIGATION_WALL_CLOCK_HOURS` (6 h after the worker stamps
 `started_at`).
 
 ### Sub-sweep 6 — `sweep_orphan_active_branches` (VR)
@@ -292,6 +292,13 @@ is the third leg of the desync triangle documented in CLAUDE.md
 (`TaskRecord.status` + `workflow_state_cursor.current_state` +
 `arq:in-progress:<id>`). Without it, an ARQ in-progress lock from a crashed
 worker prevents the next worker from picking up the same task id.
+
+- LLM idempotency cache purge — the worker imports `run_purge_expired_cron`
+  from `aila.platform.llm.idempotency_cache` (migration 061
+  `llm_idempotency_cache`) and runs it on the cron schedule. Drops expired
+  entries so cache size stays bounded. Source:
+  `src/aila/platform/tasks/worker.py:18` (import),
+  `src/aila/platform/tasks/worker.py:320-323` (cron call site).
 
 ### Crash recovery flow
 
@@ -466,4 +473,4 @@ Source: `src/aila/api/routers/admin_dead_letter.py:159-204`.
 
 
 *Source: `src/aila/platform/tasks/worker.py`, `src/aila/platform/tasks/queue.py`, `src/aila/platform/tasks/constants.py`*
-*Last updated: 2026-06-07*
+*Last updated: 2026-06-21*

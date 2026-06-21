@@ -1,5 +1,25 @@
 # VR Module — Data Model
 
+> **Status: design exploration.** This document predates the shipped VR
+> engine and describes an idealised contract, not current code. The
+> shipped implementation diverges in class names, enum values, table
+> schemas, routes, and state machines. Use this doc for intent and
+> taxonomy; verify every concrete claim against the files listed in
+> "Current implementation pointers" below before relying on it.
+>
+> **Current implementation pointers** (verified 2026-06-21):
+>
+> | Topic | Shipped location |
+> |---|---|
+> | Reasoning loop | `src/aila/modules/vr/agents/vuln_researcher.py` |
+> | Submit-time gates | `vuln_researcher._maybe_reject_submit_when_draft_pending`, `_maybe_reject_submit_with_unresolved_hypotheses`, variant-hunt gate |
+> | Per-LLM-call idempotency | `src/aila/platform/llm/idempotency_cache.py` + migration `061_llm_idempotency_cache.py` |
+> | Auto-steering | `src/aila/modules/vr/agents/auto_steering.py` |
+> | Outcome routing | `src/aila/modules/vr/agents/outcome_dispatcher.py` |
+> | DB schema (19 tables) | `src/aila/modules/vr/db_models/__init__.py` |
+> | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
+> | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
+
 The complete persistent shape of the VR module: every table, every relationship, every state machine, every query the runtime is expected to run, every migration that gets us there. Brainstorm-grade — what the data should look like if all the prior docs land coherently.
 
 Cross-references:
@@ -24,64 +44,34 @@ Module name in code: `vulnerability_research`. Module name in URLs and frontend:
 
 ---
 
-## 1. Entity Map
+## 1. Entity inventory (shipped)
 
-The shape, in one diagram, before any column-level discussion:
+The shipped DB layer holds 20 `vr_*` tables (the F1 banner cites 19;
+the accurate count includes `VRInvestigationTargetRecord`, an
+investigation \u2194 target join table not enumerated when the banner
+was drafted). The brainstorm diagram below this section names
+`VRObligation`, `VRFuzzingCampaign`, `VRAdvisory`, `VRDisclosure`,
+`VREvidenceNode/Edge`, etc. — design vocabulary, not the
+implemented model. The authoritative model list lives at
+`src/aila/modules/vr/db_models/__init__.py`:
 
-```
-                     +----------------------+
-                     |     VRProject        |
-                     | one engagement       |
-                     +----------+-----------+
-                                |
-            +-------------------+-------------------+
-            |                   |                   |
-            v                   v                   v
-   +-----------------+  +----------------+  +------------------+
-   |   VRTarget      |  |  VRNdayTask    |  | VROperatorSteer- |
-   | binary/lib/repo |  | one CVE        |  | ing (per project)|
-   +-------+---------+  +---+------------+  +------------------+
-           |                |
-   +-------+-------+        |
-   |       |       |        |
-   v       v       v        v
-+--------+ +-----------+  +----------+
-|VRHypo- | |VRFuzzing- |  |VRExploit |  (exploits link to either a crash
-|thesis  | |Campaign   |  |          |   from a campaign OR an N-day task)
-+---+----+ +----+------+  +----+-----+
-    |           |              |
-    |           v              |
-    |       +-------+          |
-    |       |VRCrash|----------+ (a confirmed exploitable crash
-    |       +---+---+              becomes the basis of a VRExploit)
-    |           |
-    +-----------+
-            |
-            v
-       +---------+
-       |VRAdvisory|  (per-finding disclosure-ready writeup;
-       +----+----+    ties together exploit + crash + hypothesis)
-            |
-            v
-     +-------------+
-     |VRDisclosure |  (vendor coordination state per advisory; D-04)
-     +-------------+
+- `VRWorkspaceRecord`, `VRProjectRecord`, `VRTargetRecord`,
+  `VRTargetTagIndexRecord`
+- `VRInvestigationRecord`, `VRInvestigationTargetRecord`,
+  `VRInvestigationBranchRecord`, `VRInvestigationMessageRecord`,
+  `VRInvestigationOutcomeRecord`, `VRInvestigationOutcomeReviewRecord`
+- `VRFindingRecord`, `VRPatternRecord`,
+  `VRDisclosureSubmissionRecord`, `VRCVERecord`, `VRCVEFeedStateRecord`
+- `VRFuzzCampaignRecord`, `VRFuzzCrashRecord`,
+  `VRFuzzCampaignProposalRecord`, `VRFuzzTelemetryRecord`
+- `VRMcpCallLogRecord`
 
-Spanning across everything:
+Schema additions since the prior doc revision:
 
-   +------------------+        +-----------------+
-   | VREvidenceNode   |<------>| VREvidenceEdge  |
-   | (one per claim,  |  fan   | (typed edges)   |
-   |  observation,    |   out  +-----------------+
-   |  artifact ref)   |
-   +--------+---------+
-            |
-            v
-   +-------------------+
-   |   VRObligation    |  (an obligation is anchored to a node;
-   |                   |   the graph cannot mark dependents
-   +-------------------+   "confirmed" while obligations are open)
-```
+- Migration 063 — `VRInvestigationMessageRecord.auto_steering_key`
+  (nullable, partial UNIQUE on `(investigation_id, auto_steering_key)`).
+- Migration 064 — `VRInvestigationBranchRecord.persona_voice` NOT
+  NULL with `server_default='unspecified'`.
 
 A few invariants the schema is forced to maintain:
 
@@ -97,13 +87,13 @@ A few invariants the schema is forced to maintain:
 
 ### Migration heads adjacent to this doc
 
-The shipped schema is the union of `db_models/` modules and the Alembic migrations under `src/aila/alembic/versions/`. Three recent heads that affect the diagrams above:
+The shipped schema is the union of `db_models/` modules and the Alembic migrations under `src/aila/alembic/versions/`. Recent heads that affect the diagrams above:
 
 | Revision | Adds |
 |---|---|
 | `060_vr_target_analysis_stages` | `vr_target_analysis_stages_json` on `vr_targets` (per-stage status + timestamps + attempts + error); `aila.modules.vr.services.stage_tracker` owns idempotency + RUNNING-timeout reaping. |
 | `061_llm_idempotency_cache` | `llm_idempotency_cache` table keyed on `sha256(investigation_id, branch_id, turn_number, prompt_hash)`. Retries replay the cached decision so a transport hiccup never re-pays the LLM. Caller-supplied keys live in `vuln_researcher.run_turn`. |
-| `062_vr_outcome_review` (current head) | `state` column on `vr_investigation_outcomes` (`draft | approved | rejected | dispatched`) and `vr_outcome_reviews` (one row per sibling vote: `approve | reject | request_edit | abstain`, with `UNIQUE(outcome_id, reviewer_branch_id)`). Powers the sibling-corroborated draft-outcome workflow plus the pre-submit draft-pending gate referenced in `01_REASONING_LOOP.md §8.bis.5`. |
+| `067_workflow_state_cursor_archived_state` (current head) | Adds `archived_state VARCHAR(128) NULL` to `workflow_state_cursor` for engine-level pause/resume — see `docs/DURABLE_STATEMACHINE_DESIGN.md`. Intermediate VR migrations — outcome review (`state` column on `vr_investigation_outcomes` plus `vr_outcome_reviews` table for sibling voting), `auto_steering_key` indexing on investigation messages, persona_voice NOT NULL backfill, TaskRecord `input_hash` + status CHECK constraint — are catalogued in `docs/DATABASE_MIGRATIONS.md`. |
 
 ---
 
@@ -112,6 +102,11 @@ The shipped schema is the union of `db_models/` modules and the Alembic migratio
 All state columns are `Text` with a `CHECK` constraint enumerating the allowed values. Values are lowercase snake_case so the same string is the API value, the storage value, and the display value (no `value_to_display()` mapping layer). Transitions are validated in the workflow layer; the DB constraint exists to catch programming errors (typo in a state literal), not as the authoritative state machine.
 
 ### 2.1 Project lifecycle
+
+Shipped: `VRProjectStatus` enum (`contracts/project.py:182-189`):
+`CREATED`, `ANALYZING`, `COMPLETED`, `FAILED`, `STALLED`. There is no
+`ACTIVE` or `ARCHIVED`. The brainstorm diagram below is design
+vocabulary kept for context.
 
 ```
 created --[targets registered]--> active --[engagement closed]--> completed --[60d]--> archived
@@ -127,9 +122,15 @@ created --[targets registered]--> active --[engagement closed]--> completed --[6
 | `completed` | Operator marked the engagement done. Read-only; advisories may still progress through `VRDisclosure` lifecycle. |
 | `archived` | Cold storage. Read-only at API; large blob columns may be moved to object storage and replaced with refs. |
 
-Transitions are operator-driven only — the runtime never auto-archives. Archive is a separate maintenance job.
+Transitions are operator-driven only \u2014 the runtime never auto-archives. Archive is a separate maintenance job.
 
 ### 2.2 Target lifecycle
+
+Shipped: two separate enums govern targets. `TargetStatus`
+(`contracts/target.py`): `ACTIVE`, `ARCHIVED`, `QUARANTINED`.
+`AnalysisState`: `PENDING`, `INGESTING`, `READY`, `FAILED`. Per-stage
+pipeline progress lives in the `analysis_stages_json` column on
+`VRTargetRecord`. The brainstorm diagram below predates both enums.
 
 ```
 registered --[recon done]--> analyzing --[harness ready]--> fuzzing
@@ -154,6 +155,10 @@ registered --[recon done]--> analyzing --[harness ready]--> fuzzing
 A target may be in *multiple conceptual phases simultaneously* (campaign running while exploit loop chases an earlier crash). The single `state` column captures the **dominant** phase — the one the project plan should display in the top-line view. Per-campaign and per-crash detail comes from those tables. We deliberately do not model this as an aggregate state graph; the operator wants one summary value, not a Cartesian product.
 
 ### 2.3 Hypothesis lifecycle
+
+Shipped: `HypothesisState` enum (`contracts/hypothesis.py:24-28`):
+`LIVE`, `REJECTED`, `RESOLVED`, `MIXED`. The brainstorm diagram below
+predates the enum.
 
 ```
 proposed --[turn picks it up]--> investigating --+--[reproducer + obligation discharge]--> confirmed
@@ -180,7 +185,27 @@ proposed --[turn picks it up]--> investigating --+--[reproducer + obligation dis
 
 The `rejected` -> `proposed` transition is **prohibited at the DB level** (CHECK on transitions log). The LLM cannot reverse a refutation by re-reasoning over the same evidence; per Metis, only fresh evidence permits re-opening, which is modeled as a *new* hypothesis with a `parent_hypothesis_id` link.
 
-### 2.4 Fuzzing campaign lifecycle
+### 2.4 Investigation lifecycle
+
+Shipped: `InvestigationStatus` enum (`contracts/investigation.py:52-60`):
+`CREATED`, `RUNNING`, `PAUSED`, `COMPLETED`, `FAILED`, `ABANDONED`.
+`InvestigationKind` (`contracts/investigation.py:32-49`): `DISCOVERY`,
+`VARIANT_HUNT`, `TRIAGE`, `N_DAY`, `AUDIT`, `MASVS_AUDIT`. Both columns
+live on `VRInvestigationRecord`.
+
+### 2.5 Outcome and persona enums
+
+Shipped: `OutcomeKind` (`contracts/outcome.py:39-50`, 11 values) —
+`ASSESSMENT_REPORT`, `STRATEGY_DESCRIPTOR`, `PROFILE_SPEC_DRAFT`,
+`CONFIG_DELTA`, `VARIANT_HUNT_ORDER`, `PATCH_ASSESSMENT_REPORT`,
+`AUDIT_MEMO`, `DIRECT_FINDING`, `CRASH_TRIAGE_REPORT`,
+`CAMPAIGN_LAUNCH`, `SUB_INVESTIGATION`.
+
+`PersonaVoice` (`contracts/branch.py:39-62`, 9 values) — `HALVAR`,
+`MADDIE`, `YUKI`, `RENZO`, `NOOR`, `WEI`, `UNSPECIFIED`,
+`MERGE_RESULT`, `FORK_UNNAMED`.
+
+### 2.6 Fuzzing campaign lifecycle
 
 ```
 configured --[harness compiled, corpus ready]--> running --[periodic check]--> monitoring
@@ -203,7 +228,7 @@ configured --[harness compiled, corpus ready]--> running --[periodic check]--> m
 
 `monitoring` is a real state, not a UI flourish: it tells the scheduler "I can preempt this without losing work; just snapshot the corpus." Without it, the scheduler must treat any active campaign as `running` and refuse to multiplex.
 
-### 2.5 Crash lifecycle
+### 2.7 Crash lifecycle
 
 ```
 discovered --[afl-tmin / similar]--> minimized --[dedup + classify]--> triaged
@@ -223,7 +248,7 @@ discovered --[afl-tmin / similar]--> minimized --[dedup + classify]--> triaged
 
 A crash never returns to a previous state via transition alone; if "not_exploitable" needs to flip to "exploitable," a *new* crash row is created with `re_triage_of` pointing at the original. This forces fresh evidence and gives the audit trail.
 
-### 2.6 Exploit lifecycle
+### 2.8 Exploit lifecycle
 
 ```
 drafting --[script compiles]--> testing --[1+ successful run]--> working --[reliability sweep >= threshold]--> reliable
@@ -246,7 +271,7 @@ drafting --[script compiles]--> testing --[1+ successful run]--> working --[reli
 
 Per Metis: `testing -> working` requires *evidence between turns*. An LLM cannot self-promote an exploit by re-reading the same run logs.
 
-### 2.7 N-day task lifecycle
+### 2.9 N-day task lifecycle
 
 ```
 researching --[advisory + commit refs collected]--> patch_found --[diff understood]--> root_caused
@@ -269,7 +294,7 @@ researching --[advisory + commit refs collected]--> patch_found --[diff understo
 
 N-day tasks share a state machine with research-mode `VRExploit` only conceptually — they each have their own state column because the milestones are different. A single `state` enum that mixes both makes neither legible. This is the answer to open question 7 in `03_EXPLOIT_AUTOMATION.md`: **two state machines, separate tables, separate workflows; no shared `mode` flag.**
 
-### 2.8 Disclosure lifecycle
+### 2.10 Disclosure lifecycle
 
 ```
 undisclosed --[vendor contacted]--> reported --[ack received]--> acknowledged

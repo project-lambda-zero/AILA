@@ -35,7 +35,12 @@ src/aila/
       ...
       060_vr_target_analysis_stages.py
       061_llm_idempotency_cache.py
-      062_vr_outcome_review.py    # current head
+      062_vr_outcome_review.py
+      063_vr_auto_steering_dedup_key.py
+      064_vr_branch_persona_voice_not_null.py
+      065_task_records_input_hash_unique.py
+      066_task_records_status_check.py
+      067_workflow_state_cursor_archived_state.py    # current head
 ```
 
 `alembic.ini` and the `alembic/` directory live under `src/aila/`, not at the repo root. All Alembic commands must run from `src/aila/`:
@@ -81,7 +86,7 @@ Where `{NNN}` is the next sequential number (zero-padded to 3 digits). Check the
 
 ```bash
 ls src/aila/alembic/versions/*.py | tail -1
-# 062_vr_outcome_review.py -> next is 063
+# 067_workflow_state_cursor_archived_state.py -> next is 068
 ```
 
 ### Step 3: Write the migration
@@ -94,7 +99,7 @@ Use this template:
 Adds a nullable priority field so operators can influence queue ordering.
 
 Revision ID: 063_taskrecord_priority
-Revises: 062_vr_outcome_review
+Revises: 067_workflow_state_cursor_archived_state
 Create Date: 2026-06-10
 """
 from __future__ import annotations
@@ -103,7 +108,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "063_taskrecord_priority"
-down_revision = "062_vr_outcome_review"
+down_revision = "067_workflow_state_cursor_archived_state"
 branch_labels = None
 depends_on = None
 
@@ -158,6 +163,11 @@ Examples from the codebase:
 | `060_vr_target_analysis_stages.py` | Module column addition |
 | `061_llm_idempotency_cache.py` | Platform subsystem |
 | `062_vr_outcome_review.py` | Module column + new table |
+| `063_vr_auto_steering_dedup_key.py` | Module column + partial UNIQUE |
+| `064_vr_branch_persona_voice_not_null.py` | Module backfill + NOT NULL |
+| `065_task_records_input_hash_unique.py` | Platform column + partial UNIQUE |
+| `066_task_records_status_check.py` | Platform CHECK constraint |
+| `067_workflow_state_cursor_archived_state.py` | Platform column addition |
 
 The `revision` string inside the file must match the filename (without `.py`).
 

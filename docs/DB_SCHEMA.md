@@ -10,7 +10,7 @@ driver; Alembic swaps to psycopg automatically via `src/aila/alembic/env.py`.
 Two creation paths coexist:
 - Platform + module tables that predate the Alembic baseline (`001_baseline_stamp`)
   are created on first boot by `make db-init`, which runs `SQLModel.metadata.create_all()`
-  then stamps `alembic_version` at the current head (`062_vr_outcome_review`).
+  then stamps `alembic_version` at the current head (`067_workflow_state_cursor_archived_state`).
 - Every schema change since then ships as an Alembic revision under
   `src/aila/alembic/versions/`. See [`DATABASE_MIGRATIONS.md`](DATABASE_MIGRATIONS.md).
 
@@ -228,7 +228,8 @@ Platform-owned task lifecycle record (task queue).
 | user_id | Text | indexed | Owning ApiKeyRecord.id |
 | group_id | Text | indexed | Owning role for RBAC scoping |
 | kwargs_json | Text | default="{}" | Serialized task arguments |
-| checkpoint_json | Text/null | | Checkpoint state for resume |
+| input_hash | Text/null | indexed, partial UNIQUE | SHA-256 dedup key for concurrent-submit safety. Partial unique index `ix_task_records_input_hash_unique` enforces uniqueness within active statuses (queued, running, waiting). Added by migration 065. |
+| version | int | default=1 | Optimistic-lock version for safe concurrent updates. Added by migration 011. |
 | result_path | Text/null | | **Legacy** — retired file-path slot; no task in `src/aila/` populates it. Results live in module-specific tables. |
 | error | Text/null | | Error message on failure |
 | depends_on_json | Text/null | | JSON list of dependency task IDs |
@@ -238,7 +239,7 @@ Platform-owned task lifecycle record (task queue).
 | created_at | datetime | default=utc_now | Submission time |
 | updated_at | datetime | default=utc_now | Last state change |
 
-**Status transitions:** queued -> waiting -> running -> done/failed/cancelled. See `TaskStatus` enum.
+**Status transitions:** queued -> waiting -> running -> paused/done/failed/cancelled/dead_letter. See `TaskStatus` enum (8 values). CHECK constraint `ck_taskrecord_status_canonical` (migration 066) enforces valid values at the DB level.
 
 ### ApiKeyRecord
 
@@ -473,7 +474,7 @@ for the full SQLModel definitions.
 
 ### Workflow engine
 
-- **WorkflowStateCursor** (`workflow_state_cursor`) — one row per active workflow run; tracks `current_state`, `version`, scheduled-tick metadata, crash sentinel (`__crashed__`).
+- **WorkflowStateCursor** (`workflow_state_cursor`) — one row per active workflow run; tracks `current_state`, `version`, scheduled-tick metadata, crash sentinel (`__crashed__`). Migration 067 adds `archived_state` (nullable `VARCHAR(128)`) to preserve the prior `current_state` across pause / resume cycles. Non-NULL only when the cursor sits at `__paused__`. Source: `src/aila/storage/db_models.py:193-200`.
 - **WorkflowStateTransition** (`workflow_state_transitions`) — append-only audit/replay log of every state transition. Indexed `(run_id, sequence DESC)` for tail-reads.
 
 ### LLM pipeline + audit
@@ -571,8 +572,8 @@ Owned by `aila.modules.vr.db_models`. Created and evolved by migrations 040 + 04
 - **VRProjectRecord** (`vr_projects`, migration 040; FK to target hardened in migration 043) — per-target research project with budget/obligation snapshot.
 - **VRFindingRecord** (`vr_findings`, migration 040; nullable `project_id` since migration 057; `poc_skip_reason` since migration 059) — confirmed vulnerabilities with triage, PoC, disclosure state.
 - **VRInvestigationRecord** (`vr_investigations`, migration 044; `is_favorite` since migration 058; CVE intel columns since migration 056) — one operator-initiated reasoning session.
-- **VRInvestigationBranchRecord** (`vr_investigation_branches`, migration 044; `strategy_family` added in migration 049) — one persona-branched conversation within an investigation.
-- **VRInvestigationMessageRecord** (`vr_investigation_messages`, migration 044) — per-turn message stream for a branch.
+- **VRInvestigationBranchRecord** (`vr_investigation_branches`, migration 044; `strategy_family` added in migration 049) — one persona-branched conversation within an investigation. Migration 064 backfills NULL `persona_voice` rows with `'unspecified'` and adds NOT NULL with `server_default='unspecified'`.
+- **VRInvestigationMessageRecord** (`vr_investigation_messages`, migration 044) — per-turn message stream for a branch. Migration 063 adds `auto_steering_key` (nullable `VARCHAR(128)`) with partial UNIQUE constraint `uq_vr_investigation_messages_auto_steering_key` on `(investigation_id, auto_steering_key)` WHERE `auto_steering_key IS NOT NULL`. Used by `auto_steering.maybe_post_auto_steering` for dedup.
 - **VRInvestigationOutcomeRecord** (`vr_investigation_outcomes`, migration 044; `state` column added in **migration 062**) — typed outcomes emitted by a branch. `state` is `draft | approved | rejected | dispatched`; the dispatcher refuses any outcome whose state is not `approved`.
 - **VRInvestigationOutcomeReviewRecord** (`vr_outcome_reviews`, **migration 062**) — sibling-review row per `(outcome_id, reviewer_branch_id)`. Vote enum is `approve | reject | request_edit | abstain`; the quorum evaluator flips the outcome to `approved` once enough approve votes land with zero rejects.
 - **VRInvestigationTargetRecord** (`vr_investigation_targets`, migration 048) — many-to-many between investigations and additional targets.
@@ -590,7 +591,7 @@ Owned by `aila.modules.vr.db_models`. Created and evolved by migrations 040 + 04
 
 ## Table Summary
 
-Counts reflect the Alembic head `062_vr_outcome_review` (2026-06-07).
+Counts reflect the Alembic head `067_workflow_state_cursor_archived_state` (2026-06-21).
 
 | Group | Owner | Tables |
 |---|---|---|
@@ -611,4 +612,4 @@ The `hello_world` module ships as a reference and does not own any DB tables.
 ---
 
 *Generated from source models in `src/aila/storage/db_models.py`, `src/aila/platform/tasks/models.py`, `src/aila/platform/llm/cost_record.py`, `src/aila/platform/llm/idempotency_cache.py`, `src/aila/platform/automation/models.py`, and the per-module `db_models/` packages under `src/aila/modules/<module>/`.*
-*Last updated: 2026-06-07 (Alembic head `062_vr_outcome_review`).*
+*Last updated: 2026-06-21 (Alembic head `067_workflow_state_cursor_archived_state`).*

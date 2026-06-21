@@ -166,7 +166,7 @@ Python side at CI time.
 
 ## Enforcement
 
-17 of these rules are programmatically enforced by the honesty audit:
+17 of these 60 rules have direct programmatic enforcement by the honesty audit (which contains 33 structural checks total — see `docs/HONESTY_AUDIT.md` for the full rule set):
 
 ```
 python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py

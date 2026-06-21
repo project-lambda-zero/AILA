@@ -18,7 +18,10 @@ must hold for the system to behave correctly.
                              |
                     +--------v---------+
                     |   FastAPI REST   |
-                    |   30 routers     |
+                    |   29 platform    |
+                    |   routers +      |
+                    |   module-        |
+                    |   contributed    |
                     +--------+---------+
                              |
           +------------------+------------------+

@@ -28,6 +28,13 @@ WorkflowDefinition
   +-- services_factory: async (run_id) -> WorkflowServices
 ```
 
+A fifth reserved state, `__paused__`, exists for engine-level pause / resume
+(Phase B). It is NOT a terminal — the cursor sits at `__paused__` while
+the prior `current_state` is preserved in the cursor's `archived_state` column
+(migration 067). Resume swaps `archived_state` back to `current_state`.
+`__paused__` is not a member of `RESERVED_TERMINAL_STATES`; the main engine
+loop skips it. Source: `src/aila/platform/workflows/types.py:36-42`.
+
 The engine loop:
 1. Load or create cursor row for `run_id`
 2. Call `services_factory(run_id)` to build a fresh services bundle
@@ -338,7 +345,7 @@ await session.merge(run_record)
 await session.commit()
 ```
 
-The orchestrator and engine may both create `WorkflowRunRecord` rows for the same `run_id`. Use `merge()` or `INSERT ON CONFLICT DO NOTHING`. Live merge sites: `src/aila/platform/runtime/orchestrator.py:304, 309`.
+The orchestrator and engine may both create `WorkflowRunRecord` rows for the same `run_id`. Use `merge()` or `INSERT ON CONFLICT DO NOTHING`. Live merge sites in `src/aila/platform/runtime/orchestrator.py` — grep for `_merge_live_hypotheses` to locate.
 
 ### Do not: hard-code state transitions in handler logic
 

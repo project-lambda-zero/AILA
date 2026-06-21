@@ -383,7 +383,7 @@ The investigation detail page shows:
 | `ANDROID_MCP_TOOL_CAP_<NAME>` | per-tool default | android-mcp server-side per-tool concurrency cap; mirrors audit-mcp pattern |
 | `ANDROID_MCP_TIMEOUT_<NAME>` | per-tool default | android-mcp server-side per-tool wall-clock cap (seconds) |
 | `ANDROID_MCP_WORKDIR` | `~/.android-mcp/work` | android-mcp server-side workdir for decoded / decompiled trees and composite reports |
-| `AILA_LLM_MAX_RETRIES` | `100` | LLM call retries on 429 / 502 / 503 errors |
+| `AILA_LLM_MAX_RETRIES` | `3` | LLM call retries on 429 / 502 / 503 errors; in-task budget ~7 s, sustained provider degradation handled by ARQ task-level retry with cursor preservation |
 | `AILA_LLM_RETRY_BASE_DELAY_S` | `1.0` | First retry backoff (seconds) |
 | `AILA_LLM_RETRY_MAX_DELAY_S` | `30.0` | Max retry backoff cap (seconds) |
 
@@ -486,6 +486,8 @@ conn.close()
 | **Renzo** | Implementer | PoC builder, dispute settler, structured output |
 | **Wei** | Implementer | Cost-efficient prioritizer, max info-gain per budget-unit |
 
+Persona dedup tiebreaker (`_branch_priority` in `_spawn_persona_siblings_and_enqueue`) now includes `created_at.timestamp()` as the tertiary element so the most recent `operator_reopen` branch always wins. Earlier code returned the same priority tuple for two equal-`turn_count=0` operator-reopen branches and the iteration-order fallback abandoned the newest one within seconds. Completes the three-front re-open fix landed in commit `92836e1`.
+
 ---
 
 ## Auto-Recovery
@@ -577,6 +579,35 @@ python -m aila worker -q vr
 - Unknown `status` value from backend (fixed by adding fallback defaults)
 - Missing `ogl` dependency (run `pnpm install`)
 - Stale Vite cache (delete `frontend/node_modules/.vite/` and restart)
+
+### Three sources of truth for "is this task active"
+
+`TaskRecord.status` (Postgres), `workflow_state_cursor.current_state`
+(Postgres), and `arq:in-progress:<id>` (Redis) CAN desync. The D-86
+SKIP path coordinates all three. New drift paths are landmines —
+inspect all three before claiming a task is running or stuck.
+
+### Cost tracking known-broken
+
+`VRInvestigationRecord.cost_actual_usd` reports `$0` for every
+investigation. The aggregator joins `LLMCostRecord.run_id ==
+TaskRecord.id`, but `run_id` is actually the workflow `RunRecord.id`
+(DurableStateMachine run instance), not the ARQ TaskRecord id.
+Correct join requires an extra hop through `workflow_run_records`.
+Not yet fixed; do not treat the gauge as authoritative.
+
+### Cursor reaper sweeps all four terminal states
+
+The platform `cursor_reaper` (`src/aila/platform/tasks/cursor_reaper.py`)
+sweeps cursors in any of the four reserved terminal states
+(`__crashed__`, `__failed__`, `__cancelled__`, `__succeeded__`) whose
+`run_id` no longer has an active `TaskRecord`. Function name
+`sweep_orphan_crashed_cursors` is kept for backwards compatibility.
+Operator-side bulk-clean for inconsistent cursors:
+`DELETE FROM workflow_state_cursor WHERE current_state IN
+('__crashed__', '__failed__', '__cancelled__', '__succeeded__')
+AND NOT EXISTS (SELECT 1 FROM taskrecord t WHERE t.id = run_id
+AND t.status IN ('queued', 'running', 'waiting'));`
 
 ---
 

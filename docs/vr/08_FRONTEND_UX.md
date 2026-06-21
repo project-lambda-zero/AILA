@@ -63,294 +63,66 @@ The `<ReenqueuePicker>` component renders next to the start/pause controls. It i
 
 ---
 
-## 1. Page Inventory
-
-Each page is a `RouteContribution` with `slot: "page.full"`. Module routes are mounted under `/vr/*`. The breadcrumb on each page is set explicitly so the header doesn't synthesize intermediate links to paths the module hasn't registered (the same trap forensics avoids).
-
-### 1.1 Projects List — `/vr`
-
-The landing page when "VR" is clicked in the sidebar. Lists every research engagement the operator has access to.
-
-**What's on screen:**
-- Header strip: "Vulnerability Research" + a "New Project" button (`Button` variant `default`).
-- Filter row: status (`active`, `paused`, `completed`, `archived`), target class (`native`, `kernel`, `hypervisor`, `java`, `python`, `js`, `php`, `go`, `rust`), workstation (each registered research VM), date range.
-- Table (`AilaTable`) with rows = projects:
-  - Name + short scope description (one-liner from project metadata)
-  - Status badge (`AilaBadge` with `tone` keyed off status)
-  - # targets, # active campaigns, # findings (with severity pulse — `SeverityPulse` showing the highest severity glow)
-  - Last activity timestamp ("3 minutes ago" — driven by the most recent reasoning turn)
-  - Operator avatar(s)
-- Empty state (`EmptyState`) when zero projects: title "No research projects yet", description, primary action "Start a project".
-
-**Driven by:**
-- `GET /api/vr/projects?status=…&target_class=…` — paginated.
-- The "live activity" timestamp is a denormalised `last_turn_at` on the project row, updated by the reasoning engine.
-
-**Why a table not a card grid:** projects in this module are operationally identical at a glance — a researcher scanning this page is looking for "which engagement needs attention right now," not browsing for inspiration. Density beats decoration. The same call vulnerability and forensics already made for their list views.
-
-### 1.2 New Project Wizard — `/vr/projects/new`
-
-A staged form, not a single page of inputs. Three steps, each its own card, navigated with a stepper at the top. The wizard never persists until the final step — closing the tab discards everything.
-
-**Step 1 — Target intake:**
-- Upload widget (drag-drop) for firmware images, source archives, individual binaries, or a manifest pointing at a git repo.
-- Or: existing-target picker (a search-as-you-type combobox over `targets` already extracted on a connected workstation, so the researcher can start a new engagement on the same firmware without re-uploading).
-- A "what is this?" hint section that updates as files arrive: "Detected: 1 firmware image (binwalk-extractable), 142 ELFs, 38 shared libs, 1 kernel module" — this is the deterministic extraction described in `docs/vr/04_MULTI_TARGET.md §1`.
-
-**Step 2 — Workstation selection:**
-- Card list of registered research workstations (each from the platform's SSH service).
-- Each card shows: hostname, distro, CPU cores, RAM, GPU presence, current load (`active campaigns`, `disk free`), tools available (IDA / Ghidra / angr / AFL++ / WinAFL / Frida / DynamoRIO — pulled from the workstation's tool inventory).
-- The researcher picks one. A "compatibility" badge flags problems: "Selected target requires WinAFL but this workstation is Linux-only" → resolved by picking a different host.
-
-**Step 3 — Scope and authorisation:**
-- Free-text scope field ("audit the MQTT and HTTP attack surfaces; do not investigate VPN").
-- Authorisation toggle: "I confirm this engagement is in scope per signed authorisation" (project cannot be created without this — see `docs/vr/02_IDA_HEADLESS_MCP.md §6`).
-- Disclosure track radio: `internal` / `coordinated` / `n-day reproduction` (drives whether the advisory editor is enabled later).
-- Operator role assignment (multi-select from operators with `vr:research` role).
-
-The wizard borrows the staged-card visual structure from sbd_nfr's wizard (`WizardLayout`), not the single-page wizard from forensics. VR's intake is more decision-heavy than forensics's "point at a disk image."
-
-### 1.3 Project Dashboard — `/vr/projects/:projectId`
-
-The hub page. Everything else hangs off this one.
-
-**Header band:**
-- Project name + scope blurb + status badge.
-- Action menu: pause / resume / archive / export.
-- "Workstation: aila-research-04 — connected" with a heartbeat dot, tied to the SSH service health.
-
-**Main grid (CSS grid, no react-grid-layout):**
-- **Targets panel (`AilaCard`, takes the left column):** Tree view of `Target` rows from §4 of the multi-target doc. Each leaf shows kind icon, name, target_class badge, network exposure badge, and a tiny progress bar derived from the `coverage_state` (uncovered / triaged / harnessed / fuzzed / exploited). Clicking a target navigates to §1.4.
-- **Active campaigns (right column, top):** List of fuzzing campaigns currently running, each as a small card with: harness name, runtime so far, edges/sec, crashes found in the last hour, "view" link to §1.5. Live, updating via SSE (see §2).
-- **Findings summary (right column, middle):** Aggregate severities — "3 critical, 7 high, 14 medium." Clicking a severity filters the findings table below.
-- **Recent reasoning turns (right column, bottom):** Last 10 turns across all targets in the project. Each row: turn id, target, action type (decompile / fuzz_run / exploit_test / …), 1-line outcome, timestamp. Clicking a row jumps into §1.10 at that turn.
-- **Investigation timeline (full-width below):** condensed timeline view of major project events (project created, target added, hypothesis confirmed, crash found, exploit succeeded, advisory drafted). Same pattern as forensics's `TimelineViewer` but with a VR-specific event vocabulary.
-
-This is the only page that holds the "what is this engagement doing right now?" answer. Every other page is a zoom-in.
-
-### 1.4 Target Detail — `/vr/projects/:projectId/targets/:targetId`
-
-One target — one binary, one library, one kernel module, or one virtual sub-target like a config parser inside `configd`.
-
-**Header:**
-- Target name + path + sha256 (truncated, click to copy).
-- Kind / arch / target class badges.
-- Mitigations row: NX / ASLR / PIE / RELRO / Stack Canaries / CFI / Control-Flow Guard / SafeSEH — each a small badge whose tone reflects presence (green = on, red = off, gray = unknown). Hovering reveals the source ("from checksec" / "from IDA structures pass" / "inferred from imports").
-
-**Tabs:**
-
-1. **Attack surface.** Cards for entrypoints (network listeners with port + protocol, IPC sockets, ioctls, command-line arguments, environment variables, parsed file formats). Each entrypoint expands to show the function entry address and an "obligations to call this reachable" count. Sourced from the entrypoint enumeration described in `docs/vr/02_IDA_HEADLESS_MCP.md §3`.
-2. **Hypotheses.** All `Hypothesis` rows tied to this target (regardless of state). Each shows: claim text, state badge (`open` / `confirmed` / `refuted` / `tainted`), turn where it was created, supporting evidence count, refuting evidence count, "open in graph" link to §1.9.
-3. **Functions of interest.** Table of functions the LLM has touched — name, address, called-by count, current annotation set (renamed? typed prototype? comment?). This is read-out from IDA via `get_function_by_name` / `get_xrefs_to`. The table's "annotation" column is what makes this view useful — it shows what the LLM has *learned* about the binary.
-4. **Imports / exports.** Standard, but flagged: imports of dangerous functions (`strcpy`, `sprintf`, `system`, `gets`) get a yellow border, imports of crypto primitives get a small icon, exports that are reachable from a network entrypoint get a "reachable" badge.
-5. **Notes.** Free-text operator notes specific to this target. Persisted, no markdown processing — text in, text out.
-
-The tabs are first-class URL state (`?tab=hypotheses`) so a researcher can deep-link a colleague to "look at the hypothesis tab on this target."
-
-### 1.5 Fuzzing Campaign Dashboard — `/vr/projects/:projectId/campaigns/:campaignId`
-
-One campaign — one harness, one corpus, possibly many fuzzer instances.
-
-**Top strip:**
-- Campaign name, harness path on the workstation, fuzzer (AFL++ / WinAFL / libfuzzer / honggfuzz), instance count, runtime, status (`running` / `paused` / `stopped` / `error`).
-- Action buttons: pause / resume / stop / "rebuild harness" (re-runs harness generation with last spec) / "tune" (opens a small drawer for config tweaks — timeout, dictionary, mutation rate).
-
-**Live charts (using `AilaChart`, which already uses `useThemeChartColors()` because Recharts can't resolve `var(--color-*)` in SVG `fill` attributes — see CLAUDE.md mistake #4):**
-- Edge coverage over time (single line, smooth).
-- Crashes-per-hour bar chart.
-- Corpus size over time.
-- Stability % (afl-cov metric — fraction of edges that are deterministic).
-
-**Resource band:**
-- Per-instance CPU / memory / disk-write-rate, sourced from the workstation's `top` / `iostat` polls (see `docs/vr/02_IDA_HEADLESS_MCP.md §5` on workstation telemetry).
-- Aggregate "exec/sec" across instances.
-
-**Crash list (`AilaTable`):**
-- One row per *distinct* crash bucket (deduped by minimised stack hash, not raw input hash).
-- Columns: bucket id, ASAN type or signal, faulting function, count, first seen, last seen, exploitability tag (set after triage runs — see §1.6), severity badge.
-- Row click → §1.6.
-- Filter chips above: "exploitable only" / "new since last visit" / "unique stack" / "untriaged."
-
-The chart-heavy layout is justified here in a way it isn't elsewhere: a researcher checks on a campaign mostly to answer two questions ("is it stuck?" and "did it find anything new?"). Charts answer the first; the crash list answers the second.
-
-### 1.6 Crash Detail — `/vr/projects/:projectId/crashes/:crashId`
-
-One crash bucket. Where triage lives.
-
-**Header:**
-- Bucket id, signal/ASAN type, faulting address (with module + offset).
-- Status: `new` / `triaging` / `triaged` / `dropped` / `exploited`.
-- Severity badge driven by exploitability score (CWE category + mitigation presence + reachability — not CVSS, that's for advisories).
-
-**Sections (top to bottom, vertical scroll):**
-
-1. **ASAN report** — verbatim, monospace. Collapsible. Above it, the LLM's one-line summary of what the report says ("heap-buffer-overflow on read of 16 bytes, originated in `parse_tlv` at offset 0x4c").
-2. **Minimised input** — a hex dump panel (binary inputs) or pretty-printed (recognized text/JSON inputs). Download button. "Re-run" button (reproduces the crash on the workstation and updates the crash record with the latest stack).
-3. **Stack trace** — clickable frames. Each frame: function, address, source line if symbols are present. Clicking a frame jumps to §1.4 functions-of-interest tab on the relevant target, scrolled to that function. This is the single most-used cross-page link in the module.
-4. **Triage chain** — the *narrative* of how this crash was understood. Built from the reasoning turns that touched it:
-   - "Turn 47 (decompile): `parse_tlv` calls `memcpy(dst, src, len)` where `len` is derived from untrusted input."
-   - "Turn 48 (data_flow_trace): `len` traces back to a 4-byte field in the input."
-   - "Turn 49 (hypothesis_confirm): integer overflow on `len * count` — confirmed by repro with crafted input."
-   - Each entry links into §1.10 at that turn.
-5. **Exploitability assessment** — structured: primitive type (write-what-where, read-out-of-bounds, integer overflow, …), mitigation analysis (what's between this primitive and code execution), required preconditions, suggested next obligations. This is the LLM's *current* answer; it can change as more turns run.
-6. **Linked artefacts** — list of harnesses that reproduce this crash, exploits derived from it (links to §1.7), and the campaign(s) that found it.
-
-There is no "edit crash" — crashes are observed facts. Researchers can change the *bucket assignment* (merge two buckets, split one bucket) and add notes, but the crash itself is read-only.
-
-### 1.7 Exploit Editor — `/vr/projects/:projectId/exploits/:exploitId`
-
-The PoC's home page. Closest thing in this module to "editing source," but constrained.
-
-**Top:**
-- Exploit name, target binary link, derived-from crash link.
-- Status: `draft` / `passing` / `flaky` / `broken`.
-- Reliability bar: a 100-trial bar showing successes (green) / failures (red) / inconclusive (gray). One click → re-run trials.
-
-**Code panel:**
-- Read-mostly editor (Monaco, with Python and pwntools syntax highlighting). The researcher *can* edit, but every save triggers a test run on the workstation — there is no "save without running."
-- Inline annotations from previous test runs: "line 47 — last run: connection succeeded but second send timed out."
-- Generation lineage banner: "Generated by turn 142, last edited by reasoning_loop at turn 198, last edited by operator 12 minutes ago." Edits are tagged by author so the LLM knows what came from a human.
-
-**Test runs:**
-- Each run is a row: run id, started, duration, outcome (`success` / `crashed` / `timeout` / `unexpected`), stdout/stderr expand, full pwndbg trace expand.
-- Sortable / filterable. New runs land at the top with a brief highlight.
-
-**Reliability stats:**
-- Aggregated across the last N runs: success rate, average runtime, average bytes sent, observed variance in target response.
-- Highlighted variance triggers (e.g. ASLR slot) get called out: "Run 23 succeeded but used a different libc base — confirm ASLR brute is robust."
-
-**Notes / advisory link:**
-- Link to the advisory draft (§1.8) this exploit demonstrates, if any. If none, a "promote to advisory" button.
-
-### 1.8 Advisory Editor — `/vr/projects/:projectId/advisories/:advisoryId`
-
-A structured editor — not a free-text markdown blob. Every advisory has the same skeleton because consumers (vendors, MITRE, internal customers) consume them programmatically. Free-form fields exist but they're labelled.
-
-**Sections:**
-
-1. **Summary** — one-paragraph description, vendor, product, affected versions.
-2. **CVSS calculator** — a real calculator widget, not a single number input. Each metric (AV, AC, PR, UI, S, C, I, A) is a button group; the calculator emits the vector string and base score live. Both v3.1 and v4.0 are supported because some consumers still want one and not the other.
-3. **Technical details** — root cause, affected code path, exploitability assessment. This is markdown-rendered, with code-fence syntax highlighting, but not a freestyle WYSIWYG.
-4. **Reproduction steps** — auto-generated from the linked exploit's PoC, manually editable. The "regenerate from exploit" button overwrites this section after a confirm dialog.
-5. **Patches / mitigations** — links to upstream commits (n-day mode) or vendor recommendations (open research mode).
-6. **References** — CVE ids, blog posts, prior work.
-7. **Disclosure timeline** — tracked as discrete events (`discovered`, `vendor_contacted`, `vendor_acked`, `patch_released`, `cve_assigned`, `public_disclosure`), each with a timestamp and free-text note. Timeline is rendered as a vertical thread.
-
-**Header band (always visible):**
-- Disclosure status: `draft` / `under embargo` / `disclosed` — drives who can see this advisory (operator-only / project-team / public). The status badge is sticky-positioned because it's the highest-stakes thing on the page.
-- Embargo date picker if `under embargo`.
-
-**Export:**
-- Buttons for: PDF (formatted), Markdown (for emails), JSON (machine), MITRE CVE template, vendor-specific templates if configured.
-
-### 1.9 Evidence Graph Viewer — `/vr/projects/:projectId/graph` (and modal-overlay from any other page)
-
-The most novel surface. Renders the project-level evidence graph (`docs/vr/04_MULTI_TARGET.md §6`) with ReactFlow.
-
-**Layout:**
-- Left rail: filters (described below).
-- Main canvas: pan/zoom graph.
-- Right rail (collapsible): selected-node detail. Empty by default; populated when a node is clicked.
-- Top toolbar: layout algorithm picker (`dagre` / `force-directed` / `manual`), search box, "fit view" button, snapshot/export.
-
-**Node types and tones (matching the brief):**
-- `hypothesis` — blue (`tone="info"`), rounded rect.
-- `evidence` — green (`tone="success"`), rectangle.
-- `crash` — red (`tone="critical"`), pill.
-- `exploit` — orange (`tone="warning"`), pill.
-- `advisory` — purple, document-shape.
-- `obligation` — gray (`tone="muted"`), dashed border (open) or solid (resolved).
-
-Node colours are not raw hex — they are mapped to design tokens (`bg-info-soft`, `border-info`, etc.) so dark/light theme just works and no custom CSS is added.
-
-**Edge types:**
-- `supports` — solid green arrow (evidence → hypothesis).
-- `refutes` — solid red arrow (evidence → hypothesis).
-- `found_by` — solid gray (campaign → crash; tool_run → evidence).
-- `exploits` — solid orange (exploit → crash).
-- `derived_from` — dashed gray (advisory → exploit; minimised_input → original_input).
-
-Edge labels are off by default and toggleable in the toolbar — labels make the graph unreadable past ~40 nodes, and a real engagement easily produces 200.
-
-**Filters (left rail):**
-- "Confirmed only" — show only hypotheses with state=confirmed and their immediate evidence.
-- "Rejected only" — refuted/tainted hypotheses + the evidence that killed them (useful for postmortems).
-- "Unresolved" — open hypotheses with at least one open obligation; this is the "what's left to do" view.
-- "Tainted path" — nodes downstream of a tainted hypothesis. Critical: a hypothesis tainted by bad evidence poisons everything derived from it; this filter shows the blast radius.
-- Free-text search filters by node label and metadata (target name, function name, CVE id).
-
-**Click interaction:**
-- Click node → right rail shows: id, type, current state, raw payload (JSON, collapsed), all incoming edges, all outgoing edges, "open source" link (jumps to the page where this node was created — turn / crash detail / target detail).
-- Shift-click → multi-select; the rail aggregates them and shows shared / divergent attributes.
-- Double-click hypothesis → opens its dedicated mini-graph (just this hypothesis, its evidence, its obligations) — same component, narrower scope, less zoom-out.
-
-**Why ReactFlow:**
-- It's already in the platform's dependency tree (sbd_nfr's `BlueprintCanvas` uses it).
-- It supports custom node renderers cleanly, which is needed because each node type has different inline content (hypothesis cards show claim text; evidence nodes show pack source; obligation nodes show a checkbox).
-- Built-in pan/zoom, selection, and edge routing. Building a graph viewer from scratch with d3 is a known time sink with a worse result.
-
-### 1.10 Investigation Timeline — `/vr/projects/:projectId/timeline`
-
-The turn-by-turn reasoning log. The most operationally important page when a researcher is supervising an active loop.
-
-**Layout:**
-- Sticky filter band at top: target filter, action-type filter (decompile / fuzz_run / exploit_test / hypothesis_create / …), confidence filter, "show pack expansions" toggle.
-- Main column: a vertical scroll of `TurnCard` rows, newest at the bottom (so a watching researcher's eye stays at the bottom and new turns appear in their reading flow).
-- Right rail (sticky): "live tail" toggle, jump-to-turn input, project case-state summary (current contract, open hypotheses, open obligations).
-
-**Anatomy of a TurnCard:**
-- Header strip: turn number, timestamp, target name, action type badge, confidence pill, duration (LLM time + tool time).
-- Body, three columns:
-  - Reasoning (the natural-language thought, from `ReasoningTurnDecision.reasoning`)
-  - Action (the structured `vr_action` rendered with its parameters — for `decompile_function`, the function name and address; for `fuzz_run`, the campaign id and budget; for `exploit_test`, the exploit id and trial count)
-  - Observation (the typed result — collapsed by default if large; "show full" expands inline).
-- Footer: hypothesis deltas ("created H7", "confirmed H3"), evidence pack deltas ("pack 0x4f added decomp of `parse_tlv`"), obligation deltas, artefact writes ("wrote `harness_v3.c`").
-
-**Live tail:**
-- When enabled, the page subscribes to `/api/vr/projects/:id/turns/stream` (SSE — `streamJsonEvents` from `frontend/src/platform/api/sse.ts`). New turns animate in (a brief amber border flash, no full-page reload).
-- A "paused" indicator shows if the loop is paused (operator pause from §1.12 or platform-level circuit breaker).
-
-**Operator interleavings:**
-- Operator actions (pause, inject context, pin strategy, manual obligation closure) appear as inline strip rows between TurnCards, with an operator avatar and the action they took. The audit trail is a single chronological stream — no separate "operator log."
-
-This page is the source of truth for "what did the LLM actually do." Every hypothesis, crash, and exploit detail page links back here at the turn that originated it.
-
-### 1.11 N-day Task View — `/vr/projects/:projectId/ndays/:cveId`
-
-Dedicated to the n-day reproduction workflow (the second of the two workflows in the module). Lays out the four-stage progression as a visible state machine, not a hidden one.
-
-**Header:**
-- CVE id, vendor, product, advisory link (external), CVSS (vendor-published), status (`intake` / `patch_analysis` / `root_cause` / `poc` / `done`).
-- Affected version range; the workstation's known-good build for that range.
-
-**Stage cards (all visible, current stage outlined):**
-
-1. **Patch acquired.** Source-side: commit hash, link to upstream diff, files changed, diffstat. Binary-side: vulnerable build sha256, patched build sha256, BinDiff result summary (functions changed, similarity scores), with a "view in IDA" link that opens the diff on the workstation.
-2. **Root cause located.** The LLM's analysis: "the patch adds a length check at line X / address Y, before a memcpy." Confidence pill, supporting evidence (decompilation excerpts side-by-side: vulnerable vs patched), refuting evidence if any.
-3. **Trigger crafted.** A minimal input that hits the pre-patch path. Hex view + structural view, repro stats (runs / 100), and the harness used.
-4. **Exploit demonstrated.** Linked to §1.7. Reliability stats; mitigations defeated; ASLR/CFI/etc. defeats listed.
-
-Each stage has a "rewind" button (drop everything from this stage forward and re-enter from earlier). N-day repro often has to back up — a wrong root cause hypothesis in stage 2 contaminates everything downstream — so stage rewind is a real operation, with a confirm dialog.
-
-The progression is rendered with the same visual vocabulary as the disclosure timeline in §1.8 — a vertical thread of stage events with dates and completing operator/turn — because the two workflows are structurally similar (a sequence of named milestones with proof at each step).
-
-### 1.12 Operator Steering Panel — drawer overlay, not a route
-
-Steering is a *modifier* on whatever page you're on. Implementing it as its own URL would mean leaving the surface you're trying to influence. So it's a right-side drawer triggered by a sticky action button on the project dashboard, target detail, timeline, and crash detail pages.
-
-**Sections (collapsed accordion, expandable individually):**
-
-1. **Pause / resume the loop.** Big toggle. While paused, the next turn won't fire. A reason field: "why are you pausing?" — captured in the audit trail. Optional "auto-resume after" timer.
-2. **Inject context.** Free-text field labelled "Information for the LLM next turn." This becomes a single user-message section ("operator note") in the next prompt. Examples of valid use the help-tip surfaces:
-   - "The customer says this binary is normally invoked with `--unsafe-mode`. Try that path."
-   - "We have unconfirmed reports that revision 2.4.1 introduced a regression in the auth code — focus there."
-   - "Stop trying to bypass ASLR; assume the leak from H4 is reliable."
-3. **Pin / unpin strategy.** Force the next N turns to use a specific strategy family (`reverse_engineering`, `fuzzing_setup`, `crash_triage`, `exploit_development`, `chain_construction`, `n_day_reproduction`, `harness_iteration`, `mitigation_analysis`). Overrides the router. Has an explicit cost: pinning bypasses the router's task-fit heuristic, so the help-tip says so.
-4. **Confirm / disprove a hypothesis.** Live-search picker over open hypotheses. Selecting one offers two actions: "confirm — operator-asserted" and "disprove — operator-asserted." Both attach an operator-evidence node to the hypothesis. Operator-evidence is *specially weighted*: it overrides LLM-derived evidence in the adjudicator (see `docs/vr/01_REASONING_LOOP.md §6`), but it also gets a yellow audit flag — operator overrides are the thing reviewers check first when a finding turns out to be wrong.
-5. **Close an obligation manually.** For obligations the LLM can't satisfy automatically (e.g. "human confirmation that this is in scope"). Same audit-flag rules as #4.
-6. **Steer the next action.** The most invasive: "next turn must be action X with parameters Y." Used when the LLM is stuck in a loop and the operator can see the way forward. Logged loudly.
-
-The drawer is intentionally *visible*. Hidden steering is research dishonesty — a finding that exists only because an operator quietly nudged the LLM is not a finding, it's an operator's intuition with extra steps.
+## 1. Page inventory
+
+Each page is a `RouteContribution` with `slot: "page.full"`. Module
+routes are mounted under `/vr/*`. The breadcrumb on each page is set
+explicitly so the header doesn’t synthesize intermediate links to
+paths the module hasn’t registered.
+
+The table below reflects what `src/aila/modules/vr/frontend/routes.tsx`
+actually exports as of 2026-06-21. Lazy-loaded pages (`EvidenceGraphPage`,
+`ExploitEditorPage`, `NewProjectWizard`, `BranchTreePage`) are flagged in
+the Notes column.
+
+| Route | Component | Min role | Notes |
+|---|---|---|---|
+| `/vr` | `ProjectsPage` | reader | Landing list of research engagements. `nav: true`. |
+| `/vr/projects/new` | `NewProjectWizard` | operator | Lazy. New-project intake wizard. |
+| `/vr/projects/:projectId` | `ProjectDetailPage` | reader | Per-engagement hub. |
+| `/vr/projects/:projectId/ndays/:cveId` | `NdayPage` | reader | N-day reproduction view. |
+| `/vr/projects/:projectId/findings/:findingId` | `FindingDetailPage` | reader | Project-scoped finding detail. |
+| `/vr/projects/:projectId/findings/:findingId/exploit` | `ExploitEditorPage` | operator | Lazy. PoC editor. |
+| `/vr/projects/:projectId/targets/:targetId` | `TargetDetailPage` | reader | Project-scoped alias for the flat target route. |
+| `/vr/projects/:projectId/campaigns/:campaignId` | `FuzzCampaignDetailPage` | reader | Project-scoped alias for the flat campaign route. |
+| `/vr/projects/:projectId/crashes/:crashId` | `FuzzCrashDetailPage` | reader | Project-scoped alias for the flat crash route. |
+| `/vr/projects/:projectId/timeline` | `InvestigationsListPage` | reader | Project-scoped timeline view (alias). |
+| `/vr/projects/:projectId/audit` | `AuditLogPage` | admin | Project-scoped audit view (alias). |
+| `/vr/investigations` | `InvestigationsListPage` | reader | Cross-project investigation list. `nav: true`. |
+| `/vr/investigations/:investigationId` | `InvestigationDetailPage` | reader | Investigation detail — branch tabs + timeline + controls. |
+| `/vr/investigations/:investigationId/graph` | `EvidenceGraphPage` | reader | Lazy. ReactFlow evidence graph. |
+| `/vr/investigations/:investigationId/tree` | `BranchTreePage` | reader | Lazy. Branch structure visualisation. |
+| `/vr/workspaces` | `WorkspacesPage` | reader | Workspace switcher. `nav: true`. |
+| `/vr/targets` | `TargetsPage` | reader | Cross-project target list. `nav: true`. |
+| `/vr/targets/:targetId` | `TargetDetailPage` | reader | Target detail + analysis stages. |
+| `/vr/patterns` | `PatternsPage` | reader | Extracted vulnerability patterns. `nav: true`. |
+| `/vr/patterns/:patternId` | `PatternDetailPage` | reader | Pattern detail. |
+| `/vr/findings` | `FindingsListPage` | reader | Cross-project findings table. `nav: true`. |
+| `/vr/findings/:findingId` | `FindingDetailPage` | reader | Global finding detail. |
+| `/vr/disclosures` | `DisclosuresPage` | operator | Disclosure submissions. `nav: true`. |
+| `/vr/disclosures/:submissionId` | `DisclosureDetailPage` | operator | Disclosure detail + timeline. |
+| `/vr/fuzz/campaigns` | `FuzzCampaignsPage` | reader | Campaign list. `nav: true`. |
+| `/vr/fuzz/campaigns/:campaignId` | `FuzzCampaignDetailPage` | reader | Campaign detail. |
+| `/vr/fuzz/crashes/:crashId` | `FuzzCrashDetailPage` | reader | Crash triage. |
+| `/vr/mcp/servers` | `McpServersPage` | admin | MCP server health admin. `nav: true`. |
+| `/vr/mcp/calls` | `McpCallLogPage` | admin | MCP call log inspector. `nav: true`. |
+| `/vr/audit` | `AuditLogPage` | admin | VR-scoped audit log. `nav: true`. |
+
+Implementer note: re-read `routes.tsx` and add/remove rows before saving.
+The list above reflects the audit on 2026-06-21; the codebase may have
+moved since.
+
+### 1.bis Investigation timeline behaviour (shipped)
+
+A few page-level details the brainstorm body did not cover:
+
+- `useInvestigationMessages` now fetches up to 500 messages (was 100).
+- `TurnCard` collapses by default — click the header to expand. Shows a one-line preview when collapsed.
+- Live updates flow exclusively through `useInvestigationMessagesStream`
+  (SSE). The previous polling default in `useInvestigationMessages` is
+  opt-in (`liveTail: true` option) after it contributed to two uvicorn
+  OOMs in production. Existing positional-arg call sites remain
+  compatible.
 
 ---
 

@@ -79,6 +79,8 @@ Notes:
 
 The frontend is a pnpm workspace. Every module's `frontend/` directory is its own workspace package consumed by `@aila/shell` via `workspace:*`.
 
+Current module frontend packages: `@aila/hello-world-frontend`, `@aila/vulnerability-frontend`, `@aila/forensics-frontend`, `@aila/sbd-nfr-frontend`, `@aila/vr-frontend`.
+
 ### Required workspace files
 
 Every module's frontend directory MUST contain:
@@ -415,13 +417,15 @@ Any missing endpoint or unusable contract becomes a separate backend follow-up.
 
 **Platform owns the design system. Modules consume it — they do not extend or replace it.**
 
-### Required: Use PatternFly + Platform CSS
+### Required: Use the AILA design system
 
-Module screens **must** build their UI from:
+Module screens MUST build their UI from:
 
-1. **PatternFly v6 components** — `@patternfly/react-core`, `@patternfly/react-icons`, `@patternfly/react-table`
-2. **Platform utility classes** — `.button`, `.data-table`, `.metric-card`, `.page-frame`, `.banner`, `.badge--*`, `.field`, `.stack`, `.metric-grid`, `.table-card`, `.callout`, `.pill`, `.code-block`, etc.
-3. **Platform CSS custom properties** — `--accent`, `--critical`, `--high`, `--medium`, `--healthy`, `--canvas`, `--panel`, `--border`, `--text-primary`, `--text-secondary`, etc.
+1. **AILA shared components** at `frontend/src/components/aila/` — re-exported by the shell. The canonical surface is `AilaCard`, `AilaBadge` (severity prop: `critical | high | medium | low | informational | unknown`), `AilaTable`, `EmptyState`, `KpiTile`, and `AilaChart`. Modules consume these as React components, NOT as CSS utility classes.
+2. **shadcn/ui primitives** — re-exported under `@platform/ui/*` when a module needs a primitive AILA components do not yet wrap (Dialog, Popover, DropdownMenu, ...).
+3. **AILA design tokens** — CSS variables under the `--color-*` namespace declared in `frontend/src/styles/globals.css`. Module styles MUST reference tokens (`color: var(--color-mint)`), never literal hex colours.
+
+No legacy CSS framework is installed. The Tailwind layer is v4; module classes must be reachable from the shell's `@source` directives (see "Tailwind v4 source discovery" below).
 
 ### Forbidden
 
@@ -429,38 +433,36 @@ Module developers must **not**:
 
 - Add a `frontend/styles.css` file to apply cosmetic CSS that duplicates or overrides platform styles
 - Hardcode colors, font sizes, spacing, or border-radius values inline or in local stylesheets
-- Override PatternFly CSS variables (e.g. `--pf-v6-*`) inside module files
-- Import a third-party UI library (`chakra-ui`, `shadcn`, `mantine`, etc.)
+- Override AILA design tokens (e.g. `--color-*`) inside module files
+- Import a third-party UI library (`chakra-ui`, `mantine`, etc.) outside the shell-curated shadcn re-exports
 - Create custom layout grids or shell structures that conflict with `PageFrame`
 
 ### Allowed Exception: Complex Data Visualizations
 
-If a module requires a genuinely complex, custom data display that cannot be composed from PatternFly + platform classes — such as:
+If a module requires a genuinely complex, custom data display that cannot be composed from AILA components + shadcn primitives — such as:
 - An interactive graph renderer (D3, Cytoscape, WebGL)
 - A custom timeline or Gantt chart
 - A domain-specific canvas visualization
 
 …then a scoped `frontend/styles.css` limited to that visualization component is acceptable. It must:
-- Use `--pf-v6-*` or platform CSS vars wherever possible for colors/spacing
+- Use `--color-*` design tokens wherever possible for colors/spacing
 - Be scoped to a unique wrapper class (e.g. `.vulnerability-graph { … }`)
-- Not override any global or PatternFly class names
+- Not override any global AILA component class names
 
 ### Correct Pattern
 
 ```tsx
-// ✓ Good — uses PF + platform classes
-import { Card, CardBody, Label } from "@patternfly/react-core";
+// ✓ Good — uses AILA components + design tokens
+import { AilaCard, AilaBadge } from "@/components/aila";
 
 export function FindingCard({ finding }: { finding: VulnerabilityFinding }) {
   return (
-    <Card>
-      <CardBody>
-        <span className={`badge badge--${finding.severity.toLowerCase()}`}>
-          {finding.severity}
-        </span>
-        <p className="text-muted">{finding.description}</p>
-      </CardBody>
-    </Card>
+    <AilaCard>
+      <AilaBadge severity={finding.severity.toLowerCase()}>
+        {finding.severity}
+      </AilaBadge>
+      <p style={{ color: "var(--color-text-muted)" }}>{finding.description}</p>
+    </AilaCard>
   );
 }
 ```
@@ -477,27 +479,20 @@ export function FindingCard({ finding }) {
 }
 ```
 
-### Platform CSS Reference
+### Platform Design System Reference
 
-The platform CSS lives at `frontend/src/platform/ui/styles.css`. Do not import it in module code — it is globally applied. Use its class names directly.
+Global styles and Tailwind directives live at `frontend/src/styles/globals.css`. Modules do not import it; the shell loads it at boot.
 
-Key utility classes available to all modules:
+Key components available to all modules:
 
-| Class | Purpose |
-|-------|---------|
-| `.button`, `.button--secondary`, `.button--danger` | Buttons |
-| `.data-table` | Sortable/filterable tables |
-| `.metric-card` | KPI stat card |
-| `.table-card` | Card wrapping a table |
-| `.badge--critical/high/medium/low/unknown` | Severity badges |
-| `.banner--warning/danger/success` | Inline alert banners |
-| `.field`, `.field__input` | Form fields |
-| `.page-frame` | Page content wrapper (use `PageFrame` component instead) |
-| `.code-block`, `.code-inline` | Monospace display |
-| `.stack`, `.stack--tight` | Vertical flex stacks |
-| `.metric-grid` | Auto-fit metric card grid |
-| `.empty-state` | Empty/no-data state |
-| `.text-muted`, `.text-link` | Typographic utilities |
+| Component | Purpose | Key props |
+|---|---|---|
+| `AilaCard` | Bordered panel with optional header / footer | `header`, `footer`, `tone` |
+| `AilaBadge` | Severity / state pill | `severity` (critical/high/medium/low/informational/unknown), `children` |
+| `AilaTable` | Striped data table with sortable headers | `columns`, `rows`, `onSort` |
+| `EmptyState` | Centred empty-list placeholder | `title`, `body`, `action` |
+| `KpiTile` | Headline metric tile | `label`, `value`, `delta` |
+| `AilaChart` | Recharts wrapper with CSS-var → hex resolution | uses `useThemeChartColors()` |
 
 ### Tailwind v4 Content Scan
 
@@ -597,9 +592,9 @@ a matching entry in `dependencies`, `peerDependencies`, or
 - module frontend importing another module's frontend code
 - UI inventing live state because the backend is inconvenient
 - **module-level `styles.css` for cosmetic overrides** (hardcoded colors, spacing, typography)
-- **reinventing platform classes** (e.g. custom status badges instead of `.badge--*`, custom cards instead of `Card` from PatternFly)
+- **reinventing platform components** (e.g. custom status badges instead of `AilaBadge`, custom cards instead of `AilaCard`)
 - **importing third-party UI libraries** not already in the platform bundle
-- **overriding `--pf-v6-*` CSS variables** from within a module file
+- **overriding `--color-*` design tokens** from within a module file
 
 ## One-Sentence Rule
 

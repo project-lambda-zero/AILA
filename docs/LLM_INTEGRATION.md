@@ -182,7 +182,8 @@ The same pattern applies to temperature, max tokens, and tool steps:
 | Per-call timeout | — | `AILA_LLM_TIMEOUT_SECONDS` env var | `180` | `300` |
 
 Models that reject the `temperature` parameter (the o1/o3/o4/gpt-5 family,
-Claude Opus 4.6) are declared in `AILA_LLM_MODELS_REJECTING_TEMPERATURE`
+Claude Opus 4.6/4.7, Claude Sonnet 4.7, high-thinking models, `hadi`) are
+declared in `AILA_LLM_MODELS_REJECTING_TEMPERATURE`
 (comma-separated substrings, matched lowercase against the routed `model_id`).
 The resolved list is cached for the process lifetime and falls back, in
 order, to the env var, the `platform.llm_models_rejecting_temperature`
@@ -399,7 +400,7 @@ Every `client.chat()` call runs through a fixed 5-step pipeline. This is transpa
 ### Step order
 
 ```
-classify -> call -> validate -> gate -> seal
+classify -> call -> validate -> gate -> verify -> seal
 ```
 
 | Step | Phase | What it does |
@@ -408,6 +409,7 @@ classify -> call -> validate -> gate -> seal
 | **call** | -- | The actual LLM API call. Not a registered step -- it is the core `_single_call` logic. |
 | **validate** | Post-call | Runs registered EvidenceValidators against the response content. Reports hallucinated citations. |
 | **gate** | Post-call | Extracts confidence score, maps to HIGH/MEDIUM/LOW/REJECT. May run consensus retries for LOW. Discards REJECT. |
+| **verify** | Post-call | Runs registered VerificationRecord cross-model verification (Phase 174, LLM-SEC-01). |
 | **seal** | Post-call | Computes HMAC-SHA256 seal over input+model+output+classification+confidence+validation. Stores to PostgreSQL (`llm_audit_seals`). |
 
 ### Per-task-type step toggling
@@ -427,8 +429,10 @@ Missing config key means enabled (`True` by default).
 
 Each step has a fail mode that controls what happens when the step throws an error:
 
-- **`open`** (default): Log the error and continue the pipeline. The LLM call succeeds.
-- **`closed`**: Re-raise the error as `LLMError`. The LLM call fails.
+- **`closed`** (default for security-critical steps: classify, validate, gate, verify, seal, sanitize): Re-raise the error as `LLMError`. The LLM call fails.
+- **`open`** (default for other steps): Log the error and continue the pipeline. The LLM call succeeds.
+
+Operators that want fail-open on a security-critical step MUST opt in explicitly per `task_type`. Source: `src/aila/platform/llm/config.py:280-285` (Phase 156).
 
 Configure via `llm_pipeline_{step}_fail_mode_{task_type}`:
 
@@ -851,17 +855,39 @@ retried with exponential backoff capped per attempt. Defaults:
 
 | Env var | Default | Effect |
 |---------|---------|--------|
-| `AILA_LLM_MAX_RETRIES` | `100` | Total attempts before raising `LLMError(retryable=True)` with the last cause. |
+| `AILA_LLM_MAX_RETRIES` | `3` | Total attempts before raising `LLMError(retryable=True)` with the last cause. Exponential backoff 1s, 2s, 4s capped at 30s. |
 | `AILA_LLM_RETRY_BASE_DELAY_S` | `1.0` | First-attempt backoff (seconds). |
 | `AILA_LLM_RETRY_MAX_DELAY_S` | `30.0` | Per-attempt backoff cap (seconds). |
 
-At the shipped defaults the client tolerates roughly 48 minutes of
-sustained provider degradation (attempts 0–4 backoff `1s, 2s, 4s, 8s,
-16s`, then 30 s thereafter) before surfacing failure. The OpenAI SDK's
-built-in retry is disabled (`max_retries=0`) so every retry passes
-through this layer for observability.
+At the shipped defaults the client retries up to 3 times with
+exponential backoff (1s, 2s, 4s capped at 30s), for a total in-task
+retry budget of ~7 seconds. Sustained provider degradation is handled
+by ARQ task-level retry with cursor preservation, not by the in-call
+retry loop. The OpenAI SDK's built-in retry is disabled
+(`max_retries=0`) so every retry passes through this layer for
+observability.
 
 Non-retryable errors — `ClassificationBlockedError`,
 `ConfidenceRejectedError`, `BudgetExceededError`, and any `LLMError`
 constructed with `retryable=False` — surface immediately on first
 attempt, regardless of the retry cap.
+
+---
+
+## 13. Request idempotency cache (migration 061)
+
+Every LLM call is request-keyed via the `llm_idempotency_cache` table.
+The key is `sha256(investigation_id, branch_id, turn_number,
+prompt_hash)` for VR; other callers supply equivalent keys. On a retry
+the cache replays the cached response instead of paying for another
+provider round-trip.
+
+- **Insert path** — gateway writes the response after successful
+  validation + verification + seal.
+- **Replay path** — gateway returns the cached row when the request
+  key matches.
+- **Cleanup** — the worker imports `run_purge_expired_cron` from
+  `aila.platform.llm.idempotency_cache` and runs it on the cron
+  schedule; expired entries drop so cache size stays bounded.
+- **Source of truth** — `src/aila/platform/llm/idempotency_cache.py`,
+  migration `061_llm_idempotency_cache.py`.

@@ -51,6 +51,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   told to prefer symbol-graph tools (`callers_of`, `taint_paths_to`,
   `type_resolver`) over `search_source` (raw grep). Repeated
   `search_source` calls are flagged as a code smell.
+- `vr` module: OWASP MASVS L1/L2 audit framework — full control catalog
+  (`masvs/catalog.py`), verdict mapper from child investigation outcomes,
+  parent reconciler for aggregate scoring, seed builder for MASVS-structured
+  investigation spawning, and PDF report section (`reporting/masvs_report.py`).
+- `vr` module: Android MCP bridge tool (`tools/android_mcp_bridge.py`) for
+  APK / mobile analysis via the android-mcp server. Adds
+  `REACT_NATIVE_EXTRACT` as a 6th Android pipeline stage between
+  `JADX_DECOMPILE` and `INDEX_DECOMPILED`.
+- `vr` module: coordinated vulnerability disclosure subsystem
+  (`disclosure/`) — pluggable disclosure tracks (kernel, standard, extra),
+  timeline management, submission tracking.
+- `vr` module: `ClaimVerifier` agent (`agents/claim_verifier.py`) —
+  adversarial post-synthesis verification of researcher claims before a
+  finding can ship.
+- `vr` module: `PatternExtractor` agent (`agents/pattern_extractor.py`) —
+  mines reusable vulnerability patterns from completed investigations into
+  the `vr_patterns` table.
+- `vr` module: enrichment pipeline (`enrichment/`) — background workers
+  for CVE / CWE / target metadata enrichment with dedicated contracts
+  and services.
+- `vr` module: `OutcomeDispatcher` agent (`agents/outcome_dispatcher.py`) —
+  routes investigation outcomes to variant spawning, disclosure tracks,
+  and finding finalization. Hosts the `_spawn_variant_child` helper.
+- `vr` module: auto-steering system (`agents/auto_steering.py`).
+  `maybe_post_auto_steering()` fires after each tool dispatch; when the
+  result matches a known dead-end pattern it POSTs an operator-style
+  message at PROMPT POSITION 2 on every branch's next turn. Dedupes via
+  the indexed `auto_steering_key` column (migration 063); re-fires once
+  all prior matching posts are ACKed.
+- `vr` module: section writer (`reporting/section_writer.py`) — one LLM
+  call per MASVS control, parallel via `asyncio.gather`, cached on the
+  outcome payload under `_report_section`. Replaces the dumb pass-through
+  that dumped auditor free-text verbatim.
+- `vr` module: stall recovery service (`services/stall_recovery.py`) —
+  detects and recovers stuck investigations via branch activity analysis.
+- `vr` module: outcome review service (`services/outcome_review.py`) —
+  quorum-based evaluation of investigation outcomes with
+  `auto_approved_no_active_voters_*` fallbacks when no active siblings
+  remain to vote.
+- `vr` module: branch manager agent (`agents/branch_manager.py`) for
+  multi-branch investigation coordination and case-state merging.
 
 ### Changed
 
@@ -150,6 +191,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Auto-correction for hallucinated `audit_mcp` `index_id` values: the
   bridge rewrites obviously-bad ids to the active investigation's
   target and surfaces a sharper prompt callout (commit `ad2af51`).
+- Platform: `cursor_reaper` now sweeps all four reserved terminal cursor
+  states (`__crashed__`, `__failed__`, `__cancelled__`, `__succeeded__`)
+  whose `run_id` no longer has an active `TaskRecord`. Function name
+  `sweep_orphan_crashed_cursors` kept for backwards compat.
+- Platform: `WorkflowStateCursor` gains an `archived_state` column
+  (migration 067). Engine-level pause/resume preserves the prior
+  `current_state` here while the cursor sits at the new non-terminal
+  reserved name `__paused__`.
+- Platform: `Settings` defaults — `AILA_LLM_MAX_RETRIES` changed from
+  `100` to `3` (in-task retry budget ~7s; sustained degradation handled
+  by ARQ task-level retry with cursor preservation, not in-call retry).
+  Pipeline fail mode default for security-critical steps (classify,
+  validate, gate, verify, seal, sanitize) changed from `open` to
+  `closed`; operators that want fail-open on these MUST opt in
+  explicitly per task_type.
+- Platform: `TaskStatus` enum gains `paused` and `dead_letter` values
+  (migration 066 adds CHECK constraint `ck_taskrecord_status_canonical`
+  enforcing all 8 values at the DB level). `TaskRecord` gains
+  `input_hash` (SHA-256 dedup key; partial UNIQUE within active statuses
+  via migration 065) and `version` (optimistic-lock column from
+  migration 011, now documented).
 
 ### Fixed
 

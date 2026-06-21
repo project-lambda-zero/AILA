@@ -55,6 +55,8 @@ UserRecord:
   is_active:        soft-delete flag (false = locked out)
   oidc_sub:         OIDC `sub` claim, set on auto-provisioned accounts
   last_login_at:    timestamp of last successful /auth/login
+  created_at:       creation timestamp
+  updated_at:       last modification timestamp
 ```
 
 ### First-boot admin

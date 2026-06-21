@@ -17,7 +17,7 @@ User: "scan raspi"
   |
   +-- [2] Platform orchestrator
   |     Creates RunState + WorkflowRunRecord
-  |     Builds EventEmitter with 3 destinations (audit DB, run history, progress SSE)
+  |     Builds EventEmitter with 4 destinations (audit DB, run history, progress callback, Redis stream)
   |
   +-- [3] LLM Router (two-tier)
   |     Tier 1: DecisionCache (keyed on query + profile hash, TTL-based)
@@ -230,7 +230,7 @@ Accessible via `GET /admin/cost` (Cost Intelligence page).
 
 ## Layer 5: Event System
 
-`EventEmitter` in `platform/events/emitter.py`. Fan-out delivery to 3 destinations per request.
+`EventEmitter` in `platform/events/emitter.py`. Fan-out delivery to 4 destinations per request.
 
 ```
 emitter.emit(PlatformEvent(stage="inventory", action="start", message="..."))
@@ -238,6 +238,8 @@ emitter.emit(PlatformEvent(stage="inventory", action="start", message="..."))
   +-- audit_db:    INSERT INTO workflowauditrecord
   +-- run_history: Append to RunState.events (in-memory, serialized at finalization)
   +-- progress:    SSE stream via Redis XADD (consumed by frontend EventSource)
+  +-- redis_stream: Publish to Redis Stream keyed by task:{run_id}:progress
+      (consumed by frontend SSE)
 ```
 
 ### Thread safety
@@ -274,7 +276,7 @@ For complex modules (vulnerability, forensics), handle() calls the module's `@pl
 
 ```python
 ModuleRequest(
-    session: AsyncSession,          # active DB session (do not create new ones)
+    session: Session,                # active DB session (do not create new ones)
     run_id: str,                    # unique run identifier
     action_id: str,                 # "vulnerability.analyze_fleet"
     run_state: RunState,            # contains RouteDecision + events
@@ -372,7 +374,7 @@ Used for three things:
 2. **SSE progress streams.** Redis Streams keyed by `aila:progress:{run_id}`. Frontend EventSource reads via XREAD.
 3. **Worker heartbeat.** Workers write `aila:heartbeat:{worker_id}` with TTL. Health endpoint checks key existence.
 
-A cron-driven sweep in `src/aila/platform/tasks/cursor_reaper.py` issues an ORM `delete(WorkflowStateCursor)` every minute for `__crashed__` cursors whose `run_id` no longer has an active `TaskRecord`.
+A cron-driven sweep in `src/aila/platform/tasks/cursor_reaper.py` issues an ORM `delete(WorkflowStateCursor)` every minute for reserved-terminal cursors (`__crashed__`, `__failed__`, `__cancelled__`, `__succeeded__`) whose `run_id` no longer has an active `TaskRecord`. Function name `sweep_orphan_crashed_cursors` is kept for backwards compat.
 
 ### Report artifacts
 

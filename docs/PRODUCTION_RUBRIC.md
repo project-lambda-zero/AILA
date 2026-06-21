@@ -70,7 +70,7 @@ Test conduct:
 | Errors raise typed exceptions | New error paths raise an `AILAError` subclass with `ClassVar code` + `http_status` + `user_message`. Generic `RuntimeError` for user-visible failures is a regression. |
 | Direct DB drivers banned in modules | No module imports `asyncpg`, `psycopg`, `psycopg2`, `sqlite3`, `create_engine`, or `create_async_engine` directly. All access goes through `UnitOfWork` / `async_session_scope`. Honesty audit catches this. |
 | `session.merge` for potentially-existing rows | `WorkflowRunRecord`, durable cursors, and other rows the platform may have pre-created use `session.merge()`. `session.add()` for these rows produces an `IntegrityError` on the second run. |
-| No direct writes to `__crashed__` cursors | The platform-owned reaper (`platform/tasks/cursor_reaper.py`) clears `workflow_state_cursor.current_state = '__crashed__'` rows. Module code never sets or reads `__crashed__` directly. |
+| No direct writes to `__crashed__` cursors | The platform-owned reaper (`platform/tasks/cursor_reaper.py`) clears cursors in reserved terminal states (`__crashed__`, `__failed__`, `__cancelled__`, `__succeeded__`) whose `run_id` no longer has an active `TaskRecord`. Module code never sets or reads these reserved states directly. |
 
 ---
 

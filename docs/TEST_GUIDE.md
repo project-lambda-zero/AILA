@@ -16,6 +16,8 @@ How to write and run tests for the AILA platform.
 
 **Do NOT use `TestClient` from Starlette.** It deadlocks on SSE endpoints and async routes. Always use `httpx.AsyncClient` with `ASGITransport`.
 
+Note: `pytest-asyncio` is required (config sets `asyncio_mode = "auto"` in `pyproject.toml`) but is not currently declared in `pyproject.toml` `[project.optional-dependencies] dev`. Install explicitly with `pip install pytest-asyncio` if it isn't already in your environment.
+
 ---
 
 ## Conftest Hierarchy

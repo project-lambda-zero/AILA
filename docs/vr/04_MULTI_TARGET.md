@@ -1,5 +1,25 @@
 # VR Module — Multi-Target Research
 
+> **Status: design exploration.** This document predates the shipped VR
+> engine and describes an idealised contract, not current code. The
+> shipped implementation diverges in class names, enum values, table
+> schemas, routes, and state machines. Use this doc for intent and
+> taxonomy; verify every concrete claim against the files listed in
+> "Current implementation pointers" below before relying on it.
+>
+> **Current implementation pointers** (verified 2026-06-21):
+>
+> | Topic | Shipped location |
+> |---|---|
+> | Reasoning loop | `src/aila/modules/vr/agents/vuln_researcher.py` |
+> | Submit-time gates | `vuln_researcher._maybe_reject_submit_when_draft_pending`, `_maybe_reject_submit_with_unresolved_hypotheses`, variant-hunt gate |
+> | Per-LLM-call idempotency | `src/aila/platform/llm/idempotency_cache.py` + migration `061_llm_idempotency_cache.py` |
+> | Auto-steering | `src/aila/modules/vr/agents/auto_steering.py` |
+> | Outcome routing | `src/aila/modules/vr/agents/outcome_dispatcher.py` |
+> | DB schema (19 tables) | `src/aila/modules/vr/db_models/__init__.py` |
+> | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
+> | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
+
 How the VR module handles a real product. Not a single binary, not a single library — a tree of binaries, libraries, parsers, protocols, and kernel components that interact and accumulate vulnerabilities into chains.
 
 The single-binary model (one ELF, one fuzzer, one campaign) is a useful primitive but it doesn't describe how research actually happens. A real engagement is "audit this router firmware" or "find bugs in this VPN appliance." That means dozens of artifacts, shared code, asymmetric privilege, and bugs that only become exploitable when you compose them across binaries.
@@ -57,16 +77,24 @@ That's 28+ artifacts. The module needs a structured representation, not "look at
 Each artifact becomes a `Target` row. Not every file is a target — only things the LLM can meaningfully research:
 
 ```python
-class TargetKind(str, Enum):
-    NATIVE_BINARY = "native_binary"          # ELF, PE, Mach-O executable
-    SHARED_LIBRARY = "shared_library"        # .so, .dll, .dylib
-    KERNEL_MODULE = "kernel_module"          # .ko, .sys
-    HYPERVISOR_COMPONENT = "hypervisor_component"
-    CONFIG_PARSER = "config_parser"          # virtual: a function inside a binary that parses a format
-    NETWORK_PROTOCOL = "network_protocol"    # virtual: one binary's parser for one wire protocol
-    JAVA_ARTIFACT = "java_artifact"          # .jar, .war, source repo
-    SOURCE_REPO = "source_repo"              # interpreted-language source tree
-    SCRIPT_FILE = "script_file"              # individual .py/.js/.php with high blast radius
+# Shipped: 13 members in src/aila/modules/vr/contracts/target.py:39-55.
+# (The brainstorm above proposed CONFIG_PARSER / NETWORK_PROTOCOL /
+# SHARED_LIBRARY / SCRIPT_FILE / JAVA_ARTIFACT / HYPERVISOR_COMPONENT;
+# the shipped enum collapsed them into the kinds below.)
+class TargetKind(StrEnum):
+    NATIVE_BINARY = "native_binary"
+    SOURCE_REPO = "source_repo"
+    CVE = "cve"
+    PROTOCOL_CAPTURE = "protocol_capture"
+    CRASH_INPUT = "crash_input"
+    PATCH_DIFF = "patch_diff"
+    ANDROID_APK = "android_apk"
+    IPA = "ipa"
+    JAR = "jar"
+    DOTNET_ASSEMBLY = "dotnet_assembly"
+    KERNEL_IMAGE = "kernel_image"
+    KERNEL_MODULE = "kernel_module"
+    HYPERVISOR_IMAGE = "hypervisor_image"
 
 class Target(SQLModel, table=True):
     id: UUID

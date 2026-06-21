@@ -56,7 +56,13 @@ Fields:
 - `percent` (str) -- completion percentage 0-100
 - `timestamp` (str) -- ISO-8601 UTC timestamp
 
-Keepalive pings are sent every 30 seconds when no events arrive:
+Keepalive cadence depends on the transport backing the endpoint. Redis-backed
+SSE (scan progress, task progress, chat tokens) uses an `XREAD` block of 30 s
+(`src/aila/platform/tasks/constants.py:68`). Worker-stream-backed SSE
+(e.g. forensics readiness, in-process progress) uses a 5 s heartbeat
+(`src/aila/platform/sse/worker_stream.py:27`, `heartbeat_interval: float = 5.0`).
+
+Keepalive payload:
 
 ```json
 {"type": "ping"}

@@ -212,7 +212,9 @@ Summary:
 - **HTTP:** `httpx.AsyncClient` with `ASGITransport`. Do **not** use
   Starlette's `TestClient` — it deadlocks on SSE and async routes.
 - **Layout:** mirror the source tree under `tests/`. API tests under
-  `tests/api/`, module tests under `tests/modules/<module_id>/`.
+  `tests/api/`, module tests under `tests/modules/<module_id>/` or prefixed
+  as `tests/test_<module_id>_*.py` (and `tests/api/test_<module_id>_*.py`
+  for API tests). The `vr` module uses the prefixed layout.
 - **Naming:** `test_<behavior>.py::test_<case>`. The filename names the
   behavior under test; the function name names the case.
 - **Fixtures over inline setup.** Reuse `tests/conftest.py`,
@@ -351,7 +353,7 @@ See `src/aila/modules/hello_world/frontend/` for a working example.
 
 The startup scripts load `.env`, start audit-mcp, the FastAPI backend, 5 ARQ
 workers (default, vr, vulnerability, forensics, sbd_nfr), and the Vite frontend.
-Logs go to `/tmp/aila_*.log`.
+Logs go to `.run/<slug>.log` (e.g. `.run/backend.log`, `.run/worker-vr.log`).
 
 ---
 

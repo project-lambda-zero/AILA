@@ -11,10 +11,12 @@ Backend ───── Python 3 (FastAPI, SQLModel, SSH, LLM agents)
 Frontend ──── React (PatternFly + AILA design system, TanStack Query v5)
 Reasoning ─── strategy-neutral LLM investigator with closed-loop protocol
               (no hardcoded playbooks; the LLM is the strategist end-to-end)
-Pipeline ──── two workflow definitions:
+Pipeline ──── four workflow definitions (one dispatcher + three modes):
+              • FORENSICS_DISPATCHER_V1   — routing → mode_selection (selects below)
               • FORENSICS_FULL_ANALYSIS_V1 — intake → collection → deep_analysis
                   → promotion → resolution → writeup → response_emit
               • FORENSICS_FREEFLOW_V1     — freeflow → writeup → response_emit
+              • FORENSICS_RAW_DIRECTORY_V1 — intake → __succeeded__ (raw directory intake-only)
 ```
 
 ### Package Map
@@ -379,7 +381,7 @@ The investigator invokes capa with both paths supplied explicitly: `capa -q -j -
 
 ## Investigation Pipelines
 
-The module ships TWO ARQ-driven workflow definitions (`workflow/definitions.py`). The dispatcher (`FORENSICS_DISPATCHER_V1`) selects between them at intake.
+The module ships THREE ARQ-driven workflow definitions (`workflow/definitions.py`). The dispatcher (`FORENSICS_DISPATCHER_V1`) selects between them at intake.
 
 ### `FORENSICS_FULL_ANALYSIS_V1`
 
@@ -532,7 +534,6 @@ All endpoints use `DataEnvelope[T]`, platform auth, and rate limiting.
 | `AnalystDirectiveRecord`       | project_id, investigation_id?, directive_text, active, created_at                                                          |
 | `SolidEvidenceRecord`          | project_id, investigation_id, evidence_text, source_artifact_id?, directive_id?                                            |
 | `FindingSuppressionRecord`     | project_id, finding_signature, reason, suppressed_by, directive_id?                                                        |
-| `QuestionRecord`               | project_id, question_text, family, expected_format                                                                         |
 
 ---
 

@@ -70,9 +70,9 @@ from aila.platform.modules.protocol import (
     ModuleProtocol, ModuleCapabilityProfile, ModuleContext,
     ModuleRouteSpec, ModuleRuntime,
 )
-from aila.platform.tools.registry import ToolRegistry
-from aila.platform.modules.schema_registry import SchemaRegistry
-from aila.platform.modules.config_registry import ConfigRegistry
+from aila.platform.runtime import ToolRegistry
+from aila.storage.registry import SchemaRegistry
+from aila.storage.registry import ConfigRegistry
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .capabilities import CAPABILITY_DESCRIPTION, MODULE_TOOLS, CAPABILITY_EXAMPLES
@@ -134,17 +134,17 @@ class MyModModule:
         # Idempotent. Check SeedVersionRecord before writing.
         from aila.storage.db_models import SeedVersionRecord
         from sqlmodel import select
-        SEED_VERSION = 1
+        SEED_VERSION = "1"
         existing = (await session.exec(
             select(SeedVersionRecord).where(
                 SeedVersionRecord.module_id == MODULE_ID,
-                SeedVersionRecord.version >= SEED_VERSION,
+                SeedVersionRecord.seed_version == SEED_VERSION,
             )
         )).first()
         if existing:
             return
         # ... write seed data ...
-        session.add(SeedVersionRecord(module_id=MODULE_ID, version=SEED_VERSION))
+        session.add(SeedVersionRecord(module_id=MODULE_ID, seed_version=SEED_VERSION))
         await session.commit()
 
     def filter_report_rows(self, rows: list, filters: dict) -> list:
@@ -654,7 +654,7 @@ export interface ThingsQueryParams {
 ```typescript
 // src/aila/modules/mymod/frontend/queries.ts
 import { useQuery } from "@tanstack/react-query";
-import { authorizedRequestJson } from "@/platform/api/client";
+import { authorizedRequestJson } from "@platform/api/http";
 import type { PaginatedThingsResponse, ThingsQueryParams } from "./types";
 
 // Envelope wrapper — all backend responses are DataEnvelope<T>
@@ -685,7 +685,7 @@ export function useThings(params: ThingsQueryParams) {
 ```typescript
 // src/aila/modules/mymod/frontend/mutations.ts
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { authorizedRequestJson } from "@/platform/api/client";
+import { authorizedRequestJson } from "@platform/api/http";
 
 export function useUpdateThing() {
   const qc = useQueryClient();
@@ -970,7 +970,7 @@ Do not add these patterns preemptively. Add them when the specific need arises.
 python -m compileall src/aila/modules/<module_id> -q
 
 # Run honesty audit (must exit 0)
-python src/aila/tools/honesty_audit.py src/aila/modules/<module_id>
+python -m aila.tools.honesty_audit src/aila/modules/<module_id> --whitelist honesty_whitelist.py
 
 # Run module tests
 pytest tests/ -k "<module_id>" -x
@@ -978,11 +978,11 @@ pytest tests/ -k "<module_id>" -x
 # Apply migration
 alembic upgrade head
 
-# Type-check frontend
-cd frontend && npx tsc --noEmit
+# Type-check frontend (workspace-wide; for one module: pnpm --filter @aila/<module>-frontend run type-check)
+pnpm -r run type-check
 ```
 
 ---
 
-*This document reflects AILA codebase state as of 2026-04-14 (v4.1 complete, Phase 184).*
+*This document reflects AILA codebase state as of 2026-06-21 (v7.0.0).*
 *Reference modules: `src/aila/modules/hello_world/` (minimal), `src/aila/modules/vulnerability/` (production scale).*

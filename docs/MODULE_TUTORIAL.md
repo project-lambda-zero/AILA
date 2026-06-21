@@ -325,7 +325,7 @@ Do not use `metadata.create_all()`. All schema changes go through Alembic.
 python -m compileall -q src/aila/modules/my_module
 
 # Honesty audit?
-python -m aila.tools.honesty_audit src/aila/modules/my_module
+python -m aila.tools.honesty_audit src/aila/modules/my_module --whitelist honesty_whitelist.py
 
 # Platform discovers it?
 uvicorn aila.api.app:app --host 0.0.0.0 --port 8000 --reload

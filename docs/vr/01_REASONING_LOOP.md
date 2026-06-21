@@ -1,5 +1,25 @@
 # VR Module — The Reasoning Loop
 
+> **Status: design exploration.** This document predates the shipped VR
+> engine and describes an idealised contract, not current code. The
+> shipped implementation diverges in class names, enum values, table
+> schemas, routes, and state machines. Use this doc for intent and
+> taxonomy; verify every concrete claim against the files listed in
+> "Current implementation pointers" below before relying on it.
+>
+> **Current implementation pointers** (verified 2026-06-21):
+>
+> | Topic | Shipped location |
+> |---|---|
+> | Reasoning loop | `src/aila/modules/vr/agents/vuln_researcher.py` |
+> | Submit-time gates | `vuln_researcher._maybe_reject_submit_when_draft_pending`, `_maybe_reject_submit_with_unresolved_hypotheses`, variant-hunt gate |
+> | Per-LLM-call idempotency | `src/aila/platform/llm/idempotency_cache.py` + migration `061_llm_idempotency_cache.py` |
+> | Auto-steering | `src/aila/modules/vr/agents/auto_steering.py` |
+> | Outcome routing | `src/aila/modules/vr/agents/outcome_dispatcher.py` |
+> | DB schema (19 tables) | `src/aila/modules/vr/db_models/__init__.py` |
+> | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
+> | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
+
 Reference on the turn-by-turn reasoning loop. This is the engine of the module: how the LLM thinks about finding bugs, what it sees each turn, what it produces, and how the platform keeps it honest. Brainstorm-grade exploration — every gray area I can find, surfaced and named.
 
 Cross-references:
@@ -940,6 +960,90 @@ Three correctness fixes layered onto the loop's `submit` path:
 1. **Pre-submit draft-pending gate** (`vuln_researcher._maybe_reject_submit_when_draft_pending`). A branch may not submit a new outcome while it still has draft outcomes pending sibling review. The gate rejects the submit, stamps `_directive.draft_pending_submit_blocked` on case state, and forces the agent to vote on the pending drafts (`submit_outcome_review`) before the next submit attempt is admitted.
 2. **Auto-approve fallback in `evaluate_quorum`** (`services/outcome_review.py`). The sibling review workflow halts a single-branch investigation indefinitely when there is no sibling to read the review request. `evaluate_quorum` now treats "no active siblings can vote" as approve-and-dispatch, with the absence logged so the operator can grep for outcomes that shipped without sibling corroboration. The pre-submit draft-pending gate is the primary mitigation; this is the safety net for investigations that predate the gate.
 3. **Tightened empty-tool_run STOP threshold** (`tool_executor` handling of malformed `tool_run`). Previously the STOP message fired only after three consecutive empty / malformed commands, because the counter saw only the most recent run on the branch. The threshold now fires after the second consecutive malformed command; the STOP message names the three legal next actions (`tool_run` with valid JSON; `submit`; `observe`) and recommends `observe` when the agent is unsure.
+
+### 8.bis.6 CyberReasoningEngine.absorb merges live hypotheses by id
+
+`absorb()` merges by hypothesis id rather than replacing the entire
+live list. Previously, if the LLM forgot to repeat `h3` in its current
+view, `h3` silently disappeared. The only way to remove a hypothesis
+is now an explicit reject from the agent or a sibling-consensus
+rejection.
+
+### 8.bis.7 decide_next_turn uses chat_structured
+
+`decide_next_turn` uses `chat_structured` so the gateway enforces the
+`ReasoningTurnDecision` JSON schema upstream when the routed model
+supports strict mode. Removes the prior failure mode where partial
+schemas missing required fields slipped through.
+
+### 8.bis.8 Per-LLM-call idempotency cache (migration 061)
+
+Every LLM call is request-keyed via `llm_idempotency_cache`. The cache
+key is `sha256(investigation_id, branch_id, turn_number, prompt_hash)`.
+Retries replay the cached decision instead of re-paying for Claude.
+See `docs/LLM_INTEGRATION.md §13`.
+
+### 8.bis.9 Wall-clock cap from coalesce(started_at, created_at)
+
+The wall-clock cap clocks from `coalesce(started_at, created_at)` so
+investigations whose only "age" is queue-wait time during long target
+ingestion are not prematurely killed. Caught by the WebKit JSC
+incident (`9e99eda0`) where every branch died at turn 1 with
+`cap_exceeded:investigation_wall_clock`. Default `6 h` after the
+worker stamps `started_at`.
+
+### 8.bis.10 Auto-re-enqueue and overall turn cap
+
+`investigation_emit` auto-re-enqueues on a `max_turns` exit without a
+terminal outcome, bounded by `_OVERALL_TURN_CAP = 200`. The per-task
+cap (`VR_MAX_TURNS_PER_TASK`, default 70 per VR_INSTALLATION_GUIDE)
+is no longer a hard stop.
+
+### 8.bis.11 Hard submit-gate for unresolved hypotheses
+
+`_maybe_reject_submit_with_unresolved_hypotheses` runs before the
+variant-hunt gate on every submit. Computes
+`unresolved = live_ids - newly_rejected`; if non-empty, converts the
+submit into a non-terminal placeholder and injects
+`_directive.unresolved_hyp_submit_rejected` at PROMPT POSITION 2 of
+the next turn. After `VR_UNRESOLVED_HYP_REJECT_CAP` (default 3) the
+submit is forced through with
+`payload.unresolved_hypotheses_at_submit_advisory` stamped naming the
+survivors.
+
+### 8.bis.12 Idempotent draft-review notice
+
+`post_draft_review_request` is idempotent. Dedupe keys on
+`auto_steering_key='draft_review_request:<outcome_id>'`; if a prior
+post exists, returns its id as a no-op. Observed 12 duplicate posts
+on a single outcome (`b3eebd6b`) before the fix.
+
+### 8.bis.13 Branch reaper uses ORM update
+
+The VR branch reaper switched from raw `text()` SQL to an ORM
+`update()` construct after the prior SELECT+UPDATE race window could
+mark a healthy branch as terminated. Atomic UPDATE with safety graces
+closes the race.
+
+### 8.bis.14 Bridge schema cache expiry
+
+The VR bridge schema cache now expires, so a newly added MCP tool
+surface is picked up without a worker restart. Tools returning zero
+results carry an auto-suggestion for the operator's next step.
+
+### 8.bis.15 Auto-correction for hallucinated index_id
+
+The bridge rewrites obviously-bad `audit_mcp` index_id values to the
+active investigation's target and surfaces a sharper prompt callout.
+Eliminates a class of "tool never matches anything" loops.
+
+### 8.bis.16 absorb() caps on agent-set observables
+
+`absorb()` caps agent-set observables at 10 per turn + 50 total.
+Tool-prefix keys (`audit_mcp:*`, `ida_headless:*`, `_directive.*`)
+are never evicted. `render_case_model` partitions tool readings
+(shown unlimited, capped at 80 display) from agent scratchpad
+(capped at 15 display).
 
 ---
 

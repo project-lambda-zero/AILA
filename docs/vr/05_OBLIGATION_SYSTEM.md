@@ -4,7 +4,46 @@ The reasoning loop (`docs/vr/01_REASONING_LOOP.md`) sketches an "adjudicator" th
 
 The frame: **the LLM is allowed to be confident only when the evidence graph contains the artifacts that justify the confidence.** Every claim creates a debt; the loop discharges debts by collecting matching evidence. Submission is gated on the debt being paid. This is the Metis pattern (prior design notes), specialized to vulnerability research where claims fan out across static, dynamic, and exploitation domains.
 
-> **Status note (2026-06).** The taxonomy and lifecycle below remain the design; the LLM-side honesty discipline ships today through the persona-deliberation panel, `claim_verifier`, the variant-hunt submit gate, the pre-submit draft-pending gate (`01_REASONING_LOOP.md §8.bis.5`), and auto-steering. A dedicated `VRObligation` table + standalone rule engine is NOT yet in `src/aila/modules/vr/db_models/`; the frontend `ObligationChecklist` renders an empty list with a "no obligation API yet" caveat. Read this document as the contract the loop is being held to, not the current API surface.
+> **Status: design exploration.** This document predates the shipped VR
+> engine and describes an idealised contract, not current code. The
+> shipped implementation diverges in class names, enum values, table
+> schemas, routes, and state machines. Use this doc for intent and
+> taxonomy; verify every concrete claim against the files listed in
+> "Current implementation pointers" below before relying on it.
+>
+> **Current implementation pointers** (verified 2026-06-21):
+>
+> | Topic | Shipped location |
+> |---|---|
+> | Reasoning loop | `src/aila/modules/vr/agents/vuln_researcher.py` |
+> | Submit-time gates | `vuln_researcher._maybe_reject_submit_when_draft_pending`, `_maybe_reject_submit_with_unresolved_hypotheses`, variant-hunt gate |
+> | Per-LLM-call idempotency | `src/aila/platform/llm/idempotency_cache.py` + migration `061_llm_idempotency_cache.py` |
+> | Auto-steering | `src/aila/modules/vr/agents/auto_steering.py` |
+> | Outcome routing | `src/aila/modules/vr/agents/outcome_dispatcher.py` |
+> | DB schema (19 tables) | `src/aila/modules/vr/db_models/__init__.py` |
+> | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
+> | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
+
+## 0.1  What shipped instead
+
+The formal VR-side `VRObligation` table + standalone rule engine is
+unbuilt. Honesty discipline ships today through:
+
+- **`ClaimVerifierAgent`** (`agents/claim_verifier.py`) — adversarial
+  post-synthesis verification with probe-based refutation.
+- **Auto-steering** (`agents/auto_steering.py`) — dead-end pattern
+  detection with corrective operator-message injection at PROMPT
+  POSITION 2; see `docs/PITFALL_GUIDE.md` Pitfall 33.
+- **Three submit-time gates** in `vuln_researcher.py`:
+  `_maybe_reject_submit_when_draft_pending`,
+  `_maybe_reject_submit_with_unresolved_hypotheses`, and the
+  variant-hunt exhaustion gate.
+- **Sibling-consensus rejection** — branch siblings vote to drop a
+  hypothesis even when the originating branch still has it live;
+  a `_directive.sibling_consensus_rejection` observable is injected.
+
+Treat the obligation taxonomy below as design vocabulary, not a
+spec of running code.
 
 ---
 

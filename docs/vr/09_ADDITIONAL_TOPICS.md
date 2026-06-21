@@ -2,7 +2,25 @@
 
 Topics not covered by the first eight documents. These are the operational, organizational, and adjacent-domain questions the previous deep-dives left implicit. Each section explores one topic; each ends with the open questions it leaves on the table.
 
-> **Status note.** This document is brainstorm-grade. The shapes proposed below (`Reproducer` records, layered SCA, supply-chain regression replay, knowledge-base RAG, etc.) are the design space the module was exploring at the time. The concrete schemas that shipped live under `src/aila/modules/vr/db_models/` and `src/aila/alembic/versions/060_…`, `061_…`, `062_…`. Where this doc names a Python class or SQLModel table by name, treat it as a sketch — verify against the current model files before quoting a field name. The strategic discussion still applies.
+> **Status: design exploration.** This document predates the shipped VR
+> engine and describes an idealised contract, not current code. The
+> shipped implementation diverges in class names, enum values, table
+> schemas, routes, and state machines. Use this doc for intent and
+> taxonomy; verify every concrete claim against the files listed in
+> "Current implementation pointers" below before relying on it.
+>
+> **Current implementation pointers** (verified 2026-06-21):
+>
+> | Topic | Shipped location |
+> |---|---|
+> | Reasoning loop | `src/aila/modules/vr/agents/vuln_researcher.py` |
+> | Submit-time gates | `vuln_researcher._maybe_reject_submit_when_draft_pending`, `_maybe_reject_submit_with_unresolved_hypotheses`, variant-hunt gate |
+> | Per-LLM-call idempotency | `src/aila/platform/llm/idempotency_cache.py` + migration `061_llm_idempotency_cache.py` |
+> | Auto-steering | `src/aila/modules/vr/agents/auto_steering.py` |
+> | Outcome routing | `src/aila/modules/vr/agents/outcome_dispatcher.py` |
+> | DB schema (19 tables) | `src/aila/modules/vr/db_models/__init__.py` |
+> | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
+> | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
 
 Cross-references:
 - `docs/vr/01_REASONING_LOOP.md` — turn anatomy and the reasoning engine

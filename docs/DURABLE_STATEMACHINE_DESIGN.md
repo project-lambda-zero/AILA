@@ -27,6 +27,9 @@ tables:
     `current_state`, `state_input` (the dict the current state
     handler will receive), `retries_in_state`, `definition_id`, and
     `version`. The whole row is the live state of the run.
+    Migration 067 adds `archived_state` (nullable VARCHAR(128)) for
+    pause/resume; NULL except when the cursor sits at `__paused__`.
+    Resume swaps `archived_state` back to `current_state`.
   - `workflow_state_transitions` — append-only event log. Two event
     kinds: `entered` (the engine has begun executing a state) and
     `exited:*` (the handler returned, raised, timed out, or was
@@ -40,7 +43,7 @@ two tables.
 
 ---
 
-## 2. Reserved terminal states (`types.py:28-40`)
+## 2. Reserved terminal states (`types.py:28-47`)
 
 Four terminals are reserved and auto-registered by every
 `WorkflowDefinition`:
@@ -58,6 +61,13 @@ Four terminals are reserved and auto-registered by every
     `MAX_STEPS_PER_JOB` breach, on `ServiceBuildError`, on a
     `failed_in_failure_handler` chain, or on any path where the
     engine cannot continue.
+
+A fifth reserved name, `__paused__`, exists as a non-terminal cursor
+state for pause/resume semantics. Paused cursors store the prior
+`current_state` in the cursor's `archived_state` column (migration
+067) and resume by swapping it back. `__paused__` is NOT in
+`RESERVED_TERMINAL_STATES` — the engine loop skips it. Source:
+`src/aila/platform/workflows/types.py:36-42`.
 
 These four names are members of the frozenset
 `RESERVED_TERMINAL_STATES`. The terminal-check in
@@ -486,10 +496,15 @@ In ONE transaction:
      `retries_in_state=new_state.retries_in_state`,
      `definition_id=definition.definition_id`,
      `version=loaded_version + 1`. The UPDATE uses
-     `.returning(run_id)`; if `result.first() is None`, the cursor
-     vanished between the FOR UPDATE lock and the UPDATE, and the
-     engine raises `WorkflowConflictError`. (Phase 178 fix 12 —
-     `.returning()` instead of driver-specific `rowcount`.)
+     `.returning(run_id)` (Phase 178 fix 12 — `.returning()` instead
+     of driver-specific `rowcount`). If `result.first() is None`
+     after the FOR UPDATE lock, the cursor was deleted externally
+     (e.g., by the `parent_reconciler` during a retry window). The
+     engine re-INSERTs the cursor with `current_state=new_state.current`,
+     `version=1`, logs `workflow.cursor_missing_during_commit_recreating`,
+     and continues. The transition audit still lands (`write_exited`
+     runs in the same transaction) so the state machine's log is
+     intact. Source: `src/aila/platform/workflows/engine.py:971-999`.
   5. Best-effort heartbeat: UPDATE
      `taskrecord SET heartbeat_at = NOW() WHERE id = run_id`. This
      is the only place the engine writes `heartbeat_at`. The reaper
@@ -623,10 +638,13 @@ The engine does NOT:
     knowledge of them.
   - Reap zombies. The reaper is a separate component that reads
     `taskrecord.heartbeat_at`.
-  - Pause workflows. There is no "paused" terminal in the reserved
-    set. Pause is implemented at the domain layer (the VR
-    investigation's `pause_reason` column is a domain-owned signal,
-    not a workflow-engine signal).
+  - Pause workflows via `__paused__` cursor state. `RESERVED_PAUSED`
+    is engine-known but NOT terminal — the main loop does not exit
+    on it, and the cursor remains addressable for resume. The
+    `archived_state` column (migration 067) preserves the prior
+    `current_state` across the pause/resume cycle. Domain layers
+    (e.g. VR's `pause_reason` column) trigger pause/resume; the
+    engine provides the durable cursor mechanics.
   - Cancel workflows. `__cancelled__` exists as a terminal but the
     engine never writes it. External cancel paths write it directly
     to the cursor.

@@ -34,7 +34,7 @@ AILA's VR module reaches the layers above through three HTTP MCP servers and one
 
 | Server | Port | Surface | Owner |
 |---|---|---|---|
-| **audit-mcp** | 18822 | 58 tools: source graph (Trailmark) + semantic search (semble) + SARIF correlation | source-code targets |
+| **audit-mcp** | 18822 | 58+ tools (verify against `GET /tools` for the live count): source graph (Trailmark) + semantic search (semble) + SARIF correlation | source-code targets |
 | **ida-headless-mcp** | 18821 | 81 tools: Hex-Rays + miasm + CAPA + symbolic / SMT (binbit) | binary targets |
 | **android-mcp** | 18823 | 13 tool wrappers (apktool / jadx / androguard / MobSF / drozer / qark / AndroBugs / LIEF / YARA / apksigner / objection / frida / adb) + 4 composite handlers (`verify_capabilities`, `classify_behavior`, `compute_risk_score`, `find_secrets`) | Android APK targets |
 | **semble** | embedded inside audit-mcp | Model2Vec + BM25 + RRF code-chunk retriever | semantic search backend |
@@ -65,12 +65,13 @@ VR target onboarding runs through `aila.modules.vr.services.target_analysis.Targ
 | `CAPABILITY_PROFILE` | semble warm-up + per-language tool catalog projection; populates the suppression set above |
 | `FUNCTION_RANKING` | `fuzzing_targets` ranking with per-language thresholds; persists ranked function index for the agent prompt |
 
-**Android-APK pipeline** — `android_apk` kind only (PRD §C-20):
+**Android-APK pipeline** — `android_apk` kind only (PRD §C-20). Six stages run in order; `REACT_NATIVE_EXTRACT` slots between `JADX_DECOMPILE` and `INDEX_DECOMPILED` so the audit-mcp index can also cover any extracted React Native JS bundles:
 
 | Stage | What runs |
 |---|---|
 | `APK_DECODE` | android-mcp `apktool_decode` — resource + AndroidManifest + smali decode. Persists `mcp_handles_json.android_mcp_decoded_dir`. |
 | `JADX_DECOMPILE` | android-mcp `jadx_decompile` — dex-to-Java decompilation. Persists `mcp_handles_json.android_mcp_decompiled_dir`. |
+| `REACT_NATIVE_EXTRACT` | Extracts React Native JavaScript bundles from APKs via the android-mcp `react_native_extract` tool. Persists handles for any recovered JS bundles so subsequent stages can index them. |
 | `INDEX_DECOMPILED` | audit-mcp `index_codebase(path=<decompiled_dir>, language="java")` over the jadx Java tree — polls until READY, then persists `mcp_handles_json.audit_mcp_decompiled_index_id` so VR personas auditing an APK get the same Trailmark / Semble surface (`semantic_search`, `callers_of`, `read_function`) they get against source-repo targets, rooted at the recovered Java methods. Soft-skips with `{"skipped": "no jadx output"}` when JADX_DECOMPILE produced no decompiled dir. |
 | `STATIC_SUMMARY` | android-mcp `androguard_summary` — package name, permissions, intent filters, signing certs. Persists `mcp_handles_json.android_mcp_static_summary`; `android_mcp_package_name` surfaces in the target row for the UI's display label. |
 | `MOBSF_SCAN` | android-mcp `mobsf_scan` — static-only MobSF scan. Gated on `MOBSF_API_KEY` on the AILA host; when unset the stage records `{"skipped": true}` and transitions `DONE` so the rollup still converges. Persists `mcp_handles_json.android_mcp_mobsf_scan`. |
@@ -83,6 +84,71 @@ curl -X POST http://localhost:8000/vr/targets/<target_id>/resume-analysis \
 ```
 
 Re-entrant: it picks up at the first non-`COMPLETED` stage and retries idempotently.
+
+---
+
+## audit-mcp adapter rules
+
+Six adapter behaviors that look surprising but are correct. Fold
+them into bug reports BEFORE concluding the MCP server is broken:
+
+- **`read_function` returns `content`, NOT `source`.** The `source`
+  field is the literal provider tag (`"semble"`, `"trailmark"`).
+  The adapter reads `content` first; `source` aliases the provider.
+- **`search_functions` returns `file_path: null` for ~half of
+  indexed functions** on Trailmark builds. The specialised
+  `adapt_search_functions` renders the actual fields (name, kind,
+  `cyclomatic_complexity`); the generic `_render_matches_dense`
+  would emit literal `?:?:` rows.
+- **`search_constants` and `search_bitfields` return 0 hits for
+  patterns that demonstrably exist in source.** Trailmark's index
+  doesn't track them on this codebase. Direct agents to
+  `search_source` for those queries.
+- **`semantic_search` and `find_related` return code CHUNKS**, not
+  functions: each result is
+  `{file_path, start_line, end_line, content}`. They have their
+  own adapters; do NOT fall through to generic JSON dump.
+- **`read_lines` is bridge-side virtual** — no upstream MCP
+  endpoint. The bridge resolves `index_id → root_path` via
+  `/tools/list_indexes` then reads the file slice from disk. Use
+  when an exact `(file_path, start, end)` is in hand and you need
+  to bypass all indexers.
+- **No per-tool-call truncation.** All `_MAX_OBS_*` caps are set to
+  100 MB. Per-value caps were causing silent body truncation; the
+  policy now is "full content stored, render layer decides display".
+  `_MAX_OBS_READ_FUNCTION` was bumped from 3 KB to 12 KB so most C
+  functions fit in the observable without truncation.
+
+---
+
+## audit-mcp async-first runtime (commit 16cb963)
+
+Concurrency issue: identical sibling-branch tool calls used to
+serialize on the GIL inside the anyio worker-thread pool. 3 branches
+asking the same `semantic_search('foo')` paid 3× the cost. Long
+`index_codebase` runs starved every other tool by holding pool slots.
+Resolved by `audit_mcp/async_runtime.py` (new) + an `audit_mcp/http_api.py`
+rewrite. Operator-facing knobs:
+
+| Env var | Default | Effect |
+|---|---|---|
+| `AUDIT_MCP_THREAD_POOL_LIMIT` | 64 | anyio worker-thread pool size. Bump if you see "all threads busy" without dedup help. |
+| `AUDIT_MCP_TOOL_CAP_<TOOLNAME>` | per-tool defaults | Per-tool concurrency cap. Tool name is uppercased (e.g. `AUDIT_MCP_TOOL_CAP_SEMANTIC_SEARCH=8`). |
+| `AUDIT_MCP_TIMEOUT_<TOOLNAME>` | per-tool defaults | Per-tool wall-clock timeout (e.g. `AUDIT_MCP_TIMEOUT_DEEP_AUDIT=1200`). |
+| `AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S` | 7200 (2 h) | Bounded `subprocess.communicate(timeout=...)` for the semble cold-build child. Was unbounded; a stuck child would hold `semble_status='building'` forever. |
+
+Diagnostics: `GET http://127.0.0.1:18822/runtime` returns live
+`{dedup: {inflight, hits, misses}, semaphores: {<tool>: {cap,
+available}}, thread_pool_limit}`. When agents report "audit_mcp slow"
+check this endpoint first — `available: 0` on a tool means it is the
+bottleneck; bump the cap via env. High `misses` with low `hits` means
+sibling branches aren't asking the same questions (fine); high `hits`
+means dedup is doing real work.
+
+Backward compat: every existing tool keeps its current sync signature.
+The HTTP layer wraps them. Stdio transport (`audit_mcp/server.py`) is
+unchanged. Async tools (`tool.is_async == True`) now work — the HTTP
+transport previously refused them at startup with a hard `RuntimeError`.
 
 ---
 

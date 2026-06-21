@@ -27,12 +27,19 @@ When `ConfigRegistry.get(namespace, key)` is called, the value is resolved in th
 
 ```
 1. Environment variable   AILA_{NAMESPACE}_{KEY}  (uppercased)
+1.5. In-process TTL cache  _CacheEntry per (namespace, key), default 60 s
 2. Database row           ConfigEntryRecord(namespace, key)
 3. Schema field default   Pydantic model field default
 ```
 
 **Environment variables always win.** This enables container orchestrators (Docker,
 Kubernetes) to inject config without touching the database.
+
+**Step 1.5 — in-process TTL cache.** `ConfigRegistry.get()` consults a
+`_CacheEntry`-backed cache (default TTL 60 s, configurable via
+`ConfigRegistry(cache_ttl=...)`) before hitting the DB. The cache is
+invalidated on `set()` and pre-warmed at startup via `warm_cache()`.
+Source: `src/aila/storage/registry.py:51-55,67`.
 
 **Database values** are set via `PUT /config/{namespace}/{key}` and take effect
 immediately on the next read. No server restart needed.
@@ -303,6 +310,12 @@ the active value originates.
 
 If `source` is `"env"`, the database value is being shadowed by an environment variable.
 Remove the env var to let the DB value take effect.
+
+### Warm cache at startup
+
+`warm_cache()` pre-populates the in-memory cache from all registered entries at
+startup. Called during platform init so the first access to each key avoids a
+DB round-trip. Source: `src/aila/storage/registry.py:241-248`.
 
 ### Orphaned DB rows
 

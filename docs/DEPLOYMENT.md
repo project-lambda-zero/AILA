@@ -42,6 +42,14 @@ The two compose files in `infra/utilities/` cover the deployment shapes:
 - `docker-compose.yml` — dev infra only: PostgreSQL (with pgvector) + Redis. Used by `make dev-up` for local development where the operator runs the API, workers, and frontend on the host.
 - `docker-compose.full.yml` — full stack: PostgreSQL + Redis + API + one worker container per queue + frontend (Vite dev server). The production-like shape used by `docker compose -f infra/utilities/docker-compose.full.yml up --build`. Credentials and tuning come from the repo-root `.env`.
 
+Note: the `x-aila-env` block in `docker-compose.full.yml` defines
+`AILA_PLATFORM_DATABASE_URL`, `AILA_PLATFORM_BIND_HOST`, and
+`AILA_PLATFORM_BIND_PORT`. The Python `Settings` class does NOT read these
+names; it reads `AILA_DATABASE_URL`, `AILA_API_HOST`, `AILA_API_PORT`. Actual
+DB and bind config comes from the `env_file: ../../.env` directive on each
+service. The `x-aila-env` overrides are dead — leave them for now (they
+document intent) but do not rely on them taking effect.
+
 ---
 
 ## Prerequisites
@@ -226,7 +234,7 @@ contention.
 ### First Start
 
 On first start:
-1. `make db-init` (or the container entrypoint when using `docker-compose.full.yml`) creates every SQLModel-registered table and stamps Alembic at the current head (`062_vr_outcome_review`).
+1. `make db-init` (or the container entrypoint when using `docker-compose.full.yml`) creates every SQLModel-registered table and stamps Alembic at the current head (`067_workflow_state_cursor_archived_state`).
 2. If `AILA_ADMIN_PASSWORD` is set and no `UserRecord` row exists, the lifespan hook creates the `admin` user with that password (argon2id-hashed). When neither condition is met, startup raises `RuntimeError` to refuse an unprotected admin account.
 3. If `AILA_BOOTSTRAP_KEY` is set and no `ApiKeyRecord` row exists, an admin API key is created from the bootstrap value.
 4. The platform discovers and loads every installed module (`default`, `vr`, `vulnerability`, `forensics`, `sbd_nfr`, plus `hello_world` as the reference).
@@ -279,11 +287,11 @@ replicating the per-queue worker service via `docker compose up --scale worker-v
 
 ### Without Redis
 
-Setting `AILA_PLATFORM_REDIS_URL` to an empty value drops AILA into a synchronous
-in-process fallback: `POST /vulnerability/analyze` and module dispatch run on the
-API thread, SSE endpoints return an informational message, no background workers
-are needed. This is for single-operator local development only — every
-production deployment runs Redis.
+Redis is required. When `AILA_PLATFORM_REDIS_URL` is empty or the broker is
+unreachable, `TaskQueue.submit()` raises `WorkerUnreachableError` (HTTP 503
+through the standard envelope pipeline). The previous in-process synchronous
+fallback was removed in Phase 178 (D-19) because it blocked the event loop,
+defeated retries and checkpoints, and created orphan DB records.
 
 ---
 
@@ -436,4 +444,4 @@ audit trail to reconstruct who triggered what across modules.
 
 ---
 
-*Last updated: 2026-06-07 (head: `062_vr_outcome_review`).*
+*Last updated: 2026-06-21 (head: `067_workflow_state_cursor_archived_state`).*
