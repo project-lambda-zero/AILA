@@ -23,12 +23,12 @@ from aila.platform.contracts.obligations import (
     ObligationSeverity,
     adjudicate,
 )
+from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.services.evidence_pack import BoundedEvidencePack, EvidenceSection
 from aila.platform.services.factory import ServiceFactory
 
 from ..config_schema import VRConfigSchema
 from ..contracts.finding import CrashType
-from ..tools.ida_bridge import IDABridgeTool
 
 __all__ = ["NdayResearcher"]
 
