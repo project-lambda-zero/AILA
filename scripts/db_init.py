@@ -38,14 +38,16 @@ from sqlalchemy import text  # noqa: E402
 from sqlalchemy.ext.asyncio import create_async_engine  # noqa: E402
 from sqlmodel import SQLModel  # noqa: E402
 
+from aila.modules.forensics import db_models as _forensics_models  # noqa: F401, E402
+from aila.modules.malware import db_models as _malware_models  # noqa: F401, E402
+from aila.modules.vr import db_models as _vr_models  # noqa: F401, E402
+from aila.modules.vulnerability import db_models as _vuln_models  # noqa: F401, E402
+
 # Importing these registers every table on SQLModel.metadata.
 # Every module that defines DB tables MUST be added here, otherwise create_all
 # won't see those tables and queries against them will fail at runtime with
 # "relation 'X' does not exist".
 from aila.storage import db_models as _platform_models  # noqa: F401, E402
-from aila.modules.vulnerability import db_models as _vuln_models  # noqa: F401, E402
-from aila.modules.forensics import db_models as _forensics_models  # noqa: F401, E402
-from aila.modules.vr import db_models as _vr_models  # noqa: F401, E402
 
 
 def _alembic_head_revision() -> str:
