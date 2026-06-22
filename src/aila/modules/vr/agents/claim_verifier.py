@@ -64,9 +64,10 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
+from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_review import OUTCOME_STATE_APPROVED
-from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
 from aila.platform.contracts._common import utc_now
+from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
 
@@ -178,7 +179,7 @@ async def _fetch_audit_mcp_signatures() -> tuple[str, bool]:
     fix §349 — log + return a failure flag instead of returning empty
     string silently.
     """
-    bridge = AuditMcpBridgeTool()
+    bridge = AuditMcpBridgeTool(recorder=record_call)
     try:
         base_url = await bridge._resolve_base_url()
     except (OSError, RuntimeError) as exc:
@@ -621,7 +622,7 @@ class ClaimVerifierAgent:
         # asynchronous runtime (per CLAUDE.md notes) deduplicates identical
         # tool calls — concurrent probes benefit from server-side
         # dedup as well as wall-clock overlap.
-        bridge = AuditMcpBridgeTool()
+        bridge = AuditMcpBridgeTool(recorder=record_call)
         top_preconditions = preconditions[: self._MAX_PROBES]
 
         async def _run_one_probe(p: dict[str, Any]) -> dict[str, Any]:

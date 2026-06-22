@@ -24,9 +24,11 @@ from typing import Any
 import httpx
 from sqlalchemy.exc import SQLAlchemyError
 
-from aila.modules.vr.tools._kwarg_alias import build_alias_map, normalize_kwargs
 from aila.platform.tools._common import Tool
 from aila.storage.registry import ConfigRegistry
+
+from ._kwarg_alias import build_alias_map, normalize_kwargs
+from ._recorder import BridgeRecorder, noop_recorder
 
 __all__ = ["IDABridgeTool"]
 
@@ -98,6 +100,7 @@ class IDABridgeTool(Tool):
         self,
         base_url: str | None = None,
         timeout: float | None = None,
+        recorder: BridgeRecorder | None = None,
     ) -> None:
         self._fixed_base_url = base_url.rstrip("/") if base_url else None
         self._timeout = timeout or float(
@@ -109,6 +112,10 @@ class IDABridgeTool(Tool):
         # reloaded its tool catalog.
         self._spec_cache: list[dict[str, Any]] | None = None
         self._auto_alias_map: dict[str, dict[str, str]] = {}
+        # Optional per-call audit logger. See ``_recorder.py``; module
+        # authors wire their own ``record_call`` here, tests + ad-hoc
+        # callers omit it and get a no-op.
+        self._recorder: BridgeRecorder = recorder or noop_recorder
 
     async def _resolve_base_url(self) -> str:
         if self._fixed_base_url is not None:
@@ -199,9 +206,10 @@ class IDABridgeTool(Tool):
             logging.getLogger(__name__).info("ida_bridge %s", note)
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
-        from aila.modules.vr.services.mcp_call_logger import record_call  # noqa: PLC0415
 
-        async with record_call(server_id="ida_headless", base_url=base, action=action) as ctx:
+        async with self._recorder(
+            server_id="ida_headless", base_url=base, action=action,
+        ) as ctx:
             try:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
                     resp = await client.post(url, json=normalized_kwargs)

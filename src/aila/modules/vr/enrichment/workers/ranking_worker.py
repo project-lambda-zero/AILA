@@ -11,8 +11,9 @@ from __future__ import annotations
 from typing import Any
 
 from aila.modules.vr.enrichment.services import FunctionRankingDispatcher
-from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
-from aila.modules.vr.tools.ida_bridge import IDABridgeTool
+from aila.modules.vr.services.mcp_call_logger import record_call
+from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 
@@ -39,8 +40,8 @@ async def run_function_ranking(
     JSON-serializable for SSE push / audit trail.
     """
     dispatcher = FunctionRankingDispatcher(
-        ida=IDABridgeTool(),
-        audit_mcp=AuditMcpBridgeTool(),
+        ida=IDABridgeTool(recorder=record_call),
+        audit_mcp=AuditMcpBridgeTool(recorder=record_call),
     )
     ranking = await dispatcher.rank(target_id)
     return ranking.model_dump(mode="json")

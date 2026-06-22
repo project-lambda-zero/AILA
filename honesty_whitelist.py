@@ -81,12 +81,13 @@ HONESTY_WHITELIST = [
     ("vr/workflow/task.py", "run_target_analysis", "noqa"),
     ("vr/workflow/task.py", "run_fuzz_campaign_launch", "noqa"),
     ("vr/services/target_analysis.py", "_run_git", "noqa"),
-    ("vr/tools/audit_mcp_bridge.py", "_resolve_base_url", "noqa"),
-    ("vr/tools/ida_bridge.py", "_resolve_base_url", "noqa"),
-    ("vr/tools/audit_mcp_bridge.py", "forward", "noqa"),
-    ("vr/tools/ida_bridge.py", "forward", "noqa"),
-    ("vr/tools/android_mcp_bridge.py", "_resolve_base_url", "noqa"),
-    ("vr/tools/android_mcp_bridge.py", "forward", "noqa"),
+    # Bridges hoisted to platform/mcp/bridges/ — these noqa entries follow the move.
+    ("platform/mcp/bridges/audit_mcp.py", "_resolve_base_url", "noqa"),
+    ("platform/mcp/bridges/ida_headless.py", "_resolve_base_url", "noqa"),
+    ("platform/mcp/bridges/audit_mcp.py", "forward", "noqa"),
+    ("platform/mcp/bridges/ida_headless.py", "forward", "noqa"),
+    ("platform/mcp/bridges/android_mcp.py", "_resolve_base_url", "noqa"),
+    ("platform/mcp/bridges/android_mcp.py", "forward", "noqa"),
 
     # Category (b): _enqueue_next_investigation_run lives in
     # workflow/states/investigation_emit.py — a state file. Workflow
@@ -167,11 +168,9 @@ HONESTY_WHITELIST = [
     ("tools/scoring_audit.py", "scoring_audit", "settings"),
     ("tools/verify_remediation.py", "verify_remediation", "settings"),
 
-    # Category (g): IDABridgeTool IS the platform HTTP bridge for binary analysis.
-    # httpx is its transport layer — same role as paramiko in SSHService.
-    ("vr/tools/ida_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
-    ("vr/tools/audit_mcp_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
-    ("vr/tools/android_mcp_bridge.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
+    # The three MCP bridges hoisted to platform/mcp/bridges/ no longer trigger
+    # http_client_in_module (the rule only fires inside modules/), so the
+    # previous vr/tools/ entries here were dropped during the hoist.
     ("vr/services/mcp_registry.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
 
     # Category (g): VRModule.health_checks probes the IDA MCP over HTTP.

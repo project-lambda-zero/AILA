@@ -30,10 +30,11 @@ from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationRecord,
 )
-from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
-from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
-from aila.modules.vr.tools.ida_bridge import IDABridgeTool
+from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.platform.llm.cancellation import get_cancellation_token
+from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
+from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import (
@@ -88,9 +89,9 @@ def _get_executor() -> ToolExecutor:
     global _EXECUTOR_SINGLETON  # noqa: PLW0603 — module singleton
     if _EXECUTOR_SINGLETON is None:
         _EXECUTOR_SINGLETON = ToolExecutor(
-            ida=IDABridgeTool(),
-            audit_mcp=AuditMcpBridgeTool(),
-            android_mcp=AndroidMcpBridgeTool(),
+            ida=IDABridgeTool(recorder=record_call),
+            audit_mcp=AuditMcpBridgeTool(recorder=record_call),
+            android_mcp=AndroidMcpBridgeTool(recorder=record_call),
         )
     return _EXECUTOR_SINGLETON
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-from aila.modules.vr.agents.mcp_adapters import (
+from aila.platform.mcp.adapters import (
     ANDROID_MCP_TOOLS,
     AUDIT_MCP_TOOLS,
     IDA_HEADLESS_TOOLS,
@@ -17,7 +17,7 @@ from aila.modules.vr.agents.mcp_adapters import (
     registered_tools,
     specialized_tools,
 )
-from aila.modules.vr.agents.mcp_adapters.audit_mcp import (
+from aila.platform.mcp.adapters.audit_mcp import (
     adapt_attack_surface,
     adapt_callees_of,
     adapt_callers_of,
@@ -29,8 +29,8 @@ from aila.modules.vr.agents.mcp_adapters.audit_mcp import (
     adapt_read_function,
     adapt_taint_paths_to,
 )
-from aila.modules.vr.agents.mcp_adapters.generic import adapt_generic
-from aila.modules.vr.agents.mcp_adapters.ida_headless import (
+from aila.platform.mcp.adapters.generic import adapt_generic
+from aila.platform.mcp.adapters.ida_headless import (
     adapt_call_chain,
     adapt_call_graph,
     adapt_capa_scan,

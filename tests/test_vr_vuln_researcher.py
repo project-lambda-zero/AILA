@@ -32,9 +32,9 @@ from aila.modules.vr.agents.vuln_researcher import (
     _to_outcome_confidence,
 )
 from aila.modules.vr.contracts import OutcomeConfidence, OutcomeKind, PayloadKind
-from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
-from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
-from aila.modules.vr.tools.ida_bridge import IDABridgeTool
+from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
+from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.contracts.reasoning import (
     EvidenceProvenance,
     Hypothesis,
@@ -416,8 +416,8 @@ class TestFetchToolSpecs:
             ida_calls.append("hit")
             return []
 
-        from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
-        from aila.modules.vr.tools.ida_bridge import IDABridgeTool
+        from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
         monkeypatch.setattr(AuditMcpBridgeTool, "list_tool_specs", fake_audit_specs)
         monkeypatch.setattr(IDABridgeTool, "list_tool_specs", fake_ida_specs)
 
@@ -440,8 +440,8 @@ class TestFetchToolSpecs:
             ida_calls.append("hit")
             return [{"name": "decompile", "params": [], "required": []}]
 
-        from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
-        from aila.modules.vr.tools.ida_bridge import IDABridgeTool
+        from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
         monkeypatch.setattr(AuditMcpBridgeTool, "list_tool_specs", fake_audit_specs)
         monkeypatch.setattr(IDABridgeTool, "list_tool_specs", fake_ida_specs)
 

@@ -30,11 +30,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr.agents.auto_steering import maybe_post_auto_steering
-from aila.modules.vr.agents.mcp_adapters import (
-    AdapterContext,
-    get_adapter,
-    get_read_tools,
-)
 from aila.modules.vr.contracts import PayloadKind, SenderKind
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
@@ -42,10 +37,15 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
-from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
-from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
-from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.contracts._common import utc_now
+from aila.platform.mcp.adapters import (
+    AdapterContext,
+    get_adapter,
+    get_read_tools,
+)
+from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
+from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.uow import UnitOfWork
 
 __all__ = [

@@ -41,11 +41,6 @@ from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import default_task_queue
 from aila.modules.vr.agents.auto_steering import _normalize_acked_observable
-from aila.modules.vr.agents.mcp_adapters import (
-    KNOWN_TOOLS,
-    specialized_tools,
-)
-from aila.modules.vr.agents.mcp_adapters.known_tools import tools_for_language
 from aila.modules.vr.agents.persona_router import resolve_task_type
 from aila.modules.vr.contracts import (
     OutcomeConfidence,
@@ -63,15 +58,13 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
+from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
     OUTCOME_STATE_DRAFT,
     evaluate_quorum,
     upsert_review,
 )
-from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
-from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
-from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.contracts._common import utc_now
 from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
@@ -84,6 +77,14 @@ from aila.platform.llm.idempotency_cache import (
     make_request_key,
     store_response,
 )
+from aila.platform.mcp.adapters import (
+    KNOWN_TOOLS,
+    specialized_tools,
+)
+from aila.platform.mcp.adapters.known_tools import tools_for_language
+from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
+from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
 
@@ -2361,15 +2362,15 @@ async def _fetch_tool_specs(
     applicable = _applicable_servers_for_kind(target_kind)
     out: dict[str, list[dict[str, Any]]] = {}
     if "audit_mcp" in applicable:
-        specs = await AuditMcpBridgeTool().list_tool_specs()
+        specs = await AuditMcpBridgeTool(recorder=record_call).list_tool_specs()
         allowed = tools_for_language("audit_mcp", primary_language)
         out["audit_mcp"] = [s for s in specs if s.get("name", "") in allowed]
     if "ida_headless" in applicable:
-        specs = await IDABridgeTool().list_tool_specs()
+        specs = await IDABridgeTool(recorder=record_call).list_tool_specs()
         allowed = tools_for_language("ida_headless", primary_language)
         out["ida_headless"] = [s for s in specs if s.get("name", "") in allowed]
     if "android_mcp" in applicable:
-        specs = await AndroidMcpBridgeTool().list_tool_specs()
+        specs = await AndroidMcpBridgeTool(recorder=record_call).list_tool_specs()
         allowed = tools_for_language("android_mcp", primary_language)
         out["android_mcp"] = [s for s in specs if s.get("name", "") in allowed]
     return out

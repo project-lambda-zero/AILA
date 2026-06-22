@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
-from aila.modules.vr.contracts import PayloadKind
+from aila.platform.contracts.mcp_payload import PayloadKind
 
 __all__ = [
     "AdapterContext",

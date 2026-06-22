@@ -13,9 +13,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from aila.config import Settings
-from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.config import build_platform_settings
 from aila.platform.exceptions import AILAError
+from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.services import SSHService
 
 __all__ = ["ToolCheckResult", "VRMachineReadinessService", "VRReadinessResult"]

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from aila.storage.registry import ConfigRegistry, SchemaRegistry
 
 from aila.config import Settings
+from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.platform.contracts._common import JsonObject
 from aila.platform.modules import (
     ModuleCapabilityProfile,
@@ -115,11 +116,11 @@ class VRModule(ModuleProtocol):
 
         from aila.modules.vr.tools.advisory_builder import AdvisoryBuilderTool
         from aila.modules.vr.tools.crash_triage import CrashTriageTool
-        from aila.modules.vr.tools.ida_bridge import IDABridgeTool
         from aila.modules.vr.tools.patch_differ import PatchDifferTool
         from aila.modules.vr.tools.poc_runner import PoCRunnerTool
+        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 
-        ida_bridge = IDABridgeTool()
+        ida_bridge = IDABridgeTool(recorder=record_call)
         tool_registry.register(TOOL_IDA_BRIDGE, ida_bridge)
         tool_registry.register(TOOL_POC_RUNNER, PoCRunnerTool(settings))
         tool_registry.register(TOOL_PATCH_DIFFER, PatchDifferTool(ida_bridge))

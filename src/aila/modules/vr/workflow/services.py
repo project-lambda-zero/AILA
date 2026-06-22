@@ -12,14 +12,15 @@ from dataclasses import dataclass
 
 from aila.config import Settings, get_settings
 from aila.modules.vr.config_schema import VRConfigSchema
+from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.target_ingestion import TargetIngestionService
 from aila.modules.vr.tools.advisory_builder import AdvisoryBuilderTool
 from aila.modules.vr.tools.crash_triage import CrashTriageTool
-from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.modules.vr.tools.patch_differ import PatchDifferTool
 from aila.modules.vr.tools.poc_runner import PoCRunnerTool
 from aila.platform.config import build_platform_settings
 from aila.platform.llm.client import AilaLLMClient
+from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.services import SSHService
 from aila.platform.services.factory import ServiceFactory
 
@@ -71,7 +72,7 @@ class VRWorkflowServices:
         """
         settings = get_settings()
         config = VRConfigSchema()
-        ida = IDABridgeTool()
+        ida = IDABridgeTool(recorder=record_call)
         ssh = SSHService(build_platform_settings(settings))
         return cls(
             run_id=run_id,

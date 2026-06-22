@@ -24,6 +24,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# PayloadKind hoisted to platform so the platform-level MCP adapters
+# can reference it without violating the platform-cannot-import-from-modules
+# direction rule. Re-exported here so existing ``from aila.modules.vr.contracts
+# import PayloadKind`` call sites keep working.
+from aila.platform.contracts.mcp_payload import PayloadKind
+
 __all__ = [
     "OperatorIntent",
     "PayloadKind",
@@ -46,28 +52,6 @@ class SenderKind(StrEnum):
     ENGINE = "engine"
     OPERATOR = "operator"
     SYSTEM = "system"
-
-
-class PayloadKind(StrEnum):
-    """The 10 D-44 typed payload kinds. Payload shape is per-kind dict.
-
-    For v0.3 v1 the payload contents are not strictly typed by Pydantic
-    — frontend renderers branch on payload_kind and consume the dict
-    fields they need. Add typed Pydantic shapes per kind when a real
-    consumer asks for one.
-    """
-
-    TEXT = "text"
-    TOOL_CALL = "tool_call"
-    CODE_POINTER = "code_pointer"
-    GRAPH_VIEW = "graph_view"
-    TAINT_FLOW = "taint_flow"
-    XREF_VIEW = "xref_view"
-    PATCH_DIFF = "patch_diff"
-    DECOMPILED_FUNCTION = "decompiled_function"
-    HYPOTHESIS_UPDATE = "hypothesis_update"
-    OUTCOME_PENDING = "outcome_pending"
-    OUTCOME_REVIEW = "outcome_review"
 
 
 class OperatorIntent(StrEnum):

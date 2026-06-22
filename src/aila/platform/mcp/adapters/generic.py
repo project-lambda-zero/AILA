@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aila.modules.vr.contracts import PayloadKind
+from aila.platform.contracts.mcp_payload import PayloadKind
 
 from ._shared import bounded_dump, obs_key_for, provenance_stamp
 from .base import AdapterContext, AdapterResult

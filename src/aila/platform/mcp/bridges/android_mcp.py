@@ -40,6 +40,8 @@ import httpx
 from aila.platform.tools._common import Tool
 from aila.storage.registry import ConfigRegistry
 
+from ._recorder import BridgeRecorder, noop_recorder
+
 __all__ = ["AndroidMcpBridgeTool"]
 
 _log = logging.getLogger(__name__)
@@ -161,7 +163,7 @@ def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
 _APK_PATH_KWARGS: frozenset[str] = frozenset(("apk_path", "apk", "path"))
 
 
-def _shared_apks_dir() -> "Path":  # noqa: F821 — Path imported in helper
+def _shared_apks_dir() -> Path:  # noqa: F821 — Path imported in helper
     """Return the directory that holds operator-uploaded APKs.
 
     Default: ``~/.android-mcp/uploads/shared/``. Env override:
@@ -200,7 +202,7 @@ def _resolve_apk_path(raw_path: str) -> tuple[str, str | None]:
     if Path(normalised).is_file():
         if normalised == raw_path:
             return normalised, None
-        return normalised, f"trimmed whitespace from apk_path"
+        return normalised, "trimmed whitespace from apk_path"
 
     shared = _shared_apks_dir()
     if not shared.is_dir():
@@ -259,7 +261,7 @@ def _resolve_apk_path(raw_path: str) -> tuple[str, str | None]:
     # candidate SHA in agent SHA), but require a minimum overlap of
     # 8 hex chars so we don't pick up coincidental short hex strings.
     if len(sha_hex) >= 8:
-        sub_matches: list[tuple[int, "Path"]] = []  # noqa: F821
+        sub_matches: list[tuple[int, Path]] = []  # noqa: F821
         for cand, cand_sha in candidate_shas.items():
             if sha_hex in cand_sha:
                 sub_matches.append((len(sha_hex), cand))
@@ -381,6 +383,7 @@ class AndroidMcpBridgeTool(Tool):
         self,
         base_url: str | None = None,
         timeout: float | None = None,
+        recorder: BridgeRecorder | None = None,
     ) -> None:
         # ``base_url`` if explicitly supplied wins forever (tests, DI).
         # Otherwise resolve per-call via env → ConfigRegistry → default
@@ -390,6 +393,10 @@ class AndroidMcpBridgeTool(Tool):
         self._timeout = timeout or float(
             os.environ.get("ANDROID_MCP_TIMEOUT", str(self._DEFAULT_TIMEOUT_S)),
         )
+        # Optional per-call audit logger. See ``_recorder.py``; module
+        # authors wire their own ``record_call`` here, tests + ad-hoc
+        # callers omit it and get a no-op.
+        self._recorder: BridgeRecorder = recorder or noop_recorder
 
     async def _resolve_base_url(self) -> str:
         """Resolve android-mcp base URL with env > config > default order."""
@@ -504,12 +511,7 @@ class AndroidMcpBridgeTool(Tool):
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
 
-        # Lazy import — top-level would create a circular dep through
-        # ``aila.modules.vr.services.__init__`` (which re-exports
-        # ``TargetAnalysisService`` that imports this bridge).
-        from aila.modules.vr.services.mcp_call_logger import record_call  # noqa: PLC0415
-
-        async with record_call(
+        async with self._recorder(
             server_id="android_mcp", base_url=base, action=action,
         ) as ctx:
             try:

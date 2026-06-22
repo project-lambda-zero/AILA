@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from aila.modules.vr.contracts import PayloadKind
+from aila.platform.contracts.mcp_payload import PayloadKind
 
 from ._shared import (
     MAX_LIST_PREVIEW,

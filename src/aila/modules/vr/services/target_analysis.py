@@ -41,6 +41,7 @@ from aila.modules.vr.contracts.target_stages import (
     StageStatus,
 )
 from aila.modules.vr.db_models import VRTargetRecord
+from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.stage_tracker import (
     StageAlreadyDoneError,
     StageInFlightError,
@@ -48,10 +49,10 @@ from aila.modules.vr.services.stage_tracker import (
     load_target_stages,
     save_target_stages,
 )
-from aila.modules.vr.tools.android_mcp_bridge import AndroidMcpBridgeTool
-from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
-from aila.modules.vr.tools.ida_bridge import IDABridgeTool
 from aila.platform.contracts._common import utc_now
+from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
+from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
@@ -597,9 +598,9 @@ class TargetAnalysisService:
         audit_mcp: AuditMcpBridgeTool | Any | None = None,
         android_mcp: AndroidMcpBridgeTool | Any | None = None,
     ) -> None:
-        self._ida = ida or IDABridgeTool()
-        self._audit_mcp = audit_mcp or AuditMcpBridgeTool()
-        self._android_mcp = android_mcp or AndroidMcpBridgeTool()
+        self._ida = ida or IDABridgeTool(recorder=record_call)
+        self._audit_mcp = audit_mcp or AuditMcpBridgeTool(recorder=record_call)
+        self._android_mcp = android_mcp or AndroidMcpBridgeTool(recorder=record_call)
 
     async def analyze(self, target_id: str) -> None:
         """Run the ingestion stage(s) for one target.

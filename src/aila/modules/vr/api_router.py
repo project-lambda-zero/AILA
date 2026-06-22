@@ -30,6 +30,7 @@ from sqlmodel import select
 from aila.api.deps import get_task_queue
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
+from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.platform.contracts._common import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.llm.cost_record import LLMCostRecord
@@ -2783,9 +2784,9 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[dict]:
         from aila.api.deps import get_task_queue
+        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 
         from .db_models import VRTargetRecord
-        from .tools.ida_bridge import IDABridgeTool
         from .workflow.task import run_target_analysis
 
         # 1) Resolve target + verify kind is uploadable.
@@ -2824,7 +2825,7 @@ def create_vr_router() -> APIRouter:
             )
 
 
-        bridge = IDABridgeTool()
+        bridge = IDABridgeTool(recorder=record_call)
         base_url = await bridge._resolve_base_url()  # noqa: SLF001
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:

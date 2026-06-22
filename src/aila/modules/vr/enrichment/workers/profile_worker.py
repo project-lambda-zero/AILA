@@ -11,8 +11,9 @@ from __future__ import annotations
 from typing import Any
 
 from aila.modules.vr.enrichment.services import CapabilityProfileBuilder
-from aila.modules.vr.tools.audit_mcp_bridge import AuditMcpBridgeTool
-from aila.modules.vr.tools.ida_bridge import IDABridgeTool
+from aila.modules.vr.services.mcp_call_logger import record_call
+from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 
@@ -39,8 +40,8 @@ async def run_capability_profile_build(
     applicable_* lists.
     """
     builder = CapabilityProfileBuilder(
-        ida=IDABridgeTool(),
-        audit_mcp=AuditMcpBridgeTool(),
+        ida=IDABridgeTool(recorder=record_call),
+        audit_mcp=AuditMcpBridgeTool(recorder=record_call),
     )
     profile = await builder.build(target_id)
     return profile.model_dump(mode="json")

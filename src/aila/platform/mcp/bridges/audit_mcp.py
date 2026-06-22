@@ -31,9 +31,11 @@ from typing import Any
 import httpx
 from sqlalchemy.exc import SQLAlchemyError
 
-from aila.modules.vr.tools._kwarg_alias import build_alias_map, normalize_kwargs
 from aila.platform.tools._common import Tool
 from aila.storage.registry import ConfigRegistry
+
+from ._kwarg_alias import build_alias_map, normalize_kwargs
+from ._recorder import BridgeRecorder, noop_recorder
 
 __all__ = ["AuditMcpBridgeTool"]
 
@@ -297,6 +299,7 @@ class AuditMcpBridgeTool(Tool):
         self,
         base_url: str | None = None,
         timeout: float | None = None,
+        recorder: BridgeRecorder | None = None,
     ) -> None:
         # `base_url` if explicitly supplied wins forever (tests, DI).
         # Otherwise resolve per-call via env → ConfigRegistry → default
@@ -306,6 +309,10 @@ class AuditMcpBridgeTool(Tool):
         self._timeout = timeout or float(
             os.environ.get("AUDIT_MCP_TIMEOUT", "300"),
         )
+        # Optional per-call audit logger. Module authors pass their own
+        # ``record_call``-style async context manager; tests and
+        # ad-hoc callers omit it and get a no-op (see ``_recorder.py``).
+        self._recorder: BridgeRecorder = recorder or noop_recorder
         # fix §207 — per-instance prewarm registry. Class-level storage
         # leaked across instances (tests saw stale state) and grew
         # monotonically in long-running workers (one entry per index_id,
@@ -529,9 +536,10 @@ class AuditMcpBridgeTool(Tool):
 
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
-        from aila.modules.vr.services.mcp_call_logger import record_call  # noqa: PLC0415
 
-        async with record_call(server_id="audit_mcp", base_url=base, action=action) as ctx:
+        async with self._recorder(
+            server_id="audit_mcp", base_url=base, action=action,
+        ) as ctx:
             # Bound concurrency on memory-heavy tools. The semaphore is
             # class-level so every bridge instance in this worker process
             # shares the cap; if the tool is not heavy the helper returns
