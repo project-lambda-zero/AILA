@@ -36,6 +36,7 @@ const THEME_LABELS: Record<string, string> = {
   "half-life-1": "Half-Life 1",
   "y2k-fever": "Y2K Fever",
   vendetta: "Vendetta",
+  "specimen-index": "Specimen Index",
 };
 
 export function UserAvatarMenu() {

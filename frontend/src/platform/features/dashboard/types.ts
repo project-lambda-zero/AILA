@@ -3,7 +3,7 @@ import type { ComponentType } from "react";
 /**
  * Widget category — used for grouping in the picker dialog.
  */
-export type WidgetCategory = "platform" | "vulnerability" | "vr";
+export type WidgetCategory = "platform" | "vulnerability" | "vr" | "malware";
 
 /**
  * Default grid dimensions for a widget.

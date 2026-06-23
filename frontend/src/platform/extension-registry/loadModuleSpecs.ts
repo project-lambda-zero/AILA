@@ -1,5 +1,6 @@
 import { frontendSpec as forensicsSpec } from "@aila/forensics-frontend";
 import { frontendSpec as helloWorldSpec } from "@aila/hello-world-frontend";
+import { frontendSpec as malwareSpec } from "@aila/malware-frontend";
 import { frontendSpec as vulnerabilitySpec } from "@aila/vulnerability-frontend";
 import { frontendSpec as vrSpec } from "@aila/vr-frontend";
 
@@ -8,6 +9,7 @@ import type { ModuleFrontendSpec } from "@platform/extension-registry/types";
 const ALL_MODULE_SPECS: ReadonlyArray<ModuleFrontendSpec> = [
   forensicsSpec,
   helloWorldSpec,
+  malwareSpec,
   vulnerabilitySpec,
   vrSpec,
 ];

@@ -12,9 +12,10 @@ const CATEGORY_LABELS: Record<WidgetCategory, string> = {
   platform: "Platform",
   vulnerability: "Vulnerability",
   vr: "Vulnerability Research",
+  malware: "Malware Analysis",
 };
 
-const CATEGORY_ORDER: WidgetCategory[] = ["platform", "vulnerability", "vr"];
+const CATEGORY_ORDER: WidgetCategory[] = ["platform", "vulnerability", "vr", "malware"];
 
 export interface WidgetPickerDialogProps {
   open: boolean;

@@ -122,6 +122,11 @@ const THEME_META: Record<Theme, ThemeMeta> = {
     tagline: "Blood-red on black. Remember remember.",
     naturalMode: "dark",
   },
+  "specimen-index": {
+    label: "Specimen Index",
+    tagline: "Bone-white paper, india-ink type, stamp-pad red.",
+    naturalMode: "light",
+  },
 };
 
 function ThemePreview({ theme }: { theme: Theme }) {
@@ -740,6 +745,66 @@ function ThemePreview({ theme }: { theme: Theme }) {
           }}
         >
           LAUNCH
+        </div>
+      </div>
+    );
+  }
+
+  if (theme === "specimen-index") {
+    return (
+      <div
+        className="relative h-28 overflow-hidden border"
+        style={{ background: "#f7f4ec", borderColor: "#c8c0a8" }}
+      >
+        {/* Stamp-pad red record marker */}
+        <div
+          className="absolute left-0 top-0 bottom-0"
+          style={{ width: 4, background: "#b91c1c" }}
+        />
+        {/* Display masthead */}
+        <div
+          className="absolute left-3 top-2 text-[18px]"
+          style={{
+            color: "#14110d",
+            fontFamily: "'Cormorant Garamond','Source Serif 4',serif",
+            fontWeight: 600,
+            letterSpacing: "0.02em",
+          }}
+        >
+          AILA Specimen
+        </div>
+        {/* Body serif */}
+        <div
+          className="absolute left-3 top-9 text-[10px]"
+          style={{
+            color: "#6b6358",
+            fontFamily: "'Source Serif 4','Cormorant Garamond',serif",
+          }}
+        >
+          Index card #042 · admitted 1973
+        </div>
+        {/* Mono hash */}
+        <div
+          className="absolute left-3 bottom-2 text-[8px]"
+          style={{
+            color: "#14110d",
+            fontFamily: "'IBM Plex Mono','Fira Code',monospace",
+          }}
+        >
+          sha256:a3f7…12d4
+        </div>
+        {/* Stamp */}
+        <div
+          className="absolute right-3 top-3 px-2 py-0.5 text-[9px] border"
+          style={{
+            color: "#b91c1c",
+            borderColor: "#b91c1c",
+            fontFamily: "'IBM Plex Mono','Fira Code',monospace",
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+          }}
+        >
+          ACTIVE
         </div>
       </div>
     );

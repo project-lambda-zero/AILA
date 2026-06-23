@@ -26,7 +26,8 @@ import type { InvestigationStatus, OperatorIntent } from "../types";
  *
  *  Sections without a backend yet are rendered as "coming next" cards
  *  so the operator sees the full design but doesn't get confused by a
- *  half-wired button. Backend wiring is tracked in
+ *  half-wired button. Backend wiring is tracked in the VR frontend
+ *  gap audit. */
 export function SteeringDrawer({
   open,
   onClose,

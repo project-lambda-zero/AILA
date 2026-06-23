@@ -216,6 +216,9 @@ importers:
       '@aila/hello-world-frontend':
         specifier: workspace:*
         version: link:../src/aila/modules/hello_world/frontend
+      '@aila/malware-frontend':
+        specifier: workspace:*
+        version: link:../src/aila/modules/malware/frontend
       '@aila/vr-frontend':
         specifier: workspace:*
         version: link:../src/aila/modules/vr/frontend
@@ -441,6 +444,49 @@ importers:
       '@types/react':
         specifier: catalog:react19
         version: 19.2.17
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.2
+
+  src/aila/modules/malware/frontend:
+    dependencies:
+      '@phosphor-icons/react':
+        specifier: catalog:ui
+        version: 2.1.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@tanstack/react-query':
+        specifier: catalog:query
+        version: 5.101.0(react@19.2.7)
+      '@xyflow/react':
+        specifier: catalog:flow
+        version: 12.11.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(immer@11.1.8)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      react:
+        specifier: catalog:react19
+        version: 19.2.7
+      react-dom:
+        specifier: catalog:react19
+        version: 19.2.7(react@19.2.7)
+      react-router:
+        specifier: '>=7.15.0'
+        version: 7.17.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+    devDependencies:
+      '@aila/typescript-config':
+        specifier: workspace:*
+        version: link:../../../../../packages/typescript-config
+      '@storybook/react':
+        specifier: catalog:storybook
+        version: 10.4.4(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(storybook@10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(typescript@6.0.2)
+      '@storybook/react-vite':
+        specifier: catalog:storybook
+        version: 10.4.4(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(esbuild@0.28.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(storybook@10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(typescript@6.0.2)(vite@8.0.16(@types/node@24.7.2)(esbuild@0.28.1)(jiti@2.7.0))
+      '@types/react':
+        specifier: catalog:react19
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: catalog:react19
+        version: 19.2.3(@types/react@19.2.17)
+      storybook:
+        specifier: catalog:storybook
+        version: 10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       typescript:
         specifier: 'catalog:'
         version: 6.0.2

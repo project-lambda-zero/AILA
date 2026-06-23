@@ -16,6 +16,7 @@
 @source "../../../src/aila/modules/vulnerability/frontend/**/*.{ts,tsx}";
 @source "../../../src/aila/modules/forensics/frontend/**/*.{ts,tsx}";
 @source "../../../src/aila/modules/hello_world/frontend/**/*.{ts,tsx}";
+@source "../../../src/aila/modules/malware/frontend/**/*.{ts,tsx}";
 
 /* Per-theme distinctive fonts. All families loaded via the
    <link rel="stylesheet"> in frontend/index.html so they're
@@ -4852,6 +4853,164 @@ a:hover {
   text-shadow:
     0 0 1px rgba(255, 215, 175, 0.4),
     0 0 20px rgba(255, 95, 135, 0.4);
+}
+
+
+/* =====================================================================
+   THEME: SPECIMEN-INDEX  (NATURALLY LIGHT — malware module aesthetic)
+   Signature A: bone-white paper surfaces + india-ink type
+   Signature B: heritage stamp-pad red — the ONLY chromatic accent;
+                 marks the active record, persona attribution, and
+                 supersession cross-references. Never decoration.
+   Signature C: pencil-graphite hairline borders — no drop shadows
+   Signature D: severity colors from classified-document marker-band
+                 conventions (cinnabar / jaundice-amber / oxidized-brass /
+                 graphite)
+   Signature E: serif body + display; mono only for hashes + code
+
+   Light is the primary mode for this theme; dark variant lives in
+   the [data-mode="dark"] block below for operators who flip it via
+   the theme menu.
+   ===================================================================== */
+
+[data-theme="specimen-index"] {
+  /* Per-theme typography — Cormorant Garamond (high-contrast
+     editorial display, paper-catalog masthead feel), Source Serif 4
+     (warm humanist serif body), IBM Plex Mono (hashes + code). */
+  --font-display: "Cormorant Garamond", "Source Serif 4", Georgia, serif;
+  --font-sans: "Source Serif 4", "Cormorant Garamond", Georgia, serif;
+  --font-mono: "IBM Plex Mono", "Fira Code", ui-monospace, monospace;
+
+  /* Surfaces — bone-white paper, card stock, ivory notebook page. */
+  --color-base: #f7f4ec;         /* bone-white paper */
+  --color-surface: #fffef8;      /* card stock */
+  --color-elevated: #fbf8ee;     /* ivory notebook page */
+  --color-border: #c8c0a8;       /* pencil-graphite hairline */
+  --color-border-hover: #b91c1c; /* heritage stamp-pad red on hover */
+
+  /* THE accent — heritage stamp-pad red. Reserved for the active
+     record, persona attribution, and supersession cross-references.
+     NEVER background fill. */
+  --color-accent: #b91c1c;
+  --color-accent-muted: #f4dcd9;
+  --color-accent-deep: #8a1414;
+
+  /* Secondary palette — aged book accents kept available for
+     KpiTile sub-numbers and the family-encyclopedia chrome. */
+  --color-peach: #c47a50;        /* aged-tan */
+  --color-lavender: #5f5390;     /* lavender ink */
+  --color-mint: #2f6b3d;         /* field-guide green */
+
+  /* Severity — classified-document marker-band conventions. */
+  --color-critical: #c03a2b;     /* cinnabar */
+  --color-high: #c99517;         /* jaundice-amber */
+  --color-medium: #997022;       /* oxidized-brass */
+  --color-low: #6b6358;          /* graphite */
+
+  /* Typography — india-ink on bone-white. */
+  --color-text: #14110d;
+  --color-text-muted: #6b6358;
+  --color-text-peach: #8a5a2b;   /* aged-tan, used by KpiTile sub-numbers */
+
+  /* Status — retoned to the paper palette so it stays coherent. */
+  --status-completed: #2f6b3d;   /* field-guide green */
+  --status-running: #c99517;     /* jaundice-amber, matches HIGH */
+  --status-failed: #c03a2b;      /* cinnabar */
+  --status-queued: #8a8270;      /* fog-paper */
+  --status-waiting: #5f5390;     /* lavender ink */
+  --status-paused: #6b6358;      /* graphite */
+  --color-info: #2e588a;         /* fountain-pen blue */
+
+  /* Focus + badge contrast. */
+  --color-focus-ring: #b91c1c;
+  --color-accent-soft: rgba(185, 28, 28, 0.10);
+  --color-badge-text: #fffef8;   /* card-stock on stamp-pad red */
+
+  /* Hairline radii — paper has corners, not pillows. */
+  --radius-sm: 1px;
+  --radius-md: 2px;
+  --radius-lg: 3px;
+
+  /* shadcn/ui token mapping — without these, Tailwind utilities like
+     `bg-primary` / `bg-card` fall back to :root (synthwave) defaults
+     and paint neon magenta over the paper palette. */
+  --background: #f7f4ec;
+  --foreground: #14110d;
+  --card: #fffef8;
+  --card-foreground: #14110d;
+  --popover: #fffef8;
+  --popover-foreground: #14110d;
+  --primary: #b91c1c;
+  --primary-foreground: #fffef8;   /* WCAG: card-stock text on stamp-pad red (8.96:1) */
+  --secondary: #fbf8ee;
+  --secondary-foreground: #14110d;
+  --muted: #f4f0e0;
+  --muted-foreground: #6b6358;
+  --destructive: #c03a2b;
+  --border: #c8c0a8;
+  --input: #c8c0a8;
+  --ring: #b91c1c;
+  --radius: 0.125rem;
+
+  /* Sidebar — ivory page tier so the main reading area pops slightly
+     forward off it (the inverse of midnight-cloud-8's deepest-tier
+     sidebar; paper themes read better with the sidebar elevated). */
+  --sidebar-background: var(--color-elevated);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-accent);
+  --sidebar-primary-foreground: var(--color-badge-text);
+  --sidebar-accent: var(--color-base);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border);
+  --sidebar-ring: var(--color-focus-ring);
+
+  /* Effect knobs — paper has no glow, no grid. */
+  --glow-strength: 0;
+  --glow-color: transparent;
+  --grid-color: transparent;
+}
+
+/* Specimen Index dark mode — operator-flip variant. Bone-white
+   inverts to india-ink; the heritage stamp-pad red shifts up one
+   step on the lightness scale so it stays distinct on the darker
+   ground. */
+[data-theme="specimen-index"][data-mode="dark"] {
+  --color-base: #14110d;
+  --color-surface: #1f1a14;
+  --color-elevated: #2a241b;
+  --color-border: #4a4338;
+  --color-border-hover: #ef4444;
+
+  --color-accent: #ef4444;
+  --color-accent-muted: #4a1818;
+  --color-accent-deep: #b91c1c;
+
+  --color-text: #ece6d6;
+  --color-text-muted: #948b7d;
+  --color-text-peach: #d4a574;
+
+  --color-focus-ring: #ef4444;
+  --color-accent-soft: rgba(239, 68, 68, 0.18);
+  --color-badge-text: #14110d;
+
+  --background: #14110d;
+  --foreground: #ece6d6;
+  --card: #1f1a14;
+  --card-foreground: #ece6d6;
+  --popover: #2a241b;
+  --popover-foreground: #ece6d6;
+  --primary: #ef4444;
+  --primary-foreground: #14110d;   /* WCAG: india-ink on cinnabar */
+  --secondary: #2a241b;
+  --secondary-foreground: #ece6d6;
+  --muted: #1f1a14;
+  --muted-foreground: #948b7d;
+  --destructive: #ef4444;
+  --border: #4a4338;
+  --input: #4a4338;
+  --ring: #ef4444;
+
+  --sidebar-background: var(--color-surface);
 }
 
 

@@ -42,6 +42,7 @@ const THEMES = [
   "half-life-1",
   "y2k-fever",
   "vendetta",
+  "specimen-index",
 ] as const;
 
 type Theme = (typeof THEMES)[number];
@@ -53,6 +54,7 @@ const NATURALLY_LIGHT: ReadonlySet<Theme> = new Set<Theme>([
   "ps1",
   "truman-show",
   "y2k-fever",
+  "specimen-index",
 ]);
 
 const DEFAULT_THEME: Theme = "midnight-cloud-8";
