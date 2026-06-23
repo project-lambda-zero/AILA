@@ -26,7 +26,7 @@
 #   FRONTEND_PORT         default 3000
 #   AUDIT_MCP_PORT        default 18822
 #   IDA_HEADLESS_PORT     default 18821
-#   WORKERS               default "default vr vulnerability forensics"
+#   WORKERS               default "default vr vulnerability forensics malware"
 #   AUDIT_MCP_DIR         default ../audit-mcp (relative to repo root)
 #   IDA_HEADLESS_DIR      default ../ida-headless-mcp-exp (relative to repo root)
 #   AILA_START_FRONTEND   1/0 (default 1)
@@ -43,7 +43,7 @@ COMMAND="${1:-start}"
 : "${FRONTEND_PORT:=3000}"
 : "${AUDIT_MCP_PORT:=18822}"
 : "${IDA_HEADLESS_PORT:=18821}"
-: "${WORKERS:=default vr vulnerability forensics}"
+: "${WORKERS:=default vr vulnerability forensics malware}"
 # Per-queue worker concurrency. The vr queue runs LLM-heavy investigations
 # with multi-minute LLM retries; one worker per queue serializes them
 # behind whichever investigation is mid-call. Default vr=5 so the queue
