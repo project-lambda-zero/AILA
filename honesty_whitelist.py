@@ -77,6 +77,12 @@ HONESTY_WHITELIST = [
     ("vr/_task_queue.py", "default_task_queue", "noqa"),
     ("vr/_task_queue.py", "enqueue_vr_nday", "noqa"),
     ("vr/_task_queue.py", "enqueue_downstream_target_stages", "noqa"),
+    # Category (b): same lazy-import pattern in the malware module's
+    # outcome dispatcher. _dispatch_sub_investigation defers the
+    # ``aila.modules.malware._task_queue`` + ``workflow.task`` imports
+    # until the dispatch actually fires (after registration completes)
+    # so the state-file registration cycle stays unbroken.
+    ("malware/agents/outcome_dispatcher.py", "_dispatch_sub_investigation", "noqa"),
     ("vr/workflow/states/investigation_emit.py", "_run_pattern_extraction", "noqa"),
     ("vr/workflow/task.py", "run_target_analysis", "noqa"),
     ("vr/workflow/task.py", "run_fuzz_campaign_launch", "noqa"),
