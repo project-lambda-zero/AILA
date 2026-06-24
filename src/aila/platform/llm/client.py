@@ -1267,12 +1267,28 @@ class AilaLLMClient:
 
     @staticmethod
     def _parse_model(content: str, model_class: type[BaseModel]) -> BaseModel | None:
-        """Try to parse content into a Pydantic model. Returns None on failure."""
+        """Try to parse content into a Pydantic model. Returns None on failure.
+
+        Logs the parse failure at WARNING with the truncated content head
+        and the validation error so operators see what mismatched without
+        bumping the logger to DEBUG. The full content is in the LLM cost
+        record's response_preview column for replay.
+        """
         try:
             data = json.loads(content)
             return model_class.model_validate(data)
-        except (json.JSONDecodeError, ValidationError) as exc:
-            logger.debug("Pydantic parse failed: %s", exc)
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "_parse_model: JSON decode failed for %s -- %s. head=%r",
+                model_class.__name__, exc, content[:200],
+            )
+            return None
+        except ValidationError as exc:
+            logger.warning(
+                "_parse_model: schema validation failed for %s -- %s",
+                model_class.__name__,
+                str(exc).replace("\n", " | ")[:600],
+            )
             return None
 
 
