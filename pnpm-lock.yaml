@@ -450,6 +450,9 @@ importers:
 
   src/aila/modules/malware/frontend:
     dependencies:
+      '@monaco-editor/react':
+        specifier: catalog:ui
+        version: 4.7.0(monaco-editor@0.55.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@phosphor-icons/react':
         specifier: catalog:ui
         version: 2.1.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
