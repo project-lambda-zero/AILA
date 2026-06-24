@@ -66,7 +66,7 @@ async def _get_shared_client() -> httpx.AsyncClient:
     Per-request ``timeout=`` overrides the client default, so callers
     keep their existing timeout semantics intact.
     """
-    global _SHARED_CLIENT  # noqa: PLW0603
+    global _SHARED_CLIENT
     if _SHARED_CLIENT is not None:
         return _SHARED_CLIENT
     async with _SHARED_CLIENT_LOCK:
@@ -129,7 +129,7 @@ def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
 # calls them directly via bridge.forward(action=...) — the denylist is
 # only applied in list_tool_specs() (what the prompt builder pulls).
 # Tools that take an ``apk_path`` argument that the agent reconstructs
-# from memory each call. The path is the 64-hex SHA256 of the APK
+# loaded fresh on every call. The path is the 64-hex SHA256 of the APK
 # bytes plus ``.apk`` extension, dropped into the operator's shared
 # uploads directory (``~/.android-mcp/uploads/shared/`` by default,
 # overridable via ``ANDROID_MCP_UPLOADS_DIR``). The LLM consistently
@@ -150,7 +150,7 @@ def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
 # limit is also hit. Net effect: agents burn ~5 turns per branch
 # typo-drifting before the block lands, and even then they have no
 # alternative tool to pivot to (verify_capabilities is the only path
-# from declared permissions to actual API call sites for the privacy
+# back to the actual API call sites in the dex from declared permissions
 # domain).
 #
 # Auto-resolver below intercepts the call before HTTP. It normalises
@@ -163,13 +163,13 @@ def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
 _APK_PATH_KWARGS: frozenset[str] = frozenset(("apk_path", "apk", "path"))
 
 
-def _shared_apks_dir() -> Path:  # noqa: F821 — Path imported in helper
+def _shared_apks_dir() -> Path:
     """Return the directory that holds operator-uploaded APKs.
 
     Default: ``~/.android-mcp/uploads/shared/``. Env override:
     ``ANDROID_MCP_UPLOADS_DIR`` (full directory path, not just a parent).
     """
-    from pathlib import Path  # noqa: PLC0415
+    from pathlib import Path
     env = os.environ.get("ANDROID_MCP_UPLOADS_DIR")
     if env:
         return Path(env)
@@ -196,7 +196,7 @@ def _resolve_apk_path(raw_path: str) -> tuple[str, str | None]:
          path unchanged so the upstream FileNotFoundError still fires
          (so the breaker can engage and the agent can pivot).
     """
-    from pathlib import Path  # noqa: PLC0415
+    from pathlib import Path
 
     normalised = raw_path.strip().strip('"').strip("'")
     if Path(normalised).is_file():
@@ -261,7 +261,7 @@ def _resolve_apk_path(raw_path: str) -> tuple[str, str | None]:
     # candidate SHA in agent SHA), but require a minimum overlap of
     # 8 hex chars so we don't pick up coincidental short hex strings.
     if len(sha_hex) >= 8:
-        sub_matches: list[tuple[int, Path]] = []  # noqa: F821
+        sub_matches: list[tuple[int, Path]] = []
         for cand, cand_sha in candidate_shas.items():
             if sha_hex in cand_sha:
                 sub_matches.append((len(sha_hex), cand))
@@ -744,7 +744,7 @@ class AndroidMcpBridgeTool(Tool):
 
         # Drop pipeline-only tools BEFORE fetching schemas so we don't
         # waste round-trips on tools the agent will never see.
-        import shutil  # noqa: PLC0415
+        import shutil
         missing_cli = {
             tool_name
             for tool_name, cli in _ENV_GATED_TOOLS.items()
@@ -803,7 +803,7 @@ class AndroidMcpBridgeTool(Tool):
         catalog-not-yet-loaded scenarios) so the call still forwards to
         android-mcp and the server's own error message surfaces.
         """
-        import difflib  # noqa: PLC0415
+        import difflib
 
         specs = await self.list_tool_specs()
         if not specs:

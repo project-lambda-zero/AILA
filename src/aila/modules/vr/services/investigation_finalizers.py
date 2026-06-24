@@ -176,7 +176,7 @@ async def synthesize_no_finding_outcomes(
                         updated_at=now,
                     ),
                 )
-                from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
+                from aila.modules.vr.services.branch_cleanup import (
                     close_orphan_branches_on_terminal,
                 )
                 await close_orphan_branches_on_terminal(
@@ -276,7 +276,7 @@ async def synthesize_no_finding_outcomes(
                     updated_at=now,
                 ),
             )
-            from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
+            from aila.modules.vr.services.branch_cleanup import (
                 close_orphan_branches_on_terminal,
             )
             await close_orphan_branches_on_terminal(

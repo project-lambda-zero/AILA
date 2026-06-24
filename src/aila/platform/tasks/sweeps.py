@@ -16,7 +16,7 @@ Contract:
 * Sweep callable is an async no-arg function returning anything
   JSON-loggable. The worker logs the result at INFO when truthy.
 * Sweep failures are swallowed by the worker per the existing
-  best-effort cron policy (``# noqa: BLE001`` block). Each module
+  best-effort cron policy (``
   is responsible for its own retry / counter / alert escalation.
 
 Registration is module-load-time. Each module's top-level

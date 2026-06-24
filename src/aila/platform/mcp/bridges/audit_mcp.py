@@ -672,7 +672,7 @@ class AuditMcpBridgeTool(Tool):
                                 # Skip the nearest-names suggestion
                                 # below — we already gave the agent
                                 # the file content.
-                                return payload  # noqa: TRY300
+                                return payload
                         suggestions = await self._suggest_function_names(
                             base=base,
                             index_id=normalized_kwargs.get("index_id") or "",

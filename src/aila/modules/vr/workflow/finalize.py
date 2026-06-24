@@ -332,7 +332,7 @@ async def _handle_all_outcomes(
     outcome. We call the same enqueue here so finalize and the emit
     path produce identical behavior.
     """
-    from .task import run_vr_synthesis  # noqa: PLC0415
+    from .task import run_vr_synthesis
 
     task_queue = default_task_queue()
     await task_queue.submit(

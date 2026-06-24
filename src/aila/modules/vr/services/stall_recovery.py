@@ -189,8 +189,8 @@ async def _default_submit_fn(
     path; we MUST not pull the task queue / module loader surface
     during the recovery-sweep import.
     """
-    from aila.modules.vr._task_queue import default_task_queue  # noqa: PLC0415
-    from aila.modules.vr.workflow.task import (  # noqa: PLC0415
+    from aila.modules.vr._task_queue import default_task_queue
+    from aila.modules.vr.workflow.task import (
         run_vr_investigate,
         run_vr_nday,
     )

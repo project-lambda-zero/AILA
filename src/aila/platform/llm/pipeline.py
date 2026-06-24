@@ -78,7 +78,7 @@ class PipelineRunner:
             raw = await getter.get(
                 "platform", f"llm_pipeline_{phase}_steps_{task_type}",
             )
-        except Exception:  # noqa: BLE001 — best-effort override; fall through to default
+        except Exception:
             return default
         if not raw:
             return default

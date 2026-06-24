@@ -365,7 +365,7 @@ def adapt_attack_surface(
     than 5,000 raw lines, and includes the trust_level + asset_value
     next to each entry so the agent can prioritize.
     """
-    from collections import Counter  # noqa: PLC0415
+    from collections import Counter
 
     # Accept both the canonical 'entrypoints' key (current audit_mcp)
     # and the legacy 'surfaces|entries|results' keys (older servers,

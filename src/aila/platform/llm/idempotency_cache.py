@@ -135,7 +135,7 @@ async def lookup_cached_response(
     expires = row.expires_at
     if expires is not None and expires.tzinfo is None:
         # fix §122 — normalize legacy tz-naive expires_at to UTC.
-        from datetime import UTC  # noqa: PLC0415
+        from datetime import UTC
         expires = expires.replace(tzinfo=UTC)
     if expires is None or expires < utc_now():
         return None
@@ -277,7 +277,7 @@ async def run_purge_expired_cron() -> int:
     function so the cron import surface stays narrow — the reaper does
     not need to know about session scopes.
     """
-    from aila.storage.database import async_session_scope  # noqa: PLC0415
+    from aila.storage.database import async_session_scope
 
     async with async_session_scope() as session:
         return await purge_expired(session)

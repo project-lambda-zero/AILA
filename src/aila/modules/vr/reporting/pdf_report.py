@@ -499,7 +499,7 @@ def _resolve_audit_metadata(
         aborting the whole audit_metadata block.
         """
         try:
-            result = subprocess.run(  # noqa: S603, S607
+            result = subprocess.run(
                 ["git", "-C", cwd, *args],
                 capture_output=True, text=True,
                 timeout=timeout, check=False,
@@ -1129,7 +1129,7 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
     )
 
     class _DarkPage(PageTemplate):
-        def beforeDrawPage(self, canvas: Any, doc: Any) -> None:  # noqa: N802
+        def beforeDrawPage(self, canvas: Any, doc: Any) -> None:
             del doc
             canvas.saveState()
             canvas.setFillColor(_BG_PAGE)

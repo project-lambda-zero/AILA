@@ -53,7 +53,7 @@ async def enqueue_vr_nday(
     production, a fake in tests). The kwargs are JSON-serializable per
     the platform-task contract.
     """
-    from .workflow.task import run_vr_nday  # noqa: PLC0415
+    from .workflow.task import run_vr_nday
 
     return await task_queue.submit(
         track="vr",

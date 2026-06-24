@@ -2698,13 +2698,13 @@ def create_vr_router() -> APIRouter:
         registry_svc = McpRegistryService()
         # _spec/_resolved_url are 'private' by convention but stable
         # since they back the public /mcp/servers route too.
-        spec = registry_svc._spec("audit_mcp")  # noqa: SLF001
+        spec = registry_svc._spec("audit_mcp")
         if spec is None:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="audit_mcp not registered in MCP_SERVERS catalog.",
             )
-        base_url, _src = await registry_svc._resolved_url(spec)  # noqa: SLF001
+        base_url, _src = await registry_svc._resolved_url(spec)
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -2826,7 +2826,7 @@ def create_vr_router() -> APIRouter:
 
 
         bridge = IDABridgeTool(recorder=record_call)
-        base_url = await bridge._resolve_base_url()  # noqa: SLF001
+        base_url = await bridge._resolve_base_url()
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 resp = await client.post(
@@ -4610,7 +4610,7 @@ def create_vr_router() -> APIRouter:
             # next branch's terminal_submit as a fresh outcome to land,
             # not as a redundant re-close of the already-approved one.
             # The old outcome row stays in vr_investigation_outcomes
-            # for audit trail (and as a contribution to the eventual
+            # so the audit trail captures it (and contributes to the eventual
             # multi-outcome synthesis) but the investigation no longer
             # points to it as the canonical answer. Without this, the
             # operator-reopen task's first emit pass sees a complete
@@ -4639,7 +4639,7 @@ def create_vr_router() -> APIRouter:
             # double-count. Branches in already-terminal states
             # (abandoned, completed, merged, promoted) stay untouched —
             # those are real history.
-            from aila.modules.vr.contracts.branch import BranchStatus as _BS  # noqa: PLC0415
+            from aila.modules.vr.contracts.branch import BranchStatus as _BS
             _live_halvars = (await uow.session.exec(
                 select(VRInvestigationBranchRecord).where(
                     VRInvestigationBranchRecord.investigation_id == inv.id,

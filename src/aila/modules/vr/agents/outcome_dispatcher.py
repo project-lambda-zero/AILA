@@ -705,7 +705,7 @@ class OutcomeDispatcher:
         # Same enqueue shape as _spawn_variant_child (commit 6d7cab1).
         enqueue_error: str | None = None
         try:
-            from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
+            from aila.modules.vr.workflow.task import run_vr_investigate
             task_queue = default_task_queue()
             await task_queue.submit(
                 track="vr",
@@ -825,7 +825,7 @@ class OutcomeDispatcher:
         # status=CREATED forever waiting for someone to drive it.
         # Same pattern as the API's create_investigation endpoint.
         try:
-            from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
+            from aila.modules.vr.workflow.task import run_vr_investigate
             task_queue = default_task_queue()
             await task_queue.submit(
                 track="vr",
@@ -895,7 +895,7 @@ class OutcomeDispatcher:
         block dispatch on PoC generation (writer call is ~10-30s of
         LLM time) — finding lands immediately, PoC trickles in.
         """
-        from aila.modules.vr.workflow.task import run_vr_draft_poc  # noqa: PLC0415
+        from aila.modules.vr.workflow.task import run_vr_draft_poc
 
         task_queue = default_task_queue()
         handle = await task_queue.submit(

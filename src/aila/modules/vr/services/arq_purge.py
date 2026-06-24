@@ -71,7 +71,7 @@ async def purge_arq_jobs_for_investigation(
         redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
         if not redis_url:
             try:
-                from aila.platform.services.config_registry import (  # noqa: PLC0415
+                from aila.platform.services.config_registry import (
                     ConfigRegistry,
                 )
                 registry = ConfigRegistry()
@@ -84,7 +84,7 @@ async def purge_arq_jobs_for_investigation(
         return {"scanned": 0, "matched": 0, "purged_jobs": 0}
 
     try:
-        import redis.asyncio as _aredis  # noqa: PLC0415
+        import redis.asyncio as _aredis
     except ImportError:
         _log.warning("purge_arq_jobs_for_investigation: redis library missing")
         return {"scanned": 0, "matched": 0, "purged_jobs": 0}
@@ -108,7 +108,7 @@ async def purge_arq_jobs_for_investigation(
                 blob = await client.get(job_key)
                 if blob is None:
                     continue
-                obj: Any = pickle.loads(blob)  # noqa: S301 — ARQ-owned pickle
+                obj: Any = pickle.loads(blob)
                 kwargs = obj.get("k") or obj.get("kwargs") or {}
                 if not isinstance(kwargs, dict):
                     continue

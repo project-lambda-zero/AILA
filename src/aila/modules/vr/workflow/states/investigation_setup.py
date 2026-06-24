@@ -440,7 +440,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     cve_ids = extract_cve_ids(inv.initial_question)
     cve_intel: list[dict[str, Any]] = []
     if cve_ids:
-        global _CONSECUTIVE_CVE_INTEL_FAILURES  # noqa: PLW0603 — module counter
+        global _CONSECUTIVE_CVE_INTEL_FAILURES
         try:
             resolutions = await resolve_cve_intel(cve_ids)
             cve_intel = [r.to_dict() for r in resolutions]
@@ -476,7 +476,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     # patterns NEVER blocks setup — every new investigation must still
     # boot even if the pattern store is empty / broken.
     applicable_patterns: list[dict[str, Any]] = []
-    global _CONSECUTIVE_PATTERN_LOOKUP_FAILURES  # noqa: PLW0603 — module counter
+    global _CONSECUTIVE_PATTERN_LOOKUP_FAILURES
     try:
         # fix §294 — read every needed target column into local vars
         # BEFORE the UoW closes. The prior code dereferenced
@@ -598,7 +598,7 @@ async def _spawn_persona_siblings_and_enqueue(
     some siblings born and some missing, with no way to roll back to
     a consistent panel.
     """
-    from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
+    from aila.modules.vr.workflow.task import run_vr_investigate
 
     # Phase 1 — atomic dedup + reactivate + insert new branches.
     # On any exception inside the `async with` block, the UoW rolls
@@ -699,7 +699,7 @@ async def _spawn_persona_siblings_and_enqueue(
                     )
                     uow.session.add(b)
                     # Also delete prior tool_call + error-text messages
-                    # from this branch's history. Without this, the
+                    # out of this branch's history. Without this, the
                     # tool_executor's repeat-failure circuit breaker
                     # (_count_prior_failures, line 849 of tool_executor)
                     # keeps counting yesterday's tool failures against

@@ -692,7 +692,7 @@ class HonestVulnResearcher:
                     # The new ``run_vr_outcome_dispatch`` task runs
                     # starting in its own worker context with its own UoW and
                     # its own retry budget.
-                    from aila.modules.vr.workflow.task import (  # noqa: PLC0415
+                    from aila.modules.vr.workflow.task import (
                         run_vr_outcome_dispatch,
                     )
 

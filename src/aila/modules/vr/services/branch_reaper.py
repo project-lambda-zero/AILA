@@ -90,8 +90,8 @@ async def sweep_orphan_active_branches() -> int:
     inv_terminal_cutoff = now - timedelta(seconds=_ORPHAN_GRACE_SECONDS)
     branch_touch_cutoff = now - timedelta(seconds=_BRANCH_TOUCH_GRACE_SECONDS)
 
-    BR = VRInvestigationBranchRecord  # noqa: N806
-    INV = VRInvestigationRecord  # noqa: N806
+    BR = VRInvestigationBranchRecord
+    INV = VRInvestigationRecord
 
     new_reason = case(
         (

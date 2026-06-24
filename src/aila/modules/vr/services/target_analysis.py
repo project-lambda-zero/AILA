@@ -456,7 +456,7 @@ def _build_unified_staging(
     """
     staging = _DEFAULT_APK_WORKDIR / f"apk-unified-{apk_sha[:16]}"
     if staging.exists():
-        import shutil as _shutil  # noqa: PLC0415
+        import shutil as _shutil
         _shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True, exist_ok=True)
     if java_dir:
@@ -495,7 +495,7 @@ def _link_dir(source: Path, target: Path) -> None:
     if os.name == "nt":
         # Try Windows native junction via ctypes (no subprocess).
         try:
-            import ctypes  # noqa: PLC0415
+            import ctypes
             kernel32 = ctypes.windll.kernel32
             kernel32.CreateSymbolicLinkW.restype = ctypes.c_ubyte
             # SYMBOLIC_LINK_FLAG_DIRECTORY=0x1, ALLOW_UNPRIVILEGED=0x2
@@ -507,14 +507,14 @@ def _link_dir(source: Path, target: Path) -> None:
         except OSError:
             pass
     # Last-resort: copy. Slower but always works.
-    import shutil as _shutil  # noqa: PLC0415
+    import shutil as _shutil
     _shutil.copytree(source, target, symlinks=False, dirs_exist_ok=False)
 
 
 # Maps file extensions to audit-mcp / trailmark language names. Mirrors
 # trailmark's FastIndexer._build_ext_map (java, kotlin, javascript,
 # typescript, c, cpp, objc, swift). Listed here so we don't have to
-# import the indexer just to ask "what language is .kt?". Add new
+# the indexer module just to ask "what language is .kt?". Add new
 # entries as audit-mcp grows its supported set.
 _STAGING_EXT_TO_LANG: dict[str, str] = {
     ".java": "java",

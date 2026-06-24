@@ -151,7 +151,7 @@ async def _get_intel_service() -> Any | None:
     instead of raising.
     """
     try:
-        from aila.platform.runtime.orchestrator import (  # noqa: PLC0415
+        from aila.platform.runtime.orchestrator import (
             get_worker_platform,
         )
     except (ImportError, AttributeError) as exc:

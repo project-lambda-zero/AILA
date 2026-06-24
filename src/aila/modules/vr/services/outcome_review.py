@@ -620,7 +620,7 @@ async def post_draft_review_request(
     # we look up the surviving row and return its id. No SELECT FOR
     # UPDATE needed because the unique constraint provides the
     # serialization point at write time.
-    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+    from sqlalchemy.exc import IntegrityError
 
     async with UnitOfWork() as uow:
         # Idempotency: skip if a request for the same outcome already exists.

@@ -474,7 +474,7 @@ class ReportWriter:
             # bugs". Bucketing key: first 240 chars of the answer with
             # whitespace collapsed and casefolded — enough to distinguish
             # genuinely different findings but tolerant of re-wording.
-            import re as _re  # noqa: PLC0415
+            import re as _re
             def _bucket(text: str) -> str:
                 return _re.sub(r"\s+", " ", (text or "")[:240]).casefold().strip()
             buckets: dict[str, int] = {}

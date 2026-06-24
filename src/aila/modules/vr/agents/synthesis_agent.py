@@ -313,7 +313,7 @@ class SynthesisAgent:
             # Phase C surgical (BLOCK fix): close orphan active branches
             # so the projection stays in lockstep with inv.status. See
             # services/branch_cleanup.py for the rationale.
-            from aila.modules.vr.services.branch_cleanup import (  # noqa: PLC0415
+            from aila.modules.vr.services.branch_cleanup import (
                 close_orphan_branches_on_terminal,
             )
             await close_orphan_branches_on_terminal(

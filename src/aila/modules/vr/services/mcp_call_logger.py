@@ -59,7 +59,7 @@ async def record_call(
     }
     try:
         yield ctx
-    except BaseException as exc:  # noqa: BLE001 — re-raised below
+    except BaseException as exc:
         ctx["error_excerpt"] = repr(exc)[:_ERROR_EXCERPT_MAX]
         raise
     finally:

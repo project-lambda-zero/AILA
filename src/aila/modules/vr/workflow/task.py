@@ -33,7 +33,7 @@ from aila.modules.vr.db_models import VRFindingRecord, VRInvestigationOutcomeRec
 # registers them with the ARQ function table. Without these re-exports
 # the API can enqueue rank/profile jobs but the worker rejects them
 # saying ``function 'run_function_ranking' not found``.
-from aila.modules.vr.enrichment.workers import (  # noqa: F401  (re-export for ARQ registration)
+from aila.modules.vr.enrichment.workers import (
     run_capability_profile_build,
     run_function_ranking,
 )

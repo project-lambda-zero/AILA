@@ -691,7 +691,7 @@ async def maybe_post_auto_steering(
     the swallowed warning to ERROR so a systemic problem (bridge down,
     raw_result schema drift) surfaces instead of drowning in noise.
     """
-    global _consecutive_failures  # noqa: PLW0603 — single module-level counter
+    global _consecutive_failures
     if not raw_result:
         return None
     # NOTE: do NOT early-return on status != "ready" — error responses
@@ -708,7 +708,7 @@ async def maybe_post_auto_steering(
             raw_result=raw_result,
             bridge_base_url=bridge_base_url,
         )
-    except (  # noqa: BLE001 — auto-steering must never fail loud (kept post-fix in case new code paths add Exception-subclass throwers)
+    except (
         OSError, RuntimeError, ValueError, TypeError, AttributeError,
         KeyError, httpx.HTTPError, json.JSONDecodeError, SQLAlchemyError,
     ) as exc:

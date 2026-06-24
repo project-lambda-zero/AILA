@@ -75,7 +75,7 @@ async def _purge_arq_for_completed(completed_ids: list[str]) -> None:
     if not completed_ids:
         return
     try:
-        from .arq_purge import (  # noqa: PLC0415
+        from .arq_purge import (
             purge_arq_jobs_for_investigation,
         )
     except ImportError as exc:
@@ -145,8 +145,8 @@ async def _flip_branches_and_inv_to_completed(
     now: Any,
 ) -> None:
     """Atomic two-update cascade shared by sweep + per-id paths."""
-    BR = VRInvestigationBranchRecord  # noqa: N806
-    INV = VRInvestigationRecord  # noqa: N806
+    BR = VRInvestigationBranchRecord
+    INV = VRInvestigationRecord
     await uow.session.exec(
         update(BR)
         .where(
@@ -191,9 +191,9 @@ async def evaluate_cap_for_investigation(investigation_id: str) -> str | None:
     wallclock_cutoff = utc_now() - timedelta(hours=wallclock_hours)
     idle_grace_s = _float_env("VR_WALL_CLOCK_IDLE_GRACE_S", 900.0)
 
-    INV = VRInvestigationRecord  # noqa: N806
-    BR = VRInvestigationBranchRecord  # noqa: N806
-    MSG = VRInvestigationMessageRecord  # noqa: N806
+    INV = VRInvestigationRecord
+    BR = VRInvestigationBranchRecord
+    MSG = VRInvestigationMessageRecord
     now = utc_now()
 
     async with UnitOfWork() as uow:
@@ -254,7 +254,7 @@ async def sweep_cap_exceeded_investigations() -> int:
     candidates; per-id evaluation owns the decision + action so the
     chokepoint and the cron produce identical outcomes.
     """
-    INV = VRInvestigationRecord  # noqa: N806
+    INV = VRInvestigationRecord
     async with UnitOfWork() as uow:
         running_ids = (await uow.session.exec(
             select(INV.id).where(INV.status == InvestigationStatus.RUNNING.value),

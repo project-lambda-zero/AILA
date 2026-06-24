@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # PayloadKind hoisted to platform so the platform-level MCP adapters
 # can reference it without violating the platform-cannot-import-from-modules
 # direction rule. Re-exported here so existing ``from aila.modules.vr.contracts
-# import PayloadKind`` call sites keep working.
+# the symbol is re-exported here so existing call sites keep working.
 from aila.platform.contracts.mcp_payload import PayloadKind
 
 __all__ = [

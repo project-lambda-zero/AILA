@@ -211,7 +211,7 @@ async def _sweep_orphan_queued_tasks() -> None:
                     TASK_ZOMBIES_REAPED_TOTAL.labels(
                         reason="orphan_queued_not_in_arq",
                     ).inc()
-                except Exception as exc:  # noqa: BLE001 — best-effort per-row
+                except Exception as exc:
                     _log.warning(
                         "_sweep_orphan_queued_tasks: row %s flush failed "
                         "(%s); skipping", rec.id, exc,
@@ -256,7 +256,7 @@ async def reaper(ctx: dict[str, object]) -> None:
     """
     try:
         await _reconcile_orphan_arq_locks()
-    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
+    except Exception as exc:
         _log.warning("reaper: arq lock reconciliation failed: %s", exc, exc_info=True)
     try:
         # Cron context: env-driven grace (default 600s, override with
@@ -275,7 +275,7 @@ async def reaper(ctx: dict[str, object]) -> None:
             grace_seconds=_REAPER_CRON_GRACE_S,
             reap_null_heartbeat=False,
         )
-    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
+    except Exception as exc:
         _log.warning("reaper: orphan running-task sweep failed: %s", exc, exc_info=True)
     # fix §X-platform-layering — iterate the generic sweep registry instead
     # of hardcoding module-specific imports. Modules register their sweeps
@@ -292,7 +292,7 @@ async def reaper(ctx: dict[str, object]) -> None:
                 # surfaces "this sweep produced work this tick" for
                 # the operator-visible cron log.
                 _log.info("reaper.%s: %s", sweep_name, result)
-        except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
+        except Exception as exc:
             _log.warning(
                 "reaper.%s: failed: %s", sweep_name, exc, exc_info=True,
             )
@@ -303,7 +303,7 @@ async def reaper(ctx: dict[str, object]) -> None:
     # cursor immediately rather than the next minute's tick.
     try:
         await _sweep_orphan_queued_tasks()
-    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
+    except Exception as exc:
         _log.warning("reaper: orphan-queued sweep failed: %s", exc, exc_info=True)
     try:
         # fix §58 — sweep covers ALL FOUR reserved terminal cursor states,
@@ -311,7 +311,7 @@ async def reaper(ctx: dict[str, object]) -> None:
         cleared = await sweep_orphan_crashed_cursors()
         if cleared:
             _log.info("reaper: cleared %d orphan terminal cursors", cleared)
-    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
+    except Exception as exc:
         _log.warning("reaper: cursor cleanup failed: %s", exc, exc_info=True)
     # fix §123 — idempotency-cache expired-row purge wired into the same
     # cron loop so the table doesn't accumulate stale rows forever. The
@@ -322,7 +322,7 @@ async def reaper(ctx: dict[str, object]) -> None:
             _log.info(
                 "reaper.idempotency_cache: purged %d expired rows", purged,
             )
-    except Exception as exc:  # noqa: BLE001 — best-effort sub-sweep
+    except Exception as exc:
         _log.warning(
             "reaper: idempotency cache purge failed: %s", exc, exc_info=True,
         )
@@ -563,7 +563,7 @@ async def _on_startup(ctx: dict[str, Any]) -> None:
     try:
         load_builtin_modules()
         _log.info("ARQ on_startup: registered builtin module sweeps")
-    except Exception as exc:  # noqa: BLE001 — non-fatal, worker still runs
+    except Exception as exc:
         _log.warning(
             "ARQ on_startup: builtin module registration failed: %s",
             exc, exc_info=True,

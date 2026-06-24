@@ -321,7 +321,7 @@ class TaskQueue:
                         TaskRecord.kwargs_json.like(f'%"{inv_id}"%'),
                     )
                 )).one()
-        except Exception as exc:  # noqa: BLE001 — best-effort fairness
+        except Exception as exc:
             _log.debug("investigation defer count failed: %s", exc)
             return 0.0
         excess = max(0, int(count) - self.INVESTIGATION_INFLIGHT_CAP)
@@ -451,7 +451,7 @@ class TaskQueue:
                     )
                 )
                 await session.commit()
-        except Exception as exc:  # noqa: BLE001 — best-effort cleanup
+        except Exception as exc:
             _log.warning(
                 "queue._delete_orphan_cursor(%s) failed: %s; cursor reaper "
                 "will retry on the next tick", task_id, exc,

@@ -247,14 +247,74 @@ ignore = [
 "src/aila/modules/forensics/workflow/states/resolution.py" = ["PLC0415"]
 "src/aila/modules/forensics/workflow/states/writeup.py" = ["PLC0415"]
 "src/aila/modules/hello_world/module.py" = ["PLC0415"]
-"src/aila/modules/malware/api_router.py" = ["PLC0415", "N814"]
+# malware/agents/auto_steering.py: PLW0603 for single module-level
+# _consecutive_failures counter; BLE001 because auto-steering must
+# never fail loud (a steering-time exception would silently break
+# every branch's next turn) -- the broad catch is intentional.
+"src/aila/modules/malware/agents/auto_steering.py" = ["PLW0603", "BLE001"]
+"src/aila/modules/malware/agents/malware_researcher.py" = ["PLC0415"]
+"src/aila/modules/malware/agents/outcome_dispatcher.py" = ["PLC0415"]
+# malware/api_router.py: PLC0415 for the deferred workflow.task imports
+# in _enqueue_*; N814 for Settings shadowing of standard config; SLF001
+# for the internal mcp_registry._probe / bridge._resolve_base_url calls
+# that the operator-side MCP probe endpoint needs.
+"src/aila/modules/malware/api_router.py" = ["PLC0415", "N814", "SLF001"]
 "src/aila/modules/malware/module.py" = ["PLC0415"]
 "src/aila/modules/malware/runtime.py" = ["PLC0415"]
+# malware/services/arq_purge.py: S301 because ARQ stores job payloads
+# as raw pickle blobs; the helper reads them back from a trusted ARQ
+# queue, NOT from untrusted input. Replacing pickle would mean
+# re-encoding every queued job during a long deploy.
+"src/aila/modules/malware/services/arq_purge.py" = ["PLC0415", "S301"]
+# malware/services/branch_reaper.py: N806 for SQLAlchemy ORM uppercase
+# aliases (BR, INV) following the standard convention used across
+# every sweep helper.
+"src/aila/modules/malware/services/branch_reaper.py" = ["N806"]
+# malware/services/config_helpers.py: PLW0603 for the lazy registry
+# singleton (one instance per worker; constructed once on first read).
+"src/aila/modules/malware/services/config_helpers.py" = ["PLW0603"]
+# malware/services/investigation_reaper.py: same N806 rationale as
+# branch_reaper above; multiple ORM aliases inside the sweep helpers.
+"src/aila/modules/malware/services/investigation_reaper.py" = ["N806"]
+# malware/services/mcp_call_logger.py: BLE001 because the call logger
+# catches BaseException only to re-raise it after enriching the log
+# record; the broad catch is an explicit observation point.
+"src/aila/modules/malware/services/mcp_call_logger.py" = ["BLE001"]
+"src/aila/modules/malware/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/malware/workflow/definitions.py" = ["PLC0415"]
-"src/aila/modules/vr/api_router.py" = ["PLC0415", "N814"]
+# finalize + investigation_emit / _setup keep targeted deferred imports of
+# `workflow.task` symbols (run_malware_investigate / run_malware_synthesis /
+# run_malware_claim_verifier). Promoting those would re-introduce the
+# task-registration import cycle these states sit inside of.
+"src/aila/modules/malware/workflow/finalize.py" = ["PLC0415"]
+"src/aila/modules/malware/workflow/states/investigation_emit.py" = ["PLC0415"]
+"src/aila/modules/malware/workflow/states/investigation_loop.py" = ["PLC0415", "PLW0603"]
+"src/aila/modules/malware/workflow/states/investigation_setup.py" = ["PLC0415", "PLW0603"]
+"src/aila/modules/vr/_task_queue.py" = ["PLC0415"]
+"src/aila/modules/vr/agents/auto_steering.py" = ["BLE001", "PLW0603"]
+"src/aila/modules/vr/agents/outcome_dispatcher.py" = ["PLC0415"]
+"src/aila/modules/vr/agents/synthesis_agent.py" = ["PLC0415"]
+"src/aila/modules/vr/agents/vuln_researcher.py" = ["PLC0415"]
+"src/aila/modules/vr/api_router.py" = ["N814", "PLC0415", "SLF001"]
 "src/aila/modules/vr/module.py" = ["PLC0415"]
+"src/aila/modules/vr/reporting/pdf_report.py" = ["N802", "S603", "S607"]
+"src/aila/modules/vr/reporting/writer_agent.py" = ["PLC0415"]
 "src/aila/modules/vr/runtime.py" = ["PLC0415"]
+"src/aila/modules/vr/services/arq_purge.py" = ["PLC0415", "S301"]
+"src/aila/modules/vr/services/branch_reaper.py" = ["N806"]
+"src/aila/modules/vr/services/cve_intel_resolver.py" = ["PLC0415"]
+"src/aila/modules/vr/services/investigation_finalizers.py" = ["PLC0415"]
+"src/aila/modules/vr/services/investigation_reaper.py" = ["N806", "PLC0415"]
+"src/aila/modules/vr/services/mcp_call_logger.py" = ["BLE001"]
+"src/aila/modules/vr/services/outcome_review.py" = ["PLC0415"]
+"src/aila/modules/vr/services/stall_recovery.py" = ["PLC0415"]
+"src/aila/modules/vr/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/definitions.py" = ["PLC0415"]
+"src/aila/modules/vr/workflow/finalize.py" = ["PLC0415"]
+"src/aila/modules/vr/workflow/states/investigation_emit.py" = ["PLC0415"]
+"src/aila/modules/vr/workflow/states/investigation_loop.py" = ["PLW0603"]
+"src/aila/modules/vr/workflow/states/investigation_setup.py" = ["PLC0415", "PLW0603"]
+"src/aila/modules/vr/workflow/task.py" = ["F401"]
 "src/aila/modules/vulnerability/adapters/arch.py" = ["PLC0415"]
 "src/aila/modules/vulnerability/adapters/ghsa.py" = ["PLC0415", "BLE001"]
 "src/aila/modules/vulnerability/agents/scoring/agent.py" = ["BLE001"]
@@ -297,17 +357,23 @@ ignore = [
 "src/aila/modules/vulnerability/workflow/utils/row_helpers.py" = ["PLC0415"]
 "src/aila/platform/automation/runner.py" = ["E712"]
 "src/aila/platform/contracts/persist.py" = ["PLC0415"]
+"src/aila/platform/contracts/reasoning.py" = ["PLC0415"]
 "src/aila/platform/events/emitter.py" = ["PLC0415"]
 "src/aila/platform/llm/classify.py" = ["PLC0415"]
-"src/aila/platform/llm/client.py" = ["PLC0415", "BLE001"]
+"src/aila/platform/llm/client.py" = ["BLE001", "PLC0415", "PLW0603"]
 "src/aila/platform/llm/config.py" = ["PLC0415"]
 "src/aila/platform/llm/cost.py" = ["PLC0415"]
 "src/aila/platform/llm/drift.py" = ["PLC0415"]
 "src/aila/platform/llm/gate.py" = ["PLC0415"]
 "src/aila/platform/llm/human_cost.py" = ["PLC0415"]
+"src/aila/platform/llm/idempotency_cache.py" = ["PLC0415"]
+"src/aila/platform/llm/pipeline.py" = ["BLE001"]
 "src/aila/platform/llm/seal.py" = ["PLC0415"]
 "src/aila/platform/llm/validate.py" = ["PLC0415"]
 "src/aila/platform/llm/verify.py" = ["PLC0415"]
+"src/aila/platform/mcp/adapters/audit_mcp.py" = ["PLC0415"]
+"src/aila/platform/mcp/bridges/android_mcp.py" = ["F821", "PLC0415", "PLW0603"]
+"src/aila/platform/mcp/bridges/audit_mcp.py" = ["TRY300"]
 "src/aila/platform/modules/builtin.py" = ["PLC0415"]
 "src/aila/platform/modules/platform.py" = ["PLC0415"]
 "src/aila/platform/modules/registry.py" = ["PLC0415"]
@@ -328,6 +394,7 @@ ignore = [
 "src/aila/platform/tasks/progress.py" = ["PLC0415"]
 "src/aila/platform/tasks/queue.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/tasks/report_tasks.py" = ["PLC0415", "BLE001"]
+"src/aila/platform/tasks/sweeps.py" = ["BLE001"]
 "src/aila/platform/tasks/template.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/tasks/worker.py" = ["PLC0415", "BLE001", "F401", "ARG001"]
 "src/aila/platform/tools/_common.py" = ["PLC0414"]

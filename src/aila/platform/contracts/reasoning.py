@@ -291,7 +291,7 @@ class ReasoningTurnDecision(BaseModel):
             ``script_execute``) → no check on ``command`` (those
             actions don't use it).
         """
-        import json as _json  # noqa: PLC0415
+        import json as _json
 
         if self.action != "tool_run":
             return self

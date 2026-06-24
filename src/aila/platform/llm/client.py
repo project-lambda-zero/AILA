@@ -63,13 +63,13 @@ _LLM_HEALTH_LOCK = asyncio.Lock()
 
 def _record_llm_ok() -> None:
     """Update the last-OK timestamp. Called inside the retry success path."""
-    global _LAST_LLM_OK_AT  # noqa: PLW0603
+    global _LAST_LLM_OK_AT
     _LAST_LLM_OK_AT = _time_mod.monotonic()
 
 
 def _record_llm_error() -> None:
     """Update the last-error timestamp. Called inside every retry catch."""
-    global _LAST_LLM_ERROR_AT  # noqa: PLW0603
+    global _LAST_LLM_ERROR_AT
     _LAST_LLM_ERROR_AT = _time_mod.monotonic()
 
 
@@ -416,7 +416,7 @@ class AilaLLMClient:
         # above the routing-resolved cap (operator's configured ceiling
         # is authoritative); only narrow it.
         if max_output_tokens is not None and max_output_tokens > 0:
-            from dataclasses import replace as _dc_replace  # noqa: PLC0415
+            from dataclasses import replace as _dc_replace
             effective_max = min(int(max_output_tokens), int(routing.max_tokens))
             if effective_max != routing.max_tokens:
                 routing = _dc_replace(routing, max_tokens=effective_max)
@@ -949,11 +949,11 @@ class AilaLLMClient:
             try:
                 if self.cost_tracker is not None:
                     self.cost_tracker.record(run_id, response.usage)
-            except Exception as exc:  # noqa: BLE001 — best-effort accounting
+            except Exception as exc:
                 logger.debug("inner_call cost_tracker.record failed: %s", exc)
 
             try:
-                from aila.platform.llm.cost import (  # noqa: PLC0415
+                from aila.platform.llm.cost import (
                     calculate_cost_usd,
                     persist_cost_record,
                 )
@@ -995,7 +995,7 @@ class AilaLLMClient:
         finally:
             try:
                 await client.close()
-            except Exception as exc:  # noqa: BLE001 — client cleanup
+            except Exception as exc:
                 logger.debug("inner_call client.close() failed: %s", exc)
 
     async def _single_call(

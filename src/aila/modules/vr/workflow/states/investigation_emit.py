@@ -181,7 +181,7 @@ async def _enqueue_next_investigation_run(
     Imports are deferred so this module stays import-safe — the worker
     boots before its ARQ client surface is wired through.
     """
-    from aila.modules.vr.workflow.task import run_vr_investigate  # noqa: PLC0415
+    from aila.modules.vr.workflow.task import run_vr_investigate
 
     kwargs: dict[str, Any] = {"investigation_id": investigation_id}
     if branch_id:
@@ -742,7 +742,7 @@ async def _maybe_trigger_synthesis(investigation_id: str) -> None:
     synthesis task itself dedupes by checking primary_outcome_id at
     its own start, so the second one becomes a no-op.
     """
-    from aila.modules.vr.workflow.task import (  # noqa: PLC0415
+    from aila.modules.vr.workflow.task import (
         run_vr_synthesis,
     )
 
@@ -870,7 +870,7 @@ async def _maybe_trigger_verifier(investigation_id: str) -> None:
     the only true collision is one overwriting the other's NEW
     field — handled at the agent layer by re-reading + merging.
     """
-    from aila.modules.vr.workflow.task import (  # noqa: PLC0415
+    from aila.modules.vr.workflow.task import (
         run_vr_claim_verifier,
     )
 

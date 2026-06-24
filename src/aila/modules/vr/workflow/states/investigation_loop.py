@@ -86,7 +86,7 @@ def _get_executor() -> ToolExecutor:
     instance so the bridge httpx pools + executor LRU index_id cache
     survive across investigations.
     """
-    global _EXECUTOR_SINGLETON  # noqa: PLW0603 — module singleton
+    global _EXECUTOR_SINGLETON
     if _EXECUTOR_SINGLETON is None:
         _EXECUTOR_SINGLETON = ToolExecutor(
             ida=IDABridgeTool(recorder=record_call),
