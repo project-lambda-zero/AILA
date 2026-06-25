@@ -31,6 +31,7 @@ ReasoningAction = Literal[
     "reasoning",
     "submit",
     "submit_outcome_review",
+    "edit_outcome",
 ]
 ReasoningConfidence = Literal["exact", "strong", "medium", "caveated", "unknown"]
 ReasoningStrategyFamily = Literal[
@@ -244,6 +245,20 @@ class ReasoningTurnDecision(BaseModel):
         "approve", "reject", "request_edit", "abstain",
     ] | None = None
     review_comment: str | None = None
+    # ``edit_outcome`` action: directly merge ``edit_patches`` into a
+    # draft outcome's payload (counterpart to the deferred
+    # ``request_edit`` vote -- that path stores suggested edits on the
+    # review row and waits for the next synthesis pass; this path is
+    # the IMMEDIATE merge). ``edit_outcome_id`` names the target,
+    # ``edit_patches`` is a top-level merge dict (protected keys --
+    # ``panel_contributions``, ``panel_summary``, ``verifier_report``,
+    # ``applied_by_synthesis`` -- are dropped server-side). The merge
+    # only fires on ``state == 'draft'`` outcomes; the service layer
+    # refuses on approved / rejected / dispatched rows and reports the
+    # reason so the agent can steer accordingly.
+    edit_outcome_id: str | None = None
+    edit_patches: dict[str, Any] = Field(default_factory=dict)
+    edit_comment: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -367,5 +382,38 @@ class ReasoningTurnDecision(BaseModel):
                 "action='submit_outcome_review' requires `review_vote` "
                 "in {approve, reject, request_edit, abstain}. Got: "
                 f"{self.review_vote!r}."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_edit_outcome(self) -> ReasoningTurnDecision:
+        """When ``action='edit_outcome'``, ``edit_outcome_id`` and a
+        non-empty ``edit_patches`` dict MUST both be set.
+
+        Without this check the engine dispatches a no-op edit that the
+        agent thinks landed; the draft outcome stays unchanged and the
+        operator sees nothing. Catch the malformed emission at the
+        Pydantic boundary so the LLM client's correction retry fires
+        before a full investigation turn is burned.
+        """
+        if self.action != "edit_outcome":
+            return self
+        if not self.edit_outcome_id:
+            raise ValueError(
+                "action='edit_outcome' requires `edit_outcome_id` "
+                "(the uuid of the draft outcome you are editing). "
+                "Copy it from the 'Outcome id:' line of the "
+                "*** DRAFT OUTCOME UP FOR REVIEW *** operator message "
+                "or from a prior outcome reference in your prompt."
+            )
+        if not self.edit_patches:
+            raise ValueError(
+                "action='edit_outcome' requires a non-empty "
+                "`edit_patches` dict mapping top-level outcome "
+                "payload keys (e.g. iocs, capabilities, "
+                "family_attribution, summary, answer) to their new "
+                "values. An empty patch is a no-op -- use "
+                "action='submit_outcome_review' with vote='approve' "
+                "if you have no changes to make."
             )
         return self

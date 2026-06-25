@@ -39,3 +39,4 @@ class PayloadKind(StrEnum):
     HYPOTHESIS_UPDATE = "hypothesis_update"
     OUTCOME_PENDING = "outcome_pending"
     OUTCOME_REVIEW = "outcome_review"
+    OUTCOME_EDIT = "outcome_edit"
