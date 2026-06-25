@@ -10,7 +10,10 @@ never bloats subsequent prompts.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import re
 from typing import Any
 
 from .base import AdapterContext
@@ -21,7 +24,172 @@ __all__ = [
     "bounded_dump",
     "provenance_stamp",
     "obs_key_for",
+    "try_decode_string",
+    "enrich_strings_with_decodes",
 ]
+
+
+# Heuristic decoder cap -- a single string longer than this is
+# unlikely to be a meaningful base64 / hex blob the agent needs
+# decoded inline; if anything that big DOES decode, the decoded
+# preview is itself capped via bounded_dump downstream.
+_DECODE_INPUT_CAP: int = 4096
+
+# Minimum decoded length we bother surfacing. Very short decodes
+# ("ok", "hi") are noise -- the same bytes show up in every
+# false-positive base64 / hex / ascii roll.
+_DECODE_MIN_OUTPUT: int = 4
+
+# At least this fraction of the decoded bytes must look like printable
+# ASCII before we surface the decode as plaintext. Below the threshold
+# it's almost certainly random bytes (encrypted payload / shellcode)
+# and we skip the decoded field to avoid drowning the observation row
+# in mojibake -- the encoded form alone is the useful signal there.
+_DECODE_PRINTABLE_RATIO: float = 0.85
+
+_BASE64_PATTERN = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
+_BASE64URL_PATTERN = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
+_HEX_PATTERN = re.compile(r"^(?:[0-9a-fA-F]{2})+$")
+
+
+def _printable_ratio(data: bytes) -> float:
+    if not data:
+        return 0.0
+    # Printable = ASCII 0x20-0x7E + \t \n \r. Everything else flags as
+    # non-printable, including UTF-8 multi-byte (which we won't try to
+    # decode here -- ida-headless strings are already utf-8 normalized).
+    printable = sum(
+        1 for b in data
+        if (0x20 <= b <= 0x7E) or b in (0x09, 0x0A, 0x0D)
+    )
+    return printable / len(data)
+
+
+def try_decode_string(raw: str) -> dict[str, str] | None:
+    """Attempt base64 / base64url / hex decode and return the plaintext.
+
+    Returns ``{"encoding": str, "decoded": str}`` when ONE of the
+    candidates produces meaningful printable output, otherwise
+    ``None``. Multiple candidates are tried in order (standard
+    base64 -> url-safe base64 -> hex); the first success wins.
+
+    Used by ida-headless string-family adapters to enrich observation
+    payloads so the agent sees decoded C2 URLs / file paths / config
+    keys inline instead of having to call out to a separate decoder.
+    """
+    if not raw:
+        return None
+    s = raw.strip()
+    if len(s) < 8 or len(s) > _DECODE_INPUT_CAP:
+        # Too short to be meaningful, or too long to bother (likely
+        # already binary that decode would explode on).
+        return None
+
+    # Standard base64 (length divisible by 4 after stripping padding).
+    if _BASE64_PATTERN.match(s) and len(s) % 4 == 0:
+        try:
+            decoded = base64.b64decode(s, validate=True)
+        except (binascii.Error, ValueError):
+            decoded = None
+        if (
+            decoded is not None
+            and len(decoded) >= _DECODE_MIN_OUTPUT
+            and _printable_ratio(decoded) >= _DECODE_PRINTABLE_RATIO
+        ):
+            try:
+                return {"encoding": "base64", "decoded": decoded.decode("utf-8", errors="replace")}
+            except UnicodeDecodeError:
+                pass
+
+    # URL-safe base64 (uses - _ instead of + /). Distinct enough from
+    # standard base64 that we test it separately; the regex anchors
+    # prevent a string with both alphabets from double-matching.
+    if _BASE64URL_PATTERN.match(s) and ("-" in s or "_" in s) and len(s) % 4 == 0:
+        try:
+            decoded = base64.urlsafe_b64decode(s)
+        except (binascii.Error, ValueError):
+            decoded = None
+        if (
+            decoded is not None
+            and len(decoded) >= _DECODE_MIN_OUTPUT
+            and _printable_ratio(decoded) >= _DECODE_PRINTABLE_RATIO
+        ):
+            try:
+                return {"encoding": "base64url", "decoded": decoded.decode("utf-8", errors="replace")}
+            except UnicodeDecodeError:
+                pass
+
+    # Plain hex (every char in [0-9a-f], length even). False-positive
+    # candidate -- so the printable-ratio gate must clear or we skip.
+    if _HEX_PATTERN.match(s):
+        try:
+            decoded = bytes.fromhex(s)
+        except ValueError:
+            decoded = None
+        if (
+            decoded is not None
+            and len(decoded) >= _DECODE_MIN_OUTPUT
+            and _printable_ratio(decoded) >= _DECODE_PRINTABLE_RATIO
+        ):
+            try:
+                return {"encoding": "hex", "decoded": decoded.decode("utf-8", errors="replace")}
+            except UnicodeDecodeError:
+                pass
+
+    return None
+
+
+def enrich_strings_with_decodes(
+    strings: list[Any], *, key: str = "value",
+) -> list[Any]:
+    """Walk a list of string records and add ``decoded`` / ``encoding``
+    fields when a base64 / hex decode looks meaningful.
+
+    Each record can be a bare string OR a dict carrying the actual
+    string under ``key`` (defaults to "value"; ida-headless string
+    tools commonly use "string" or "text" as well -- callers pass
+    the right key). Records without a decodable value are returned
+    unchanged; dict records get ``decoded`` + ``encoding`` keys
+    appended in-place (the input list is not mutated -- a new list
+    of new dicts is returned).
+
+    Bare-string inputs are wrapped: ``["a", "b"]`` becomes
+    ``[{"value": "a", "decoded": "...", "encoding": "..."}, ...]``
+    when the decode succeeds, OR ``["a", "b"]`` when it does not.
+    The list shape stays homogeneous for the common case (all decode
+    or none decode) so renderers don't need to test per-entry.
+    """
+    if not isinstance(strings, list):
+        return strings
+    out: list[Any] = []
+    for entry in strings:
+        if isinstance(entry, str):
+            decode = try_decode_string(entry)
+            if decode is None:
+                out.append(entry)
+            else:
+                out.append({key: entry, **decode})
+        elif isinstance(entry, dict):
+            value = entry.get(key)
+            if not isinstance(value, str):
+                # Fall back to common alternate keys without forcing
+                # callers to enumerate every adapter-specific shape.
+                for alt in ("string", "text", "raw", "data"):
+                    if isinstance(entry.get(alt), str):
+                        value = entry[alt]
+                        break
+            if isinstance(value, str):
+                decode = try_decode_string(value)
+                if decode is not None:
+                    merged = dict(entry)
+                    merged.setdefault("decoded", decode["decoded"])
+                    merged.setdefault("encoding", decode["encoding"])
+                    out.append(merged)
+                    continue
+            out.append(entry)
+        else:
+            out.append(entry)
+    return out
 
 
 # fix §271 — single source of truth for the bounded preview cap. The

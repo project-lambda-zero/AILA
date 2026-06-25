@@ -424,17 +424,43 @@ def _code_pointer_result(
     label: str,
     max_chars: int = MAX_OBS_DUMP_CHARS,
 ) -> AdapterResult:
-    _assert_binary_id_match(raw, ctx)  # fix §280
+    _assert_binary_id_match(raw, ctx)  # fix \u00a7280
+    # Walk body_keys looking for content. Empty list / empty string
+    # does NOT short-circuit -- the prior implementation broke on
+    # the first matched key even when the value was empty, hiding
+    # signal that lived under a later key (e.g. pseudocode_slice_view
+    # populates `slices`; when no focus is given that list is empty
+    # but `text` / `lines` may still carry the full pseudocode).
     body = ""
     for k in body_keys:
         v = raw.get(k)
         if isinstance(v, str) and v:
             body = v
             break
-        if isinstance(v, list):
+        if isinstance(v, list) and v:
             body = "\n".join(str(x) for x in v)
             break
     line_count = body.count("\n") + (1 if body else 0)
+    # Empty-body diagnostic: when no body_keys carried content,
+    # surface every non-housekeeping scalar from the raw response so
+    # the agent sees WHY (slices_count=0, total_lines=61, etc.)
+    # instead of an opaque "(empty)". Lets the next turn pick the
+    # right pivot (decompile the full function, or re-call with a
+    # focus argument).
+    diagnostic = ""
+    if not body:
+        bits: list[str] = []
+        for dk, dv in raw.items():
+            if dk in {"binary_id", "status", "generation", "action"}:
+                continue
+            if isinstance(dv, (str, int, float, bool)):
+                bits.append(f"{dk}={dv}")
+            elif isinstance(dv, list):
+                bits.append(f"{dk}_len={len(dv)}")
+            elif isinstance(dv, dict):
+                bits.append(f"{dk}_keys={sorted(dv.keys())[:5]}")
+        if bits:
+            diagnostic = ", ".join(bits)
     payload: dict[str, Any] = {
         "label": label,
         "body": body,
@@ -444,13 +470,27 @@ def _code_pointer_result(
     }
     obs_body = body[:max_chars]
     if len(body) > max_chars:
-        obs_body += f"\n... [truncated — {line_count} lines total in message {ctx.call_id}]"
-    obs_value = f"{label}:\n{obs_body}" if obs_body else f"{label}: (empty)"
+        obs_body += f"\n... [truncated -- {line_count} lines total in message {ctx.call_id}]"
+    if obs_body:
+        obs_value = f"{label}:\n{obs_body}"
+    elif diagnostic:
+        obs_value = (
+            f"{label}: (no body returned) -- {diagnostic}. "
+            f"Tool ran successfully but produced no slice body; the "
+            f"args may need refining (focus_callee / focus_address) "
+            f"or pivot to ida_headless.decompile for the full function."
+        )
+    else:
+        obs_value = f"{label}: (empty response)"
     return AdapterResult(
         payload_kind=PayloadKind.CODE_POINTER,
         payload=payload,
         observables_delta={obs_key_for(ctx, obs_suffix): obs_value},
-        summary=f"{label} ({line_count} lines)",
+        summary=(
+            f"{label} ({line_count} lines)"
+            if line_count
+            else f"{label} (no body; {diagnostic or 'empty'})"
+        ),
     )
 
 
@@ -612,17 +652,27 @@ def adapt_classify_behavior(
         "total_categories": len(categories),
         "source_provenance": provenance_stamp(ctx),
     }
+    # Ship the structured category dict alongside the bullet summary
+    # so the agent's next-turn prompt sees concrete category names +
+    # API counts instead of having to re-call the tool to learn them.
+    # Bounded by the shared 32 KiB observable dump cap.
+    obs_value = summary_text
+    if categories:
+        obs_value += "\n\nstructured:\n" + bounded_dump({
+            "categories": categories,
+            "total_categories": len(categories),
+        })
     return AdapterResult(
         payload_kind=PayloadKind.TEXT,
         payload=payload,
-        observables_delta={obs_key_for(ctx): summary_text},
+        observables_delta={obs_key_for(ctx): obs_value},
         summary=f"classify_behavior: {len(categories)} categories",
     )
 
 
 def adapt_capa_scan(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``capa_scan`` to TEXT payload (capability matches)."""
-    _assert_binary_id_match(raw, ctx)  # fix §280
+    _assert_binary_id_match(raw, ctx)  # fix \u00a7280
     matches = _list_or_empty(raw, "matches", "results", "capabilities")
     bullets: list[str] = []
     for m in matches[:MAX_LIST_PREVIEW]:
@@ -649,9 +699,20 @@ def adapt_capa_scan(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
         "raw_preview": bounded_dump(raw),
         "source_provenance": provenance_stamp(ctx),
     }
+    # Carry the structured matches list (rule + ATT&CK techniques per
+    # entry) into observables so the next-turn prompt has the concrete
+    # rule names + technique ids without a re-call. Trimmed to
+    # MAX_LIST_PREVIEW entries and the shared 32 KiB dump cap.
+    obs_value = summary_text
+    if matches:
+        obs_value += "\n\nstructured:\n" + bounded_dump({
+            "matches": matches[:MAX_LIST_PREVIEW],
+            "total": len(matches),
+            "truncated": max(0, len(matches) - MAX_LIST_PREVIEW),
+        })
     return AdapterResult(
         payload_kind=PayloadKind.TEXT,
         payload=payload,
-        observables_delta={obs_key_for(ctx): summary_text},
+        observables_delta={obs_key_for(ctx): obs_value},
         summary=f"capa_scan: {len(matches)} matches",
     )

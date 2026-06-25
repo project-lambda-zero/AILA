@@ -234,9 +234,10 @@ class TestAdaptGeneric:
         # agent never has to issue a follow-up read to see the tail.
         raw = {"results": ["X" * 100 for _ in range(100)]}
         out = adapt_generic(raw, _ctx(tool="search_pattern"))
-        obs = out.observables_delta["ida_headless.search_pattern"]
+        assert len(out.observables_delta) == 1
+        obs = next(iter(out.observables_delta.values()))
         assert "truncated" not in obs
-        # All 100 entries × 100 X's land in the JSON dump verbatim.
+        # All 100 entries \u00d7 100 X's land in the JSON dump verbatim.
         assert obs.count("X" * 100) == 100
 
     def test_summary_includes_status_and_counts(self) -> None:
@@ -350,7 +351,9 @@ class TestAdaptFindApiCallSites:
         out = adapt_find_api_call_sites(raw, _ctx(tool="find_api_call_sites", api_name="memcpy"))
         assert out.payload["total"] == 100
         key = "ida_headless.find_api_call_sites.callsites.memcpy"
-        assert "and 75 more" in out.observables_delta[key]
+        # MAX_LIST_PREVIEW = 20 -- the prior literal 75 dated from when
+        # the cap was 25; 100-20 = 80 entries elided.
+        assert "and 80 more" in out.observables_delta[key]
 
 
 class TestAdaptXrefsTo:
@@ -595,7 +598,8 @@ class TestAdaptFuzzingTargets:
         out = adapt_fuzzing_targets(raw, ctx)
         assert out.payload_kind == PayloadKind.TEXT
         assert out.payload["total"] == 2
-        obs = out.observables_delta["audit_mcp.fuzzing_targets"]
+        assert len(out.observables_delta) == 1
+        obs = next(iter(out.observables_delta.values()))
         assert "parse_pdu" in obs
         assert "blast=80" in obs
 
@@ -613,7 +617,8 @@ class TestAdaptChecksec:
         ctx = _ctx(tool="checksec", binary_id="abc")
         out = adapt_checksec(raw, ctx)
         assert out.payload_kind == PayloadKind.TEXT
-        obs = out.observables_delta["ida_headless.checksec"]
+        assert len(out.observables_delta) == 1
+        obs = next(iter(out.observables_delta.values()))
         assert "NX: ON" in obs
         assert "PIE: ON" in obs
         assert "RELRO: full" in obs
@@ -624,7 +629,8 @@ class TestAdaptChecksec:
         raw = {"nx": True, "aslr": False, "pie": False, "canary": True,
                "cet": False, "cfi": False}
         out = adapt_checksec(raw, _ctx(tool="checksec"))
-        obs = out.observables_delta["ida_headless.checksec"]
+        assert len(out.observables_delta) == 1
+        obs = next(iter(out.observables_delta.values()))
         assert "ASLR: OFF" in obs
         assert "PIE: OFF" in obs
 
@@ -640,9 +646,17 @@ class TestAdaptClassifyBehavior:
         ctx = _ctx(tool="classify_behavior", binary_id="abc")
         out = adapt_classify_behavior(raw, ctx)
         assert out.payload_kind == PayloadKind.TEXT
-        obs = out.observables_delta["ida_headless.classify_behavior"]
+        # obs_key carries the call-id fallback when args fingerprint is
+        # empty (binary_id is pagination noise). Single-key observable;
+        # pull it generically rather than hard-coding the suffix.
+        assert len(out.observables_delta) == 1
+        obs = next(iter(out.observables_delta.values()))
         assert "process_injection: 2 API(s)" in obs
         assert "persistence: 1 API(s)" in obs
+        # The structured-detail block lands after the summary so the
+        # next-turn prompt sees concrete category names + API counts.
+        assert "structured:" in obs
+        assert "WriteProcessMemory" in obs
 
 
 class TestAdaptCapaScan:
@@ -656,9 +670,14 @@ class TestAdaptCapaScan:
         ctx = _ctx(tool="capa_scan", binary_id="abc")
         out = adapt_capa_scan(raw, ctx)
         assert out.payload_kind == PayloadKind.TEXT
-        obs = out.observables_delta["ida_headless.capa_scan"]
+        assert len(out.observables_delta) == 1
+        obs = next(iter(out.observables_delta.values()))
         assert "encrypt data using RC4" in obs
         assert "T1027" in obs
+        # Structured-detail block ships the rule + technique list so
+        # the next turn doesn't need to re-call to see the matches.
+        assert "structured:" in obs
+        assert "communicate over HTTP" in obs
 
 
 class TestAdaptAttackSurface:
@@ -680,7 +699,8 @@ class TestAdaptAttackSurface:
         ctx = _ctx(server="audit_mcp", tool="attack_surface", index_id="x")
         out = adapt_attack_surface(raw, ctx)
         assert out.payload_kind == PayloadKind.TEXT
-        obs = out.observables_delta["audit_mcp.attack_surface"]
+        assert len(out.observables_delta) == 1
+        obs = next(iter(out.observables_delta.values()))
         # Header line: total count + by-kind breakdown
         assert "2 entry point(s) across 2 kind(s)" in obs
         # Per-kind section heading
@@ -709,7 +729,8 @@ class TestAdaptComplexityHotspots:
         ctx = _ctx(server="audit_mcp", tool="complexity_hotspots", index_id="x")
         out = adapt_complexity_hotspots(raw, ctx)
         assert out.payload_kind == PayloadKind.TEXT
-        obs = out.observables_delta["audit_mcp.complexity_hotspots"]
+        assert len(out.observables_delta) == 1
+        obs = next(iter(out.observables_delta.values()))
         assert "ngx_http_parse_request_line" in obs
         assert "cyc=42" in obs
         assert "cog=65" in obs

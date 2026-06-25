@@ -25,7 +25,26 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["build_alias_map", "normalize_kwargs"]
+__all__ = [
+    "build_alias_map",
+    "build_known_params",
+    "drop_unknown_pagination_kwargs",
+    "normalize_kwargs",
+]
+
+
+# Pagination-style kwargs the LLM commonly attaches out of habit to
+# tools that do not support pagination (every snapshot/scan/poll/
+# read-once-and-return endpoint). Dropping these silently keeps the
+# call going through; legitimately-paginated tools always declare the
+# canonical name in their schema so the drop never triggers on them.
+# Keep the set tight: only names whose semantic intent is universally
+# "page through results". Other unknown kwargs still surface as
+# upstream validation errors so the agent learns the real signature.
+_PAGINATION_NOISE: frozenset[str] = frozenset({
+    "offset", "limit", "page", "page_size",
+    "cursor", "next_token", "top_k",
+})
 
 
 def build_alias_map(
@@ -132,4 +151,80 @@ def normalize_kwargs(
         notes.append(
             f"{action}: rewrote kwarg '{key}' -> '{canonical}'",
         )
+    return out, notes
+
+
+def build_known_params(
+    specs: list[dict[str, Any]],
+) -> dict[str, frozenset[str]]:
+    """Return ``{action_name: frozenset(canonical_param_names)}``.
+
+    Companion to :func:`build_alias_map`. Used by
+    :func:`drop_unknown_pagination_kwargs` to decide whether a kwarg
+    the agent attached is real for that tool or noise that should be
+    stripped before the bridge POST.
+    """
+    out: dict[str, frozenset[str]] = {}
+    for spec in specs:
+        name = spec.get("name")
+        if not name:
+            continue
+        out[name] = frozenset(
+            p["name"] for p in spec.get("params") or [] if "name" in p
+        )
+    return out
+
+
+def drop_unknown_pagination_kwargs(
+    action: str,
+    kwargs: dict[str, Any],
+    known_params: dict[str, frozenset[str]],
+) -> tuple[dict[str, Any], list[str]]:
+    """Strip pagination-style kwargs the target tool does not declare.
+
+    The LLM commonly attaches ``offset`` / ``limit`` / ``cursor`` to
+    every tool out of habit. Snapshot endpoints (capa_scan,
+    pseudocode_slice_view, verify_capabilities, ...) reject the call
+    with TypeError, which lands as a synthetic bridge error that
+    burns turns in the repeat-failure breaker. Silently dropping the
+    kwarg when the tool's schema doesn't declare it lets the call go
+    through; the note explains what happened so the operator sees the
+    drop in the bridge log.
+
+    Drops are limited to the curated ``_PAGINATION_NOISE`` set --
+    other unknown kwargs still pass through so the upstream validator
+    can reject them loudly and teach the agent the real signature.
+
+    Args:
+        action: tool name.
+        kwargs: kwargs as resolved by :func:`normalize_kwargs`.
+        known_params: per-action canonical params (see
+            :func:`build_known_params`).
+
+    Returns:
+        ``(filtered_kwargs, notes)``. Notes are one string per drop;
+        when ``known_params`` lacks an entry for ``action`` (unknown
+        tool, catalog fetch failed, schema absent) the function is a
+        no-op so it never drops legitimate args.
+    """
+    if not kwargs:
+        return {}, []
+    declared = known_params.get(action)
+    if not declared:
+        return dict(kwargs), []
+    out: dict[str, Any] = {}
+    notes: list[str] = []
+    for key, value in kwargs.items():
+        if key in declared:
+            out[key] = value
+            continue
+        if key in _PAGINATION_NOISE:
+            notes.append(
+                f"{action}: dropping kwarg {key!r}={value!r} "
+                f"(pagination noise; tool does not declare it)",
+            )
+            continue
+        # Unknown non-pagination kwargs pass through so the upstream
+        # validator surfaces them as a real error the agent must fix.
+        out[key] = value
     return out, notes

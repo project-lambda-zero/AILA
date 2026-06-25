@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from aila.platform.tools._common import Tool
 from aila.storage.registry import ConfigRegistry
 
-from ._kwarg_alias import build_alias_map, normalize_kwargs
+from ._kwarg_alias import (
+    build_alias_map,
+    build_known_params,
+    drop_unknown_pagination_kwargs,
+    normalize_kwargs,
+)
 from ._recorder import BridgeRecorder, noop_recorder
 
 __all__ = ["IDABridgeTool"]
@@ -112,6 +118,23 @@ class IDABridgeTool(Tool):
         # reloaded its tool catalog.
         self._spec_cache: list[dict[str, Any]] | None = None
         self._auto_alias_map: dict[str, dict[str, str]] = {}
+        # Set of canonical params per action -- used by
+        # drop_unknown_pagination_kwargs to strip pagination-style
+        # kwargs the agent attaches to snapshot tools that don't
+        # support them (capa_scan, pseudocode_slice_view, etc.).
+        self._known_params: dict[str, frozenset[str]] = {}
+        # Wall-clock cap for the auto-retry loop on status='pending'
+        # responses. On observed live traffic, build_call_tree /
+        # deflat_function on large binaries (masson PE sample, 1.4MB)
+        # routinely takes 90-180s of server-side work before landing
+        # ready. The earlier 90s default was tight enough that those
+        # tools surfaced pending to the agent and burned a turn. 240s
+        # gives even the heavy graph builders headroom; override via
+        # env IDA_HEADLESS_PENDING_POLL_TIMEOUT (seconds) if specific
+        # samples need longer.
+        self._pending_poll_timeout: float = float(
+            os.environ.get("IDA_HEADLESS_PENDING_POLL_TIMEOUT", "240"),
+        )
         # Optional per-call audit logger. See ``_recorder.py``; module
         # authors wire their own ``record_call`` here, tests + ad-hoc
         # callers omit it and get a no-op.
@@ -176,14 +199,181 @@ class IDABridgeTool(Tool):
         },
     }
 
-    # Manual overrides — empty by design; everything is data-driven.
-    _MANUAL_OVERRIDES: dict[str, dict[str, str]] = {}
+    # Manual per-tool overrides for kwarg drift that the family-based
+    # auto-alias can't catch. Format: ``{action: {alias: canonical}}``.
+    # Used when the agent reaches for an intuitive-but-wrong kwarg
+    # name that doesn't fit any of :data:`_KW_FAMILIES`.
+    _MANUAL_OVERRIDES: dict[str, dict[str, str]] = {
+        # search_pattern takes ``pattern_type`` (enum of vuln pattern
+        # ids), not free-form ``pattern``. Agents commonly type
+        # ``pattern`` thinking it's a regex/byte search; the rewrite
+        # at least gets the call to the bridge so the MCP can surface
+        # a real "unknown pattern_type" error if the value isn't an
+        # enum member.
+        "search_pattern": {
+            "pattern": "pattern_type",
+            "pattern_str": "pattern_type",
+            "query": "pattern_type",
+        },
+    }
+
+    # Address-shaped kwargs that the MCP server expects as integer
+    # (hex string) values. When the agent passes an IDA-style auto-name
+    # like ``sub_474FC0`` the bridge extracts the hex tail and rewrites
+    # before dispatch -- saves a turn cycle on the int() ValueError.
+    # Names without an embedded address (e.g. ``_main``, ``wmain``,
+    # custom labels) pass through unchanged; the MCP server will then
+    # surface the real validation error.
+    # Every kwarg name across the 81 ida-headless tools whose docs
+    # describe an address / hex EA. Audited 2026-06-25 by walking
+    # each tool's "Args:" block. The coercion regex only matches
+    # IDA auto-names (sub_<hex>, loc_<hex>, ...) so real labels like
+    # ``wmain`` / ``_main`` pass through any of these untouched.
+    # Listing every name lets tools that secretly require hex behind
+    # a "or name" advertisement (disassemble_function rejects names
+    # at runtime with `invalid literal for int() with base 16`) get
+    # the agent's auto-name rewritten to its embedded address.
+    _ADDRESS_KWARG_NAMES: frozenset[str] = frozenset({
+        # Generic
+        "address", "ea",
+        # Function-scoped
+        "function_address", "caller_address", "callee_address",
+        "target_function",
+        # Decryption helpers (decrypt_function_strings,
+        # decrypt_binary_strings).
+        "decryptor_address",
+        # Graph / path-finding endpoints
+        "root_address", "source_address", "sink_address",
+        "target_address", "start_address", "end_address",
+        "from_address", "to_address",
+        # Optional focus addresses (pseudocode_slice_view).
+        "focus_address",
+        # Canonical name-or-address kwarg.
+        "address_or_name",
+    })
+
+    # List-of-addresses kwarg names. The coercion walks each element
+    # and rewrites auto-names individually; non-string members and
+    # non-auto-name strings pass through.
+    _ADDRESS_LIST_KWARG_NAMES: frozenset[str] = frozenset({
+        "avoid_addresses",
+    })
+    # IDA's auto-generated symbol prefixes followed by hex. Matches
+    # `sub_474FC0`, `loc_4012A0`, `unk_402100`, `byte_409010`, etc.
+    # Anchored to ^ + $ so it never matches user-given labels that
+    # happen to contain these substrings.
+    _IDA_AUTONAME_PATTERN = re.compile(
+        r"^(?:sub|loc|unk|byte|word|dword|qword|off|nullsub|j|asc|stru|"
+        r"flt|dbl|tbyte|packreal|locret)_([0-9a-fA-F]+)$",
+    )
+
+    @classmethod
+    def _coerce_ida_autoname_to_address(
+        cls, action: str, kwargs: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Rewrite IDA auto-name strings on address kwargs to ``0x<hex>``.
+
+        Only touches keys in :data:`_ADDRESS_KWARG_NAMES`. Returns the
+        kwargs dict (possibly modified) + a list of human-readable
+        notes (one per rewrite) for the bridge log.
+        """
+        if not kwargs:
+            return {}, []
+        out: dict[str, Any] = dict(kwargs)
+        notes: list[str] = []
+        for k in cls._ADDRESS_KWARG_NAMES:
+            v = out.get(k)
+            if not isinstance(v, str):
+                continue
+            m = cls._IDA_AUTONAME_PATTERN.match(v.strip())
+            if not m:
+                continue
+            hex_tail = m.group(1)
+            new_val = f"0x{hex_tail}"
+            out[k] = new_val
+            notes.append(
+                f"{action}: coerced {k}={v!r} -> {new_val!r} "
+                f"(IDA auto-name embeds the address)",
+            )
+        # List-of-addresses kwargs: walk each entry and rewrite
+        # in-place; non-string / non-auto-name entries are left.
+        for k in cls._ADDRESS_LIST_KWARG_NAMES:
+            v = out.get(k)
+            if not isinstance(v, list):
+                continue
+            rewritten_count = 0
+            new_list: list[Any] = []
+            for elem in v:
+                if isinstance(elem, str):
+                    m = cls._IDA_AUTONAME_PATTERN.match(elem.strip())
+                    if m:
+                        new_list.append(f"0x{m.group(1)}")
+                        rewritten_count += 1
+                        continue
+                new_list.append(elem)
+            if rewritten_count > 0:
+                out[k] = new_list
+                notes.append(
+                    f"{action}: coerced {rewritten_count} "
+                    f"auto-name entries in {k} list to 0x<hex>",
+                )
+        return out, notes
 
     def _normalize_kwargs(
         self, action: str, kwargs: dict[str, Any],
     ) -> tuple[dict[str, Any], list[str]]:
-        """Delegate to the shared resolver against the live alias map."""
-        return normalize_kwargs(action, kwargs, self._auto_alias_map)
+        """Delegate to the shared resolver against the live alias map,
+        then strip pagination-style kwargs the tool doesn't declare,
+        then coerce IDA-style auto-name strings on address kwargs to
+        ``0x<hex>`` so MCP tools that need int addresses don't get
+        a `ValueError: invalid literal for int() with base 16` back.
+        """
+        renamed, alias_notes = normalize_kwargs(
+            action, kwargs, self._auto_alias_map,
+        )
+        filtered, drop_notes = drop_unknown_pagination_kwargs(
+            action, renamed, self._known_params,
+        )
+        coerced, addr_notes = self._coerce_ida_autoname_to_address(
+            action, filtered,
+        )
+        return coerced, alias_notes + drop_notes + addr_notes
+
+    async def _call_action_once(
+        self, action: str, kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Single bridge POST without recorder, kwarg normalization, or
+        the pending-retry loop. Used by ``forward()`` to re-issue an
+        already-normalized call when the first response came back
+        ``pending`` / ``queued`` / ``running``.
+
+        Returns the raw JSON payload (status / error / per-tool fields).
+        Network failures and non-JSON bodies are mapped to a synthetic
+        error envelope so the caller has a uniform shape to inspect.
+        """
+        base = await self._resolve_base_url()
+        url = f"{base}/tools/{action}"
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(url, json=kwargs)
+        except httpx.ConnectError as exc:
+            return {
+                "status": "error",
+                "error": f"Cannot reach IDA Headless MCP at {base}: {exc}",
+            }
+        except httpx.TimeoutException as exc:
+            return {
+                "status": "error",
+                "error": f"Timeout ({self._timeout}s) on retry of {action}: {exc}",
+            }
+        try:
+            payload = resp.json() if resp.content else {}
+        except ValueError as exc:
+            return {
+                "status": "error",
+                "error": f"Non-JSON response from {action} retry: {exc}",
+            }
+        return payload if isinstance(payload, dict) else {"status": "error", "error": "non-dict payload"}
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the MCP HTTP API.
@@ -201,6 +391,9 @@ class IDABridgeTool(Tool):
             return await self._list_tools()
         if action == "upload":
             return await self._upload_binary(**kwargs)
+        # Drop the recursion guard before the public-facing alias /
+        # validation pipeline so it never reaches the MCP server.
+        suppress_poll = bool(kwargs.pop("_ida_bridge_no_poll", False))
         normalized_kwargs, kw_notes = self._normalize_kwargs(action, kwargs)
         for note in kw_notes:
             logging.getLogger(__name__).info("ida_bridge %s", note)
@@ -249,13 +442,75 @@ class IDABridgeTool(Tool):
                 ctx["status"] = "ready"
             elif payload_status in ("pending", "queued", "running"):
                 ctx["status"] = "pending"
+                # Per-call async retry loop. ``poll_analysis`` only
+                # reports whether the binary's IDA database (.i64) is
+                # loaded -- it does NOT track per-call async jobs like
+                # build_call_tree / deflat_function / interprocedural_taint
+                # that queue their own server-side work and return
+                # ``pending`` until that work finishes. The fix is to
+                # just sleep and re-POST the same call until it lands
+                # ready, errors, or the wall-clock budget runs out.
+                #
+                # Skip conditions: already on a retry pass
+                # (suppress_poll), action is poll_analysis itself
+                # (cheap status read, no point looping).
+                if not suppress_poll and action != "poll_analysis":
+                    deadline = (
+                        asyncio.get_event_loop().time()
+                        + self._pending_poll_timeout
+                    )
+                    delay = 2.0
+                    attempt = 0
+                    while asyncio.get_event_loop().time() < deadline:
+                        attempt += 1
+                        await asyncio.sleep(delay)
+                        delay = min(delay * 1.5, 8.0)
+                        logging.getLogger(__name__).info(
+                            "ida_bridge %s: pending retry attempt=%d "
+                            "(deadline in %.1fs)",
+                            action, attempt,
+                            deadline - asyncio.get_event_loop().time(),
+                        )
+                        retry_payload = await self._call_action_once(
+                            action, normalized_kwargs,
+                        )
+                        retry_status = (
+                            retry_payload.get("status")
+                            if isinstance(retry_payload, dict) else None
+                        )
+                        if retry_status in ("ready", "completed", "ok"):
+                            logging.getLogger(__name__).info(
+                                "ida_bridge %s: retry attempt=%d "
+                                "succeeded", action, attempt,
+                            )
+                            return retry_payload
+                        if retry_status not in ("pending", "queued", "running"):
+                            return retry_payload
+                    else:
+                        logging.getLogger(__name__).warning(
+                            "ida_bridge %s: retry deadline hit after "
+                            "%d attempt(s); surfacing pending",
+                            action, attempt,
+                        )
             elif payload_status == "error":
                 ctx["status"] = "error"
             elif payload_status is None and resp.status_code < 400:
+                # Tools like binary_metadata and list_indexes return
+                # data with no top-level ``status`` field; HTTP 2xx
+                # itself is the success signal. The bridge recorder
+                # marks ctx=ready, but the downstream executor's
+                # _SUCCESS_STATUSES whitelist re-checks
+                # ``raw.get('status')`` and a missing key fails the
+                # check, surfacing as ``returned error: ''`` -- empty
+                # error string because the payload doesn't carry one
+                # either. Inject ``status: ready`` into the payload
+                # so every consumer sees the same shape.
                 ctx["status"] = "ready"
+                if isinstance(payload, dict):
+                    payload = {**payload, "status": "ready"}
             else:
                 logging.getLogger(__name__).warning(
-                    "ida_bridge %s: unknown payload status %r (HTTP %d) — "
+                    "ida_bridge %s: unknown payload status %r (HTTP %d) -- "
                     "coercing to error",
                     action, payload_status, resp.status_code,
                 )
@@ -303,6 +558,7 @@ class IDABridgeTool(Tool):
             self._KW_FAMILIES,
             self._MANUAL_OVERRIDES,
         )
+        self._known_params = build_known_params(self._spec_cache)
         logging.getLogger(__name__).info(
             "ida_bridge: catalog loaded — %d tools, %d with alias maps",
             len(self._spec_cache),
