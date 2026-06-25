@@ -79,19 +79,40 @@ class TestRegistry:
         assert len(ANDROID_MCP_TOOLS) >= 22
 
     def test_registered_tools_includes_all_known(self) -> None:
+        from aila.platform.mcp.adapters.known_tools import _ALWAYS_SUPPRESS
+
         tools = set(registered_tools())
         for name in IDA_HEADLESS_TOOLS:
+            if name in _ALWAYS_SUPPRESS.get("ida_headless", frozenset()):
+                continue
             assert f"ida_headless.{name}" in tools
         for name in AUDIT_MCP_TOOLS:
+            if name in _ALWAYS_SUPPRESS.get("audit_mcp", frozenset()):
+                continue
             assert f"audit_mcp.{name}" in tools
         for name in ANDROID_MCP_TOOLS:
+            if name in _ALWAYS_SUPPRESS.get("android_mcp", frozenset()):
+                continue
             assert f"android_mcp.{name}" in tools
 
     def test_every_known_tool_resolves_to_some_adapter(self) -> None:
-        # The point of KNOWN_TOOLS: every entry must be callable, either
-        # via specialized or generic adapter.
+        # The point of KNOWN_TOOLS: every entry must be callable,
+        # either via specialized or generic adapter -- UNLESS it has
+        # been explicitly suppressed (``_ALWAYS_SUPPRESS``), in which
+        # case ``get_adapter`` must return ``None`` so dispatch fails
+        # at the executor instead of silently running a deprecated
+        # tool through the generic fallback.
+        from aila.platform.mcp.adapters.known_tools import _ALWAYS_SUPPRESS
+
         for server, names in KNOWN_TOOLS.items():
+            suppress = _ALWAYS_SUPPRESS.get(server, frozenset())
             for name in names:
+                if name in suppress:
+                    assert get_adapter(server, name) is None, (
+                        f"{server}.{name} is in _ALWAYS_SUPPRESS but "
+                        f"get_adapter still returned an adapter"
+                    )
+                    continue
                 assert get_adapter(server, name) is not None, (
                     f"no adapter for {server}.{name}"
                 )
@@ -106,6 +127,48 @@ class TestRegistry:
     def test_unknown_tool_returns_none(self) -> None:
         assert get_adapter("ida_headless", "bogus_tool_name") is None
         assert get_adapter("nonexistent_server", "decompile") is None
+
+    def test_always_suppress_blocks_dispatch_even_with_specialized_or_runtime(
+        self,
+    ) -> None:
+        # Regression: deleting ``ida_headless.classify_strings`` from
+        # the static ``IDA_HEADLESS_TOOLS`` set was not enough --
+        # ``_effective_tools`` unions the runtime bridge catalog, and
+        # ``get_adapter`` checked the specialized table first. The
+        # bridge's ``/tools`` response still advertised the tool, and
+        # the historical specialized adapter entry was still wired.
+        # Net effect: the agent could still dispatch the deprecated
+        # tool through either path. Suppression now short-circuits
+        # the lookup before EITHER specialized OR runtime sees it.
+        from aila.platform.mcp.adapters.known_tools import _ALWAYS_SUPPRESS
+        from aila.platform.mcp.adapters.registry import (
+            _RUNTIME_BRIDGE_TOOLS,
+            _SPECIALIZED,
+            register_bridge_tools,
+        )
+
+        # classify_strings IS in the suppress set and is re-injected
+        # via the runtime catalog (the bridge's live ``/tools`` list
+        # still advertises it). The historical ``_SPECIALIZED`` entry
+        # was removed; the suppress short-circuit in ``get_adapter``
+        # is the second line of defense for any future re-add.
+        assert "classify_strings" in _ALWAYS_SUPPRESS["ida_headless"]
+        assert ("ida_headless", "classify_strings") not in _SPECIALIZED
+        register_bridge_tools("ida_headless", ["classify_strings"])
+        try:
+            assert "classify_strings" in _RUNTIME_BRIDGE_TOOLS["ida_headless"]
+            assert get_adapter("ida_headless", "classify_strings") is None
+        finally:
+            _RUNTIME_BRIDGE_TOOLS["ida_headless"].discard("classify_strings")
+
+    def test_suppressed_tools_absent_from_registered_tools(self) -> None:
+        # ``registered_tools()`` is used by diagnostics + the prompt
+        # builder fallback. A suppressed tool that still shows up in
+        # the listing is just another way for the agent to learn the
+        # name and try to dispatch it.
+        listed = set(registered_tools())
+        assert "ida_headless.classify_strings" not in listed
+        assert "audit_mcp.search_source" not in listed
 
     def test_specialized_tools_lists_only_specialized(self) -> None:
         spec = set(specialized_tools())

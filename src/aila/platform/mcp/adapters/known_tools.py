@@ -312,6 +312,21 @@ _CALL_GRAPH_FRAGILE_TOOLS: frozenset[str] = frozenset({
 # directly from disk. For "find code that does X" use semantic_search.
 _ALWAYS_SUPPRESS: dict[str, frozenset[str]] = {
     "audit_mcp": frozenset({"search_source"}),
+    # ida_headless.classify_strings reads IDA's auto-strings table
+    # (null-terminated ASCII >= min length) and buckets matches by
+    # regex. Misses Delphi / Pascal AnsiString, .NET BSTR, VB6, Go,
+    # any UTF-16 / non-section / encrypted payload. Returned
+    # ``total_unique_strings: 19`` against a Delphi sample whose true
+    # string count is 10,254, and the empty buckets convinced the
+    # agent there was nothing to look at. The replacement surface is
+    # ``list_strings`` (lists the actual IDA strings table with
+    # encoding / section / filter knobs) plus ``read_memory`` /
+    # ``get_string_at`` for direct byte-range reads. Suppressing here
+    # (not just deleting from ``IDA_HEADLESS_TOOLS``) is required
+    # because ``_effective_tools`` unions the runtime bridge catalog
+    # into the callable set -- the bridge's live ``/tools`` response
+    # still advertises ``classify_strings``.
+    "ida_headless": frozenset({"classify_strings"}),
 }
 
 # Bridge-side virtual tools added on top of the live MCP catalog.

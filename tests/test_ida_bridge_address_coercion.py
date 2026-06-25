@@ -148,3 +148,96 @@ class TestIDAAutonameCoercion:
             {"root_address": 0x474FC0},
         )
         assert out["root_address"] == 0x474FC0
+
+
+class TestEncodingValueCoercion:
+    """``encoding`` value normalization on string-family tools.
+
+    The MCP server's ``list_strings`` emits hits under ``by_encoding``
+    with the label ``"utf16le"`` but the historical filter on the
+    server only accepted ``"utf16"``. An agent reading ``count_only``
+    output and passing the observed encoding label back as a filter
+    got zero matches (false negative -- killed sibling-branch
+    second-stage hunts on masson). The bridge now rewrites the alias
+    forms to the canonical ``"utf16le"`` before dispatch.
+    """
+
+    def test_utf16_aliased_to_utf16le_on_list_strings(self) -> None:
+        out, notes = IDABridgeTool._coerce_encoding_value(
+            "list_strings",
+            {"binary_id": "b", "encoding": "utf16"},
+        )
+        assert out["encoding"] == "utf16le"
+        assert len(notes) == 1 and "utf16" in notes[0]
+
+    def test_hyphen_variants_aliased(self) -> None:
+        for variant in ("utf-16", "utf-16le", "utf16-le", "UTF-16LE"):
+            out, _ = IDABridgeTool._coerce_encoding_value(
+                "list_strings",
+                {"encoding": variant},
+            )
+            assert out["encoding"] == "utf16le", f"variant {variant!r} not normalized"
+
+    def test_canonical_utf16le_passes_through_silently(self) -> None:
+        # Already canonical -- no rewrite, no note.
+        out, notes = IDABridgeTool._coerce_encoding_value(
+            "list_strings",
+            {"encoding": "utf16le"},
+        )
+        assert out["encoding"] == "utf16le"
+        assert notes == []
+
+    def test_ascii_and_all_untouched(self) -> None:
+        for value in ("ascii", "all"):
+            out, notes = IDABridgeTool._coerce_encoding_value(
+                "list_strings",
+                {"encoding": value},
+            )
+            assert out["encoding"] == value
+            assert notes == []
+
+    def test_non_string_encoding_skipped(self) -> None:
+        # Don't crash on an int or None passed as encoding -- just
+        # let the MCP surface the real validation error.
+        out, notes = IDABridgeTool._coerce_encoding_value(
+            "list_strings",
+            {"encoding": None},
+        )
+        assert out["encoding"] is None
+        assert notes == []
+
+    def test_get_string_at_also_normalized(self) -> None:
+        out, notes = IDABridgeTool._coerce_encoding_value(
+            "get_string_at",
+            {"binary_id": "b", "address": "0x4c0608", "encoding": "utf16"},
+        )
+        assert out["encoding"] == "utf16le"
+        assert out["address"] == "0x4c0608"
+        assert len(notes) == 1
+
+    def test_unrelated_tool_untouched(self) -> None:
+        # Only list_strings + get_string_at are in _ENCODING_TOOLS.
+        # decompile has no ``encoding`` kwarg, but if some other
+        # tool happens to take ``encoding``, the bridge must not
+        # rewrite it -- the alias map is scoped to string tools.
+        out, notes = IDABridgeTool._coerce_encoding_value(
+            "decompile",
+            {"encoding": "utf16"},
+        )
+        assert out["encoding"] == "utf16"
+        assert notes == []
+
+    def test_full_pipeline_normalizes_through_normalize_kwargs(self) -> None:
+        # End-to-end: _normalize_kwargs is what forward() actually
+        # calls. Confirm the encoding-value step runs inside the
+        # full pipeline (after alias renames, pagination drops,
+        # and address coercion).
+        bridge = IDABridgeTool.__new__(IDABridgeTool)
+        bridge._auto_alias_map = {}  # type: ignore[attr-defined]
+        bridge._known_params = {"list_strings": frozenset({"binary_id", "encoding", "section"})}  # type: ignore[attr-defined]
+        out, notes = bridge._normalize_kwargs(
+            "list_strings",
+            {"binary_id": "b", "encoding": "utf16", "section": ".rsrc"},
+        )
+        assert out["encoding"] == "utf16le"
+        assert any("encoding" in n for n in notes)

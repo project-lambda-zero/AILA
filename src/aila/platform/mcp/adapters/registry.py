@@ -53,7 +53,6 @@ from .ida_headless import (
     adapt_capa_scan,
     adapt_checksec,
     adapt_classify_behavior,
-    adapt_classify_strings,
     adapt_decompile,
     adapt_def_use,
     adapt_diff_function,
@@ -66,7 +65,7 @@ from .ida_headless import (
     adapt_xrefs_from,
     adapt_xrefs_to,
 )
-from .known_tools import _VIRTUAL_TOOLS, KNOWN_TOOLS
+from .known_tools import _ALWAYS_SUPPRESS, _VIRTUAL_TOOLS, KNOWN_TOOLS
 
 __all__ = [
     "get_adapter",
@@ -102,7 +101,10 @@ _SPECIALIZED: dict[tuple[str, str], AdapterFn] = {
     # ida_headless \u2014 TEXT specializations
     ("ida_headless", "checksec"): adapt_checksec,
     ("ida_headless", "classify_behavior"): adapt_classify_behavior,
-    ("ida_headless", "classify_strings"): adapt_classify_strings,
+    # ``classify_strings`` is no longer wired: the tool is in
+    # ``_ALWAYS_SUPPRESS`` and ``get_adapter`` returns ``None`` for it
+    # before the specialized lookup. Leaving a row here would only
+    # keep ``specialized_tools()`` reporting a deprecated name.
     ("ida_headless", "capa_scan"): adapt_capa_scan,
     # audit_mcp — DECOMPILED_FUNCTION
     ("audit_mcp", "read_function"): adapt_read_function,
@@ -185,24 +187,48 @@ def register_bridge_tools(server_id: str, tool_names: object) -> None:
 
 
 def _effective_tools(server_id: str) -> frozenset[str]:
-    """Union of the static + runtime catalogs for one server."""
+    """Union of the static + runtime catalogs for one server, minus
+    :data:`_ALWAYS_SUPPRESS`.
+
+    The runtime union (fix \u00a7244) ensures a tool added on the bridge
+    side becomes callable without a static catalog edit. The
+    suppression subtraction restores the inverse property: a tool
+    DELETED from the static catalog (or explicitly listed in
+    ``_ALWAYS_SUPPRESS``) stays uncallable even though the bridge's
+    live ``/tools`` response still advertises it. Without this the
+    agent learns the name from training data, dispatches it, and the
+    bridge happily runs the deprecated tool.
+    """
     static = KNOWN_TOOLS.get(server_id, frozenset())
     runtime = _RUNTIME_BRIDGE_TOOLS.get(server_id) or set()
-    if not runtime:
-        return static
-    return frozenset(static | runtime)
+    suppress = _ALWAYS_SUPPRESS.get(server_id, frozenset())
+    base = static if not runtime else (static | runtime)
+    if not suppress:
+        return frozenset(base)
+    return frozenset(t for t in base if t not in suppress)
 
 
 def get_adapter(server_id: str, tool_name: str) -> AdapterFn | None:
     """Return the adapter for one MCP tool, or None when unknown.
 
-    Specialized adapters take priority. Falls back to ``adapt_generic``
-    when the tool is in :func:`_effective_tools` (static ``KNOWN_TOOLS``
-    plus any names registered via :func:`register_bridge_tools` —
-    fix §244). Returns ``None`` for completely unknown server/tool
-    combinations so the executor can surface a 'no such tool' error
-    to the engine.
+    Suppressed tools (``_ALWAYS_SUPPRESS``) short-circuit to ``None``
+    BEFORE the specialized-adapter lookup. The specialized table is
+    additive and historically kept entries for tools we later
+    deprecated (e.g. ``ida_headless.classify_strings``); leaving the
+    entry wired meant the agent could still dispatch the tool through
+    the specialized path even after we removed the name from the
+    static catalog and now from the runtime union too.
+
+    After the suppression gate: specialized adapters take priority.
+    Falls back to ``adapt_generic`` when the tool is in
+    :func:`_effective_tools` (static ``KNOWN_TOOLS`` plus any names
+    registered via :func:`register_bridge_tools` -- fix \u00a7244, minus
+    ``_ALWAYS_SUPPRESS``). Returns ``None`` for completely unknown
+    server/tool combinations so the executor can surface a 'no such
+    tool' error to the engine.
     """
+    if tool_name in _ALWAYS_SUPPRESS.get(server_id, frozenset()):
+        return None
     specific = _SPECIALIZED.get((server_id, tool_name))
     if specific is not None:
         return specific
@@ -224,13 +250,22 @@ def registered_tools() -> list[str]:
     """
     seen: set[str] = set()
     for server, tools in KNOWN_TOOLS.items():
+        suppress = _ALWAYS_SUPPRESS.get(server, frozenset())
         for tool in tools:
+            if tool in suppress:
+                continue
             seen.add(f"{server}.{tool}")
     for server, tools in _VIRTUAL_TOOLS.items():
+        suppress = _ALWAYS_SUPPRESS.get(server, frozenset())
         for tool in tools:
+            if tool in suppress:
+                continue
             seen.add(f"{server}.{tool}")
     for server, tools in _RUNTIME_BRIDGE_TOOLS.items():
+        suppress = _ALWAYS_SUPPRESS.get(server, frozenset())
         for tool in tools:
+            if tool in suppress:
+                continue
             seen.add(f"{server}.{tool}")
     return sorted(seen)
 
@@ -239,6 +274,13 @@ def specialized_tools() -> list[str]:
     """List only tools with custom (non-generic) adapters.
 
     Useful for diagnostics and for the prompt builder to indicate which
-    tools produce structured payloads vs raw TEXT.
+    tools produce structured payloads vs raw TEXT. Suppressed tools
+    (``_ALWAYS_SUPPRESS``) are filtered out so the listing stays
+    consistent with :func:`registered_tools` and the agent surface.
     """
-    return sorted(f"{s}.{t}" for s, t in _SPECIALIZED)
+    out: list[str] = []
+    for server, tool in _SPECIALIZED:
+        if tool in _ALWAYS_SUPPRESS.get(server, frozenset()):
+            continue
+        out.append(f"{server}.{tool}")
+    return sorted(out)

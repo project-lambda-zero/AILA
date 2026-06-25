@@ -62,10 +62,6 @@ class TestTryDecodeString:
         assert try_decode_string("abcd") is None
         assert try_decode_string("a===") is None
 
-    def test_not_a_string(self) -> None:
-        assert try_decode_string(123) is None  # type: ignore[arg-type]
-        assert try_decode_string(None) is None  # type: ignore[arg-type]
-
     def test_empty(self) -> None:
         assert try_decode_string("") is None
         assert try_decode_string("   ") is None

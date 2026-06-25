@@ -258,6 +258,27 @@ class IDABridgeTool(Tool):
     _ADDRESS_LIST_KWARG_NAMES: frozenset[str] = frozenset({
         "avoid_addresses",
     })
+
+    # ``encoding`` value aliases for the string-family tools
+    # (``list_strings``, ``get_string_at``). The MCP server emits hits
+    # under ``by_encoding`` with the label ``"utf16le"``, but the
+    # historical filter on the server side only accepted ``"utf16"``
+    # -- so an agent reading ``count_only`` output and passing the
+    # observed encoding value back as a filter got zero matches
+    # (false negative that killed sibling-branch second-stage hunts
+    # on masson). The ida-headless side now normalizes too; this
+    # alias map is the defense that ships without an MCP restart and
+    # keeps the bridge tolerant to either label spelling forever.
+    _ENCODING_VALUE_ALIASES: dict[str, str] = {
+        "utf-16": "utf16le",
+        "utf16": "utf16le",
+        "utf-16le": "utf16le",
+        "utf16-le": "utf16le",
+    }
+    _ENCODING_TOOLS: frozenset[str] = frozenset({
+        "list_strings",
+        "get_string_at",
+    })
     # IDA's auto-generated symbol prefixes followed by hex. Matches
     # `sub_474FC0`, `loc_4012A0`, `unk_402100`, `byte_409010`, etc.
     # Anchored to ^ + $ so it never matches user-given labels that
@@ -319,6 +340,34 @@ class IDABridgeTool(Tool):
                 )
         return out, notes
 
+    @classmethod
+    def _coerce_encoding_value(
+        cls, action: str, kwargs: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Rewrite ``encoding`` values on string-family tools to the
+        canonical label that the MCP server accepts as a filter.
+
+        Only touches keys named ``encoding`` on tools listed in
+        :data:`_ENCODING_TOOLS`. Values not in the alias map (e.g.
+        ``"ascii"``, ``"all"``) pass through unchanged.
+        """
+        if action not in cls._ENCODING_TOOLS or "encoding" not in kwargs:
+            return kwargs, []
+        raw = kwargs["encoding"]
+        if not isinstance(raw, str):
+            return kwargs, []
+        key = raw.strip().lower()
+        canonical = cls._ENCODING_VALUE_ALIASES.get(key)
+        if canonical is None or canonical == key:
+            return kwargs, []
+        out = dict(kwargs)
+        out["encoding"] = canonical
+        return out, [
+            f"{action}: coerced encoding={raw!r} -> {canonical!r} "
+            f"(MCP server emits the same label under by_encoding; "
+            f"alias map keeps count_only output round-tripping as a filter)",
+        ]
+
     def _normalize_kwargs(
         self, action: str, kwargs: dict[str, Any],
     ) -> tuple[dict[str, Any], list[str]]:
@@ -327,6 +376,9 @@ class IDABridgeTool(Tool):
         then coerce IDA-style auto-name strings on address kwargs to
         ``0x<hex>`` so MCP tools that need int addresses don't get
         a `ValueError: invalid literal for int() with base 16` back.
+        Finally normalize the ``encoding`` VALUE on the string-family
+        tools so a value pulled from ``list_strings(count_only=True)``
+        round-trips as a filter on the next call.
         """
         renamed, alias_notes = normalize_kwargs(
             action, kwargs, self._auto_alias_map,
@@ -337,7 +389,10 @@ class IDABridgeTool(Tool):
         coerced, addr_notes = self._coerce_ida_autoname_to_address(
             action, filtered,
         )
-        return coerced, alias_notes + drop_notes + addr_notes
+        enc_coerced, enc_notes = self._coerce_encoding_value(
+            action, coerced,
+        )
+        return enc_coerced, alias_notes + drop_notes + addr_notes + enc_notes
 
     async def _call_action_once(
         self, action: str, kwargs: dict[str, Any],
