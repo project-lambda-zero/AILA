@@ -438,6 +438,29 @@ class IDABridgeTool(Tool):
             # used to fall through to "ready" when HTTP was 2xx, silently
             # turning {"status": "queued"} into a success in the call log.
             payload_status = payload.get("status") if isinstance(payload, dict) else None
+            # Defensive: some tools (search_pattern most prominently)
+            # have the frontend wrap a worker-side ValueError into
+            # the cached payload but stamp ``status: ready`` on it
+            # before returning. The downstream executor then sees
+            # ready + a populated ``error`` field and treats the
+            # call as success, polluting case_state with a
+            # "no matches" reading that isn't actually grounded.
+            # Promote any non-empty ``error`` field to status=error
+            # regardless of the declared status; the response body
+            # is unchanged so adapters can still read its shape.
+            if (
+                isinstance(payload, dict)
+                and payload.get("error")
+                and isinstance(payload["error"], str)
+                and payload_status in ("ready", "completed", "ok", None)
+            ):
+                logging.getLogger(__name__).info(
+                    "ida_bridge %s: promoting status=%r to error -- "
+                    "payload carries error field: %s",
+                    action, payload_status,
+                    payload["error"][:200],
+                )
+                payload_status = "error"
             if payload_status in ("ready", "completed", "ok"):
                 ctx["status"] = "ready"
             elif payload_status in ("pending", "queued", "running"):
