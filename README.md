@@ -68,9 +68,11 @@ and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.
   self-contained package implementing `ModuleProtocol`. One module never
   imports from another. Layout is fixed by `docs/MODULE_STANDARD.md`.
   Current modules: `vulnerability` (CVE/CWE scanning + intel),
-  `forensics` (DFIR investigations), `vr` (vulnerability research —
+  `forensics` (DFIR investigations), `vr` (vulnerability research --
   graph-aware audit, fuzz campaign proposals, enterprise PDF reports,
-  exploit/PoC writer agent), and the `hello_world` reference module.
+  exploit/PoC writer agent), `malware` (sample-centric reverse
+  engineering over ida-headless-mcp-exp), and the `hello_world`
+  reference module.
 - **API** (`src/aila/api/`) -- FastAPI application (`aila.api.app:app`).
   Modules contribute additional routers via `api_router.py`.
 - **Frontend** (`frontend/`) -- top-level Vite + React + TypeScript shell.
@@ -85,6 +87,86 @@ and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.
   starve each other.
 
 For deeper detail see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Agent reasoning loop -- think / hypothesize / act / observe
+
+Every reasoning module in AILA (vr, malware, anything future that
+holds a multi-turn LLM conversation against an MCP backend) runs the
+same four-phase loop driven by the platform's reasoning engine
+(`src/aila/platform/services/reasoning.py`). Personas differ, tool
+surfaces differ, terminal outcome kinds differ -- the loop does not.
+
+```
+            +----------------------------------+
+            |        case_state.observables    |
+            |  prior tool readings + directives|
+            |  + agent scratchpad (capped)     |
+            +-----------------+----------------+
+                              |
+                              v
+   +---------+         +------+-------+        +--------+
+   |  THINK  |-------->|  HYPOTHESIZE |------->|  ACT   |
+   | persona |  reads  |  produce or  | emits  | tool_  |
+   | prompt  |  state  |  refine list |  one   | run    |
+   | + state |         |  with claim, |  action| OR     |
+   |         |         |  why_plaus., |        | submit |
+   |         |         |  kill_crit.  |        | OR text|
+   +---------+         +--------------+        +----+---+
+        ^                                            |
+        |                                            |
+        +-------------- OBSERVE ---------------------+
+               tool result -> observables_delta
+                          merged into case_state
+```
+
+**Think.** Each turn, one persona (researcher / critic / implementer)
+receives the system prompt + persona prompt + the current
+`case_state` projection. The case_state carries every prior tool
+reading the platform decided was worth keeping in attention (tool
+observables capped at the last 80, agent scratchpad capped at 15),
+plus directives the auto-steering pipeline injected.
+
+**Hypothesize.** The persona's output is a structured envelope
+carrying a hypothesis list. Each hypothesis is a triple of
+`{claim, why_plausible, kill_criterion}` -- the kill_criterion is the
+specific evidence that would refute it. Hypotheses persist across
+turns and accumulate state (`live` / `rejected` / `resolved`); the
+rejection reason and resolution note travel with them. The frontend
+renders the live + rejected + resolved aggregate per investigation
+so the operator sees the deliberation drift in real time.
+
+**Act.** The same envelope emits exactly one action: a
+`tool_run` (dispatch one MCP tool call), a `submit` of a terminal
+outcome (AnalysisReport, FindingDraft, TriageVerdict, ...), or a
+text-only deliberation turn that updates hypotheses without
+external action. The executor dispatches tool_runs through the
+module's MCP bridge layer (which adds defenses: auto-poll on
+pending, kwarg coercion, alias maps, address-format coercion --
+see VR / Malware sections below).
+
+**Observe.** The tool response flows through a per-adapter pass
+that shapes the response into an `observables_delta` (key-value
+pairs the next turn will see) plus a durable observation row in
+the module's observation table (cross-investigation memory, kind +
+polarity tagged). The case_state merges the delta; the renderer
+decides which observables make it back into the next prompt under
+the attention cap.
+
+**Multi-persona adversarial discipline.** The reasoning module's
+branch manager spawns multiple personas in parallel against the
+same investigation. Each branch holds its own case_state. The
+platform's deliberation broker surfaces rejection signal across
+branches (a hypothesis rejected by 2+ siblings becomes a
+`sibling_consensus_rejection` directive on the still-live branch).
+Claim verifier promotes evidence reaching a confidence floor;
+synth assembles the final outcome from the converged claims.
+
+The pattern is what lets two very different modules (source-level
+vulnerability hunting vs binary malware reverse engineering) share
+the same engine + the same operator UI + the same observation
+memory abstraction. Adding a third reasoning module is mostly
+writing prompts + an MCP bridge + an outcome contract; the loop
+is already there.
 
 ## VR Engine and MCP Architecture
 
@@ -182,6 +264,143 @@ Operator can resume a stuck target via `POST /vr/targets/{id}/resume-analysis`; 
 
 For day-to-day MCP operations and the full VR agent design see [docs/vr/](docs/vr/).
 
+## Malware Module
+
+The `malware` module ports the VR adversarial-deliberation pattern
+onto sample-centric reverse engineering. Same multi-persona loop
+(halvar / noor researchers, maddie / yuki critics, renzo / wei
+implementers), same SSE-streamed timeline, same observation memory --
+but every tool dispatch is constrained to `ida-headless-mcp-exp`
+only. `audit_mcp` and `android_mcp` are explicitly hidden from the
+agent-facing catalog and rejected at the executor's allowlist
+(backend services like the claim verifier still construct their own
+bridge instances).
+
+### Pipeline
+
+```
+sample upload
+      |
+      v
+target_analysis stages (Alembic-tracked, per-stage durable)
+   open_binary -> auto_analysis -> string_classification
+      |
+      v
+investigation kinds:
+   triage | full_analysis | unpack_only | config_extract
+      | yara_generate | family_attribute
+      |
+      v
+multi-persona reasoning loop:
+   investigation_setup -> investigation_loop -> investigation_emit
+      |
+      v
+outcomes:
+   ANALYSIS_REPORT | TRIAGE_VERDICT | UNPACK_ARTIFACT
+      | CONFIG_BLOB | YARA_RULE_DRAFT | FAMILY_ATTRIBUTION
+      | FINDING | OUTCOME_REVIEW
+```
+
+### Tool surface (ida-headless-mcp-exp only)
+
+The agent dispatches exclusively against `ida-headless-mcp-exp`
+running on port `18821`. The bridge layer
+(`platform/mcp/bridges/ida_headless.py`) adds five defenses on top
+of the raw catalog so the agent's habits don't cost turns:
+
+- **Auto-poll on `status: pending`** -- bridge sleeps + re-POSTs the
+  same call (2s -> 3s -> 4.5s -> 8s capped) until the per-call
+  async work lands ready or the 240s budget runs out. `poll_analysis`
+  itself is the only excluded action.
+- **IDA auto-name -> hex coercion** -- 17 address-shaped kwargs across
+  the 81-tool catalog rewrite `sub_<hex>` / `loc_<hex>` /
+  `unk_<hex>` to `0x<hex>` before dispatch. `avoid_addresses`
+  (list) gets per-element rewriting.
+- **Pagination-noise drop** -- `offset` / `limit` / `cursor` /
+  `top_k` get silently stripped when the target tool doesn't declare
+  them, so snapshot tools no longer TypeError on agent habits.
+- **`search_pattern` alias map** -- rewrites `pattern` / `pattern_str` /
+  `query` to the canonical `pattern_type` enum kwarg.
+- **`status=None` payload normalization** -- tools like
+  `binary_metadata` that omit a top-level `status` field get
+  `status='ready'` injected so the downstream executor's whitelist
+  doesn't synthesize a spurious empty error.
+
+### Three tools added to ida-headless-mcp-exp (commit `f3d4147`+)
+
+The agent had no static path to constant strings outside the
+classifier-bucketed subset that `classify_strings` returns. Three
+synchronous tools fix the gap (full PE reader, no IDA round-trip):
+
+- **`list_strings(binary_id, min_length=4, filter_text="", section=None, count_only=False, ...)`** --
+  enumerates every printable ASCII + UTF-16LE run across all sections
+  with non-zero raw size. Returns per-section / per-encoding
+  breakdown always; `count_only=True` is the cheap pre-flight that
+  returns ONLY totals (no payload) so the agent can size unknown
+  binaries before paging.
+- **`read_memory(binary_id, address, size=64)`** -- VA -> file offset
+  via the PE section table, returns hex + ascii rendering. Clipped
+  at section boundaries so reads never bleed across sections.
+- **`get_string_at(binary_id, address, max_length=512, encoding="ascii")`** --
+  convenience wrapper around `read_memory` for resolving
+  null-terminated C-strings or UTF-16LE strings at a known VA.
+
+On a 813KB Delphi PE, `list_strings` returns 10,254 ASCII strings
+with `min_length=4` versus `classify_strings`' 19 -- enough to
+surface all hardcoded C2 URLs, embedded second-stage RAT config
+blocks in `.rsrc` UTF-16LE, and operator-grade IOCs the classifier
+misses.
+
+### Agent prompt: deterministic C2 config extraction
+
+The system prompt teaches a four-stage extraction workflow instead
+of pattern-matching on hostname-shaped substrings:
+
+1. **Locate the config loader** -- find via
+   `find_api_call_sites('FindResourceW')` for embedded-resource
+   patterns, decryptor xrefs for crypto blobs, or
+   `RegQueryValueExW` for registry-stored configs.
+2. **Recover the storage layout** -- decompile the loader, read off
+   exact resource ID / data offset, decryption algorithm + key + IV,
+   serialization format, field offsets.
+3. **Apply the layout** -- `read_memory(VA, size)` the encrypted
+   blob, decrypt with binary-sourced constants, parse with the
+   known offsets, identify the C2 field.
+4. **Cross-validate** -- walk from loader-populated global to its
+   consumer at `WinHttpConnect` / `InternetOpenUrlA` / `connect`.
+   If the path doesn't close, it isn't the C2 -- keep going.
+
+### Server restart resilience
+
+ida-headless-mcp-exp now eager-initializes `_Frontend` in `main()`
+/ `main_http()` before binding the transport, so `recover_all()`
+populates `_binaries` from `cache/<sha>/state.json` BEFORE the
+server accepts the first HTTP request. AILA workers carrying stale
+`binary_id` values in `mcp_handles_json` survive restarts without
+seeing `Unknown binary_id`. Defensive `_sha` fallback handles
+out-of-band registrations (e.g. a stdio MCP transport writing
+state.json that the HTTP server's already-completed sweep missed).
+
+### Operator workflows
+
+- **Reset** -- toolbar button on the investigation page. Server
+  endpoint at `POST /malware/investigations/{id}/reset` wipes
+  messages + observations + outcomes + forked branches +
+  `workflow_state_cursor` archive in one transaction, flips status
+  back to `CREATED`. Refuses while `RUNNING` (operator must pause
+  first); `PAUSED` is fine because the cursor wipe handles the
+  archive that `/resume` would otherwise rely on.
+- **Force Re-enqueue** -- visible when status is `RUNNING` and the
+  reaper missed a stall (engine reports in-flight but no task
+  heartbeat). Calls the same `/re-enqueue` endpoint the reaper
+  would.
+- **Observations debug panel** -- operator-facing list of every
+  observation row recorded under the investigation, with polarity
+  and kind filter chips. Surfaces what evidence the agent has
+  actually committed to durable storage.
+- **Hypothesis aggregate** -- per-investigation projection of live /
+  rejected / resolved hypotheses across every branch.
+
 ## Quick Start
 
 **Prerequisites**
@@ -250,6 +469,7 @@ For day-to-day MCP operations and the full VR agent design see [docs/vr/](docs/v
    make worker-vr           # vulnerability research
    make worker-vuln         # vulnerability scans
    make worker-forensics    # DFIR investigations
+   make worker-malware      # malware reverse engineering
    ```
 
    On Windows, `bash start.sh` brings up audit-mcp + backend + 4 workers + frontend in a single command.
@@ -263,7 +483,8 @@ common pitfalls, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 |-----------------|---------------------------------------------------------------------------------------------------|------------|
 | `vulnerability` | SSH package inventory, distro-aware advisory resolution, CVE enrichment, scoring, and reporting.  | production |
 | `forensics`     | Remote forensic evidence triage over SSH: disk images, memory dumps, PCAPs, write-up generation.  | production |
-| `vr`            | Vulnerability research: graph-aware source/binary audit (audit-mcp + IDA Headless MCP), hypothesis-driven reasoning, fuzz campaign proposals (audit→fuzz pipeline), enterprise PDF reports with LLM writer agent, automatic exploit/PoC drafting, variant hunting with child-investigation spawning. | production |
+| `vr`            | Vulnerability research: graph-aware source/binary audit (audit-mcp + IDA Headless MCP), hypothesis-driven reasoning, fuzz campaign proposals (audit\u2192fuzz pipeline), enterprise PDF reports with LLM writer agent, automatic exploit/PoC drafting, variant hunting with child-investigation spawning. | production |
+| `malware`       | Malware reverse engineering: VR-pattern multi-persona deliberation over `ida-headless-mcp-exp` only. Six investigation kinds (triage / full_analysis / unpack_only / config_extract / yara_generate / family_attribute), deterministic four-stage C2 config extraction, fan-out sub-investigation spawning, observation memory with base64 / hex auto-decode, observations debug panel + reset + force-re-enqueue toolbar. | production |
 | `hello_world`   | Minimal reference module proving the `ModuleProtocol` contract end-to-end.                        | example    |
 
 Modules are auto-discovered at platform boot by scanning `src/aila/modules/*`.
