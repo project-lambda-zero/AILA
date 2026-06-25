@@ -46,6 +46,7 @@ __all__ = [
     "adapt_diff_function",
     "adapt_checksec",
     "adapt_classify_behavior",
+    "adapt_classify_strings",
     "adapt_capa_scan",
 ]
 
@@ -626,11 +627,97 @@ def adapt_checksec(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     )
 
 
+# Below this many categorized strings, ``adapt_classify_strings``
+# prepends a steering banner to the observable telling the agent
+# the result is a narrow categorizer subset and to pivot to
+# ``list_strings(count_only=True)`` for the real string surface.
+# Tuned against masson (Delphi PE, 813KB, 10254 actual strings,
+# classify_strings returned 19): anything < 100 is almost
+# certainly the trap, not the truth.
+_CLASSIFY_STRINGS_NARROW_THRESHOLD: int = 100
+
+
+def adapt_classify_strings(
+    raw: dict[str, Any], ctx: AdapterContext,
+) -> AdapterResult:
+    """Map ``classify_strings`` to TEXT payload + steering banner on
+    small categorized counts.
+
+    Default rendering surfaces ``total_unique_strings``,
+    ``total_classified``, and the per-category breakdown.
+    When the categorized result is small (under 100 strings on a
+    binary that almost certainly has 10K+ printable strings), the
+    observable text is prepended with a stark pivot directive.
+    The agent's next turn sees this banner at the top of the
+    observable and the prompt's opening-moves rule reinforces it.
+    Without this, agents read ``total_classified: 0`` and conclude
+    "binary has no strings worth looking at" -- a load-bearing
+    wrong inference that derails the entire investigation.
+    """
+    _assert_binary_id_match(raw, ctx)
+    total_unique = int(raw.get("total_unique_strings") or 0)
+    total_classified = int(raw.get("total_classified") or 0)
+    categories = raw.get("categories") or {}
+    if not isinstance(categories, dict):
+        categories = {}
+    bullets: list[str] = []
+    for cat_name in sorted(categories.keys()):
+        entries = categories[cat_name]
+        n = len(entries) if isinstance(entries, list) else 1
+        bullets.append(f"  - {cat_name}: {n}")
+    summary_lines = [
+        f"classify_strings: {total_classified} categorized / {total_unique} unique",
+    ]
+    if bullets:
+        summary_lines.append("categories:")
+        summary_lines.extend(bullets)
+    elif total_classified == 0:
+        summary_lines.append("  (no strings matched any classifier bucket)")
+    summary_text = "\n".join(summary_lines)
+
+    obs_value = summary_text
+    if total_classified < _CLASSIFY_STRINGS_NARROW_THRESHOLD:
+        banner = (
+            "!!! NARROW CATEGORIZER RESULT -- PIVOT REQUIRED !!!\n"
+            f"classify_strings categorized {total_classified} strings "
+            f"(unique total in IDA: {total_unique}). This is a regex "
+            f"bucket over URL / IP / registry / file-path / base64 "
+            f"shapes, NOT the binary's string surface. Real malware "
+            f"routinely holds 10000+ printable strings that this "
+            f"classifier never sees -- UTF-16LE in .rsrc, ASCII in "
+            f".rdata / DATA, dictionary-word obfuscation tokens. "
+            f"DO NOT conclude 'no strings worth looking at' from "
+            f"this result. Call list_strings(binary_id=<id>, "
+            f"count_only=True) NOW to see the actual size + "
+            f"per-section breakdown, then scope list_strings with "
+            f"section= / encoding= / filter_text= on the next call.\n\n"
+        )
+        obs_value = banner + summary_text
+
+    payload: dict[str, Any] = {
+        "text": summary_text,
+        "tool": f"{ctx.mcp_server_id}.{ctx.tool_name}",
+        "total_unique_strings": total_unique,
+        "total_classified": total_classified,
+        "categories": categories,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    return AdapterResult(
+        payload_kind=PayloadKind.TEXT,
+        payload=payload,
+        observables_delta={obs_key_for(ctx): obs_value},
+        summary=(
+            f"classify_strings: {total_classified}/{total_unique}"
+            + (" (NARROW)" if total_classified < _CLASSIFY_STRINGS_NARROW_THRESHOLD else "")
+        ),
+    )
+
+
 def adapt_classify_behavior(
     raw: dict[str, Any], ctx: AdapterContext,
 ) -> AdapterResult:
     """Map ``classify_behavior`` to TEXT payload (ATT&CK-aligned categories)."""
-    _assert_binary_id_match(raw, ctx)  # fix §280
+    _assert_binary_id_match(raw, ctx)  # fix \u00a7280
     categories = raw.get("categories") or raw.get("behaviors") or {}
     if not isinstance(categories, dict):
         categories = {}

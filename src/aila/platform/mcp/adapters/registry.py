@@ -53,6 +53,7 @@ from .ida_headless import (
     adapt_capa_scan,
     adapt_checksec,
     adapt_classify_behavior,
+    adapt_classify_strings,
     adapt_decompile,
     adapt_def_use,
     adapt_diff_function,
@@ -98,9 +99,10 @@ _SPECIALIZED: dict[tuple[str, str], AdapterFn] = {
     ("ida_headless", "pseudocode_slice_view"): adapt_pseudocode_slice_view,
     # ida_headless — PATCH_DIFF family
     ("ida_headless", "diff_function"): adapt_diff_function,
-    # ida_headless — TEXT specializations
+    # ida_headless \u2014 TEXT specializations
     ("ida_headless", "checksec"): adapt_checksec,
     ("ida_headless", "classify_behavior"): adapt_classify_behavior,
+    ("ida_headless", "classify_strings"): adapt_classify_strings,
     ("ida_headless", "capa_scan"): adapt_capa_scan,
     # audit_mcp — DECOMPILED_FUNCTION
     ("audit_mcp", "read_function"): adapt_read_function,
