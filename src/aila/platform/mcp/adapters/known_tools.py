@@ -94,7 +94,17 @@ IDA_HEADLESS_TOOLS: frozenset[str] = frozenset({
     "detect_stack_strings",
     "detect_dynamic_resolution",
     "detect_crypto_primitives",
-    "classify_strings",
+    # ``classify_strings`` removed from the agent catalog: it reads
+    # IDA's auto-strings table (null-terminated ASCII >= min length)
+    # and buckets by regex against URL / IP / path / base64. Misses
+    # everything on Delphi / Pascal AnsiString, .NET BSTR, VB6, Go,
+    # and UTF-16LE in .rsrc -- which is most modern malware. On
+    # masson it returned ``0 categorized / 19 unique`` while the
+    # binary actually holds 10,254 strings (1952 in .rsrc UTF-16LE
+    # including the second-stage C2). Agents read 0/19 as 'binary
+    # has nothing to look at' and derail. list_strings is the
+    # correct surface for string enumeration; classify_strings has
+    # no remaining purpose for the agent.
     "decrypt_function_strings",
     "decrypt_binary_strings",
     "resolve_api_hashes",
