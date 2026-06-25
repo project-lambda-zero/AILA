@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 620" role="img" aria-labelledby="title desc">
+  <title id="title">AILA monogram</title>
+  <desc id="desc">Geometric AILA monogram traced from the supplied reference.</desc>
+
+  <defs>
+    <linearGradient id="ailaWhite" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#F5F5F6"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+
+    <linearGradient id="ailaPurple" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#9697F2"/>
+      <stop offset="1" stop-color="#7677D9"/>
+    </linearGradient>
+
+    <linearGradient id="ailaOrange" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFB85F"/>
+      <stop offset="1" stop-color="#F6A23D"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Left white stroke -->
+  <path d="M 70 540
+           L 180 540
+           L 318 282
+           L 267 180
+           Z"
+        fill="url(#ailaWhite)"/>
+
+  <!-- Center orange triangle -->
+  <path d="M 282 540
+           L 448 540
+           L 365 382
+           Z"
+        fill="url(#ailaOrange)"/>
+
+  <!-- Right purple stroke -->
+  <path d="M 362 0
+           L 307 102
+           L 548 540
+           L 658 540
+           Z"
+        fill="url(#ailaPurple)"/>
+</svg>

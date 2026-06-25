@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/aila-logo.svg" alt="AILA monogram" width="160" />
+</p>
+
 # AILA -- AI Lab Assistant
 
 Modular AI security platform with pluggable analysis modules: a Python core
