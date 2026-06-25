@@ -98,6 +98,14 @@ IDA_HEADLESS_TOOLS: frozenset[str] = frozenset({
     "decrypt_function_strings",
     "decrypt_binary_strings",
     "resolve_api_hashes",
+    # PE reader -- synchronous, no worker round-trip. list_strings
+    # is the agent's broad string-enumeration surface (categorizer-
+    # free); read_memory + get_string_at resolve VAs to bytes /
+    # null-terminated strings. Added to ida-headless-mcp-exp in
+    # commits 6ea6e0b + d618728 (server warm-up + 3 new tools).
+    "list_strings",
+    "read_memory",
+    "get_string_at",
     # Library / classification
     "detect_library_functions",
     "classify_behavior",
