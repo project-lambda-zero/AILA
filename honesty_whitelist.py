@@ -387,6 +387,7 @@ HONESTY_WHITELIST = [
     # is a documented direct httpx use, not negligence.
     ("malware/agents/auto_steering.py", "http_client_in_module", "import httpx"),
     ("malware/agents/claim_verifier.py", "http_client_in_module", "import httpx"),
+    ("malware/agents/narrative_agent.py", "http_client_in_module", "import httpx"),
     ("malware/agents/pattern_extractor.py", "http_client_in_module", "import httpx"),
     ("malware/agents/synthesis_agent.py", "http_client_in_module", "import httpx"),
     ("malware/agents/tool_executor.py", "http_client_in_module", "import httpx"),
