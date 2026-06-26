@@ -186,24 +186,54 @@ def _xref_view_result(
     obs_suffix: str,
     summary_noun: str,
 ) -> AdapterResult:
-    _assert_binary_id_match(raw, ctx)  # fix §280
+    _assert_binary_id_match(raw, ctx)  # fix \u00a7280
     refs = _list_or_empty(raw, *list_keys)
+    total = len(refs)
     payload: dict[str, Any] = {
         target_field: target,
         "xrefs": refs,
-        "total": len(refs),
+        "total": total,
         "source_provenance": provenance_stamp(ctx),
     }
-    lines = [_xref_compact_line(r) for r in refs[:MAX_LIST_PREVIEW] if isinstance(r, dict)]
-    if len(refs) > MAX_LIST_PREVIEW:
-        lines.append(f"  ... and {len(refs) - MAX_LIST_PREVIEW} more")
+    lines = [
+        _xref_compact_line(r) for r in refs[:MAX_LIST_PREVIEW]
+        if isinstance(r, dict)
+    ]
+    # Pagination hint replaces the older silent "... and N more"
+    # marker. When the result is larger than the per-observable preview
+    # cap, surface BOTH the count of suppressed rows AND the exact
+    # follow-up call that pulls the rest. Without the actionable call
+    # shape the agent has no way to retrieve the suppressed rows and
+    # ends up either dropping them silently or re-issuing the same
+    # unbounded call hoping for different output.
+    if total > MAX_LIST_PREVIEW:
+        suppressed = total - MAX_LIST_PREVIEW
+        hint = (
+            f"  ... {suppressed} more row(s) suppressed from this "
+            f"observable preview (cap={MAX_LIST_PREVIEW}). The full "
+            f"list is on the message payload's ``xrefs`` array. To "
+            f"pull the next page into a fresh observable, re-issue "
+            f"the same call with `offset={MAX_LIST_PREVIEW}` and "
+            f"`limit=20` (or read the original payload directly via "
+            f"message_id={ctx.call_id})."
+        )
+        lines.append(hint)
+        payload["pagination_hint"] = {
+            "shown": MAX_LIST_PREVIEW,
+            "total": total,
+            "suppressed": suppressed,
+            "next_offset": MAX_LIST_PREVIEW,
+            "call_id": ctx.call_id,
+        }
     body = "\n".join(lines) if lines else "  (none)"
-    obs_value = f"{len(refs)} {summary_noun} for {target}:\n{body}"
+    obs_value = f"{total} {summary_noun} for {target}:\n{body}"
     return AdapterResult(
         payload_kind=PayloadKind.XREF_VIEW,
         payload=payload,
-        observables_delta={obs_key_for(ctx, f"{obs_suffix}.{target}"): obs_value},
-        summary=f"{len(refs)} {summary_noun} for {target}",
+        observables_delta={
+            obs_key_for(ctx, f"{obs_suffix}.{target}"): obs_value,
+        },
+        summary=f"{total} {summary_noun} for {target}",
     )
 
 

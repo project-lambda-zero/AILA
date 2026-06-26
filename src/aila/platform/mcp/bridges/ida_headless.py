@@ -15,9 +15,12 @@ Timeout:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json as _json
 import logging
 import os
 import re
+import time as _time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -139,6 +142,41 @@ class IDABridgeTool(Tool):
         # authors wire their own ``record_call`` here, tests + ad-hoc
         # callers omit it and get a no-op.
         self._recorder: BridgeRecorder = recorder or noop_recorder
+
+        # Per-call dedup cache. Maps fingerprint -> (cached_payload, expiry_ts).
+        # Fingerprint key: sha256 of (action, normalized_kwargs JSON). Hits return
+        # the cached payload immediately without re-dispatching to ida-headless.
+        # TTL is short (default 300s) because IDA database state can change when
+        # a fresh ``open_binary`` runs against the same SHA -- a stale cache
+        # surviving an analysis re-run would surface yesterday's xrefs against
+        # today's database. Cache is keyed off the FULL kwargs (including
+        # binary_id) so two binaries don't cross-contaminate. Disable via env
+        # ``IDA_HEADLESS_DEDUP_TTL_S=0``.
+        self._dedup_ttl_s: float = float(
+            os.environ.get("IDA_HEADLESS_DEDUP_TTL_S", "300"),
+        )
+        self._dedup_cache: dict[str, tuple[dict[str, Any], float]] = {}
+        # Tools eligible for dedup -- read-only / deterministic queries
+        # where re-issuing the same call within TTL must return the same
+        # answer. EXCLUDE state-mutating tools (open_binary, upload,
+        # patch_assemble) and tools whose result depends on the
+        # caller's freshness expectations (poll_analysis). Also excludes
+        # the heavy graph tools where one cached response served to N
+        # sibling branches saves significant compute.
+        self._dedup_actions: frozenset[str] = frozenset({
+            "xrefs_to", "xrefs_from",
+            "decompile", "pseudocode_slice_view",
+            "find_api_call_sites", "callers_of",
+            "build_call_tree", "call_graph", "call_chain",
+            "list_strings", "list_functions",
+            "imports", "exports",
+            "detect_crypto_primitives", "find_crypto_constants",
+            "capa_scan", "verify_capabilities",
+            "get_string_at", "read_memory",
+            "binary_metadata", "section_info",
+            "interprocedural_taint", "def_use",
+            "resolve_api_hashes",
+        })
 
     async def _resolve_base_url(self) -> str:
         if self._fixed_base_url is not None:
@@ -430,6 +468,155 @@ class IDABridgeTool(Tool):
             }
         return payload if isinstance(payload, dict) else {"status": "error", "error": "non-dict payload"}
 
+    # Dead-worker signature -- shape the ida-headless HTTP server emits
+    # when the in-process arbiter has not spawned the IDA subprocess.
+    # The arbiter is supposed to respawn on every tick when work is
+    # queued; in practice an unrecoverable open_database failure plus
+    # the persistent crash_counts.json cap (default 3) leaves the
+    # arbiter permanently refusing to spawn for a given SHA. Callers
+    # of the bridge see every request return ``status: pending`` for
+    # the full 240s poll timeout while the worker_heartbeat.json on
+    # disk stays days old.
+    #
+    # Detection criteria (all must match):
+    #   * status == "pending"
+    #   * worker_phase indicating the arbiter isn't running
+    #     (``exiting_idle`` is the canonical dead signal; we also flag
+    #     ``crashed`` and the empty-string state as defensive aliases)
+    #   * heartbeat_age_s above ``_DEAD_WORKER_HEARTBEAT_THRESHOLD``
+    #     (default 10 min; tunable via
+    #     ``IDA_HEADLESS_DEAD_WORKER_HEARTBEAT_S``)
+    #
+    # When all three line up the bridge short-circuits with a
+    # structured error rather than polling for 240s, so the agent's
+    # next turn carries actionable text instead of a silent timeout.
+    _DEAD_WORKER_PHASES: frozenset[str] = frozenset({
+        "exiting_idle", "crashed", "",
+    })
+    _DEAD_WORKER_HEARTBEAT_THRESHOLD_S: float = float(
+        os.environ.get(
+            "IDA_HEADLESS_DEAD_WORKER_HEARTBEAT_S",
+            "600",
+        ),
+    )
+
+    @classmethod
+    def _looks_like_dead_worker(
+        cls, payload: dict[str, Any] | None,
+    ) -> bool:
+        """True when the response shape matches the dead-arbiter signature.
+
+        Conservative: requires all three criteria so a legitimately slow
+        worker producing a real ``pending`` doesn't trip the gate.
+        """
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("status") != "pending":
+            return False
+        phase = payload.get("worker_phase")
+        if not isinstance(phase, str) or phase not in cls._DEAD_WORKER_PHASES:
+            return False
+        hb_age = payload.get("heartbeat_age_s")
+        try:
+            hb_age_f = float(hb_age) if hb_age is not None else 0.0
+        except (TypeError, ValueError):
+            return False
+        return hb_age_f >= cls._DEAD_WORKER_HEARTBEAT_THRESHOLD_S
+
+    def _dead_worker_error(
+        self, action: str, payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build the structured fail-fast error replacement for a
+        dead-arbiter response. The message names the symptom + the
+        operator action to take so the agent surfaces the right next
+        step rather than a generic timeout.
+        """
+        hb_age = payload.get("heartbeat_age_s", "?")
+        queue_depth = payload.get("queue_depth", "?")
+        sha = payload.get("binary_id", "?")
+        return {
+            "status": "error",
+            "error": (
+                f"ida-headless IDA worker is not alive for {sha}: "
+                f"heartbeat_age_s={hb_age} (threshold "
+                f"{int(self._DEAD_WORKER_HEARTBEAT_THRESHOLD_S)}s), "
+                f"queue_depth={queue_depth}, worker_phase="
+                f"{payload.get('worker_phase', '?')}. The arbiter has "
+                f"stopped spawning subprocesses for this binary (most "
+                f"often: open_database failures hit the crash-count "
+                f"cap, or the .i64 file is corrupt). Calling {action!r} "
+                f"again will time out the same way. Operator action: "
+                f"restart ida-headless and clear crash_counts.json for "
+                f"this SHA, or re-upload the binary to force fresh "
+                f"analysis."
+            ),
+            "dead_worker_diagnostic": {
+                "sha": sha,
+                "heartbeat_age_s": hb_age,
+                "queue_depth": queue_depth,
+                "worker_phase": payload.get("worker_phase"),
+                "action": action,
+            },
+        }
+
+    def _dedup_fingerprint(
+        self, action: str, normalized_kwargs: dict[str, Any],
+    ) -> str:
+        """sha256 of (action, sorted kwargs JSON) used as dedup-cache key.
+
+        Sort keys so call-order variance does not split otherwise-
+        identical cache entries; default=str to coerce non-JSON-clean
+        values (paths, UUIDs) into a stable string form.
+        """
+        try:
+            blob = _json.dumps(
+                {"action": action, "kwargs": normalized_kwargs},
+                sort_keys=True, default=str,
+            )
+        except (TypeError, ValueError):
+            blob = f"{action}:{normalized_kwargs!r}"
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    def _dedup_lookup(self, fingerprint: str) -> dict[str, Any] | None:
+        """Return cached payload if present and not expired; else None.
+
+        Lazy cleanup: an expired hit is unlinked on read so the cache
+        doesn't grow unbounded across long-running worker lifetimes.
+        Eviction at write time (see :meth:`_dedup_store`) handles the
+        case where reads never come.
+        """
+        entry = self._dedup_cache.get(fingerprint)
+        if entry is None:
+            return None
+        cached, expiry = entry
+        if _time.monotonic() >= expiry:
+            self._dedup_cache.pop(fingerprint, None)
+            return None
+        return cached
+
+    def _dedup_store(
+        self, fingerprint: str, payload: dict[str, Any],
+    ) -> None:
+        """Cache a ready payload for ``_dedup_ttl_s``. Caller is
+        responsible for filtering -- only payloads with
+        ``status: ready`` should be stored, never ``pending`` or
+        ``error``.
+        """
+        if self._dedup_ttl_s <= 0:
+            return
+        # Periodic eviction: when the cache crosses 1024 entries,
+        # drop everything already expired. Simple O(n) sweep; the
+        # cache rarely grows that large because the TTL is short.
+        if len(self._dedup_cache) > 1024:
+            now = _time.monotonic()
+            self._dedup_cache = {
+                k: v for k, v in self._dedup_cache.items()
+                if v[1] > now
+            }
+        self._dedup_cache[fingerprint] = (
+            payload, _time.monotonic() + self._dedup_ttl_s,
+        )
+
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the MCP HTTP API.
 
@@ -449,9 +636,39 @@ class IDABridgeTool(Tool):
         # Drop the recursion guard before the public-facing alias /
         # validation pipeline so it never reaches the MCP server.
         suppress_poll = bool(kwargs.pop("_ida_bridge_no_poll", False))
+        # Operator-supplied force-fresh flag bypasses the dedup cache
+        # without disabling it for other callers. Strip before the
+        # normalize_kwargs pass so it never reaches the MCP server.
+        bypass_dedup = bool(kwargs.pop("_ida_bridge_no_dedup", False))
         normalized_kwargs, kw_notes = self._normalize_kwargs(action, kwargs)
         for note in kw_notes:
             logging.getLogger(__name__).info("ida_bridge %s", note)
+
+        # Per-call dedup: identical (action, normalized_kwargs) within
+        # the TTL replays the cached payload. Skipped on retry passes
+        # (suppress_poll), explicit ``_ida_bridge_no_dedup`` overrides,
+        # tools not in ``_dedup_actions``, or when TTL is zero.
+        dedup_fp: str | None = None
+        if (
+            self._dedup_ttl_s > 0
+            and not suppress_poll
+            and not bypass_dedup
+            and action in self._dedup_actions
+        ):
+            dedup_fp = self._dedup_fingerprint(action, normalized_kwargs)
+            cached = self._dedup_lookup(dedup_fp)
+            if cached is not None:
+                logging.getLogger(__name__).info(
+                    "ida_bridge %s: dedup HIT (fp=%s)",
+                    action, dedup_fp[:12],
+                )
+                # Mark the cached payload so the executor can
+                # distinguish "freshly fetched" from "replay" if it
+                # ever wants to surface that to the agent. Cheap copy
+                # since the cached dict is small.
+                replay = dict(cached)
+                replay["_ida_bridge_dedup"] = "hit"
+                return replay
         base = await self._resolve_base_url()
         url = f"{base}/tools/{action}"
 
@@ -519,6 +736,25 @@ class IDABridgeTool(Tool):
             if payload_status in ("ready", "completed", "ok"):
                 ctx["status"] = "ready"
             elif payload_status in ("pending", "queued", "running"):
+                # Dead-worker short-circuit: when the response shape
+                # matches the dead-arbiter signature, polling for 240s
+                # is pointless -- the IDA subprocess will not spawn
+                # without operator intervention. The bridge swaps in a
+                # structured error that names the symptom plus the
+                # operator action.
+                if self._looks_like_dead_worker(payload):
+                    err = self._dead_worker_error(action, payload)
+                    logging.getLogger(__name__).warning(
+                        "ida_bridge %s: dead-arbiter signature "
+                        "detected; failing fast (heartbeat_age_s=%s, "
+                        "queue_depth=%s)",
+                        action,
+                        payload.get("heartbeat_age_s"),
+                        payload.get("queue_depth"),
+                    )
+                    ctx["status"] = "error"
+                    ctx["error_excerpt"] = err["error"][:400]
+                    return err
                 ctx["status"] = "pending"
                 # Per-call async retry loop. ``poll_analysis`` only
                 # reports whether the binary's IDA database (.i64) is
@@ -561,7 +797,28 @@ class IDABridgeTool(Tool):
                                 "ida_bridge %s: retry attempt=%d "
                                 "succeeded", action, attempt,
                             )
+                            # Cache the recovered ready payload so
+                            # sibling branches don't re-pay the wait.
+                            if (
+                                dedup_fp is not None
+                                and isinstance(retry_payload, dict)
+                            ):
+                                self._dedup_store(dedup_fp, retry_payload)
                             return retry_payload
+                        # Dead-worker shape can also surface on the
+                        # retry path -- bridge starts polling against
+                        # a live worker, the worker crashes mid-poll,
+                        # subsequent retries return the dead-arbiter
+                        # signature. Short-circuit there too.
+                        if self._looks_like_dead_worker(retry_payload):
+                            logging.getLogger(__name__).warning(
+                                "ida_bridge %s: dead-arbiter signature "
+                                "detected on retry attempt=%d; failing "
+                                "fast", action, attempt,
+                            )
+                            return self._dead_worker_error(
+                                action, retry_payload,
+                            )
                         if retry_status not in ("pending", "queued", "running"):
                             return retry_payload
                     else:
@@ -597,6 +854,16 @@ class IDABridgeTool(Tool):
                 err = payload.get("error")
                 if isinstance(err, str):
                     ctx["error_excerpt"] = err[:400]
+            # Cache the response payload when it lands ready and the
+            # action is dedup-eligible. ``pending`` and ``error``
+            # states are never cached -- the next caller for the same
+            # fingerprint deserves a fresh attempt.
+            if (
+                dedup_fp is not None
+                and ctx["status"] == "ready"
+                and isinstance(payload, dict)
+            ):
+                self._dedup_store(dedup_fp, payload)
             return payload
 
     # fix §211 — _SPEC_CACHE moved to instance attr in __init__.

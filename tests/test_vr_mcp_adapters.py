@@ -414,9 +414,20 @@ class TestAdaptFindApiCallSites:
         out = adapt_find_api_call_sites(raw, _ctx(tool="find_api_call_sites", api_name="memcpy"))
         assert out.payload["total"] == 100
         key = "ida_headless.find_api_call_sites.callsites.memcpy"
-        # MAX_LIST_PREVIEW = 20 -- the prior literal 75 dated from when
-        # the cap was 25; 100-20 = 80 entries elided.
-        assert "and 80 more" in out.observables_delta[key]
+        # MAX_LIST_PREVIEW = 20 -- 100-20 = 80 entries suppressed.
+        # New pagination hint replaces the silent "and N more" line
+        # with an actionable directive that names the offset / limit
+        # for the follow-up call plus the call_id for direct payload
+        # access. Also stamps payload.pagination_hint so consumers
+        # can branch on it programmatically.
+        obs = out.observables_delta[key]
+        assert "80 more row" in obs
+        assert "offset=20" in obs
+        ph = out.payload["pagination_hint"]
+        assert ph["shown"] == 20
+        assert ph["total"] == 100
+        assert ph["suppressed"] == 80
+        assert ph["next_offset"] == 20
 
 
 class TestAdaptXrefsTo:
