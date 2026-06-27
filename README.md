@@ -305,17 +305,41 @@ outcomes:
 
 The agent dispatches exclusively against `ida-headless-mcp-exp`
 running on port `18821`. The bridge layer
-(`platform/mcp/bridges/ida_headless.py`) adds five defenses on top
+(`platform/mcp/bridges/ida_headless.py`) adds nine defenses on top
 of the raw catalog so the agent's habits don't cost turns:
 
 - **Auto-poll on `status: pending`** -- bridge sleeps + re-POSTs the
   same call (2s -> 3s -> 4.5s -> 8s capped) until the per-call
   async work lands ready or the 240s budget runs out. `poll_analysis`
   itself is the only excluded action.
+- **Dead-arbiter fail-fast** -- when the ida-headless response shape
+  matches the dead-worker signature (`status=pending` +
+  `worker_phase` in `{exiting_idle, crashed, ""}` +
+  `heartbeat_age_s >= 600`), the bridge skips the 240s poll and
+  returns a structured `dead_worker_diagnostic` error naming the SHA,
+  heartbeat age, queue depth, and the exact operator action
+  (restart ida-headless, clear `crash_counts.json`, re-upload to
+  force fresh analysis). Threshold override:
+  `IDA_HEADLESS_DEAD_WORKER_HEARTBEAT_S`.
+- **Per-call dedup** -- identical `(action, sorted_kwargs)` within
+  `IDA_HEADLESS_DEDUP_TTL_S` (default 300s) replays the cached
+  ready payload. Scoped to 23 read-only actions (xrefs_to/from,
+  decompile, find_api_call_sites, callers_of, build_call_tree,
+  list_strings/functions, capa_scan, detect_crypto_primitives,
+  etc.). State mutators (open_binary, upload, patch_assemble) and
+  freshness-sensitive (poll_analysis) are excluded. Cached hits
+  stamp `_ida_bridge_dedup: hit` so the executor can distinguish
+  replay from fresh. Per-call bypass: pass `_ida_bridge_no_dedup=True`.
 - **IDA auto-name -> hex coercion** -- 17 address-shaped kwargs across
   the 81-tool catalog rewrite `sub_<hex>` / `loc_<hex>` /
   `unk_<hex>` to `0x<hex>` before dispatch. `avoid_addresses`
   (list) gets per-element rewriting.
+- **`encoding` value alias** -- the string-family tools
+  (`list_strings`, `get_string_at`) accept `utf16` / `utf-16` /
+  `utf-16le` / `utf16-le` as aliases for the canonical `utf16le`.
+  Closes the round-trip with the same-named label the server emits
+  under `by_encoding`; an agent passing back the value it just read
+  from `count_only` no longer falls into a `total=0` false negative.
 - **Pagination-noise drop** -- `offset` / `limit` / `cursor` /
   `top_k` get silently stripped when the target tool doesn't declare
   them, so snapshot tools no longer TypeError on agent habits.
@@ -325,6 +349,24 @@ of the raw catalog so the agent's habits don't cost turns:
   `binary_metadata` that omit a top-level `status` field get
   `status='ready'` injected so the downstream executor's whitelist
   doesn't synthesize a spurious empty error.
+- **`_ALWAYS_SUPPRESS` enforcement** -- a curated set of tools the
+  agent must never reach is checked BEFORE the specialized-adapter
+  lookup AND subtracted from `_effective_tools` (which would
+  otherwise re-introduce them via the runtime bridge catalog).
+  Current suppress set: `ida_headless.classify_strings` (regex
+  categorizer that returns 19 buckets on a 10,254-string binary;
+  agents derail by treating its empty output as evidence) and
+  `audit_mcp.search_source` (deprecated). Suppressed tools also
+  drop from `registered_tools()` + `specialized_tools()` so the
+  diagnostic listings stay consistent.
+
+The XREF adapter additionally surfaces a `pagination_hint` block
+on `payload` + a one-line directive in the observable when
+`total > MAX_LIST_PREVIEW=20`. The directive names the suppressed
+row count + the exact follow-up call shape
+(`offset=20`, `limit=20`) + the `call_id` for direct payload
+access. The full xref array is preserved verbatim in `payload.xrefs`
+regardless of length; only the per-turn observable preview is trimmed.
 
 ### Three tools added to ida-headless-mcp-exp (commit `f3d4147`+)
 
@@ -346,10 +388,15 @@ synchronous tools fix the gap (full PE reader, no IDA round-trip):
   null-terminated C-strings or UTF-16LE strings at a known VA.
 
 On a 813KB Delphi PE, `list_strings` returns 10,254 ASCII strings
-with `min_length=4` versus `classify_strings`' 19 -- enough to
-surface all hardcoded C2 URLs, embedded second-stage RAT config
-blocks in `.rsrc` UTF-16LE, and operator-grade IOCs the classifier
-misses.
+with `min_length=4` -- enough to surface every hardcoded C2 URL,
+embedded second-stage RAT config block in `.rsrc` UTF-16LE, and the
+full IOC surface (brand strings, AES keys, mutex names, persistence
+commands). The older `classify_strings` tool that bucketed strings
+by regex returned only 19 entries on the same binary; it has been
+added to `_ALWAYS_SUPPRESS` and is unreachable from the agent
+surface (the empty buckets convinced agents the binary held no
+strings worth looking at -- a load-bearing wrong inference that
+derailed entire investigations).
 
 ### Agent prompt: deterministic C2 config extraction
 
@@ -394,6 +441,51 @@ state.json that the HTTP server's already-completed sweep missed).
   reaper missed a stall (engine reports in-flight but no task
   heartbeat). Calls the same `/re-enqueue` endpoint the reaper
   would.
+- **Re-synthesize** -- "Synthesize again" button on the investigation
+  page (the `Synthesis & Narrative` card under the primary outcome).
+  `POST /malware/investigations/{id}/synthesize` accepts
+  `{ force, tone, length, enumerate_every_suspicious, operator_focus }`.
+  Default `force=True`; tones `operator | executive | technical |
+  analyst | forensic`; lengths `brief | standard | exhaustive`.
+  `enumerate_every_suspicious=True` is the "don't drop anything"
+  mode that walks every persona's answer + reasoning and surfaces
+  every distinct suspicious item (string, address, function, IOC,
+  persistence artifact, decoded blob). Runs against an already-
+  `COMPLETED` investigation without flipping its status; the
+  structured `panel_summary` is overwritten plus every promoted
+  field (`family_attribution`, `capabilities`, `iocs`,
+  `attribution_rationale`, `headline_verdict`, `detection_guidance`,
+  `next_actions`, `panel_dissent`, `inconclusive_areas`,
+  `inconclusive_capabilities`) is re-derived.
+- **Generate narrative** -- separate artifact from synthesis. A
+  long-form chronological writeup stored under
+  `payload.investigation_narrative` on the canonical outcome,
+  alongside (not replacing) `panel_summary`. Endpoint:
+  `POST /malware/investigations/{id}/narrative` with
+  `{ force, tone, length, operator_focus }`. Tones `blog |
+  incident_report | thriller | academic | casual`; lengths
+  `short` (~1.5-2.5K words), `standard` (~3.5-5.5K words), `long`
+  (~8-15K words). Schema enforces `body.min_length=4000` so the
+  LLM cannot bail with a 200-char intro stub. UI button opens the
+  rendered markdown in a side modal with table of contents,
+  copy-to-clipboard, and the title / tone / length / word count
+  metadata strip.
+- **Direct outcome edit** -- agents and operators alike can patch a
+  draft outcome's payload via the `edit_outcome` action.
+  Counterpart to the deferred `request_edit` vote (which only
+  suggests edits the synthesis agent picks up on the next pass);
+  `edit_outcome` merges patches immediately. Refused on non-draft
+  outcomes; protected workflow-owned keys (`panel_contributions`,
+  `panel_summary`, `verifier_report`, `applied_by_synthesis`) are
+  dropped from the merge. Every applied edit writes an audit row.
+- **Veto threshold = 2 (chorus, not solo)** -- a single sibling
+  `reject` vote no longer kills an outcome. A second sibling must
+  concur (`VETO_K=2` in `services/outcome_review.py`). Single rejects
+  still record on the outcome and surface in the proposing branch's
+  prompt so it can react; the state flip waits on the chorus.
+  Approve quorum (`approve_count >= quorum_k`) still ships the
+  outcome; veto is evaluated BEFORE approve so a tied chorus
+  resolves to rejected.
 - **Observations debug panel** -- operator-facing list of every
   observation row recorded under the investigation, with polarity
   and kind filter chips. Surfaces what evidence the agent has
@@ -472,7 +564,7 @@ state.json that the HTTP server's already-completed sweep missed).
    make worker-malware      # malware reverse engineering
    ```
 
-   On Windows, `bash start.sh` brings up audit-mcp + backend + 4 workers + frontend in a single command.
+   On Windows, `bash start.sh` brings up audit-mcp + backend + 4 workers + frontend in a single command. Per-queue worker pool size is set via `WORKER_COUNT_<QUEUE>` env vars (e.g. `WORKER_COUNT_VR=3`, `WORKER_COUNT_MALWARE=2`, `WORKER_COUNT_SBD_NFR=0` to disable a queue). Defaults to 1 per queue. Bounce one queue's pool with `bash start.sh restart-worker <queue>`.
 
 For the expanded walkthrough including admin user creation, smoke tests, and
 common pitfalls, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
@@ -484,7 +576,7 @@ common pitfalls, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 | `vulnerability` | SSH package inventory, distro-aware advisory resolution, CVE enrichment, scoring, and reporting.  | production |
 | `forensics`     | Remote forensic evidence triage over SSH: disk images, memory dumps, PCAPs, write-up generation.  | production |
 | `vr`            | Vulnerability research: graph-aware source/binary audit (audit-mcp + IDA Headless MCP), hypothesis-driven reasoning, fuzz campaign proposals (audit\u2192fuzz pipeline), enterprise PDF reports with LLM writer agent, automatic exploit/PoC drafting, variant hunting with child-investigation spawning. | production |
-| `malware`       | Malware reverse engineering: VR-pattern multi-persona deliberation over `ida-headless-mcp-exp` only. Six investigation kinds (triage / full_analysis / unpack_only / config_extract / yara_generate / family_attribute), deterministic four-stage C2 config extraction, fan-out sub-investigation spawning, observation memory with base64 / hex auto-decode, observations debug panel + reset + force-re-enqueue toolbar. | production |
+| `malware`       | Malware reverse engineering: VR-pattern multi-persona deliberation over `ida-headless-mcp-exp` only. Six investigation kinds (triage / full_analysis / unpack_only / config_extract / yara_generate / family_attribute), deterministic four-stage C2 config extraction with mandatory string-sweep + xref-chain follow-up, two-stage C2 hunt (Stage 1 loader URLs vs Stage 2 dropped-payload endpoints), fan-out sub-investigation spawning, observation memory with base64 / hex auto-decode, operator controls (reset / re-enqueue / re-synthesize with tone+length / generate-narrative writeup / direct `edit_outcome` patches), chorus-veto outcome review (`VETO_K=2`), structured synthesis promoting family / capabilities / IOCs / detection guidance / next actions onto the canonical payload. | production |
 | `hello_world`   | Minimal reference module proving the `ModuleProtocol` contract end-to-end.                        | example    |
 
 Modules are auto-discovered at platform boot by scanning `src/aila/modules/*`.
