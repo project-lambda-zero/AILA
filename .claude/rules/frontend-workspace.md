@@ -79,7 +79,7 @@ Every module's `package.json`:
 ```json
 {
   "name": "@aila/<module>-frontend",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "./spec.ts",

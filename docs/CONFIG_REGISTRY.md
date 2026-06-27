@@ -53,7 +53,7 @@ to the field's declared type:
 
 | Python Type | Accepted Values | Example |
 |-------------|-----------------|---------|
-| `str` | Any string | `"AILA/1.5.0"` |
+| `str` | Any string | `"AILA/0.1.0"` |
 | `int` | Numeric string | `"30"` -> `30` |
 | `float` | Numeric string | `"0.2"` -> `0.2` |
 | `bool` | `true/1/yes` or `false/0/no` | `"true"` -> `True` |

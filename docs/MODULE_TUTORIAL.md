@@ -350,7 +350,7 @@ Use `src/aila/modules/hello_world/frontend/` as the canonical reference.
 ```json
 {
   "name": "@aila/my-module-frontend",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "./spec.ts",
