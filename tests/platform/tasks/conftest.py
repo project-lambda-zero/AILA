@@ -78,7 +78,7 @@ def make_sqlite_engine(db_url: str):
     import aila.platform.tasks.models as _tasks_models  # noqa: F401
 
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
-    # Create just the TaskRecord table — avoid SQLModel.metadata.create_all
+    # Create just the TaskRecord table -- avoid SQLModel.metadata.create_all
     # which also tries to emit TSVECTOR columns on the knowledge table.
     _tasks_models.TaskRecord.__table__.create(engine, checkfirst=True)
     return engine
@@ -155,7 +155,7 @@ class _SyncSessionAdapter:
     def __init__(self, s: Session):
         self._s = s
 
-    async def exec(self, stmt):  # noqa: A003 — mirrors SQLModel.AsyncSession API
+    async def exec(self, stmt):  # noqa: A003 -- mirrors SQLModel.AsyncSession API
         return self._s.exec(stmt)
 
     async def execute(self, stmt):

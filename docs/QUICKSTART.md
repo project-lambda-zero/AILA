@@ -28,12 +28,12 @@ PostgreSQL and Redis must be running locally on their default ports (`5432` and 
 The project requires Python 3.11+. If your system Python is older (e.g., Ubuntu 22.04 ships 3.10), get 3.11 first:
 
 ```bash
-# Option A — via uv (recommended, no apt repo work needed)
+# Option A -- via uv (recommended, no apt repo work needed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv python install 3.11
 PY311=$(uv python find 3.11)
 
-# Option B — via deadsnakes PPA on Ubuntu/Debian
+# Option B -- via deadsnakes PPA on Ubuntu/Debian
 sudo add-apt-repository ppa:deadsnakes/ppa
 sudo apt install python3.11 python3.11-venv python3.11-dev
 PY311=python3.11
@@ -108,7 +108,7 @@ make migrate
 cd src/aila && alembic upgrade head && cd ../..
 ```
 
-`alembic.ini` lives under `src/aila/`, so the alembic CLI must be run from that directory. Both `make migrate` and `make db-init` handle the cwd for you. The repo's alembic `env.py` and the FastAPI app both auto-load `.env` at the repo root via `aila._dotenv.load_project_env()` — no need to `export` env vars before each command.
+`alembic.ini` lives under `src/aila/`, so the alembic CLI must be run from that directory. Both `make migrate` and `make db-init` handle the cwd for you. The repo's alembic `env.py` and the FastAPI app both auto-load `.env` at the repo root via `aila._dotenv.load_project_env()` -- no need to `export` env vars before each command.
 
 ---
 
@@ -117,13 +117,13 @@ cd src/aila && alembic upgrade head && cd ../..
 AILA runs as three processes. Open three terminals.
 
 ```bash
-# Terminal 1 — Backend API (FastAPI on :8000)
+# Terminal 1 -- Backend API (FastAPI on :8000)
 uvicorn aila.api.app:app --host 0.0.0.0 --port 8000 --reload
 
-# Terminal 2 — Frontend (Vite dev server on :3000, single SPA bundling all modules)
+# Terminal 2 -- Frontend (Vite dev server on :3000, single SPA bundling all modules)
 pnpm dev
 
-# Terminal 3 — Default task worker (ARQ over Redis)
+# Terminal 3 -- Default task worker (ARQ over Redis)
 python -m aila worker
 ```
 
@@ -133,7 +133,7 @@ Or, in one terminal:
 make dev-all
 ```
 
-`make dev-all` brings up dev infra and all six services (backend, frontend, four workers) under one supervisor (Ctrl+C stops everything). `make dev` by itself only prints the canonical workflow above — it does not start anything.
+`make dev-all` brings up dev infra and all six services (backend, frontend, four workers) under one supervisor (Ctrl+C stops everything). `make dev` by itself only prints the canonical workflow above -- it does not start anything.
 
 ---
 
@@ -203,8 +203,8 @@ pnpm --filter @aila/shell run build      # production build
 
 ## Next Steps
 
-- [MODULE_TUTORIAL.md](MODULE_TUTORIAL.md) — build your first module
-- [MODULE_STANDARD.md](MODULE_STANDARD.md) — module authoring contract
-- [ARCHITECTURE.md](ARCHITECTURE.md) — platform internals
-- [ENV_VARS.md](ENV_VARS.md) — full environment variable reference
-- [DEPLOYMENT.md](DEPLOYMENT.md) — production deployment
+- [MODULE_TUTORIAL.md](MODULE_TUTORIAL.md) -- build your first module
+- [MODULE_STANDARD.md](MODULE_STANDARD.md) -- module authoring contract
+- [ARCHITECTURE.md](ARCHITECTURE.md) -- platform internals
+- [ENV_VARS.md](ENV_VARS.md) -- full environment variable reference
+- [DEPLOYMENT.md](DEPLOYMENT.md) -- production deployment

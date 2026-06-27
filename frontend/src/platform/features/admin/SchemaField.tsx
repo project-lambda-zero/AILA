@@ -1,5 +1,5 @@
 /**
- * SchemaField — recursive JSON Schema → form field renderer.
+ * SchemaField -- recursive JSON Schema → form field renderer.
  *
  * Handles: string, integer, number, boolean, object, array.
  * Uses existing shadcn UI primitives: Input, Textarea.

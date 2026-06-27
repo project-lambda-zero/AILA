@@ -1,4 +1,4 @@
-"""File carving and embedded content extraction runner — over SSH.
+"""File carving and embedded content extraction runner -- over SSH.
 
 Supports binwalk (firmware/binary analysis), foremost (file carving from
 raw images), and bulk_extractor (PII/credential/IOC extraction).

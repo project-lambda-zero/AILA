@@ -1,4 +1,4 @@
-# AILA full stack — postgres + redis + API + workers + frontend.
+# AILA full stack -- postgres + redis + API + workers + frontend.
 #
 # This is the "everything in one shot" compose for developers who
 # want to docker-up without managing 7 separate processes. For the
@@ -16,13 +16,13 @@
 #   Redis:     localhost:6379
 #
 # Override env per-service via the .env file at repo root. The
-# compose file deliberately does NOT bake credentials — they come
+# compose file deliberately does NOT bake credentials -- they come
 # from .env so dev / staging / production use the same shape.
 
 name: aila-full
 
 x-aila-env: &aila-env
-  # Shared env block — each backend service pulls .env from the
+  # Shared env block -- each backend service pulls .env from the
   # repo root + these overrides for in-cluster service discovery.
   AILA_PLATFORM_DATABASE_URL: postgresql://postgres:changeme@postgres:5432/aila
   AILA_PLATFORM_REDIS_URL: redis://redis:6379/0
@@ -85,7 +85,7 @@ services:
       - "8000:8000"
     # The image's default CMD already runs `aila serve` on 0.0.0.0:8000.
 
-  # One worker container per queue. Workers share the API image — the
+  # One worker container per queue. Workers share the API image -- the
   # entrypoint is the same `aila` CLI, only the CMD differs. Per
   # D-13 each queue has its own worker process so a slow vr task
   # can't block forensics dispatch.
@@ -172,7 +172,7 @@ services:
     ports:
       - "3000:3000"
     # Vite dev server. For production, build a static bundle and
-    # serve via nginx/caddy instead — this compose targets
+    # serve via nginx/caddy instead -- this compose targets
     # developer-machine iteration.
     command:
       - sh

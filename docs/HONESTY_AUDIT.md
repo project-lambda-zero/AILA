@@ -637,7 +637,7 @@ checklist.
 
 **Why it matters:** `asyncio.to_thread` runs a **sync** callable in a
 thread-pool executor. Passing an `async def` to it creates a coroutine
-object that is never awaited — the function body never executes. Silent
+object that is never awaited -- the function body never executes. Silent
 no-op bug.
 
 **Common trigger:** Confusing `submit()` (async, returns awaitable
@@ -646,14 +646,14 @@ handle) with a sync queue-put call.
 **Violation:**
 
 ```python
-# TaskQueue.submit is async def — this wraps a coroutine, never runs it
+# TaskQueue.submit is async def -- this wraps a coroutine, never runs it
 result = await asyncio.to_thread(task_queue.submit, track="forensics", fn=..., kwargs={...})
 ```
 
 **Correct:**
 
 ```python
-# submit is async — await it directly
+# submit is async -- await it directly
 handle = await task_queue.submit(track="forensics", fn=..., kwargs={...})
 ```
 

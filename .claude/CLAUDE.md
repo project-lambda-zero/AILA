@@ -207,7 +207,7 @@ Multi-step behavior uses staged workflows with named states, not nested conditio
 - Platform owns: routing, runtime, services, contracts, tools, task queue
 - Modules own: domain logic, module-specific contracts/tools/services, reports, workflow
 - Platform never imports from `aila.modules.*`
-- Modules never import from each other (Python OR frontend — pnpm strict mode enforces this at install time by failing on undeclared bare imports)
+- Modules never import from each other (Python OR frontend -- pnpm strict mode enforces this at install time by failing on undeclared bare imports)
 
 ### 6. Frontend dep ownership
 - Every bare import in a module's frontend MUST be declared in that module's `package.json` (deps, peerDeps, or devDeps)
@@ -277,7 +277,7 @@ Before yielding any change:
 
 ## Bridge + workflow gotchas (session learnings, 2026-05-24)
 
-A long debugging session on investigation `8cf6144f` (WebAssembly RCE
+A long debugging session on investigation `<inv-uuid>` (WebAssembly RCE
 variant hunt) exposed a stack of bugs that were silently breaking
 investigations. These rules are the operational lessons:
 
@@ -287,7 +287,7 @@ investigations. These rules are the operational lessons:
    `source` field is the literal provider tag (e.g. `"semble"`,
    `"trailmark"`). For months the adapter read `source` first and
    stored the literal string `"semble"` as the function body. Always
-   `raw.get("content") or raw.get("body") or raw.get("text")` —
+   `raw.get("content") or raw.get("body") or raw.get("text")` --
    NEVER `source`. See `audit_mcp.py:adapt_read_function`.
 
 2. **`search_functions` returns `file_path: null` for ~half the
@@ -298,14 +298,14 @@ investigations. These rules are the operational lessons:
 
 3. **`search_constants`, `search_bitfields` return 0 results for
    patterns that exist in source.** Trailmark's index doesn't track
-   them on this codebase. Tell the agent in the prompt — don't
+   them on this codebase. Tell the agent in the prompt -- don't
    recommend these as the primary path.
 
 4. **`semantic_search` and `find_related` return code CHUNKS** with
    `{file_path, start_line, end_line, content}` per result. They have
    their own adapters; do NOT fall through to generic JSON dump.
 
-5. **`read_lines` is a bridge-side virtual tool** — no upstream MCP
+5. **`read_lines` is a bridge-side virtual tool** -- no upstream MCP
    endpoint. Bridge resolves `index_id → root_path` via
    `/tools/list_indexes` then reads the file slice from disk. Use
    this when the agent has a precise `(file_path, start, end)` and
@@ -320,24 +320,24 @@ investigations. These rules are the operational lessons:
 1. **`__crashed__` cursors persist forever** unless explicitly
    cleared. The `/re-enqueue` handler now wipes them for the target
    investigation. Standalone reaper for orphans across the whole
-   table not yet shipped — operator can `DELETE FROM
+   table not yet shipped -- operator can `DELETE FROM
    workflow_state_cursor WHERE current_state = '__crashed__' AND NOT
    EXISTS (SELECT 1 FROM taskrecord t WHERE t.id = run_id AND
    t.status IN ('queued','running','waiting'))` to bulk-clean.
 
 2. **`safe_exc_message()` redacts to class name** per Phase 178
    security policy. The cursor row stores ONLY `"UnboundLocalError"`
-   etc. — no message, no traceback. The engine's crash paths
+   etc. -- no message, no traceback. The engine's crash paths
    (`_force_crashed`, handler-raised) now also `_log.exception(...)`
    so the operator-private worker log gets the full traceback.
 
 3. **Three sources of truth for "is this task active":**
    `TaskRecord.status` (DB), `workflow_state_cursor.current_state`,
    `arq:in-progress:<id>` (Redis). They CAN desync. The D-86 SKIP
-   path now coordinates all three. New drift paths are landmines —
+   path now coordinates all three. New drift paths are landmines --
    inspect all three before claiming a task is running/stuck.
 
-4. **Worker D-86 SKIP `rec.completed_at` not `rec.finished_at`** —
+4. **Worker D-86 SKIP `rec.completed_at` not `rec.finished_at`** --
    TaskRecord has no `finished_at` column. Typoing it raises
    `AttributeError` inside the reaper loop, which is caught silently
    higher up, leaving the cursor in an inconsistent state.
@@ -384,7 +384,7 @@ investigations. These rules are the operational lessons:
 
 3. **Windows uvicorn must run with `--loop asyncio`** (selector
    event loop). The default Proactor loop leaks IOCP socket handles
-   on abnormal exit — port appears owned by a phantom PID forever.
+   on abnormal exit -- port appears owned by a phantom PID forever.
    `start.sh` backend launch enforces `--loop asyncio`.
 
 4. **PowerShell `Start-Process` discards bash env vars on
@@ -397,9 +397,9 @@ investigations. These rules are the operational lessons:
 tool dispatch. When a result matches a known dead-end pattern
 (`read_lines` past EOF, `read_function` returning file header from
 indexer fault), the system POSTS an operator message to the
-investigation with the corrective info — identical DB write to the
+investigation with the corrective info -- identical DB write to the
 UI's chat composer. Lands at PROMPT POSITION 2 on every branch's
-next turn under `*** OPERATOR STEERING — MANDATORY OVERRIDE ***`.
+next turn under `*** OPERATOR STEERING -- MANDATORY OVERRIDE ***`.
 De-dupes by `(rule, target_file, target_symbol)` key; allows
 re-post once all prior matching steerings are ACKed (so a recurring
 condition can re-fire after the agent ignores the first one). To
@@ -410,7 +410,7 @@ add a new rule: write `_detect_X` + `_derive_X_correction` in
 
 `VRInvestigationRecord.cost_actual_usd` shows $0 forever. The
 aggregator in `api_router._compute_live_investigation_cost` joins
-`LLMCostRecord.run_id == TaskRecord.id` — but `run_id` is actually
+`LLMCostRecord.run_id == TaskRecord.id` -- but `run_id` is actually
 the workflow `RunRecord.id` (DurableStateMachine run instance),
 not the ARQ TaskRecord id. The correct join needs an extra hop
 through `workflow_run_records`. Not yet fixed.
@@ -436,12 +436,12 @@ rewrite. Operator-facing knobs:
 Diagnostics: `GET http://127.0.0.1:18822/runtime` returns live
 `{dedup: {inflight, hits, misses}, semaphores: {<tool>: {cap,
 available}}, thread_pool_limit}`. When agents report "audit_mcp slow"
-check this endpoint first — `available: 0` on a tool = that tool is
+check this endpoint first -- `available: 0` on a tool = that tool is
 the bottleneck; bump its cap via env. High `misses` with low `hits` =
 sibling branches aren't asking the same questions, which is fine; high
 `hits` = dedup is doing real work.
 
 Backward compat: every existing tool keeps its current sync signature.
 The HTTP layer wraps them. Stdio transport (`audit_mcp/server.py`) is
-unchanged. Async tools (`tool.is_async == True`) now WORK — previously
+unchanged. Async tools (`tool.is_async == True`) now WORK -- previously
 the HTTP transport refused them at startup with a hard `RuntimeError`.

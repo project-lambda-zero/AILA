@@ -56,7 +56,7 @@ class NotFoundError(AILAError):
 class ValidationError(AILAError):
     """Raised when input fails validation at a service or workflow boundary.
 
-    Distinguished from Pydantic's own ValidationError — this is a domain-level
+    Distinguished from Pydantic's own ValidationError -- this is a domain-level
     error for semantically invalid inputs (e.g. an unresolvable SSH profile or
     an unsupported operation). Maps to HTTP 422 at the API layer.
     """
@@ -84,8 +84,8 @@ class TimeoutError(AILAError):
 #
 # Each concrete class exposes ClassVar ``code`` and ``http_status`` attributes.
 # The API error-envelope handler (aila.api.errors.handlers) reads these via
-# getattr with a 500 fallback so pre-existing AILAError subclasses above — which
-# do NOT declare ``http_status`` — remain compatible (preflight BE-E).
+# getattr with a 500 fallback so pre-existing AILAError subclasses above -- which
+# do NOT declare ``http_status`` -- remain compatible (preflight BE-E).
 #
 # Status codes are locked by phase decision D-20; do not mutate.
 # ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ class MissingApiKeyError(AILAError):
 
     ``user_message`` is the ONLY string surfaced to API clients. ``str(exc)``
     (the constructor argument) is for server-side logs and must never reach
-    the envelope — it can carry internal paths, provider identifiers, or
+    the envelope -- it can carry internal paths, provider identifiers, or
     other sensitive context the caller passed in.
     """
 

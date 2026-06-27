@@ -30,7 +30,7 @@ class VREventType(StrEnum):
     OUTCOME_CREATED = "outcome.created"
 
     # Hypothesis lifecycle (derived from branch operations + persona
-    # spawn outcomes — same wire shape as branch.state_changed but
+    # spawn outcomes -- same wire shape as branch.state_changed but
     # named for the consumer that cares about hypothesis tracking).
     HYPOTHESIS_STATE_CHANGED = "hypothesis.state_changed"
 
@@ -54,7 +54,7 @@ class VREventEnvelope(BaseModel):
     """Typed envelope wrapping every SSE event payload.
 
     Wire format on the SSE channel is
-    ``event: <type>\\ndata: <envelope_json>\\n\\n`` — both the SSE
+    ``event: <type>\\ndata: <envelope_json>\\n\\n`` -- both the SSE
     ``event:`` field and the inner ``type`` are set so callers can
     discriminate without parsing JSON.
     """

@@ -1,11 +1,11 @@
-"""052 — VR MCP call log.
+"""052 -- VR MCP call log.
 
 Every forward() through audit_mcp_bridge or ida_bridge writes one row so
 operators have a live audit trail of what the platform delegated to
 which workstation, with latency, outcome, and an error excerpt when the
 MCP call failed.
 
-The table is intentionally narrow — no full request/response bodies, no
+The table is intentionally narrow -- no full request/response bodies, no
 free-form metadata. The point is operator visibility ("what was just
 called, did it succeed, how long did it take"), not full IR. Detailed
 payloads stay in worker logs.

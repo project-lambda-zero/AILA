@@ -1,5 +1,5 @@
 /**
- * fixtures.ts — Phase 176a Playwright fixtures.
+ * fixtures.ts -- Phase 176a Playwright fixtures.
  *
  * Composed via test.extend so every spec can pull `authedPage` plus a
  * per-test `namespace` string and the optional seedTasks/seedReports
@@ -23,7 +23,7 @@ import {
 } from "./db-seed";
 
 interface WorkerFixtures {
-  /** Worker-scoped TokenPair — one login per Playwright worker (avoids 429 from
+  /** Worker-scoped TokenPair -- one login per Playwright worker (avoids 429 from
    *  the auth rate limiter while still hitting the real /auth/login endpoint). */
   tokens: TokenPair;
 }
@@ -50,7 +50,7 @@ async function getTokensWithBackoff(
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("429") || /rate limit/i.test(msg)) {
-        // Auth rate limiter is 10/min — wait a bit and retry.
+        // Auth rate limiter is 10/min -- wait a bit and retry.
         await new Promise((r) => setTimeout(r, 7_000 * (attempt + 1)));
         continue;
       }
@@ -71,7 +71,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         const reachable = await pingApi(ctx);
         if (!reachable) {
           throw new Error(
-            `Backend API not reachable — refusing to run e2e tests against an ` +
+            `Backend API not reachable -- refusing to run e2e tests against an ` +
               `absent backend (no mock fallback per project rules).`,
           );
         }

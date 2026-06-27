@@ -1,8 +1,8 @@
 /**
- * topologyUtils.ts — Transform API topology data to ReactFlow nodes/edges.
+ * topologyUtils.ts -- Transform API topology data to ReactFlow nodes/edges.
  *
  * Applies color-by mode to determine node fill color.
- * Pure functions — no React, no side effects.
+ * Pure functions -- no React, no side effects.
  *
  * Per D-03 (Phase 144): client-side filtering, no additional API calls.
  */
@@ -76,7 +76,7 @@ export function nodeColor(node: TopologyNode, mode: ColorByMode): string {
 // Filter
 // ---------------------------------------------------------------------------
 
-/** Apply RadarFilter to topology nodes — pure client-side filtering. */
+/** Apply RadarFilter to topology nodes -- pure client-side filtering. */
 export function filterNodes(nodes: TopologyNode[], filter: RadarFilter): TopologyNode[] {
   let result = nodes;
 
@@ -132,7 +132,7 @@ export function buildFlowNodes(
 
   const flowNodes: Node[] = [];
 
-  // Emit group nodes first — ReactFlow requires parent before child
+  // Emit group nodes first -- ReactFlow requires parent before child
   if (subnetGrouping) {
     const subnetMap = new Map<string, TopologyNode[]>();
     for (const node of nodes) {

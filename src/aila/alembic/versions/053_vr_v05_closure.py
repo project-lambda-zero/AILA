@@ -1,22 +1,22 @@
-"""053 — VR v0.5 promise-audit closure schema additions.
+"""053 -- VR v0.5 promise-audit closure schema additions.
 
 Adds columns required to close the remaining gap clusters from
 `prior design notes`:
 
-- ``vr_projects.created_by`` — string id of the operator that opened
+- ``vr_projects.created_by`` -- string id of the operator that opened
   the project. Populated from ``AuthContext.user_id`` on
   POST /vr/projects. Renders avatars on the project list (§1.1).
-- ``vr_disclosure_submissions.sections_json`` — structured advisory
+- ``vr_disclosure_submissions.sections_json`` -- structured advisory
   body with named sections (summary / technical / reproduction /
   patches / references). Powers the §1.8 structured editor.
-- ``vr_disclosure_submissions.regenerated_from_finding_at`` —
+- ``vr_disclosure_submissions.regenerated_from_finding_at`` --
   timestamp of the most recent "regenerate from exploit" action.
-- ``vr_fuzz_crashes.reproducer_head_hex`` + helpers — first N bytes
+- ``vr_fuzz_crashes.reproducer_head_hex`` + helpers -- first N bytes
   of the reproducer file inlined for the §1.6 hex-view preview
   without round-tripping the analysis workstation.
-- ``vr_fuzz_crashes.llm_summary`` + ``triage_chain_json`` — §1.6
+- ``vr_fuzz_crashes.llm_summary`` + ``triage_chain_json`` -- §1.6
   triage chain (per-event ordered list) and one-line LLM summary.
-- ``vr_fuzz_telemetry`` — §1.5 per-measurement time-series for
+- ``vr_fuzz_telemetry`` -- §1.5 per-measurement time-series for
   fuzz campaigns. Workers POST measurements, the UI reads back the
   series for sparklines + stuck detection.
 """

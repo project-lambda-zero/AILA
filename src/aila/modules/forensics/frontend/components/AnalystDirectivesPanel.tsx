@@ -74,7 +74,7 @@ export function AnalystDirectivesPanel({
     setText("");
   };
 
-  const heading = compact ? "Analyst Directives" : "Analyst Directives — guide AILA";
+  const heading = compact ? "Analyst Directives" : "Analyst Directives -- guide AILA";
   const placeholder =
     "Optional directives to guide the investigator (focus areas, files to extract, hypotheses to pursue).";
 
@@ -151,7 +151,7 @@ export function AnalystDirectivesPanel({
           </div>
         ) : (
           <span className="text-xs text-text-muted">
-            Project-wide — applies to every investigation
+            Project-wide -- applies to every investigation
           </span>
         )}
         <Button

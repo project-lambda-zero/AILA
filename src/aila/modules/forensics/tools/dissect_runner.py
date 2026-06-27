@@ -1,4 +1,4 @@
-"""Dissect forensic framework runner — executes dissect commands over SSH."""
+"""Dissect forensic framework runner -- executes dissect commands over SSH."""
 from __future__ import annotations
 
 from aila.config import Settings
@@ -41,7 +41,7 @@ class DissectRunnerTool(Tool):
             evidence_path: Path to the evidence file on the analyzer.
             query_function: For target_query, the Dissect function name.
             integration: SSH connection fields.
-            analyzer_os: Target OS — ``"linux"`` or ``"windows"``.
+            analyzer_os: Target OS -- ``"linux"`` or ``"windows"``.
 
         Returns:
             Command stdout as a string.

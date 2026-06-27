@@ -57,7 +57,7 @@ CVSS_METRIC_EXPLANATIONS: dict[tuple[str, str], tuple[str, str, str]] = {
     # Attack Vector
     ("AV", "N"): (
         "Network",
-        "Exploitable remotely over the network — no local access needed.",
+        "Exploitable remotely over the network -- no local access needed.",
         "high",
     ),
     ("AV", "A"): (
@@ -78,7 +78,7 @@ CVSS_METRIC_EXPLANATIONS: dict[tuple[str, str], tuple[str, str, str]] = {
     # Attack Complexity
     ("AC", "L"): (
         "Low",
-        "No special conditions required — the attack is reliably reproducible.",
+        "No special conditions required -- the attack is reliably reproducible.",
         "high",
     ),
     ("AC", "H"): (
@@ -105,7 +105,7 @@ CVSS_METRIC_EXPLANATIONS: dict[tuple[str, str], tuple[str, str, str]] = {
     # User Interaction
     ("UI", "N"): (
         "None",
-        "No victim action required — exploit is fully unassisted.",
+        "No victim action required -- exploit is fully unassisted.",
         "high",
     ),
     ("UI", "R"): (
@@ -132,7 +132,7 @@ CVSS_METRIC_EXPLANATIONS: dict[tuple[str, str], tuple[str, str, str]] = {
     ),
     ("C", "L"): (
         "Low",
-        "Limited disclosure — attacker sees some restricted data.",
+        "Limited disclosure -- attacker sees some restricted data.",
         "medium",
     ),
     ("C", "N"): (
@@ -222,7 +222,7 @@ def parse_cvss_vector(vector: str | None) -> list[CvssMetricExplanation]:
         metric = metric.strip().upper()
         value = value.strip().upper()
         if metric == "CVSS":
-            # "CVSS:3.1" version marker — skip.
+            # "CVSS:3.1" version marker -- skip.
             continue
         if metric in _METRIC_LABELS and metric not in pairs:
             pairs[metric] = value
@@ -234,7 +234,7 @@ def parse_cvss_vector(vector: str | None) -> list[CvssMetricExplanation]:
         value_code = pairs[metric]
         entry = CVSS_METRIC_EXPLANATIONS.get((metric, value_code))
         if entry is None:
-            # Unknown value code for a known metric — skip rather than surface
+            # Unknown value code for a known metric -- skip rather than surface
             # malformed data to the UI.
             continue
         value_label, explanation, weight = entry
@@ -293,7 +293,7 @@ class CveIntelResponse(APIModel):
     ) -> CveIntelResponse:
         """Build the response envelope from a `CVEKnowledge` plus parsed vector.
 
-        The explicit `cvss_vector` override takes precedence when provided —
+        The explicit `cvss_vector` override takes precedence when provided --
         otherwise falls back to the vector stored on the knowledge record
         (populated by IntelService._fetch_from_nvd for live fetches).
         """

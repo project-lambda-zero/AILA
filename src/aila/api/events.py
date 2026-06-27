@@ -91,7 +91,7 @@ async def emit_platform_event(
         queue.put_nowait(payload)
     except asyncio.QueueFull:
         _log.warning(
-            "Event queue full for user %s — dropping event %s",
+            "Event queue full for user %s -- dropping event %s",
             user_id,
             event_type,
         )

@@ -1,4 +1,4 @@
-"""Stall-recovery sweep — single comprehensive integration test.
+"""Stall-recovery sweep -- single comprehensive integration test.
 
 Exercises every eligibility branch + every dispatch branch of
 ``sweep_stalled_investigations`` against a real Postgres test DB.
@@ -13,9 +13,9 @@ Test matrix (9 seeded fixtures, one comprehensive assertion phase):
   B: variant_hunt / running / 6 active branches / idle / no live task
      → 6 submits (whole fan-out fits in default cap=6)
   C: n_day / running / has branches / idle
-     → 1 submit (inv-level, no branch_id — nday owns branches)
+     → 1 submit (inv-level, no branch_id -- nday owns branches)
   D: audit / running / 1 active branch / idle / **live task present**
-     → 0 submits (skipped — in-flight task blocks recovery)
+     → 0 submits (skipped -- in-flight task blocks recovery)
   E: audit / paused / pause_reason='operator' / idle
      → 0 submits (paused branches owned by operator)
   F: masvs_audit / running / branches / idle
@@ -58,7 +58,7 @@ from aila.platform.tasks.models import TaskRecord
 from aila.platform.uow import UnitOfWork
 
 # ----------------------------------------------------------------------
-# Test-local seeders — kept here so the test file stays self-contained
+# Test-local seeders -- kept here so the test file stays self-contained
 # ----------------------------------------------------------------------
 
 
@@ -96,7 +96,7 @@ async def _seed_inv(
 
     ``idle=True`` (default) backdates updated_at by 30 minutes so the
     sweep's idle threshold (default 15 min) accepts it. ``idle=False``
-    leaves updated_at fresh — used for fixture G (within-idle skip).
+    leaves updated_at fresh -- used for fixture G (within-idle skip).
     """
     async with UnitOfWork() as uow:
         inv = VRInvestigationRecord(
@@ -221,7 +221,7 @@ async def test_stall_recovery_full_matrix() -> None:
         await _seed_branch(inv_a, status="active", persona_voice="noor"),
         await _seed_branch(inv_a, status="active", persona_voice="maddie"),
     ]
-    # one completed branch — MUST NOT be touched
+    # one completed branch -- MUST NOT be touched
     await _seed_branch(inv_a, status="completed", persona_voice="renzo")
 
     # ── B: variant_hunt / running / 6 active branches
@@ -264,7 +264,7 @@ async def test_stall_recovery_full_matrix() -> None:
     await _seed_branch(inv_i, status="active", persona_voice="halvar")
 
     # ─────────────────────────────────────────────────────────────────
-    # Scenario 1: high cap (15) — every eligible fixture should fire
+    # Scenario 1: high cap (15) -- every eligible fixture should fire
     # ─────────────────────────────────────────────────────────────────
     capture1 = _CaptureSubmit()
     result1 = await sweep_stalled_investigations(
@@ -335,7 +335,7 @@ async def test_stall_recovery_full_matrix() -> None:
     )
 
     # ─────────────────────────────────────────────────────────────────
-    # Scenario 2: tight cap (2) — partial fan-out mid-fixture
+    # Scenario 2: tight cap (2) -- partial fan-out mid-fixture
     # ─────────────────────────────────────────────────────────────────
     # The eligibility query sorts by updated_at ASC, oldest first.
     # Fixtures A-C-H-B were all back-dated to NOW-30min in seed order

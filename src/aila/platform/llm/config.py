@@ -240,7 +240,7 @@ class LLMConfigProvider:
             return val
         return str(val).strip().lower() not in ("false", "0", "no")
 
-    # fix §156 — pipeline steps default to fail-closed so a regex compile
+    # fix §156 -- pipeline steps default to fail-closed so a regex compile
     # error or transient validator hiccup never silently bypasses sanitize
     # / validate / gate / verify on a hot path. Operators that want fail-
     # open MUST opt in explicitly per task_type.
@@ -253,7 +253,7 @@ class LLMConfigProvider:
 
         Reads key ``llm_pipeline_{step}_fail_mode_{task_type}`` from
         ConfigRegistry. Missing key defaults to ``"closed"`` for security-
-        critical steps (sanitize/validate/gate/verify/classify/seal — §156)
+        critical steps (sanitize/validate/gate/verify/classify/seal -- §156)
         and ``"open"`` for everything else.
 
         Args:

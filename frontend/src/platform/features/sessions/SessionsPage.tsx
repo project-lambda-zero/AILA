@@ -161,7 +161,7 @@ export function SessionsPage() {
   const sessions = sessionsQuery.data ?? [];
 
   // Heuristic (T-140-20): the session with the latest created_at is the current one.
-  // This is a UI-only indicator — server-side revocation is always correct regardless.
+  // This is a UI-only indicator -- server-side revocation is always correct regardless.
   const currentSessionId =
     sessions.length > 0
       ? sessions.reduce((latest, s) => {

@@ -1,4 +1,4 @@
-"""Tests for src/aila/logging.py — RunIdFilter, formatters, configure_logging."""
+"""Tests for src/aila/logging.py -- RunIdFilter, formatters, configure_logging."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def test_json_formatter_produces_valid_json(capfd):
             data = json.loads(line)
         except json.JSONDecodeError:
             continue
-        # Found a valid JSON line — verify keys
+        # Found a valid JSON line -- verify keys
         assert "time" in data
         assert "level" in data
         assert "logger" in data

@@ -1,5 +1,5 @@
 /**
- * RadarGraph.tsx — ReactFlow canvas for the Network Radar (Phase 144).
+ * RadarGraph.tsx -- ReactFlow canvas for the Network Radar (Phase 144).
  *
  * Renders the topology graph with:
  * - Custom RadarNode nodes (SVG circles, severity colored)
@@ -46,7 +46,7 @@ interface RadarGraphProps {
   onNodeClick: (node: TopologyNode) => void;
 }
 
-// Custom node types — memoized to prevent ReactFlow re-registration
+// Custom node types -- memoized to prevent ReactFlow re-registration
 const NODE_TYPES = { radarNode: RadarNode } as const;
 
 // ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ function RadarGraphInner({
     return () => clearTimeout(timer);
   }, [initialFlowNodes, initialFlowEdges, setFlowNodes, setFlowEdges, fitView]);
 
-  // Handle node click — extract TopologyNode from ReactFlow node data
+  // Handle node click -- extract TopologyNode from ReactFlow node data
   const handleNodeClick: NodeMouseHandler = React.useCallback(
     (_event, rfNode) => {
       const nodeData = rfNode.data as { node?: TopologyNode };
@@ -159,7 +159,7 @@ function RadarGraphInner({
 }
 
 // ---------------------------------------------------------------------------
-// Public export — wraps inner graph with ReactFlowProvider
+// Public export -- wraps inner graph with ReactFlowProvider
 // ---------------------------------------------------------------------------
 
 export function RadarGraph(props: RadarGraphProps) {

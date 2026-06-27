@@ -1,4 +1,4 @@
-"""S-4 — :func:`child_outcome_to_verdict` mapping rule.
+"""S-4 -- :func:`child_outcome_to_verdict` mapping rule.
 
 The four branches from PRD §S-4 plus the edge cases that matter for the
 aggregator (R-1):
@@ -119,7 +119,7 @@ def test_direct_finding_below_floor_is_inconclusive_with_reason() -> None:
 
 
 def test_direct_finding_without_verifier_report_uses_enum_fallback() -> None:
-    """No verifier_report — fall back to OutcomeConfidence enum mapping.
+    """No verifier_report -- fall back to OutcomeConfidence enum mapping.
 
     STRONG → 0.85, which clears the 0.6 floor.
     """
@@ -253,7 +253,7 @@ def test_not_applicable_wins_over_refuted() -> None:
     """Branch ordering invariant: not_applicable is checked first.
 
     When both signals are in the payload, the agent has told us the
-    control doesn't apply to this APK — there is nothing to refute.
+    control doesn't apply to this APK -- there is nothing to refute.
     """
     control = _first_l1()
     outcome = _outcome(
@@ -351,7 +351,7 @@ def test_audit_memo_outcome_is_inconclusive_with_outcome_kind_in_reason() -> Non
 def test_verifier_inconclusive_on_direct_finding_maps_to_inconclusive() -> None:
     """The verifier explicitly classified the finding as inconclusive.
 
-    Don't trust the direct_finding's reported confidence — the verifier
+    Don't trust the direct_finding's reported confidence -- the verifier
     overrides.
     """
     control = _first_l1()
@@ -456,7 +456,7 @@ def test_verifier_report_non_dict_payload_is_ignored() -> None:
 
 
 def test_verdict_carries_control_id_and_investigation_id_verbatim() -> None:
-    """The mapper never invents identifiers — they pass through."""
+    """The mapper never invents identifiers -- they pass through."""
     control = _first_l1()
     outcome = _outcome(
         outcome_kind=OutcomeKind.DIRECT_FINDING,
@@ -477,7 +477,7 @@ def test_verdict_carries_control_id_and_investigation_id_verbatim() -> None:
 
 
 def test_evidence_locations_populated_from_affected_components() -> None:
-    """Happy path — ``payload['affected_components']`` becomes a list of
+    """Happy path -- ``payload['affected_components']`` becomes a list of
     :class:`MasvsEvidenceLocation` entries on the returned verdict, in
     input order, with file/function preserved verbatim.
     """
@@ -547,7 +547,7 @@ def test_evidence_locations_empty_when_outcome_is_none() -> None:
 
 
 def test_evidence_locations_skips_non_dict_entries() -> None:
-    """Mixed list of strings / None / dicts — only dicts survive."""
+    """Mixed list of strings / None / dicts -- only dicts survive."""
     control = _first_l1()
     outcome = _outcome(
         outcome_kind=OutcomeKind.DIRECT_FINDING,
@@ -572,7 +572,7 @@ def test_evidence_locations_skips_non_dict_entries() -> None:
 
 
 def test_evidence_locations_skips_entries_missing_file_or_function() -> None:
-    """Half-populated dicts and empty strings are dropped — the
+    """Half-populated dicts and empty strings are dropped -- the
     contract's ``min_length=1`` on both fields would reject them at
     construction otherwise.
     """
@@ -659,7 +659,7 @@ def test_evidence_locations_capped_at_extraction_limit() -> None:
     # ``max_length=64`` field bound.
     assert 0 < len(v.evidence_locations) < 1000
     assert len(v.evidence_locations) <= 64
-    # Prefix is preserved — the cap drops the tail, not random entries.
+    # Prefix is preserved -- the cap drops the tail, not random entries.
     assert v.evidence_locations[0] == MasvsEvidenceLocation(
         file="src/f0.java", function="m0",
     )
@@ -695,7 +695,7 @@ def test_evidence_locations_populated_for_refuted_verdict() -> None:
 def test_evidence_locations_populated_for_not_applicable_verdict() -> None:
     """The not_applicable branch wins ordering but still surfaces
     locations the auditor listed (e.g. "checked these native libs, app
-    ships none — not applicable").
+    ships none -- not applicable").
     """
     control = _first_l1()
     outcome = _outcome(
@@ -721,7 +721,7 @@ def test_evidence_locations_populated_for_not_applicable_verdict() -> None:
 
 
 def test_evidence_locations_empty_when_payload_value_is_not_a_list() -> None:
-    """Defensive — a payload that puts a dict / string / None at
+    """Defensive -- a payload that puts a dict / string / None at
     ``affected_components`` (malformed agent output) must not crash."""
     control = _first_l1()
     for malformed in ({"file": "x"}, "not-a-list", 42, None):

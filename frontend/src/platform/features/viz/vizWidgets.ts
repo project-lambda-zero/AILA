@@ -1,5 +1,5 @@
 /**
- * vizWidgets.ts — Dashboard widget contributions from the Viz feature.
+ * vizWidgets.ts -- Dashboard widget contributions from the Viz feature.
  *
  * Registers platform.severity-donut and platform.findings-trend widgets.
  * Called from registerAllPlatformWidgets() in dashboard/widgets/index.ts.

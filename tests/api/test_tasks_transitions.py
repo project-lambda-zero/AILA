@@ -32,7 +32,7 @@ async def task_with_run(test_db, admin_key_record):
             module_id="vulnerability",
         )
         session.add(run)
-        # TaskRecord with same id — required by TaskRepository.get_for_user
+        # TaskRecord with same id -- required by TaskRepository.get_for_user
         task = TaskRecord(
             id=rid,
             track="vulnerability",
@@ -94,7 +94,7 @@ async def test_transitions_401_no_auth(async_client, task_with_run):
 async def test_transitions_empty_list_for_non_workflow_task(
     async_client, admin_token, task_with_run
 ):
-    """A task with no WorkflowStateTransition rows returns [] — not 404."""
+    """A task with no WorkflowStateTransition rows returns [] -- not 404."""
     resp = await async_client.get(
         f"/tasks/{task_with_run}/transitions",
         headers={"Authorization": f"Bearer {admin_token}"},

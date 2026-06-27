@@ -2,9 +2,9 @@
  * Findings workflow API hooks.
  *
  * Wraps the FastAPI router at src/aila/api/routers/findings_workflow.py:
- *   GET  /findings/workflow/states         — state machine definition
- *   GET  /findings/{finding_id}/workflow   — current state + transition history
- *   POST /findings/{finding_id}/transition — transition to a new state
+ *   GET  /findings/workflow/states         -- state machine definition
+ *   GET  /findings/{finding_id}/workflow   -- current state + transition history
+ *   POST /findings/{finding_id}/transition -- transition to a new state
  *
  * All responses are wrapped in a DataEnvelope; hooks unwrap to plain data so
  * callers receive the domain object directly.
@@ -19,7 +19,7 @@ import {
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
-// Types — mirror src/aila/api/schemas/endpoints.py exactly.
+// Types -- mirror src/aila/api/schemas/endpoints.py exactly.
 // ---------------------------------------------------------------------------
 
 export interface WorkflowStateDefinition {
@@ -47,7 +47,7 @@ export interface FindingWorkflowState {
 
 export interface TransitionFindingRequest {
   findingId: number | string;
-  /** Target state — must be in the legal next-state list for current_state. */
+  /** Target state -- must be in the legal next-state list for current_state. */
   target_state: string;
   /** Operator note, surfaced in the transition history. */
   notes?: string;
@@ -61,7 +61,7 @@ interface DataEnvelope<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Query keys — exported so callers can invalidate from outside this module.
+// Query keys -- exported so callers can invalidate from outside this module.
 // ---------------------------------------------------------------------------
 
 export const workflowQueryKeys = {
@@ -74,7 +74,7 @@ export const workflowQueryKeys = {
 // ---------------------------------------------------------------------------
 
 /**
- * useWorkflowStates — fetch the canonical state machine definition.
+ * useWorkflowStates -- fetch the canonical state machine definition.
  *
  * Calls GET /findings/workflow/states. The backend merges any module-
  * contributed states/transitions, so the result reflects every state any
@@ -94,7 +94,7 @@ export function useWorkflowStates() {
 }
 
 /**
- * useFindingWorkflow — fetch the current workflow state and full transition
+ * useFindingWorkflow -- fetch the current workflow state and full transition
  * history for a single finding.
  *
  * Calls GET /findings/{finding_id}/workflow. Disabled when findingId is null.
@@ -118,7 +118,7 @@ export function useFindingWorkflow(findingId: number | string | null) {
 }
 
 /**
- * useTransitionFinding — POST /findings/{id}/transition.
+ * useTransitionFinding -- POST /findings/{id}/transition.
  *
  * The backend enforces the state machine server-side; an illegal transition
  * comes back as 422. On success we invalidate:
@@ -154,7 +154,7 @@ export function useTransitionFinding() {
       queryClient.invalidateQueries({
         queryKey: workflowQueryKeys.finding(variables.findingId),
       });
-      // Vulnerability module surfaces — see queries.ts in
+      // Vulnerability module surfaces -- see queries.ts in
       // src/aila/modules/vulnerability/frontend/.
       queryClient.invalidateQueries({ queryKey: ["vulnerability", "findings"] });
       queryClient.invalidateQueries({ queryKey: ["vulnerability", "finding-facets"] });

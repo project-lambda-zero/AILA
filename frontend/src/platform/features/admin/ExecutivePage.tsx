@@ -1,14 +1,14 @@
 /**
- * ExecutivePage — fleet-wide risk posture summary and downloadable artifacts.
+ * ExecutivePage -- fleet-wide risk posture summary and downloadable artifacts.
  *
  * Phase 147: surfaces the same data that backs the executive PDF (severity
  * breakdown, total findings, last scan timestamp) and exposes the
  * downloadable PDF + per-system evidence ZIP.
  *
  * Endpoints:
- *   GET /executive/health               — JSON posture summary
- *   GET /executive/risk-summary-pdf     — fleet-wide PDF (binary)
- *   GET /executive/systems/{id}/evidence-package  — per-system ZIP (binary)
+ *   GET /executive/health               -- JSON posture summary
+ *   GET /executive/risk-summary-pdf     -- fleet-wide PDF (binary)
+ *   GET /executive/systems/{id}/evidence-package  -- per-system ZIP (binary)
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -28,7 +28,7 @@ import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
-// Types — mirror src/aila/api/schemas/endpoints.py:ExecutiveHealthResponse
+// Types -- mirror src/aila/api/schemas/endpoints.py:ExecutiveHealthResponse
 // ---------------------------------------------------------------------------
 
 interface ExecutiveHealthResponse {
@@ -57,7 +57,7 @@ const SEVERITY_ORDER: { key: string; label: string; color: string }[] = [
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "--";
   return new Date(value).toLocaleString();
 }
 
@@ -148,7 +148,7 @@ export function ExecutivePage() {
           number, generous negative space, and a 7/5 column rhythm that pulls the
           eye left-to-right instead of scanning a flat row. (A3) */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        {/* Masthead — Total Findings as the page's typographic anchor */}
+        {/* Masthead -- Total Findings as the page's typographic anchor */}
         <AilaCard
           variant="elevated"
           padding="none"
@@ -168,18 +168,18 @@ export function ExecutivePage() {
               className="font-mono font-semibold leading-none text-text"
               style={{ fontSize: "clamp(4rem, 9vw, 7.5rem)" }}
             >
-              {healthQuery.isLoading ? "—" : totalFindings}
+              {healthQuery.isLoading ? "--" : totalFindings}
             </p>
             <p className="font-mono text-sm text-text-muted">
               Active findings across the fleet · refreshed{" "}
               {healthQuery.isLoading
-                ? "—"
+                ? "--"
                 : formatTimestamp(health?.last_scanned_at)}
             </p>
           </div>
         </AilaCard>
 
-        {/* Right stack — three supporting tiles, vertical rhythm, severity accent
+        {/* Right stack -- three supporting tiles, vertical rhythm, severity accent
             stripes give a glance-readable hierarchy without competing with the
             masthead's weight */}
         <div className="flex flex-col gap-3 lg:col-span-5">
@@ -196,7 +196,7 @@ export function ExecutivePage() {
               </p>
               <p className="font-mono text-3xl font-semibold leading-tight text-text">
                 {healthQuery.isLoading
-                  ? "—"
+                  ? "--"
                   : (health?.systems_with_findings ?? 0)}
               </p>
               <p className="font-mono text-2xs text-text-muted">
@@ -225,7 +225,7 @@ export function ExecutivePage() {
                   immediateCount > 0 ? "text-critical" : "text-text"
                 }`}
               >
-                {healthQuery.isLoading ? "—" : immediateCount}
+                {healthQuery.isLoading ? "--" : immediateCount}
               </p>
               <p className="font-mono text-2xs text-text-muted">
                 Requires action now
@@ -246,7 +246,7 @@ export function ExecutivePage() {
               </p>
               <p className="font-mono text-base font-medium leading-tight text-text">
                 {healthQuery.isLoading
-                  ? "—"
+                  ? "--"
                   : formatTimestamp(health?.last_scanned_at)}
               </p>
               <p className="font-mono text-2xs text-text-muted">
@@ -264,7 +264,7 @@ export function ExecutivePage() {
         </div>
       )}
 
-      {/* Severity breakdown — offset right at lg+ to deliberately break the
+      {/* Severity breakdown -- offset right at lg+ to deliberately break the
           hero's left edge alignment, reinforcing the asymmetric rhythm */}
       <AilaCard
         variant="default"

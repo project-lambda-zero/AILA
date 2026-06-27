@@ -296,7 +296,7 @@ def _extract_target_from_run(run: Any) -> list[str]:
     """Derive the scanned target hosts from a run's route_json blob.
 
     Returns an empty list when the route_json is malformed or does not
-    declare a target — callers treat this as "fleet-wide".
+    declare a target -- callers treat this as "fleet-wide".
     """
     raw = getattr(run, "route_json", None) or "{}"
     try:

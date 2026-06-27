@@ -88,8 +88,8 @@ response uses depends on the exception class:
 
 | Shape | Where it comes from | When it fires |
 |-------|--------------------|---------------|
-| `ErrorResponse` — `{"detail": str, "code": str \| null, "errors": list \| null}` | The Phase 80 handlers in `create_app()` plus the `_catch_unhandled_exceptions` middleware | Any `fastapi.HTTPException` raised in a route, and the last-resort 500 fallback. |
-| `ErrorEnvelope` — `{"code": str, "message": str, "hint": str \| null, "trace_id": str \| null}` | `register_error_handlers()` in `src/aila/api/errors/` | Every `AILAError` subclass (typed taxonomy), every `RequestValidationError` (422), and any otherwise-unhandled `Exception` (500). |
+| `ErrorResponse` -- `{"detail": str, "code": str \| null, "errors": list \| null}` | The Phase 80 handlers in `create_app()` plus the `_catch_unhandled_exceptions` middleware | Any `fastapi.HTTPException` raised in a route, and the last-resort 500 fallback. |
+| `ErrorEnvelope` -- `{"code": str, "message": str, "hint": str \| null, "trace_id": str \| null}` | `register_error_handlers()` in `src/aila/api/errors/` | Every `AILAError` subclass (typed taxonomy), every `RequestValidationError` (422), and any otherwise-unhandled `Exception` (500). |
 
 Both bodies are documented under `responses={}` keys on individual routes
 when the route can return both, but most routes raise `HTTPException` and

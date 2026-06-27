@@ -47,7 +47,7 @@ export function QuestionsTable({ projectId }: { projectId: string }) {
                 <p className="truncate">{answer.question_text}</p>
               </td>
               <td className="px-3 py-2 text-green-300 font-mono text-xs max-w-xs">
-                {answer.answer_text || "—"}
+                {answer.answer_text || "--"}
               </td>
               <td className="px-3 py-2">
                 <AilaBadge severity={confidenceColor[answer.confidence] ?? "info"} size="sm">
@@ -55,7 +55,7 @@ export function QuestionsTable({ projectId }: { projectId: string }) {
                 </AilaBadge>
               </td>
               <td className="px-3 py-2 text-text-muted text-xs font-mono">
-                {answer.format_hint || "—"}
+                {answer.format_hint || "--"}
               </td>
             </tr>
           ))}

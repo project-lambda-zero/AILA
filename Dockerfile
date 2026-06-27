@@ -1,12 +1,12 @@
 # AILA backend + worker container.
 #
 # Multi-stage build:
-#   1. base    — Python 3.12-slim with system libs the runtime needs
+#   1. base    -- Python 3.12-slim with system libs the runtime needs
 #                (libmagic for python-magic, libpq for psycopg, build
 #                tools for native wheel fallbacks).
-#   2. deps    — installs the package into a venv so the final stage
+#   2. deps    -- installs the package into a venv so the final stage
 #                can copy a clean tree without keeping the build chain.
-#   3. runtime — minimal image with the venv + source. ENTRYPOINT is
+#   3. runtime -- minimal image with the venv + source. ENTRYPOINT is
 #                aila's typer CLI; CMD is the API server. Override CMD
 #                to run a worker (e.g. ``CMD ["worker","-q","vr"]``).
 #
@@ -17,7 +17,7 @@
 # Run worker (override CMD):
 #   docker run --env-file .env aila:7.0.0 worker -q vr
 #
-# This image does NOT bundle the frontend — the frontend is a separate
+# This image does NOT bundle the frontend -- the frontend is a separate
 # Vite build served as static assets (use the dedicated frontend
 # Dockerfile under frontend/ or serve via a CDN). The API container
 # only serves the FastAPI app + workers.
@@ -31,10 +31,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # System packages:
-#   libmagic1   — python-magic file-type detection
-#   libpq5      — psycopg connection layer
-#   curl, ca-certificates — runtime HTTP + TLS
-#   build-essential, libpq-dev, libffi-dev — for native wheel fallbacks
+#   libmagic1   -- python-magic file-type detection
+#   libpq5      -- psycopg connection layer
+#   curl, ca-certificates -- runtime HTTP + TLS
+#   build-essential, libpq-dev, libffi-dev -- for native wheel fallbacks
 #                                            (cryptography, argon2-cffi)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libmagic1 \
@@ -55,7 +55,7 @@ WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY src/aila/__init__.py src/aila/__init__.py
 
-# Create a venv so the final stage can copy /opt/venv only — no build
+# Create a venv so the final stage can copy /opt/venv only -- no build
 # artifacts, no pip cache, no setuptools history.
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip wheel setuptools
@@ -73,7 +73,7 @@ FROM base AS runtime
 COPY --from=deps /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Source tree — needed because alembic migrations + module entry
+# Source tree -- needed because alembic migrations + module entry
 # points are loaded by path at startup. Keep ownership simple
 # (root) since the container should run as a non-root user via the
 # orchestrator's UID/GID mapping in production, not baked into the
@@ -91,7 +91,7 @@ ENV PYTHONPATH=/app/src
 EXPOSE 8000
 
 # Healthcheck hits /health. The endpoint returns 200 even when
-# downstream subsystems are degraded — that's the right answer for
+# downstream subsystems are degraded -- that's the right answer for
 # k8s liveness (the container itself is alive). Readiness probes
 # should check /health AND parse the JSON body to gate traffic.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

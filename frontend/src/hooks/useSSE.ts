@@ -1,5 +1,5 @@
 /**
- * useSSE — connects to an SSE endpoint, calls onEvent for each event,
+ * useSSE -- connects to an SSE endpoint, calls onEvent for each event,
  * and reconnects on disconnect with exponential back-off.
  *
  * Manages connection lifecycle: mounts = connect, unmounts = disconnect.
@@ -36,10 +36,10 @@ export interface UseSSEOptions {
 const BACKOFF_STEPS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
 
 /**
- * useSSE — persistent SSE connection with reconnect back-off.
+ * useSSE -- persistent SSE connection with reconnect back-off.
  *
  * Returns the current connection status so callers can render indicators.
- * The hook is stable — it does NOT reconnect on every render.
+ * The hook is stable -- it does NOT reconnect on every render.
  */
 export function useSSE({
   url,
@@ -51,7 +51,7 @@ export function useSSE({
   const abortRef = useRef<AbortController | null>(null);
   const attemptRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Stable reference to getAccessToken — does not change after login
+  // Stable reference to getAccessToken -- does not change after login
   const getAccessToken = useAuthStore((s) => s.getAccessToken);
 
   // Keep latest callbacks in a ref to avoid restarting the connection loop
@@ -130,7 +130,7 @@ export function useSSE({
                   const parsed = JSON.parse(currentData.join("\n")) as SSEEvent;
                   onEventRef.current({ ...parsed, type: currentType });
                 } catch {
-                  // Malformed data — discard silently
+                  // Malformed data -- discard silently
                 }
               }
               currentType = "message";
@@ -151,7 +151,7 @@ export function useSSE({
           }
         }
       } catch (err) {
-        // AbortError is expected on unmount — do not reconnect
+        // AbortError is expected on unmount -- do not reconnect
         if ((err as Error)?.name === "AbortError" || cancelled) return;
       }
 

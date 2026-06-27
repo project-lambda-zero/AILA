@@ -22,7 +22,7 @@ import { FindingsListPage } from "./screens/FindingsListPage";
 import { NdayPage } from "./screens/NdayPage";
 import { AuditLogPage } from "./screens/AuditLogPage";
 
-// Heavy pages — ReactFlow / Monaco-style editor / wizard / branch tree
+// Heavy pages -- ReactFlow / Monaco-style editor / wizard / branch tree
 // bundles add weight that users who never visit them shouldn't pay for
 // on the projects list. Lazy-loaded per 08_FRONTEND_UX.md §4.4.
 const EvidenceGraphPage = lazy(() =>

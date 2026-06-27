@@ -1,10 +1,10 @@
-"""057 — make vr_findings.project_id nullable.
+"""057 -- make vr_findings.project_id nullable.
 
 Standalone investigations (no project_id on VRInvestigationRecord)
 previously had their DIRECT_FINDING outcomes silently SKIPPED by
 the dispatcher because creating a VRFindingRecord row required a
 non-null project_id. That left the outcome data on the outcome row
-but never materialized as a finding — which in turn meant the
+but never materialized as a finding -- which in turn meant the
 variant-child auto-PoC pipeline (which hooks off finding creation)
 never fired, and the /vr/findings listings missed every standalone
 investigation.

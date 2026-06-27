@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils"
 import { ailaChartVariants, DEFAULT_COLORS } from "./AilaChart"
 import type { AilaChartProps } from "./AilaChart"
 
-/** Chart tooltip style — dark surface, border, 4px radius matching AilaCard */
+/** Chart tooltip style -- dark surface, border, 4px radius matching AilaCard */
 const TOOLTIP_STYLE: React.CSSProperties = {
   backgroundColor: "var(--color-elevated)",
   border: "1px solid var(--color-border)",
@@ -32,13 +32,13 @@ const TOOLTIP_STYLE: React.CSSProperties = {
   color: "var(--color-text)",
 }
 
-/** Cartesian grid style — border color, dashed */
+/** Cartesian grid style -- border color, dashed */
 const GRID_STYLE = {
   stroke: "var(--color-border)",
   strokeDasharray: "3 3",
 }
 
-/** Axis style — monospace font per D-03 */
+/** Axis style -- monospace font per D-03 */
 const AXIS_STYLE = {
   fontFamily: "var(--font-mono)",
   fontSize: 11,
@@ -46,7 +46,7 @@ const AXIS_STYLE = {
 }
 
 /**
- * AilaChartView — the recharts-touching JSX for AilaChart.
+ * AilaChartView -- the recharts-touching JSX for AilaChart.
  *
  * This module is loaded lazily by the public AilaChart wrapper so the
  * ~430 KB recharts bundle is not pulled into the root entry. The

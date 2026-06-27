@@ -1,4 +1,4 @@
-"""aila.tools — standalone analysis tools for the AILA platform."""
+"""aila.tools -- standalone analysis tools for the AILA platform."""
 
 from __future__ import annotations
 

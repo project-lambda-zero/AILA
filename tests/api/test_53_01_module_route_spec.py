@@ -2,7 +2,7 @@
 
 Tests verify:
 - ModuleRouteSpec has the new frozen dataclass shape (prefix, router_factory, tool_keys,
-  config_namespace, payload_type) — no legacy fields (action_id, http_method, path, etc.)
+  config_namespace, payload_type) -- no legacy fields (action_id, http_method, path, etc.)
 - ModuleProtocol gains system_summary() and report_count() with default {} return
 - ModuleProtocol.route_specs() default return value is still [] (backwards compat)
 """
@@ -23,7 +23,7 @@ class TestModuleRouteSpecNewShape:
         assert spec.router_factory is not None
 
     def test_tool_keys_defaults_to_empty_tuple(self) -> None:
-        """tool_keys defaults to empty tuple (not list — frozen dataclass requires immutable)."""
+        """tool_keys defaults to empty tuple (not list -- frozen dataclass requires immutable)."""
         from aila.platform.modules.protocol import ModuleRouteSpec
 
         spec = ModuleRouteSpec(prefix="/x", router_factory=lambda: None)
@@ -65,7 +65,7 @@ class TestModuleRouteSpecNewShape:
         assert spec.payload_type == "VulnPayload"
 
     def test_is_frozen(self) -> None:
-        """ModuleRouteSpec is frozen — mutation raises FrozenInstanceError."""
+        """ModuleRouteSpec is frozen -- mutation raises FrozenInstanceError."""
         from dataclasses import FrozenInstanceError
 
         from aila.platform.modules.protocol import ModuleRouteSpec

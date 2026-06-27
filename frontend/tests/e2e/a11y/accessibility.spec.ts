@@ -1,24 +1,24 @@
 /**
- * accessibility.spec.ts — Automated accessibility audit (TEST-04).
+ * accessibility.spec.ts -- Automated accessibility audit (TEST-04).
  *
  * Runs axe-core against all critical AILA pages to verify zero WCAG 2.1 AA
  * violations. Uses @axe-core/playwright.
  *
  * Pages tested:
- *   - /login                 — full AA ruleset
- *   - /                      — full AA ruleset (dashboard)
- *   - /systems               — full AA ruleset
- *   - /vulnerability/findings — full AA ruleset
- *   - /assessments           — full AA ruleset (SbD wizard)
- *   - /radar                 — AA with exceptions (D-02: ReactFlow SVG limitations)
- *   - /admin/audit           — full AA ruleset
+ *   - /login                 -- full AA ruleset
+ *   - /                      -- full AA ruleset (dashboard)
+ *   - /systems               -- full AA ruleset
+ *   - /vulnerability/findings -- full AA ruleset
+ *   - /assessments           -- full AA ruleset (SbD wizard)
+ *   - /radar                 -- AA with exceptions (D-02: ReactFlow SVG limitations)
+ *   - /admin/audit           -- full AA ruleset
  *
  * Exception (D-02): The /radar page uses ReactFlow which generates non-standard
  * ARIA on its canvas SVG elements. Rules `scrollable-region-focusable` and
  * `aria-allowed-attr` are disabled specifically for that page to avoid false
  * positives from the third-party canvas library. All other AA rules remain active.
  *
- * Uses REAL PostgreSQL backend — auth injected via localStorage.
+ * Uses REAL PostgreSQL backend -- auth injected via localStorage.
  */
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
@@ -35,7 +35,7 @@ const FULL_AA_TAGS = { type: "tag" as const, values: ["wcag2a", "wcag2aa"] };
 // Auth setup
 // ---------------------------------------------------------------------------
 
-test.describe("Accessibility audit — WCAG 2.1 AA", () => {
+test.describe("Accessibility audit -- WCAG 2.1 AA", () => {
   let tokens: TokenPair;
 
   test.beforeAll(async ({ request }) => {
@@ -43,10 +43,10 @@ test.describe("Accessibility audit — WCAG 2.1 AA", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Login page — no auth needed, public page
+  // Login page -- no auth needed, public page
   // ---------------------------------------------------------------------------
 
-  test("/login — zero WCAG 2.1 AA violations", async ({ page }) => {
+  test("/login -- zero WCAG 2.1 AA violations", async ({ page }) => {
     await page.goto("/login");
     await page.waitForLoadState("networkidle", { timeout: 10_000 });
 
@@ -61,10 +61,10 @@ test.describe("Accessibility audit — WCAG 2.1 AA", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Dashboard — authenticated
+  // Dashboard -- authenticated
   // ---------------------------------------------------------------------------
 
-  test("/ (dashboard) — zero WCAG 2.1 AA violations", async ({ page }) => {
+  test("/ (dashboard) -- zero WCAG 2.1 AA violations", async ({ page }) => {
     await injectAuthState(page, tokens);
     await page.goto("/");
     await page.waitForLoadState("networkidle", { timeout: 15_000 });
@@ -80,10 +80,10 @@ test.describe("Accessibility audit — WCAG 2.1 AA", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Systems list — authenticated
+  // Systems list -- authenticated
   // ---------------------------------------------------------------------------
 
-  test("/systems — zero WCAG 2.1 AA violations", async ({ page }) => {
+  test("/systems -- zero WCAG 2.1 AA violations", async ({ page }) => {
     await injectAuthState(page, tokens);
     await page.goto("/systems");
     await page.waitForLoadState("networkidle", { timeout: 10_000 });
@@ -99,10 +99,10 @@ test.describe("Accessibility audit — WCAG 2.1 AA", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Findings table — authenticated
+  // Findings table -- authenticated
   // ---------------------------------------------------------------------------
 
-  test("/vulnerability/findings — zero WCAG 2.1 AA violations", async ({ page }) => {
+  test("/vulnerability/findings -- zero WCAG 2.1 AA violations", async ({ page }) => {
     await injectAuthState(page, tokens);
     await page.goto("/vulnerability/findings");
     await page.waitForLoadState("networkidle", { timeout: 10_000 });
@@ -118,10 +118,10 @@ test.describe("Accessibility audit — WCAG 2.1 AA", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SbD assessments — authenticated
+  // SbD assessments -- authenticated
   // ---------------------------------------------------------------------------
 
-  test("/assessments — zero WCAG 2.1 AA violations", async ({ page }) => {
+  test("/assessments -- zero WCAG 2.1 AA violations", async ({ page }) => {
     await injectAuthState(page, tokens);
     await page.goto("/assessments");
     await page.waitForLoadState("networkidle", { timeout: 10_000 });
@@ -137,10 +137,10 @@ test.describe("Accessibility audit — WCAG 2.1 AA", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Radar (Network Topology) — authenticated, with D-02 exceptions
+  // Radar (Network Topology) -- authenticated, with D-02 exceptions
   // ---------------------------------------------------------------------------
 
-  test("/radar — zero AA violations (ReactFlow SVG exceptions applied)", async ({ page }) => {
+  test("/radar -- zero AA violations (ReactFlow SVG exceptions applied)", async ({ page }) => {
     await injectAuthState(page, tokens);
     await page.goto("/radar");
     // ReactFlow needs extra time for canvas initialization
@@ -160,10 +160,10 @@ test.describe("Accessibility audit — WCAG 2.1 AA", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Admin audit logs — authenticated, admin role required
+  // Admin audit logs -- authenticated, admin role required
   // ---------------------------------------------------------------------------
 
-  test("/admin/audit — zero WCAG 2.1 AA violations", async ({ page }) => {
+  test("/admin/audit -- zero WCAG 2.1 AA violations", async ({ page }) => {
     await injectAuthState(page, tokens);
     await page.goto("/admin/audit");
     await page.waitForLoadState("networkidle", { timeout: 10_000 });

@@ -1,4 +1,4 @@
-# VR Module — The Evidence Obligation System: Anti-Bluffing Mechanics
+# VR Module -- The Evidence Obligation System: Anti-Bluffing Mechanics
 
 The reasoning loop (`docs/vr/01_REASONING_LOOP.md`) sketches an "adjudicator" that catches LLM bluffs. The exploitation doc (`docs/vr/03_EXPLOIT_AUTOMATION.md`) sketches a per-tier obligation table for runtime claims. The MCP doc (`docs/vr/02_IDA_HEADLESS_MCP.md`) sketches obligation-aware audit logs for static-analysis evidence. This document collapses the three views into one mechanism: how the obligation system is structured, what claims it tracks, how obligations are lifecycle-managed, what the deterministic rule engine actually checks per turn, and where the system breaks at the seams.
 
@@ -29,16 +29,16 @@ The frame: **the LLM is allowed to be confident only when the evidence graph con
 The formal VR-side `VRObligation` table + standalone rule engine is
 unbuilt. Honesty discipline ships today through:
 
-- **`ClaimVerifierAgent`** (`agents/claim_verifier.py`) — adversarial
+- **`ClaimVerifierAgent`** (`agents/claim_verifier.py`) -- adversarial
   post-synthesis verification with probe-based refutation.
-- **Auto-steering** (`agents/auto_steering.py`) — dead-end pattern
+- **Auto-steering** (`agents/auto_steering.py`) -- dead-end pattern
   detection with corrective operator-message injection at PROMPT
   POSITION 2; see `docs/PITFALL_GUIDE.md` Pitfall 33.
 - **Three submit-time gates** in `vuln_researcher.py`:
   `_maybe_reject_submit_when_draft_pending`,
   `_maybe_reject_submit_with_unresolved_hypotheses`, and the
   variant-hunt exhaustion gate.
-- **Sibling-consensus rejection** — branch siblings vote to drop a
+- **Sibling-consensus rejection** -- branch siblings vote to drop a
   hypothesis even when the originating branch still has it live;
   a `_directive.sibling_consensus_rejection` observable is injected.
 
@@ -49,7 +49,7 @@ spec of running code.
 
 ## 1. Why Obligations Exist
 
-A standard chat-style agent emits a paragraph of conclusions, the user reads it, and trust is interpersonal. A research workbench emitting CVE-class findings is not interpersonal; the consumer of the output is a vendor PSIRT, a customer security team, or — eventually — a CVE database. The cost of a wrong "exploitable" verdict is reputational damage to the platform and, downstream, an inflated CVSS that wastes engineering attention.
+A standard chat-style agent emits a paragraph of conclusions, the user reads it, and trust is interpersonal. A research workbench emitting CVE-class findings is not interpersonal; the consumer of the output is a vendor PSIRT, a customer security team, or -- eventually -- a CVE database. The cost of a wrong "exploitable" verdict is reputational damage to the platform and, downstream, an inflated CVSS that wastes engineering attention.
 
 The single behavior we want to prevent is **uncorrelated confidence**: the LLM saying "this is RCE" with the same surface fluency whether it has a working PoC or a hypothesis. The obligation system breaks the correlation by making confidence a function of artifacts in the evidence graph, not of word choice in the LLM's prose.
 
@@ -73,8 +73,8 @@ Obligations are typed by claim category. The table below is exhaustive for v0.1 
 |---|---|---|---|---|
 | "heap overflow" / `bug_class=heap_overflow` | ASAN/HWASAN report containing `heap-buffer-overflow` AND a target-side allocator state dump | run_target with ASAN + pwndbg `vis_heap_chunks` | CRITICAL | Reject if claim is heap but ASAN report says `stack-buffer-overflow` (contradiction). Reject if no ASAN run is in the graph. |
 | "stack overflow" / `bug_class=stack_overflow` | ASAN report `stack-buffer-overflow` OR core dump showing return address overwrite | run_target / GDB | CRITICAL | If both ASAN and GDB disagree on bug class, force `confidence=inconclusive`. |
-| "use-after-free" / `bug_class=uaf` | ASAN `heap-use-after-free` with allocation-stack and free-stack frames | ASAN | CRITICAL | The free-stack frame must be present in the report — "UAF without a free site" is a false-positive shape ASAN occasionally produces with mmap'd objects; flag as caveat. |
-| "double-free" / `bug_class=double_free` | ASAN `attempting double-free` | ASAN | CRITICAL | — |
+| "use-after-free" / `bug_class=uaf` | ASAN `heap-use-after-free` with allocation-stack and free-stack frames | ASAN | CRITICAL | The free-stack frame must be present in the report -- "UAF without a free site" is a false-positive shape ASAN occasionally produces with mmap'd objects; flag as caveat. |
+| "double-free" / `bug_class=double_free` | ASAN `attempting double-free` | ASAN | CRITICAL | -- |
 | "controlled write" | GDB output showing `mov [rdi], rax` (or equivalent) where `rdi` and `rax` both contain untrusted-input bytes; bytes traceable to the input | GDB session log + input-mapping artifact | CRITICAL | Both the address and the value must derive from untrusted input. "Crash in `mov` instruction" is not a controlled write. |
 | "controlled call / RIP control" | Core dump or GDB output where instruction pointer equals untrusted-input bytes | core file, GDB | CRITICAL | The bytes must be matchable against an entry in the trigger input (the model can't claim RIP control with a hardcoded `0x4141414141414141` if the input is JSON). |
 | "exploitable" | All target mitigations enumerated; bypass primitive present for each enabled mitigation OR explicit "no bypass needed" justification per mitigation | `analyze_binary` mitigations block + per-mitigation evidence | CRITICAL | The mitigation set is read from `analyze_binary` (deterministic). Each enabled mitigation must be addressed in the reasoning. CFI on, ROP claimed, no CFI bypass cited → reject. |
@@ -96,7 +96,7 @@ Obligations are typed by claim category. The table below is exhaustive for v0.1 
 | "reachable from unauthenticated context" | Same as above + auth-check enumeration on the path showing no auth gate, OR exploit run from unauthenticated client | Trailmark + decompilation of all auth checkpoints, OR live exploit | CRITICAL | The hardest reachability claim to satisfy honestly. Most bugs are gated by *something*; the LLM under-counts. |
 | "reachable in default config" | Config-loading path traced + default config artifact captured | `analyze_binary` + config file artifact | REQUIRED | If the bug requires a non-default flag, the claim is "reachable when X enabled" not "reachable in default config." |
 | "no bounds check" | Decompiled code of the *entire* path from input to vulnerable op, not just the target function | batched decompile of caller chain | REQUIRED | The most common false negative: the model decompiles the function with the bug, sees no check, and concludes there's no check anywhere. The check is often two callers up. |
-| "no validation exists" | Explicit `absent` observable with the search method recorded (e.g., "searched callees of `parse_packet`, no `len_check_*` symbol exists") | grep / xrefs / search_pattern log | REQUIRED | Per `01_REASONING_LOOP.md` §6.4 — `absent` is evidence only when search method is recorded. |
+| "no validation exists" | Explicit `absent` observable with the search method recorded (e.g., "searched callees of `parse_packet`, no `len_check_*` symbol exists") | grep / xrefs / search_pattern log | REQUIRED | Per `01_REASONING_LOOP.md` §6.4 -- `absent` is evidence only when search method is recorded. |
 | "same pattern as CVE-X" | Side-by-side comparison of the prior pattern (from disclosure or commit) and the candidate pattern, with the matching elements named | comparison artifact (model-produced, evidence-cited) | REQUIRED | The model must cite the *prior* artifact (commit hash, advisory URL) and the *new* code, with the equivalence explicit. "Looks like CVE-X" is not enough. |
 | "variant of confirmed bug" | Both the confirmed bug's evidence and the variant's evidence in the graph; equivalence cited | two CONFIRMED_VULNERABILITY nodes + VARIANT_OF edge | RECOMMENDED | Encouraged for variant analysis productivity. Logged as a gap if missing but does not block submit. |
 
@@ -122,7 +122,7 @@ Obligations are typed by claim category. The table below is exhaustive for v0.1 
 
 ### 2.5 Counted
 
-The taxonomy above contains 28 distinct claim → obligation mappings. The number is a planning artifact, not a target — the rule engine grows as new claim shapes are observed in development. New rows are added by patching the rule registry; the LLM doesn't see the registry, only its effects.
+The taxonomy above contains 28 distinct claim → obligation mappings. The number is a planning artifact, not a target -- the rule engine grows as new claim shapes are observed in development. New rows are added by patching the rule registry; the LLM doesn't see the registry, only its effects.
 
 ---
 
@@ -196,7 +196,7 @@ class ObligationNode:
     history: list[ObligationEvent]      # state transitions, immutable
 ```
 
-`required_evidence` is a list of `EvidenceSpec` records — these are the artifact-class predicates the adjudicator runs. Example for "RCE":
+`required_evidence` is a list of `EvidenceSpec` records -- these are the artifact-class predicates the adjudicator runs. Example for "RCE":
 
 ```python
 EvidenceSpec(kind="exploit_run_log",
@@ -217,7 +217,7 @@ The split between TRACKED and SATISFIED is intentional: the LLM frequently *atte
 
 ### 3.3 SATISFIED
 
-The adjudicator ran every `EvidenceSpec` against the linked artifact and they all returned true. The obligation flips state. The transition is immutable in `history` — even if the obligation later regresses, the original satisfaction stays in the audit trail.
+The adjudicator ran every `EvidenceSpec` against the linked artifact and they all returned true. The obligation flips state. The transition is immutable in `history` -- even if the obligation later regresses, the original satisfaction stays in the audit trail.
 
 ### 3.4 UNMET
 
@@ -236,7 +236,7 @@ The LLM either produces a real artifact or downgrades the claim. It cannot make 
 
 A human operator can mark an obligation WAIVED with a free-text reason. The waiver is a first-class graph node (`WaiverNode`), permanently linked, surfaces in every report, and contains the operator's identity and timestamp. Unblockable downstream.
 
-The product reason for waivers is unblocking the loop when the obligation is structurally unsatisfiable on this target — see §6 — without forcing the LLM to lie. The audit reason is that a waived obligation is *visibly* waived rather than silently elided.
+The product reason for waivers is unblocking the loop when the obligation is structurally unsatisfiable on this target -- see §6 -- without forcing the LLM to lie. The audit reason is that a waived obligation is *visibly* waived rather than silently elided.
 
 ### 3.6 REGRESSION
 
@@ -254,9 +254,9 @@ Three levels. The level controls what the submit gate enforces.
 | **REQUIRED** | Submit blocked until SATISFIED or WAIVED. Adjudicator forces `confidence ≤ caveated` if unsatisfied. | Reliability sweep for "reliable", version-bisect for "affects X-Y", patch-diff verification for "fixed in Z." |
 | **RECOMMENDED** | Submit allowed. Unsatisfied RECOMMENDED obligations are surfaced in the finding's `gaps` field and the operator can choose to upgrade them before publishing. | Variant enumeration, KEV/EPSS lookup, prior-art comparison. |
 
-The level is not the LLM's choice — it's set by the rule that emits the obligation. The LLM can request an upgrade ("this should be CRITICAL because…") but the engine decides.
+The level is not the LLM's choice -- it's set by the rule that emits the obligation. The LLM can request an upgrade ("this should be CRITICAL because…") but the engine decides.
 
-The line between CRITICAL and REQUIRED is whether the claim is *false* without the evidence (CRITICAL) or *unsupported* without the evidence (REQUIRED). "RCE without controlled-write proof" is a *false* claim — the model is asserting something it has no basis for. "Reliable without sweep" is *unsupported* — the exploit may well be reliable, we just haven't measured.
+The line between CRITICAL and REQUIRED is whether the claim is *false* without the evidence (CRITICAL) or *unsupported* without the evidence (REQUIRED). "RCE without controlled-write proof" is a *false* claim -- the model is asserting something it has no basis for. "Reliable without sweep" is *unsupported* -- the exploit may well be reliable, we just haven't measured.
 
 This distinction matters because a CRITICAL miss is a bug-report-shape error (we said RCE, it's not RCE), while a REQUIRED miss is a confidence-shape error (we said reliable, we don't know yet).
 
@@ -473,15 +473,15 @@ def adjudicate(turn: ReasoningTurnDecision,
 
 - **`accept`**: turn proceeds, obligations updated, next prompt prepared normally.
 - **`accept_with_caveats`**: turn proceeds but next prompt prefixes the rule output (e.g., "your claim contained 3 hedge words; consider downgrading confidence").
-- **`force_reasoning`**: the LLM's chosen action is rejected; next turn is forced to `kind="reasoning"` with the rule findings as input. This is the most common non-accept outcome — the LLM tried to act on a confabulation and the engine bounced it.
+- **`force_reasoning`**: the LLM's chosen action is rejected; next turn is forced to `kind="reasoning"` with the rule findings as input. This is the most common non-accept outcome -- the LLM tried to act on a confabulation and the engine bounced it.
 - **`reject_submit`**: only on submit. The finding is not persisted; the LLM is told why and continues.
 - **`escalate_to_operator`**: same rule has fired ≥3 times in a session, or the rule output indicates a structural problem the LLM can't resolve (e.g., contradictory ASAN reports). The workflow pauses; operator sees the rule trace and decides.
 
 ### 5.4 What the rule engine cannot do
 
-It cannot judge *correctness* of claims that aren't verifiable from the evidence graph. It can detect bluffs but it cannot detect *correct claims with insufficient evidence*. The latter is by design — the system errs on the side of forcing more evidence collection rather than accepting under-justified claims.
+It cannot judge *correctness* of claims that aren't verifiable from the evidence graph. It can detect bluffs but it cannot detect *correct claims with insufficient evidence*. The latter is by design -- the system errs on the side of forcing more evidence collection rather than accepting under-justified claims.
 
-It also cannot detect cleverly-worded bluffs that don't trip the regex/embedding heuristics. A model that says "the controlled write is established by the trace" without producing a trace will be caught by `MissingObligation`. A model that says "trace artifact T-042 establishes the controlled write" referring to a real T-042 that doesn't actually establish that — that requires the spec validator to actually parse T-042 and check. This is the §6.4 case below.
+It also cannot detect cleverly-worded bluffs that don't trip the regex/embedding heuristics. A model that says "the controlled write is established by the trace" without producing a trace will be caught by `MissingObligation`. A model that says "trace artifact T-042 establishes the controlled write" referring to a real T-042 that doesn't actually establish that -- that requires the spec validator to actually parse T-042 and check. This is the §6.4 case below.
 
 ---
 
@@ -505,7 +505,7 @@ Example: target is a Windows kernel driver. The "exploitable → mitigations enu
 
 **Three options, in order of preference:**
 
-1. **Backend-aware obligation specs.** The MCP advertises which evidence kinds are available for the current target (per `02_IDA_HEADLESS_MCP.md` §10). The obligation spec is parameterized on backend capabilities. For RTOS, the mitigation evidence becomes "manual mitigation analysis artifact authored by operator" — a different artifact class with the same role.
+1. **Backend-aware obligation specs.** The MCP advertises which evidence kinds are available for the current target (per `02_IDA_HEADLESS_MCP.md` §10). The obligation spec is parameterized on backend capabilities. For RTOS, the mitigation evidence becomes "manual mitigation analysis artifact authored by operator" -- a different artifact class with the same role.
 
 2. **Operator waiver with technical justification.** The operator inspects the target manually, writes a `MitigationAnalysisArtifact` by hand, and uploads it. This is the artifact class the obligation expects; it's just human-produced. The rule engine doesn't care who authored it.
 
@@ -513,7 +513,7 @@ Example: target is a Windows kernel driver. The "exploitable → mitigations enu
 
 The pattern: **obligations don't require a specific tool. They require an artifact class that satisfies a spec.** The artifact's provenance (tool, operator, hand-written) is metadata; the rule engine validates the artifact contents.
 
-What is *not* allowed: silently dropping an obligation because the standard tool doesn't exist. That's the bluff path — "we couldn't run checksec so we'll just claim no NX." The waiver path forces the operator to *explicitly* take responsibility for the assertion, with timestamp and reason in the audit trail.
+What is *not* allowed: silently dropping an obligation because the standard tool doesn't exist. That's the bluff path -- "we couldn't run checksec so we'll just claim no NX." The waiver path forces the operator to *explicitly* take responsibility for the assertion, with timestamp and reason in the audit trail.
 
 ### 6.3 Operator disagrees with an obligation
 
@@ -536,7 +536,7 @@ The waiver propagates: the finding can submit, but the report carries a `waivers
 
 What the operator *cannot* do: edit the rule registry to make obligations not fire. The rule registry is project-shared and version-controlled; rule changes need a code review. Per-finding waivers are operator-scoped; rule changes are platform-scoped. Different review path.
 
-The risk this creates: a busy operator waiving obligations as a way to silence the loop. Mitigation: a "waiver rate" metric on the operator-overview UI. If waiver rate exceeds (say) 20% of created CRITICAL obligations across a project, the platform raises a soft warning. Not blocking — operators have legitimate reasons for high waiver rates on certain target types — but visible.
+The risk this creates: a busy operator waiving obligations as a way to silence the loop. Mitigation: a "waiver rate" metric on the operator-overview UI. If waiver rate exceeds (say) 20% of created CRITICAL obligations across a project, the platform raises a soft warning. Not blocking -- operators have legitimate reasons for high waiver rates on certain target types -- but visible.
 
 ### 6.4 The LLM fabricates evidence
 
@@ -550,17 +550,17 @@ Three layers of mitigation, none perfect:
 
 1. **Provenance binding.** Every artifact in the graph has a provenance record: the action that produced it, the inputs, the timestamps, the tool's invocation arguments. `EvidenceSpec` can require `provenance.command` to match a pattern (e.g., the ASAN run's argv must include the trigger input file referenced in the claim). The rule engine checks this. Forcing the LLM to cite an artifact whose provenance matches the claim raises the bar.
 
-2. **Linkage requirements.** An artifact alone doesn't satisfy an obligation; the *link* between the artifact and the claim's hypothesis must be stated. The LLM has to write "A-072 (run on input I-019, which is the trigger from H-03)" not "A-072 shows the bug." If the linkage chain is broken — A-072 was run on input I-014, not I-019 — the rule engine sees the discrepancy and the obligation goes UNMET.
+2. **Linkage requirements.** An artifact alone doesn't satisfy an obligation; the *link* between the artifact and the claim's hypothesis must be stated. The LLM has to write "A-072 (run on input I-019, which is the trigger from H-03)" not "A-072 shows the bug." If the linkage chain is broken -- A-072 was run on input I-014, not I-019 -- the rule engine sees the discrepancy and the obligation goes UNMET.
 
 3. **Tool-side ground truth.** The IDA MCP and the run_target tool both record exactly what they ran, when, and against what binary. The rule engine cross-references the LLM's cited provenance against the tool's ground-truth log. If the LLM cites "A-072 from running ./target with input I-019" and the tool log says A-072 was produced by running ./target_v2 with input I-014, the rule engine raises a `ProvenanceMismatch` finding. CRITICAL severity, blocks submit, escalates to operator.
 
 The tool-side ground-truth check is the most reliable. The audit log lives outside the project root (`/vr/audit/`), is append-only, and is what `02_IDA_HEADLESS_MCP.md` §10 calls "auditable provenance." The rule engine treats the audit log as canonical and the LLM's `reasoning` text as a claim *about* the audit log.
 
-What survives all three layers: an LLM that fabricates a hypothetical ID for an artifact that doesn't exist. That's the cheap case — the engine just looks up the ID in the graph and finds nothing. Caught at TRACKED time.
+What survives all three layers: an LLM that fabricates a hypothetical ID for an artifact that doesn't exist. That's the cheap case -- the engine just looks up the ID in the graph and finds nothing. Caught at TRACKED time.
 
 What doesn't survive: an LLM that cites a real artifact that doesn't actually pertain to the claim *and* invents matching provenance fields. This would require the model to lie about the audit log entries, which it can do in `reasoning` text, but the rule engine reads the audit log directly, not the model's summary of it. The model can't actually rewrite the audit log.
 
-The residual risk: a deeply confused model citing the wrong artifact id without intent to deceive. The provenance check catches it; the failure mode is mistaken-identity, not lying. The operator-facing language in such cases should be "the cited artifact does not match the claimed scenario" rather than "the model fabricated evidence" — the latter implies intent we have no way to attribute.
+The residual risk: a deeply confused model citing the wrong artifact id without intent to deceive. The provenance check catches it; the failure mode is mistaken-identity, not lying. The operator-facing language in such cases should be "the cited artifact does not match the claimed scenario" rather than "the model fabricated evidence" -- the latter implies intent we have no way to attribute.
 
 ### 6.5 Obligation chains and their failure modes
 
@@ -576,8 +576,8 @@ The failure mode: **operator waives the prerequisite to unblock the loop, and th
 
 For grounding the design in the actual repo:
 
-- **Spec registry**: `src/aila/modules/vulnerability/services/obligation_specs.py` — maps canonical claims to `EvidenceSpec` lists. Plain-data, version-controlled, tested with golden examples.
-- **Rule engine**: `src/aila/modules/vulnerability/adjudication/` — runs after every turn. Pure functions over `(turn, state, graph, project) -> AdjudicationResult`. No LLM calls. Heavily tested.
+- **Spec registry**: `src/aila/modules/vulnerability/services/obligation_specs.py` -- maps canonical claims to `EvidenceSpec` lists. Plain-data, version-controlled, tested with golden examples.
+- **Rule engine**: `src/aila/modules/vulnerability/adjudication/` -- runs after every turn. Pure functions over `(turn, state, graph, project) -> AdjudicationResult`. No LLM calls. Heavily tested.
 - **Obligation graph**: a SQLModel table (`ObligationRecord`) plus helpers; lives alongside the rest of the evidence graph schema in `src/aila/storage/`.
 - **Waiver UI**: a panel in the VR frontend (`frontend/src/modules/vulnerability/`) that surfaces obligations with state, severity, linked artifacts, and a "waive" button with required reason text.
 - **Audit log**: per `02_IDA_HEADLESS_MCP.md` §10, lives outside project root in `/vr/audit/`. Append-only. Read by the rule engine for provenance binding.
@@ -610,12 +610,12 @@ This asymmetry is intentional. The LLM should be solving "how do I prove this cl
 Cataloguing where the obligation system can be wrong, not just the LLM.
 
 **False positives (rule engine flags a valid claim):**
-- Hedge-word detection over-triggers on legitimate technical caveats ("the bug appears to be a UAF" is precise hedging, not laundering). Mitigation: confidence-aware regex — the same hedge in `reasoning` is fine; in a `confidence=strong` claim it's flagged.
+- Hedge-word detection over-triggers on legitimate technical caveats ("the bug appears to be a UAF" is precise hedging, not laundering). Mitigation: confidence-aware regex -- the same hedge in `reasoning` is fine; in a `confidence=strong` claim it's flagged.
 - Contradiction detection misreads ASAN output (an ASAN report of "container-overflow" gets parsed as "stack-buffer-overflow" by a sloppy parser, contradicting a correct heap claim). Mitigation: the parser is a small, audited piece of code with golden tests.
 - State-transition gating fires on legitimate verdict reversals where the operator added new evidence offline and the loop didn't see the source. Mitigation: operator-added artifacts carry the operator's identity, and state transitions backed by operator artifacts are accepted.
 
 **False negatives (rule engine misses a real bluff):**
-- Cleverly-worded claims that don't trip any heuristic ("the trace establishes the primitive" — no hedge, no missing artifact, but the trace doesn't actually establish anything). Mitigation: spec validators that parse artifact contents, not just metadata. The cost of writing a good spec is high; coverage will start partial and grow.
+- Cleverly-worded claims that don't trip any heuristic ("the trace establishes the primitive" -- no hedge, no missing artifact, but the trace doesn't actually establish anything). Mitigation: spec validators that parse artifact contents, not just metadata. The cost of writing a good spec is high; coverage will start partial and grow.
 - Reused artifacts across unrelated claims (§6.4). Mitigated by provenance binding, not perfectly.
 - Off-by-one obligation scope: the rule engine requires evidence for "RCE" but accepts the same evidence for two distinct RCE claims in the project, when only the first one was actually demonstrated. Mitigation: obligations are linked to specific finding ids; the same artifact can satisfy multiple obligations only if its provenance covers each claim's scope.
 
@@ -645,7 +645,7 @@ A short list of things the system is *not* responsible for:
 
 3. **Cross-project obligation reuse.** A vendor's platform mitigation (e.g., "this product family always has CFI on") is a project-pinned fact. Should it be a shared knowledge file the obligation engine reads, or duplicated per project? Sharing is cheaper but creates a bleed surface where one bad fact poisons many projects.
 
-4. **Time-bounded obligations.** Some claims age out — "no patch available" is true on the day of the search but may be false a week later. Should obligations have a `valid_until` field that triggers re-verification on age? Or does this belong in a separate "claim freshness" layer? Probably the latter.
+4. **Time-bounded obligations.** Some claims age out -- "no patch available" is true on the day of the search but may be false a week later. Should obligations have a `valid_until` field that triggers re-verification on age? Or does this belong in a separate "claim freshness" layer? Probably the latter.
 
 5. **Obligation back-pressure.** The rule engine doesn't currently surface "your finding has 14 outstanding REQUIRED obligations; consider scoping down" before the LLM hits submit. Should it? Pre-submit guidance is helpful; over-supplying it makes the loop noisy. Where's the threshold (5 outstanding obligations? 10? after N turns of growth?)?
 
@@ -655,11 +655,11 @@ A short list of things the system is *not* responsible for:
 
 8. **Severity inflation.** The temptation, when a bluff slips through, is to re-classify the relevant obligation from REQUIRED to CRITICAL. If we do this every time, eventually everything is CRITICAL and the gradient is meaningless. What's the policy for severity changes? Probably: a one-time event (this specific bluff) is a CRITICAL annotation on the rule's history, not a severity change to the rule itself.
 
-9. **Obligation-driven prompt construction.** Does the user prompt to the LLM include a "to advance, you need to satisfy obligation O-X by producing evidence Y" hint, or is that too directive (steers the model toward gaming the rule)? Currently designed as visible-but-not-prescriptive — the LLM sees outstanding obligations and is told what artifact class is needed, but is not given the spec details.
+9. **Obligation-driven prompt construction.** Does the user prompt to the LLM include a "to advance, you need to satisfy obligation O-X by producing evidence Y" hint, or is that too directive (steers the model toward gaming the rule)? Currently designed as visible-but-not-prescriptive -- the LLM sees outstanding obligations and is told what artifact class is needed, but is not given the spec details.
 
 10. **Multi-operator waiver workflows.** A waiver by a junior operator is different from one by a senior. Do we want approval workflows on waivers (junior proposes, senior approves), or is the operator-identity stamp enough for downstream consumers to weight? Approval workflows add latency; identity stamps add ambiguity ("how senior is rkim?"). Probably project-policy-configurable.
 
-11. **Negative obligations.** Currently, obligations are "evidence X must exist." Some claims need "evidence X must *not* exist" — e.g., "no auth check on the path" requires demonstrating absence. Per `01_REASONING_LOOP.md` §6.4, absence is encoded as `absent` observables with explicit search method. Should `absent` observables themselves carry obligations (to verify the search method actually ran)? That's an obligation-on-obligation, which is fine in the schema but worth thinking through before it shows up.
+11. **Negative obligations.** Currently, obligations are "evidence X must exist." Some claims need "evidence X must *not* exist" -- e.g., "no auth check on the path" requires demonstrating absence. Per `01_REASONING_LOOP.md` §6.4, absence is encoded as `absent` observables with explicit search method. Should `absent` observables themselves carry obligations (to verify the search method actually ran)? That's an obligation-on-obligation, which is fine in the schema but worth thinking through before it shows up.
 
 12. **Performance.** The rule engine runs after every turn. On a project with thousands of artifacts and hundreds of obligations, each turn re-evaluates a non-trivial graph. At what scale do we need to cache spec validation results, and what invalidates the cache? Artifact provenance is immutable, so a SATISFIED obligation can be cached as long as its linked artifacts don't gain new contradicting evidence. Probably fine for v0.1; revisit at v0.2.
 

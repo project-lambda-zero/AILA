@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 
 export interface PageTransitionProps {
   /**
-   * Unique key for the animated content — typically the current route pathname.
+   * Unique key for the animated content -- typically the current route pathname.
    * Must change when route changes to trigger exit/enter animation.
    */
   motionKey: string
@@ -20,9 +20,9 @@ export interface PageTransitionProps {
 }
 
 /**
- * PageTransition — route-level fade + slide animation wrapper (D-21).
+ * PageTransition -- route-level fade + slide animation wrapper (D-21).
  *
- * Uses `motion/react` (NOT framer-motion — renamed package per Pitfall 6).
+ * Uses `motion/react` (NOT framer-motion -- renamed package per Pitfall 6).
  * Respects prefers-reduced-motion via `useReducedMotion()` hook:
  * - When reduced motion is preferred: duration=0, no y offsets
  * - Otherwise: 200ms fade + 8px slide, easeOut easing

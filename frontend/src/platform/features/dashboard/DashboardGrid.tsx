@@ -16,7 +16,7 @@ export interface DashboardGridProps {
 }
 
 /**
- * DashboardGrid — 12-column drag-drop resizable widget grid (D-01).
+ * DashboardGrid -- 12-column drag-drop resizable widget grid (D-01).
  *
  * Uses react-grid-layout v2 with cyberpunk design token overrides.
  * Edit mode shows drag handles and remove buttons.

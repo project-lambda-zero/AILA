@@ -259,13 +259,13 @@ def _build_finding_rows_html(findings: list[dict]) -> str:
     for f in sorted_findings:
         crit = (f.get("criticality") or "").capitalize()
         css = _CRITICALITY_CSS.get(crit.lower(), "")
-        cve = f.get("cve_id") or "—"
+        cve = f.get("cve_id") or "--"
         score = f.get("score")
-        score_str = f"{score:.1f}" if score is not None else "—"
-        fixed = f.get("fixed_version") or "—"
+        score_str = f"{score:.1f}" if score is not None else "--"
+        fixed = f.get("fixed_version") or "--"
         kev = "Yes" if f.get("is_kev") else "No"
-        pkg = f.get("package_name") or "—"
-        sys_name = f.get("system_name") or "—"
+        pkg = f.get("package_name") or "--"
+        sys_name = f.get("system_name") or "--"
 
         rows.append(
             f"    <tr>"
@@ -373,7 +373,7 @@ async def download_risk_summary_pdf(
 ) -> StreamingResponse:
     """Generate and stream a fleet-wide executive risk summary PDF.
 
-    Queries all LatestFindingRecord rows (no run_id filter — fleet-wide posture).
+    Queries all LatestFindingRecord rows (no run_id filter -- fleet-wide posture).
     Renders HTML with severity breakdown cards and top-25 findings table.
     Converts to PDF via weasyprint in a thread pool (asyncio.to_thread).
 
@@ -420,10 +420,10 @@ async def download_evidence_package(
     """Generate and stream a compliance evidence ZIP archive for a specific system.
 
     ZIP contains:
-      findings.json       — all findings for the system
-      findings.csv        — same in CSV (VulnerabilityReportBuilder column order)
-      compliance_tags.json — NIST/PCI compliance tags per finding
-      scan_metadata.json  — system metadata and severity breakdown
+      findings.json       -- all findings for the system
+      findings.csv        -- same in CSV (VulnerabilityReportBuilder column order)
+      compliance_tags.json -- NIST/PCI compliance tags per finding
+      scan_metadata.json  -- system metadata and severity breakdown
 
     Returns 404 if no findings exist for the given system_id.
     """

@@ -1,4 +1,4 @@
-# VR Module — The Reasoning Loop
+# VR Module -- The Reasoning Loop
 
 > **Status: design exploration.** This document predates the shipped VR
 > engine and describes an idealised contract, not current code. The
@@ -20,12 +20,12 @@
 > | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
 > | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
 
-Reference on the turn-by-turn reasoning loop. This is the engine of the module: how the LLM thinks about finding bugs, what it sees each turn, what it produces, and how the platform keeps it honest. Brainstorm-grade exploration — every gray area I can find, surfaced and named.
+Reference on the turn-by-turn reasoning loop. This is the engine of the module: how the LLM thinks about finding bugs, what it sees each turn, what it produces, and how the platform keeps it honest. Brainstorm-grade exploration -- every gray area I can find, surfaced and named.
 
 Cross-references:
-- `docs/VR_MODULE_TOOLCHAIN.md` — full tool matrix
-- `src/aila/platform/services/reasoning.py` — the existing `CyberReasoningEngine`
-- `src/aila/platform/contracts/reasoning.py` — `ReasoningTurnDecision` / `ReasoningCaseState`
+- `docs/VR_MODULE_TOOLCHAIN.md` -- full tool matrix
+- `src/aila/platform/services/reasoning.py` -- the existing `CyberReasoningEngine`
+- `src/aila/platform/contracts/reasoning.py` -- `ReasoningTurnDecision` / `ReasoningCaseState`
 
 ---
 
@@ -33,7 +33,7 @@ Cross-references:
 
 The platform already has a reasoning engine. Forensics already proves that hypothesis -> action -> observe -> refine works at production scale. The temptation is to drop in a few new strategy families ("fuzzing", "exploit_development") and call the loop done.
 
-That is wrong. Forensics asks "what happened on this disk?" — a question with a single ground truth waiting to be discovered. VR asks "is there a bug here, and can I weaponize it?" — a question whose answer is *constructed*, not found. The loop has to support:
+That is wrong. Forensics asks "what happened on this disk?" -- a question with a single ground truth waiting to be discovered. VR asks "is there a bug here, and can I weaponize it?" -- a question whose answer is *constructed*, not found. The loop has to support:
 
 - Open-ended hypothesis generation (forensics has questions; VR has *targets*)
 - Long-running side effects (a fuzzing campaign runs for hours and produces evidence asynchronously)
@@ -60,7 +60,7 @@ A single user-message payload composed of:
 | Strategy family | router (keyword or LLM) | one token |
 | Operator steering | `ReasoningOperatorSteering` | small |
 | Target context | `VRTargetContext` (arch, mitigations, target class, source/binary) | small |
-| Evidence pack | bounded pack of decompiled functions, source snippets, ASAN reports, traces | hard cap — sections + chars per section |
+| Evidence pack | bounded pack of decompiled functions, source snippets, ASAN reports, traces | hard cap -- sections + chars per section |
 | Case model | rendered `ReasoningCaseState` (contract, hypotheses, rejected, observables) | small |
 | Artefact index | one-line summary per artefact already produced (harness path, campaign id, crash id, PoC id) | small |
 | Recent transcript | last N turns compressed (action, expected_observation, one-line outcome) | bounded |
@@ -89,18 +89,18 @@ class VRTurnDecision(ReasoningTurnDecision):
 
 The discriminated `vr_action` replaces the generic `script_execute`/`tool_run` slot for VR-domain operations. Generic `tool_run` is still there as a safety hatch (e.g. `file`, `strings`, `checksec`).
 
-`pack_requests` are crucial — see §3 for the example.
+`pack_requests` are crucial -- see §3 for the example.
 
 ### 1.3 What it gets back
 
 Each `vr_action` produces a typed observation. The engine attaches:
 
-- `latency_ms` — wall clock for the action
-- `truncated` — bool, if the result was clipped
-- `dropped_evidence_count` — how many sections didn't fit
-- `artefact_id` — where the full output lives (filesystem on the workstation, or a row in `vr_artefacts`)
-- `obligation_satisfied: list[str]` — which prior obligations this evidence proves
-- `obligation_invalidated: list[str]` — which prior conclusions this evidence contradicts
+- `latency_ms` -- wall clock for the action
+- `truncated` -- bool, if the result was clipped
+- `dropped_evidence_count` -- how many sections didn't fit
+- `artefact_id` -- where the full output lives (filesystem on the workstation, or a row in `vr_artefacts`)
+- `obligation_satisfied: list[str]` -- which prior obligations this evidence proves
+- `obligation_invalidated: list[str]` -- which prior conclusions this evidence contradicts
 
 The next turn's evidence pack is built from artefacts referenced by the current case state plus whatever fresh observation the previous action produced.
 
@@ -132,7 +132,7 @@ async def run_turn(state: VRCaseState, project: VRProject) -> VRCaseState:
     return state
 ```
 
-`adjudicate` is the deterministic gate (Metis-style). It runs *before* dispatch — there is no point burning a 6-hour fuzzer run on a hypothesis whose stated obligations are already unmet.
+`adjudicate` is the deterministic gate (Metis-style). It runs *before* dispatch -- there is no point burning a 6-hour fuzzer run on a hypothesis whose stated obligations are already unmet.
 
 ---
 
@@ -142,16 +142,16 @@ The persona has to be: a research engineer who breaks software for a living, is 
 
 ### 2.1 Sections of the system prompt
 
-1. **Role & posture** — adversarial researcher, evidence-bound, refuses uncertainty laundering.
-2. **The closed-loop protocol** — same as forensics: turn budget, JSON-only response, contract.
-3. **Action vocabulary** — the typed `vr_action` schema with every action and its parameters.
-4. **Evidence rules** — never claim what isn't in the evidence pack; mark inferences explicitly; request expansion if the pack is insufficient.
-5. **Mitigation discipline** — claims of exploitability MUST address the binary's actual mitigations (ASLR, NX, stack canary, RELRO, CFI, CET, MTE, KASLR, SMEP/SMAP).
-6. **Strategy menu and pivot rules** — when to fuzz vs audit vs diff; when to abandon a hypothesis.
-7. **Target context** — class (native userspace / kernel / hypervisor / Java / Python / JS / PHP / Go / Rust), arch, OS, source availability, build system.
-8. **Operator steering** — confirmed facts, disproved hypotheses, pinned strategy, supplied techniques.
-9. **Anti-patterns** — every hallucination shape we've seen in dev: phantom bounds checks, wishful integer math, "exploitable in theory", fabricated stack traces.
-10. **Submission contract** — what must be true before `action="submit"` is permitted.
+1. **Role & posture** -- adversarial researcher, evidence-bound, refuses uncertainty laundering.
+2. **The closed-loop protocol** -- same as forensics: turn budget, JSON-only response, contract.
+3. **Action vocabulary** -- the typed `vr_action` schema with every action and its parameters.
+4. **Evidence rules** -- never claim what isn't in the evidence pack; mark inferences explicitly; request expansion if the pack is insufficient.
+5. **Mitigation discipline** -- claims of exploitability MUST address the binary's actual mitigations (ASLR, NX, stack canary, RELRO, CFI, CET, MTE, KASLR, SMEP/SMAP).
+6. **Strategy menu and pivot rules** -- when to fuzz vs audit vs diff; when to abandon a hypothesis.
+7. **Target context** -- class (native userspace / kernel / hypervisor / Java / Python / JS / PHP / Go / Rust), arch, OS, source availability, build system.
+8. **Operator steering** -- confirmed facts, disproved hypotheses, pinned strategy, supplied techniques.
+9. **Anti-patterns** -- every hallucination shape we've seen in dev: phantom bounds checks, wishful integer math, "exploitable in theory", fabricated stack traces.
+10. **Submission contract** -- what must be true before `action="submit"` is permitted.
 
 ### 2.2 Example system prompt
 
@@ -214,18 +214,18 @@ Hard rules:
   provenance.primary_artifact that points to a real artefact_id you produced.
 
 Strategy menu (pick the cheapest action that maximally narrows hypotheses):
-  fuzz       — when target has a clear input boundary and source/QEMU coverage
-  decompile  — when you need to read code you haven't seen
-  trace      — when behaviour at runtime is the cheapest way to confirm a guess
-  debug      — when you need register/memory state at a specific point
-  search_code — when you suspect a pattern across many functions
-  diff_versions — when you have two versions and want the silent fix
-  query_graph — when Trailmark / call-graph relationships are the shortcut
-  run_angr   — when path feasibility / constraint solving is faster than fuzz
-  write_harness — when no existing harness reaches the target function
-  write_exploit — only after the bug is confirmed and primitives are clear
-  analyze_crash — only on a real crash artefact you can name
-  reasoning  — when you need to think without burning a tool budget
+  fuzz       -- when target has a clear input boundary and source/QEMU coverage
+  decompile  -- when you need to read code you haven't seen
+  trace      -- when behaviour at runtime is the cheapest way to confirm a guess
+  debug      -- when you need register/memory state at a specific point
+  search_code -- when you suspect a pattern across many functions
+  diff_versions -- when you have two versions and want the silent fix
+  query_graph -- when Trailmark / call-graph relationships are the shortcut
+  run_angr   -- when path feasibility / constraint solving is faster than fuzz
+  write_harness -- when no existing harness reaches the target function
+  write_exploit -- only after the bug is confirmed and primitives are clear
+  analyze_crash -- only on a real crash artefact you can name
+  reasoning  -- when you need to think without burning a tool budget
 
 Pivot rules:
 - If a hypothesis has produced 0 progress over 3 consecutive turns AND no
@@ -262,7 +262,7 @@ Anti-patterns (do NOT do these, you will be downgraded to inconclusive):
   that was actually tested.
 ```
 
-The prompt is long. That's fine — it's static across turns and (modulo target context and operator steering) does not consume new tokens per turn beyond the first. With prompt caching it's effectively free after turn 1.
+The prompt is long. That's fine -- it's static across turns and (modulo target context and operator steering) does not consume new tokens per turn beyond the first. With prompt caching it's effectively free after turn 1.
 
 ### 2.3 Per-target-class addenda
 
@@ -271,7 +271,7 @@ The system prompt has a per-class block appended. Examples:
 - **kernel**: address SMEP/SMAP/KPTI/KASLR/PAN; primitives are "arbitrary kernel R/W via X" not "code exec via Y"; testing requires QEMU+KASAN, not native.
 - **java**: deserialization gadget chains; classpath introspection; JNDI/RMI surfaces; no shellcode talk.
 - **python**: pickle, eval/exec sinks, SSTI; no ROP talk.
-- **rust**: focus is unsafe blocks, FFI, and unsoundness — not memory corruption in the abstract.
+- **rust**: focus is unsafe blocks, FFI, and unsoundness -- not memory corruption in the abstract.
 
 Branching the prompt body is preferable to a single monster prompt that lists every class, because most rules are class-specific anti-patterns and the LLM does worse with a long list of "ignore this section if your target is X".
 
@@ -343,19 +343,19 @@ Artefacts already produced (3 records):
     kind: decompilation
     func: parse_extension
     summary: reads u16 ext_length, mallocs ext_length, memcpys ext_length+4
-             from caller buffer — see §observation below
+             from caller buffer -- see §observation below
 
 Transcript (last 2 turns):
-  Turn 1 — action=decompile parse_mqtt_message
+  Turn 1 -- action=decompile parse_mqtt_message
     expected: identify how extension parser is reached
     outcome:  observable parser_entry @ 0x401af0; H1 proposed
-  Turn 2 — action=decompile parse_extension
+  Turn 2 -- action=decompile parse_extension
     expected: spot the length-validation gap that the changelog hinted at
     outcome:  ext_length read as u16; memcpy size = ext_length + 4;
               malloc size = ext_length. dangerous_calls observed.
 
 New evidence from last action (turn 2):
-  artefact:dc-002 — parse_extension decompilation, 78 lines:
+  artefact:dc-002 -- parse_extension decompilation, 78 lines:
   ```c
   int parse_extension(mqtt_ctx_t *ctx, const uint8_t *buf, size_t len) {
       if (len < 2) return -1;
@@ -370,7 +370,7 @@ New evidence from last action (turn 2):
   }
   ```
   Pack drop count: 2 (xrefs to parse_extension and the wrapper that supplies
-  `len` were excluded — request via pack_requests if needed).
+  `len` were excluded -- request via pack_requests if needed).
 
 Evidence pack budget: 20 sections / 4000 chars per section.
 Sections used: 6/20. Chars used in current section: 2811/4000.
@@ -395,15 +395,15 @@ Return one JSON object matching the response contract.
 
 ### 3.1 Notes on this concrete example
 
-A reasonable model response on turn 3 here would be: confirm H1 by computing the actual integer arithmetic (`ext_length+4` overflows when `ext_length == 0xFFFC`, leading to `malloc(0xFFFC)` followed by `memcpy(out, src, 0)` — *not* an overflow), recognize the bug is actually different (overread on `buf` if `len` lies, but `len` is checked against `ext_length+4` first), and either propose a tighter hypothesis or request the wrapper that supplies `len` via `pack_requests`. The interesting design point: a careful LLM should *not* submit here. The deterministic adjudicator must enforce that — see §5.
+A reasonable model response on turn 3 here would be: confirm H1 by computing the actual integer arithmetic (`ext_length+4` overflows when `ext_length == 0xFFFC`, leading to `malloc(0xFFFC)` followed by `memcpy(out, src, 0)` -- *not* an overflow), recognize the bug is actually different (overread on `buf` if `len` lies, but `len` is checked against `ext_length+4` first), and either propose a tighter hypothesis or request the wrapper that supplies `len` via `pack_requests`. The interesting design point: a careful LLM should *not* submit here. The deterministic adjudicator must enforce that -- see §5.
 
 A careless LLM would say "obvious heap overflow, exploitable" and submit. We must have machinery to catch this. That's §8.
 
 ### 3.2 Compression of older turns
 
-Turns older than the last 2-3 are summarised to one line each (`Turn N — action=X expected=Y outcome=Z`). The full transcript lives in the durable workflow record. The LLM never sees raw old turns again unless it requests a specific artefact via `pack_requests`. This is what keeps long campaigns inside the context window.
+Turns older than the last 2-3 are summarised to one line each (`Turn N -- action=X expected=Y outcome=Z`). The full transcript lives in the durable workflow record. The LLM never sees raw old turns again unless it requests a specific artefact via `pack_requests`. This is what keeps long campaigns inside the context window.
 
-The summarisation is itself a small LLM call done by the engine, *not* by the research LLM. It's a different task, different prompt, smaller model — there is no need to burn the research model's context on transcript compression.
+The summarisation is itself a small LLM call done by the engine, *not* by the research LLM. It's a different task, different prompt, smaller model -- there is no need to burn the research model's context on transcript compression.
 
 ---
 
@@ -429,7 +429,7 @@ Failure modes: function not found, decompilation failed (bad CFG), IDA license u
 
 ### 4.2 `fuzz`
 
-Launch or extend a fuzzing campaign. Async — returns a campaign id, the LLM polls or moves on.
+Launch or extend a fuzzing campaign. Async -- returns a campaign id, the LLM polls or moves on.
 
 ```
 params: {
@@ -523,7 +523,7 @@ output: { hits: [{ file, line, snippet }], truncated: bool, dropped_count: int }
 latency: <2s typical
 ```
 
-Failure modes: pattern too broad (10k hits — engine forces truncate + warns), no source available (only binary).
+Failure modes: pattern too broad (10k hits -- engine forces truncate + warns), no source available (only binary).
 
 ### 4.7 `diff_versions`
 
@@ -558,11 +558,11 @@ output: { harness_artefact_id, language, source_path, build_status,
 latency: 5-30s (compilation included)
 ```
 
-The harness is *built* on the workstation. If build fails, `build_status="failed"` and the LLM sees the build log. The model can then iterate on the harness in subsequent turns. This is one place where the loop has to gracefully tolerate multiple compilation failures — common case, not failure mode.
+The harness is *built* on the workstation. If build fails, `build_status="failed"` and the LLM sees the build log. The model can then iterate on the harness in subsequent turns. This is one place where the loop has to gracefully tolerate multiple compilation failures -- common case, not failure mode.
 
 ### 4.9 `write_exploit`
 
-Generate an exploit. Does not run it (running is `debug` or a dedicated `run_poc` action — see §11 open question).
+Generate an exploit. Does not run it (running is `debug` or a dedicated `run_poc` action -- see §11 open question).
 
 ```
 params: {
@@ -664,9 +664,9 @@ How does the LLM decide what to do this turn? Two layers.
 
 This is **fine for the strategy family** (which is a coarse routing decision) but **insufficient for tactical strategy selection** (which function to analyse, fuzz vs audit vs diff, when to pivot). The keyword heuristic was designed for the multi-domain reasoning engine, not for VR's fine-grained per-turn choices.
 
-### 5.2 Tactical selection — LLM-driven
+### 5.2 Tactical selection -- LLM-driven
 
-Tactical choice happens inside the LLM each turn. The system prompt's "Strategy menu" is the menu; the case model is the state; the LLM picks. The deterministic layer does *not* pick the strategy — it only validates that the chosen strategy is consistent with the case state.
+Tactical choice happens inside the LLM each turn. The system prompt's "Strategy menu" is the menu; the case model is the state; the LLM picks. The deterministic layer does *not* pick the strategy -- it only validates that the chosen strategy is consistent with the case state.
 
 That said, we can scaffold the LLM with deterministic scoring:
 
@@ -706,9 +706,9 @@ These suggestions are surfaced to the LLM as a *hint section* in the user prompt
 
 ```
 Suggested actions (engine-derived; not binding):
-  - decompile parse_wrapper @ 0x401a00 — H1 cites this caller; not in pack yet
-  - search_code "uint16_t.*_length\s*=" — variant search for length-truncation pattern
-  - diff_versions 1.2.3 vs 1.2.4 scope=parse_extension — operator hint about silent fix
+  - decompile parse_wrapper @ 0x401a00 -- H1 cites this caller; not in pack yet
+  - search_code "uint16_t.*_length\s*=" -- variant search for length-truncation pattern
+  - diff_versions 1.2.3 vs 1.2.4 scope=parse_extension -- operator hint about silent fix
 ```
 
 The LLM is free to ignore them. But suggestion quality is testable separately from LLM quality, which is good for evals.
@@ -784,7 +784,7 @@ The system prompt names this as a first-class move. Without that prompt instruct
 "Same bug class as CVE-XXXX in a different parser." The loop supports this via `query_graph` and `search_code` calls keyed off a confirmed-finding pattern:
 
 ```
-Confirmed: H1 — uint16_t length read, memcpy of length+4
+Confirmed: H1 -- uint16_t length read, memcpy of length+4
 Variant query: search_code pattern for "uint(8|16|32)_t .*length.*=" near memcpy
 Result: 4 functions in libfoo, 2 in dependencies
 ```
@@ -795,11 +795,11 @@ Then each variant is decompiled and evaluated. This is mechanical *given* a conf
 
 Examples we've seen elsewhere and want to support:
 
-- "Fuzz the error handler, not the happy path" — error recovery code is less-tested.
-- "Fuzz with the binary's own test corpus, not random bytes" — gets past gating quickly.
-- "Differential fuzz two versions of the same parser" — find divergences.
-- "Fuzz with `setlocale` set to a weird locale" — locale-dependent integer parsing.
-- "Replay protocol traces with one byte mutated at each offset" — surgical mutation.
+- "Fuzz the error handler, not the happy path" -- error recovery code is less-tested.
+- "Fuzz with the binary's own test corpus, not random bytes" -- gets past gating quickly.
+- "Differential fuzz two versions of the same parser" -- find divergences.
+- "Fuzz with `setlocale` set to a weird locale" -- locale-dependent integer parsing.
+- "Replay protocol traces with one byte mutated at each offset" -- surgical mutation.
 
 The loop supports these because the harness format is open-ended and the LLM writes the harness. The system prompt names them as legitimate moves under "Strategy menu".
 
@@ -820,7 +820,7 @@ The adjudicator treats `absent` observables as evidence (not nothing). The model
 
 The danger is the LLM dressing up a guess as a creative leap. Mitigations:
 
-- Every hypothesis has a `kill_criterion` — a falsifiable test. If the kill criterion isn't testable with available tools, the hypothesis is malformed.
+- Every hypothesis has a `kill_criterion` -- a falsifiable test. If the kill criterion isn't testable with available tools, the hypothesis is malformed.
 - Every claim with `confidence ≥ strong` requires obligation evidence (Metis pattern).
 - The deterministic adjudicator catches uncertainty laundering ("might", "could", "in theory").
 
@@ -834,25 +834,25 @@ The loop is finite. Five distinct termination conditions; each maps to a concret
 
 | Trigger | Detector | Outcome |
 |---|---|---|
-| Time budget exhausted | wall-clock since project start vs `project.time_budget_minutes` | partial_results — emit current case state as a research log |
+| Time budget exhausted | wall-clock since project start vs `project.time_budget_minutes` | partial_results -- emit current case state as a research log |
 | Tool budget exhausted | sum of action costs vs `project.tool_budget` | partial_results |
 | LLM proposes `submit` and adjudicator accepts | adjudicator | finding emitted, workflow transitions to advisory |
 | LLM proposes `submit` repeatedly and adjudicator rejects | repeat counter ≥ 3 | escalated to operator; workflow pauses for steering |
-| All hypotheses confirmed or rejected, no unsubmitted finding | case state inspector | depleted — emit "no exploitable defect found, here's why" report with rejected hypotheses as evidence-of-absence |
+| All hypotheses confirmed or rejected, no unsubmitted finding | case state inspector | depleted -- emit "no exploitable defect found, here's why" report with rejected hypotheses as evidence-of-absence |
 | Coverage plateau across all active campaigns ≥ Xh AND no new hypotheses ≥ Y turns | engine watchdog | depleted with hint to operator |
 | Operator says stop | UI signal | workflow aborts, evidence preserved |
 
 A few things I want to flag:
 
 - "Depleted" is not failure. A documented "I tried these 14 hypotheses, here's why each was rejected, here's the campaign coverage data" is a legitimate, valuable VR output. The advisory pipeline must support `outcome="no_finding"`.
-- The LLM does not decide termination — the engine does. The LLM only proposes `submit`. Letting the LLM also decide when to give up creates an out — "this is too hard, terminating" — which is exactly what we don't want.
-- Operator stop is not an emergency. It happens — the operator sees the transcript and intervenes ("stop, you're going down a rathole, here's the right pivot"). The workflow handles this with the existing operator-steering machinery; the LLM resumes with new context.
+- The LLM does not decide termination -- the engine does. The LLM only proposes `submit`. Letting the LLM also decide when to give up creates an out -- "this is too hard, terminating" -- which is exactly what we don't want.
+- Operator stop is not an emergency. It happens -- the operator sees the transcript and intervenes ("stop, you're going down a rathole, here's the right pivot"). The workflow handles this with the existing operator-steering machinery; the LLM resumes with new context.
 
 ### 7.1 Convergence detection
 
 A useful signal: `hypothesis_velocity` = (new hypotheses + rejections) per turn over the last 5 turns. When velocity drops below 0.5 *and* no new observables for ≥3 turns, the LLM is spinning. The watchdog injects a "you appear stuck; either pivot or escalate to operator" instruction next turn.
 
-This is a *prompt-time injection*, not a tool — it pressures the model without removing its agency.
+This is a *prompt-time injection*, not a tool -- it pressures the model without removing its agency.
 
 ---
 
@@ -872,7 +872,7 @@ If this happens 3+ times in the same case, the watchdog surfaces it to the opera
 
 ### 8.2 The LLM confabulates
 
-**Shape:** "the crash at 0x4140 confirms a controlled write" — but no crash artefact exists. Or "the bounds check at line 87 prevents the overflow" — but line 87 does not contain a bounds check.
+**Shape:** "the crash at 0x4140 confirms a controlled write" -- but no crash artefact exists. Or "the bounds check at line 87 prevents the overflow" -- but line 87 does not contain a bounds check.
 
 **Detect:** the adjudicator's evidence-obligation check. Every claim with `confidence ≥ medium` derives a list of required evidence pieces. If a claim references an artefact id that doesn't exist, the adjudicator catches it (cheap). If it references content within an artefact, the engine grep-validates the citation against the artefact body (medium cost).
 
@@ -886,7 +886,7 @@ If this happens 3+ times in the same case, the watchdog surfaces it to the opera
 
 **Recover:** truncate at the byte cap, set `truncated=true` and `dropped_lines=N` (or `dropped_chars=N`). The full output is persisted as an artefact; the LLM can request a slice via `pack_requests`. For pseudocode specifically, we slice by basic block / line range. For ASAN reports, we keep the top frame and summary; the LLM requests inner frames if needed.
 
-This is not graceful degradation — it is the design. The LLM never sees full output. The model adapts to slicing.
+This is not graceful degradation -- it is the design. The LLM never sees full output. The model adapts to slicing.
 
 ### 8.4 The LLM picks the wrong strategy repeatedly
 
@@ -906,11 +906,11 @@ This is not graceful degradation — it is the design. The LLM never sees full o
 
 ### 8.6 The adjudicator is too aggressive
 
-**Shape:** the LLM has a legitimate finding but the adjudicator keeps downgrading it because of a rule ("RCE claim requires CFI bypass" — but this target has no CFI).
+**Shape:** the LLM has a legitimate finding but the adjudicator keeps downgrading it because of a rule ("RCE claim requires CFI bypass" -- but this target has no CFI).
 
 **Detect:** persistent submit rejections with the same rule firing.
 
-**Recover:** the adjudicator's rules must be data-driven, not hardcoded. The CFI rule reads `project.target_context.mitigations` and only fires when CFI is on. This pattern applies to every rule — the adjudicator validates against *the actual target*, not a generic checklist. When new rule cases emerge in development, the rule is patched, not the LLM's wording.
+**Recover:** the adjudicator's rules must be data-driven, not hardcoded. The CFI rule reads `project.target_context.mitigations` and only fires when CFI is on. This pattern applies to every rule -- the adjudicator validates against *the actual target*, not a generic checklist. When new rule cases emerge in development, the rule is patched, not the LLM's wording.
 
 ### 8.7 Asynchronous campaigns leak state
 
@@ -918,7 +918,7 @@ This is not graceful degradation — it is the design. The LLM never sees full o
 
 **Detect:** the workflow's evidence-snapshot logic must integrate campaign telemetry on every turn. The campaign service publishes events; the workflow subscribes and merges into observables.
 
-**Recover:** belt-and-suspenders — every turn does a "campaigns delta since last turn" pull as part of building the user prompt. New crashes appear as observables. Stale state is impossible by construction.
+**Recover:** belt-and-suspenders -- every turn does a "campaigns delta since last turn" pull as part of building the user prompt. New crashes appear as observables. Stale state is impossible by construction.
 
 ### 8.8 The LLM produces unsafe artefacts
 
@@ -926,24 +926,24 @@ This is not graceful degradation — it is the design. The LLM never sees full o
 
 **Detect:** static scan of artefact contents before persistence. Allowlist of imports, syscalls, and operations. Pattern detection for outbound network in shellcode (any `connect`, `socket(AF_INET)`, common LHOST/LPORT patterns).
 
-**Recover:** artefact write is rejected, the LLM gets a structured rejection ("shellcode contains `connect` to external IP — disallowed"), the LLM must produce a localhost or no-connect variant. Persistent attempts escalate to operator.
+**Recover:** artefact write is rejected, the LLM gets a structured rejection ("shellcode contains `connect` to external IP -- disallowed"), the LLM must produce a localhost or no-connect variant. Persistent attempts escalate to operator.
 
 This is more a containment concern than a reasoning concern, but it touches the loop because rejected artefacts must propagate back as observations the LLM can react to.
 
 
 ---
 
-## 8.bis What shipped — corrections to the brainstorm
+## 8.bis What shipped -- corrections to the brainstorm
 
 The sections above are the original design exploration. The module that shipped narrows several of them in ways worth recording in this doc so a new reader doesn't take the brainstorm as the API.
 
 ### 8.bis.1 Six personas, not three
 
-Section 9 used to file a single-vs-split-LLM question as open. It's settled — see the persona table in §9.2. The reasoning loop ALWAYS runs through `HonestVulnResearcher.run_turn()` in `src/aila/modules/vr/agents/vuln_researcher.py`, parameterised by the per-branch `persona_voice`. Six branches deliberate in parallel; `claim_verifier.py` plus a synthesis agent reduce their outcomes to one finding.
+Section 9 used to file a single-vs-split-LLM question as open. It's settled -- see the persona table in §9.2. The reasoning loop ALWAYS runs through `HonestVulnResearcher.run_turn()` in `src/aila/modules/vr/agents/vuln_researcher.py`, parameterised by the per-branch `persona_voice`. Six branches deliberate in parallel; `claim_verifier.py` plus a synthesis agent reduce their outcomes to one finding.
 
 ### 8.bis.2 Auto-steering (in addition to the watchdog)
 
-`src/aila/modules/vr/agents/auto_steering.py` runs after every tool dispatch. When a tool result matches a known dead-end pattern (`read_lines` past EOF; `read_function` returning a file header because the indexer faulted on the requested symbol; xref tool returning 0 hits despite the symbol existing), the dispatcher POSTs an operator-style message to the investigation with the corrective info — the exact same DB write the UI's chat composer makes. The agent sees it next turn under `*** OPERATOR STEERING — MANDATORY OVERRIDE ***` and cannot tell human steering apart from auto steering; that is intentional. De-dupe is keyed on `(rule, target_file, target_symbol)`. Auto-steering rules ship as `_detect_X` / `_derive_X_correction` pairs and are appended without prompt changes.
+`src/aila/modules/vr/agents/auto_steering.py` runs after every tool dispatch. When a tool result matches a known dead-end pattern (`read_lines` past EOF; `read_function` returning a file header because the indexer faulted on the requested symbol; xref tool returning 0 hits despite the symbol existing), the dispatcher POSTs an operator-style message to the investigation with the corrective info -- the exact same DB write the UI's chat composer makes. The agent sees it next turn under `*** OPERATOR STEERING -- MANDATORY OVERRIDE ***` and cannot tell human steering apart from auto steering; that is intentional. De-dupe is keyed on `(rule, target_file, target_symbol)`. Auto-steering rules ship as `_detect_X` / `_derive_X_correction` pairs and are appended without prompt changes.
 
 ### 8.bis.3 Sibling-consensus rejection
 
@@ -1049,9 +1049,9 @@ are never evicted. `render_case_model` partitions tool readings
 
 ## 9. Open Questions
 
-1. **Per-turn vs per-action tool budget.** Is the budget "you have 18 turns left" or "you have 40 tool-action units, decompile=1, fuzz=8, run_angr=4"? Per-action better reflects actual cost (a 6-hour fuzz is not the same as a decompilation), but it is harder for the LLM to reason about and risks the model gaming the cost function. Leaning per-action with the costs surfaced in the user prompt — but not yet decided.
+1. **Per-turn vs per-action tool budget.** Is the budget "you have 18 turns left" or "you have 40 tool-action units, decompile=1, fuzz=8, run_angr=4"? Per-action better reflects actual cost (a 6-hour fuzz is not the same as a decompilation), but it is harder for the LLM to reason about and risks the model gaming the cost function. Leaning per-action with the costs surfaced in the user prompt -- but not yet decided.
 
-2. **Single LLM vs split-roles — settled, six personas.** Open at brainstorm time; settled in shipping code. The module ships SIX personas, three role buckets, one model task type per role:
+2. **Single LLM vs split-roles -- settled, six personas.** Open at brainstorm time; settled in shipping code. The module ships SIX personas, three role buckets, one model task type per role:
 
    | Persona | Role | Routed task type |
    |---|---|---|
@@ -1065,11 +1065,11 @@ are never evicted. `render_case_model` partitions tool readings
 
 4. **How long should the system prompt be.** The example in §2.2 is ~70 lines. Each per-class addendum is another 20-40. We can either ship one monster prompt (full menu always) or compose per-target-class. Composition is cleaner but adds another moving part (the prompt builder). Open: which scales better to 9 target classes? If composition, where does the test for "prompt was assembled correctly for target X" live?
 
-5. **Pack_requests vs auto-expansion.** Currently the LLM asks for more context via `pack_requests`, and the next turn's pack honours it. Alternative: the engine auto-expands when it detects an unresolved reference (function name in `reasoning` but not in pack). Auto-expansion is convenient but hides what the LLM was missing. Manual is better for evals — explicit pack misses are signal. Leaning manual; revisit if it becomes a usability tax.
+5. **Pack_requests vs auto-expansion.** Currently the LLM asks for more context via `pack_requests`, and the next turn's pack honours it. Alternative: the engine auto-expands when it detects an unresolved reference (function name in `reasoning` but not in pack). Auto-expansion is convenient but hides what the LLM was missing. Manual is better for evals -- explicit pack misses are signal. Leaning manual; revisit if it becomes a usability tax.
 
 6. **Per-hypothesis case state vs single global state.** Right now `ReasoningCaseState` is a single object per project. For a target with 8 hypotheses across 4 sub-targets, is one big state model the right shape? Or do we partition: each hypothesis has its own evidence set, and the global state is a thin index? Partitioning helps focus per-turn evidence packs but complicates merging when two hypotheses combine into a third.
 
-7. **N-day PoC writer reuses the same loop?** D-01 says yes — same hypothesis-action-observe shape. But the N-day workflow has a much narrower goal (crash on version X, clean on Y) and might benefit from a dedicated, simpler loop with fewer action types. The cost of a separate loop is divergent code; the cost of one shared loop is N-day prompts that have to disable half the action menu. Default: one loop, action-menu trimmed via target context. Revisit if the N-day workflow's success rate is poor under the unified loop.
+7. **N-day PoC writer reuses the same loop?** D-01 says yes -- same hypothesis-action-observe shape. But the N-day workflow has a much narrower goal (crash on version X, clean on Y) and might benefit from a dedicated, simpler loop with fewer action types. The cost of a separate loop is divergent code; the cost of one shared loop is N-day prompts that have to disable half the action menu. Default: one loop, action-menu trimmed via target context. Revisit if the N-day workflow's success rate is poor under the unified loop.
 
 8. **When does the watchdog become annoying.** The watchdog injects "you appear stuck", "you have looped on H3", "your last 3 `trace` actions failed". Too many of these and the user prompt becomes a wall of meta-feedback that crowds out evidence. We need a clear precedence: when watchdog signals are loud, real evidence may need to be moved to a separate slot or referenced by id only. Open: what is the budget for watchdog text in the user prompt?
 
@@ -1084,4 +1084,4 @@ The reasoning loop for VR is the forensics loop with four upgrades:
 3. **A deterministic adjudicator** that gates submissions, downgrades confabulation, blocks dead-state transitions, and adapts to per-target mitigation context.
 4. **A watchdog** that detects looping, plateau, strategy misfit, and stale hypotheses, and either pressures the LLM or escalates to the operator.
 
-Every other piece — the multi-turn structure, hypothesis bookkeeping, operator steering, durable workflow — already exists in the platform. The work is in the four upgrades and in proving they hold up against a creative-but-careless model.
+Every other piece -- the multi-turn structure, hypothesis bookkeeping, operator steering, durable workflow -- already exists in the platform. The work is in the four upgrades and in proving they hold up against a creative-but-careless model.

@@ -5,12 +5,12 @@ state (fix §27).
 point for clearing queued ARQ jobs that target a specific investigation.
 Four call sites historically existed:
 
-  * ``POST /vr/investigations/{id}/pause`` (api_router — Phase B owns)
+  * ``POST /vr/investigations/{id}/pause`` (api_router -- Phase B owns)
   * ``investigation_emit`` cap-exceeded sweep (Phase C deletes the block)
   * ``OutcomeDispatcher._update_outcome_status`` sibling halt (W2 E1)
   * ``investigation_reaper`` cap sweep (Phase C deletes the file)
 
-All four route through this function — none re-implements the purge
+All four route through this function -- none re-implements the purge
 primitive. :func:`purge_for_investigation` is a thin alias kept for
 future-callers that prefer the shorter name.
 
@@ -28,7 +28,7 @@ Race window: between the zrem and the delete of the job blob, a worker
 that already dequeued the job (BEFORE the zrem fired) still has the
 job_id in memory and will fetch the (not-yet-deleted) blob and run the
 job. The ``investigation_setup`` STATUS_LOCKED guard catches that
-execution and exits cleanly — the dequeued worker's run becomes a
+execution and exits cleanly -- the dequeued worker's run becomes a
 no-op. See §60 for the full race analysis; the comment at the
 zrem/delete pair below is the canonical mitigation reference.
 """
@@ -63,7 +63,7 @@ async def purge_arq_jobs_for_investigation(
     """Drop queued ARQ jobs whose ``kwargs.investigation_id`` matches.
 
     Returns a count summary so callers can log how much was reclaimed.
-    Best-effort: any Redis / unpickle error is logged and skipped — the
+    Best-effort: any Redis / unpickle error is logged and skipped -- the
     investigation_setup STATUS_LOCKED guard still catches anything we
     miss here, so a partial purge is safe.
     """
@@ -96,7 +96,7 @@ async def purge_arq_jobs_for_investigation(
     matched = 0
     purged_jobs = 0
     try:
-        # Snapshot the queue. ZRANGE with WITHSCORES isn't needed —
+        # Snapshot the queue. ZRANGE with WITHSCORES isn't needed --
         # we only need member ids. Cap at 10k to bound work; in
         # practice the queue rarely exceeds a few hundred entries.
         job_ids: list[bytes] = await client.zrange(queue_key, 0, 9999)
@@ -115,7 +115,7 @@ async def purge_arq_jobs_for_investigation(
                 if kwargs.get("investigation_id") != investigation_id:
                     continue
                 matched += 1
-                # fix §60 — dequeue-then-delete window (worker that
+                # fix §60 -- dequeue-then-delete window (worker that
                 # already dequeued before zrem will still find the blob
                 # and execute it) is mitigated by investigation_setup's
                 # STATUS_LOCKED guard at the start of the workflow turn,
@@ -137,7 +137,7 @@ async def purge_arq_jobs_for_investigation(
                 AttributeError,
                 ValueError,
             ) as exc:
-                # fix §59 — broaden the pickle catch. Old ARQ versions
+                # fix §59 -- broaden the pickle catch. Old ARQ versions
                 # pickled classes that no longer exist (ImportError),
                 # truncated blobs raise EOFError, AttributeError fires
                 # when ``obj.get`` is missing because the unpickle
@@ -164,8 +164,8 @@ async def purge_arq_jobs_for_investigation(
     return {"scanned": scanned, "matched": matched, "purged_jobs": purged_jobs}
 
 
-# fix §27 — alias under the shorter name from the cutover spec so
+# fix §27 -- alias under the shorter name from the cutover spec so
 # future callers can converge on a single shape. Both names point at
 # the same primitive; the centralisation claim is that NO other module
-# implements ARQ purge logic — they all go through here.
+# implements ARQ purge logic -- they all go through here.
 purge_for_investigation = purge_arq_jobs_for_investigation

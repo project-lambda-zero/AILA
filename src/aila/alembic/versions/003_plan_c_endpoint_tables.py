@@ -1,4 +1,4 @@
-"""Plan C endpoint support tables — notifications, widget layouts, saved filters,
+"""Plan C endpoint support tables -- notifications, widget layouts, saved filters,
 scheduled reports, finding workflow records, and asset tag vocabulary.
 
 Revision ID: 003_plan_c_endpoint_tables

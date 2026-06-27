@@ -1,4 +1,4 @@
-"""Binary diff tool — proxies IDA headless MCP diff capabilities.
+"""Binary diff tool -- proxies IDA headless MCP diff capabilities.
 
 Compares two binary versions to surface security patches: structural diffs
 across whole binaries and pseudocode diffs for individual functions. The
@@ -49,7 +49,7 @@ class PatchDifferTool(Tool):
 
         Returns:
             Result dict from the underlying MCP call (``status`` field is
-            ``ready``, ``pending``, or ``error``) — or an aggregated result
+            ``ready``, ``pending``, or ``error``) -- or an aggregated result
             for ``find_patched_functions``.
         """
         if action == "diff_binaries":

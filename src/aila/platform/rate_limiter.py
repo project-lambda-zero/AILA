@@ -2,7 +2,7 @@
 
 A token bucket allows a configurable burst (up to `capacity` tokens) then
 refills at `rate` tokens/second.  Concurrent callers each claim a future token
-slot and sleep only for their specific wait — they do not serialize behind each
+slot and sleep only for their specific wait -- they do not serialize behind each
 other for the full interval.
 
 Usage (module-level singleton, shared across all instances of an adapter)::
@@ -13,8 +13,8 @@ Usage (module-level singleton, shared across all instances of an adapter)::
         _limiter.acquire()
         return httpx.get(url)
 
-The lock is held only during the token accounting calculation — never during
-the sleep — so it scales to many concurrent callers without contention.
+The lock is held only during the token accounting calculation -- never during
+the sleep -- so it scales to many concurrent callers without contention.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class TokenBucketRateLimiter:
     Args:
         rate: Refill rate in tokens per second (e.g. 1/0.75 ≈ 1.33 req/s).
         capacity: Maximum tokens the bucket can hold (burst size).
-                  Defaults to 1 (no burst — pure leaky-bucket behaviour).
+                  Defaults to 1 (no burst -- pure leaky-bucket behaviour).
     """
 
     def __init__(self, rate: float, capacity: float = 1.0) -> None:
@@ -56,7 +56,7 @@ class TokenBucketRateLimiter:
     def _claim_token(self) -> float:
         """Refill bucket, claim one token, return seconds to sleep (0 if immediate).
 
-        Concurrent callers each get their own future slot — the next caller will
+        Concurrent callers each get their own future slot -- the next caller will
         see a bucket that already has the current caller's token subtracted, so
         it naturally gets assigned a slot one interval later.
         """
@@ -70,7 +70,7 @@ class TokenBucketRateLimiter:
                 self._tokens -= 1.0
                 return 0.0
 
-            # Not enough tokens — calculate how long until one is available
+            # Not enough tokens -- calculate how long until one is available
             deficit = 1.0 - self._tokens
             wait = deficit / self._rate
             # Pre-subtract the token we are claiming for the future slot

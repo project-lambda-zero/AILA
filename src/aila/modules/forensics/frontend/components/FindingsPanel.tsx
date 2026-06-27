@@ -17,7 +17,7 @@ function reasonSentence(reasons: string[]): string {
     } else if (r.startsWith("suspicious_path:")) {
       parts.push("it runs from a location legitimate installers almost never write to (AppData/Local/Temp, Users/Public, Windows/Temp, ProgramData), a classic attacker-staging pattern");
     } else if (r === "double_extension") {
-      parts.push("the filename uses a double-extension (e.g. `invoice.pdf.exe`) — a classic phishing dropper disguise");
+      parts.push("the filename uses a double-extension (e.g. `invoice.pdf.exe`) -- a classic phishing dropper disguise");
     } else {
       parts.push(`heuristic "${r}" matched`);
     }
@@ -39,31 +39,31 @@ function narrativeFor(f: Finding): { title: string; body: string } {
 
   if (f.artifact_type === "runkeys" || f.artifact_type === "runkey") {
     return {
-      title: `Persistence — Run-key entry "${f.name ?? evidence.slice(0, 60)}"`,
+      title: `Persistence -- Run-key entry "${f.name ?? evidence.slice(0, 60)}"`,
       body: `A Windows Run-key${who} was configured to launch \`${evidence}\`${where}${when}${runs}. It is worth examining because ${reason}. Run keys execute at user logon, so this grants the binary automatic re-execution privileges on every session.`,
     };
   }
   if (f.artifact_type.startsWith("services")) {
     return {
-      title: `Persistence — Windows service "${f.name ?? evidence.slice(0, 60)}"`,
-      body: `A Windows service${who} targets \`${evidence}\`${where}. Suspicious because ${reason}. Services run with SYSTEM privilege at boot — a strong persistence primitive.`,
+      title: `Persistence -- Windows service "${f.name ?? evidence.slice(0, 60)}"`,
+      body: `A Windows service${who} targets \`${evidence}\`${where}. Suspicious because ${reason}. Services run with SYSTEM privilege at boot -- a strong persistence primitive.`,
     };
   }
   if (f.artifact_type.startsWith("tasks")) {
     return {
-      title: `Persistence — Scheduled task "${f.name ?? evidence.slice(0, 60)}"`,
-      body: `A scheduled task${who} runs \`${evidence}\`${where}${when}. Flagged because ${reason}. Scheduled tasks can trigger on user idle, logon, or arbitrary times — useful for stealthy re-triggering.`,
+      title: `Persistence -- Scheduled task "${f.name ?? evidence.slice(0, 60)}"`,
+      body: `A scheduled task${who} runs \`${evidence}\`${where}${when}. Flagged because ${reason}. Scheduled tasks can trigger on user idle, logon, or arbitrary times -- useful for stealthy re-triggering.`,
     };
   }
   if (f.artifact_type === "prefetch" || f.artifact_type.startsWith("prefetch")) {
     return {
-      title: `Execution — ${evidence} ran${runs}`,
-      body: `The binary \`${evidence}\`${where} was executed${runs}${when}. Flagged because ${reason}. Prefetch is Windows' own record — this is proof the binary ran, not just existed.`,
+      title: `Execution -- ${evidence} ran${runs}`,
+      body: `The binary \`${evidence}\`${where} was executed${runs}${when}. Flagged because ${reason}. Prefetch is Windows' own record -- this is proof the binary ran, not just existed.`,
     };
   }
   if (f.artifact_type.startsWith("startup")) {
     return {
-      title: `Persistence — Startup item "${f.name ?? evidence.slice(0, 60)}"`,
+      title: `Persistence -- Startup item "${f.name ?? evidence.slice(0, 60)}"`,
       body: `A startup entry${who} points to \`${evidence}\`${where}. Flagged because ${reason}.`,
     };
   }
@@ -75,7 +75,7 @@ function narrativeFor(f: Finding): { title: string; body: string } {
 
 /** Extract every key from the raw dissect record that likely contains a
  *  command string, args, or a full launch spec. This is what the user
- *  wants to see when expanded — the actual "how it was run". */
+ *  wants to see when expanded -- the actual "how it was run". */
 function extractCommandFields(raw: Record<string, unknown> | undefined): Array<[string, string]> {
   if (!raw || typeof raw !== "object") return [];
   const interesting = [
@@ -250,11 +250,11 @@ function FindingRow({
 }
 
 /**
- * Auto-findings view — flat, collapsible list of every record the
+ * Auto-findings view -- flat, collapsible list of every record the
  * collector heuristics tagged with `suspicious_reasons` (LOLBAS,
  * AppData/Temp execution, double-extension, etc.). One row = one
  * concrete piece of evidence; expand to see exact parameters + raw
- * record. Each row can be marked as false positive — that hides it
+ * record. Each row can be marked as false positive -- that hides it
  * and drops a `verdict="false"` directive so every future
  * investigation sees "analyst cleared this as benign".
  */
@@ -329,7 +329,7 @@ export function FindingsPanel({ projectId }: { projectId: string }) {
     
     {findings.length === 0 ? (
       <p className="text-sm text-text-muted italic py-6 text-center">
-        No suspicious findings yet. Run Full Analysis to populate — the heuristics will tag any
+        No suspicious findings yet. Run Full Analysis to populate -- the heuristics will tag any
         LOLBAS, AppData/Temp execution, or double-extension patterns automatically.
       </p>
     ) : (

@@ -27,7 +27,7 @@ const ailaChartVariants = cva("w-full", {
 export type AilaChartVariants = VariantProps<typeof ailaChartVariants>
 
 /**
- * Default AILA color palette — uses CSS variables from globals.css design tokens.
+ * Default AILA color palette -- uses CSS variables from globals.css design tokens.
  * Colors adapt automatically between light and dark themes via CSS custom properties.
  */
 const DEFAULT_COLORS = [
@@ -42,7 +42,7 @@ const DEFAULT_COLORS = [
 
 export interface AilaChartProps extends AilaChartVariants {
   /**
-   * Chart type — determines which Recharts chart is rendered.
+   * Chart type -- determines which Recharts chart is rendered.
    */
   type: "bar" | "line" | "area" | "pie"
   /**
@@ -75,7 +75,7 @@ export interface AilaChartProps extends AilaChartVariants {
 }
 
 /**
- * Lazy boundary — keeps recharts (~430 KB) out of the root entry.
+ * Lazy boundary -- keeps recharts (~430 KB) out of the root entry.
  * Vite chunk-splits ./AilaChart.view together with the vendor-recharts
  * chunk; both arrive only when an AilaChart instance first renders.
  */
@@ -106,11 +106,11 @@ function AilaChartFallback({
 }
 
 /**
- * AilaChart — Recharts wrapper with AILA design token colors (D-17).
+ * AilaChart -- Recharts wrapper with AILA design token colors (D-17).
  *
  * The implementation lives in ./AilaChart.view and is loaded lazily so
  * the recharts library stays out of the initial bundle. Render the
- * component normally — the suspense boundary is internal.
+ * component normally -- the suspense boundary is internal.
  *
  * All color references use CSS variables (`var(--color-*)`) so they
  * adapt automatically to dark/light mode without any JS.

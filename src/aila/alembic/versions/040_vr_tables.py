@@ -1,8 +1,8 @@
-"""040 — create vulnerability research module tables.
+"""040 -- create vulnerability research module tables.
 
 Adds the two tables required by the vulnerability research (VR) module:
-  - vr_projects        — per-target research project with budget/obligation snapshot
-  - vr_findings        — confirmed vulnerabilities with triage, PoC, and disclosure state
+  - vr_projects        -- per-target research project with budget/obligation snapshot
+  - vr_findings        -- confirmed vulnerabilities with triage, PoC, and disclosure state
 
 Revision ID: 040_vr_tables
 Revises: 039_forensics_directive_controls

@@ -1,7 +1,7 @@
 """Regression tests for Phase 138 Plan 02 bug fixes.
 
 Covers:
-- BE-05: GET /health with async module health check functions — no "coroutine never awaited"
+- BE-05: GET /health with async module health check functions -- no "coroutine never awaited"
 - SYS-04: GET /systems returns correct paginated data shape with items array
 
 All tests run against PostgreSQL via AILA_TEST_DATABASE_URL.
@@ -19,7 +19,7 @@ from aila.api.routers.health import _run_single_health_check
 from aila.storage.db_models import ApiKeyRecord
 
 # ---------------------------------------------------------------------------
-# Task 1: BE-05 — async health checks correctly awaited
+# Task 1: BE-05 -- async health checks correctly awaited
 # ---------------------------------------------------------------------------
 
 
@@ -76,7 +76,7 @@ async def test_run_single_health_check_timeout() -> None:
     assert _HEALTH_CHECK_TIMEOUT_SECONDS == 5.0
 
     async def slow_check() -> dict[str, object]:
-        # Sleep far longer than the timeout — will be cancelled by wait_for
+        # Sleep far longer than the timeout -- will be cancelled by wait_for
         await _asyncio.sleep(100)
         return {"status": "up"}
 
@@ -100,8 +100,8 @@ async def test_health_endpoint_with_async_module_checks(
 ) -> None:
     """GET /health works correctly when a registered module exposes async health check functions.
 
-    Before BE-05 fix: health_checks() was called via asyncio.to_thread (wrong — it's sync),
-    and each check_fn was also passed to asyncio.to_thread (wrong — they're coroutines).
+    Before BE-05 fix: health_checks() was called via asyncio.to_thread (wrong -- it's sync),
+    and each check_fn was also passed to asyncio.to_thread (wrong -- they're coroutines).
     After fix: health_checks() is called directly; coroutines are detected and awaited.
     """
     import warnings
@@ -132,7 +132,7 @@ async def test_health_endpoint_with_async_module_checks(
 
     token, _ = issue_jwt_token(admin_key_record)
 
-    # Capture RuntimeWarnings — before the fix, "coroutine was never awaited" fires here
+    # Capture RuntimeWarnings -- before the fix, "coroutine was never awaited" fires here
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
         async with AsyncClient(
@@ -162,7 +162,7 @@ async def test_health_endpoint_with_async_module_checks(
 
 
 # ---------------------------------------------------------------------------
-# Task 2: SYS-04 — GET /systems returns correct paginated data shape
+# Task 2: SYS-04 -- GET /systems returns correct paginated data shape
 # ---------------------------------------------------------------------------
 
 
@@ -176,7 +176,7 @@ async def test_systems_endpoint_returns_correct_shape(
 
     SYS-04: Verifies the API returns the shape that the frontend useSystems()
     hook expects: {total, page, page_size, pages, items: [...]}.
-    The frontend reads data?.items — this test confirms items is always present.
+    The frontend reads data?.items -- this test confirms items is always present.
     """
     import time
 
@@ -256,7 +256,7 @@ async def test_systems_endpoint_always_has_items_key(
 ) -> None:
     """GET /systems always returns items key (even when empty).
 
-    SYS-04: The frontend reads data?.items ?? [] — items must always be present
+    SYS-04: The frontend reads data?.items ?? [] -- items must always be present
     in the response so the frontend can bind correctly regardless of how many
     systems exist. The key assertion is the 'items' key exists and is a list.
     """

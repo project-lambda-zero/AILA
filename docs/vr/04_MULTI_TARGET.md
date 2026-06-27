@@ -1,4 +1,4 @@
-# VR Module — Multi-Target Research
+# VR Module -- Multi-Target Research
 
 > **Status: design exploration.** This document predates the shipped VR
 > engine and describes an idealised contract, not current code. The
@@ -20,7 +20,7 @@
 > | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
 > | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
 
-How the VR module handles a real product. Not a single binary, not a single library — a tree of binaries, libraries, parsers, protocols, and kernel components that interact and accumulate vulnerabilities into chains.
+How the VR module handles a real product. Not a single binary, not a single library -- a tree of binaries, libraries, parsers, protocols, and kernel components that interact and accumulate vulnerabilities into chains.
 
 The single-binary model (one ELF, one fuzzer, one campaign) is a useful primitive but it doesn't describe how research actually happens. A real engagement is "audit this router firmware" or "find bugs in this VPN appliance." That means dozens of artifacts, shared code, asymmetric privilege, and bugs that only become exploitable when you compose them across binaries.
 
@@ -61,20 +61,20 @@ firmware/
     appliance/rules.acl     # custom DSL parsed by vpnd
 
 Network:
-  :1883 MQTT (mqttd)        — internet-reachable in default deploy
-  :1194 OpenVPN (vpnd)      — internet-reachable
-  :8080 HTTP API (httpd)    — internet-reachable
+  :1883 MQTT (mqttd)        -- internet-reachable in default deploy
+  :1194 OpenVPN (vpnd)      -- internet-reachable
+  :8080 HTTP API (httpd)    -- internet-reachable
   :22   SSH (cli via dropbear)
-  /tmp/configd.sock         — local IPC, accepts from anyone
-  /tmp/update.sock          — local IPC, write requires updater group
-  /dev/appliance            — kernel char device, world-writable (mode 0666)
+  /tmp/configd.sock         -- local IPC, accepts from anyone
+  /tmp/update.sock          -- local IPC, write requires updater group
+  /dev/appliance            -- kernel char device, world-writable (mode 0666)
 ```
 
 That's 28+ artifacts. The module needs a structured representation, not "look at the firmware folder."
 
 ### The Target abstraction
 
-Each artifact becomes a `Target` row. Not every file is a target — only things the LLM can meaningfully research:
+Each artifact becomes a `Target` row. Not every file is a target -- only things the LLM can meaningfully research:
 
 ```python
 # Shipped: 13 members in src/aila/modules/vr/contracts/target.py:39-55.
@@ -103,7 +103,7 @@ class Target(SQLModel, table=True):
     path: str                                # relative to project root
     sha256: str                              # for change detection
     arch: Optional[str]                      # x86_64, aarch64, mips, etc.
-    target_class: TargetClass                # from D-03 — drives workflow branching
+    target_class: TargetClass                # from D-03 -- drives workflow branching
     privilege_context: PrivilegeContext      # see §3
     network_exposure: NetworkExposure        # internet, lan, localhost, none
     parent_target_id: Optional[UUID]         # config_parser inside a binary points to it
@@ -112,9 +112,9 @@ class Target(SQLModel, table=True):
 
 Two non-obvious kinds:
 
-**`CONFIG_PARSER`** is virtual — it doesn't correspond to a separate file. `configd` parses YAML; the YAML parser inside `configd` is a sub-target with its own attack surface (what fields are reachable, what types are validated, can we crash the parser with malformed input). The parent is `configd`; the path is something like `configd::yaml_load_v2`.
+**`CONFIG_PARSER`** is virtual -- it doesn't correspond to a separate file. `configd` parses YAML; the YAML parser inside `configd` is a sub-target with its own attack surface (what fields are reachable, what types are validated, can we crash the parser with malformed input). The parent is `configd`; the path is something like `configd::yaml_load_v2`.
 
-**`NETWORK_PROTOCOL`** is also virtual — `mqttd` exposes MQTT but the *MQTT parser inside mqttd* is the actual research target. The protocol target captures the wire format, the listening socket, the auth model, and points to the binary's parser entrypoint.
+**`NETWORK_PROTOCOL`** is also virtual -- `mqttd` exposes MQTT but the *MQTT parser inside mqttd* is the actual research target. The protocol target captures the wire format, the listening socket, the auth model, and points to the binary's parser entrypoint.
 
 This matters because **a single binary can host multiple research targets at different depths.** `httpd` has: the HTTP/1.1 parser (network), the JSON body parser (config), the auth token validator (privilege), the policy file loader (config). Each is a separately schedulable research unit with its own evidence pack.
 
@@ -165,11 +165,11 @@ DEPENDENCY GRAPH CONSTRUCTION (deterministic)
     binary --HOSTS--> config_parser     (LLM-proposed, evidence-gated)
 ```
 
-The decomposition is not "ask the LLM to look at the firmware." Most of it is deterministic file-system walking. The LLM only enters where structural inference is required — identifying which function inside which binary is the protocol parser, or which config file is parsed by which daemon. Those claims are evidence-gated.
+The decomposition is not "ask the LLM to look at the firmware." Most of it is deterministic file-system walking. The LLM only enters where structural inference is required -- identifying which function inside which binary is the protocol parser, or which config file is parsed by which daemon. Those claims are evidence-gated.
 
 ### Why this structure matters
 
-If the module's unit of work is "the firmware," scheduling is impossible — there's no way to allocate fuzzing time, score progress, or report findings. If the unit of work is "the binary," shared libraries get fuzzed five times and cross-binary chains are invisible. The Target hierarchy with virtual sub-targets gives the right granularity: `mqttd::mqtt_parser` is what you fuzz; `mqttd` is what you exploit; `firmware` is what you report on.
+If the module's unit of work is "the firmware," scheduling is impossible -- there's no way to allocate fuzzing time, score progress, or report findings. If the unit of work is "the binary," shared libraries get fuzzed five times and cross-binary chains are invisible. The Target hierarchy with virtual sub-targets gives the right granularity: `mqttd::mqtt_parser` is what you fuzz; `mqttd` is what you exploit; `firmware` is what you report on.
 
 ---
 
@@ -191,9 +191,9 @@ Same bug, three different exploitability stories. The module must:
 
 ### Fuzzing the library directly
 
-For source-available libraries this is straightforward — write a libFuzzer harness that calls the library's exported functions. For binary-only libraries, harness construction is the hard part:
+For source-available libraries this is straightforward -- write a libFuzzer harness that calls the library's exported functions. For binary-only libraries, harness construction is the hard part:
 
-- **What's the API?** Exported symbols give names but not semantics. The LLM must read the consumers to figure out: `parse_packet(uint8_t *buf, size_t len, parse_ctx_t *ctx)` — what's `ctx`? Is `len` trusted? Is there a length prefix inside `buf`?
+- **What's the API?** Exported symbols give names but not semantics. The LLM must read the consumers to figure out: `parse_packet(uint8_t *buf, size_t len, parse_ctx_t *ctx)` -- what's `ctx`? Is `len` trusted? Is there a length prefix inside `buf`?
 - **What's the initialization sequence?** `parse_packet` may require `parser_init` first. The harness must replicate that.
 - **What state is shared?** Globals, TLS, allocator state. Persistent fuzzing is faster but only works if state is reset between iterations.
 
@@ -236,12 +236,12 @@ Libraries are scheduled before consumers because:
 2. Library APIs are smaller and more constrained → easier to fuzz well.
 3. Consumer-specific bugs are still found by fuzzing the consumer; library-level bugs are *only* found by fuzzing the library.
 
-But: libraries with a single consumer (`libipc.so` used only by `configd`) get folded into the consumer's campaign — there's no multiplier, and the library API is exercised by fuzzing the consumer. The decision is automated: shared library with N consumers where N >= 2 → fuzz separately.
+But: libraries with a single consumer (`libipc.so` used only by `configd`) get folded into the consumer's campaign -- there's no multiplier, and the library API is exercised by fuzzing the consumer. The decision is automated: shared library with N consumers where N >= 2 → fuzz separately.
 
 ### Sample evidence pack on a library finding
 
 ```
-FINDING libfoo.so::parse_packet — heap overflow at offset 0x1c0
+FINDING libfoo.so::parse_packet -- heap overflow at offset 0x1c0
   Static facts (adjudicated):
     - libfoo is loaded by 3 binaries: mqttd, vpnd, httpd  [evidence: ldd outputs]
     - parse_packet is exported from libfoo  [evidence: readelf -s]
@@ -270,7 +270,7 @@ FINDING libfoo.so::parse_packet — heap overflow at offset 0x1c0
       that load it indirectly (transitive dependents).
 ```
 
-This is what one library finding looks like when handled correctly. Notice the LLM cannot say "RCE in libfoo" — it can only say "crash in libfoo, reachable as RCE candidate from mqttd, post-auth in vpnd, unreachable in default httpd config." The adjudicator forces this discipline.
+This is what one library finding looks like when handled correctly. Notice the LLM cannot say "RCE in libfoo" -- it can only say "crash in libfoo, reachable as RCE candidate from mqttd, post-auth in vpnd, unreachable in default httpd config." The adjudicator forces this discipline.
 
 ---
 
@@ -312,7 +312,7 @@ The module needs three capabilities:
 
 1. **Cross-binary reachability**: given a successful exploitation of binary A as user X, what binaries B can A reach? Through what mechanism (IPC socket, file write, signal, kernel device, environment manipulation, shared memory)?
 
-2. **Privilege transition modeling**: each cross-binary edge has a privilege model. UNIX socket `/tmp/update.sock` mode 0660 owned by root:updater — caller must be in `updater` group; on success the called binary executes as root. The transition is `(any user in updater group) -> (root via update-helper)`.
+2. **Privilege transition modeling**: each cross-binary edge has a privilege model. UNIX socket `/tmp/update.sock` mode 0660 owned by root:updater -- caller must be in `updater` group; on success the called binary executes as root. The transition is `(any user in updater group) -> (root via update-helper)`.
 
 3. **Composable exploitability scoring**: a chain is exploitable if every edge is exploitable *given the privileges the previous step yields*. Bug 2 requires updater group; bug 1 yields mqtt user; mqtt user is in updater group → edge passes. The chain analyzer composes per-step requirements.
 
@@ -342,7 +342,7 @@ Sources of edges:
 - **IDA/Ghidra import analysis**: `socket()`, `connect()` to AF_UNIX with literal path → IPC edge. `open("/dev/...")` → kernel device edge. `kill(pid, SIGUSR1)` → signal edge.
 - **Trailmark on source repos**: when source is available, taint analysis from `socket.connect` or `open` calls to literal paths gives high-confidence edges.
 
-The graph is not "complete" — dynamic dispatch, configurable endpoints, environment-driven paths all introduce uncertain edges. The confidence field carries that uncertainty into the chain analyzer.
+The graph is not "complete" -- dynamic dispatch, configurable endpoints, environment-driven paths all introduce uncertain edges. The confidence field carries that uncertainty into the chain analyzer.
 
 ### Chain discovery algorithm
 
@@ -378,7 +378,7 @@ procedure DISCOVER_CHAINS(F, max_depth=4):
                     results.append(new_chain)
                     frontier.append((sf, new_chain))
 
-            # Also: speculative hypothesis — even if no finding exists yet,
+            # Also: speculative hypothesis -- even if no finding exists yet,
             # the sink is now "newly interesting" given our gained privilege.
             # Emit a research suggestion.
             if not sink_findings:
@@ -432,13 +432,13 @@ class Chain(SQLModel, table=True):
     severity: ChainSeverity                  # composite, not min(steps)
 ```
 
-Chains are first-class records, not derived views — the chain itself can have findings (e.g., "the chain works because the IPC group membership defaults are wrong"; that's a finding about the chain, not about any single binary).
+Chains are first-class records, not derived views -- the chain itself can have findings (e.g., "the chain works because the IPC group membership defaults are wrong"; that's a finding about the chain, not about any single binary).
 
 ---
 
 ## 4. Resource Allocation
 
-72 hours, 16 cores, 64GB RAM. 15 binaries, 8 libraries, 3 config parsers, 2 protocols, 1 kernel module — call it 29 fuzzable units.
+72 hours, 16 cores, 64GB RAM. 15 binaries, 8 libraries, 3 config parsers, 2 protocols, 1 kernel module -- call it 29 fuzzable units.
 
 Naive split: 29 units, each gets 0.55 cores. That's wrong on every axis: kernel fuzzing needs a dedicated VM, the MQTT parser is far higher value than the log collector, and AFL++ on half a core barely runs.
 
@@ -511,7 +511,7 @@ def score(self, c: FuzzCampaign) -> float:
     return static + coverage_velocity + crash_velocity * 2 - plateau_penalty
 ```
 
-The crash term is weighted higher than coverage because a triaged unique crash is direct evidence of bug productivity, not just indirect (coverage). Plateau penalty is bounded so a high-value target doesn't get starved permanently — at worst it loses 3 points, which is enough to lose to a rising star but not enough to fall to zero if its static value is high.
+The crash term is weighted higher than coverage because a triaged unique crash is direct evidence of bug productivity, not just indirect (coverage). Plateau penalty is bounded so a high-value target doesn't get starved permanently -- at worst it loses 3 points, which is enough to lose to a rising star but not enough to fall to zero if its static value is high.
 
 ### Distribution under contention
 
@@ -545,7 +545,7 @@ Kernel fuzzing (syzkaller)            cores 4   (separate VM)
 
 After 2 hours, suppose `configd::yaml_parser` produces a fast, novel crash. The triage worker confirms unique. Crash velocity for configd jumps; its priority climbs from 6.3 to 8.5. The next reallocation cycle moves a core off `httpd::http_parser` (which has plateaued) to configd. Within an hour configd is at 3 cores.
 
-After 6 hours, `mqttd::mqtt_parser` plateaus — coverage curve flat for 5 hours, no new crashes. The plateau penalty kicks in. mqtt_parser drops to priority 8.4, still high (network, root, pre-auth) but loses 1 core to a rising target. It is *not* zeroed because its static value remains high. The LLM may also propose a new strategy ("the dictionary is exhausted; switch to grammar-based fuzzing using the MQTT spec we have on disk").
+After 6 hours, `mqttd::mqtt_parser` plateaus -- coverage curve flat for 5 hours, no new crashes. The plateau penalty kicks in. mqtt_parser drops to priority 8.4, still high (network, root, pre-auth) but loses 1 core to a rising target. It is *not* zeroed because its static value remains high. The LLM may also propose a new strategy ("the dictionary is exhausted; switch to grammar-based fuzzing using the MQTT spec we have on disk").
 
 This is why the scheduler is a loop, not a one-shot plan: research is dynamic, the priority signal changes every hour.
 
@@ -558,13 +558,13 @@ The human can:
 - **Boost**: "+5 priority on configd permanently" (a permanent additive, not a pin).
 - **Strategy shift**: "switch mqtt_parser to grammar-based with this MQTT5 grammar." Scheduler restarts the campaign with the new fuzzer config but keeps its core allocation.
 
-The override surface mirrors the forensics module's `ReasoningOperatorSteering` — same shape, different verbs (no `confirmed_facts` or `disproved_hypotheses`; instead `pinned_campaigns`, `priority_overrides`, `strategy_pins`).
+The override surface mirrors the forensics module's `ReasoningOperatorSteering` -- same shape, different verbs (no `confirmed_facts` or `disproved_hypotheses`; instead `pinned_campaigns`, `priority_overrides`, `strategy_pins`).
 
 ### Memory and disk allocation
 
 Memory-bound by ASAN-instrumented binaries: each instance can use 1-4GB depending on harness. 64GB / ~3GB per instance ≈ 20 instances max. Cores are usually the tighter bound for libFuzzer; memory is the tighter bound when running many ASAN AFL++ instances against large binaries (e.g., a JS engine harness).
 
-Disk for corpora and crashes grows fast — a 12-hour AFL++ run on a moderately complex parser produces 50-200GB of corpus. The module must:
+Disk for corpora and crashes grows fast -- a 12-hour AFL++ run on a moderately complex parser produces 50-200GB of corpus. The module must:
 - Periodically minimize corpora (`afl-cmin`) to keep disk usable.
 - Compress and ship triaged crashes off the workstation; delete the rest after N days.
 - Treat disk-full as a campaign-pausing event and notify the operator.
@@ -585,7 +585,7 @@ Three node types:
 Edges:
 - `Analysis depends on Analysis` (e.g., harness construction depends on recon)
 - `Analysis depends on Finding` (e.g., chain confirmation depends on per-step findings)
-- `Target depends on Target` (library is a prerequisite of consumer analysis — but only weakly)
+- `Target depends on Target` (library is a prerequisite of consumer analysis -- but only weakly)
 
 ### The library-first rule, formalized
 
@@ -599,7 +599,7 @@ For any shared library L with consumer count >= 2:
     schedule(L.exported_api_doc)   before  schedule(L.consumers[i].harness)
 ```
 
-In words: do library reconnaissance before consumer reconnaissance, because understanding `libfoo`'s API improves the model of every consumer that uses it. But fuzz library and consumers in parallel — they hit different code paths.
+In words: do library reconnaissance before consumer reconnaissance, because understanding `libfoo`'s API improves the model of every consumer that uses it. But fuzz library and consumers in parallel -- they hit different code paths.
 
 ### Network-first within consumers
 
@@ -618,7 +618,7 @@ Tier 4 (continuous):         kernel module syzkaller campaign (separate VM)
 Tier 5 (opportunistic):      unprivileged or LAN-only binaries
 ```
 
-"After T1 underway" means starts ~30 minutes after T1, not after T1 completes — recon is itself a long-running analysis.
+"After T1 underway" means starts ~30 minutes after T1, not after T1 completes -- recon is itself a long-running analysis.
 
 ### Building the dependency graph
 
@@ -636,8 +636,8 @@ Sources, in order of trust:
 
 Two senses of dependency:
 
-- **Information dependency**: "consumer harness construction needs to know libfoo's API." This is a soft dependency — the consumer analysis can start with a placeholder API model and refine when libfoo recon completes.
-- **Resource dependency**: "syzkaller needs the kernel-fuzzing VM exclusively." This is hard — the syzkaller campaign can't run alongside another VM-bound analysis on the same VM.
+- **Information dependency**: "consumer harness construction needs to know libfoo's API." This is a soft dependency -- the consumer analysis can start with a placeholder API model and refine when libfoo recon completes.
+- **Resource dependency**: "syzkaller needs the kernel-fuzzing VM exclusively." This is hard -- the syzkaller campaign can't run alongside another VM-bound analysis on the same VM.
 
 The scheduler honors hard dependencies as constraints; soft dependencies are advisory and influence priority but don't gate execution.
 
@@ -655,11 +655,11 @@ This makes findings **first-class scheduler inputs**, not just outputs.
 
 ## 6. Project-Level Evidence Graph
 
-Each target has its own evidence pack. The project has a **graph that spans all targets** — one structure where hypotheses, crashes, exploits, and chains in different binaries are nodes connected by typed edges.
+Each target has its own evidence pack. The project has a **graph that spans all targets** -- one structure where hypotheses, crashes, exploits, and chains in different binaries are nodes connected by typed edges.
 
 ### Why one graph
 
-Two binaries, two evidence packs, no cross-edge: variant analysis is impossible. The MQTT parser bug and the HTTP parser bug both come from "developer trusts length field in vendored parsing macro" — but if the evidence is siloed per target, the LLM cannot see the pattern. One graph, with edges typed `same_root_cause`, `variant_of`, `exploits_via`, `enables_chain_step`, lets the LLM and the adjudicator reason structurally across the whole project.
+Two binaries, two evidence packs, no cross-edge: variant analysis is impossible. The MQTT parser bug and the HTTP parser bug both come from "developer trusts length field in vendored parsing macro" -- but if the evidence is siloed per target, the LLM cannot see the pattern. One graph, with edges typed `same_root_cause`, `variant_of`, `exploits_via`, `enables_chain_step`, lets the LLM and the adjudicator reason structurally across the whole project.
 
 ### Node types
 
@@ -705,7 +705,7 @@ This is a **structural pattern query** over decompilation/source across the proj
 
 1. From the confirmed bug, extract the *shape*: `read_uint16(buf) -> alloc(len) -> memcpy(buf+2, dst, len)`.
 2. Build a normalized signature (function-hash style: opcode sequence ignoring registers, or AST sketch on source).
-3. Run the signature across all parser functions in all binaries (Trailmark for source, IDA's Hex-Rays microcode or function-hash for binaries — see Pharos inspirations).
+3. Run the signature across all parser functions in all binaries (Trailmark for source, IDA's Hex-Rays microcode or function-hash for binaries -- see Pharos inspirations).
 4. Rank matches by similarity score.
 5. Emit `PATTERN` node connecting the original bug to candidate variants, with `variant_of` edges.
 
@@ -713,7 +713,7 @@ Each variant is a new hypothesis the LLM can test:
 
 > "Pattern P-01 (trusted-length-field) matched in `httpd::parse_chunked`, `vpnd::ctl_parse_msg`, `libfoo::parse_packet`. Schedule directed fuzzing with length-overflow inputs against each."
 
-Variant analysis multiplies the value of every confirmed bug — finding one is finding many.
+Variant analysis multiplies the value of every confirmed bug -- finding one is finding many.
 
 ### Shipped: `variant_hunt_orders` and the variant-hunt child pipeline
 
@@ -729,7 +729,7 @@ One submit produces one primary outcome plus N variant probes:
 
 The variant-hunt submit gate is enforced on `kind = variant_hunt` investigations: a terminal submit with `variant_hunt_orders = []` AND no exhaustion declaration (`"VARIANT DEAD"`, `"NO VARIANT EXISTS"`, etc.) is rejected by `vuln_researcher._maybe_reject_variant_hunt_submit`, which injects a `_directive.variant_hunt_submit_rejected` observable into case state. After `_UNRESOLVED_HYP_REJECT_CAP` consecutive rejections on the same branch the submit is FORCED THROUGH but stamped with `payload.variant_hunt_advisory = "forced_through_after_N_rejects"` so the operator can grep for over-forced submissions and re-tune the prompt.
 
-For non-`variant_hunt` kinds (`discovery`, `nday`, `audit`), `variant_hunt_orders` is still honoured by the dispatcher — the gate does not fire, but populating the field still spawns the children. Identifying real adjacent code paths and offloading them as variant probes is the canonical mechanism for amortising a finding across the project.
+For non-`variant_hunt` kinds (`discovery`, `nday`, `audit`), `variant_hunt_orders` is still honoured by the dispatcher -- the gate does not fire, but populating the field still spawns the children. Identifying real adjacent code paths and offloading them as variant probes is the canonical mechanism for amortising a finding across the project.
 
 ### Bug attribution across consumers
 
@@ -755,7 +755,7 @@ This propagation prevents the LLM from claiming a chain works when its weakest l
 
 ### Persistence and querying
 
-The project graph is stored in the same DB as the platform's other evidence (no separate graph DB needed for v0.1 — SQLModel relations are sufficient at expected scale of <100K nodes per project). Common queries:
+The project graph is stored in the same DB as the platform's other evidence (no separate graph DB needed for v0.1 -- SQLModel relations are sufficient at expected scale of <100K nodes per project). Common queries:
 
 ```python
 # All confirmed RCE-class findings in this project, with their consumer reachability
@@ -854,7 +854,7 @@ Priority Remediation (sorted by leverage, not CVSS):
 ... (per-finding fixes follow)
 ```
 
-Notice item 5 sits below structural fixes because the structural fixes have broader leverage. Vendors typically prefer structural fixes anyway — the report's job is to make that easy for them to adopt.
+Notice item 5 sits below structural fixes because the structural fixes have broader leverage. Vendors typically prefer structural fixes anyway -- the report's job is to make that easy for them to adopt.
 
 ### Per-target findings rollup
 
@@ -916,7 +916,7 @@ Generating this report is itself a multi-turn LLM task with strong adjudication:
 
 6. **Resource allocation when fuzzing competes with interactive use.** The operator may want to attach GDB to a binary the scheduler is currently fuzzing. Pause the campaign? Run a second instance? Currently the dependency graph treats the workstation as a single resource pool; multi-tenant scheduling is not modeled.
 
-7. **Chain reporting and disclosure coordination.** Three CVEs from one chain across one product — do they get one advisory or three? Different vendors have different preferences. The disclosure tracking from D-04 is per-finding; do we need a separate `ChainDisclosure` track for coordinating multi-CVE releases?
+7. **Chain reporting and disclosure coordination.** Three CVEs from one chain across one product -- do they get one advisory or three? Different vendors have different preferences. The disclosure tracking from D-04 is per-finding; do we need a separate `ChainDisclosure` track for coordinating multi-CVE releases?
 
 8. **How aggressive should re-planning on findings be?** Every confirmed finding can in principle reshuffle the schedule. If we re-plan on every finding, we churn campaigns. If we re-plan on a timer, we miss high-leverage moments. A heuristic threshold ("re-plan when a finding adds a high-priority chain candidate") may be the right answer but needs tuning data.
 

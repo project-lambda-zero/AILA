@@ -12,7 +12,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "Orchestrated entrance for a list. The container holds the `staggerChildren` variant; each `<StaggeredItem>` inherits the cascade. One pass per mount — re-renders that keep stable keys do not replay. Respects `prefers-reduced-motion` via the `useReducedMotion` hook (A5 / B10).",
+          "Orchestrated entrance for a list. The container holds the `staggerChildren` variant; each `<StaggeredItem>` inherits the cascade. One pass per mount -- re-renders that keep stable keys do not replay. Respects `prefers-reduced-motion` via the `useReducedMotion` hook (A5 / B10).",
       },
     },
   },

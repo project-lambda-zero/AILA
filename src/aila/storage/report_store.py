@@ -11,7 +11,7 @@ environments cannot expand home-directory paths, so a clear ValueError is
 preferable to a silent OSError downstream.
 
 Pruning: artifact records for a run are deleted and recreated on each
-persist_run_bundle() call.  Old filesystem files are not deleted — that is left
+persist_run_bundle() call.  Old filesystem files are not deleted -- that is left
 to a separate pruning policy (not yet implemented).
 """
 
@@ -40,7 +40,7 @@ class ReportArtifactBundle:
 
     Artifact IDs (report_artifact_id, summary_artifact_id, rows_artifact_id)
     are the ReportArtifactRecord primary keys assigned at persist_run_bundle()
-    time — these are the canonical artifact IDs surfaced in the API response
+    time -- these are the canonical artifact IDs surfaced in the API response
     (Phase 46: state_persist is the canonical ID assignment site).
     """
 
@@ -134,7 +134,7 @@ class ReportArtifactStore:
 
         Reads summary_json and rows_json file content from disk if the paths exist.
         Missing or unreadable files result in None for the corresponding content
-        fields — not an error (files may have been pruned).
+        fields -- not an error (files may have been pruned).
 
         Args:
             session: Active SQLModel Session (used only if records is None).
@@ -346,7 +346,7 @@ class ReportArtifactStore:
         """Create a ReportArtifactRecord for the given path.
 
         path may be synthetic (non-filesystem), e.g. a string like
-        "db://run-001/csv". No filesystem existence check is performed —
+        "db://run-001/csv". No filesystem existence check is performed --
         the caller is responsible for ensuring the path string is meaningful.
         Returns None only when path is falsy (None or empty string).
         """

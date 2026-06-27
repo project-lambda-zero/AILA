@@ -1,4 +1,4 @@
-"""043 — Refactor vr_projects to reference vr_targets; drop legacy target columns.
+"""043 -- Refactor vr_projects to reference vr_targets; drop legacy target columns.
 
 Per D-53 (no legacy v0.1 backward compat). Schema unification: target
 identity moves from vr_projects to vr_targets. vr_projects keeps only

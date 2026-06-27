@@ -81,7 +81,7 @@ the platform picks it up at the next boot.
 If the module's `create_module()` raises or fails validation, the
 platform logs a WARNING (`Module '<id>' failed validation -- disabled`)
 and continues startup with reduced functionality rather than crashing.
-The discovery code catches `(AILAError, ValueError)` specifically — bare
+The discovery code catches `(AILAError, ValueError)` specifically -- bare
 `except Exception` is banned everywhere, including this path.
 
 ## Registration Validation Rules
@@ -123,7 +123,7 @@ Rationale: The LLM agent selects tools by name and description. A tool named "un
 
 ### Barrel-Only `__init__.py`
 
-`contracts/__init__.py` must be a barrel re-export only — no model definitions inline. Models live in domain submodules (`matching.py`, `scoring.py`, `reporting.py`, `analysis.py`). The barrel re-exports all public names so external callers use:
+`contracts/__init__.py` must be a barrel re-export only -- no model definitions inline. Models live in domain submodules (`matching.py`, `scoring.py`, `reporting.py`, `analysis.py`). The barrel re-exports all public names so external callers use:
 
 ```python
 from module.contracts import ModelName
@@ -176,7 +176,7 @@ db_models/
 from module.db_models import SomeRecord
 ```
 
-without knowing which submodule defines it. Internal helpers shared between submodules (e.g., `_enum_sql_values`) live in one submodule and are imported by others — no duplication.
+without knowing which submodule defines it. Internal helpers shared between submodules (e.g., `_enum_sql_values`) live in one submodule and are imported by others -- no duplication.
 
 ---
 
@@ -201,7 +201,7 @@ The module is responsible for explicitly wiring:
 - Injecting module-specific query callables into platform repositories
   (e.g., `ReportRepository(materialized_query=_query_latest_findings)`)
 
-Wiring happens at `register_tools()` time or `build_runtime()` time — not inside platform infrastructure.
+Wiring happens at `register_tools()` time or `build_runtime()` time -- not inside platform infrastructure.
 
 ### Storage Layer Isolation Rule
 
@@ -213,12 +213,12 @@ The platform `storage/` layer must NOT import from any `modules/<module_id>/` pa
 Never via a direct model import crossing the platform-to-module boundary.
 
 ```python
-# CORRECT — module owns the coupling to its own DB model
+# CORRECT -- module owns the coupling to its own DB model
 def _query_latest_findings(session, target):
     from aila.modules.vulnerability.db_models import LatestFindingRecord
     ...
 
-# WRONG — storage layer imports module model directly
+# WRONG -- storage layer imports module model directly
 from ..modules.vulnerability.db_models import LatestFindingRecord
 ```
 
@@ -299,7 +299,7 @@ def filter_report_rows(
 ```
 
 - Must return `list(rows)` unchanged when `filters` is `None`, empty, or contains only unknown/empty keys.
-- Filter semantics (exact vs. contains, delimiter splitting) are module-internal — callers must not assume a specific algorithm.
+- Filter semantics (exact vs. contains, delimiter splitting) are module-internal -- callers must not assume a specific algorithm.
 
 ---
 
@@ -355,9 +355,9 @@ async def seed_data(self, session: AsyncSession) -> None:
 
 A module may import from:
 
-- `aila.platform.*` — modules, routing, runtime, services, tools, contracts
-- `aila.storage.*` — DB models, schema registry, config registry
-- `aila.config.Settings` — infrastructure settings
+- `aila.platform.*` -- modules, routing, runtime, services, tools, contracts
+- `aila.storage.*` -- DB models, schema registry, config registry
+- `aila.config.Settings` -- infrastructure settings
 
 A module **must not** import from another feature module:
 
@@ -379,7 +379,7 @@ From `CLAUDE.md`:
 - `__all__` must list every name intended for external use.
 - `__all__` must **not** include names that start with an underscore.
 - Namespace packages with no public re-exports must set `__all__ = []`.
-- Underscore-prefixed modules (e.g., `_lookup_helpers.py`) are private implementation details. They **must not** define `__all__` — the underscore prefix signals non-public surface.
+- Underscore-prefixed modules (e.g., `_lookup_helpers.py`) are private implementation details. They **must not** define `__all__` -- the underscore prefix signals non-public surface.
 
 ```python
 # Public module or package init
@@ -387,8 +387,8 @@ __all__ = ["MyService", "MyContract"]
 from .my_service import MyService
 from .my_contract import MyContract
 
-# Package init with no public exports — __all__ = []
-# _helpers.py — private module, omit __all__ entirely
+# Package init with no public exports -- __all__ = []
+# _helpers.py -- private module, omit __all__ entirely
 ```
 
 ---
@@ -408,10 +408,10 @@ async def register_tools(self, tool_registry, settings, registry=None, schema_re
 
 Rules:
 
-- Call `schema_registry.push(TableClass, ...)` inside `register_tools()` — not elsewhere.
+- Call `schema_registry.push(TableClass, ...)` inside `register_tools()` -- not elsewhere.
 - Do **not** call `create_all()` directly inside a module. The platform calls it after all modules have registered.
 - Every SQLModel table class must set `__tablename__` explicitly.
-- `schema_registry` may be `None` in some execution contexts (e.g., test fixtures that bypass DB setup) — always guard with `if schema_registry is not None`.
+- `schema_registry` may be `None` in some execution contexts (e.g., test fixtures that bypass DB setup) -- always guard with `if schema_registry is not None`.
 
 ---
 
@@ -488,10 +488,10 @@ def state_prepare(context: WorkflowExecutionContext) -> WorkflowStage | None:
 
 Rules:
 - Call `emit_stage_result()` at the end of each state handler, after all mutations to context are complete.
-- `event_key` format: `"<module_id>.<stage_name>"` — must be unique and lowercase.
+- `event_key` format: `"<module_id>.<stage_name>"` -- must be unique and lowercase.
 - `audit_details` is optional; include meaningful facts (counts, IDs, mode names).
 - `progress_message` is optional; used for CLI/SSE progress display.
-- Do not call `audit_event()`, `append_run_event()`, or `progress_callback` directly — they are destinations wired inside `emit_stage_result`.
+- Do not call `audit_event()`, `append_run_event()`, or `progress_callback` directly -- they are destinations wired inside `emit_stage_result`.
 
 ---
 
@@ -523,7 +523,7 @@ class MyProviderClient(BaseProviderClient):
         ...
 ```
 
-HTTP tools that use a provider client must override `__init__` WITHOUT calling `super().__init__()` from `VulnerabilityTool` — HTTP tools do not need `init_db()`.
+HTTP tools that use a provider client must override `__init__` WITHOUT calling `super().__init__()` from `VulnerabilityTool` -- HTTP tools do not need `init_db()`.
 
 ---
 
@@ -556,11 +556,11 @@ def my_function(name: str, count: int = 0) -> list[str]:
 Rules:
 - First line: one-sentence summary, ends with a period.
 - Blank line between summary and Args/Returns/Raises sections.
-- Args section: one line per parameter. Type annotations are in the function signature — do NOT duplicate types in the docstring.
+- Args section: one line per parameter. Type annotations are in the function signature -- do NOT duplicate types in the docstring.
 - Returns section: what the return value is, its shape, and key semantics. Omit for `None`-returning functions.
 - Raises section: document exceptions that callers must handle. Omit for functions that do not raise.
 - Skip trivial `__init__` that only assigns fields (no logic) and obvious property getters.
-- Describe WHAT and WHY — not the parameter types (those are in type annotations).
+- Describe WHAT and WHY -- not the parameter types (those are in type annotations).
 - Private functions (`_` prefix) may have docstrings but are not required to.
 
 ---

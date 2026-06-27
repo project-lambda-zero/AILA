@@ -23,7 +23,7 @@ from .conftest import sqlite_db_env
 
 def _module_fn():
     """Function callable by the queue; lives in this module so module-boundary passes."""
-    def fn(**_kwargs):  # noqa: ARG001 — deliberate stub
+    def fn(**_kwargs):  # noqa: ARG001 -- deliberate stub
         return None
 
     fn.__qualname__ = "fn"
@@ -52,7 +52,7 @@ async def test_submit_raises_when_redis_url_unset(tmp_path, monkeypatch) -> None
         assert exc_info.value.__class__.code == "WORKER_UNREACHABLE"
         assert exc_info.value.__class__.http_status == 503
 
-        # No DB record left behind — caller gets a clean 503, nothing to
+        # No DB record left behind -- caller gets a clean 503, nothing to
         # clean up later.
         from sqlmodel import Session, select
 
@@ -96,7 +96,7 @@ def test_sync_fallback_attribute_is_gone() -> None:
 
 
 def test_sync_fallback_string_is_gone_from_tasks_source() -> None:
-    """Static audit — the literal sync_fallback / no_redis.fallback must not
+    """Static audit -- the literal sync_fallback / no_redis.fallback must not
     appear in the tasks tree anymore. The routers legitimately use
     ``_no_redis_generator`` for SSE streams; that is a different concern.
     """

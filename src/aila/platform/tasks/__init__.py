@@ -1,4 +1,4 @@
-"""Platform task queue infrastructure — public API surface.
+"""Platform task queue infrastructure -- public API surface.
 
 Phase 179 rewrite. Re-exports the new template primitives
 (``@platform_task``, :class:`TaskContext`, :class:`WorkflowMigratedError`)

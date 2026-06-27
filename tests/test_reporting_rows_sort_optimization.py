@@ -19,7 +19,7 @@ class TestCriticalityRanksConstant:
         }
 
     def test_criticality_rank_uses_constant(self):
-        """criticality_rank must use _CRITICALITY_RANKS — no inline dict construction."""
+        """criticality_rank must use _CRITICALITY_RANKS -- no inline dict construction."""
         from aila.modules.vulnerability.reporting.rows import _CRITICALITY_RANKS, criticality_rank
 
         # Verify function returns correct values using the constant
@@ -111,7 +111,7 @@ class TestBuildGroupsSortOrder:
             self._make_finding(1, "host-a", "pkg-x", "Immediate", 90.0, "CVE-2"),
         ]
         groups = build_groups(findings)
-        # Both findings share the same (system_id, host, package_name) — one group
+        # Both findings share the same (system_id, host, package_name) -- one group
         assert len(groups) == 1
         assert len(groups[0]) == 2
 
@@ -143,7 +143,7 @@ class TestBuildGroupsOrderGroupCallCount:
         ]
         rows_module.build_groups(findings)
 
-        # 10 unique groups — order_group should be called exactly 10 times
+        # 10 unique groups -- order_group should be called exactly 10 times
         # (once per group for key extraction), not O(10 log 10 * C) times
         assert call_count["n"] == 10, (
             f"order_group called {call_count['n']} times for 10 groups; "

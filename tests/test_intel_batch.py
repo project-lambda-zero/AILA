@@ -116,7 +116,7 @@ def test_batch_returns_empty_for_empty_list(populated_session):
             return False
 
     with patch("aila.modules.vulnerability.tools.intel_cache.session_scope", return_value=_CM()):
-        # direct call with empty list — no query should be needed but behavior is just {}
+        # direct call with empty list -- no query should be needed but behavior is just {}
         result = _forward_cve_cache_batch(mock_settings, cve_ids=[])
 
     assert result == {}

@@ -2,7 +2,7 @@ node_modules/
 dist/
 .vite/
 
-# Test output — generated files not committed
+# Test output -- generated files not committed
 coverage/
 storybook-static/
 playwright-report/

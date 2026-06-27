@@ -79,7 +79,7 @@ def _seed(session: Session, *records: LatestFindingRecord) -> None:
 def _make_query_fn(engine):
     """Return a MaterializedFindingsQuery that reads LatestFindingRecord from the given engine.
 
-    This mirrors what the vulnerability module does via _query_latest_findings — the test
+    This mirrors what the vulnerability module does via _query_latest_findings -- the test
     supplies it directly so the test file owns the coupling to db_models, not the storage layer.
     """
     def _query(session: Session, target: str | None) -> list[dict]:

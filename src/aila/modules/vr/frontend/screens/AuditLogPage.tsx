@@ -11,16 +11,16 @@ import { useInvestigations, useMcpCalls } from "../queries";
  *
  *  Two streams are surfaced:
  *
- *  1. Delegated MCP calls — every forward() through audit-mcp /
+ *  1. Delegated MCP calls -- every forward() through audit-mcp /
  *     ida-headless bridges, with server / action / status / latency.
  *     Sourced from vr_mcp_call_log (real table).
  *
- *  2. Operator events — pause / resume / inject context / manual
+ *  2. Operator events -- pause / resume / inject context / manual
  *     hypothesis confirm / etc. Spec wants these in a dedicated
  *     VRAuditEventRecord; v0.5 surfaces them from operator-sender
  *     messages on each investigation.
  *
- *  Per spec §6.2 — "Reading the timeline plus the audit log gives a
+ *  Per spec §6.2 -- "Reading the timeline plus the audit log gives a
  *  complete picture of what happened on this engagement, by whom,
  *  when." */
 export function AuditLogPage() {
@@ -56,7 +56,7 @@ export function AuditLogPage() {
         driven investigation state changes + the MCP call log.
       </p></AilaCard>
 
-      {/* MCP calls — direct read from the log */}
+      {/* MCP calls -- direct read from the log */}
       <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2">
         <h2 className="text-sm font-semibold text-foreground">
           Delegated MCP calls
@@ -109,7 +109,7 @@ export function AuditLogPage() {
         </ul>
       )}</AilaCard>
 
-      {/* Operator events — investigation state changes */}
+      {/* Operator events -- investigation state changes */}
       <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
         Operator events ({operatorEvents.length})
       </h2>
@@ -138,7 +138,7 @@ export function AuditLogPage() {
                 <span className="text-text-muted text-3xs ml-2">
                   {e.time
                     ? new Date(e.time).toLocaleString()
-                    : "—"}
+                    : "--"}
                 </span>
               </div>
             </li>

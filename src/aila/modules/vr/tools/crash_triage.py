@@ -180,15 +180,15 @@ class CrashTriageTool(Tool):
             if controllable:
                 verdict, rationale = "likely_exploitable", "Controllable write into adjacent memory."
             elif write_size and write_size >= 8:
-                verdict, rationale = "possibly_exploitable", f"Write of {write_size} bytes — corruption primitive present."
+                verdict, rationale = "possibly_exploitable", f"Write of {write_size} bytes -- corruption primitive present."
             else:
                 verdict, rationale = "possibly_exploitable", "Write primitive without confirmed control."
         elif crash_type in {"uaf", "double_free", "type_confusion", "rip_control"}:
             verdict, rationale = "likely_exploitable", "Allocator/control-flow corruption primitive."
         elif crash_type == "null_deref":
-            verdict, rationale = "unlikely", "NULL deref — typically DoS only."
+            verdict, rationale = "unlikely", "NULL deref -- typically DoS only."
         elif crash_type in {"leak_stack", "leak_heap", "leak_libc", "leak_pie", "info_disclosure", "oob_read", "aar"}:
-            verdict, rationale = "info_disclosure", "Read primitive — disclosure without code-exec on its own."
+            verdict, rationale = "info_disclosure", "Read primitive -- disclosure without code-exec on its own."
         elif crash_type in {"cmd_injection", "ssti", "sqli", "deser_gadget"}:
             verdict, rationale = "likely_exploitable", "Logic-layer code execution primitive."
 

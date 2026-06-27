@@ -2,13 +2,13 @@
 
 ProviderConfigStore manages flat string key-value pairs such as openai_api_base
 and openai_model_id.  These differ from typed module configs managed by
-ConfigRegistry — they have no schema, no env-var fallback chain, and no type
+ConfigRegistry -- they have no schema, no env-var fallback chain, and no type
 casting.  They are read by AilaLLMClient's LLMConfigProvider to build the LLM
 client.
 
 The fallback chain for LLM config resolution is:
-1. ProviderConfigStore.get_config(key)  — user-set DB value
-2. None  — caller supplies a default (e.g. empty string for model_id)
+1. ProviderConfigStore.get_config(key)  -- user-set DB value
+2. None  -- caller supplies a default (e.g. empty string for model_id)
 
 Module-level typed configs (e.g. VulnerabilityConfigSchema fields) are read via
 ConfigRegistry.get(), not this store.

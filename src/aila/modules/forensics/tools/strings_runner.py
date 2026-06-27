@@ -1,4 +1,4 @@
-"""Strings, FLOSS, and capa malware analysis runner — over SSH."""
+"""Strings, FLOSS, and capa malware analysis runner -- over SSH."""
 from __future__ import annotations
 
 from aila.config import Settings
@@ -41,7 +41,7 @@ class StringsRunnerTool(Tool):
             file_path: Target file path on the analyzer.
             extra_args: Additional command-line arguments.
             integration: SSH connection fields.
-            analyzer_os: Target OS — ``"linux"`` or ``"windows"``.
+            analyzer_os: Target OS -- ``"linux"`` or ``"windows"``.
 
         Returns:
             Command stdout as a string.

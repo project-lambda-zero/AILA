@@ -3,7 +3,7 @@
 The MASVS aggregator (R-1, :mod:`aila.modules.vr.reporting.masvs_report`)
 walks every child investigation's primary outcome and turns it into one
 :class:`MasvsControlVerdict` via :func:`child_outcome_to_verdict`. This
-mapper is the *only* writer of verdicts in the MASVS pipeline — the
+mapper is the *only* writer of verdicts in the MASVS pipeline -- the
 report renderer and the API payload carry the result verbatim, so any
 operator-visible verdict traces back to a real child outcome. The
 mapper never invents a value.
@@ -28,7 +28,7 @@ is caught by tests:
 
 The not-applicable signal wins over every other branch because the
 agent has explicitly told the auditor the underlying capability is
-absent from this APK — there is nothing left to assess. Refuted then
+absent from this APK -- there is nothing left to assess. Refuted then
 wins over direct_finding because the verifier (or the agent's own
 assessment) has explicitly contradicted the finding hypothesis.
 """
@@ -55,7 +55,7 @@ __all__ = [
 
 # Threshold above which a direct_finding's verifier confidence is treated
 # as load-bearing for a MASVS ``finding`` verdict. PRD §S-4 fixes this
-# at 0.6 — the same gate the auto-promotion path uses in
+# at 0.6 -- the same gate the auto-promotion path uses in
 # :mod:`aila.modules.vr.agents.claim_verifier` (_AUTO_PROMOTE_MIN_CONFIDENCE).
 _FINDING_CONFIDENCE_FLOOR: float = 0.6
 
@@ -69,7 +69,7 @@ _FINDING_CONFIDENCE_FLOOR: float = 0.6
 # direct_finding still crosses the gate when no verifier_report is
 # present, matching the seed prompt's ≥0.6 cutoff.
 #
-# fix §219 — UNKNOWN is mapped to the FINDING floor (not 0.0) so the
+# fix §219 -- UNKNOWN is mapped to the FINDING floor (not 0.0) so the
 # default behaviour for an unclassified confidence is "treat as finding
 # pending operator review" rather than "silently demote to inconclusive".
 # The :meth:`dict.get` default below also lands on the floor so a future
@@ -121,20 +121,20 @@ def child_outcome_to_verdict(
     numeric_conf = (
         verifier_conf
         if verifier_conf is not None
-        # fix §219 — unknown enum members fall through to the FINDING
+        # fix §219 -- unknown enum members fall through to the FINDING
         # floor (not 0.0) so adding a new OutcomeConfidence value defaults
         # to "treat as finding pending operator review".
         else _ENUM_CONFIDENCE.get(outcome.confidence, _FINDING_CONFIDENCE_FLOOR)
     )
     agent_summary = _extract_agent_summary(payload)
 
-    # Branch 1 — explicit not_applicable tag wins over every other
+    # Branch 1 -- explicit not_applicable tag wins over every other
     # signal. The agent has told us the control does not apply to this
     # APK; there is nothing else to weigh.
     if _has_not_applicable_tag(payload):
-        # fix §220 — confidence is meaningless for a binary applicability
+        # fix §220 -- confidence is meaningless for a binary applicability
         # statement. Pin to 1.0 so downstream consumers don't read a
-        # low numeric_conf as "we're not sure this is N/A" — the
+        # low numeric_conf as "we're not sure this is N/A" -- the
         # not_applicable tag is itself the certainty signal.
         return MasvsControlVerdict(
             control_id=control.id,
@@ -148,7 +148,7 @@ def child_outcome_to_verdict(
             agent_summary=agent_summary,
         )
 
-    # Branch 2 — refuted. Either the claim verifier emitted it on a
+    # Branch 2 -- refuted. Either the claim verifier emitted it on a
     # DIRECT_FINDING outcome (canonical post-synthesis path) or the
     # agent wrote it on an assessment_report outcome directly.
     if verifier_verdict == "refuted" or _payload_says_refuted(payload) or _payload_says_pass(payload):
@@ -164,10 +164,10 @@ def child_outcome_to_verdict(
             agent_summary=agent_summary,
         )
 
-    # Branch 3 — direct_finding. Verifier-confirmed dominates the numeric
+    # Branch 3 -- direct_finding. Verifier-confirmed dominates the numeric
     # confidence gate (fix §218); otherwise the float floor decides.
     if outcome.outcome_kind == OutcomeKind.DIRECT_FINDING:
-        # fix §218 — verifier_verdict == 'confirmed' is the canonical
+        # fix §218 -- verifier_verdict == 'confirmed' is the canonical
         # post-synthesis pass for a real finding. Treat it as FINDING
         # regardless of numeric_conf so a low-confidence-but-confirmed
         # claim is never demoted to inconclusive on the float gate.
@@ -219,7 +219,7 @@ def child_outcome_to_verdict(
             agent_summary=agent_summary,
         )
 
-    # Branch 4 — fallthrough. Carry the underlying outcome_kind so the
+    # Branch 4 -- fallthrough. Carry the underlying outcome_kind so the
     # operator can see why the child landed inconclusive (assessment
     # report without a verdict signal, audit memo, sub-investigation
     # spawn, etc.).
@@ -320,7 +320,7 @@ def _payload_says_refuted(payload: dict[str, Any]) -> bool:
 
 
 # Natural-language indicators that the agent concluded the control is
-# COMPLIANT / PASSING / no vulnerability found — even when they
+# COMPLIANT / PASSING / no vulnerability found -- even when they
 # (incorrectly) labelled the outcome with kind=direct_finding. Agents
 # routinely use direct_finding as their default submit-kind regardless
 # of whether they actually found a vulnerability, so the audit_memo
@@ -353,7 +353,7 @@ _PASS_PHRASES: tuple[str, ...] = (
 
 # Anti-pattern: even when one of the above is present, if the payload
 # also explicitly says FAIL / CRITICAL / GAP, the agent meant a real
-# finding (often mixed results — partial compliance with gaps). Don't
+# finding (often mixed results -- partial compliance with gaps). Don't
 # flip the verdict to NO_FINDING in that case.
 _FAIL_PHRASES: tuple[str, ...] = (
     "audit verdict: fail",
@@ -375,7 +375,7 @@ def _payload_says_pass(payload: dict[str, Any]) -> bool:
     vulnerabilities AND audits that conclude the control is compliant.
     Without a payload-text override, the mapper trusts outcome_kind
     literally and renders 'audit found app is compliant' as a FAIL
-    badge — operator-observed and rejected. This helper scans the
+    badge -- observed and rejected. This helper scans the
     ``answer`` field (the agent's free-text conclusion) for unambiguous
     PASS markers and returns True only when at least one PASS phrase
     is present AND no FAIL phrase is present.
@@ -395,9 +395,9 @@ def _has_not_applicable_tag(payload: dict[str, Any]) -> bool:
     not_applicable tag" without nailing the field location. The agent
     may encode that as:
 
-    - ``payload['not_applicable'] is True`` — boolean flag.
-    - ``payload['applicability'] == 'not_applicable'`` — string field.
-    - ``'not_applicable' in payload['tags']`` — tags list entry.
+    - ``payload['not_applicable'] is True`` -- boolean flag.
+    - ``payload['applicability'] == 'not_applicable'`` -- string field.
+    - ``'not_applicable' in payload['tags']`` -- tags list entry.
 
     The mapper accepts all three so a single prompt revision does not
     drop verdicts on the floor.
@@ -421,7 +421,7 @@ def _has_not_applicable_tag(payload: dict[str, Any]) -> bool:
     return False
 
 
-# Hard cap on entries copied to a verdict — keeps the PDF table bounded
+# Hard cap on entries copied to a verdict -- keeps the PDF table bounded
 # and matches the spirit of the per-investigation pdf_report's
 # ``affected_components[:8]`` slice for audit-mcp resolution. The
 # verdict-level cap is larger because the MASVS PDF only renders the
@@ -438,7 +438,7 @@ def _extract_evidence_locations(
 
     Per ``vr/agents/prompts/system_audit.md``, every DIRECT_FINDING
     submit carries an ``affected_components: [{file, function}, ...]``
-    list — the canonical evidence shape the per-investigation
+    list -- the canonical evidence shape the per-investigation
     ``pdf_report`` also consumes. The MASVS verdict mapper surfaces
     these as :class:`MasvsEvidenceLocation` entries on the returned
     verdict so the PDF renderer can print "what the auditor cited"
@@ -454,11 +454,11 @@ def _extract_evidence_locations(
     - Capped at :data:`_EVIDENCE_LOCATION_CAP` entries so a malformed
       payload listing thousands of components cannot bloat the PDF.
 
-    The mapper never fabricates locations — when the payload omits
+    The mapper never fabricates locations -- when the payload omits
     the field or every entry is malformed, an empty list is the
     correct, honest output.
     """
-    # fix §217 — return (capped_list, true_total) so the verdict carries
+    # fix §217 -- return (capped_list, true_total) so the verdict carries
     # the pre-cap count for "N of M shown" rendering. The list is
     # bounded by :data:`_EVIDENCE_LOCATION_CAP`; the int counts every
     # validly-formed entry the agent emitted before truncation.

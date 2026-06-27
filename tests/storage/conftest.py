@@ -5,7 +5,7 @@ Connects to the local PostgreSQL instance. Uses a dedicated test database
 database if it doesn't exist. Enables pgvector extension.
 
 Uses a session-scoped event loop so all async tests in tests/storage/
-share one loop — prevents asyncpg "Event loop is closed" errors on
+share one loop -- prevents asyncpg "Event loop is closed" errors on
 Windows ProactorEventLoop where function-scoped loops cause teardown
 races with the connection pool.
 
@@ -53,7 +53,7 @@ def _ensure_test_db() -> None:
         f"SELECT 1 FROM pg_database WHERE datname = '{PG_TEST_DB}';",
     )
     if PG_TEST_DB not in (result.stdout or ""):
-        # Doesn't exist — but CREATE DATABASE can't run in a transaction
+        # Doesn't exist -- but CREATE DATABASE can't run in a transaction
         _run_psql("postgres", f"CREATE DATABASE {PG_TEST_DB};")
 
     # Enable pgvector extension
@@ -88,7 +88,7 @@ def pg_url():
     os.environ["AILA_DATABASE_URL"] = url
     yield url
 
-    # Dispose engines before pytest closes the event loop — prevents
+    # Dispose engines before pytest closes the event loop -- prevents
     # asyncpg "Event loop is closed" errors on Windows ProactorEventLoop
     _dispose_engines_sync()
 
@@ -105,7 +105,7 @@ def _dispose_engines_sync() -> None:
         loop.run_until_complete(dispose_engine())
         loop.close()
     except Exception:
-        pass  # Best-effort cleanup — don't fail teardown
+        pass  # Best-effort cleanup -- don't fail teardown
 
 
 @pytest.fixture

@@ -1,21 +1,21 @@
-"""R-2a — :func:`build_pdf` renders an aggregate as a real PDF byte string.
+"""R-2a -- :func:`build_pdf` renders an aggregate as a real PDF byte string.
 
 The renderer is the operator-facing front-end of the MASVS audit pipeline.
 It must produce a self-contained PDF whose:
 
 1. byte stream is a valid PDF document (``%PDF-`` header + ``%%EOF``
    trailer + at least one page that pypdf can parse);
-2. cover page surfaces the APK identity verbatim — display name,
-   package, version, SHA-256, MASVS catalog version — so the operator
+2. cover page surfaces the APK identity verbatim -- display name,
+   package, version, SHA-256, MASVS catalog version -- so the operator
    can identify the artifact from page 1 without opening the body;
 3. executive summary names every verdict bucket (FINDING / NO FINDING
    / NOT APPLICABLE / INCONCLUSIVE) plus the total controls audited;
 4. emits one section per non-empty MASVS group with a corresponding
    PDF outline entry so a viewer renders a TOC sidebar;
 5. handles the partial-aggregate path (no verdicts yet) without
-   raising — children-still-in-flight is a first-class state.
+   raising -- children-still-in-flight is a first-class state.
 
-The render is structural — none of these tests pin LLM-generated prose
+The render is structural -- none of these tests pin LLM-generated prose
 (R-2b will add per-control bodies and those tests will live in
 ``tests/test_vr_masvs_pdf_report_subsections.py``). They exercise the
 scaffolding only.
@@ -192,7 +192,7 @@ def test_build_pdf_cover_carries_apk_identity() -> None:
     assert "ExampleCorp Self-Service" in text, "display name missing"
     assert _APK_PACKAGE in text, "package id missing"
     assert _APK_VERSION in text, "version name missing"
-    # SHA-256 is split into 8-char groups for readability — assert a
+    # SHA-256 is split into 8-char groups for readability -- assert a
     # prefix that survives the formatting.
     assert "9228be90" in text, "sha-256 prefix missing"
     assert "1.4.2-aila" in text, "MASVS catalog version missing"
@@ -274,7 +274,7 @@ def test_build_pdf_emits_section_per_group_with_toc_entries() -> None:
 
 
 def test_build_pdf_skips_empty_groups() -> None:
-    """Groups with no verdicts must not render — empty buckets carry no
+    """Groups with no verdicts must not render -- empty buckets carry no
     audit signal and would clutter the report with placeholder pages.
     """
     verdicts = [
@@ -300,7 +300,7 @@ def test_build_pdf_skips_empty_groups() -> None:
 
 def test_build_pdf_handles_empty_aggregate() -> None:
     """A partial-aggregate render with zero verdicts must still produce
-    a valid PDF — the operator-visible "audit in progress" path lands
+    a valid PDF -- the operator-visible "audit in progress" path lands
     here when every child investigation is still running.
     """
     aggregate = _make_aggregate([], by_group={})
@@ -316,7 +316,7 @@ def test_build_pdf_handles_empty_aggregate() -> None:
 
 def test_build_pdf_handles_target_without_apk_overview() -> None:
     """A target whose STATIC_SUMMARY hasn't materialised should still
-    render — the dispatcher guards this case, but the renderer must
+    render -- the dispatcher guards this case, but the renderer must
     not raise on it either (defence in depth).
     """
     verdicts = [

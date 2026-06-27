@@ -7,7 +7,7 @@ shutdown) is hard to assert with the unit test loop, so we cover:
   2. 404 on unknown investigation (auth path works, polling never starts).
   3. The generator yields ``event: done`` immediately when the
      investigation is already in a terminal state and no new messages
-     are pending — proves the loop's exit condition is wired.
+     are pending -- proves the loop's exit condition is wired.
 """
 from __future__ import annotations
 

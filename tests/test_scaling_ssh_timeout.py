@@ -16,7 +16,7 @@ def test_run_command_accepts_timeout_seconds_parameter():
 
 
 def test_timeout_seconds_defaults_to_none():
-    """timeout_seconds must default to None (backward-compat — existing callers unchanged)."""
+    """timeout_seconds must default to None (backward-compat -- existing callers unchanged)."""
     sig = inspect.signature(SSHService.run_command)
     param = sig.parameters["timeout_seconds"]
     assert param.default is None

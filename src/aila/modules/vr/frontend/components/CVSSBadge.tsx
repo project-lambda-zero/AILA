@@ -52,7 +52,7 @@ export function CVSSBadge({
   return (
     <AilaBadge severity={SEVERITY_TONE[sev]} size="sm" title={tip || undefined}>
       <span className={className}>
-        {score != null ? score.toFixed(1) : "—"}{" "}
+        {score != null ? score.toFixed(1) : "--"}{" "}
         <span className="opacity-80">{sev.toUpperCase()}</span>
       </span>
     </AilaBadge>
@@ -71,7 +71,7 @@ const ATTACK_VECTOR: MetricSpec = {
   id: "AV",
   label: "Attack Vector",
   values: [
-    { id: "N", label: "Network", description: "Remote — across the network." },
+    { id: "N", label: "Network", description: "Remote -- across the network." },
     { id: "A", label: "Adjacent", description: "Adjacent network (same broadcast/collision domain)." },
     { id: "L", label: "Local", description: "Local logon required." },
     { id: "P", label: "Physical", description: "Physical access required." },
@@ -152,7 +152,7 @@ export function parseVector(vector: string | null | undefined): Record<string, s
   return out;
 }
 
-/** Render a CVSS vector as an 8-metric table — read-only display. */
+/** Render a CVSS vector as an 8-metric table -- read-only display. */
 export function CVSSBreakdown({
   vector,
   score,
@@ -198,7 +198,7 @@ export function CVSSBreakdown({
                       </span>
                     </span>
                   ) : (
-                    <span className="text-text-muted">—</span>
+                    <span className="text-text-muted">--</span>
                   )}
                 </td>
               </tr>
@@ -234,7 +234,7 @@ export function CWEBadge({
       className="inline-flex items-center gap-1 text-3xs font-mono px-1.5 py-0.5 rounded bg-surface border border-border-default text-foreground hover:bg-surface-hover"
     >
       {cweId}
-      {name && <span className="text-text-muted truncate" style={{ maxWidth: "18ch" }}>— {name}</span>}
+      {name && <span className="text-text-muted truncate" style={{ maxWidth: "18ch" }}>-- {name}</span>}
     </a>
   );
 }

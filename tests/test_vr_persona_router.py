@@ -81,7 +81,7 @@ class TestDefaultTaskType:
 
 
 class TestAllPersonasCovered:
-    """Every PersonaVoice must map to a role — no silent fallthrough."""
+    """Every PersonaVoice must map to a role -- no silent fallthrough."""
 
     def test_no_persona_without_role(self) -> None:
         for persona in PersonaVoice:

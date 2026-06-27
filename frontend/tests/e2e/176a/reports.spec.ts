@@ -1,9 +1,9 @@
 /**
- * reports.spec.ts — D-07, D-08, D-13, D-16, D-17, D-18, D-28.
+ * reports.spec.ts -- D-07, D-08, D-13, D-16, D-17, D-18, D-28.
  *
  * - D-07: list endpoint hit at LOCKED URL /vulnerability/reports/list.
  * - D-08: detail page renders the four canonical sections.
- * - D-13: empty list renders honest "No reports yet." text — never a fake row.
+ * - D-13: empty list renders honest "No reports yet." text -- never a fake row.
  * - D-16: ReportSummary shape keys present in list items.
  * - D-17: ReportDetail shape keys present in detail body.
  * - D-18: queries.ts imports real query module (asserted via the prod request URL).
@@ -119,7 +119,7 @@ test.describe("Vulnerability reports (D-07, D-08, D-13, D-16/17/18, D-28)", () =
     if (count === 0) {
       test.skip(
         true,
-        "no reports seeded in this env — D-08 covered by ReportDetailPage unit test",
+        "no reports seeded in this env -- D-08 covered by ReportDetailPage unit test",
       );
       return;
     }

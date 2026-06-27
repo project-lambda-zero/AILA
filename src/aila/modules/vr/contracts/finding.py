@@ -112,7 +112,7 @@ class VRFinding(BaseModel):
     assigned_cve_id: str | None = None
     patch_version: str | None = None
 
-    # Triage classification + evidence — surfaced for the global
+    # Triage classification + evidence -- surfaced for the global
     # findings explorer so the operator can tell at a glance which
     # finding carries which evidence without paging through every
     # FindingDetailPage. evidence_count is a derived field: length of

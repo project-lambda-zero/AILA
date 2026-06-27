@@ -1,4 +1,4 @@
-"""023 — workflow_state_cursor (Phase 178).
+"""023 -- workflow_state_cursor (Phase 178).
 
 Creates the cursor table that holds the active state for each workflow run.
 One row per run_id. Atomic updates via optimistic ``version`` lock:

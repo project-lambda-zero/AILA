@@ -1,18 +1,18 @@
-"""Binary analysis collector — extracts suspicious files from disk images
+"""Binary analysis collector -- extracts suspicious files from disk images
 and runs the capa / FLOSS / strings / hashing toolchain against each.
 
 Produces one artifact per analysed binary with:
   - sha256 / size / filetype
   - `strings` (Sysinternals on Windows, GNU strings on POSIX)
-  - `FLOSS` — deobfuscated / stack / decoded strings
-  - `capa` — capability JSON (MITRE ATT&CK mapping)
+  - `FLOSS` -- deobfuscated / stack / decoded strings
+  - `capa` -- capability JSON (MITRE ATT&CK mapping)
   - For ELF (including ``.ko`` kernel modules): ELF header + import-ish
     summary via ``dissect.executable.elf`` when available.
   - For PE: imports + sections via ``pefile`` when available.
 
 Design notes (read these before modifying):
 
-* Discovery is STRUCTURAL and generalises across images — no CTF-specific
+* Discovery is STRUCTURAL and generalises across images -- no CTF-specific
   filenames. We walk a fixed set of attacker-favoured roots (``/tmp``,
   ``/var/tmp``, ``/dev/shm``, ``/home``, ``/root`` on Linux; ``AppData\\Local\\Temp``,
   ``AppData\\Roaming``, ``Users\\Public``, ``Windows\\Temp``, ``ProgramData``
@@ -23,12 +23,12 @@ Design notes (read these before modifying):
   ELF/PE regardless of extension.
 
 * Extraction reads files lazily via ``dissect.target.fs.path().open('rb')``
-  — the disk image is never mounted. Extraction writes to an analyzer-local
+  -- the disk image is never mounted. Extraction writes to an analyzer-local
   temp directory named by sha256 so re-runs hit cache.
 
 * Each tool runs with a hard timeout (``_TOOL_TIMEOUT_S``). Tool failures
   are captured in the artifact payload under ``tool_errors`` rather than
-  raising — so one broken sample never aborts the whole pass.
+  raising -- so one broken sample never aborts the whole pass.
 
 * The whole thing runs over SSH on the analyzer machine. We upload a
   single self-contained Python script per disk image and interpret its
@@ -57,7 +57,7 @@ _log = logging.getLogger(__name__)
 # Roots worth walking when hunting for malicious payload samples. These are
 # universal attacker-staging + persistence-payload locations per OS, not
 # CTF-specific. We explicitly do NOT walk ``C:\Program Files\`` or
-# ``C:\Windows\System32\`` even though those contain executables — those are
+# ``C:\Windows\System32\`` even though those contain executables -- those are
 # legit install roots and would drown the analysis in kernel + OS binaries.
 _LINUX_WALK_ROOTS: tuple[str, ...] = (
     "/tmp", "/var/tmp", "/dev/shm",
@@ -325,19 +325,19 @@ def _build_analysis_script(
                 "filetype": filetype, "tool_errors": [],
             }}
 
-            # strings — Sysinternals (-accepteula quiet), fall back to no-flag run.
+            # strings -- Sysinternals (-accepteula quiet), fall back to no-flag run.
             strings_r = _run_tool(["strings.exe", "-accepteula", "-nobanner", "-n", "6", scratch], T_STRINGS)
             if not strings_r["ok"]:
                 strings_r = _run_tool(["strings.exe", "-accepteula", "-n", "6", scratch], T_STRINGS)
             if strings_r["ok"]:
                 lines = strings_r["stdout"].splitlines()
                 result["strings_count"] = len(lines)
-                # Keep a bounded sample — LLM prompt can't absorb 50k lines.
+                # Keep a bounded sample -- LLM prompt can't absorb 50k lines.
                 result["strings_sample"] = lines[:600]
             else:
                 result["tool_errors"].append({{"tool": "strings", "err": strings_r["stderr"][:400]}})
 
-            # capa — only on PE / ELF and only below the full-analysis cap.
+            # capa -- only on PE / ELF and only below the full-analysis cap.
             if filetype in ("pe", "elf") and size <= MAX_BYTES_FULL:
                 capa_r = _run_tool(["capa.exe", "-j", scratch], T_CAPA)
                 if capa_r["ok"] and capa_r["stdout"].strip().startswith("{{"):
@@ -347,19 +347,19 @@ def _build_analysis_script(
                         result["tool_errors"].append({{"tool": "capa", "err": f"json parse: {{e}}"}})
                 else:
                     result["tool_errors"].append({{"tool": "capa", "exit": capa_r["exit"], "err": capa_r["stderr"][:400]}})
-            # FLOSS — same guardrails.
+            # FLOSS -- same guardrails.
             if filetype in ("pe", "elf") and size <= MAX_BYTES_FULL:
                 floss_r = _run_tool(["floss.exe", "--json", "-q", scratch], T_FLOSS)
                 if floss_r["ok"]:
                     try:
                         result["floss"] = json.loads(floss_r["stdout"])
                     except Exception:
-                        # Older FLOSS prints mixed text+json — take first decoded_strings block we can parse.
+                        # Older FLOSS prints mixed text+json -- take first decoded_strings block we can parse.
                         result["floss_raw_head"] = floss_r["stdout"][:4000]
                 else:
                     result["tool_errors"].append({{"tool": "floss", "exit": floss_r["exit"], "err": floss_r["stderr"][:400]}})
 
-            # pefile — imports + sections.
+            # pefile -- imports + sections.
             if filetype == "pe":
                 try:
                     import pefile
@@ -387,7 +387,7 @@ def _build_analysis_script(
                 except Exception as e:
                     result["tool_errors"].append({{"tool": "pefile", "err": f"{{type(e).__name__}}: {{e}}"}})
 
-            # ELF header — dissect.executable.elf when available, else raw parse.
+            # ELF header -- dissect.executable.elf when available, else raw parse.
             if filetype == "elf":
                 try:
                     from dissect.executable import elf as _elf
@@ -412,7 +412,7 @@ def _build_analysis_script(
                         "symbols_sample": syms[:200],
                     }}
                 except Exception as e:
-                    # Fallback — just pull the ei_class / machine bytes manually.
+                    # Fallback -- just pull the ei_class / machine bytes manually.
                     try:
                         ei_class = data[4] if len(data) > 4 else 0
                         machine = int.from_bytes(data[18:20], "little") if len(data) > 20 else 0
@@ -508,7 +508,7 @@ async def collect_binary_analysis_artifacts(
         )
     except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
         await safe_emit(emitter, "binary_analysis_failed",
-                        f"binary_analysis: {path} FAILED during script upload — {exc}",
+                        f"binary_analysis: {path} FAILED during script upload -- {exc}",
                         {"path": path, "error": str(exc)[:400]})
         return artifacts
     finally:
@@ -524,7 +524,7 @@ async def collect_binary_analysis_artifacts(
         output = await ssh.run_command(integration, cmd, timeout_seconds=1800.0)
     except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
         await safe_emit(emitter, "binary_analysis_failed",
-                        f"binary_analysis: {path} FAILED — {exc}",
+                        f"binary_analysis: {path} FAILED -- {exc}",
                         {"path": path, "error": str(exc)[:400]})
         return artifacts
     finally:
@@ -543,14 +543,14 @@ async def collect_binary_analysis_artifacts(
         payload = json.loads(output.strip())
     except json.JSONDecodeError as exc:
         await safe_emit(emitter, "binary_analysis_parse_error",
-                        f"binary_analysis: {path} JSON parse failed — {exc}",
+                        f"binary_analysis: {path} JSON parse failed -- {exc}",
                         {"path": path, "error": str(exc)[:200], "head": output[:400]})
         return artifacts
 
     results = payload.get("results", []) or []
     candidates = payload.get("candidates", []) or []
     await safe_emit(emitter, "binary_analysis_candidates",
-                    f"binary_analysis: {path} — {len(candidates)} candidate(s), analysed {len(results)} in {elapsed}s",
+                    f"binary_analysis: {path} -- {len(candidates)} candidate(s), analysed {len(results)} in {elapsed}s",
                     {"path": path, "candidate_count": len(candidates),
                      "analyzed_count": len(results), "elapsed_s": elapsed,
                      "discovery_elapsed_s": payload.get("discovery_elapsed_s")})
@@ -602,7 +602,7 @@ async def collect_binary_analysis_artifacts(
                 artifacts.append(ga)
         except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
             await safe_emit(emitter, "ghidra_stage_failed",
-                            f"binary_analysis: ghidra stage failed for {basename} — {exc}",
+                            f"binary_analysis: ghidra stage failed for {basename} -- {exc}",
                             {"path": path, "basename": basename,
                              "sha256": r.get("sha256"), "error": str(exc)[:400]})
 

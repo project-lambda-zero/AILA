@@ -12,7 +12,7 @@
 #   ]
 #
 # Categories of expected false positives:
-#   a. Protocol/ABC abstract methods — body is ... but signature has params
+#   a. Protocol/ABC abstract methods -- body is ... but signature has params
 #      (already skipped by auditor, but list here if edge cases arise)
 #   b. Framework callbacks with mandatory signature (e.g. workflow stage handlers,
 #      platform Tool.forward, or dispatch tables requiring a fixed signature)
@@ -20,9 +20,9 @@
 #   d. Module-level cache variables not matching the _CACHE_IMPL_IDENTIFIERS set
 #      (e.g. _EMBEDDING_MODEL is a singleton cache, but name does not include "cache")
 #   e. "persist" in docstrings meaning DB persistence, not in-memory caching
-#   f. ModuleProtocol interface methods — mandatory one-liner overrides
-#   g. Adapter interface methods — delegation is the pattern
-#   h. Cache fallback patterns — silent fallback on corrupted cache is intentional
+#   f. ModuleProtocol interface methods -- mandatory one-liner overrides
+#   g. Adapter interface methods -- delegation is the pattern
+#   h. Cache fallback patterns -- silent fallback on corrupted cache is intentional
 
 HONESTY_WHITELIST = [
     # Category (b): state_response_emit is a required workflow stage handler.
@@ -48,17 +48,17 @@ HONESTY_WHITELIST = [
     ("scheduled_scans.py", "forward", "action-dispatch"),
     ("scoring_policy.py", "forward", "action-dispatch"),
 
-    # Category (f): ModuleProtocol interface — required_tools and report_filter_keys
+    # Category (f): ModuleProtocol interface -- required_tools and report_filter_keys
     # are one-liner overrides mandated by the protocol.
     ("_template/module.py", "required_tools", "inlining"),
     ("_template/module.py", "report_filter_keys", "inlining"),
     ("vulnerability/module.py", "report_filter_keys", "inlining"),
 
-    # Category (g): collect_inventory delegates to build_inventory_from_command —
+    # Category (g): collect_inventory delegates to build_inventory_from_command --
     # the adapter interface method IS the indirection point.
     ("adapters/base.py", "collect_inventory", "inlining"),
 
-    # Category (b): Pydantic field validator — name is the public API contract.
+    # Category (b): Pydantic field validator -- name is the public API contract.
     ("contracts/profile.py", "validate_display_name", "inlining"),
 
     # Category (f): list_run_records is a @staticmethod on ReportArtifactStore
@@ -87,7 +87,7 @@ HONESTY_WHITELIST = [
     ("vr/workflow/task.py", "run_target_analysis", "noqa"),
     ("vr/workflow/task.py", "run_fuzz_campaign_launch", "noqa"),
     ("vr/services/target_analysis.py", "_run_git", "noqa"),
-    # Bridges hoisted to platform/mcp/bridges/ — these noqa entries follow the move.
+    # Bridges hoisted to platform/mcp/bridges/ -- these noqa entries follow the move.
     ("platform/mcp/bridges/audit_mcp.py", "_resolve_base_url", "noqa"),
     ("platform/mcp/bridges/ida_headless.py", "_resolve_base_url", "noqa"),
     ("platform/mcp/bridges/audit_mcp.py", "forward", "noqa"),
@@ -96,7 +96,7 @@ HONESTY_WHITELIST = [
     ("platform/mcp/bridges/android_mcp.py", "forward", "noqa"),
 
     # Category (b): _enqueue_next_investigation_run lives in
-    # workflow/states/investigation_emit.py — a state file. Workflow
+    # workflow/states/investigation_emit.py -- a state file. Workflow
     # registration loads every state file, then loads workflow.task
     # which imports those state functions to build the definition.
     # Top-level importing default_task_queue (which lazy-loads
@@ -115,7 +115,7 @@ HONESTY_WHITELIST = [
     # import it, and the helper has a circular dependency risk via
     # vr.contracts (which branch_cleanup deliberately avoids by reading
     # status enum values directly from the platform contract layer).
-    # See commit 42a5ef8 for the operator-observed BLOCK bug rationale.
+    # See an earlier audit pass for the observed BLOCK bug rationale.
     ("vr/workflow/states/investigation_emit.py", "state_investigation_emit", "noqa"),
     ("vr/services/investigation_finalizers.py", "synthesize_no_finding_outcomes", "noqa"),
     ("vr/masvs/parent_reconciler.py", "_enforce_total_turn_cap", "noqa"),
@@ -133,22 +133,22 @@ HONESTY_WHITELIST = [
     # internal state across the API boundary.
     ("vr/disclosure/registry.py", "available_tracks", "inlining"),
 
-    # Category (h): router cache deserialization — silent fallback on corrupt
+    # Category (h): router cache deserialization -- silent fallback on corrupt
     # cache is intentional; the router re-routes on miss.
     ("router.py", "except Exception", "silently swallows"),
 
-    # Category (b): Template module register_tools — registry and schema_registry
+    # Category (b): Template module register_tools -- registry and schema_registry
     # are ModuleProtocol contract params unused by the template.
     ("_template/module.py", "register_tools", "registry"),
     ("_template/module.py", "register_tools", "schema_registry"),
 
     # Category (g): hash_api_key and verify_api_key are public API accessors that
     # encapsulate the private _HASHER module-level singleton. The indirection is
-    # intentional — callers should not access _HASHER directly.
+    # intentional -- callers should not access _HASHER directly.
     ("api/auth.py", "hash_api_key", "inlining"),
     ("api/auth.py", "verify_api_key", "inlining"),
 
-    # Category (b): ARQ worker mandatory signature — ctx dict is required by ARQ
+    # Category (b): ARQ worker mandatory signature -- ctx dict is required by ARQ
     # but not referenced in the handler body (ARQ injects it automatically).
     ("tasks/worker.py", "reaper", "ctx"),
 
@@ -183,7 +183,7 @@ HONESTY_WHITELIST = [
     # This is a one-line httpx import inside an async closure, not a general HTTP client.
     ("vr/module.py", "http_client_in_module", "HTTP clients belong to the platform layer"),
 
-    # Category (f): ModuleProtocol interface methods — returning [] or {} is the
+    # Category (f): ModuleProtocol interface methods -- returning [] or {} is the
     # correct no-op implementation for optional protocol methods. These are not
     # placeholder stubs; they are intentional "this module doesn't use this feature".
     ("protocol.py", "placeholder_return", "returns empty"),
@@ -195,11 +195,11 @@ HONESTY_WHITELIST = [
     ("vr/module.py", "placeholder_return", "returns empty"),
     ("vr/agents/nday_researcher.py", "placeholder_return", "returns empty"),
 
-    # Category (f): Alembic baseline stamp — upgrade/downgrade are intentionally empty
+    # Category (f): Alembic baseline stamp -- upgrade/downgrade are intentionally empty
     # because the baseline migration just stamps the version, no DDL needed.
     ("001_baseline_stamp.py", "pointless_pass", "implement or mark"),
 
-    # Category (f): Service __init__ stubs — base classes with empty __init__ bodies
+    # Category (f): Service __init__ stubs -- base classes with empty __init__ bodies
     # that subclasses override. Not abstract because they're usable as-is.
     ("platform/services/storage.py", "pointless_pass", "implement or mark"),
     ("platform/services/system.py", "pointless_pass", "implement or mark"),
@@ -210,14 +210,14 @@ HONESTY_WHITELIST = [
     ("_template/module.py", "commented_out_code", "commented-out Python"),
 
     # ──────────────────────────────────────────────────────────────────
-    # Category (h): Intentional error boundaries — broad_exception_catch.
+    # Category (h): Intentional error boundaries -- broad_exception_catch.
     # The platform/API surface logs the exception and degrades gracefully
     # to keep the request, task, or worker pipeline alive. Narrowing the
     # catches would risk crashing a service on an unforeseen failure mode
     # at the system boundary; the breadth is the design.
     # ──────────────────────────────────────────────────────────────────
 
-    # api/ — FastAPI app, middleware, and routers. Each catch logs and
+    # api/ -- FastAPI app, middleware, and routers. Each catch logs and
     # returns a typed error response or degrades a single endpoint.
     ("api/app.py", "broad_exception_catch", "catches everything"),
     ("api/middleware/idempotency.py", "broad_exception_catch", "catches everything"),
@@ -236,7 +236,7 @@ HONESTY_WHITELIST = [
     ("api/routers/topology.py", "broad_exception_catch", "catches everything"),
     ("api/routers/users.py", "broad_exception_catch", "catches everything"),
 
-    # platform/ — LLM client, routing/runtime, services, task queue, and
+    # platform/ -- LLM client, routing/runtime, services, task queue, and
     # workflow engine. These are the platform's outermost frames and
     # supervisors; they MUST keep running across model/provider/runner
     # failures and emit structured events instead of propagating.
@@ -255,12 +255,12 @@ HONESTY_WHITELIST = [
     ("platform/workflows/engine.py", "broad_exception_catch", "catches everything"),
     ("platform/workflows/log.py", "broad_exception_catch", "catches everything"),
 
-    # storage/ — secret store catches keyring backend failures so a missing
+    # storage/ -- secret store catches keyring backend failures so a missing
     # platform-level keyring service does not break the API at startup.
     ("storage/secrets.py", "broad_exception_catch", "catches everything"),
 
     # ──────────────────────────────────────────────────────────────────
-    # Category (h): except_return_default — mechanical typed catches whose
+    # Category (h): except_return_default -- mechanical typed catches whose
     # documented contract IS the empty default. These are pure parser /
     # coercion / cache-lookup utilities; the empty return is the public
     # contract, not an error swallow. Logging on every parse failure
@@ -276,7 +276,7 @@ HONESTY_WHITELIST = [
     # to the outer route handler.
     ("api/routers/tools.py", "except_return_default", "silently hides failures"),
 
-    # forensics parser/coercion utilities — ill-formed input is the contract.
+    # forensics parser/coercion utilities -- ill-formed input is the contract.
     ("forensics/api_router.py", "except_return_default", "silently hides failures"),
     ("workflow/states/collectors/_ghidra_stage.py", "except_return_default", "silently hides failures"),
     ("workflow/states/collectors/memory.py", "except_return_default", "silently hides failures"),
@@ -294,11 +294,11 @@ HONESTY_WHITELIST = [
     ("vulnerability/adapters/arch.py", "except_return_default", "silently hides failures"),
     ("vulnerability/adapters/osv.py", "except_return_default", "silently hides failures"),
 
-    # Scoring agent prior-knowledge fetch — retrieval miss returns empty
+    # Scoring agent prior-knowledge fetch -- retrieval miss returns empty
     # context, which the prompt builder handles transparently.
     ("vulnerability/agents/scoring/agent.py", "except_return_default", "silently hides failures"),
 
-    # vulnerability coercion utilities — the return-on-bad-input default is
+    # vulnerability coercion utilities -- the return-on-bad-input default is
     # the entire purpose of these functions (coerce_int, coerce_float,
     # coerce_non_negative_int).
     ("vulnerability/workflow/utils/coercion.py", "except_return_default", "silently hides failures"),
@@ -316,12 +316,12 @@ HONESTY_WHITELIST = [
     # → empty target list, treated as "fleet-wide" by callers.
     ("platform/services/report.py", "except_return_default", "silently hides failures"),
 
-    # platform/services/team_scope: SQLAlchemy listener fallback — statements
+    # platform/services/team_scope: SQLAlchemy listener fallback -- statements
     # that don't expose a mapper / column descriptions are global queries.
     ("platform/services/team_scope.py", "except_return_default", "silently hides failures"),
 
     # platform/tasks/discovery: parser utilities for nproc, free, df, uptime
-    # output — None is the documented "unparseable" contract.
+    # output -- None is the documented "unparseable" contract.
     ("platform/tasks/discovery.py", "except_return_default", "silently hides failures"),
 
     # platform/tools/artifacts: JSON content-type parser fallback returns
@@ -347,7 +347,7 @@ HONESTY_WHITELIST = [
     # ---- Rules 1-23 residual (pre-existing, verified legitimate) --------
 
     # Category (g): Vulnerability module HTTP providers/adapters are the data-fetch
-    # boundary itself — the module's equivalent of IDA bridge. httpx is their transport.
+    # boundary itself -- the module's equivalent of IDA bridge. httpx is their transport.
     ("vulnerability/adapters/ghsa.py", "http_client_in_module", "HTTP clients belong to the platform"),
     ("vulnerability/providers/_http.py", "http_client_in_module", "HTTP clients belong to the platform"),
     ("vulnerability/providers/alpine_secdb.py", "http_client_in_module", "HTTP clients belong to the platform"),
@@ -361,12 +361,12 @@ HONESTY_WHITELIST = [
     # retry, not for direct DB connections. The exception type is the import target.
     ("vulnerability/workflow/definitions.py", "direct_db_in_module", "use UnitOfWork"),
 
-    # Category (b): CLI sync-to-async bridge functions — Click/Typer requires sync
+    # Category (b): CLI sync-to-async bridge functions -- Click/Typer requires sync
     # entry points. These thin wrappers call run_until_complete() which is the mandatory
     # pattern for invoking async code from a sync CLI handler.
     ("cli.py", "run_until_complete", "consider inlining"),
 
-    # Category (b): Forensics tool_catalog factory function — the indirection is the
+    # Category (b): Forensics tool_catalog factory function -- the indirection is the
     # registry pattern (tool alias → factory callable → tool instance).
     ("forensics/tool_catalog.py", "factory_fn", "consider inlining"),
 

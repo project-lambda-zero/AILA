@@ -1,4 +1,4 @@
-"""Track registry — lookup by track_id, list available tracks.
+"""Track registry -- lookup by track_id, list available tracks.
 
 v1 is built-ins only. v1.1 adds YAML-defined tracks from
 ``data/disclosure_tracks/*.yaml``.

@@ -1,4 +1,4 @@
-"""Fuzz campaign proposal table — operator-in-the-loop with full
+"""Fuzz campaign proposal table -- operator-in-the-loop with full
 pre-fuzz prep (D-37 + audit-first reasoning model).
 
 The reasoning agent prepares EVERYTHING needed to fuzz before

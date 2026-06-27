@@ -76,7 +76,7 @@ export const BarChart: Story = {
     size: "md",
     ariaLabel: "Severity distribution bar chart",
   },
-  name: "Bar Chart — Severity Distribution",
+  name: "Bar Chart -- Severity Distribution",
 }
 
 export const LineChart: Story = {
@@ -88,7 +88,7 @@ export const LineChart: Story = {
     size: "md",
     ariaLabel: "Critical vulnerabilities trend line chart",
   },
-  name: "Line Chart — Critical Trend",
+  name: "Line Chart -- Critical Trend",
 }
 
 export const AreaChart: Story = {
@@ -100,7 +100,7 @@ export const AreaChart: Story = {
     size: "md",
     ariaLabel: "Medium vulnerabilities area chart",
   },
-  name: "Area Chart — Medium Trend",
+  name: "Area Chart -- Medium Trend",
 }
 
 export const PieChart: Story = {
@@ -112,7 +112,7 @@ export const PieChart: Story = {
     size: "md",
     ariaLabel: "Vulnerability distribution by system pie chart",
   },
-  name: "Pie Chart — System Distribution",
+  name: "Pie Chart -- System Distribution",
 }
 
 export const AllSizes: Story = {

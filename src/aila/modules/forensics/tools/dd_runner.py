@@ -1,4 +1,4 @@
-"""dd disk imaging and raw data extraction runner — over SSH.
+"""dd disk imaging and raw data extraction runner -- over SSH.
 
 Supports raw disk/partition copying, evidence acquisition, selective block
 extraction, disk-to-image conversion, and raw data slicing for carving.

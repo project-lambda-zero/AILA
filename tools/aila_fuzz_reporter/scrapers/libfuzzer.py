@@ -1,4 +1,4 @@
-"""libFuzzer scraper — tails the run log for stats + scans the
+"""libFuzzer scraper -- tails the run log for stats + scans the
 ``-artifact_prefix`` directory for ``crash-*`` / ``leak-*`` / ``oom-*``
 artifact files.
 

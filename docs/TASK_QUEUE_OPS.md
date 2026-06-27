@@ -168,7 +168,7 @@ It is cancelled in the `finally` block when the job completes (success, failure,
 
 **Healthy task:** `heartbeat_at` is within `heartbeat_interval_s` of now.
 
-**Stale task:** `heartbeat_at` is older than `reaper_heartbeat_threshold_s` (default 86400s) — or, when `heartbeat_at` is NULL, `started_at` is older than `reaper_zombie_threshold_s` (default 3300s).
+**Stale task:** `heartbeat_at` is older than `reaper_heartbeat_threshold_s` (default 86400s) -- or, when `heartbeat_at` is NULL, `started_at` is older than `reaper_zombie_threshold_s` (default 3300s).
 This indicates the worker crashed without cleanup.
 
 ### Query for stale tasks
@@ -208,10 +208,10 @@ invocation because cron fires while jobs are mid-flight:
 The cron path skips `heartbeat=None` tasks because a single-shot tool call
 (e.g. `run_function_ranking`, one ~5 min audit-mcp HTTP request) parks the
 coroutine in `await` without calling `ctx.heartbeat()`, so `heartbeat=None`
-mid-flight is ambiguous. Boot is unambiguous — `heartbeat=None` at startup
+mid-flight is ambiguous. Boot is unambiguous -- `heartbeat=None` at startup
 means the previous worker died before the first beat.
 
-### Sub-sweep 1 — `_sweep_orphan_running_tasks` (platform)
+### Sub-sweep 1 -- `_sweep_orphan_running_tasks` (platform)
 
 Heartbeat-based zombie detection. Marks a task FAILED when both:
 
@@ -221,17 +221,17 @@ Heartbeat-based zombie detection. Marks a task FAILED when both:
 
 Thresholds (`src/aila/platform/tasks/constants.py:55-56`):
 
-- `REAPER_ZOMBIE_THRESHOLD_S = 3300` (55 min — applied when `heartbeat_at` is
+- `REAPER_ZOMBIE_THRESHOLD_S = 3300` (55 min -- applied when `heartbeat_at` is
   NULL). Sits deliberately below the `3600` s `job_timeout` so the reaper
   never races ARQ's own timeout for a still-running job.
-- `REAPER_HEARTBEAT_THRESHOLD_S = 86400` (24 h — applied when the worker is
+- `REAPER_HEARTBEAT_THRESHOLD_S = 86400` (24 h -- applied when the worker is
   actively updating `heartbeat_at`).
 
 On checkpoint presence the task is re-queued (see *Crash recovery flow* below);
 without a checkpoint the task is marked FAILED with
 `Worker heartbeat timeout -- task presumed dead (TASK-10 reaper)`.
 
-### Sub-sweep 2 — `reap_stuck_stages` (VR; migration 060)
+### Sub-sweep 2 -- `reap_stuck_stages` (VR; migration 060)
 
 Per-stage VR target-analysis reaper. Flips any `vr_targets.analysis_stages_json`
 stage stuck in RUNNING past its per-stage timeout to `FAILED:timeout`. Stage
@@ -248,7 +248,7 @@ which fans out a fresh ARQ job per non-DONE stage. Without this sweep, a
 crashed mid-stage worker would leave the target stuck in `ingesting` forever
 (the firefox case that motivated migration 060).
 
-### Sub-sweep 3 — `sweep_orphan_crashed_cursors` (platform; commit `af9a724`)
+### Sub-sweep 3 -- `sweep_orphan_crashed_cursors` (platform; commit `af9a724`)
 
 Clears `workflow_state_cursor` rows whose `current_state = '__crashed__'`
 when the underlying `TaskRecord` is absent or already terminal. Without this,
@@ -259,13 +259,13 @@ Originally a per-module sweep; moved to platform in commit `af9a724` because
 `workflow_state_cursor` is a platform-owned table and the same lifecycle
 applies to every module that uses `DurableStateMachine`.
 
-### Sub-sweep 4 — `_sweep_orphan_queued_tasks` (platform)
+### Sub-sweep 4 -- `_sweep_orphan_queued_tasks` (platform)
 
 Detects tasks parked in QUEUED whose ARQ job has gone missing from Redis
 (typically because Redis was wiped and the durable `TaskRecord` survived).
 Re-enqueues so a worker can pick them up.
 
-### Sub-sweep 5 — `sweep_cap_exceeded_investigations` (VR)
+### Sub-sweep 5 -- `sweep_cap_exceeded_investigations` (VR)
 
 Walks `vr_investigations` and completes any that breach a per-investigation
 cap: turn count, message count, or wall-clock budget. Wall-clock is now
@@ -275,14 +275,14 @@ moment a worker picks it up. The cap defaults to
 `VR_INVESTIGATION_WALL_CLOCK_HOURS` (6 h after the worker stamps
 `started_at`).
 
-### Sub-sweep 6 — `sweep_orphan_active_branches` (VR)
+### Sub-sweep 6 -- `sweep_orphan_active_branches` (VR)
 
 Flips any `vr_investigation_branches` row still ACTIVE under an investigation
 whose top-level `status` is already terminal (`completed`/`failed`/`cancelled`).
 Without this, a branch left active under a closed investigation pins quorum
 forever and blocks dispatch.
 
-### Auxiliary — `_reconcile_orphan_arq_locks`
+### Auxiliary -- `_reconcile_orphan_arq_locks`
 
 Runs from the boot path of every worker (not from the cron tick). Deletes
 `arq:in-progress:*` Redis keys whose `TaskRecord` is absent or terminal. This
@@ -291,7 +291,7 @@ is the third leg of the desync triangle documented in CLAUDE.md
 `arq:in-progress:<id>`). Without it, an ARQ in-progress lock from a crashed
 worker prevents the next worker from picking up the same task id.
 
-- LLM idempotency cache purge — the worker imports `run_purge_expired_cron`
+- LLM idempotency cache purge -- the worker imports `run_purge_expired_cron`
   from `aila.platform.llm.idempotency_cache` (migration 061
   `llm_idempotency_cache`) and runs it on the cron schedule. Drops expired
   entries so cache size stays bounded. Source:
@@ -435,7 +435,7 @@ at runtime via `get_task_tuning()` and take effect without restart.
 
 1. Check `platform.redis_url` via `GET /config`
 2. Verify Redis/Memurai is running: `redis-cli -u <url> ping`
-3. If Redis is unreachable, new `TaskQueue.submit()` calls raise `WorkerUnreachableError` (HTTP 503) — the ghost `TaskRecord` is deleted before the call returns. Existing queued jobs in Redis resume once Redis is back and a worker reconnects.
+3. If Redis is unreachable, new `TaskQueue.submit()` calls raise `WorkerUnreachableError` (HTTP 503) -- the ghost `TaskRecord` is deleted before the call returns. Existing queued jobs in Redis resume once Redis is back and a worker reconnects.
 
 ### Worker keeps crashing
 

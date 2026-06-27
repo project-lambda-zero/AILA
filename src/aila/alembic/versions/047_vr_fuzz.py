@@ -1,8 +1,8 @@
-"""047 — VR fuzzing campaigns + crashes (Fuzzing plan).
+"""047 -- VR fuzzing campaigns + crashes (Fuzzing plan).
 
 Adds two new tables:
-  vr_fuzz_campaigns  — one long-running campaign per (target, engine, strategy)
-  vr_fuzz_crashes    — one crash per (campaign, stack_hash); dedup enforced
+  vr_fuzz_campaigns  -- one long-running campaign per (target, engine, strategy)
+  vr_fuzz_crashes    -- one crash per (campaign, stack_hash); dedup enforced
 
 Revision ID: 047_vr_fuzz
 Revises: 046_vr_disclosure_submissions

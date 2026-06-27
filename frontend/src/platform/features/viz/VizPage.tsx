@@ -1,5 +1,5 @@
 /**
- * VizPage — Data Visualization hub.
+ * VizPage -- Data Visualization hub.
  *
  * Assembles all VIZ-01 through VIZ-04 charts on a single responsive grid page.
  * Available at /viz for any authenticated user.
@@ -32,7 +32,7 @@ export function VizPage() {
             <SystemHeatmap exportRef={heatmapRef} />
           </div>
     
-          {/* VIZ-04: Geographic map — full width */}
+          {/* VIZ-04: Geographic map -- full width */}
           <div className="lg:col-span-2 h-full">
             <GeographicMap />
           </div>

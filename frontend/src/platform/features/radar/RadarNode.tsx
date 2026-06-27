@@ -1,5 +1,5 @@
 /**
- * RadarNode.tsx — Custom ReactFlow node for the Network Radar (Phase 144).
+ * RadarNode.tsx -- Custom ReactFlow node for the Network Radar (Phase 144).
  *
  * Renders as an SVG circle with:
  * - Fill color driven by the active colorBy mode (vulnerabilities/services/distro/connectivity)
@@ -39,7 +39,7 @@ export const RadarNode: React.FC<NodeProps> = ({ data, selected }) => {
   const severitySummary = formatSeveritySummary(node.severity_counts);
   const colors = useThemeChartColors();
 
-  const circleSize = 60; // radius equivalent — total node is 120x120
+  const circleSize = 60; // radius equivalent -- total node is 120x120
   const nodeSize = 120;
 
   return (
@@ -54,7 +54,7 @@ export const RadarNode: React.FC<NodeProps> = ({ data, selected }) => {
       }}
       title={`${node.name}\n${node.host}\n${isStale ? "[STALE]" : ""}`}
     >
-      {/* ReactFlow connection handles — invisible, positioned at cardinal points */}
+      {/* ReactFlow connection handles -- invisible, positioned at cardinal points */}
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />

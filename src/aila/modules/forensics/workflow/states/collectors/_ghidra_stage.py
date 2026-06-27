@@ -4,11 +4,11 @@ For every suspicious PE / ELF sample the discovery script has already
 written into ``%TEMP%\\aila_ba\\<sha8>\\<sha12>_<basename>`` on the
 analyzer, this module runs two Ghidra headless passes:
 
-1. ``ListFunctions.java``           — enumerate all functions with address + size
-2. ``ExportDecompilationJson.java`` — decompile the top 200 by size, cap each at 8000 chars
+1. ``ListFunctions.java``           -- enumerate all functions with address + size
+2. ``ExportDecompilationJson.java`` -- decompile the top 200 by size, cap each at 8000 chars
 
 Both pass results become ``binary_analysis`` artifacts the investigator
-can query through ``artifact_query`` — no need for the LLM to invoke
+can query through ``artifact_query`` -- no need for the LLM to invoke
 ``analyzeHeadless.bat`` by hand. The stage also computes a deterministic
 ``summary`` that buckets imports/callees by intent (execution / network /
 crypto / persistence / injection / anti-debug / filesystem) so the
@@ -17,17 +17,17 @@ decompilation up front.
 
 Design invariants
 -----------------
-* Stage is OFF the hot path — runs after the main discovery JSON has
+* Stage is OFF the hot path -- runs after the main discovery JSON has
   been parsed and one artifact per sample has already been emitted.
 * Scratch file path is derived from the discovery script's naming
   scheme, so we never re-extract from the disk image here.
-* Static analysis only — no execution of the sample.
+* Static analysis only -- no execution of the sample.
 * One isolated project dir per sha (so Ghidra's "project already exists"
   never fires and samples don't collide).
 * Per-sample 900 s wall-clock cap; failure emits an event and continues
   to the next sample instead of aborting the lane.
 * Cache by (sha256, "ghidra_decompilation", "ghidra") via the
-  ``on_artifact`` dispatcher's ``already_collected`` set — second run
+  ``on_artifact`` dispatcher's ``already_collected`` set -- second run
   on the same image short-circuits.
 """
 from __future__ import annotations
@@ -46,7 +46,7 @@ __all__ = ["run_ghidra_on_sample", "MAX_BINARY_SIZE_BYTES", "PER_SAMPLE_TIMEOUT_
 
 _log = logging.getLogger(__name__)
 
-# Ghidra struggles beyond ~60 MB — the auto-analysis step can easily blow
+# Ghidra struggles beyond ~60 MB -- the auto-analysis step can easily blow
 # past the wall-clock budget on a single sample. Skip anything larger.
 MAX_BINARY_SIZE_BYTES = 60 * 1024 * 1024
 
@@ -107,7 +107,7 @@ _INTENT_BUCKETS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# JSON sentinel markers — must match ExportDecompilationJson.java.
+# JSON sentinel markers -- must match ExportDecompilationJson.java.
 _JSON_BEGIN = "AILA_GHIDRA_JSON_BEGIN"
 _JSON_END = "AILA_GHIDRA_JSON_END"
 
@@ -201,7 +201,7 @@ def _summarise(
     decomp_rows: list[dict[str, Any]],
     import_names: list[str],
 ) -> dict[str, Any]:
-    # Top functions by size — useful to orient an analyst / agent.
+    # Top functions by size -- useful to orient an analyst / agent.
     top_by_size = sorted(
         function_rows, key=lambda r: int(r.get("size") or 0), reverse=True,
     )[:40]
@@ -226,7 +226,7 @@ def _is_signed_hint(sample: dict[str, Any]) -> bool:
       - ``pe.imports`` includes ``WINTRUST.DLL`` → verification surface
         but NOT proof of signing.
       - ``strings_sample`` contains an Authenticode OID signature.
-    The honest default is "unsigned" — we'd rather run Ghidra once too
+    The honest default is "unsigned" -- we'd rather run Ghidra once too
     often than skip it on a trojanised binary that ships a stolen cert.
     """
     strings = sample.get("strings_sample") or []
@@ -277,39 +277,39 @@ async def run_ghidra_on_sample(
 
     if not sha:
         await safe_emit(emitter, "ghidra_stage_skipped",
-                        f"ghidra: skipped {basename} — no sha256 on record",
+                        f"ghidra: skipped {basename} -- no sha256 on record",
                         {"basename": basename, "reason": "no_sha256"})
         return []
     if filetype not in ("pe", "elf"):
         await safe_emit(emitter, "ghidra_stage_skipped",
-                        f"ghidra: skipped {basename} — filetype={filetype}",
+                        f"ghidra: skipped {basename} -- filetype={filetype}",
                         {"sha256": sha, "basename": basename,
                          "reason": "filetype_not_pe_or_elf", "filetype": filetype})
         return []
     if size <= 0 or size > MAX_BINARY_SIZE_BYTES:
         await safe_emit(emitter, "ghidra_stage_skipped",
-                        f"ghidra: skipped {basename} — size {size:,}B exceeds cap",
+                        f"ghidra: skipped {basename} -- size {size:,}B exceeds cap",
                         {"sha256": sha, "basename": basename,
                          "reason": "size_over_cap", "size": size,
                          "cap": MAX_BINARY_SIZE_BYTES})
         return []
     if _is_signed_hint(sample):
         await safe_emit(emitter, "ghidra_stage_skipped",
-                        f"ghidra: skipped {basename} — looks signed",
+                        f"ghidra: skipped {basename} -- looks signed",
                         {"sha256": sha, "basename": basename, "reason": "signed_hint"})
         return []
 
     cache_key = (None, "ghidra_decompilation", "ghidra")
     if already_collected is not None:
         # Dispatcher tracks by (source_evidence_id, artifact_type, source_tool).
-        # We don't have an evidence-id scoped cache here — the dispatcher
-        # will still collapse duplicates per-evidence via that tuple — but
+        # We don't have an evidence-id scoped cache here -- the dispatcher
+        # will still collapse duplicates per-evidence via that tuple -- but
         # we add an in-process guard keyed by sha256 to avoid double-runs
         # within the same collection pass.
         sha_key = ("__ghidra_sha__", sha)
         if sha_key in already_collected:
             await safe_emit(emitter, "ghidra_stage_skipped",
-                            f"ghidra: skipped {basename} — already analyzed in this pass",
+                            f"ghidra: skipped {basename} -- already analyzed in this pass",
                             {"sha256": sha, "reason": "sha_cached_in_pass"})
             return []
         already_collected.add(sha_key)
@@ -322,7 +322,7 @@ async def run_ghidra_on_sample(
 
     if not await _scratch_file_exists(ssh, integration, scratch):
         await safe_emit(emitter, "ghidra_stage_skipped",
-                        f"ghidra: skipped {basename} — scratch file missing at {scratch}",
+                        f"ghidra: skipped {basename} -- scratch file missing at {scratch}",
                         {"sha256": sha, "basename": basename,
                          "reason": "scratch_missing", "scratch": scratch})
         return []
@@ -333,7 +333,7 @@ async def run_ghidra_on_sample(
         timeout_s=15.0,
     )
 
-    # Upload the Java scripts on first use (idempotent — the helper
+    # Upload the Java scripts on first use (idempotent -- the helper
     # checks per-file existence too). This reuses the shared uploader
     # that ``tools/ghidra_runner.py`` already defined, so any future
     # script additions go there and are automatically picked up here.
@@ -346,7 +346,7 @@ async def run_ghidra_on_sample(
         )
     except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
         await safe_emit(emitter, "ghidra_stage_failed",
-                        f"ghidra: {basename} — script upload failed: {exc}",
+                        f"ghidra: {basename} -- script upload failed: {exc}",
                         {"sha256": sha, "basename": basename,
                          "error": str(exc)[:400]})
         return []
@@ -373,7 +373,7 @@ async def run_ghidra_on_sample(
 
     if not function_rows:
         await safe_emit(emitter, "ghidra_list_functions_empty",
-                        f"ghidra: {basename} — list_functions returned 0 rows (rc={rc_list}, elapsed={func_elapsed}s)",
+                        f"ghidra: {basename} -- list_functions returned 0 rows (rc={rc_list}, elapsed={func_elapsed}s)",
                         {"sha256": sha, "basename": basename,
                          "exit_code": rc_list, "elapsed_s": func_elapsed,
                          "stderr_tail": out_list[-600:]})
@@ -381,7 +381,7 @@ async def run_ghidra_on_sample(
 
     total_functions = len(function_rows)
     await safe_emit(emitter, "ghidra_list_functions_done",
-                    f"ghidra: {basename} — {total_functions} functions in {func_elapsed}s",
+                    f"ghidra: {basename} -- {total_functions} functions in {func_elapsed}s",
                     {"sha256": sha, "basename": basename,
                      "function_count": total_functions, "elapsed_s": func_elapsed})
 
@@ -402,7 +402,7 @@ async def run_ghidra_on_sample(
         await on_artifact(functions_art)
 
     # --- Pass 2: export decompilation ------------------------------------
-    # Reuse the same project dir — Ghidra will pick up the analysis it
+    # Reuse the same project dir -- Ghidra will pick up the analysis it
     # just ran instead of re-analyzing. The -import flag is idempotent
     # alongside -overwrite.
     decomp_cmd = (
@@ -425,7 +425,7 @@ async def run_ghidra_on_sample(
 
     if not decomp_rows:
         await safe_emit(emitter, "ghidra_decompilation_empty",
-                        f"ghidra: {basename} — decompilation produced 0 rows (rc={rc_decomp}, elapsed={decomp_elapsed}s)",
+                        f"ghidra: {basename} -- decompilation produced 0 rows (rc={rc_decomp}, elapsed={decomp_elapsed}s)",
                         {"sha256": sha, "basename": basename,
                          "exit_code": rc_decomp, "elapsed_s": decomp_elapsed,
                          "stderr_tail": out_decomp[-600:]})
@@ -433,7 +433,7 @@ async def run_ghidra_on_sample(
         # failure; empty records[] is a legitimate state.
     else:
         await safe_emit(emitter, "ghidra_decompilation_done",
-                        f"ghidra: {basename} — decompiled {len(decomp_rows)} function(s) in {decomp_elapsed}s",
+                        f"ghidra: {basename} -- decompiled {len(decomp_rows)} function(s) in {decomp_elapsed}s",
                         {"sha256": sha, "basename": basename,
                          "records_stored": len(decomp_rows),
                          "elapsed_s": decomp_elapsed})

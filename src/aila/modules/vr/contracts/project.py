@@ -1,7 +1,7 @@
 """Project-level contract models for the vulnerability research module.
 
 Per D-53 refactor:
-  - VRTarget renamed to TargetIngestionSpec — it describes HOW a binary
+  - VRTarget renamed to TargetIngestionSpec -- it describes HOW a binary
     gets ingested onto the analysis workstation, not the persistent
     target identity. The persistent target identity lives in
     ``contracts/target.py`` (VRTargetSummary, VRTargetCreate).
@@ -9,7 +9,7 @@ Per D-53 refactor:
     api_router materializes the ingestion spec into a vr_targets row
     before creating the project row.
   - VRProjectSummary no longer exposes target_class / input_source /
-    target_format — those live on VRTargetSummary, exposed via a
+    target_format -- those live on VRTargetSummary, exposed via a
     separate /api/vr/targets endpoint.
 
 The TargetClass / TargetFormat / InputSource StrEnums are preserved for
@@ -81,7 +81,7 @@ class InputSource(StrEnum):
 class TargetIngestionSpec(BaseModel):
     """How to ingest one analysis target onto the workstation.
 
-    This is a transient request-time shape — the api_router materializes
+    This is a transient request-time shape -- the api_router materializes
     it into a vr_targets row (VRTargetRecord) and then forwards the
     physical-ingestion fields to the workflow setup state via task kwargs.
 
@@ -193,7 +193,7 @@ class VRProjectSummary(BaseModel):
     """Read-only summary of a VR project.
 
     Target metadata (target_class, input_source, format, etc) is no longer
-    exposed here — call /api/vr/targets/{target_id} for the full target.
+    exposed here -- call /api/vr/targets/{target_id} for the full target.
     """
 
     model_config = ConfigDict(extra="forbid")

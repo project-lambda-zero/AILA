@@ -1,5 +1,5 @@
 /**
- * KpiTile — single metric tile with severity-tinted left stripe + icon
+ * KpiTile -- single metric tile with severity-tinted left stripe + icon
  * badge. Use 4-up in a hero row at the top of list pages. Pairs with
  * AilaCard for grouped surfaces; this is the standalone "single number
  * with context" primitive.
@@ -73,7 +73,7 @@ export function KpiTile({
         boxShadow: "inset 0 1px 0 0 color-mix(in srgb, var(--color-text) 6%, transparent)",
       }}
     >
-      {/* Left accent stripe — vertical 3px bar */}
+      {/* Left accent stripe -- vertical 3px bar */}
       <span
         aria-hidden
         className="pointer-events-none absolute inset-y-0 left-0 w-[3px]"

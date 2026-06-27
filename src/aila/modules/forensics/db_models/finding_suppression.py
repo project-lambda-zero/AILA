@@ -1,9 +1,9 @@
-"""Finding suppressions — analyst-marked false positives on auto-findings.
+"""Finding suppressions -- analyst-marked false positives on auto-findings.
 
 Auto-findings are derived at read-time from ``ArtifactRecord.data_json``
 ``records[]`` that carry ``suspicious_reasons``. Since there is no stable
 row id, a suppression is keyed on a deterministic fingerprint built from
-``(artifact_type, executable, path, name, user)`` — the same tuple the
+``(artifact_type, executable, path, name, user)`` -- the same tuple the
 findings endpoint uses for dedup.
 
 Written by: POST /forensics/projects/{pid}/findings/suppress.

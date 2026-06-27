@@ -226,7 +226,7 @@ export function DisclosureDetailPage() {
               <button
                 type="button"
                 onClick={() => {
-                  // MITRE CVE 5.x JSON template — minimal shell.
+                  // MITRE CVE 5.x JSON template -- minimal shell.
                   // Full per-field mapping requires a backend renderer
                   // (track_id + finding_id → CVE JSON 5.x).
                   const tpl = {
@@ -305,14 +305,14 @@ export function DisclosureDetailPage() {
         </p>
       )}</AilaCard>
 
-      {/* CVSS calculator — interactive scoring per 08_FRONTEND_UX.md §1.8.2 */}
+      {/* CVSS calculator -- interactive scoring per 08_FRONTEND_UX.md §1.8.2 */}
       <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
         CVSS v3.1 score
       </h2>
       <p className="text-xs text-text-muted mb-3">
         Pick one value per metric. Vector + base score recompute live.
         Persisting the score back to the submission is{" "}
-        <em>backend pending</em> — copy the vector string into the
+        <em>backend pending</em> -- copy the vector string into the
         advisory body for now.
       </p>
       <CVSSCalculator /></AilaCard>
@@ -326,7 +326,7 @@ export function DisclosureDetailPage() {
           <div>
             <dt className="text-text-muted">Program URL</dt>
             <dd className="font-mono">
-              {sub.track_info.program_url ?? "—"}
+              {sub.track_info.program_url ?? "--"}
             </dd>
           </div>
           <div>
@@ -336,7 +336,7 @@ export function DisclosureDetailPage() {
           <div className="col-span-2">
             <dt className="text-text-muted">Required artifacts</dt>
             <dd className="font-mono">
-              {sub.track_info.required_artifacts.join(", ") || "—"}
+              {sub.track_info.required_artifacts.join(", ") || "--"}
             </dd>
           </div>
           <div className="col-span-2">
@@ -351,7 +351,7 @@ export function DisclosureDetailPage() {
           </div>
         </dl></AilaCard>
       )}
-      {/* Structured advisory editor (§1.8) — sections backed by
+      {/* Structured advisory editor (§1.8) -- sections backed by
           POST /disclosures/{id}/sections + regenerate-from-finding. */}
       <DisclosureSectionsEditor submission={sub} />
 
@@ -416,7 +416,7 @@ function TimelineRow({
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-mono text-foreground">{label}</span>
           <span className="text-text-muted">
-            {time ? new Date(time).toLocaleString() : "—"}
+            {time ? new Date(time).toLocaleString() : "--"}
           </span>
         </div>
         {note && <p className="text-text-muted text-3xs mt-0.5">{note}</p>}

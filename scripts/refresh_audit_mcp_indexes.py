@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
             sha = (result.get("sha") or "")[:8]
             detail = f"unchanged ({sha})"
         elif status == "refreshing":
-            old = (result.get("old_sha") or "—")[:8]
+            old = (result.get("old_sha") or "--")[:8]
             new = (result.get("new_sha") or "?")[:8]
             detail = f"{old} -> {new}"
         else:

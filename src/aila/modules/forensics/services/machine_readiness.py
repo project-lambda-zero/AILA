@@ -4,13 +4,13 @@ Connects to the analyzer machine via SSH and verifies that all required
 forensic tools are installed.  When a tool is missing, the service
 attempts a three-tier install cascade:
 
-1. **Online install** — runs the tool's ``install_commands`` (apt, pip,
+1. **Online install** -- runs the tool's ``install_commands`` (apt, pip,
    winget, brew) directly on the analyzer.
-2. **Offline install** — if the online attempt fails (air-gapped machine,
+2. **Offline install** -- if the online attempt fails (air-gapped machine,
    no internet), delegates to ``OfflineInstallerService`` which prepares
    bundles on the platform server, uploads them via SFTP, and installs
    locally on the analyzer.
-3. **Skip** — if both tiers fail and the tool is optional, marks it as
+3. **Skip** -- if both tiers fail and the tool is optional, marks it as
    ``missing``; if required, sets ``all_required_ok = False``.
 
 Supports Linux, macOS, and Windows analyzer machines.
@@ -64,7 +64,7 @@ class MachineReadinessService:
             if "linux" in kernel:
                 return "linux"
         except (OSError, TimeoutError, ConnectionError, RuntimeError):
-            _log.debug("uname probe failed — trying Windows detection", exc_info=True)
+            _log.debug("uname probe failed -- trying Windows detection", exc_info=True)
 
         try:
             output = await ssh.run_command(integration, "ver", timeout_seconds=10.0)
@@ -93,7 +93,7 @@ class MachineReadinessService:
             integration: SSH connection fields.
             system_id: Platform system ID.
             system_name: System display name.
-            analyzer_os: Target OS — ``"linux"``, ``"macos"``, or ``"windows"``.
+            analyzer_os: Target OS -- ``"linux"``, ``"macos"``, or ``"windows"``.
             install_missing: If True, attempt to install missing tools.
 
         Returns:
@@ -163,7 +163,7 @@ class MachineReadinessService:
                         await progress_cb({
                             "stage": "check_failed",
                             "tool": tool_name,
-                            "message": f"{tool_name} not present — {check_error[:300]}",
+                            "message": f"{tool_name} not present -- {check_error[:300]}",
                             "error": check_error,
                             "command": check_cmd,
                         })
@@ -230,8 +230,8 @@ class MachineReadinessService:
                         "stage": "installing",
                         "tool": tool_name,
                         "message": (
-                            f"Installing {tool_name} offline — type={offline_type}, "
-                            f"bundle={offline_bundle}" + (f" — {offline_note}" if offline_note else "")
+                            f"Installing {tool_name} offline -- type={offline_type}, "
+                            f"bundle={offline_bundle}" + (f" -- {offline_note}" if offline_note else "")
                         ),
                         "offline_type": offline_type,
                         "offline_bundle": offline_bundle,
@@ -272,7 +272,7 @@ class MachineReadinessService:
                         f"[{severity.upper()}] Failed to install {tool_name}. "
                         f"Initial check: {check_error}. "
                         "Online and offline install both failed. "
-                        + ("Manual installation is required — contact your admin." if required else "System can proceed without this tool.")
+                        + ("Manual installation is required -- contact your admin." if required else "System can proceed without this tool.")
                     ),
                 )
                 results.append(result_entry)
@@ -282,7 +282,7 @@ class MachineReadinessService:
                         "tool": tool_name,
                         "status": "missing",
                         "required": required,
-                        "message": f"{tool_name} [{severity.upper()}] MISSING — {check_error}",
+                        "message": f"{tool_name} [{severity.upper()}] MISSING -- {check_error}",
                     })
 
         ready = all_required_ok
@@ -345,13 +345,13 @@ class MachineReadinessService:
                     })
             except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
                 err = str(exc)
-                _log.info("Online install failed for %s: %s — %s", tool_name, cmd, err)
+                _log.info("Online install failed for %s: %s -- %s", tool_name, cmd, err)
                 if progress_cb:
                     await progress_cb({
                         "stage": "install_failed",
                         "tool": tool_name,
                         "command": cmd[:500],
-                        "message": f"{tool_name}: install failed — {err[:300]}",
+                        "message": f"{tool_name}: install failed -- {err[:300]}",
                         "error": err,
                     })
                 continue
@@ -374,7 +374,7 @@ class MachineReadinessService:
                     await progress_cb({
                         "stage": "install_verify_failed",
                         "tool": tool_name,
-                        "message": f"{tool_name}: installed but verify still fails — {err[:300]}",
+                        "message": f"{tool_name}: installed but verify still fails -- {err[:300]}",
                         "error": err,
                     })
 
@@ -411,7 +411,7 @@ class MachineReadinessService:
                 await progress_cb({
                     "stage": "offline_install_failed",
                     "tool": tool_name,
-                    "message": f"{tool_name}: offline install errored — {err[:300]}",
+                    "message": f"{tool_name}: offline install errored -- {err[:300]}",
                     "error": err,
                 })
             return False

@@ -1,5 +1,5 @@
 /**
- * offline-banner.spec.ts — E2E tests for offline mode banner (UX-07).
+ * offline-banner.spec.ts -- E2E tests for offline mode banner (UX-07).
  *
  * Uses Playwright's context.setOffline() to simulate network loss.
  * Auth injected via localStorage per established project pattern.

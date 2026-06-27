@@ -1,6 +1,6 @@
 """Sibling-review of a draft outcome (migration 062).
 
-One row per (outcome_id, reviewer_branch_id) pair — UPSERT in the
+One row per (outcome_id, reviewer_branch_id) pair -- UPSERT in the
 service layer keeps the latest vote per branch. The presence of any
 ``vote='reject'`` row flips the outcome to ``rejected`` state; once
 the count of ``vote='approve'`` rows clears the quorum threshold, the
@@ -9,7 +9,7 @@ outcome flips to ``approved`` and the dispatcher takes over.
 ``suggested_edits_json`` is free-form: the reviewer agent (or the
 operator) can propose payload changes like ``{"confidence": "weak"}``
 or ``{"claims[0].file_path": "actual/path.c"}``. v1 surfaces these to
-the operator for manual application — automated apply is intentionally
+the operator for manual application -- automated apply is intentionally
 out of scope until the format stabilizes.
 """
 from __future__ import annotations

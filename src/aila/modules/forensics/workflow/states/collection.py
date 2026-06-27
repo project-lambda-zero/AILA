@@ -30,7 +30,7 @@ async def _evidence_is_reachable(
     """Confirm ``path`` is readable from the worker's SSH session.
 
     Returns ``(ok, diagnostic)``. A failed probe means the file simply
-    isn't visible to this session — wrong path, missing permissions,
+    isn't visible to this session -- wrong path, missing permissions,
     or the drive wasn't online when the worker spawned. Running 20+
     tool invocations after that is wasted time, so we fail the file
     with one clear message instead.
@@ -72,7 +72,7 @@ _LANE_DISPATCH = {
     "log": collect_log_artifacts,
 }
 
-# Many-to-many — a disk_image file feeds both ``disk`` (dissect queries)
+# Many-to-many -- a disk_image file feeds both ``disk`` (dissect queries)
 # and ``binary_analysis`` (capa/FLOSS/strings on discovered samples).
 # Kept as a mapping of lane -> set of evidence types so the matcher is
 # symmetric and obvious.
@@ -97,7 +97,7 @@ async def state_collection(
     """Extract artifacts from evidence using forensic tools, lane-by-lane.
 
     Emits: collection_start, lane_start, file_start, file_done, file_error,
-    lane_done, collection_done — so the xray log reflects the full graph.
+    lane_done, collection_done -- so the xray log reflects the full graph.
     """
     project_id = input.get("project_id", "")
     active_lanes = input.get("active_lanes", [])
@@ -112,7 +112,7 @@ async def state_collection(
     )
     await emitter.emit(
         "collection",
-        f"Starting artifact collection — {len(active_lanes)} lane(s), {len(evidence_files)} file(s).",
+        f"Starting artifact collection -- {len(active_lanes)} lane(s), {len(evidence_files)} file(s).",
         {
             "stage": "collection_start",
             "lanes": list(active_lanes),
@@ -127,7 +127,7 @@ async def state_collection(
     from aila.modules.forensics.tools._ssh_helper import get_ssh_service
     from aila.platform.uow import UnitOfWork
 
-    # Lazy — skip SSH if there is literally nothing to do so a no-op call path
+    # Lazy -- skip SSH if there is literally nothing to do so a no-op call path
     # doesn't drag in the paramiko stack + secret store unlock.
     ssh = await get_ssh_service(services.settings) if active_lanes and evidence_files else None
     artifacts_by_family: dict[str, int] = {}
@@ -138,7 +138,7 @@ async def state_collection(
 
     # Pre-fetch every (source_evidence_id, artifact_type, source_tool) tuple
     # already persisted for this project so we skip queries that have results
-    # carried over from a prior run. Incremental collection is the rule —
+    # carried over from a prior run. Incremental collection is the rule --
     # "full analysis from scratch" is only what the very first run does.
     async with UnitOfWork() as uow_prefetch:
         existing_rows = (await uow_prefetch.session.exec(
@@ -153,7 +153,7 @@ async def state_collection(
     }
     await emitter.emit(
         "collection",
-        f"Incremental mode — {len(already_collected)} artifact(s) already on record for this project.",
+        f"Incremental mode -- {len(already_collected)} artifact(s) already on record for this project.",
         {
             "stage": "incremental_prefetch",
             "existing_artifact_count": len(already_collected),
@@ -163,10 +163,10 @@ async def state_collection(
     for lane in active_lanes:
         collector = _LANE_DISPATCH.get(lane)
         if collector is None:
-            _log.warning("Unknown collection lane %s — skipping", lane)
+            _log.warning("Unknown collection lane %s -- skipping", lane)
             await emitter.emit(
                 "collection",
-                f"Unknown lane {lane!r} — skipping.",
+                f"Unknown lane {lane!r} -- skipping.",
                 {"stage": "lane_skipped", "lane": lane},
             )
             continue
@@ -199,7 +199,7 @@ async def state_collection(
                     file_error_count += 1
                     await emitter.emit(
                         "collection",
-                        f"{lane}: SKIPPED {path} — not reachable from worker SSH session. {diag}",
+                        f"{lane}: SKIPPED {path} -- not reachable from worker SSH session. {diag}",
                         {
                             "stage": "file_unreachable",
                             "lane": lane,
@@ -261,7 +261,7 @@ async def state_collection(
                 file_error_count += 1
                 await emitter.emit(
                     "collection",
-                    f"{lane}: FAILED for {path} — {str(exc)[:200]}",
+                    f"{lane}: FAILED for {path} -- {str(exc)[:200]}",
                     {
                         "stage": "file_error",
                         "lane": lane,
@@ -282,7 +282,7 @@ async def state_collection(
 
             await emitter.emit(
                 "collection",
-                f"{lane}: done {path} — {len(new_records)} new artifact(s)"
+                f"{lane}: done {path} -- {len(new_records)} new artifact(s)"
                 + (f", {file_skipped} already on record." if file_skipped else "."),
                 {
                     "stage": "file_done",
@@ -298,7 +298,7 @@ async def state_collection(
         artifacts_by_lane[lane] = lane_artifact_count
         await emitter.emit(
             "collection",
-            f"Lane {lane}: complete — {lane_artifact_count} new artifact(s) from {len(lane_files)} file(s).",
+            f"Lane {lane}: complete -- {lane_artifact_count} new artifact(s) from {len(lane_files)} file(s).",
             {
                 "stage": "lane_done",
                 "lane": lane,
@@ -310,7 +310,7 @@ async def state_collection(
     await emitter.emit(
         "collection",
         (
-            f"Collection complete — {artifact_count} new artifact(s) across "
+            f"Collection complete -- {artifact_count} new artifact(s) across "
             f"{len(active_lanes)} lane(s), {file_error_count} file error(s), "
             f"{skipped_file_count} file(s) fully cached from a prior run."
         ),

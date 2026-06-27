@@ -63,7 +63,7 @@ _SCORE_BOOST_KEYWORDS: list[tuple[str, re.Pattern[str], float]] = [
     _kw("keylogger",     r"\bkey[_ -]?log",                 20.0),
 ]
 
-# Keys we never want to match keywords against — they are schema markers
+# Keys we never want to match keywords against -- they are schema markers
 # (e.g. every enriched record carries "suspicious_reasons" by design; matching
 # on the key name would blindly fire the "suspicious" boost on every artifact).
 _REASON_SKIP_KEYS: frozenset[str] = frozenset({
@@ -79,7 +79,7 @@ _REASON_SKIP_KEYS: frozenset[str] = frozenset({
 
 # Path segments that name the *scanner*, not the evidence. A dissect
 # `browser.credentials` plugin legitimately puts the word "credentials" in its
-# plugin / query_function field on every browser scan — that's not a finding.
+# plugin / query_function field on every browser scan -- that's not a finding.
 _REASON_SKIP_PATH_SEGMENTS: frozenset[str] = frozenset({
     "plugin",
     "query_function",
@@ -105,8 +105,8 @@ async def state_promotion(
     """Score investigator-emitted artefacts and build the Valuable Items summary.
 
     **Lead source rule (honest):** only artefacts with a
-    ``source_investigation_id`` — i.e. rows the investigator itself
-    wrote during a turn — are promoted. Collector-side rows never
+    ``source_investigation_id`` -- i.e. rows the investigator itself
+    wrote during a turn -- are promoted. Collector-side rows never
     become leads; they populate Valuable Items / Findings but NOT the
     Top Leads panel. The latter is a panel of agent conclusions, not
     keyword heuristics over raw tool output.
@@ -320,7 +320,7 @@ def _walk_string_values(
     ``suspicious_reasons`` list every enriched record carries) don't
     trigger false keyword matches. Also skips any leaf whose **final** path
     segment is a scanner-metadata key (``plugin``, ``query_function``, etc.)
-    — those name the collector, not the evidence.
+    -- those name the collector, not the evidence.
     """
     out: list[tuple[str, str]] = []
     if isinstance(data, dict):
@@ -394,7 +394,7 @@ def _score_investigator_artifact(artifact: Any) -> float:
     The investigator writes artefacts on submit / per-turn; each carries
     the agent's own confidence signal in ``data`` (typed fields like
     ``confidence``, ``severity``, ``role``, ``is_final``). We map those
-    into a 0-100 score — never scrape raw strings for keyword heuristics.
+    into a 0-100 score -- never scrape raw strings for keyword heuristics.
     """
     try:
         data = json.loads(artifact.data_json) if artifact.data_json else {}
@@ -408,7 +408,7 @@ def _score_investigator_artifact(artifact: Any) -> float:
         return {"exact": 95.0, "strong": 85.0,
                 "medium": 65.0, "caveated": 45.0}.get(conf, 50.0)
 
-    # Typed agent observations — the investigator emits these with an
+    # Typed agent observations -- the investigator emits these with an
     # explicit severity/role hint. Keep the ranges modest so a single
     # noisy hypothesis doesn't outscore a confirmed submit row.
     severity = str(data.get("severity") or "").lower()
@@ -417,7 +417,7 @@ def _score_investigator_artifact(artifact: Any) -> float:
     if severity_score:
         return severity_score
 
-    # IOC observations — score by count of the concrete things the
+    # IOC observations -- score by count of the concrete things the
     # investigator saw, capped so a dump of 500 IPs doesn't swamp the
     # panel.
     n_ips = len(data.get("ips") or [])
@@ -510,8 +510,8 @@ def _build_investigator_reason(
 def _score_artifact(artifact: Any) -> float:
     """Compute a lead score for an artifact based on family and data content.
 
-    Only counts a keyword if it appears in actual string *values* — not key
-    names or schema markers — so the reason we report to the analyst is the
+    Only counts a keyword if it appears in actual string *values* -- not key
+    names or schema markers -- so the reason we report to the analyst is the
     same thing we scored on.
     """
     score = _SUSPICIOUS_INDICATORS.get(artifact.artifact_family, 10.0)
@@ -542,7 +542,7 @@ def _build_reason(artifact: Any, score: float) -> tuple[str, list[dict[str, str]
     Returns ``(reason_text, evidence_matches)``. ``evidence_matches`` is a
     flat list of ``{keyword, path, excerpt}`` dicts the UI can render so the
     analyst sees *what* matched, *where*, and the *actual text* from the
-    artifact — not a vague "contains 'c2' indicator".
+    artifact -- not a vague "contains 'c2' indicator".
     """
     family = artifact.artifact_family
     atype = artifact.artifact_type

@@ -1,4 +1,4 @@
-"""tshark network capture analysis runner — executes tshark commands over SSH.
+"""tshark network capture analysis runner -- executes tshark commands over SSH.
 
 Supports 16 analysis actions covering NetworkMiner-equivalent functionality:
 hosts, sessions, DNS, HTTP, files, images, credentials, endpoints,
@@ -39,7 +39,7 @@ async def _resolve_tshark_cmd(ssh: object, integration: dict) -> str:
 
 TOOL_ALIAS = "tshark_runner"
 CAPABILITY = (
-    "Run tshark commands for comprehensive PCAP analysis — summary, HTTP, DNS, conversations, "
+    "Run tshark commands for comprehensive PCAP analysis -- summary, HTTP, DNS, conversations, "
     "stream following, endpoints, protocol hierarchy, HTTP objects, TLS handshakes, SMTP, FTP, "
     "stream listing, credentials, file extraction, anomalies, and custom filters."
 )

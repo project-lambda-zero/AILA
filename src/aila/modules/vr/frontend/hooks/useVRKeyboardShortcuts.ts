@@ -3,17 +3,17 @@ import { useLocation, useNavigate } from "react-router";
 
 /** VR module keyboard shortcuts (08_FRONTEND_UX.md §6.6).
  *
- *  Three shortcuts only — heavy keyboard vocabularies create onboarding
+ *  Three shortcuts only -- heavy keyboard vocabularies create onboarding
  *  cost that the spec explicitly rejects.
  *
- *    Cmd+P (Ctrl+P on non-mac) — quick-jump search across project entities
- *    Cmd+/ (Ctrl+/)            — open steering drawer on pages that support it
- *    J / K                     — when on the investigation timeline,
+ *    Cmd+P (Ctrl+P on non-mac) -- quick-jump search across project entities
+ *    Cmd+/ (Ctrl+/)            -- open steering drawer on pages that support it
+ *    J / K                     -- when on the investigation timeline,
  *                                jump to next / previous turn
  *
  *  Mount once at the platform shell or per-page. We mount at the VR
  *  module's route boundary by calling this hook from any page in the
- *  VR module — the listeners are global window listeners but unmount
+ *  VR module -- the listeners are global window listeners but unmount
  *  cleanly when the VR route unmounts.
  *
  *  The hook supports a `onOpenSteering` callback so per-page drawer
@@ -25,7 +25,7 @@ export interface VRShortcutHandlers {
 
 const QUICK_JUMP_EVENT = "vr-quick-jump";
 
-/** Bus event for the quick-jump dialog — any page can listen and open
+/** Bus event for the quick-jump dialog -- any page can listen and open
  *  its own command palette. For v0.5 we just fire the event; pages can
  *  attach `window.addEventListener('vr-quick-jump', …)`. */
 export function emitQuickJumpRequest(): void {
@@ -58,21 +58,21 @@ export function useVRKeyboardShortcuts({
 
       const mod = e.metaKey || e.ctrlKey;
 
-      // Cmd+P — quick-jump
+      // Cmd+P -- quick-jump
       if (mod && (e.key === "p" || e.key === "P")) {
         e.preventDefault();
         emitQuickJumpRequest();
         return;
       }
 
-      // Cmd+/ — open steering drawer
+      // Cmd+/ -- open steering drawer
       if (mod && e.key === "/") {
         e.preventDefault();
         if (onOpenSteering) onOpenSteering();
         return;
       }
 
-      // J / K — jump turn (only on timeline pages)
+      // J / K -- jump turn (only on timeline pages)
       const onTimeline = /\/vr\/investigations\/[^/]+$/.test(location.pathname);
       if (!onTimeline || mod || e.shiftKey || e.altKey) return;
 

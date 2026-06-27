@@ -6,7 +6,7 @@
 import { useState } from "react";
 
 const ROW_BYTES = 16;
-const TRUNCATE_AT = 4096; // bytes — above this we hide unless explicit
+const TRUNCATE_AT = 4096; // bytes -- above this we hide unless explicit
 
 export function HexView({
   data,

@@ -29,7 +29,7 @@ _SKIP_PATHS: set[str] = {
     "/openapi.json",
 }
 
-# SSE paths contain "/events" — they stream indefinitely and can't be
+# SSE paths contain "/events" -- they stream indefinitely and can't be
 # tested with a simple request/response cycle.
 _SSE_SUFFIX = "/events"
 
@@ -82,7 +82,7 @@ async def test_every_registered_route_returns_non_500(
     with a valid admin Bearer token.
 
     Non-500 means the route resolves and the handler runs without crashing.
-    404, 422, 401, 503, etc. are all acceptable — only 500 (unhandled
+    404, 422, 401, 503, etc. are all acceptable -- only 500 (unhandled
     exception) is a wiring failure.
     """
     import time
@@ -151,15 +151,15 @@ async def test_public_endpoints_accessible_without_auth(
     """GET /health and GET /status return 200 without auth.
     POST /auth/token returns 401 or 422 (not 500) without body.
     """
-    # GET /health — no auth needed
+    # GET /health -- no auth needed
     resp_health = await async_client.get("/health")
     assert resp_health.status_code == 200, f"/health returned {resp_health.status_code}"
 
-    # GET /status — no auth needed
+    # GET /status -- no auth needed
     resp_status = await async_client.get("/status")
     assert resp_status.status_code == 200, f"/status returned {resp_status.status_code}"
 
-    # POST /auth/token — public endpoint, but requires body; expect 422 (missing body)
+    # POST /auth/token -- public endpoint, but requires body; expect 422 (missing body)
     # or 401 (invalid key). Either way, NOT 500.
     resp_token = await async_client.post("/auth/token")
     assert resp_token.status_code in (401, 422), (

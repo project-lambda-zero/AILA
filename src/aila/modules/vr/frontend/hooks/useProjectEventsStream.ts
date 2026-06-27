@@ -35,7 +35,7 @@ export type VREvent = {
  *  Connects to `/vr/projects/{id}/events` and exposes the latest event
  *  via a state hook so any consumer can react (toast, refetch,
  *  in-view animation). The hook also invalidates relevant React Query
- *  caches on event types that affect them — `campaign.crash_found`
+ *  caches on event types that affect them -- `campaign.crash_found`
  *  invalidates the campaign's crash list, `branch.state_changed` and
  *  `outcome.created` invalidate the investigation's branches /
  *  outcomes.
@@ -61,7 +61,7 @@ export function useProjectEventsStream(projectId: string | undefined): {
       try {
         token = await getAuthTokenStandalone();
       } catch {
-        // unauthenticated — server will reject
+        // unauthenticated -- server will reject
       }
       const params = new URLSearchParams();
       params.set("since_iso", new Date().toISOString());
@@ -123,7 +123,7 @@ export function useProjectEventsStream(projectId: string | undefined): {
             });
           }
         } catch {
-          // malformed event — skip
+          // malformed event -- skip
         }
       };
 

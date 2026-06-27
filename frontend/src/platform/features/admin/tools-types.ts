@@ -33,7 +33,7 @@ export interface ToolDetail extends ToolSummary {
 }
 
 export interface ToolInvokeRequest {
-  /** Backend field name is `kwargs` — passed directly to tool.forward(**kwargs). */
+  /** Backend field name is `kwargs` -- passed directly to tool.forward(**kwargs). */
   kwargs: Record<string, unknown>;
 }
 

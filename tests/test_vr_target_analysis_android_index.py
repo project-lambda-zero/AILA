@@ -1,9 +1,9 @@
-"""F-3 — TargetAnalysisService._android_index_decompiled unit tests.
+"""F-3 -- TargetAnalysisService._android_index_decompiled unit tests.
 
 The worker hands the jadx Java tree to audit-mcp's `index_codebase`,
 polls until READY, and writes `audit_mcp_decompiled_index_id` +
 `audit_mcp_decompiled_indexed_at` into mcp_handles_json. These tests
-exercise the worker in isolation — no DB, no real MCP — by passing
+exercise the worker in isolation -- no DB, no real MCP -- by passing
 mocked bridges into the service constructor and a stub tracker.
 """
 from __future__ import annotations
@@ -56,9 +56,9 @@ async def test_index_decompiled_kicks_off_and_records_handles() -> None:
     """Happy path: jadx dir present, index_codebase returns id, poll READY."""
     audit_forward = AsyncMock()
     audit_forward.side_effect = [
-        # index_codebase response — kickoff returns the new index id.
+        # index_codebase response -- kickoff returns the new index id.
         {"status": "ready", "index_id": "idx-abc123"},
-        # poll_index — single READY on first poll exits the loop.
+        # poll_index -- single READY on first poll exits the loop.
         {"status": "ready", "state": "READY"},
     ]
     svc = _build_service(audit_forward=audit_forward)
@@ -68,7 +68,7 @@ async def test_index_decompiled_kicks_off_and_records_handles() -> None:
         "android_mcp_decompiled_dir": "/work/decompiled/sampleapp",
         "android_mcp_decoded_dir": "/work/decoded/sampleapp",
     }
-    await svc._android_index_decompiled(  # noqa: SLF001 — unit-testing private API
+    await svc._android_index_decompiled(  # noqa: SLF001 -- unit-testing private API
         target_id="t-1",
         descriptor={"apk_path": "/work/sampleapp.apk"},
         current_handles=current_handles,
@@ -193,7 +193,7 @@ async def test_index_decompiled_raises_when_descriptor_missing_apk_path() -> Non
     with pytest.raises(TargetAnalysisError, match="apk_path"):
         await svc._android_index_decompiled(  # noqa: SLF001
             target_id="t-1",
-            descriptor={},  # No apk_path — descriptor invariant breach.
+            descriptor={},  # No apk_path -- descriptor invariant breach.
             current_handles={"android_mcp_decompiled_dir": "/work/d"},
             tracker=tracker,
         )

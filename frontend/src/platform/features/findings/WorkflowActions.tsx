@@ -1,5 +1,5 @@
 /**
- * WorkflowActions — operator transition controls for a single finding.
+ * WorkflowActions -- operator transition controls for a single finding.
  *
  * Renders one button per legal next state (driven by the server-side state
  * machine returned by useWorkflowStates), opens a confirmation dialog with an
@@ -34,7 +34,7 @@ import {
 } from "./workflowApi";
 
 // ---------------------------------------------------------------------------
-// State presentation — known canonical states get a label + severity colour.
+// State presentation -- known canonical states get a label + severity colour.
 // Unknown states (e.g. module-contributed) fall back to neutral + Title Case.
 // ---------------------------------------------------------------------------
 
@@ -65,7 +65,7 @@ function stateSeverity(state: string): BadgeSeverity {
 }
 
 // ---------------------------------------------------------------------------
-// State badge — exported so other surfaces (table column, list rows) can
+// State badge -- exported so other surfaces (table column, list rows) can
 // render the same chip without re-importing severity-mapping logic.
 // ---------------------------------------------------------------------------
 
@@ -94,7 +94,7 @@ export function WorkflowStateBadge({
 }
 
 // ---------------------------------------------------------------------------
-// Confirmation dialog — shown when an operator clicks a transition button.
+// Confirmation dialog -- shown when an operator clicks a transition button.
 // Captures an optional comment and POSTs to /findings/{id}/transition.
 // ---------------------------------------------------------------------------
 
@@ -297,7 +297,7 @@ export function WorkflowActions({
         <WorkflowStateBadge state={currentState} />
         {allowed.length === 0 ? (
           <span className="font-mono text-xs text-text-muted">
-            Terminal state — no transitions available.
+            Terminal state -- no transitions available.
           </span>
         ) : (
           <>

@@ -23,7 +23,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   inputs (no fabricated exploits). Auto-queued when a variant-child
   investigation lands a `DIRECT_FINDING`; also exposed via
   `POST /vr/findings/{id}/draft-poc`.
-- `vr` module: variant-hunt pipeline — `system_audit.md` mandate to
+- `vr` module: variant-hunt pipeline -- `system_audit.md` mandate to
   emit `variant_hunt_orders` for `kind=variant_hunt` investigations;
   dispatcher walks the bundle and spawns child investigations via
   the shared `_spawn_variant_child` helper. One submit → primary
@@ -32,26 +32,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   when status is `completed` or `failed`). Resets to `created` and
   submits a fresh `run_vr_investigate` task while preserving the
   branch case state.
-- `vr` module: schema-driven prompt — agent now sees per-tool
+- `vr` module: schema-driven prompt -- agent now sees per-tool
   signatures (`audit_mcp.read_function(index_id: string [required],
   file_path: string [required], name: string [required])`) instead
   of just tool names. Fetched live from each MCP server's `/tools`
   catalog and cached per process.
-- `Dockerfile` + `.dockerignore` — multi-stage build producing a
+- `Dockerfile` + `.dockerignore` -- multi-stage build producing a
   minimal runtime image for the API and workers. ENTRYPOINT is
   `aila`; override CMD to switch between `serve` and `worker -q <q>`.
-- `infra/utilities/docker-compose.full.yml` — full-stack compose
+- `infra/utilities/docker-compose.full.yml` -- full-stack compose
   spinning up postgres + redis + api + 5 workers + frontend. The
   existing `docker-compose.yml` (infra-only) remains the default
   for developers running AILA locally.
-- `requirements.txt` + `requirements-dev.txt` — generated from
+- `requirements.txt` + `requirements-dev.txt` -- generated from
   `pyproject.toml` for pip-only workflows. `pyproject.toml` is still
   the source of truth.
 - Tool-priority steering section in `system_audit.md`: agent is now
   told to prefer symbol-graph tools (`callers_of`, `taint_paths_to`,
   `type_resolver`) over `search_source` (raw grep). Repeated
   `search_source` calls are flagged as a code smell.
-- `vr` module: OWASP MASVS L1/L2 audit framework — full control catalog
+- `vr` module: OWASP MASVS L1/L2 audit framework -- full control catalog
   (`masvs/catalog.py`), verdict mapper from child investigation outcomes,
   parent reconciler for aggregate scoring, seed builder for MASVS-structured
   investigation spawning, and PDF report section (`reporting/masvs_report.py`).
@@ -60,18 +60,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `REACT_NATIVE_EXTRACT` as a 6th Android pipeline stage between
   `JADX_DECOMPILE` and `INDEX_DECOMPILED`.
 - `vr` module: coordinated vulnerability disclosure subsystem
-  (`disclosure/`) — pluggable disclosure tracks (kernel, standard, extra),
+  (`disclosure/`) -- pluggable disclosure tracks (kernel, standard, extra),
   timeline management, submission tracking.
-- `vr` module: `ClaimVerifier` agent (`agents/claim_verifier.py`) —
+- `vr` module: `ClaimVerifier` agent (`agents/claim_verifier.py`) --
   adversarial post-synthesis verification of researcher claims before a
   finding can ship.
-- `vr` module: `PatternExtractor` agent (`agents/pattern_extractor.py`) —
+- `vr` module: `PatternExtractor` agent (`agents/pattern_extractor.py`) --
   mines reusable vulnerability patterns from completed investigations into
   the `vr_patterns` table.
-- `vr` module: enrichment pipeline (`enrichment/`) — background workers
+- `vr` module: enrichment pipeline (`enrichment/`) -- background workers
   for CVE / CWE / target metadata enrichment with dedicated contracts
   and services.
-- `vr` module: `OutcomeDispatcher` agent (`agents/outcome_dispatcher.py`) —
+- `vr` module: `OutcomeDispatcher` agent (`agents/outcome_dispatcher.py`) --
   routes investigation outcomes to variant spawning, disclosure tracks,
   and finding finalization. Hosts the `_spawn_variant_child` helper.
 - `vr` module: auto-steering system (`agents/auto_steering.py`).
@@ -80,13 +80,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   message at PROMPT POSITION 2 on every branch's next turn. Dedupes via
   the indexed `auto_steering_key` column (migration 063); re-fires once
   all prior matching posts are ACKed.
-- `vr` module: section writer (`reporting/section_writer.py`) — one LLM
+- `vr` module: section writer (`reporting/section_writer.py`) -- one LLM
   call per MASVS control, parallel via `asyncio.gather`, cached on the
   outcome payload under `_report_section`. Replaces the dumb pass-through
   that dumped auditor free-text verbatim.
-- `vr` module: stall recovery service (`services/stall_recovery.py`) —
+- `vr` module: stall recovery service (`services/stall_recovery.py`) --
   detects and recovers stuck investigations via branch activity analysis.
-- `vr` module: outcome review service (`services/outcome_review.py`) —
+- `vr` module: outcome review service (`services/outcome_review.py`) --
   quorum-based evaluation of investigation outcomes with
   `auto_approved_no_active_voters_*` fallbacks when no active siblings
   remain to vote.
@@ -104,7 +104,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   forgot to repeat h3 in its current view, h3 silently disappeared.
   Now the only way to remove a hypothesis is to explicitly reject it.
 - `CyberReasoningEngine.decide_next_turn` uses `chat_structured`
-  instead of plain `chat` — gateway enforces the
+  instead of plain `chat` -- gateway enforces the
   `ReasoningTurnDecision` JSON schema upstream when the routed model
   supports strict mode. Removes the prior failure mode where the LLM
   emitted partial schemas missing required fields.
@@ -125,7 +125,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   whose workflow cursor is still in a non-terminal state (D-86).
 - Frontend message limit raised 100 → 500 in `useInvestigationMessages`
   so long investigations past T100 actually render.
-- `TurnCard` collapses by default — click the header to expand the
+- `TurnCard` collapses by default -- click the header to expand the
   body. One-line preview when collapsed.
 - Documentation: README module inventory now lists `vr` with its
   full capability surface. Quick-start uses `pnpm` (not `npm`) and
@@ -178,7 +178,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with an ORM `delete()` (commit `af9a724`), so any module that lands
   in `__crashed__` is reaped on worker startup.
 - ARQ stale-heartbeat zombies are now reaped with an unconditional
-  commit (commit `e42dea2`) — the previous reaper logged the reap but
+  commit (commit `e42dea2`) -- the previous reaper logged the reap but
   did not always commit, leaving heartbeats stuck.
 - VR branch reaper switched from raw `text()` SQL to an ORM `update()`
   construct (commit `c7c6820`) after the prior race window between
@@ -199,7 +199,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (migration 067). Engine-level pause/resume preserves the prior
   `current_state` here while the cursor sits at the new non-terminal
   reserved name `__paused__`.
-- Platform: `Settings` defaults — `AILA_LLM_MAX_RETRIES` changed from
+- Platform: `Settings` defaults -- `AILA_LLM_MAX_RETRIES` changed from
   `100` to `3` (in-task retry budget ~7s; sustained degradation handled
   by ARQ task-level retry with cursor preservation, not in-call retry).
   Pipeline fail mode default for security-critical steps (classify,
@@ -228,7 +228,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   three-front re-open fix landed in `92836e1`.
 
 - `audit-mcp` `read_function` / `extract_class` AST-only resolution
-  via `TypeResolver` — eliminates three classes of failure: Windows
+  via `TypeResolver` -- eliminates three classes of failure: Windows
   path slash mismatch, K&R-style multi-line definitions, and matching
   call sites instead of definitions.
 - VR adapter for `audit_mcp.read_function`: handles the list-of-lines

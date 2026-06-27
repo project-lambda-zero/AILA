@@ -5,7 +5,7 @@ requirement`` when no matching debug symbols are installed for the
 kernel build in the dump. Upstream ships three prebuilt symbol packs
 at ``https://downloads.volatilityfoundation.org/volatility3/symbols/``
 (linux, mac, windows). On first use vol3 will auto-fetch them from
-that URL — but only if the analyzer has outbound internet to that host
+that URL -- but only if the analyzer has outbound internet to that host
 AND the fetch hasn't already been attempted and failed. Air-gapped or
 proxy-restricted analyzers never get symbols, and every plugin run
 returns 0.3s of empty output.
@@ -18,7 +18,7 @@ sysadmin unpacked them manually) the first check exits after a single
 directory listing.
 
 Symbol packs live in
-``<volatility3 install>/volatility3/symbols/<os>/`` — we resolve the
+``<volatility3 install>/volatility3/symbols/<os>/`` -- we resolve the
 install path by asking python on the analyzer, then unzip into place.
 
 References:
@@ -129,9 +129,9 @@ async def ensure_volatility_symbols(
     Idempotent. Returns True when the pack is present at the end of the
     call (whether it was already there or just fetched), False when the
     download failed. Callers that get False should still run their
-    plugins — vol3 may have locally cached symbols for this specific
+    plugins -- vol3 may have locally cached symbols for this specific
     kernel build in its user-scope cache, which lives outside the pack
-    directory — but should treat the outcome as low-confidence.
+    directory -- but should treat the outcome as low-confidence.
 
     The first successful check for a given (analyzer, dump_os) is
     cached in-process so repeated calls (one per plugin) cost a single
@@ -185,10 +185,10 @@ async def ensure_volatility_symbols(
         )
         return True
     except (OSError, TimeoutError, RuntimeError, AILAError):
-        pass  # pack missing — proceed to download
+        pass  # pack missing -- proceed to download
 
     # 3. Download and unzip. One pack ≈ 100-250 MB, so allow a long
-    #    timeout — but cap it so a hanging proxy doesn't stall the
+    #    timeout -- but cap it so a hanging proxy doesn't stall the
     #    whole collector.
     url = VOLATILITY_SYMBOL_URLS[dump_os]
     await safe_emit(
@@ -268,8 +268,8 @@ async def warmup_windows_pdb_cache(
     as a progress event for observability.
 
     Returns True on success (cache populated, output non-empty),
-    False otherwise. The caller should still run plugins on False —
-    the dump may still be analysable via fallback code paths — but
+    False otherwise. The caller should still run plugins on False --
+    the dump may still be analysable via fallback code paths -- but
     should log the warmup failure as a reduced-confidence signal.
     """
     from ..workflow.states.collectors._helpers import vol_cmd
@@ -321,7 +321,7 @@ async def warmup_windows_pdb_cache(
     _pdb_warmed[cache_key] = True
     await safe_emit(
         emitter, "memory_pdb_warmup_done",
-        f"memory: PDB cache warmed on {host} — {kernel_line or 'kernel symbols resolved'}",
+        f"memory: PDB cache warmed on {host} -- {kernel_line or 'kernel symbols resolved'}",
         {"host": host, "path": path, "kernel_identity": kernel_line[:500]},
     )
     return True

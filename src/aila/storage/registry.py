@@ -2,7 +2,7 @@
 
 Two registries are provided:
 
-ConfigRegistry — typed module configuration.
+ConfigRegistry -- typed module configuration.
     Modules call register() during register_tools() to declare their config
     schema (a Pydantic BaseModel subclass).  Default values are written to
     ConfigEntryRecord on first registration.  Callers resolve values via
@@ -10,10 +10,10 @@ ConfigRegistry — typed module configuration.
     build_platform_settings() reads from this registry; Settings only carries
     the infrastructure fields that are NOT managed here.
 
-SchemaRegistry — SQLModel table registration.
+SchemaRegistry -- SQLModel table registration.
     Modules call push() during register_tools() to register their SQLModel table
     classes.  init_db() calls create_all(engine) to create only those tables.
-    No filesystem crawl — all registration is explicit and happens at startup.
+    No filesystem crawl -- all registration is explicit and happens at startup.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ class ConfigRegistry:
 
     async def register(self, namespace: str, schema_class: type[BaseModel]) -> None:
         """Register a Pydantic schema for namespace. Persists defaults to DB on
-        first registration — existing DB rows are left unchanged (user overrides
+        first registration -- existing DB rows are left unchanged (user overrides
         survive re-registration)."""
         self._schemas[namespace] = schema_class
         defaults = schema_class()
@@ -168,7 +168,7 @@ class ConfigRegistry:
         if field_info is None:
             raise ValueError(f"Key '{key}' not found in schema for namespace '{namespace}'.")
 
-        # Validate by casting — raises ValueError on bad input
+        # Validate by casting -- raises ValueError on bad input
         _cast_value(value, field_info)
 
         # Capture old value BEFORE write for audit (D-12: read old before write)

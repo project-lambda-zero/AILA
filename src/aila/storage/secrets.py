@@ -16,11 +16,11 @@ dispatches to the named backend (only "master-key" is supported), and calls
 MasterKeySecretProtector.decrypt() which re-derives the AAD from stored fields.
 
 Secrets are NOT stored in the database in any recoverable plaintext form.
-The keyring file is the only source of key material — loss of the keyring
+The keyring file is the only source of key material -- loss of the keyring
 means encrypted secrets are unrecoverable.
 
 Env-var resolution: secrets are resolved via SecretStore.resolve_provider_secret()
-which looks up the DB record.  There is no env-var fallback chain for secrets —
+which looks up the DB record.  There is no env-var fallback chain for secrets --
 callers that need env-var override must check the env var before calling
 resolve_provider_secret().
 """
@@ -75,8 +75,8 @@ class MasterKeyProvider:
     only).  On Windows, file permissions are left to the OS (icacls hardening is
     tracked as an active requirement in PROJECT.md).
 
-    Raises RuntimeError on any configuration error — malformed JSON, missing active
-    version, or invalid base64 key — to fail fast before attempting any encryption.
+    Raises RuntimeError on any configuration error -- malformed JSON, missing active
+    version, or invalid base64 key -- to fail fast before attempting any encryption.
     """
 
     def __init__(self, keyring_path: Path, active_version: str):
@@ -97,7 +97,7 @@ class MasterKeyProvider:
         return MasterKeyMaterial(version=version, key_bytes=key_bytes)
 
     def key_for_version(self, version: str) -> bytes:
-        """Return the 32-byte key for a specific version — used during decryption.
+        """Return the 32-byte key for a specific version -- used during decryption.
 
         Args:
             version: The key version string stored on the SecretRecord.
@@ -119,7 +119,7 @@ class MasterKeyProvider:
             return self._load_or_create_keyring_unlocked()
 
     def _load_or_create_keyring_unlocked(self) -> dict[str, object]:
-        """Inner load logic — caller must hold self._file_lock."""
+        """Inner load logic -- caller must hold self._file_lock."""
         if self.keyring_path.exists():
             raw = self.keyring_path.read_bytes().strip()
             if not raw:
@@ -152,7 +152,7 @@ class MasterKeyProvider:
             return self._create_keyring_unlocked()
 
     def _create_keyring_unlocked(self) -> dict[str, object]:
-        """Inner create logic — caller must hold self._file_lock."""
+        """Inner create logic -- caller must hold self._file_lock."""
         payload = {
             "active_version": self.active_version,
             "keys": {
@@ -167,7 +167,7 @@ class MasterKeyProvider:
             self._write_keyring_unlocked(payload)
 
     def _write_keyring_unlocked(self, payload: dict[str, object]) -> None:
-        """Inner write logic — caller must hold self._file_lock."""
+        """Inner write logic -- caller must hold self._file_lock."""
         self.keyring_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         if os.name != "nt":
             self.keyring_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
@@ -455,7 +455,7 @@ class SecretStore:
         """Resolve a provider-scoped secret by key.
 
         Opens its own async_session_scope.  Returns None if the secret has not been set.
-        No env-var fallback — callers that want env-var override must check the
+        No env-var fallback -- callers that want env-var override must check the
         env var before calling this method.
         """
         async with async_session_scope(self.settings) as session:

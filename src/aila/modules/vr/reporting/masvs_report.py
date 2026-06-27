@@ -1,6 +1,6 @@
 """MASVS audit aggregation + PDF rendering for the vr module.
 
-R-1 — :func:`collect_findings`. Walks every child
+R-1 -- :func:`collect_findings`. Walks every child
 investigation under a MASVS audit parent, projects each child's primary
 outcome through the S-4 mapping rule
 (:func:`aila.modules.vr.masvs.verdict_mapper.child_outcome_to_verdict`),
@@ -10,7 +10,7 @@ summary counts. The output is the
 the PDF renderer (R-2) and the
 ``GET /vr/targets/{id}/masvs-report`` payload (R-3).
 
-R-2a (this commit) — :func:`build_pdf`. Renders a
+R-2a (this commit) -- :func:`build_pdf`. Renders a
 :class:`MasvsAuditAggregate` as a self-contained PDF document:
 cover page (APK identity + audit metadata), executive-summary
 count table, and one section per MASVS group with PDF outline
@@ -31,7 +31,7 @@ Design notes
   the catalog has since moved on.
 * Children whose ``masvs_control_id`` ref is missing or whose control id
   is not in the current catalog are skipped with a log line. The
-  parent's pinned version is the audit trail — surfacing a partial
+  parent's pinned version is the audit trail -- surfacing a partial
   aggregate beats fabricating a synthetic verdict from a missing
   control entry.
 * Partial aggregates are valid: a child still in flight has no
@@ -176,7 +176,7 @@ def _extract_child_control_id(child: VRInvestigationRecord) -> str | None:
     ``masvs_control_id`` entry. A parse failure is logged at WARNING so
     upstream schema drift (e.g. a dispatcher regression writing a list
     of strings instead of dicts) surfaces without breaking the
-    aggregate build — the caller still drops the verdict for the
+    aggregate build -- the caller still drops the verdict for the
     affected child.
     """
     try:
@@ -325,7 +325,7 @@ async def collect_findings(parent_id: str) -> MasvsAuditAggregate:
     )
 
 # ──────────────────────────────────────────────────────────────────────
-# R-2a — PDF rendering
+# R-2a -- PDF rendering
 # ──────────────────────────────────────────────────────────────────────
 #
 # Visual identity (palette, fonts, page chrome) is shared with
@@ -337,10 +337,10 @@ async def collect_findings(parent_id: str) -> MasvsAuditAggregate:
 #
 # Layout (R-2a scaffolding):
 #
-#   Page 1   Cover — title, overall posture badge, APK identity
+#   Page 1   Cover -- title, overall posture badge, APK identity
 #            table (package / version / SHA-256 / MASVS catalog /
 #            audit window / generated date), bookmark "Cover".
-#   Page 2+  Executive summary — interpretive paragraph + four-cell
+#   Page 2+  Executive summary -- interpretive paragraph + four-cell
 #            count grid (FINDING / NO_FINDING / NOT_APPLICABLE /
 #            INCONCLUSIVE). Bookmark "Executive summary".
 #   Page 2+  One section per non-empty MASVS group, in canonical
@@ -353,12 +353,12 @@ async def collect_findings(parent_id: str) -> MasvsAuditAggregate:
 
 # Verdict → pastel cell color (placed on the dark page surface, with
 # black text on the cell so badge contrast holds up even when the
-# reader prints the PDF on a monochrome printer — the text reads
+# reader prints the PDF on a monochrome printer -- the text reads
 # either way).
 # Verdict colors: red for vulnerabilities; green for compliant;
 # grey for inapplicable; amber for not-yet-conclusive. Picked so a
 # tired reviewer skimming the report at 3am can't confuse "we found
-# a vulnerability" with "we found that this is fine" — the older
+# a vulnerability" with "we found that this is fine" -- the older
 # labels both contained the word "finding" and read the same on a
 # similar-toned badge.
 _VERDICT_COLOR: dict[MasvsVerdict, colors.Color] = {
@@ -384,7 +384,7 @@ _VERDICT_LABEL: dict[MasvsVerdict, str] = {
 }
 
 # Display order for the executive-summary count grid and the per-row
-# legend. FINDING leads — the report's job is to surface compliance
+# legend. FINDING leads -- the report's job is to surface compliance
 # gaps first, then everything else in decreasing audit signal.
 _VERDICT_DISPLAY_ORDER: tuple[MasvsVerdict, ...] = (
     MasvsVerdict.FINDING,
@@ -405,7 +405,7 @@ _GROUP_HEADING: dict[MasvsGroup, str] = {
 # missing id at render time means the catalog moved on after the audit
 # was dispatched. The renderer falls back to a minimal subsection
 # (id-only header, no description, no verification steps) rather than
-# raising — partial fidelity beats refusing to render.
+# raising -- partial fidelity beats refusing to render.
 _CATALOG_BY_ID: dict[str, MasvsControl] = {
     control.id: control for control in MASVS_CONTROLS
 }
@@ -427,7 +427,7 @@ class _BookmarkFlowable(Flowable):
     To anchor a TOC entry to "the point a section heading lands on a
     page" we drop one of these into the flow right before the heading.
     PDF viewers (Acrobat, Preview, Edge, Firefox) render the resulting
-    outline as a TOC sidebar — operators jump from "Executive summary"
+    outline as a TOC sidebar -- operators jump from "Executive summary"
     to "MASVS-CRYPTO" without scrolling 30 pages.
     """
 
@@ -504,7 +504,7 @@ def _append_cover(
     static_summary: Mapping[str, Any],
     styles: dict[str, ParagraphStyle],
 ) -> None:
-    """Cover page — title, posture badge, APK identity meta-table.
+    """Cover page -- title, posture badge, APK identity meta-table.
 
     Mirrors the per-investigation cover layout in :mod:`pdf_report` so
     the two reports share visual identity. The posture badge collapses
@@ -616,7 +616,7 @@ def _append_executive_summary(
     aggregate: MasvsAuditAggregate,
     styles: dict[str, ParagraphStyle],
 ) -> None:
-    """Executive summary — interpretive sentence + four-cell count grid.
+    """Executive summary -- interpretive sentence + four-cell count grid.
 
     The sentence reads naturally so the lead can paste it into an email
     without polishing ("3 findings, 2 inconclusive across 46 controls
@@ -636,7 +636,7 @@ def _append_executive_summary(
 
     if total == 0:
         opening = (
-            "No controls have terminal verdicts yet — every child "
+            "No controls have terminal verdicts yet -- every child "
             "investigation is still in flight or has produced no "
             "primary outcome."
         )
@@ -696,7 +696,7 @@ def _append_findings_highlights(
     styles: dict[str, ParagraphStyle],
 ) -> None:
     """Page right after Executive Summary listing every FAIL + REVIEW
-    verdict with a one-line title — so the reader sees what actually
+    verdict with a one-line title -- so the reader sees what actually
     needs attention before scrolling through 88 per-control
     subsections. Skips silently when there are zero FAIL + REVIEW
     rows (clean audit, all-PASS).
@@ -732,7 +732,7 @@ def _append_findings_highlights(
         if evidence_count:
             reason_text = f"{evidence_count} evidence ref(s)  {reason_text}".strip()
         reason = Paragraph(
-            f"<font size='8'>{_escape_for_paragraph(reason_text or '—')}</font>",
+            f"<font size='8'>{_escape_for_paragraph(reason_text or '--')}</font>",
             styles["body"],
         )
         return [badge, cid, reason]
@@ -796,12 +796,12 @@ def _append_apk_intelligence(
     ))
     story.append(Spacer(1, 0.15 * inch))
 
-    # fix §268 — ``android_mcp_static_summary`` now stores a pointer
+    # fix §268 -- ``android_mcp_static_summary`` now stores a pointer
     # to ``target_artifacts/{target_id}/static_summary.json``; the
     # inline dict carries only the digest. The APK Intelligence section
     # needs the FULL inventory (permission names, native_libs paths,
     # exported-component class names), so resolve the pointer here.
-    # Legacy inline form (rows ingested pre-§268) is still accepted —
+    # Legacy inline form (rows ingested pre-§268) is still accepted --
     # the loader returns the input dict unchanged when no
     # ``_artifact_path`` is present.
     static_handle = (
@@ -811,7 +811,7 @@ def _append_apk_intelligence(
     if not full_static:
         full_static = static_summary if isinstance(static_summary, Mapping) else {}
 
-    # fix §269 — ``android_mcp_mobsf_scan`` now stores a pointer with
+    # fix §269 -- ``android_mcp_mobsf_scan`` now stores a pointer with
     # ``prompt_safe=False`` plus a small digest (security_score,
     # trackers_detected, findings_by_severity); the full multi-MB
     # report lives in ``target_artifacts/{target_id}/mobsf_scan.json``.
@@ -991,8 +991,8 @@ def _append_group_sections(
 
     The section header (h1) is the spec-facing label (``MASVS-CRYPTO``)
     and emits a PDF outline bookmark so the viewer renders it as a TOC
-    entry. Each row beneath is one control — id, title, verdict badge,
-    confidence — enough scaffolding that R-2b can drop the per-control
+    entry. Each row beneath is one control -- id, title, verdict badge,
+    confidence -- enough scaffolding that R-2b can drop the per-control
     body (evidence excerpts + remediation prose) directly below this
     row without restructuring.
     """
@@ -1085,7 +1085,7 @@ def _render_report_section_block(
 ) -> None:
     """Render the writer-agent's ``ReportSection`` dict as the per-
     control body. The dict mirrors :class:`ReportSection` from
-    ``aila.modules.vr.reporting.section_writer`` — we don't import
+    ``aila.modules.vr.reporting.section_writer`` -- we don't import
     the model class here because the cached form on the outcome is
     raw JSON.
     """
@@ -1109,7 +1109,7 @@ def _render_report_section_block(
         for item in evidence:
             if not isinstance(item, Mapping):
                 continue
-            loc = str(item.get("location") or "—")
+            loc = str(item.get("location") or "--")
             detail = str(item.get("detail") or "")
             ev_rows.append([
                 Paragraph(
@@ -1185,7 +1185,7 @@ def _append_control_subsection(
     control: MasvsControl | None,
     styles: dict[str, ParagraphStyle],
 ) -> None:
-    """Per-control subsection body — title bar / description / evidence /
+    """Per-control subsection body -- title bar / description / evidence /
     verification steps / child investigation link.
 
     The title bar is a single-row colored table (verdict color
@@ -1196,26 +1196,26 @@ def _append_control_subsection(
 
     Layout (one per control inside a group section):
 
-    - **Title bar** — colored by verdict; one row carrying control id,
+    - **Title bar** -- colored by verdict; one row carrying control id,
       control title, verdict label, confidence percent.
-    - **Description** — the spec text the audit ran against (from
+    - **Description** -- the spec text the audit ran against (from
       :attr:`MasvsControl.description`).
-    - **Affected components** — verbatim ``{file, function}`` list the
+    - **Affected components** -- verbatim ``{file, function}`` list the
       auditor cited in its primary outcome's
       ``payload['affected_components']``. Empty for inconclusive
       verdicts where no primary outcome was emitted.
-    - **Verification & remediation** — bulleted
+    - **Verification & remediation** -- bulleted
       :attr:`MasvsControl.verification_steps`. The same steps describe
       both how a compliant app looks and what a non-compliant one
       needs to fix, so the section header doubles up on the wording.
-    - **Footer** — child investigation id + the operator-facing path
+    - **Footer** -- child investigation id + the operator-facing path
       (matches :file:`src/aila/modules/vr/frontend/routes.tsx`
       ``vr.investigation-detail`` route) + inconclusive reason when
       :attr:`MasvsControlVerdict.reason` is set.
 
     When ``control`` is ``None`` (catalog moved on after dispatch),
     the renderer emits the title bar + a one-line note and skips the
-    description / verification block — partial fidelity beats refusing
+    description / verification block -- partial fidelity beats refusing
     to render the verdict.
     """
     verdict_color = _VERDICT_COLOR[verdict.verdict]
@@ -1258,7 +1258,7 @@ def _append_control_subsection(
     title_table.hAlign = "LEFT"
     story.append(KeepTogether([Spacer(1, 0.18 * inch), title_table]))
 
-    # 1. CATALOG DESCRIPTION — faded grey, italic, small. Context only.
+    # 1. CATALOG DESCRIPTION -- faded grey, italic, small. Context only.
     if control is not None and control.description.strip():
         story.append(Paragraph(
             "<font color='#9c9c9c' size='8'><i>"
@@ -1266,7 +1266,7 @@ def _append_control_subsection(
             styles["body"],
         ))
 
-    # 2a. STRUCTURED REPORT SECTION — preferred. Renders the
+    # 2a. STRUCTURED REPORT SECTION -- preferred. Renders the
     #     section-writer agent's headline / evidence / risk /
     #     remediation / why-it-matters fields with proper visual
     #     hierarchy. When the section-writer hasn't run yet (cache
@@ -1274,7 +1274,7 @@ def _append_control_subsection(
     if verdict.report_section:
         _render_report_section_block(story, verdict.report_section, styles)
     elif verdict.agent_summary:
-        # 2b. RAW AGENT SUMMARY fallback — only when the writer agent
+        # 2b. RAW AGENT SUMMARY fallback -- only when the writer agent
         #     didn't run. Less polished but still APK-specific.
         story.append(Spacer(1, 0.08 * inch))
         story.append(Paragraph(
@@ -1290,7 +1290,7 @@ def _append_control_subsection(
                 ))
                 story.append(Spacer(1, 0.04 * inch))
 
-    # 3. AFFECTED COMPONENTS — file:method evidence the agent cited.
+    # 3. AFFECTED COMPONENTS -- file:method evidence the agent cited.
     if verdict.evidence_locations:
         story.append(Spacer(1, 0.04 * inch))
         story.append(Paragraph(
@@ -1328,7 +1328,7 @@ def _append_control_subsection(
         ev_table.hAlign = "LEFT"
         story.append(ev_table)
 
-    # 4. GENERIC VERIFICATION STEPS — only rendered when the agent
+    # 4. GENERIC VERIFICATION STEPS -- only rendered when the agent
     #    didn't produce a summary AND there's no evidence either.
     #    Otherwise the catalog's generic "Run apkanalyzer + grep for X"
     #    instructions just add noise to a report a real auditor reads.
@@ -1337,7 +1337,7 @@ def _append_control_subsection(
         story.append(Spacer(1, 0.08 * inch))
         story.append(Paragraph(
             "<font color='#9c9c9c' size='8'><b>VERIFICATION CHECKLIST "
-            "(catalog default — agent produced no specific findings)</b></font>",
+            "(catalog default -- agent produced no specific findings)</b></font>",
             styles["meta"],
         ))
         for step in control.verification_steps:
@@ -1374,20 +1374,20 @@ def build_pdf(
 ) -> bytes:
     """Render a :class:`MasvsAuditAggregate` as a PDF byte string.
 
-    R-2a scaffolding — cover page, executive summary count grid, and
+    R-2a scaffolding -- cover page, executive summary count grid, and
     one section per non-empty MASVS group with PDF outline bookmarks
     driving the TOC sidebar. R-2b appends per-control subsection bodies
     (verdict badge + evidence excerpts + remediation prose) inside each
     group section without restructuring the existing scaffolding.
 
-    The render is purely structural — it never invents verdicts. Every
+    The render is purely structural -- it never invents verdicts. Every
     table row and badge traces back to a real
     :class:`MasvsControlVerdict` in ``aggregate.verdicts``, which itself
     cites a real child investigation outcome.
 
     :param aggregate: Output of :func:`collect_findings` for a MASVS
         audit parent. Partial aggregates (children still in flight) are
-        valid — the renderer reports whatever verdicts are resolvable.
+        valid -- the renderer reports whatever verdicts are resolvable.
     :param target: Read-only target projection supplying the cover
         page's APK identity (display name, package, version, SHA-256).
     :returns: Bytes of a self-contained PDF document. Caller streams
@@ -1413,7 +1413,7 @@ def build_pdf(
     # ``_draw_footer`` paints the dark page background as its first
     # action (see ``aila.modules.vr.reporting.pdf_report``), so a plain
     # ``PageTemplate`` with ``onPage=_draw_footer`` produces the same
-    # dark canvas + cream footer chrome without subclassing — the
+    # dark canvas + cream footer chrome without subclassing -- the
     # ``beforeDrawPage`` override only matters when the background is
     # not also painted by ``onPage``.
     package_for_title = (
@@ -1429,7 +1429,7 @@ def build_pdf(
         rightMargin=margin,
         topMargin=margin,
         bottomMargin=margin,
-        title=f"MASVS audit — {package_for_title}",
+        title=f"MASVS audit -- {package_for_title}",
         author="AILA Vulnerability Research",
         subject=f"OWASP MASVS audit report (catalog {aggregate.masvs_spec_version})",
     )

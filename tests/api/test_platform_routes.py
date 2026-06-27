@@ -266,7 +266,7 @@ async def test_tools_list_returns_503_without_platform(
         "/tools",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
-    # Platform is None in async_client — 503 is correct behavior
+    # Platform is None in async_client -- 503 is correct behavior
     assert response.status_code == 503
 
 

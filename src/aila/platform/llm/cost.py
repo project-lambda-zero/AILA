@@ -131,7 +131,7 @@ class CostTracker:
 
         Worker restart no longer resets the budget to zero; sibling
         workers see the same total. The sync :meth:`check_budget` keeps
-        its old contract for tests + sync callers — only the async
+        its old contract for tests + sync callers -- only the async
         client path needs the seed, and only on a fresh process.
         """
         rid = run_id or _NO_RUN

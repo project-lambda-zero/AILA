@@ -14,7 +14,7 @@ ConfigRegistry values are resolved on every access and can be changed at runtime
 via the `/config` API.
 
 Module code MUST read its own settings through `ConfigRegistry.get()`, not direct
-`os.getenv` calls — `os.getenv` bypasses the DB row and the schema default, and
+`os.getenv` calls -- `os.getenv` bypasses the DB row and the schema default, and
 the honesty audit flags new occurrences.
 
 **Source:** `src/aila/storage/registry.py`
@@ -35,7 +35,7 @@ When `ConfigRegistry.get(namespace, key)` is called, the value is resolved in th
 **Environment variables always win.** This enables container orchestrators (Docker,
 Kubernetes) to inject config without touching the database.
 
-**Step 1.5 — in-process TTL cache.** `ConfigRegistry.get()` consults a
+**Step 1.5 -- in-process TTL cache.** `ConfigRegistry.get()` consults a
 `_CacheEntry`-backed cache (default TTL 60 s, configurable via
 `ConfigRegistry(cache_ttl=...)`) before hitting the DB. The cache is
 invalidated on `set()` and pre-warmed at startup via `warm_cache()`.
@@ -66,7 +66,7 @@ Invalid casts raise `ValueError`, which the config router converts to HTTP 422.
 
 ### From application code
 
-`ConfigRegistry.get()` is async — every caller must `await` it from inside an
+`ConfigRegistry.get()` is async -- every caller must `await` it from inside an
 event loop (FastAPI handlers, ARQ task wrappers, `async def` services):
 
 ```python
@@ -177,7 +177,7 @@ value `"5"` and `value_type="int"`.
 If the row already exists (from a previous start), it is left unchanged -- operator
 overrides survive schema re-registration.
 
-# Option A: Via ConfigRegistry instance (await it — get() is async)
+# Option A: Via ConfigRegistry instance (await it -- get() is async)
 max_retries = await config_registry.get("platform", "max_retries")
 
 # Option B: Via get_task_tuning when no event loop is available

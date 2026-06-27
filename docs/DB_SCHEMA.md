@@ -230,7 +230,7 @@ Platform-owned task lifecycle record (task queue).
 | kwargs_json | Text | default="{}" | Serialized task arguments |
 | input_hash | Text/null | indexed, partial UNIQUE | SHA-256 dedup key for concurrent-submit safety. Partial unique index `ix_task_records_input_hash_unique` enforces uniqueness within active statuses (queued, running, waiting). Added by migration 065. |
 | version | int | default=1 | Optimistic-lock version for safe concurrent updates. Added by migration 011. |
-| result_path | Text/null | | **Legacy** — retired file-path slot; no task in `src/aila/` populates it. Results live in module-specific tables. |
+| result_path | Text/null | | **Legacy** -- retired file-path slot; no task in `src/aila/` populates it. Results live in module-specific tables. |
 | error | Text/null | | Error message on failure |
 | depends_on_json | Text/null | | JSON list of dependency task IDs |
 | started_at | datetime/null | | Worker pickup time |
@@ -474,51 +474,51 @@ for the full SQLModel definitions.
 
 ### Workflow engine
 
-- **WorkflowStateCursor** (`workflow_state_cursor`) — one row per active workflow run; tracks `current_state`, `version`, scheduled-tick metadata, crash sentinel (`__crashed__`). Migration 067 adds `archived_state` (nullable `VARCHAR(128)`) to preserve the prior `current_state` across pause / resume cycles. Non-NULL only when the cursor sits at `__paused__`. Source: `src/aila/storage/db_models.py:193-200`.
-- **WorkflowStateTransition** (`workflow_state_transitions`) — append-only audit/replay log of every state transition. Indexed `(run_id, sequence DESC)` for tail-reads.
+- **WorkflowStateCursor** (`workflow_state_cursor`) -- one row per active workflow run; tracks `current_state`, `version`, scheduled-tick metadata, crash sentinel (`__crashed__`). Migration 067 adds `archived_state` (nullable `VARCHAR(128)`) to preserve the prior `current_state` across pause / resume cycles. Non-NULL only when the cursor sits at `__paused__`. Source: `src/aila/storage/db_models.py:193-200`.
+- **WorkflowStateTransition** (`workflow_state_transitions`) -- append-only audit/replay log of every state transition. Indexed `(run_id, sequence DESC)` for tail-reads.
 
 ### LLM pipeline + audit
 
-- **AuditSealRecord** (`auditsealrecord`) — cryptographic seals over LLM pipeline outputs. HMAC key from `platform.llm_seal_hmac_key`.
-- **VerificationRecord** (`verification_records`) — cross-model verification results (Phase 174 LLM-SEC-01).
-- **ReasoningGraphSnapshotRecord** (`reasoning_graph_snapshots`) — durable graph snapshot emitted by the platform reasoning engine; unique on `(module_id, run_id, sequence)`.
-- **LLMCostRecord** (`llm_cost_records`) — per-call token + USD cost record; indexes on `(run_id, model_id)` and `(team_id, created_at)`.
-- **LLMIdempotencyCacheRecord** (`llm_idempotency_cache`) — request-key keyed cache for retry-safe LLM calls (migration 061). PK is the SHA-256 of `(investigation, branch, turn, prompt_hash)`. Carries `response_json`, token counts, cost, 7-day TTL.
+- **AuditSealRecord** (`auditsealrecord`) -- cryptographic seals over LLM pipeline outputs. HMAC key from `platform.llm_seal_hmac_key`.
+- **VerificationRecord** (`verification_records`) -- cross-model verification results (Phase 174 LLM-SEC-01).
+- **ReasoningGraphSnapshotRecord** (`reasoning_graph_snapshots`) -- durable graph snapshot emitted by the platform reasoning engine; unique on `(module_id, run_id, sequence)`.
+- **LLMCostRecord** (`llm_cost_records`) -- per-call token + USD cost record; indexes on `(run_id, model_id)` and `(team_id, created_at)`.
+- **LLMIdempotencyCacheRecord** (`llm_idempotency_cache`) -- request-key keyed cache for retry-safe LLM calls (migration 061). PK is the SHA-256 of `(investigation, branch, turn, prompt_hash)`. Carries `response_json`, token counts, cost, 7-day TTL.
 
 ### Multi-team auth (Phase 177)
 
-- **UserRecord** (`user_records`) — username/password user. Hash via argon2id.
-- **OIDCProviderRecord** (`oidc_provider_records`) — OIDC provider configuration (Microsoft, generic OIDC).
-- **RefreshTokenRecord** (`refresh_token_records`) — refresh-token record for user sessions; key_id blacklist on revoke.
-- **TeamRecord** (`team_records`) — first-class team identity. UNIQUE on `name`. Soft-delete via `deleted_at`.
-- **TeamMemberRecord** (`team_member_records`) — explicit (team, user) edge with role. UNIQUE on `(team_id, user_id)`.
+- **UserRecord** (`user_records`) -- username/password user. Hash via argon2id.
+- **OIDCProviderRecord** (`oidc_provider_records`) -- OIDC provider configuration (Microsoft, generic OIDC).
+- **RefreshTokenRecord** (`refresh_token_records`) -- refresh-token record for user sessions; key_id blacklist on revoke.
+- **TeamRecord** (`team_records`) -- first-class team identity. UNIQUE on `name`. Soft-delete via `deleted_at`.
+- **TeamMemberRecord** (`team_member_records`) -- explicit (team, user) edge with role. UNIQUE on `(team_id, user_id)`.
 
-### Plan C — endpoint support
+### Plan C -- endpoint support
 
-- **NotificationRecord** (`notification_records`) — per-user notifications.
-- **WidgetLayoutRecord** (`widget_layout_records`) — dashboard widget layout JSON per user (one row per user).
-- **SavedFilterRecord** (`saved_filter_records`) — user-saved filter configs for entity list views.
-- **ScheduledReportRecord** (`scheduled_report_records`) — cron-scheduled report jobs.
-- **FindingWorkflowRecord** (`finding_workflow_records`) — audit trail entry for finding workflow state transitions.
-- **AssetTagVocabRecord** (`asset_tag_vocab_records`) — admin-managed tag key vocabulary.
+- **NotificationRecord** (`notification_records`) -- per-user notifications.
+- **WidgetLayoutRecord** (`widget_layout_records`) -- dashboard widget layout JSON per user (one row per user).
+- **SavedFilterRecord** (`saved_filter_records`) -- user-saved filter configs for entity list views.
+- **ScheduledReportRecord** (`scheduled_report_records`) -- cron-scheduled report jobs.
+- **FindingWorkflowRecord** (`finding_workflow_records`) -- audit trail entry for finding workflow state transitions.
+- **AssetTagVocabRecord** (`asset_tag_vocab_records`) -- admin-managed tag key vocabulary.
 
-### Plan D — network discovery
+### Plan D -- network discovery
 
-- **ConfidenceDriftRecord** (`confidence_drift_records`) — per-`(target_name, task_type)` drift tracking.
-- **SystemPortRecord** (`system_port_records`) — open TCP/UDP listening ports per system (from `ss -tlnp`).
-- **SystemServiceRecord** (`system_service_records`) — running systemd services per system.
-- **SystemConnectionRecord** (`system_connection_records`) — active TCP connections between registered systems (topology edges).
-- **SystemMetadataRecord** (`system_metadata_records`) — per-system SSH-discovered metadata (Phase 176d). UNIQUE on `system_id`.
+- **ConfidenceDriftRecord** (`confidence_drift_records`) -- per-`(target_name, task_type)` drift tracking.
+- **SystemPortRecord** (`system_port_records`) -- open TCP/UDP listening ports per system (from `ss -tlnp`).
+- **SystemServiceRecord** (`system_service_records`) -- running systemd services per system.
+- **SystemConnectionRecord** (`system_connection_records`) -- active TCP connections between registered systems (topology edges).
+- **SystemMetadataRecord** (`system_metadata_records`) -- per-system SSH-discovered metadata (Phase 176d). UNIQUE on `system_id`.
 
 ### Automation
 
-- **AutomationScheduleRecord** (`automation_schedule_records`) — cron-driven automation schedule.
+- **AutomationScheduleRecord** (`automation_schedule_records`) -- cron-driven automation schedule.
 
 ---
 
-## Vulnerability Module — Additional Tables
+## Vulnerability Module -- Additional Tables
 
-- **FindingFeedbackRecord** (`finding_feedbacks`) — operator feedback on a finding (false-positive / accepted / deferred etc.). CHECK constraint on `reason`.
+- **FindingFeedbackRecord** (`finding_feedbacks`) -- operator feedback on a finding (false-positive / accepted / deferred etc.). CHECK constraint on `reason`.
 
 ---
 
@@ -527,17 +527,17 @@ for the full SQLModel definitions.
 Owned by `aila.modules.forensics.db_models`. Every table is prefixed with
 `forensics_` to keep ownership obvious in the shared database.
 
-- **ForensicsProjectRecord** (`forensics_projects`, migration 028) — top-level forensics project.
-- **ForensicsProjectEvidenceRecord** (`forensics_project_evidence`, migration 028) — evidence file metadata; `size_bytes` widened to BIGINT in migration 031.
-- **ForensicsArtifactRecord** (`forensics_artifacts`, migration 028) — artifacts produced during analysis; `source_investigation_id` column added in migration 036.
-- **ForensicsLeadRecord** (`forensics_leads`, migration 028) — investigative leads surfaced by analyzers.
-- **ForensicsInvestigationRecord** (`forensics_investigations`, migration 028) — one investigation per project run; `parent_investigation_id` added in migration 037, `task_id` linkage in migration 030.
-- **ForensicsAgentStepRecord** (`forensics_agent_steps`, migration 028) — per-step agent trace.
-- **ForensicsWriteupRecord** (`forensics_writeups`, migration 028) — generated investigation writeup.
-- **ForensicsAnswerCandidateRecord** (`forensics_answer_candidates`, migration 028) — candidate answers for question-driven investigations.
-- **ForensicsAnalystDirectiveRecord** (`forensics_analyst_directives`, migrations 032/039) — operator directives that steer agent behavior.
-- **ForensicsSolidEvidenceRecord** (`forensics_solid_evidence`, migration 034) — promoted, high-confidence evidence.
-- **ForensicsFindingSuppressionRecord** (`forensics_finding_suppressions`, migration 035) — operator-suppressed findings.
+- **ForensicsProjectRecord** (`forensics_projects`, migration 028) -- top-level forensics project.
+- **ForensicsProjectEvidenceRecord** (`forensics_project_evidence`, migration 028) -- evidence file metadata; `size_bytes` widened to BIGINT in migration 031.
+- **ForensicsArtifactRecord** (`forensics_artifacts`, migration 028) -- artifacts produced during analysis; `source_investigation_id` column added in migration 036.
+- **ForensicsLeadRecord** (`forensics_leads`, migration 028) -- investigative leads surfaced by analyzers.
+- **ForensicsInvestigationRecord** (`forensics_investigations`, migration 028) -- one investigation per project run; `parent_investigation_id` added in migration 037, `task_id` linkage in migration 030.
+- **ForensicsAgentStepRecord** (`forensics_agent_steps`, migration 028) -- per-step agent trace.
+- **ForensicsWriteupRecord** (`forensics_writeups`, migration 028) -- generated investigation writeup.
+- **ForensicsAnswerCandidateRecord** (`forensics_answer_candidates`, migration 028) -- candidate answers for question-driven investigations.
+- **ForensicsAnalystDirectiveRecord** (`forensics_analyst_directives`, migrations 032/039) -- operator directives that steer agent behavior.
+- **ForensicsSolidEvidenceRecord** (`forensics_solid_evidence`, migration 034) -- promoted, high-confidence evidence.
+- **ForensicsFindingSuppressionRecord** (`forensics_finding_suppressions`, migration 035) -- operator-suppressed findings.
 
 ---
 
@@ -545,26 +545,26 @@ Owned by `aila.modules.forensics.db_models`. Every table is prefixed with
 
 Owned by `aila.modules.vr.db_models`. Created and evolved by migrations 040 + 042 + 044 + 045 + 046 + 047 + 048 + 050 + 052 + 053 + 055 + 060 + 061 + 062. See those migration files for the canonical DDL.
 
-- **VRWorkspaceRecord** (`vr_workspaces`, migration 042) — team-scoped workspace. UNIQUE on `(team_id, slug)`.
-- **VRTargetRecord** (`vr_targets`, migration 042) — persistent target identity inside a workspace. **Migration 060** added `analysis_stages_json` for per-stage durable analysis state across the `ingestion` / `capability_profile` / `function_ranking` pipeline.
-- **VRTargetTagIndexRecord** (`vr_target_tag_index`, migration 042) — denormalized tag-to-target index for fast multi-tag filter queries. UNIQUE on `(target_id, tag, tag_source)`.
-- **VRProjectRecord** (`vr_projects`, migration 040; FK to target hardened in migration 043) — per-target research project with budget/obligation snapshot.
-- **VRFindingRecord** (`vr_findings`, migration 040; nullable `project_id` since migration 057; `poc_skip_reason` since migration 059) — confirmed vulnerabilities with triage, PoC, disclosure state.
-- **VRInvestigationRecord** (`vr_investigations`, migration 044; `is_favorite` since migration 058; CVE intel columns since migration 056) — one operator-initiated reasoning session.
-- **VRInvestigationBranchRecord** (`vr_investigation_branches`, migration 044; `strategy_family` added in migration 049) — one persona-branched conversation within an investigation. Migration 064 backfills NULL `persona_voice` rows with `'unspecified'` and adds NOT NULL with `server_default='unspecified'`.
-- **VRInvestigationMessageRecord** (`vr_investigation_messages`, migration 044) — per-turn message stream for a branch. Migration 063 adds `auto_steering_key` (nullable `VARCHAR(128)`) with partial UNIQUE constraint `uq_vr_investigation_messages_auto_steering_key` on `(investigation_id, auto_steering_key)` WHERE `auto_steering_key IS NOT NULL`. Used by `auto_steering.maybe_post_auto_steering` for dedup.
-- **VRInvestigationOutcomeRecord** (`vr_investigation_outcomes`, migration 044; `state` column added in **migration 062**) — typed outcomes emitted by a branch. `state` is `draft | approved | rejected | dispatched`; the dispatcher refuses any outcome whose state is not `approved`.
-- **VRInvestigationOutcomeReviewRecord** (`vr_outcome_reviews`, **migration 062**) — sibling-review row per `(outcome_id, reviewer_branch_id)`. Vote enum is `approve | reject | request_edit | abstain`; the quorum evaluator flips the outcome to `approved` once enough approve votes land with zero rejects.
-- **VRInvestigationTargetRecord** (`vr_investigation_targets`, migration 048) — many-to-many between investigations and additional targets.
-- **VRMcpCallLogRecord** (`vr_mcp_call_log`, migration 052) — every MCP tool call surfaced through the VR bridges (audit-mcp / ida-headless-mcp).
-- **VRPatternRecord** (`vr_patterns`, migration 045) — durable pattern memory shared across investigations.
-- **VRCVERecord** (`vr_cve_records`, migration 050) — CVE record cache. UNIQUE on `cve_id`.
-- **VRCVEFeedStateRecord** (`vr_cve_feed_state`, migration 050) — per-source feed poll state.
-- **VRDisclosureSubmissionRecord** (`vr_disclosure_submissions`, migration 046) — vendor disclosure submission tracking.
-- **VRFuzzCampaignRecord** (`vr_fuzz_campaigns`, migration 047; `system_id` FK added in migration 054) — fuzzing campaign metadata.
-- **VRFuzzCrashRecord** (`vr_fuzz_crashes`, migration 047) — deduplicated crashes; UNIQUE on `(campaign_id, stack_hash)`.
-- **VRFuzzCampaignProposalRecord** (`vr_fuzz_campaign_proposals`, migration 055) — proposed campaigns awaiting operator approval.
-- **VRFuzzTelemetryRecord** (`vr_fuzz_telemetry`, migration 053) — fuzz campaign telemetry samples.
+- **VRWorkspaceRecord** (`vr_workspaces`, migration 042) -- team-scoped workspace. UNIQUE on `(team_id, slug)`.
+- **VRTargetRecord** (`vr_targets`, migration 042) -- persistent target identity inside a workspace. **Migration 060** added `analysis_stages_json` for per-stage durable analysis state across the `ingestion` / `capability_profile` / `function_ranking` pipeline.
+- **VRTargetTagIndexRecord** (`vr_target_tag_index`, migration 042) -- denormalized tag-to-target index for fast multi-tag filter queries. UNIQUE on `(target_id, tag, tag_source)`.
+- **VRProjectRecord** (`vr_projects`, migration 040; FK to target hardened in migration 043) -- per-target research project with budget/obligation snapshot.
+- **VRFindingRecord** (`vr_findings`, migration 040; nullable `project_id` since migration 057; `poc_skip_reason` since migration 059) -- confirmed vulnerabilities with triage, PoC, disclosure state.
+- **VRInvestigationRecord** (`vr_investigations`, migration 044; `is_favorite` since migration 058; CVE intel columns since migration 056) -- one operator-initiated reasoning session.
+- **VRInvestigationBranchRecord** (`vr_investigation_branches`, migration 044; `strategy_family` added in migration 049) -- one persona-branched conversation within an investigation. Migration 064 backfills NULL `persona_voice` rows with `'unspecified'` and adds NOT NULL with `server_default='unspecified'`.
+- **VRInvestigationMessageRecord** (`vr_investigation_messages`, migration 044) -- per-turn message stream for a branch. Migration 063 adds `auto_steering_key` (nullable `VARCHAR(128)`) with partial UNIQUE constraint `uq_vr_investigation_messages_auto_steering_key` on `(investigation_id, auto_steering_key)` WHERE `auto_steering_key IS NOT NULL`. Used by `auto_steering.maybe_post_auto_steering` for dedup.
+- **VRInvestigationOutcomeRecord** (`vr_investigation_outcomes`, migration 044; `state` column added in **migration 062**) -- typed outcomes emitted by a branch. `state` is `draft | approved | rejected | dispatched`; the dispatcher refuses any outcome whose state is not `approved`.
+- **VRInvestigationOutcomeReviewRecord** (`vr_outcome_reviews`, **migration 062**) -- sibling-review row per `(outcome_id, reviewer_branch_id)`. Vote enum is `approve | reject | request_edit | abstain`; the quorum evaluator flips the outcome to `approved` once enough approve votes land with zero rejects.
+- **VRInvestigationTargetRecord** (`vr_investigation_targets`, migration 048) -- many-to-many between investigations and additional targets.
+- **VRMcpCallLogRecord** (`vr_mcp_call_log`, migration 052) -- every MCP tool call surfaced through the VR bridges (audit-mcp / ida-headless-mcp).
+- **VRPatternRecord** (`vr_patterns`, migration 045) -- durable pattern memory shared across investigations.
+- **VRCVERecord** (`vr_cve_records`, migration 050) -- CVE record cache. UNIQUE on `cve_id`.
+- **VRCVEFeedStateRecord** (`vr_cve_feed_state`, migration 050) -- per-source feed poll state.
+- **VRDisclosureSubmissionRecord** (`vr_disclosure_submissions`, migration 046) -- vendor disclosure submission tracking.
+- **VRFuzzCampaignRecord** (`vr_fuzz_campaigns`, migration 047; `system_id` FK added in migration 054) -- fuzzing campaign metadata.
+- **VRFuzzCrashRecord** (`vr_fuzz_crashes`, migration 047) -- deduplicated crashes; UNIQUE on `(campaign_id, stack_hash)`.
+- **VRFuzzCampaignProposalRecord** (`vr_fuzz_campaign_proposals`, migration 055) -- proposed campaigns awaiting operator approval.
+- **VRFuzzTelemetryRecord** (`vr_fuzz_telemetry`, migration 053) -- fuzz campaign telemetry samples.
 
 ---
 

@@ -6,11 +6,11 @@ Loads a ScheduledReportRecord, generates the appropriate report PDF,
 and delivers it via email if SMTP is configured in ConfigRegistry.
 
 SMTP config keys (namespace="platform"):
-  smtp_host     — SMTP server hostname (required for email; if absent, skips delivery)
-  smtp_port     — SMTP server port (default: 587)
-  smtp_from     — From address (default: "aila@localhost")
-  smtp_username — SMTP auth username (optional)
-  smtp_password — SMTP auth password (optional)
+  smtp_host     -- SMTP server hostname (required for email; if absent, skips delivery)
+  smtp_port     -- SMTP server port (default: 587)
+  smtp_from     -- From address (default: "aila@localhost")
+  smtp_username -- SMTP auth username (optional)
+  smtp_password -- SMTP auth password (optional)
 
 Security:
   T-147-01: SMTP config loaded from ConfigRegistry only, never from request body.
@@ -56,7 +56,7 @@ async def generate_scheduled_report_job(
         Result dict with status, recipients count, and report_id.
 
     Raises:
-        Never raises — exceptions are logged and reflected in the return dict
+        Never raises -- exceptions are logged and reflected in the return dict
         so ARQ does not retry on business logic failures.
     """
     _log.info(
@@ -80,7 +80,7 @@ async def generate_scheduled_report_job(
         recipient_emails_raw = record.recipient_emails_json or "[]"
         report_name = record.name
 
-    # Parse recipient emails (set by admin via API — trusted source)
+    # Parse recipient emails (set by admin via API -- trusted source)
     try:
         recipient_emails: list[str] = json.loads(recipient_emails_raw)
         if not isinstance(recipient_emails, list):
@@ -128,7 +128,7 @@ async def generate_scheduled_report_job(
 
     if not smtp_host or pdf_bytes is None:
         _log.info(
-            "generate_scheduled_report_job: smtp_host not configured — skipping email delivery "
+            "generate_scheduled_report_job: smtp_host not configured -- skipping email delivery "
             "for report_id=%r. Configure platform.smtp_host to enable delivery.",
             report_id,
         )
@@ -243,7 +243,7 @@ def _send_report_email(
 ) -> None:
     """Send a report email with the PDF attached.
 
-    Runs synchronously — always called via asyncio.to_thread().
+    Runs synchronously -- always called via asyncio.to_thread().
     Uses stdlib smtplib; no external dependencies required.
 
     Args:
@@ -260,12 +260,12 @@ def _send_report_email(
     msg = MIMEMultipart()
     msg["From"] = smtp_from
     msg["To"] = recipient
-    msg["Subject"] = f"AILA Security Report: {report_name} — {date_str}"
+    msg["Subject"] = f"AILA Security Report: {report_name} -- {date_str}"
 
     body = MIMEText(
         f"Please find attached the scheduled security report: {report_name}.\n\n"
         f"Generated: {date_str}\n"
-        f"Source: AILA — AI Lab Assistant\n",
+        f"Source: AILA -- AI Lab Assistant\n",
         "plain",
     )
     msg.attach(body)

@@ -155,7 +155,7 @@ async def test_get_task_by_id_wrong_group_returns_404(
     # Seed a task for reader group
     task = _seed_task(status=TaskStatus.QUEUED, group_id="reader")
 
-    # Operator tries to access it — should be 404 (not visible to different group)
+    # Operator tries to access it -- should be 404 (not visible to different group)
     response = await async_client.get(
         f"/tasks/{task.id}",
         headers={"Authorization": f"Bearer {operator_token}"},

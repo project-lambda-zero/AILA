@@ -1,8 +1,8 @@
-"""054 — replace vr_fuzz_campaigns.workstation_host (free-text) with
+"""054 -- replace vr_fuzz_campaigns.workstation_host (free-text) with
 analysis_system_id (FK to managedsystemrecord.id).
 
 Architectural correctness fix. `workstation_host` was a string label
-with no link to the platform's `ManagedSystemRecord` table — the
+with no link to the platform's `ManagedSystemRecord` table -- the
 operator had no way to pick a registered rig from the UI, AILA could
 not SSH into it, and the campaign's workstation was effectively
 opaque. The FK makes the workstation a first-class entity: the
@@ -11,7 +11,7 @@ points at, the SSH bridge can reach it, and the heartbeat /
 compatibility surfaces work uniformly.
 
 Destructive: drops `workstation_host`. No production users per
-CLAUDE.md (single-tenant dev), so we don't bother backfilling — any
+CLAUDE.md (single-tenant dev), so we don't bother backfilling -- any
 existing free-text values would not resolve to a `ManagedSystemRecord`
 id anyway.
 """

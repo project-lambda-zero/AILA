@@ -15,7 +15,7 @@ interface Props {
 }
 
 /**
- * Retrieve-File panel — pulls an arbitrary artefact out of the
+ * Retrieve-File panel -- pulls an arbitrary artefact out of the
  * project's disk image by its in-image path. Accepts either a file
  * path (streamed back verbatim) or a directory path (zipped on the
  * analyzer, shipped as ``<dirname>.zip``). The backend runs a
@@ -81,7 +81,7 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
           disabled={retrieveMut.isPending}
           className="w-full text-xs border border-border rounded px-2 py-1 bg-background"
         >
-          <option value="">— pick a disk image —</option>
+          <option value="">-- pick a disk image --</option>
           {diskImages.map((d) => (
             <option key={d.id} value={d.id}>
               {d.file_path}
@@ -92,7 +92,7 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
     
       <div className="flex items-center justify-between gap-2">
         <p className="text-2xs text-text-muted">
-          Paste the full in-image path — file or directory. Directories
+          Paste the full in-image path -- file or directory. Directories
           are zipped on the analyzer and shipped as
           <code className="font-mono mx-1">&lt;name&gt;.zip</code>.
           Windows and POSIX path styles are both accepted.
@@ -110,7 +110,7 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
     )}
     {!evidenceQ.isLoading && diskImages.length === 0 && (
       <p className="text-xs text-text-muted mt-2">
-        No disk images on this project — run intake first.
+        No disk images on this project -- run intake first.
       </p>
     )}</AilaCard>
   );

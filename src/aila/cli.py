@@ -195,7 +195,7 @@ def parse_row_filters(entries: list[str] | None) -> dict[str, str]:
 
 def _build_config_registry() -> ConfigRegistry:
     """Create a ConfigRegistry populated with all known schemas.
-    Used by CLI config commands — does not start the full platform.
+    Used by CLI config commands -- does not start the full platform.
     Runs async registration through _run_async since CLI is the sync boundary."""
     async def _init_registry() -> ConfigRegistry:
         registry = ConfigRegistry()
@@ -207,7 +207,7 @@ def _build_config_registry() -> ConfigRegistry:
 
 def _build_tool_registry() -> ToolRegistry:
     """Create a ToolRegistry with all platform and module tools.
-    Lightweight bootstrap: init_db + register tools — no AILAPlatform, no LLM key required."""
+    Lightweight bootstrap: init_db + register tools -- no AILAPlatform, no LLM key required."""
     app_settings = get_settings()
     platform_settings = build_platform_settings(app_settings)
     _run_async(init_db(platform_settings))
@@ -318,7 +318,7 @@ def worker_start(
         job_timeout = get_task_tuning("arq_job_timeout_s", ARQ_JOB_TIMEOUT_S)
         keep_result = get_task_tuning("arq_keep_result_s", ARQ_KEEP_RESULT_S)
         max_tries = get_task_tuning("arq_max_tries", ARQ_MAX_TRIES)
-        # arq.get_kwargs() reads __dict__, not the MRO — inherited class attributes
+        # arq.get_kwargs() reads __dict__, not the MRO -- inherited class attributes
         # are invisible to it. Without these lines WorkerSettings attributes never
         # reach arq.Worker. Explicitly shadowing them forces them into __dict__.
         functions = WorkerSettings.functions
@@ -335,7 +335,7 @@ def worker_start(
         _ = _settings.database_url  # forces validation of DB URL
     except (ValueError, pydantic.ValidationError) as _cfg_err:
         typer.echo(
-            f"ERROR: Worker cannot start — configuration invalid: {_cfg_err}\n"
+            f"ERROR: Worker cannot start -- configuration invalid: {_cfg_err}\n"
             "Set AILA_DATABASE_URL (and other required env vars) before starting the worker.",
             err=True,
         )
@@ -343,7 +343,7 @@ def worker_start(
 
     typer.echo(f"Starting ARQ worker for queue='{queue}', redis='{redis_host}:{redis_port}'")
     # On Windows, asyncio defaults to ProactorEventLoop (IOCP). asyncpg + SQLAlchemy
-    # have known instability with ProactorEventLoop on Python 3.12+ — connections
+    # have known instability with ProactorEventLoop on Python 3.12+ -- connections
     # created inside the loop can end up with a None _proactor after any internal
     # loop-close path, breaking all subsequent I/O with AttributeError.
     # WindowsSelectorEventLoopPolicy uses the stable select()-based loop that
@@ -523,7 +523,7 @@ def health() -> None:
             typer.echo(f"  SSH {system.name:<20} FAIL  ({exc})")
             failures.append(f"ssh:{system.name}")
 
-    # 3. API health — HEAD requests with 5s timeout (URLs from config schema, R10/R53)
+    # 3. API health -- HEAD requests with 5s timeout (URLs from config schema, R10/R53)
     from aila.modules.vulnerability.config_schema import VulnerabilityConfigSchema
     _cfg = VulnerabilityConfigSchema()
     api_endpoints = {
@@ -550,7 +550,7 @@ def health() -> None:
         if _model_id and _api_key:
             typer.echo(f"  LLM            OK  (model={_model_id})")
         else:
-            typer.echo("  LLM            WARN  (not configured — scoring will fail)")
+            typer.echo("  LLM            WARN  (not configured -- scoring will fail)")
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:
         typer.echo(f"  LLM            FAIL  ({exc})")
         failures.append("llm")
@@ -1578,7 +1578,7 @@ def create_api_key(
 
     D-01: CLI path for interactive admin key creation.
     D-02: Only admin role is supported via CLI; use POST /auth/keys for other roles.
-    The raw key is shown ONCE. Store it securely — it cannot be recovered.
+    The raw key is shown ONCE. Store it securely -- it cannot be recovered.
 
     Examples:
         aila create-api-key

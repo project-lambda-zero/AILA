@@ -1,8 +1,8 @@
-"""059 — add poc_skip_reason to vr_findings.
+"""059 -- add poc_skip_reason to vr_findings.
 
 Set by run_vr_draft_poc when the task bails without producing PoC code
 (e.g. because the investigation's verifier_report verdict is 'refuted'
-— writing a PoC for a refuted finding wastes LLM tokens on code that
+-- writing a PoC for a refuted finding wastes LLM tokens on code that
 cannot reproduce a non-bug).
 
 Nullable; existing rows backfill cleanly. Indexed sparsely for the

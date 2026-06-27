@@ -2,11 +2,11 @@
 
 Two sub-packages:
 
-* :mod:`aila.platform.mcp.bridges` — HTTP/SSE clients (one Tool subclass
+* :mod:`aila.platform.mcp.bridges` -- HTTP/SSE clients (one Tool subclass
   per MCP server: audit_mcp, ida_headless, android_mcp). The bridges
   are stateless dispatchers; every binary / index / session state lives
   on the MCP server itself.
-* :mod:`aila.platform.mcp.adapters` — pure response→payload adapters.
+* :mod:`aila.platform.mcp.adapters` -- pure response→payload adapters.
   One per (server, tool) pair where structured rendering helps; the
   rest fall through to ``generic.adapt_generic``. Adapters convert a
   raw MCP response into a typed ``PayloadKind`` payload plus an

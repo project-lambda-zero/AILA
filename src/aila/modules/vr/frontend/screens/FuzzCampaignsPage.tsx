@@ -52,7 +52,7 @@ export function FuzzCampaignsPage() {
           aria-label="Filter by workspace"
           className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
         >
-          <option value="">— all —</option>
+          <option value="">-- all --</option>
           {workspaces.map((ws) => (
             <option key={ws.id} value={ws.id}>
               {ws.name}
@@ -67,7 +67,7 @@ export function FuzzCampaignsPage() {
           aria-label="Filter by status"
           className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
         >
-          <option value="">— all —</option>
+          <option value="">-- all --</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>
               {s}
@@ -137,7 +137,7 @@ export function FuzzCampaignsPage() {
                 <td className="px-4 py-2 font-mono text-xs text-right">
                   {c.coverage_pct != null
                     ? `${c.coverage_pct.toFixed(2)}%`
-                    : "—"}
+                    : "--"}
                 </td>
                 <td className="px-4 py-2 font-mono text-xs text-right">
                   {c.crashes_found}
@@ -145,7 +145,7 @@ export function FuzzCampaignsPage() {
                 <td className="px-4 py-2 font-mono text-xs text-text-muted">
                   {c.last_progress_at
                     ? new Date(c.last_progress_at).toLocaleString()
-                    : "—"}
+                    : "--"}
                 </td>
                 <td className="px-2 py-2 text-right">
                   <DeleteButton

@@ -156,7 +156,7 @@ select = [
   "PLC",    # pylint convention (PLC0415: import not at top-level)
 ]
 ignore = [
-  "E501",  # line too long — handled by formatter, not lint
+  "E501",  # line too long -- handled by formatter, not lint
 ]
 
 # ---------------------------------------------------------------------------
@@ -167,7 +167,7 @@ ignore = [
 # ---------------------------------------------------------------------------
 [tool.ruff.lint.per-file-ignores]
 
-# Alembic migration files — append-only DDL with unconventional import patterns.
+# Alembic migration files -- append-only DDL with unconventional import patterns.
 "src/aila/alembic/env.py" = ["E402", "F401"]
 "src/aila/alembic/versions/*.py" = ["ALL"]
 
@@ -420,7 +420,7 @@ warn_return_any = true
 warn_unused_ignores = true
 show_error_codes = true
 
-# Third-party libraries without complete stubs — suppress at module boundary
+# Third-party libraries without complete stubs -- suppress at module boundary
 [[tool.mypy.overrides]]
 module = [
 
@@ -438,7 +438,7 @@ ignore_errors = true
 module = ["aila.storage.*"]
 ignore_errors = true
 
-# Modules with complex dynamic dispatch — fix in follow-up
+# Modules with complex dynamic dispatch -- fix in follow-up
 [[tool.mypy.overrides]]
 module = [
   "aila.modules.vulnerability.workflow.states.*",

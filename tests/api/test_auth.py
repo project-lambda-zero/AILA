@@ -43,7 +43,7 @@ async def test_protected_routes_return_401_without_token(async_client):
             continue
         response = await async_client.get(path)
         if response.status_code == 405:
-            # Method not allowed — route exists but wrong method; try without trailing
+            # Method not allowed -- route exists but wrong method; try without trailing
             continue
         assert response.status_code == 401, (
             f"Expected 401 on {path} without token, got {response.status_code}"
@@ -151,7 +151,7 @@ async def test_create_api_key_succeeds_as_admin(async_client, admin_token):
 
 
 async def test_created_key_raw_key_not_stored_in_list(async_client, admin_token):
-    """GET /auth/keys never returns raw keys — only prefix (AUTH-02)."""
+    """GET /auth/keys never returns raw keys -- only prefix (AUTH-02)."""
     response = await async_client.get(
         "/auth/keys",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -182,7 +182,7 @@ async def test_revoke_api_key(async_client, admin_token, admin_key_record):
 
 
 async def test_revoked_key_jwt_returns_401(async_client, admin_token, admin_key_record):
-    """JWT for a revoked key returns 401 on next request — token blacklist (D-11, AUTH-07)."""
+    """JWT for a revoked key returns 401 on next request -- token blacklist (D-11, AUTH-07)."""
     # Create a new key, get its JWT, then revoke it
     create_resp = await async_client.post(
         "/auth/keys",
@@ -222,7 +222,7 @@ async def test_missing_bearer_token_returns_401(async_client):
 
 
 async def test_async_client_does_not_hang(async_client):
-    """Async client runs without hanging — pytest-asyncio + httpx works (INFRA-04)."""
+    """Async client runs without hanging -- pytest-asyncio + httpx works (INFRA-04)."""
     # This test itself proves the async infrastructure works: if it runs, it passed.
     response = await async_client.get("/health")
     assert response.status_code == 200
@@ -252,14 +252,14 @@ async def test_revoke_already_revoked_key_returns_409(async_client, admin_token)
     assert create_resp.status_code == 201
     key_id = create_resp.json()["key_id"]
 
-    # First revoke — should succeed
+    # First revoke -- should succeed
     first_revoke = await async_client.delete(
         f"/auth/keys/{key_id}",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert first_revoke.status_code == 200
 
-    # Second revoke — should 409
+    # Second revoke -- should 409
     second_revoke = await async_client.delete(
         f"/auth/keys/{key_id}",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -295,7 +295,7 @@ async def test_refresh_token_blacklist_check(async_client, admin_token):
     )
     assert revoke_resp.status_code == 200
 
-    # Attempt refresh — should fail with 401
+    # Attempt refresh -- should fail with 401
     refresh_resp = await async_client.post(
         "/auth/refresh",
         json={"refresh_token": refresh_token},

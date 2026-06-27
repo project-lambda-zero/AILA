@@ -1,4 +1,4 @@
-"""021 — team_records + team_member_records (Phase 177).
+"""021 -- team_records + team_member_records (Phase 177).
 
 Materialises teams as first-class records. Prior phases (167) tracked
 ``team_id`` on every team-scoped record as a free-form string without a
@@ -9,7 +9,7 @@ parent teams table. Phase 177 introduces:
     team_member_records    -- {id, team_id (fk), user_id (fk), role,
                               created_at}
 
-``team_id`` strings already stamped on existing records are preserved —
+``team_id`` strings already stamped on existing records are preserved --
 the migration does not backfill relationships. Admin UI creates teams
 going forward and reassigns users as needed.
 

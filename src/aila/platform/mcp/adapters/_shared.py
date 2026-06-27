@@ -1,4 +1,4 @@
-"""Shared adapter helpers — bounded preview + provenance stamping.
+"""Shared adapter helpers -- bounded preview + provenance stamping.
 
 These helpers are used by:
   - the generic fallback adapter (generic.py)
@@ -192,12 +192,12 @@ def enrich_strings_with_decodes(
     return out
 
 
-# fix §271 — single source of truth for the bounded preview cap. The
+# fix §271 -- single source of truth for the bounded preview cap. The
 # prior value (100MB) made "bounded" a misnomer: a 50MB JSON dump
 # landed verbatim in observables, which then rode in case_state_json
 # through every prompt build, parent_reconciler scan, and frontend
-# fetch. 32 KiB is the working budget — roughly one Platypus PDF
-# paragraph rendered at body_sm, or ~8000 tokens of plain text —
+# fetch. 32 KiB is the working budget -- roughly one Platypus PDF
+# paragraph rendered at body_sm, or ~8000 tokens of plain text --
 # which is enough for the agent to recognise the next move without
 # stuffing whole files into the reasoning state. Specialised renderers
 # (audit_mcp._render_matches_dense, _render_chunks_dense, ida_headless
@@ -208,13 +208,13 @@ MAX_OBS_DUMP_CHARS = 32 * 1024
 # Cap on per-list previews surfaced into observables.
 MAX_LIST_PREVIEW = 20
 
-# fix §274 — curated set of args dropped from the obs-key fingerprint.
+# fix §274 -- curated set of args dropped from the obs-key fingerprint.
 # Two buckets, both opaque to "what the agent actually asked":
 #   - target-handle identifiers (``index_id``, ``binary_id``) that
 #     stay constant across every call on one branch;
 #   - pagination cursors that page the same conceptual question.
 # Adding ``page``, ``cursor``, ``next_token``, ``page_size``, ``from``,
-# ``to`` was operator-observed: without them, three pages of the
+# ``to`` was observed: without them, three pages of the
 # same search produced three different obs-keys and three side-by-side
 # observation entries instead of overwriting cleanly. Contributors
 # adding new pagination knobs to a tool MUST extend this set.
@@ -248,11 +248,11 @@ def obs_key_for(ctx: AdapterContext, suffix: str = "") -> str:
     When the caller supplies an explicit ``suffix`` (e.g. a function
     name) we use it verbatim. Otherwise we derive a short fingerprint
     from ``ctx.args`` so two calls with different arguments do NOT
-    collide on the same key — the prior behaviour silently overwrote
+    collide on the same key -- the prior behaviour silently overwrote
     each other, which caused the agent to forget what it had already
     looked up and keep re-issuing the same call.
 
-    fix §275 — for no-arg tools (e.g. ``audit_mcp.list_indexes``,
+    fix §275 -- for no-arg tools (e.g. ``audit_mcp.list_indexes``,
     ``cache_stats``) neither the suffix nor the fingerprint produces
     a discriminator. Two consecutive calls would land at the same
     ``<server>.<tool>`` key and overwrite each other's observation,
@@ -276,12 +276,12 @@ def _args_fingerprint(args: dict[str, Any]) -> str:
     """Stable short fingerprint of significant tool args.
 
     Drops pagination noise (``_PAGINATION_NOISE_KEYS``) and keeps what
-    identifies WHAT the agent asked about — e.g. ``pattern`` for a
+    identifies WHAT the agent asked about -- e.g. ``pattern`` for a
     search, ``name`` for read_function. The fingerprint is the sorted
     ``key=value`` list joined with ``__``, truncated to keep the
     observable key readable.
 
-    fix §273 — caps each per-value at 30 chars BEFORE joining so a
+    fix §273 -- caps each per-value at 30 chars BEFORE joining so a
     single 1000-char arg can't dominate the budget and elide every
     other arg. The prior single global truncate let one big value
     swallow siblings; two calls with the same big first arg but
@@ -308,7 +308,7 @@ def _args_fingerprint(args: dict[str, Any]) -> str:
 def bounded_dump(value: Any, max_chars: int = MAX_OBS_DUMP_CHARS) -> str:
     """Render a JSON-ish preview of ``value`` capped at ``max_chars``.
 
-    fix §272 — drops ``indent=2`` so the cap budget reflects real data
+    fix §272 -- drops ``indent=2`` so the cap budget reflects real data
     rather than whitespace. Pretty-printed JSON triples byte count
     over compact form; under the 32 KiB cap that meant the agent saw
     ~10 KiB of actual content and 22 KiB of indentation. Compact

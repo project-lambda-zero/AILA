@@ -796,7 +796,7 @@ async def test_all_endpoints_use_envelope(admin_key_record, test_db):
                 headers={"Authorization": f"Bearer {token}"},
             )
             body = resp.json()
-            assert "data" in body, f"{method} {path} missing 'data' key — got: {body}"
+            assert "data" in body, f"{method} {path} missing 'data' key -- got: {body}"
             assert "error" in body, f"{method} {path} missing 'error' key"
             assert "meta" in body, f"{method} {path} missing 'meta' key"
 
@@ -817,7 +817,7 @@ def test_rate_limiting_wired():
     We do not attempt to actually trigger a 429 in the test suite because the
     module-level Limiter uses shared in-memory bucket state across tests, making
     429-trigger tests inherently order-dependent and flaky. The structural assertion
-    that the limiter is wired is sufficient — slowapi's own test suite covers the
+    that the limiter is wired is sufficient -- slowapi's own test suite covers the
     429 response behavior.
     """
     from slowapi import Limiter
@@ -826,12 +826,12 @@ def test_rate_limiting_wired():
     from aila.api.limiter import limiter as module_limiter
 
     # 1. App state must hold the Limiter (slowapi reads from request.app.state.limiter)
-    assert hasattr(app.state, "limiter"), "app.state.limiter not set — RateLimitExceeded handler won't fire"
+    assert hasattr(app.state, "limiter"), "app.state.limiter not set -- RateLimitExceeded handler won't fire"
     assert isinstance(app.state.limiter, Limiter), f"app.state.limiter is {type(app.state.limiter)}, expected Limiter"
 
     # 2. The app's limiter must be the same object as the module-level limiter
     assert app.state.limiter is module_limiter, (
-        "app.state.limiter is not the same object as aila.api.limiter.limiter — "
+        "app.state.limiter is not the same object as aila.api.limiter.limiter -- "
         "this means the rate limiting won't be applied to decorated routes"
     )
 
@@ -839,5 +839,5 @@ def test_rate_limiting_wired():
     from slowapi.errors import RateLimitExceeded
 
     assert RateLimitExceeded in app.exception_handlers, (
-        "RateLimitExceeded not in app.exception_handlers — 429 responses won't be returned"
+        "RateLimitExceeded not in app.exception_handlers -- 429 responses won't be returned"
     )

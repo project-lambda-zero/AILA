@@ -1,5 +1,5 @@
 /**
- * NotificationBell — header bell icon with unread count badge and dropdown.
+ * NotificationBell -- header bell icon with unread count badge and dropdown.
  *
  * SSE-driven: the SSEProvider invalidates ["notifications"] on inbound events,
  * so this component reflects live unread state without polling (RT-02).
@@ -84,7 +84,7 @@ function useRecentNotifications() {
     queryKey: ["notifications", "recent"],
     queryFn: () =>
       authorizedRequestJson<NotificationsEnvelope>("/notifications?limit=5"),
-    // No refetchInterval — SSEProvider invalidates this key on notification events
+    // No refetchInterval -- SSEProvider invalidates this key on notification events
     staleTime: 60_000,
     retry: false,
     throwOnError: false,

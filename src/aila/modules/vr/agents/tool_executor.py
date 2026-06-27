@@ -1,4 +1,4 @@
-"""Tool executor — dispatches tool_run decisions through MCP bridges (M3.R-3).
+"""Tool executor -- dispatches tool_run decisions through MCP bridges (M3.R-3).
 
 The reasoning agent (``HonestVulnResearcher``) emits a tool_run decision
 with ``command`` set to a JSON string describing which MCP tool to call.
@@ -13,7 +13,7 @@ The executor:
 
 Unknown tools / malformed commands / MCP errors all write an
 informative ENGINE message (PayloadKind.TEXT) and do NOT mutate
-observables — the engine sees the error in the next turn and can
+observables -- the engine sees the error in the next turn and can
 recover.
 """
 from __future__ import annotations
@@ -55,11 +55,11 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-# fix §202 — bridge writer-side whitelist contract (cross-ref W1 §214
+# fix §202 -- bridge writer-side whitelist contract (cross-ref W1 §214
 # ida_bridge, §215 android_mcp_bridge): success statuses are normalised
 # to exactly one of {"ready", "completed", "ok"}. The async progression
 # values {"pending", "queued", "running"} mean the bridge returned
-# without a final result — the executor treats those identically
+# without a final result -- the executor treats those identically
 # to an error because there is no payload to render. Any other value
 # (unknown / malformed) is coerced to error here so the engine sees a
 # loud message on the next turn instead of an empty rendering.
@@ -76,13 +76,13 @@ _HARD_BLOCK_REPEAT_LIMIT: int = int(
     __import__("os").environ.get("VR_TOOL_EXECUTOR_HARD_BLOCK_REPEAT", "3"),
 )
 
-# fix §254 — single source of truth for the malformed-command marker.
+# fix §254 -- single source of truth for the malformed-command marker.
 # Emitted by the executor (see line 159) and matched by the consecutive-
 # malformed counter (see _count_consecutive_malformed). Drift between
 # the two halves used to silently break the STOP-circuit-breaker.
 _MALFORMED_TOOL_RUN_MARKER: str = "Malformed tool_run"
 
-# fix §261 — DoS guard. _parse_command runs json.loads on agent-supplied
+# fix §261 -- DoS guard. _parse_command runs json.loads on agent-supplied
 # strings; a runaway agent that emits a multi-megabyte command_raw would
 # pin a worker thread on the parse for seconds and bloat the resulting
 # error message that gets persisted. 64KB is well above any legitimate
@@ -110,7 +110,7 @@ class ToolExecutor:
     method returning a canned dict.
     """
 
-    # fix §252 — bounded LRU cap. Was an unbounded `dict[str, str]`
+    # fix §252 -- bounded LRU cap. Was an unbounded `dict[str, str]`
     # leaking ~16 bytes per investigation forever; 100K investigations
     # = several MB of permanent worker-process residency. 2048 covers
     # every active investigation in flight comfortably (production
@@ -137,7 +137,7 @@ class ToolExecutor:
         # Per-process LRU: investigation_id -> resolved audit_mcp
         # index_id (or empty string when the investigation's target has
         # no source repo). Filled lazily on first use per investigation.
-        # fix §252 — bounded LRU. OrderedDict.move_to_end on hit +
+        # fix §252 -- bounded LRU. OrderedDict.move_to_end on hit +
         # popitem(last=False) on overflow gives true LRU semantics
         # without functools.lru_cache (which can't wrap async methods
         # AND can't share state across instances). Cache lives on the
@@ -156,7 +156,7 @@ class ToolExecutor:
 
         parsed = _parse_command(command_raw)
         if parsed is None:
-            # fix §201 — count TOTAL malformed-command errors on the
+            # fix §201 -- count TOTAL malformed-command errors on the
             # last 50 engine messages from this branch (was: consecutive
             # starting at the tail). Alternating empty→good→empty→good→empty
             # legitimately means the agent cannot stabilise on a valid
@@ -171,7 +171,7 @@ class ToolExecutor:
             )
             if malformed_count >= 5:
                 err = (
-                    "STOP — you have produced 6 or more empty or "
+                    "STOP -- you have produced 6 or more empty or "
                     "malformed tool_run commands on this branch (last "
                     "50 messages). The engine cannot dispatch an empty "
                     "command. Your next turn MUST be one of:\n"
@@ -180,15 +180,15 @@ class ToolExecutor:
                     "  (b) action=submit if you have enough evidence to "
                     "submit your findings.\n"
                     "  (c) action=reasoning to think without a tool call.\n\n"
-                    "Pick (c) if you are unsure — reasoning is always safe "
+                    "Pick (c) if you are unsure -- reasoning is always safe "
                     "and lets you think before dispatching another tool. "
-                    "(There is NO 'observe' action — only tool_run / "
+                    "(There is NO 'observe' action -- only tool_run / "
                     "reasoning / submit / submit_outcome_review / "
                     "script_execute.)"
                 )
             else:
                 err = (
-                    f"{_MALFORMED_TOOL_RUN_MARKER} command — expected JSON with "
+                    f"{_MALFORMED_TOOL_RUN_MARKER} command -- expected JSON with "
                     "'tool' (e.g. 'server.tool_name') and 'args' dict. "
                     f"Got: {command_raw[:200]!r}. "
                     "If you don't have a specific tool query to make this "
@@ -222,7 +222,7 @@ class ToolExecutor:
             err = (
                 f"No tool '{server_id}.{tool_name}' is available for this "
                 f"target. Re-read the # Available tools section in the "
-                f"prompt — only tools listed there will execute."
+                f"prompt -- only tools listed there will execute."
             )
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
@@ -275,7 +275,7 @@ class ToolExecutor:
                 f"{server_id}.{tool_name} HARD-BLOCKED: this exact call "
                 f"(args={sorted(args)}) has failed {hard_block_count} "
                 f"times in this branch. The bridge will NOT execute "
-                f"this call again — every retry produces the same "
+                f"this call again -- every retry produces the same "
                 f"failure pattern. Choose a different tool OR a "
                 f"different args shape OR submit terminal_submit "
                 f"declaring you cannot proceed on this lead."
@@ -297,9 +297,9 @@ class ToolExecutor:
         try:
             raw = await bridge.forward(action=tool_name, **args)
         except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:
-            # fix §197 — broadened from (OSError, TimeoutError,
+            # fix §197 -- broadened from (OSError, TimeoutError,
             # RuntimeError). `bridge.forward` reaches into httpx
-            # (httpx.HTTPError, httpx.PoolTimeout — neither one is
+            # (httpx.HTTPError, httpx.PoolTimeout -- neither one is
             # an OSError subclass on every platform), pydantic.ValidationError
             # covering malformed bridge response envelopes, and arbitrary
             # provider errors from sync→async wrappers. A miss here
@@ -318,7 +318,7 @@ class ToolExecutor:
                 message_id=msg_id, success=False, error=err,
             )
 
-        # fix §202 — positive whitelist (writer contract closure for W1
+        # fix §202 -- positive whitelist (writer contract closure for W1
         # §214/§215). Treat anything outside _SUCCESS_STATUSES as an
         # executor-visible error: includes legitimate `error` envelopes,
         # the async in-progress values (pending/queued/running) that mean
@@ -334,7 +334,7 @@ class ToolExecutor:
                 )
             err = f"{server_id}.{tool_name} returned error: {raw_err!r}"
             # Common false-negative: audit_mcp.read_function says
-            # 'Function X not indexed' — but the identifier is a
+            # 'Function X not indexed' -- but the identifier is a
             # #define macro, not a function. Append a hint so the
             # agent's next turn calls audit_mcp.search_macros instead
             # of grinding on more search_source attempts.
@@ -347,7 +347,7 @@ class ToolExecutor:
                 requested = args.get("name") or args.get("function") or "<symbol>"
                 err += (
                     f"\n\nHINT: '{requested}' may be a macro (#define), not a function. "
-                    f"Try audit_mcp.search_macros(name={requested!r}) BEFORE giving up — "
+                    f"Try audit_mcp.search_macros(name={requested!r}) BEFORE giving up -- "
                     f"identifiers that look like function calls (e.g. ngx_http_v2_write_*) "
                     f"are often macros that read_function can't see."
                 )
@@ -402,7 +402,7 @@ class ToolExecutor:
                 # Pick the breaker text based on which CLASS the error
                 # falls into. Wrong-kwarg / missing-kwarg / type-mismatch
                 # all share "the arg shape is wrong, re-read signature"
-                # advice. resource_not_found is the opposite — arg shape
+                # advice. resource_not_found is the opposite -- arg shape
                 # is fine, the VALUE is wrong (typo, stale identifier,
                 # path the agent copied from somewhere stale). Telling
                 # the agent to "re-read the tool signature" in that case
@@ -414,14 +414,14 @@ class ToolExecutor:
                         f"You have called {server_id}.{tool_name} {error_class_count + 1} times "
                         f"in this branch and EACH attempt failed because the resource "
                         f"identifier (path / id / file) you passed does not exist on disk "
-                        f"or in the index. The arg NAMES are fine — the VALUE is wrong. "
+                        f"or in the index. The arg NAMES are fine -- the VALUE is wrong. "
                         f"Typing a new typo of the same identifier will not help: every "
                         f"version you've tried so far has missed.\n\n"
                         f"Likely root cause: you are reconstructing a long identifier "
                         f"(SHA-derived APK path, hex index id, GUID) from memory and "
                         f"corrupting it each time. SHA-256 paths are 64 hex chars + extension; "
                         f"a single dropped char or stray space breaks the lookup.\n\n"
-                        f"PIVOT — do NOT call {server_id}.{tool_name} with another typed "
+                        f"PIVOT -- do NOT call {server_id}.{tool_name} with another typed "
                         f"identifier. Pull the canonical value from an existing observable "
                         f"in this branch's case_state (a prior tool result, target metadata, "
                         f"or the initial-question text), copy it byte-for-byte, OR pivot to "
@@ -434,16 +434,16 @@ class ToolExecutor:
                     # the wrong kwarg / missing arg. The bridge
                     # validator (audit_mcp_bridge._validate_kwargs)
                     # already injected a 'did you mean' hint into the
-                    # raw error — reinforce the STOP signal at the
+                    # raw error -- reinforce the STOP signal at the
                     # breaker level so the agent realizes it's looping.
                     err += (
                         f"\n\n*** REPEAT-FAILURE CIRCUIT BREAKER (error-class match) ***\n"
                         f"You have called {server_id}.{tool_name} {error_class_count + 1} times "
                         f"in this branch and EACH attempt failed with the same error class. "
-                        f"Varying the arg VALUE will not help — the arg NAME or shape is "
+                        f"Varying the arg VALUE will not help -- the arg NAME or shape is "
                         f"wrong. Re-read the tool signature in the # Available tools section "
                         f"of the prompt above. The valid parameter list is named in the error.\n\n"
-                        f"PIVOT — do NOT call {server_id}.{tool_name} again until you have "
+                        f"PIVOT -- do NOT call {server_id}.{tool_name} again until you have "
                         f"a different param NAME, or call a different tool entirely."
                         + ("\nTry one of:\n" + "\n".join(alternatives) if alternatives else "")
                         + "\nOR submit a finding noting the obstacle."
@@ -452,7 +452,7 @@ class ToolExecutor:
                     err += (
                         f"\n\n*** REPEAT-FAILURE CIRCUIT BREAKER ***\n"
                         f"You have already issued THIS EXACT CALL "
-                        f"{repeat_count + 1} times in this branch — all failed with the "
+                        f"{repeat_count + 1} times in this branch -- all failed with the "
                         f"same error. STOP. The identifier {ident!r} does not exist "
                         f"in the form you expect. Possible reasons:\n"
                         f"  (a) it's a directive name, not a function (directives are\n"
@@ -460,7 +460,7 @@ class ToolExecutor:
                         f"      with that exact name);\n"
                         f"  (b) it's a macro / typedef / constant, not a function;\n"
                         f"  (c) it never existed and a sibling persona hallucinated it.\n\n"
-                        f"PIVOT — your next tool call MUST NOT be the same call again."
+                        f"PIVOT -- your next tool call MUST NOT be the same call again."
                         + ("\nTry one of:\n" + "\n".join(alternatives) if alternatives else "")
                         + "\nOR submit a finding noting 'identifier not present in tree'."
                     )
@@ -490,10 +490,10 @@ class ToolExecutor:
         # actual source bodies once near the end.
         #
         # The hint is appended to BOTH:
-        #   (a) the rendered text payload — so it shows up in the UI
+        #   (a) the rendered text payload -- so it shows up in the UI
         #       timeline next to the tool result, and
         #   (b) the observables_delta under the reserved key
-        #       `_directive.pivot` — so the next turn's
+        #       `_directive.pivot` -- so the next turn's
         #       render_case_model() surfaces it in the agent's prompt.
         # Without (b) the directive was written to a DB message but
         # never made it into the agent's next-turn context: case_state
@@ -507,7 +507,7 @@ class ToolExecutor:
                 adapter_result.payload["text"] = (
                     existing.rstrip() + "\n\n" + pivot_hint
                 )
-            # fix §199 — keep the single-string `_directive.pivot` for
+            # fix §199 -- keep the single-string `_directive.pivot` for
             # the prompt renderer (which filters non-string directive
             # values), AND append a structured entry to the
             # `_directive.pivot_history` array so the operator (and
@@ -530,7 +530,7 @@ class ToolExecutor:
             # Clear the pivot directive ONLY when the agent satisfied
             # it by calling an actual read/trace tool. Surveys obviously
             # don't satisfy a pivot, but neither does search_functions
-            # / search_macros / semantic_search — those find candidates
+            # / search_macros / semantic_search -- those find candidates
             # without reading any source body. The directive stays put
             # until the agent commits to a real read.
             if (server_id, tool_name) in self._read_tools():
@@ -539,7 +539,7 @@ class ToolExecutor:
                     "_directive.pivot": "",
                 }
 
-        # fix §203 — single UoW write: tool result message AND the
+        # fix §203 -- single UoW write: tool result message AND the
         # observables delta land atomically so a concurrent reader
         # cannot observe one half without the other.
         msg_id = await self._persist_result_and_observables(
@@ -550,7 +550,7 @@ class ToolExecutor:
             at_turn=at_turn,
         )
 
-        # fix §81 — auto-steering rule evaluators key off raw_result
+        # fix §81 -- auto-steering rule evaluators key off raw_result
         # shape; a tool that legitimately returns no payload (e.g.
         # list_indexes on an empty repo, callees_of for a leaf
         # function) was triggering rule misfires. Skip when the result
@@ -576,11 +576,11 @@ class ToolExecutor:
             # patterns (read_lines past EOF, read_function indexer
             # fault). If a rule fires, post an operator-kind message
             # to the investigation just like the human operator would
-            # — same DB write, same prompt position on next turn,
+            # -- same DB write, same prompt position on next turn,
             # same ACK contract. Best-effort; failures here NEVER
             # abort the tool result path.
             #
-            # fix §80 (PARTIAL) — auto-steering still uses its own
+            # fix §80 (PARTIAL) -- auto-steering still uses its own
             # internal UoWs for the operator-message post; full
             # atomicity with the §203 single UoW above requires
             # extending ``maybe_post_auto_steering`` to accept an
@@ -591,7 +591,7 @@ class ToolExecutor:
             # never observable to the agent itself; only an out-of-band
             # reader (operator UI streaming inv messages) could see
             # the result-message before the steering operator-message.
-            # fix §198 — bridge_base_url comes from the audit_mcp
+            # fix §198 -- bridge_base_url comes from the audit_mcp
             # bridge instance, not a hardcoded literal. See
             # AuditMcpBridgeTool.base_url(); falls back to default
             # only when the bridge stub lacks the accessor.
@@ -677,7 +677,7 @@ class ToolExecutor:
     ) -> str:
         """Write the tool result message AND merge observables in ONE UoW.
 
-        fix §203 — was two separate transactions. A concurrent reader
+        fix §203 -- was two separate transactions. A concurrent reader
         (operator UI streaming inv messages, or a sibling branch reading
         case_state mid-flight) could observe one half of the update
         without the other. Single UoW eliminates the gap.
@@ -761,7 +761,7 @@ class ToolExecutor:
     def _cache_index_id(self, investigation_id: str, resolved: str) -> str:
         """Insert or refresh ``investigation_id`` in the LRU index cache.
 
-        fix §252 — moves an existing entry to the MRU end and evicts the
+        fix §252 -- moves an existing entry to the MRU end and evicts the
         LRU entry when the cap is exceeded. Returns ``resolved`` so the
         caller can ``return self._cache_index_id(inv, value)`` directly.
         """
@@ -781,7 +781,7 @@ class ToolExecutor:
         """
         cache = self._inv_index_id_cache
         if investigation_id in cache:
-            # fix §252 — LRU touch.
+            # fix §252 -- LRU touch.
             cache.move_to_end(investigation_id)
             return cache[investigation_id]
         try:
@@ -807,13 +807,13 @@ class ToolExecutor:
             resolved = str(handles.get("audit_mcp_index_id") or "")
             return self._cache_index_id(investigation_id, resolved)
         except (SQLAlchemyError, OSError, RuntimeError, ImportError, AttributeError, ValueError, TypeError) as exc:
-            # fix §253 — broadened from (OSError, RuntimeError, ImportError,
+            # fix §253 -- broadened from (OSError, RuntimeError, ImportError,
             # AttributeError). The auto-correct path must NEVER block the
             # underlying tool dispatch, so any failure here (SQLAlchemy
             # OperationalError, DataError, JSON corruption, schema drift,
             # arbitrary upstream raise) is logged at INFO and falls through
             # to "use args as-is".
-            # fix §350 — surface traceback on the fallback so SQLAlchemy /
+            # fix §350 -- surface traceback on the fallback so SQLAlchemy /
             # schema drift / JSON corruption is grep-able instead of just
             # the class + truncated message.
             _log.info(
@@ -846,7 +846,7 @@ class ToolExecutor:
         """Count TOTAL malformed-command error messages on this branch
         across the last 50 engine messages.
 
-        fix §201 — was ``_count_consecutive_malformed`` which walked
+        fix §201 -- was ``_count_consecutive_malformed`` which walked
         backwards from the tail and stopped at the first non-malformed
         message. That meant a single good call would reset the counter
         and let the breaker miss alternating empty/good/empty/... loops.
@@ -859,7 +859,7 @@ class ToolExecutor:
                 _select(VRInvestigationMessageRecord)
                 .where(
                     VRInvestigationMessageRecord.branch_id == branch_id,
-                    # fix §256 — was the literal "engine"; drift hazard
+                    # fix §256 -- was the literal "engine"; drift hazard
                     # should SenderKind.ENGINE's value ever change.
                     VRInvestigationMessageRecord.sender_kind == SenderKind.ENGINE.value,
                 )
@@ -888,15 +888,15 @@ class ToolExecutor:
 
         Args are JSON-canonicalised (sorted keys) for the comparison
         so semantic-equivalence holds regardless of dict order. Used
-        by the repeat-failure circuit breaker — when the same tool
+        by the repeat-failure circuit breaker -- when the same tool
         call has failed 3+ times on the same branch, the executor
         injects a hard pivot hint into the next error.
         """
-        # fix §255 — was O(N²): each of up-to-50 errors triggered a
+        # fix §255 -- was O(N²): each of up-to-50 errors triggered a
         # nested ``_messages_before`` query (1 + 50 round trips).
         # Single query now fetches up to 100 recent messages, then
         # one linear pass pairs each (tool_call, error_text) tuple
-        # by adjacency — equivalent to a LAG() window function but
+        # by adjacency -- equivalent to a LAG() window function but
         # portable across the SQLite/Postgres targets and easier to
         # read.
         canonical = json.dumps(args, sort_keys=True, default=str)
@@ -953,11 +953,11 @@ class ToolExecutor:
         contract-violation class as the current error, regardless of
         args.
 
-        Error-class matching is intentionally narrow — only fires when
+        Error-class matching is intentionally narrow -- only fires when
         ``raw_err`` looks like a bridge-validator or upstream
         contract-violation message (unknown kwarg, missing required
         kwarg, unexpected keyword argument, signature mismatch). For
-        those classes, varying the arg VALUE never helps — the agent
+        those classes, varying the arg VALUE never helps -- the agent
         is calling the tool with the wrong arg NAME or shape and
         needs to pivot, not retry. For other error classes (function
         not indexed, file not found, timeout, etc.) varying args can
@@ -1000,7 +1000,7 @@ class ToolExecutor:
         """Return the existing ``_directive.pivot_history`` array for
         this branch (or an empty list when absent / corrupted).
 
-        fix §199 — used by the survey-streak pivot path to append new
+        fix §199 -- used by the survey-streak pivot path to append new
         entries without losing prior nudges. A separate read because
         the observables merge happens atomically inside
         :meth:`_merge_observables`; the pivot site only owns the
@@ -1054,7 +1054,7 @@ class ToolExecutor:
         ("ida_headless", "segments"),
     })
 
-    # fix §200 — was a hardcoded class attribute. Now sourced from
+    # fix §200 -- was a hardcoded class attribute. Now sourced from
     # ``mcp_adapters.get_read_tools()`` which is populated at import
     # time by the ``@is_read_tool`` decorator on each specialised
     # adapter (plus a small imperative list in
@@ -1101,7 +1101,7 @@ class ToolExecutor:
         """Return a pivot directive when the current call AND the prior
         two successful tool_calls on this branch are all SURVEY tools.
 
-        Returns None unless the streak fires — non-survey calls reset
+        Returns None unless the streak fires -- non-survey calls reset
         the counter immediately. The hint is intentionally short and
         actionable so it lands at the top of the agent's next-turn
         attention without crowding out the actual tool output.
@@ -1109,7 +1109,7 @@ class ToolExecutor:
         if (server_id, tool_name) not in self._SURVEY_TOOLS:
             return None
         # Walk back the last 4 tool_call payloads on this branch and
-        # count consecutive surveys (excluding the current one — it's
+        # count consecutive surveys (excluding the current one -- it's
         # already counted as #3 if the prior 2 match).
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
@@ -1126,7 +1126,7 @@ class ToolExecutor:
                 cmd = json.loads(payload.get("command") or "{}")
             except (ValueError, TypeError):
                 break
-            # fix §257 — keep "server is leftmost segment, tool is the
+            # fix §257 -- keep "server is leftmost segment, tool is the
             # rest" semantics for multi-segment tool names (e.g. a future
             # `audit_mcp.utils.read_lines` would split to
             # ("audit_mcp", "utils.read_lines")). `partition`'s tail
@@ -1150,10 +1150,10 @@ class ToolExecutor:
             f"branch without reading any source code. STOP SURVEYING. "
             f"You already have enough ranking data. Your next tool_run "
             f"MUST be one of:\n"
-            f"  - audit_mcp.read_function(name=<top candidate>, file_path=<path>) — read the actual body\n"
-            f"  - audit_mcp.taint_paths_to(name=<sink>) — trace user input to the candidate\n"
-            f"  - audit_mcp.callers_of(name=<candidate>) — who reaches this function\n"
-            f"  - audit_mcp.entrypoint_paths_to(name=<candidate>) — what untrusted-input entrypoints reach it\n"
+            f"  - audit_mcp.read_function(name=<top candidate>, file_path=<path>) -- read the actual body\n"
+            f"  - audit_mcp.taint_paths_to(name=<sink>) -- trace user input to the candidate\n"
+            f"  - audit_mcp.callers_of(name=<candidate>) -- who reaches this function\n"
+            f"  - audit_mcp.entrypoint_paths_to(name=<candidate>) -- what untrusted-input entrypoints reach it\n"
             f"  - OR submit a finding/AssessmentReport if no candidate is concrete enough to read\n"
             f"Adversarial deliberation is consuming turns without acquiring evidence. Read source NOW."
         )
@@ -1164,15 +1164,15 @@ class ToolExecutor:
         None when ``text`` doesn't look like one.
 
         Classes:
-          - "unknown_kwarg"  — bridge validator OR upstream Python
+          - "unknown_kwarg"  -- bridge validator OR upstream Python
                               TypeError about an unexpected keyword
-          - "missing_kwarg"  — required kwarg not provided
-          - "type_mismatch"  — wrong type passed
-          - "resource_not_found" — agent is passing a path / id /
+          - "missing_kwarg"  -- required kwarg not provided
+          - "type_mismatch"  -- wrong type passed
+          - "resource_not_found" -- agent is passing a path / id /
                               identifier the tool cannot resolve. Once
                               an APK / index / file lookup misses, the
                               same lookup with slightly different bytes
-                              keeps missing — the agent typo-drifts the
+                              keeps missing -- the agent typo-drifts the
                               identifier (LLM transcription error on
                               long SHA-derived paths) and the
                               args-identical breaker never matches
@@ -1224,11 +1224,11 @@ class ToolExecutor:
 
         Preserves §259 insertion order and caps the result at
         :attr:`_MAX_OBSERVABLES` entries (directives always kept). Pure
-        helper — does no I/O — so it can run inside any UoW.
+        helper -- does no I/O -- so it can run inside any UoW.
         """
         try:
             case_state = json.loads(case_state_json or "{}")
-        # fix §258 — also catch TypeError so a corrupted column
+        # fix §258 -- also catch TypeError so a corrupted column
         # (e.g. integer or null where a JSON string is expected)
         # never wedges the merge.
         except (json.JSONDecodeError, TypeError):
@@ -1242,7 +1242,7 @@ class ToolExecutor:
         # OLDEST non-directive keys by dict insertion order
         # (Python 3.7+ guarantees insertion order in dicts).
         if len(observables) > cls._MAX_OBSERVABLES:
-            # fix §259 — preserve original key insertion order so the
+            # fix §259 -- preserve original key insertion order so the
             # prompt-rendering position of every kept key stays stable
             # across turns.
             directive_keys = {
@@ -1270,7 +1270,7 @@ class ToolExecutor:
 
         Retained for call sites that do not also write a result message
         (the success path uses :meth:`_persist_result_and_observables`
-        which combines both writes into a single UoW — see fix §203).
+        which combines both writes into a single UoW -- see fix §203).
         """
         if not delta:
             return
@@ -1304,7 +1304,7 @@ def _parse_command(raw: str) -> tuple[str, dict[str, Any]] | None:
     """
     if not raw or not raw.strip():
         return None
-    # fix §261 — bail before json.loads on oversize input.
+    # fix §261 -- bail before json.loads on oversize input.
     if len(raw) > _MAX_TOOL_CMD_BYTES:
         _log.warning(
             "tool_executor._parse_command: command_raw exceeds cap "
@@ -1323,7 +1323,7 @@ def _parse_command(raw: str) -> tuple[str, dict[str, Any]] | None:
     if not isinstance(decoded, dict):
         return None
     tool_id = decoded.get("tool")
-    # fix §260 — `args` explicitly set to None (e.g. by an agent that
+    # fix §260 -- `args` explicitly set to None (e.g. by an agent that
     # remembered list_indexes takes no kwargs) used to fail the dict
     # isinstance check and force-stop. Coerce missing-OR-None to {}.
     args = decoded.get("args") or {}

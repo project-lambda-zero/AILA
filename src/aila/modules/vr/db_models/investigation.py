@@ -7,7 +7,7 @@ Per D-43 GA-24: cost tracking has three streams (LLM tokens + MCP calls
 + fuzz infra). Each stream is summed into ``cost_actual_usd``.
 
 Linked artifacts (campaign_ids, finding_ids) are stored as JSON lists
-rather than denormalized through join tables — querying 'all findings
+rather than denormalized through join tables -- querying 'all findings
 from this investigation' is a low-volume operator action that doesn't
 need indexed access.
 """

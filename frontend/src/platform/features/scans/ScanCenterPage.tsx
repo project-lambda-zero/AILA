@@ -27,7 +27,7 @@ import {
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(value: string | null) {
-  return value ? new Date(value).toLocaleString() : "—";
+  return value ? new Date(value).toLocaleString() : "--";
 }
 
 function parseTargets(value: string) {
@@ -158,7 +158,7 @@ function ScanForm({ queryText, targetsText, onQueryChange, onTargetsChange, onCl
       )}
       {submitScan.data && (
         <div className="rounded-[2px] border border-accent/30 bg-accent/10 px-3 py-2 font-mono text-xs text-accent">
-          Scan submitted — run {submitScan.data.run_id}
+          Scan submitted -- run {submitScan.data.run_id}
         </div>
       )}
     

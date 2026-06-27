@@ -75,7 +75,7 @@ async def toy_definition() -> WorkflowDefinition:
 
 
 @pytest_asyncio.fixture
-async def workflow_run_id(test_db: None) -> str:  # noqa: ARG001 — uses fixture
+async def workflow_run_id(test_db: None) -> str:  # noqa: ARG001 -- uses fixture
     """Create a WorkflowRunRecord row and return its id.
 
     Cleanup is delegated to the ``test_db`` TRUNCATE at teardown.

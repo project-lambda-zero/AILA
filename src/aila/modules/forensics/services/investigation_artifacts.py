@@ -2,12 +2,12 @@
 
 When an investigation submits an answer the agent has accumulated:
 
-  - ``observables``  — free-form structured key/value findings the
+  - ``observables``  -- free-form structured key/value findings the
     agent recorded across turns (e.g. ``trigger_file=musk.jpg.lnk``,
     ``capa_capabilities=[...]``, ``c2_endpoint=10.26.33.40``).
-  - ``provenance``   — ``primary_artifact`` path + ``corroboration``
+  - ``provenance``   -- ``primary_artifact`` path + ``corroboration``
     list pointing at the evidence that backs the answer.
-  - ``contract``     — answer_type / answer_format / evidence_domain.
+  - ``contract``     -- answer_type / answer_format / evidence_domain.
 
 This module classifies those observables into a small, fixed set of
 artifact types and writes them into ``forensics_artifacts`` so the
@@ -290,7 +290,7 @@ def _classify(
     # (`suspect_exe`, `xor_key`, `installer_magic`, `package_version`,
     # `ipc_handlers`, `app_archive`, ...). Without a generic snapshot
     # row those discoveries vanish from the Artifacts tab. This row
-    # captures the FULL observables map — verbatim — so nothing the
+    # captures the FULL observables map -- verbatim -- so nothing the
     # agent learned is silently dropped.
     if observables:
         meaningful = {
@@ -325,7 +325,7 @@ async def persist_investigation_artifacts(
     """Insert artifact rows derived from the investigation's findings.
 
     Returns the number of rows inserted (excluding de-dup skips).
-    Never raises — a write failure is logged at WARNING and swallowed
+    Never raises -- a write failure is logged at WARNING and swallowed
     so the investigation completion path is not destabilised.
 
     Set ``include_summary=False`` for per-step calls during the agent

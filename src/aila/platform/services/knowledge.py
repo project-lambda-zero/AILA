@@ -171,7 +171,7 @@ class KnowledgeService:
                     created_at=utc_now(),
                 )
                 sess.add(record)
-                # fix §204 — flush unconditionally so `record.id` is
+                # fix §204 -- flush unconditionally so `record.id` is
                 # populated even when the caller owns the session (UoW
                 # pattern). Previously only the `owns` branch refreshed,
                 # which left `entry_id = None` on the external-session

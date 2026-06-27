@@ -28,7 +28,7 @@ function formatLastSync(isoString: string | null): string {
 // ---------------------------------------------------------------------------
 
 /**
- * OfflineBanner — shows when the browser has no network connectivity (UX-07).
+ * OfflineBanner -- shows when the browser has no network connectivity (UX-07).
  *
  * Renders a top banner strip indicating offline mode and last sync time.
  * Disappears automatically when connectivity is restored.
@@ -49,10 +49,10 @@ export function OfflineBanner() {
     >
       <WifiSlash size={14} weight="bold" aria-hidden="true" />
       <span>
-        Offline — last synced {formatLastSync(lastSyncTime)}
+        Offline -- last synced {formatLastSync(lastSyncTime)}
       </span>
       <span className="text-text-muted ml-1">
-        (read-only mode — data may be stale)
+        (read-only mode -- data may be stale)
       </span>
     </div>
   );

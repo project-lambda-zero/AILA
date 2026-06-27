@@ -1,5 +1,5 @@
 /**
- * AuditLogsPage — admin audit trail with filterable AilaTable and CSV/JSON export.
+ * AuditLogsPage -- admin audit trail with filterable AilaTable and CSV/JSON export.
  *
  * ADM-01: Filterable, sortable audit log table with server-side filtering
  * (run_id, stage, action, status, user_id, since, until) and client-side
@@ -129,7 +129,7 @@ function jqlToAuditFilters(filters: JqlFilter[]): AuditFilters {
 }
 
 function formatTimestamp(value: string | null): string {
-  if (!value) return "—";
+  if (!value) return "--";
   return new Date(value).toLocaleString();
 }
 
@@ -251,7 +251,7 @@ const AUDIT_COLUMNS: ColumnDef<AuditEvent>[] = [
     cell: ({ getValue }) => {
       const v = String(getValue() ?? "");
       return (
-        <span className="font-mono text-xs text-text-muted">{v || "—"}</span>
+        <span className="font-mono text-xs text-text-muted">{v || "--"}</span>
       );
     },
   },
@@ -543,7 +543,7 @@ export function AuditLogsPage() {
           Total Events
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {auditQuery.data?.total ?? "—"}
+          {auditQuery.data?.total ?? "--"}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Matching active filters

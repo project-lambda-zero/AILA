@@ -1,4 +1,4 @@
-"""Phase 183 Plan 06 — stage output validation tests.
+"""Phase 183 Plan 06 -- stage output validation tests.
 
 Tests verify:
 - Empty dict from a non-terminal handler triggers on_failure
@@ -39,7 +39,7 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 
 
-async def _make_run_id(test_db: None) -> str:  # noqa: ARG001 — fixture param
+async def _make_run_id(test_db: None) -> str:  # noqa: ARG001 -- fixture param
     """Insert a WorkflowRunRecord row and return a fresh run_id."""
     rid = str(uuid.uuid4())
     async with async_session_scope() as session:
@@ -72,20 +72,20 @@ class MyOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — empty dict from non-terminal triggers on_failure
+# Test 1 -- empty dict from non-terminal triggers on_failure
 # ---------------------------------------------------------------------------
 
 
 async def test_empty_dict_from_non_terminal_triggers_on_failure(
     test_db: None,
 ) -> None:
-    """state_empty returns {} — engine must route to on_failure."""
+    """state_empty returns {} -- engine must route to on_failure."""
     run_id = await _make_run_id(test_db)
 
     async def state_empty(
         state_input: dict[str, Any], services: Any
     ) -> StateResult:
-        # Returns empty dict — must be rejected
+        # Returns empty dict -- must be rejected
         return StateResult(next_state=RESERVED_SUCCEEDED, output={})
 
     async def state_failure_handler(
@@ -124,14 +124,14 @@ async def test_empty_dict_from_non_terminal_triggers_on_failure(
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — output_schema invalid triggers on_failure
+# Test 2 -- output_schema invalid triggers on_failure
 # ---------------------------------------------------------------------------
 
 
 async def test_output_schema_invalid_triggers_on_failure(
     test_db: None,
 ) -> None:
-    """Handler returns a dict missing 'result' — schema validation fails."""
+    """Handler returns a dict missing 'result' -- schema validation fails."""
     run_id = await _make_run_id(test_db)
 
     async def bad_handler(
@@ -174,14 +174,14 @@ async def test_output_schema_invalid_triggers_on_failure(
 
 
 # ---------------------------------------------------------------------------
-# Test 3 — output_schema valid advances normally
+# Test 3 -- output_schema valid advances normally
 # ---------------------------------------------------------------------------
 
 
 async def test_output_schema_valid_advances_normally(
     test_db: None,
 ) -> None:
-    """Handler returns a well-formed dict matching output_schema — normal advance."""
+    """Handler returns a well-formed dict matching output_schema -- normal advance."""
     run_id = await _make_run_id(test_db)
 
     async def good_handler(
@@ -212,7 +212,7 @@ async def test_output_schema_valid_advances_normally(
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — terminal state empty dict is allowed
+# Test 4 -- terminal state empty dict is allowed
 # ---------------------------------------------------------------------------
 
 
@@ -227,7 +227,7 @@ async def test_terminal_state_empty_dict_allowed(
     next_state=__succeeded__ with non-empty output must work.
 
     This test covers the converse: a *terminal state* state_input that is {}
-    — the engine does not call any handler for it, so no validation occurs.
+    -- the engine does not call any handler for it, so no validation occurs.
     We verify by directly checking the cursor after routing to __failed__.
     """
     run_id = await _make_run_id(test_db)
@@ -255,19 +255,19 @@ async def test_terminal_state_empty_dict_allowed(
     # and the engine does not attempt validation on terminal states.
     cursor = await _cursor_state(run_id)
     assert cursor.current_state == "__crashed__"
-    # Result is the crash state_input — contains error metadata (not empty)
+    # Result is the crash state_input -- contains error metadata (not empty)
     assert "error_class" in result or "failed_state" in result
 
 
 # ---------------------------------------------------------------------------
-# Test 5 — no output_schema + non-empty dict advances normally (backwards compat)
+# Test 5 -- no output_schema + non-empty dict advances normally (backwards compat)
 # ---------------------------------------------------------------------------
 
 
 async def test_no_output_schema_allows_non_empty_dict(
     test_db: None,
 ) -> None:
-    """State with no output_schema and non-empty dict output — normal advance."""
+    """State with no output_schema and non-empty dict output -- normal advance."""
     run_id = await _make_run_id(test_db)
 
     async def compat_handler(
@@ -298,7 +298,7 @@ async def test_no_output_schema_allows_non_empty_dict(
 
 
 # ---------------------------------------------------------------------------
-# Test 6 — empty dict with no on_failure routes to __failed__
+# Test 6 -- empty dict with no on_failure routes to __failed__
 # ---------------------------------------------------------------------------
 
 
@@ -319,7 +319,7 @@ async def test_empty_dict_no_on_failure_routes_to_reserved_failed(
         states={
             "do_work": StateSpec(
                 handler=state_empty,
-                # on_failure intentionally absent — should route to __failed__
+                # on_failure intentionally absent -- should route to __failed__
             ),
         },
         services_factory=toy_services_factory,

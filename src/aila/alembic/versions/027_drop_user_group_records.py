@@ -1,4 +1,4 @@
-"""027 — drop user_group_records table (Phase 184 audit cleanup).
+"""027 -- drop user_group_records table (Phase 184 audit cleanup).
 
 UserGroupRecord was an orphaned schema object: no router imported it,
 no service used it, and no endpoint wrote to it. Removed from db_models.py

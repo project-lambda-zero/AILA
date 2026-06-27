@@ -1,7 +1,7 @@
 """Machine readiness checker for VR analyzer workstations.
 
 Verifies IDA Headless MCP reachability and probes research tooling
-(gcc, gdb, pwntools, ...) over SSH. v0.1 reports only — no auto-install.
+(gcc, gdb, pwntools, ...) over SSH. v0.1 reports only -- no auto-install.
 ``integration=None`` skips SSH and checks MCP only (local workstation).
 """
 from __future__ import annotations

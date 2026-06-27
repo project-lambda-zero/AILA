@@ -1,6 +1,6 @@
-# AILA Module Development — AI Context Document
+# AILA Module Development -- AI Context Document
 
-**Purpose:** This document gives an AI agent everything it needs to build a complete, production-grade AILA module — backend and frontend — without exploring the codebase first. Read this once. Then build.
+**Purpose:** This document gives an AI agent everything it needs to build a complete, production-grade AILA module -- backend and frontend -- without exploring the codebase first. Read this once. Then build.
 
 **Codebase root:** `src/aila/` (Python) and `frontend/src/` (TypeScript/React)
 
@@ -61,7 +61,7 @@ Alembic migration (if needed): `src/aila/alembic/versions/0NN_<module_id>_tables
 
 ## 3. Backend: ModuleProtocol
 
-`module.py` must export `create_module()` — a zero-argument callable returning a `ModuleProtocol` instance.
+`module.py` must export `create_module()` -- a zero-argument callable returning a `ModuleProtocol` instance.
 
 ```python
 # src/aila/modules/mymod/module.py
@@ -89,7 +89,7 @@ class MyModModule:
     # ── Required ────────────────────────────────────────────────────────────
 
     def capability_profiles(self) -> list[ModuleCapabilityProfile]:
-        # Write description FOR THE LLM ROUTER — it goes into routing prompts.
+        # Write description FOR THE LLM ROUTER -- it goes into routing prompts.
         return [ModuleCapabilityProfile(
             module_id=MODULE_ID,
             action_id=f"{MODULE_ID}.do_thing",
@@ -197,7 +197,7 @@ CAPABILITY_EXAMPLES: tuple[str, ...] = (
 ```python
 # src/aila/modules/mymod/tool_keys.py
 TOOL_DO_THING = "mymod.do_thing"
-# Add one constant per tool. These are stable API — never rename after release.
+# Add one constant per tool. These are stable API -- never rename after release.
 ```
 
 ---
@@ -283,7 +283,7 @@ class MyModContext:
 
 # ── Pure handlers ────────────────────────────────────────────────────────────
 # Each handler: reads context, writes to context, returns None (advance) or
-# a specific next stage. DO NOT call tools or DB inside handlers — do that in
+# a specific next stage. DO NOT call tools or DB inside handlers -- do that in
 # services that the handler calls.
 
 def state_prepare(ctx: MyModContext) -> MyModStage | None:
@@ -302,7 +302,7 @@ def state_execute(ctx: MyModContext) -> MyModStage | None:
 
 
 def state_response_emit(ctx: MyModContext) -> MyModStage | None:
-    return None  # final stage — orchestrator detects and builds PlatformResponse
+    return None  # final stage -- orchestrator detects and builds PlatformResponse
 
 
 # ── Concurrency annotations (required) ──────────────────────────────────────
@@ -328,7 +328,7 @@ HANDLER_REGISTRY: dict[MyModStage, Callable] = {
     MyModStage.RESPONSE_EMIT: state_response_emit,
 }
 
-# Import-time validation — NEVER remove this
+# Import-time validation -- NEVER remove this
 _missing = set(MyModStage) - set(HANDLER_REGISTRY)
 if _missing:
     raise RuntimeError(f"Workflow missing handlers: {_missing}")
@@ -394,7 +394,7 @@ class MyModOptions(BaseModel):
     force_refresh: bool = False
 
 
-# API response models — defined here, used in api_router.py
+# API response models -- defined here, used in api_router.py
 class ThingResult(BaseModel):
     target: str
     result: str
@@ -435,7 +435,7 @@ def create_mymod_router() -> APIRouter:
         request: Request,
         auth: AuthContext = Depends(require_user_or_api_key),
     ) -> DataEnvelope[ThingResponse]:
-        # request param is required by slowapi rate limiter — do not remove
+        # request param is required by slowapi rate limiter -- do not remove
         del request
         # Do real DB work here
         items = []  # replace with real query
@@ -445,12 +445,12 @@ def create_mymod_router() -> APIRouter:
 ```
 
 **Rules for every endpoint:**
-- Always `response_model=DataEnvelope[YourModel]` — never `-> dict`
+- Always `response_model=DataEnvelope[YourModel]` -- never `-> dict`
 - `request: Request` first param (slowapi requires it by name)
 - `auth: AuthContext = Depends(require_user_or_api_key)` for auth
 - `del request` if not used (suppresses ARG001)
 - `@limiter.limit("60/minute")` on every endpoint
-- GET endpoints have zero side effects — no rescans, no mutations
+- GET endpoints have zero side effects -- no rescans, no mutations
 - Server-side pagination: `limit: int = Query(default=25, le=250)`, `offset: int = Query(default=0, ge=0)`
 - DB field names translate to API field names at this boundary (never leak raw column names)
 - Paginated responses include `total`, `page`, `page_size`, `pages`, `items`
@@ -491,7 +491,7 @@ schema_registry.register(MyModRecord)
 **Migration file** (`src/aila/alembic/versions/027_mymod_tables.py`):
 
 ```python
-"""027 — mymod tables.
+"""027 -- mymod tables.
 
 Revision ID: 027_mymod_tables
 Revises: 026_drop_legacy_task_columns
@@ -657,7 +657,7 @@ import { useQuery } from "@tanstack/react-query";
 import { authorizedRequestJson } from "@platform/api/http";
 import type { PaginatedThingsResponse, ThingsQueryParams } from "./types";
 
-// Envelope wrapper — all backend responses are DataEnvelope<T>
+// Envelope wrapper -- all backend responses are DataEnvelope<T>
 interface Envelope<T> { data: T; }
 
 export function useThings(params: ThingsQueryParams) {
@@ -706,8 +706,8 @@ export function useUpdateThing() {
 ```
 
 **TanStack Query v5 rules:**
-- `onError` DOES NOT work in `defaultOptions` in v5 — it silently does nothing. Error state comes from `isError` + `error` on each hook.
-- `onSuccess` on `useQuery` is deprecated — use `select` or handle in component.
+- `onError` DOES NOT work in `defaultOptions` in v5 -- it silently does nothing. Error state comes from `isError` + `error` on each hook.
+- `onSuccess` on `useQuery` is deprecated -- use `select` or handle in component.
 - For mutations: `onSuccess`, `onError` in `useMutation` options work fine.
 - Query key is an array. `["mymod", "things", params]` → invalidating `["mymod", "things"]` clears all paginated variants.
 
@@ -792,7 +792,7 @@ export default function MainPage() {
             header: "Score",
             cell: ({ row }) => (
               <span className="tabular-nums text-sm">
-                {row.original.score?.toFixed(2) ?? "—"}
+                {row.original.score?.toFixed(2) ?? "--"}
               </span>
             ),
           },
@@ -840,7 +840,7 @@ export default function MainPage() {
 | Loading placeholder | `LoadingSkeleton` |
 | Charts | `AilaChart` |
 
-**CSS variables (always use these — never hardcode hex):**
+**CSS variables (always use these -- never hardcode hex):**
 
 | Variable | Use |
 |----------|-----|
@@ -855,13 +855,13 @@ export default function MainPage() {
 | `--color-muted` | De-emphasized text |
 
 **Typography:**
-- `font-display` → Syne — headlines only
-- `font-sans` → Space Grotesk — body text (default)
-- `font-mono` → Fira Code — CVE IDs, hostnames, package names, scores, code
+- `font-display` → Syne -- headlines only
+- `font-sans` → Space Grotesk -- body text (default)
+- `font-mono` → Fira Code -- CVE IDs, hostnames, package names, scores, code
 
 **Spacing and radius:**
-- Corners: `rounded-sm` (2px) for badges, `rounded` (4px) for cards — NEVER `rounded-lg` or `rounded-full`
-- Elevation: border-based (`border border-border`, `border-elevated`) — NO `shadow-*` classes (D-06)
+- Corners: `rounded-sm` (2px) for badges, `rounded` (4px) for cards -- NEVER `rounded-lg` or `rounded-full`
+- Elevation: border-based (`border border-border`, `border-elevated`) -- NO `shadow-*` classes (D-06)
 - Hover: `hover:bg-elevated/50` for row hover, `hover:border-border-hover` for card hover
 
 **Severity sort order** (always apply when displaying severity):
@@ -876,47 +876,47 @@ items.sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 5) - (SEVERITY_ORDER[b.sever
 
 ### Backend
 
-1. **No bare `except Exception:`** — name exact types. `except (ValueError, OSError):` not `except Exception:`. Broad catches that are genuinely necessary go in `honesty_whitelist.py` with written justification.
+1. **No bare `except Exception:`** -- name exact types. `except (ValueError, OSError):` not `except Exception:`. Broad catches that are genuinely necessary go in `honesty_whitelist.py` with written justification.
 
-2. **No `# noqa` comments** — fix the violation or add to `honesty_whitelist.py`.
+2. **No `# noqa` comments** -- fix the violation or add to `honesty_whitelist.py`.
 
-3. **No cross-module imports** — never `from aila.modules.vulnerability.x import ...` inside another module. This is a hard boundary.
+3. **No cross-module imports** -- never `from aila.modules.vulnerability.x import ...` inside another module. This is a hard boundary.
 
-4. **No bare dict returns from endpoints** — every endpoint returns `DataEnvelope[YourPydanticModel]`. Never `-> dict` or `return {"key": val}`.
+4. **No bare dict returns from endpoints** -- every endpoint returns `DataEnvelope[YourPydanticModel]`. Never `-> dict` or `return {"key": val}`.
 
-5. **No inline Pydantic models in routers** — all models in `contracts/`.
+5. **No inline Pydantic models in routers** -- all models in `contracts/`.
 
-6. **No SQLite** — PostgreSQL only, always. No fallbacks, no test shortcuts.
+6. **No SQLite** -- PostgreSQL only, always. No fallbacks, no test shortcuts.
 
-7. **No mock/placeholder data in seeds or tools** — if data isn't real, the honest response is an error or empty state.
+7. **No mock/placeholder data in seeds or tools** -- if data isn't real, the honest response is an error or empty state.
 
-8. **`request: Request` is mandatory first param on rate-limited endpoints** — slowapi requires it by name. Suppress with `del request` if unused.
+8. **`request: Request` is mandatory first param on rate-limited endpoints** -- slowapi requires it by name. Suppress with `del request` if unused.
 
-9. **`alembic upgrade head` after every migration** — never commit broken migration state.
+9. **`alembic upgrade head` after every migration** -- never commit broken migration state.
 
-10. **Explicit state machines** — multi-step behavior is visible in `STAGE_ORDER` + `HANDLER_REGISTRY`, never hidden in nested conditions.
+10. **Explicit state machines** -- multi-step behavior is visible in `STAGE_ORDER` + `HANDLER_REGISTRY`, never hidden in nested conditions.
 
 ### Frontend
 
-1. **No mock data** — ever. Empty state = honest empty state with real message, not a greyed-out fake table.
+1. **No mock data** -- ever. Empty state = honest empty state with real message, not a greyed-out fake table.
 
-2. **URL is state for filters** — use search params, not component state or context, for anything that should survive navigation or sharing.
+2. **URL is state for filters** -- use search params, not component state or context, for anything that should survive navigation or sharing.
 
-3. **TanStack Query v5 onError** — `defaultOptions.onError` is silently ignored. Error state comes from `isError` + `error` on each hook/mutation.
+3. **TanStack Query v5 onError** -- `defaultOptions.onError` is silently ignored. Error state comes from `isError` + `error` on each hook/mutation.
 
-4. **All API calls through hooks** — no raw `fetch()` in screen components. All calls in `queries.ts` or `mutations.ts`.
+4. **All API calls through hooks** -- no raw `fetch()` in screen components. All calls in `queries.ts` or `mutations.ts`.
 
-5. **Invalidate by prefix after mutations** — `qc.invalidateQueries({ queryKey: ["mymod", "things"] })` clears all paginated variants.
+5. **Invalidate by prefix after mutations** -- `qc.invalidateQueries({ queryKey: ["mymod", "things"] })` clears all paginated variants.
 
-6. **No `shadow-*` classes** — border-based elevation only (D-06).
+6. **No `shadow-*` classes** -- border-based elevation only (D-06).
 
-7. **No `rounded-lg` or `rounded-full`** — 2px or 4px only (D-05 arcade aesthetic).
+7. **No `rounded-lg` or `rounded-full`** -- 2px or 4px only (D-05 arcade aesthetic).
 
-8. **`response_model=DataEnvelope[T]` must match `Envelope<T>` in TypeScript** — if you change one, change the other.
+8. **`response_model=DataEnvelope[T]` must match `Envelope<T>` in TypeScript** -- if you change one, change the other.
 
-9. **Three required states on every data-fetching component** — loading (skeleton), error (message), empty (honest text). Never skip any of them.
+9. **Three required states on every data-fetching component** -- loading (skeleton), error (message), empty (honest text). Never skip any of them.
 
-10. **Monospace for technical identifiers** — hostnames, CVE IDs, package names, hashes → `font-mono`.
+10. **Monospace for technical identifiers** -- hostnames, CVE IDs, package names, hashes → `font-mono`.
 
 ---
 

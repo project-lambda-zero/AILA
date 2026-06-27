@@ -167,7 +167,7 @@ class AppleSecurityTrack(DisclosureTrack):
             _section(
                 "Reproducer",
                 str(finding_payload.get("poc_code")
-                    or "(working PoC required — never strip primitives)"),
+                    or "(working PoC required -- never strip primitives)"),
             ),
             _section(
                 "Reliability",
@@ -243,7 +243,7 @@ class ZDITrack(DisclosureTrack):
     embargo_default_days = 120
     severity_schema = "cvss"
     notes = (
-        "Submit via ZDI Researcher portal. ZDI takes exclusivity — the same "
+        "Submit via ZDI Researcher portal. ZDI takes exclusivity -- the same "
         "finding CANNOT be reported to other programs or the vendor "
         "directly while ZDI evaluates. Embargo typically 120 days, sometimes "
         "extended to coordinated disclosure date."
@@ -297,7 +297,7 @@ class CertCCTrack(DisclosureTrack):
     embargo_default_days = 45
     severity_schema = "cvss"
     notes = (
-        "Submit via VINCE. Use for multi-vendor coordination — CERT/CC "
+        "Submit via VINCE. Use for multi-vendor coordination -- CERT/CC "
         "contacts affected vendors on your behalf. PoC sent privately to "
         "vendors after they engage."
     )
@@ -351,7 +351,7 @@ class ConferenceCfpTrack(DisclosureTrack):
     severity_schema = "cvss"
     notes = (
         "Talk abstract for Black Hat / DEF CON / USENIX Security / IEEE S&P "
-        "/ etc. Working PoC NEVER on stage — sanitized demonstration only. "
+        "/ etc. Working PoC NEVER on stage -- sanitized demonstration only. "
         "Requires patch shipped + (typically) ≥ 30 days post-disclosure."
     )
 

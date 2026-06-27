@@ -1,5 +1,5 @@
 /**
- * useSSE.test.ts — unit tests for the useSSE hook (D-08 approach).
+ * useSSE.test.ts -- unit tests for the useSSE hook (D-08 approach).
  *
  * useSSE connects to a real SSE endpoint with fetch + AbortController.
  * Testing the internal fetch streaming loop requires a live SSE server,
@@ -70,7 +70,7 @@ describe("useSSE", () => {
   });
 
   it("transitions to 'connecting' when enabled=true (fetch mocked to reject)", async () => {
-    // fetch resolves slowly — enough for connect() to transition to "connecting"
+    // fetch resolves slowly -- enough for connect() to transition to "connecting"
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation(

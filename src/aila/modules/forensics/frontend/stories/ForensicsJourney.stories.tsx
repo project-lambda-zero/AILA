@@ -1,7 +1,7 @@
 /**
  * ForensicsJourney.stories.tsx
  *
- * SB-09: Composite user journey — new project → readiness check → dashboard →
+ * SB-09: Composite user journey -- new project → readiness check → dashboard →
  * start investigation → view detail with steps and answers.
  *
  * Uses a single QueryClient pre-seeded with data for the whole journey.
@@ -161,7 +161,7 @@ function makeJourneyQC(): QueryClient {
 }
 
 // ---------------------------------------------------------------------------
-// Journey app — all routes wired
+// Journey app -- all routes wired
 // ---------------------------------------------------------------------------
 
 function JourneyApp({ queryClient }: { queryClient: QueryClient }) {
@@ -211,7 +211,7 @@ type Story = StoryObj<typeof meta>;
 // ---------------------------------------------------------------------------
 
 export const ProjectsListView: Story = {
-  name: "1. Projects List — populated",
+  name: "1. Projects List -- populated",
   args: { queryClient: makeJourneyQC() },
 };
 
@@ -233,7 +233,7 @@ export const NewProjectFormView: Story = {
 };
 
 export const DashboardWithInvestigation: Story = {
-  name: "3. Project Dashboard — investigation complete",
+  name: "3. Project Dashboard -- investigation complete",
   args: { queryClient: makeJourneyQC() },
   render: ({ queryClient }) => (
     <QueryClientProvider client={queryClient}>
@@ -254,7 +254,7 @@ export const DashboardWithInvestigation: Story = {
 };
 
 export const InvestigationDetailView: Story = {
-  name: "4. Investigation Detail — steps + answers",
+  name: "4. Investigation Detail -- steps + answers",
   args: { queryClient: makeJourneyQC() },
   render: ({ queryClient }) => (
     <QueryClientProvider client={queryClient}>

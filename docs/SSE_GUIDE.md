@@ -208,7 +208,7 @@ GET /forensics/projects/{project_id}/investigations/{investigation_id}/events?la
 
 ### Authentication
 
-Bearer JWT token (reader+ role). Team-scoped — you must own the project.
+Bearer JWT token (reader+ role). Team-scoped -- you must own the project.
 
 ### Event Format
 
@@ -232,7 +232,7 @@ data: {"status": "completed"}
 If Redis is unavailable or the investigation has no `task_id` yet (race between submit and SSE open):
 
 ```
-data: {"message": "No progress stream available — Redis not configured or task not yet queued"}
+data: {"message": "No progress stream available -- Redis not configured or task not yet queued"}
 ```
 
 ### Frontend Hook
@@ -242,7 +242,7 @@ import { useInvestigationEventFeed } from "@forensics/queries";
 
 const { events, feedStatus } = useInvestigationEventFeed(projectId, investigationId);
 // feedStatus: "idle" | "connecting" | "live" | "unavailable" | "closed" | "error"
-// events: InvestigationEvent[]  — {stage, message, percent, timestamp}
+// events: InvestigationEvent[]  -- {stage, message, percent, timestamp}
 ```
 
 Only open the feed when the investigation status is running (`queued | running | analyzing`). Pass empty strings to disable.
@@ -302,7 +302,7 @@ Fields:
 
 ### Frontend Checklist
 
-- [ ] Hook uses `streamJsonEvents()` from `@platform/api/sse` (NOT `EventSource` — needs auth header)
+- [ ] Hook uses `streamJsonEvents()` from `@platform/api/sse` (NOT `EventSource` -- needs auth header)
 - [ ] Hook uses `getAuthTokenStandalone()` to inject Bearer token
 - [ ] `AbortController` for cleanup on unmount
 - [ ] Only open feed when resource is in a running state (pass empty string to disable)
@@ -311,9 +311,9 @@ Fields:
 
 ### asyncio Rules
 
-- **NEVER** wrap `await task_queue.submit()` in `asyncio.to_thread()` — `submit` is `async def`
-- **NEVER** call sync `session_scope()` directly inside `async def` — use `UnitOfWork` (async) or wrap in `asyncio.to_thread()`
-- `ProgressStream.catchup()` and `stream_events()` are `async` — `await` / `async for` them directly
+- **NEVER** wrap `await task_queue.submit()` in `asyncio.to_thread()` -- `submit` is `async def`
+- **NEVER** call sync `session_scope()` directly inside `async def` -- use `UnitOfWork` (async) or wrap in `asyncio.to_thread()`
+- `ProgressStream.catchup()` and `stream_events()` are `async` -- `await` / `async for` them directly
 
 ---
 

@@ -1,4 +1,4 @@
-"""026 — drop taskrecord.poison_attempts + checkpoint_json (Phase 179).
+"""026 -- drop taskrecord.poison_attempts + checkpoint_json (Phase 179).
 
 v5.0 migration. Runs AFTER marking all non-terminal TaskRecord rows as
 FAILED (they cannot use the new workflow cursor table; operators must
@@ -24,7 +24,7 @@ depends_on = None
 # the new workflow cursor table. Mark them FAILED with a distinctive error
 # so operators see what was in flight and can resubmit.
 NON_TERMINAL_STATUSES: tuple[str, ...] = ("queued", "waiting", "running", "paused")
-MIGRATION_ERROR: str = "v5.0 migration — resubmit"
+MIGRATION_ERROR: str = "v5.0 migration -- resubmit"
 
 
 def upgrade() -> None:

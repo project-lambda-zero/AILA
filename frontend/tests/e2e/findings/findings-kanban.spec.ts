@@ -2,7 +2,7 @@
  * findings-kanban.spec.ts
  *
  * E2E tests for the /vulnerability/findings Kanban view.
- * Uses REAL PostgreSQL backend — no mocks.
+ * Uses REAL PostgreSQL backend -- no mocks.
  *
  * Coverage:
  *   - Kanban view renders 5 workflow-state columns

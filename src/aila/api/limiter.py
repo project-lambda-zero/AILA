@@ -25,7 +25,7 @@ def _authenticated_user_key(request: Request) -> str:
     """Rate-limit bucket by authenticated user/key identity.
 
     Reads the Bearer token from the Authorization header and decodes the JWT
-    payload WITHOUT signature verification — we only need the identity claim
+    payload WITHOUT signature verification -- we only need the identity claim
     for bucketing, not for security.  Falls back to remote IP for unauthenticated
     requests so the limiter still applies to the auth endpoints themselves.
 

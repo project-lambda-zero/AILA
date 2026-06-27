@@ -1,4 +1,4 @@
-"""Alembic env.py — async-capable migration environment.
+"""Alembic env.py -- async-capable migration environment.
 
 Imports all SQLModel table classes so Alembic autogenerate sees every table.
 Uses psycopg3 sync driver for migrations (asyncpg is runtime-only).
@@ -40,7 +40,7 @@ def _get_sync_url() -> str:
     """Return a psycopg3 sync URL for Alembic migrations.
 
     Reads AILA_DATABASE_URL and replaces +asyncpg with +psycopg.
-    Alembic requires a sync connection — asyncpg cannot be used here.
+    Alembic requires a sync connection -- asyncpg cannot be used here.
     """
     url = os.environ.get("AILA_DATABASE_URL", "")
     if not url:
@@ -55,7 +55,7 @@ def _get_sync_url() -> str:
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode — emit SQL without connecting."""
+    """Run migrations in 'offline' mode -- emit SQL without connecting."""
     url = _get_sync_url()
     context.configure(
         url=url,
@@ -69,7 +69,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode — connect and execute."""
+    """Run migrations in 'online' mode -- connect and execute."""
     configuration = config.get_section(config.config_ini_section, {})
     configuration["sqlalchemy.url"] = _get_sync_url()
     connectable = engine_from_config(

@@ -596,7 +596,7 @@ Common targets in the root `Makefile`:
 | `make dev-reset`        | Stop containers and wipe data volumes                                     |
 | `make dev-logs`         | Follow compose service logs                                               |
 | `make dev-status`       | `docker compose ps`                                                       |
-| `make db-init`          | `python scripts/db_init.py` — create tables + stamp Alembic head (first run only) |
+| `make db-init`          | `python scripts/db_init.py` -- create tables + stamp Alembic head (first run only) |
 | `make migrate`          | `cd src/aila && alembic upgrade head`                                     |
 | `make dev`              | Print the canonical dev workflow (no services started)                    |
 | `make backend`          | Ensure `dev-up` + `db-init`, free port 8000, run `uvicorn aila.api.app:app --host 0.0.0.0 --port 8000 --reload` |

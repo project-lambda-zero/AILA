@@ -1,4 +1,4 @@
-# VR Module — Additional Topics
+# VR Module -- Additional Topics
 
 Topics not covered by the first eight documents. These are the operational, organizational, and adjacent-domain questions the previous deep-dives left implicit. Each section explores one topic; each ends with the open questions it leaves on the table.
 
@@ -23,10 +23,10 @@ Topics not covered by the first eight documents. These are the operational, orga
 > | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
 
 Cross-references:
-- `docs/vr/01_REASONING_LOOP.md` — turn anatomy and the reasoning engine
-- `docs/vr/02_IDA_HEADLESS_MCP.md` — the binary-database query layer
-- `docs/vr/03_EXPLOIT_AUTOMATION.md` — what the LLM can and cannot do at exploitation time
-- `docs/vr/04_MULTI_TARGET.md` — product decomposition and project-level evidence
+- `docs/vr/01_REASONING_LOOP.md` -- turn anatomy and the reasoning engine
+- `docs/vr/02_IDA_HEADLESS_MCP.md` -- the binary-database query layer
+- `docs/vr/03_EXPLOIT_AUTOMATION.md` -- what the LLM can and cannot do at exploitation time
+- `docs/vr/04_MULTI_TARGET.md` -- product decomposition and project-level evidence
 - `docs/VR_MODULE_TOOLCHAIN.md`
 
 ---
@@ -90,7 +90,7 @@ $ rr ls   # session id
 $ tar caf rr_session.tar.zst ~/.local/share/rr/vulnerable_binary-0/
 ```
 
-The recording captures every system call result, every signal, every non-deterministic CPU read. Replay is bit-exact. Pwndbg works against `rr replay`. Time travel works (`reverse-stepi`). The LLM can be handed a recording and asked to walk back from the crash to the source of corruption — a workflow that's hopeless on a live process where state has already been overwritten.
+The recording captures every system call result, every signal, every non-deterministic CPU read. Replay is bit-exact. Pwndbg works against `rr replay`. Time travel works (`reverse-stepi`). The LLM can be handed a recording and asked to walk back from the crash to the source of corruption -- a workflow that's hopeless on a live process where state has already been overwritten.
 
 Storage cost: `rr` recordings for typical user-space crashes are 50–500 MB. For a campaign that produces 200 unique crashes, that's 10–100 GB per project. The dependency-graph storage layer has to plan for it.
 
@@ -108,19 +108,19 @@ $ qemu-img snapshot -a pre-trigger disk.qcow2  # restore
 $ ./run-trigger.sh                              # bit-exact rerun
 ```
 
-For glibc-allocator-shape bugs, the snapshot must include the address-space layout *after* boot — the bug depends on the heap arena's initial state, which is itself derived from the boot sequence. A "cold" snapshot taken before the target boots is too early; a snapshot taken after the target's network listener is up is the right point.
+For glibc-allocator-shape bugs, the snapshot must include the address-space layout *after* boot -- the bug depends on the heap arena's initial state, which is itself derived from the boot sequence. A "cold" snapshot taken before the target boots is too early; a snapshot taken after the target's network listener is up is the right point.
 
-The module's Reproducer records carry the snapshot ID and the rehydration script. They do not embed the snapshot itself in the database — snapshots live on the workstation's storage, with a content-addressable URI.
+The module's Reproducer records carry the snapshot ID and the rehydration script. They do not embed the snapshot itself in the database -- snapshots live on the workstation's storage, with a content-addressable URI.
 
 ### 1.5 Cross-machine reproducibility
 
 The same binary, same input, two machines, two outcomes. Common causes:
 
-- **libc version drift** — Ubuntu 22.04's `glibc 2.35` and 24.04's `glibc 2.39` have different tcache layout. A heap exploit calibrated against 2.35 reads garbage on 2.39.
-- **Kernel version drift** — `mmap_min_addr`, `kptr_restrict`, `dmesg_restrict` defaults shift between distributions. A kernel exploit's info-leak path can become unreadable.
-- **Mitigation flag drift** — distributions enable CET, MTE, or PAC by build policy. A PoC built without checking `cf_protection_branch` in the target binary's notes section will silently fail.
-- **CPU feature drift** — the workstation's CPU has Intel CET; the customer's deployment doesn't, and the exploit uses an indirect branch the workstation hardware would have caught.
-- **Filesystem/mount drift** — `/tmp` is a tmpfs on the workstation, an NFS mount on the customer's box. File-creation primitives behave differently.
+- **libc version drift** -- Ubuntu 22.04's `glibc 2.35` and 24.04's `glibc 2.39` have different tcache layout. A heap exploit calibrated against 2.35 reads garbage on 2.39.
+- **Kernel version drift** -- `mmap_min_addr`, `kptr_restrict`, `dmesg_restrict` defaults shift between distributions. A kernel exploit's info-leak path can become unreadable.
+- **Mitigation flag drift** -- distributions enable CET, MTE, or PAC by build policy. A PoC built without checking `cf_protection_branch` in the target binary's notes section will silently fail.
+- **CPU feature drift** -- the workstation's CPU has Intel CET; the customer's deployment doesn't, and the exploit uses an indirect branch the workstation hardware would have caught.
+- **Filesystem/mount drift** -- `/tmp` is a tmpfs on the workstation, an NFS mount on the customer's box. File-creation primitives behave differently.
 
 The module fingerprints every relevant axis at trigger time and stores the fingerprint with the Reproducer. A replay across machines starts with a *fingerprint diff*, and the module refuses to claim "still reproducible" without an explicit operator override when the diff is non-empty.
 
@@ -149,9 +149,9 @@ Time is the most aggressive enemy. Six months after a finding:
 - The LLM has moved. *(Same prompt, different decisions.)*
 
 The module distinguishes three replay outcomes:
-- **`pass`** — Reproducer artifact still produces the expected observable.
-- **`drifted`** — input runs, crash signature changed (different fault address, different register state). Auto-opens an investigation: same bug or new bug?
-- **`fail`** — input runs, no crash, target healthy. Auto-checks for a fix advisory; if none, flags as "may be silently patched."
+- **`pass`** -- Reproducer artifact still produces the expected observable.
+- **`drifted`** -- input runs, crash signature changed (different fault address, different register state). Auto-opens an investigation: same bug or new bug?
+- **`fail`** -- input runs, no crash, target healthy. Auto-checks for a fix advisory; if none, flags as "may be silently patched."
 
 A passive Reproducer running on a schedule is itself the supply-chain regression test from §4.
 
@@ -163,7 +163,7 @@ The module *can* promise:
 - Every prompt is recorded verbatim, including the rendered evidence pack.
 - Every decision is recorded verbatim.
 - Every action's input and output are recorded.
-- Replay of the *trajectory* (turn-by-turn) is possible against any future model — same prompts, different model, compare outputs.
+- Replay of the *trajectory* (turn-by-turn) is possible against any future model -- same prompts, different model, compare outputs.
 
 That last property is what enables model upgrades without losing audit-ability. We cannot replay the LLM; we can replay everything around the LLM.
 
@@ -175,7 +175,7 @@ A subordinate service runs every active Reproducer on a schedule, records the re
 python -m aila worker -q vr_replay
 ```
 
-Throughput is the bottleneck — running 500 Reproducers a night against the workstation is multi-hour work, especially when some require VM snapshot restores (~30 s each). Reproducer scheduling has its own priority queue: high-severity findings re-replay daily, low-severity weekly, archived monthly.
+Throughput is the bottleneck -- running 500 Reproducers a night against the workstation is multi-hour work, especially when some require VM snapshot restores (~30 s each). Reproducer scheduling has its own priority queue: high-severity findings re-replay daily, low-severity weekly, archived monthly.
 
 ### 1.9 Failure modes
 
@@ -236,7 +236,7 @@ class Scope(SQLModel, table=True):
     revoked_reason: str | None
 ```
 
-Scope is checked on every action. The dispatcher does not consult the scope on a fast path that depends on the LLM's claim about the action; it consults the *resolved* action — the actual command, the actual destination, the actual binary path — after parameter binding. An LLM cannot smuggle out-of-scope work past the gate by lying about its intent.
+Scope is checked on every action. The dispatcher does not consult the scope on a fast path that depends on the LLM's claim about the action; it consults the *resolved* action -- the actual command, the actual destination, the actual binary path -- after parameter binding. An LLM cannot smuggle out-of-scope work past the gate by lying about its intent.
 
 Scope expiry is hard. After `effective_until`, the dispatcher refuses all gated actions for the project. The operator must explicitly extend scope (with re-authorized documentation) to continue.
 
@@ -267,11 +267,11 @@ Bug bounty programs are first-class: a BBP scope is a Scope record whose `author
 
 D-04 covers the disclosure state machine. The legal layer adds:
 
-- **Vendor contact verification.** The module does not auto-send disclosure emails. It generates the advisory; the operator (a person) sends it. Auto-send is a foot-cannon — wrong vendor, wrong embargo date, wrong PGP key — that the module declines to provide.
+- **Vendor contact verification.** The module does not auto-send disclosure emails. It generates the advisory; the operator (a person) sends it. Auto-send is a foot-cannon -- wrong vendor, wrong embargo date, wrong PGP key -- that the module declines to provide.
 - **CVE coordination.** The module's role is to format CVE-quality writeups. CVE assignment goes through a CNA (the customer, MITRE, or a coordinator). The module tracks assignment status; it does not request CVEs on the operator's behalf.
 - **Embargo enforcement.** A finding under embargo is read-restricted. Exporting its advisory before `embargo_until` requires a privileged role and produces an audit event flagged for compliance review.
 - **Premature disclosure.** Operator A finishes the work; operator B downloads the advisory and tweets it before embargo. The module cannot prevent the tweet (out-of-system action) but the audit trail shows who downloaded what when, which is what compliance needs after the fact.
-- **Coordinated multi-vendor disclosure.** A chain across three vendors needs three coordinated timelines. The disclosure tracker (D-04) is per-finding; chains need a `ChainDisclosure` aggregate that ANDs the individual embargoes — the chain advisory is releasable only when *all* component advisories are.
+- **Coordinated multi-vendor disclosure.** A chain across three vendors needs three coordinated timelines. The disclosure tracker (D-04) is per-finding; chains need a `ChainDisclosure` aggregate that ANDs the individual embargoes -- the chain advisory is releasable only when *all* component advisories are.
 
 ### 2.6 Tooling licenses
 
@@ -306,7 +306,7 @@ This is conservative on purpose. It will occasionally block a legitimate cross-r
 
 ### 2.8 "Find then don't disclose"
 
-The module is contractually obligated to disclose findings to the customer. It is *not* obligated to disclose them publicly — that's between the customer and their CNA / disclosure policy. But the module must not be operable in a mode where findings are produced and then withheld from the customer who paid for the engagement. The advisory generation and customer-handoff steps are not gated by anything other than the engagement's status.
+The module is contractually obligated to disclose findings to the customer. It is *not* obligated to disclose them publicly -- that's between the customer and their CNA / disclosure policy. But the module must not be operable in a mode where findings are produced and then withheld from the customer who paid for the engagement. The advisory generation and customer-handoff steps are not gated by anything other than the engagement's status.
 
 If an operator (or a customer-side admin) tries to delete findings from a closed engagement, the audit trail records the attempt and the deletion is a soft-delete that preserves the underlying record. Hard deletion requires a privileged role, two-person approval, and a recorded justification.
 
@@ -343,7 +343,7 @@ Two consumers:
 
 Five record families:
 
-**Bug pattern templates** — a structured description of a bug class, with sufficient detail to seed both LLM hypotheses and tool queries.
+**Bug pattern templates** -- a structured description of a bug class, with sufficient detail to seed both LLM hypotheses and tool queries.
 
 ```python
 class BugPatternTemplate(SQLModel, table=True):
@@ -364,7 +364,7 @@ class BugPatternTemplate(SQLModel, table=True):
     last_validated_against: str         # toolchain/lib version this was last confirmed on
 ```
 
-**Vulnerable function signatures** — known-bad function shapes that a binary-only audit should grep for.
+**Vulnerable function signatures** -- known-bad function shapes that a binary-only audit should grep for.
 
 ```python
 class VulnerableFunctionSignature(SQLModel, table=True):
@@ -377,7 +377,7 @@ class VulnerableFunctionSignature(SQLModel, table=True):
     recorded_cves: list[str]            # CVEs where this pattern was the bug
 ```
 
-**Exploitation recipes** — step sequences for known exploitation primitives.
+**Exploitation recipes** -- step sequences for known exploitation primitives.
 
 ```python
 class ExploitationRecipe(SQLModel, table=True):
@@ -392,7 +392,7 @@ class ExploitationRecipe(SQLModel, table=True):
     last_validated_against: str          # libc commit / version that confirmed the recipe
 ```
 
-**Mitigation behavior records** — what each mitigation actually does *currently*, distinct from what it did at LLM training cutoff.
+**Mitigation behavior records** -- what each mitigation actually does *currently*, distinct from what it did at LLM training cutoff.
 
 ```python
 class MitigationRecord(SQLModel, table=True):
@@ -405,7 +405,7 @@ class MitigationRecord(SQLModel, table=True):
     drift_warnings: list[str]            # "compiler N changed default to disable BTI"
 ```
 
-**Engagement digests** — per-project distillations of what was learned: what worked, what didn't, what the LLM tried and abandoned. Anonymized at the customer-data level; concrete at the technique level.
+**Engagement digests** -- per-project distillations of what was learned: what worked, what didn't, what the LLM tried and abandoned. Anonymized at the customer-data level; concrete at the technique level.
 
 ```python
 class EngagementDigest(SQLModel, table=True):
@@ -470,7 +470,7 @@ We do not fine-tune on the KB. The KB is retrieved at inference time and rendere
 - Freshness. A new pattern is usable the moment it's written; fine-tuning has a release cycle.
 - Correctability. A bad pattern can be deleted from the KB; it cannot be deleted from a fine-tuned model.
 
-This is the canonical retrieval-augmented design. The interesting question is which retrieval primitive is right — see §10.3 below.
+This is the canonical retrieval-augmented design. The interesting question is which retrieval primitive is right -- see §10.3 below.
 
 ### 3.7 Tooling integration
 
@@ -497,7 +497,7 @@ Each consumer has a different freshness tolerance and caching policy.
 
 ## 4. CI/CD Integration
 
-Can the VR module run unattended on commit? Yes, in three distinct modes, with different SLA shapes and different output contracts. The interesting design question is which of those modes makes sense for which kind of customer, and where the line is between "VR module in CI" and "a fuzzer in CI" — those are not the same thing.
+Can the VR module run unattended on commit? Yes, in three distinct modes, with different SLA shapes and different output contracts. The interesting design question is which of those modes makes sense for which kind of customer, and where the line is between "VR module in CI" and "a fuzzer in CI" -- those are not the same thing.
 
 ### 4.1 Three modes
 
@@ -563,7 +563,7 @@ The module owns the campaign; CI owns the build artifact. The two communicate vi
 
 Continuous fuzz is *not* a per-commit blocker. Fuzz campaigns produce findings on their own schedule (a new crash on day 5 of fuzzing has nothing to do with which commit went in last); blocking commits on fuzz output is a category error. Fuzz output goes to a backlog the customer triages.
 
-OSS-Fuzz comparison: OSS-Fuzz runs fuzzers in CI. The VR module *runs the research loop* in CI — the LLM hypothesizes, the LLM proposes harnesses, the LLM triages crashes. Continuous fuzz mode is the part of the module that most resembles OSS-Fuzz; the difference is that the harnesses are LLM-authored (and re-authored as the code changes), not human-authored once and forgotten.
+OSS-Fuzz comparison: OSS-Fuzz runs fuzzers in CI. The VR module *runs the research loop* in CI -- the LLM hypothesizes, the LLM proposes harnesses, the LLM triages crashes. Continuous fuzz mode is the part of the module that most resembles OSS-Fuzz; the difference is that the harnesses are LLM-authored (and re-authored as the code changes), not human-authored once and forgotten.
 
 ### 4.4 Security gate mode
 
@@ -595,7 +595,7 @@ Pre-acknowledged findings let a customer ship with a known bug they're fixing in
 
 On a small commit (10 lines changed across 2 files), running the full research loop is wasteful. The CI hook computes the diff in *binary* form (function-hash deltas between old and new build) and feeds the changed-functions list to the loop as a focused target context. The loop's strategy router prioritizes patterns that match the changed functions; broader scans are deferred to scheduled runs.
 
-Binary diff is harder than source diff. Compiler flag changes, ASLR cookies, build timestamps, and inlining decisions cause spurious diffs. The diff tool (BinDiff, Diaphora, or a custom function-hash differ) needs aggressive normalization. Diff-target output is a recommendation to the loop, not a constraint — the loop is allowed to investigate beyond the diff if a high-confidence hypothesis points elsewhere.
+Binary diff is harder than source diff. Compiler flag changes, ASLR cookies, build timestamps, and inlining decisions cause spurious diffs. The diff tool (BinDiff, Diaphora, or a custom function-hash differ) needs aggressive normalization. Diff-target output is a recommendation to the loop, not a constraint -- the loop is allowed to investigate beyond the diff if a high-confidence hypothesis points elsewhere.
 
 ### 4.6 Resource constraints
 
@@ -619,24 +619,24 @@ A bug found in a third-party dependency *during* a customer CI run is more compl
 ### 4.8 Output formats
 
 CI consumers expect specific schemas:
-- **SARIF** — GitHub, Azure DevOps, Sonar, etc. The module emits SARIF for findings.
-- **JUnit XML** — generic CI rendering of pass/fail tests; useful for regression mode where each Reproducer is a "test."
-- **CycloneDX/SPDX** — if the module produces a Software Composition Analysis side-output (§9).
-- **Custom JSON** — the AILA-native format for in-product views.
+- **SARIF** -- GitHub, Azure DevOps, Sonar, etc. The module emits SARIF for findings.
+- **JUnit XML** -- generic CI rendering of pass/fail tests; useful for regression mode where each Reproducer is a "test."
+- **CycloneDX/SPDX** -- if the module produces a Software Composition Analysis side-output (§9).
+- **Custom JSON** -- the AILA-native format for in-product views.
 
 All formats are derived from the same internal `Finding` shape; the formatters are pure functions and they're tested.
 
 ### 4.9 What CI integration cannot do
 
 - Cannot replace a security audit. The gate's job is to catch regressions and known patterns; novel research takes more turns than a 2-hour gate budget.
-- Cannot run on every commit at the cost of a 10-line typo PR — budget needs to be sane.
+- Cannot run on every commit at the cost of a 10-line typo PR -- budget needs to be sane.
 - Cannot promise it caught everything. `INCONCLUSIVE` is honest; "PASS" with no caveat is dishonest.
 - Cannot fully automate disclosure. Vendor contact is a human call.
 
 ### Open questions
 
 1. **Gate decision authority.** When the gate produces `FAIL`, who can override? A senior engineer with two-person sign-off? Per-project policy? Default policy?
-2. **CI worker hosting.** The module's heavy lifting (IDA, AFL++, replay) needs the workstation. The CI runner is GitHub-hosted. What's the bridge — webhook + queue + workstation poll? Long-running CI with the runner just blocking on the workstation?
+2. **CI worker hosting.** The module's heavy lifting (IDA, AFL++, replay) needs the workstation. The CI runner is GitHub-hosted. What's the bridge -- webhook + queue + workstation poll? Long-running CI with the runner just blocking on the workstation?
 3. **Diff-targeted analysis fidelity.** Function-hash diff is approximate. Compiler upgrade changes every function's hash. Is the diff tool a soft hint or a hard scope? Default tunable per project?
 4. **Cross-build state in continuous fuzz.** A campaign accumulates corpus across builds. New build invalidates some seeds. Do we corpus-minimize on every build (expensive) or accept corpus growth?
 5. **Severity threshold defaults.** Gate's default severity floor: `high` is conservative; `critical` is permissive. Does the platform ship a default or require the customer to set one?
@@ -696,9 +696,9 @@ class CaseStateBranch(SQLModel, table=True):
 Each branch has its own active hypotheses, observables, and rejected list. Branches share the project's findings (a confirmed finding is a project-level fact, not a branch-local one) and the project's evidence graph.
 
 Branches can be:
-- **Abandoned** — the hypothesis didn't pan out; rejected hypotheses become evidence.
-- **Merged** — the branch produced findings or insights, which absorb back into the trunk; the branch closes.
-- **Promoted to trunk** — the trunk's hypothesis was wrong; the branch becomes the new trunk.
+- **Abandoned** -- the hypothesis didn't pan out; rejected hypotheses become evidence.
+- **Merged** -- the branch produced findings or insights, which absorb back into the trunk; the branch closes.
+- **Promoted to trunk** -- the trunk's hypothesis was wrong; the branch becomes the new trunk.
 
 Merging is explicit, not automatic. A reviewer (or the lead) signs off on the merge; the audit trail records who merged what.
 
@@ -719,10 +719,10 @@ Two operators disagree on a finding's severity. The module:
 ### 5.5 Finding ownership
 
 Each finding carries:
-- `discovered_by` — the operator who confirmed the finding (last to advance the turn that crossed the discovery threshold).
-- `contributors` — operators whose turns contributed to the finding's evidence chain.
-- `closed_by` — the operator who landed the PoC.
-- `acknowledged_by` — the lead who approved the finding for the engagement record.
+- `discovered_by` -- the operator who confirmed the finding (last to advance the turn that crossed the discovery threshold).
+- `contributors` -- operators whose turns contributed to the finding's evidence chain.
+- `closed_by` -- the operator who landed the PoC.
+- `acknowledged_by` -- the lead who approved the finding for the engagement record.
 
 These fields are descriptive, not contractual. Bonuses, recognition, and disputes are out-of-system; the module exposes the truth and lets HR/management handle it. The audit trail makes "who did what" answerable; it does not adjudicate "who deserves credit."
 
@@ -756,9 +756,9 @@ When the same operator finds the same pattern in two projects, the module flags 
 ### 5.9 Trust boundaries
 
 Three trust profiles for collaborators:
-- **Internal staff** — full operator role, full KB read, full audit visibility within their projects.
-- **External contractor** — operator role on assigned projects only, KB read scoped to the project, no audit-wide visibility, MFA enforced.
-- **Customer-side researcher** — effectively a customer-tenant operator; sees their tenant's data only.
+- **Internal staff** -- full operator role, full KB read, full audit visibility within their projects.
+- **External contractor** -- operator role on assigned projects only, KB read scoped to the project, no audit-wide visibility, MFA enforced.
+- **Customer-side researcher** -- effectively a customer-tenant operator; sees their tenant's data only.
 
 Each profile has different defaults for action gates. A contractor's destructive actions (target reset, project archive) require lead sign-off; an internal operator's do not.
 
@@ -802,16 +802,16 @@ Concrete numbers, illustrative for an Opus-class model at current pricing (treat
 
 | Component | Typical input tokens | Typical output tokens |
 |---|---|---|
-| System prompt | 1,500 | — |
-| Strategy guidance | 600 | — |
-| Case state render | 800–2,500 | — |
-| Evidence pack (small) | 2,000–6,000 | — |
-| Evidence pack (large, decompilation) | 8,000–30,000 | — |
-| Rolling transcript (compressed) | 1,500–3,000 | — |
-| Action catalogue | 400 | — |
-| **Turn input total** | **8K–45K** | — |
-| `ReasoningTurnDecision` | — | 200–1,000 |
-| Reasoning chain (if enabled) | — | 1,000–8,000 |
+| System prompt | 1,500 | -- |
+| Strategy guidance | 600 | -- |
+| Case state render | 800–2,500 | -- |
+| Evidence pack (small) | 2,000–6,000 | -- |
+| Evidence pack (large, decompilation) | 8,000–30,000 | -- |
+| Rolling transcript (compressed) | 1,500–3,000 | -- |
+| Action catalogue | 400 | -- |
+| **Turn input total** | **8K–45K** | -- |
+| `ReasoningTurnDecision` | -- | 200–1,000 |
+| Reasoning chain (if enabled) | -- | 1,000–8,000 |
 
 At Opus pricing (varies; assume ~$15/M input, ~$75/M output as of late 2025), a typical turn lands at $0.15–$0.80; a heavy turn with full chain-of-thought at $1.50+. Sonnet-class is roughly 5x cheaper.
 
@@ -857,7 +857,7 @@ Workstation-class hardware: 32+ cores, 128+ GB RAM, 4+ TB NVMe, optional GPU for
 | Evidence pack history | 1–10 MB per turn | Engagement + 7 years (audit) |
 | Audit log | KB per event, ~10K events/engagement | 7 years minimum |
 
-A small engagement's footprint is 5–20 GB. A heavy engagement with multiple campaigns and rr recordings is 200–1000 GB. Storage is cheap until it isn't — multiply by N customers, by retention duration, by replication factor.
+A small engagement's footprint is 5–20 GB. A heavy engagement with multiple campaigns and rr recordings is 200–1000 GB. Storage is cheap until it isn't -- multiply by N customers, by retention duration, by replication factor.
 
 Storage tiering: hot (immediate read for active analysis) on local NVMe; warm (read in seconds) on object storage; cold (read in minutes) on archival. Audit logs are always retrievable; rr recordings can move to cold once their Reproducer's value tier drops.
 
@@ -871,10 +871,10 @@ Pre-engagement, the lead sets:
 - Storage budget (GB-months).
 
 Each budget has alarms at 50%, 75%, 90%, and a hard cap. Hitting an alarm:
-- 50% — logged, no notification.
-- 75% — lead notified.
-- 90% — driver and lead notified, the loop continues but flags every turn as "approaching budget."
-- Hard cap — the loop pauses; lead must explicitly extend budget or close the engagement.
+- 50% -- logged, no notification.
+- 75% -- lead notified.
+- 90% -- driver and lead notified, the loop continues but flags every turn as "approaching budget."
+- Hard cap -- the loop pauses; lead must explicitly extend budget or close the engagement.
 
 Cost at the action level:
 - Each action has an estimated cost (token cost + tool cost + storage delta).
@@ -884,20 +884,20 @@ Cost at the action level:
 ### 6.6 Cost-aware model routing
 
 Not every turn needs Opus. The router tier-classifies turns:
-- **Cheap turns** — evidence summarization, hypothesis listing, recon synthesis. Sonnet- or Haiku-class is sufficient.
-- **Mid turns** — strategy selection, exploitation planning, decompilation review. Sonnet-class is the default.
-- **Heavy turns** — Tier 3 exploitation reasoning, novel hypothesis generation under uncertainty, multi-step heap-shape reasoning. Opus-class.
+- **Cheap turns** -- evidence summarization, hypothesis listing, recon synthesis. Sonnet- or Haiku-class is sufficient.
+- **Mid turns** -- strategy selection, exploitation planning, decompilation review. Sonnet-class is the default.
+- **Heavy turns** -- Tier 3 exploitation reasoning, novel hypothesis generation under uncertainty, multi-step heap-shape reasoning. Opus-class.
 
 Routing decisions are recorded; per-engagement model-mix is reported as part of the cost summary. Heavy-only engagements are an alarm signal ("why is every turn going to Opus?").
 
 ### 6.7 Caching strategy
 
 Caches reduce both cost and latency:
-- **Decompilation cache** — keyed on `(binary_sha256, function_addr, ida_version, plugin_version)`. Hit rate >95% in steady-state engagements.
-- **Gadget cache** — ROPgadget output keyed on binary hash. Massive savings on re-runs.
-- **Evidence-pack render cache** — the rendered string for a given case state + selection set is deterministic; cached across turns when only fresh observations change.
-- **Function-hash cache** — Pharos-style hashes of every function in every analyzed binary, indexed for cross-binary similarity queries.
-- **LLM response cache for deterministic prompts** — if a prompt is byte-identical to a prior prompt and the model+params are the same, return the cached response. Useful for replays and tests; not the production hot path because prompts are rarely byte-identical.
+- **Decompilation cache** -- keyed on `(binary_sha256, function_addr, ida_version, plugin_version)`. Hit rate >95% in steady-state engagements.
+- **Gadget cache** -- ROPgadget output keyed on binary hash. Massive savings on re-runs.
+- **Evidence-pack render cache** -- the rendered string for a given case state + selection set is deterministic; cached across turns when only fresh observations change.
+- **Function-hash cache** -- Pharos-style hashes of every function in every analyzed binary, indexed for cross-binary similarity queries.
+- **LLM response cache for deterministic prompts** -- if a prompt is byte-identical to a prior prompt and the model+params are the same, return the cached response. Useful for replays and tests; not the production hot path because prompts are rarely byte-identical.
 
 ### 6.8 Cost reporting
 
@@ -953,7 +953,7 @@ Golden tests run on every release, every model upgrade, and every prompt change.
 3. Asserts the module finds the CVE (claim must trace to the actual vulnerable function).
 4. Optionally: asserts the module produces a working PoC.
 
-Pre-fix versions of CVEs from major OSS projects (curl, openssl, sudo, openssh historic, freebsd kernel CVEs, kernel CVEs from N years ago) become a regression suite. The suite is curated for reproducibility — binaries built deterministically from the source tag, with build environment captured in a Dockerfile.
+Pre-fix versions of CVEs from major OSS projects (curl, openssl, sudo, openssh historic, freebsd kernel CVEs, kernel CVEs from N years ago) become a regression suite. The suite is curated for reproducibility -- binaries built deterministically from the source tag, with build environment captured in a Dockerfile.
 
 **End-to-end tests.** Black-box: handed an unfamiliar binary with a known bug, the module must find it within budget. The set is rotated (lest the module's KB pattern-match the test set). End-to-end is the hardest test to automate because "the module found the bug" is a fuzzy assertion: did it identify the right function? did the produced PoC actually trigger the bug? did the severity match the CVE's CVSS?
 
@@ -1014,10 +1014,10 @@ These tests run in the regular Python test suite (`pytest tests/`) and are the f
 ### 7.5 Determinism in tests
 
 The LLM is non-deterministic at any sane temperature. Tests can:
-- **Pin temperature to 0** — reduces but does not eliminate non-determinism.
-- **Run N times, accept failure rate ≤ X%** — honest, expensive.
-- **Mock the LLM with recorded responses** — tests the surrounding machinery, not the LLM. Used heavily for component tests, sparingly for end-to-end.
-- **Use a deterministic fake model** — a script that emits canned `ReasoningTurnDecision`s on prompt-pattern match. Fast, useful for testing dispatcher and obligation system; not useful for testing actual research behavior.
+- **Pin temperature to 0** -- reduces but does not eliminate non-determinism.
+- **Run N times, accept failure rate ≤ X%** -- honest, expensive.
+- **Mock the LLM with recorded responses** -- tests the surrounding machinery, not the LLM. Used heavily for component tests, sparingly for end-to-end.
+- **Use a deterministic fake model** -- a script that emits canned `ReasoningTurnDecision`s on prompt-pattern match. Fast, useful for testing dispatcher and obligation system; not useful for testing actual research behavior.
 
 Different test classes use different determinism strategies. Component tests use mocks; eval cases use temperature-pinned real models with N-of-M tolerance.
 
@@ -1095,13 +1095,13 @@ Firmware violates each of these to varying degrees.
 
 Three rough shapes, with progressively diverging tooling needs:
 
-**Linux-on-embedded firmware** — a router, NAS, or appliance running a stripped Linux kernel + busybox + vendor binaries. The vendor binaries are the targets; busybox and the kernel are the platform. The existing model *mostly* applies: extract the binaries with `binwalk`, copy to the workstation, run them in a chroot or qemu-user, fuzz with AFL++. Differences:
+**Linux-on-embedded firmware** -- a router, NAS, or appliance running a stripped Linux kernel + busybox + vendor binaries. The vendor binaries are the targets; busybox and the kernel are the platform. The existing model *mostly* applies: extract the binaries with `binwalk`, copy to the workstation, run them in a chroot or qemu-user, fuzz with AFL++. Differences:
 - The libc is uClibc or musl, not glibc. Allocator behavior differs.
 - The init system is not systemd; service binaries are launched from `/etc/init.d/*`.
 - Some binaries are statically linked; others have library load orders that depend on `LD_LIBRARY_PATH` overrides set at boot.
 - Network exposure is configured by `/etc/config/*.conf` files; understanding which ports are open requires parsing the config, not running the boot sequence.
 
-**RTOS firmware blobs** — a single monolithic binary, often relocatable, no OS as we know it. FreeRTOS, Zephyr, ThreadX, vendor-proprietary RTOS kernels. The challenges:
+**RTOS firmware blobs** -- a single monolithic binary, often relocatable, no OS as we know it. FreeRTOS, Zephyr, ThreadX, vendor-proprietary RTOS kernels. The challenges:
 - No filesystem. The binary *is* the running system.
 - No symbols (release builds strip everything; some have a debug symbol blob alongside, often not).
 - No standard ABI; calling conventions vary. Helper functions like `memcpy` are inlined or vendor-specific.
@@ -1109,7 +1109,7 @@ Three rough shapes, with progressively diverging tooling needs:
 - The "entrypoint" is the reset vector at a known address (varies by architecture); execution starts there and the module's entire surface map starts there.
 - Tasks (RTOS threads) are scheduled cooperatively or pre-emptively by the RTOS kernel; a parser running in one task can clobber another's memory.
 
-**Bare-metal firmware** — no RTOS, just an interrupt loop and main(). Cortex-M for sensors, microcontrollers for IoT endpoints. Even simpler than RTOS in structure but with even less tooling support: most analyzers expect *some* OS abstraction.
+**Bare-metal firmware** -- no RTOS, just an interrupt loop and main(). Cortex-M for sensors, microcontrollers for IoT endpoints. Even simpler than RTOS in structure but with even less tooling support: most analyzers expect *some* OS abstraction.
 
 ### 8.3 ARM Cortex-M specifics
 
@@ -1180,7 +1180,7 @@ The existing platform has an SSH tool for talking to the workstation. For embedd
 Backend ----SSH----> Workstation ----USB----> Debug probe ----SWD/JTAG----> Target board
 ```
 
-From the module's perspective, the additional hop is invisible — the platform dispatches "set breakpoint at addr X" and the workstation's gdb-via-OpenOCD-via-probe-via-SWD machinery handles the chain. From the operations perspective, the chain has more failure modes: probe firmware mismatches, USB enumeration failures, target-board power issues, the probe's RTT/SWO buffer overflowing, the target getting wedged in a fault loop and the probe not being able to halt it.
+From the module's perspective, the additional hop is invisible -- the platform dispatches "set breakpoint at addr X" and the workstation's gdb-via-OpenOCD-via-probe-via-SWD machinery handles the chain. From the operations perspective, the chain has more failure modes: probe firmware mismatches, USB enumeration failures, target-board power issues, the probe's RTT/SWO buffer overflowing, the target getting wedged in a fault loop and the probe not being able to halt it.
 
 The module has health checks for the probe link analogous to the SSH health checks. A probe disconnect surfaces as an explicit error, not a generic timeout.
 
@@ -1213,7 +1213,7 @@ Increasingly, "firmware" is an OCI container image deployed to the device by an 
 1. **Probe abstraction.** Is the debug probe a first-class target-platform attribute (per `EmbeddedTarget`) or a workstation attribute (lab benches with probes)? Latter is operationally cleaner; former is correctness-aligned with the dispatcher's routing.
 2. **Fuzzing throughput on chip.** When rehost is unfaithful and chip-fuzzing is too slow, do we accept low coverage as the budget reality, or invest in hardware-accelerated fuzzing rigs (FPGA-based, multi-board)? The latter is real money.
 3. **RTOS task isolation.** A bug in task A clobbers task B's memory. Is the bug attributed to task A's parser or to the RTOS's lack of task isolation? Both views are valid; the finding model needs to support both.
-4. **Symbol recovery for stripped RTOS.** Function-hash matching against a corpus of known RTOS images can recover symbols. We need that corpus. Where does it come from — vendor SDK reverse-engineering? Public symbol databases? Operator-curated?
+4. **Symbol recovery for stripped RTOS.** Function-hash matching against a corpus of known RTOS images can recover symbols. We need that corpus. Where does it come from -- vendor SDK reverse-engineering? Public symbol databases? Operator-curated?
 5. **Physical lab access for distributed teams.** Operators are remote; the lab is in one office. Streaming probe + camera over the network exists; latency on debug operations is a real ergonomic problem.
 6. **Custom silicon.** Some targets are vendor SoCs with proprietary cores (not ARM or RISC-V). The module's tooling assumption (capstone, unicorn) may not cover the architecture. Default behavior: refuse with a clear error.
 7. **Firmware update interception during analysis.** Some chips lock down debug access after firmware boot. The probe must halt the chip before it re-locks. Module needs to model the boot-sequence timing window.
@@ -1268,10 +1268,10 @@ Vendors fork upstream libraries and patch them. Sometimes the fork is documented
 1. Fingerprint each function in the bundled library (Pharos-style fuzzy hash).
 2. Compare against fingerprints of upstream tags (the closest version).
 3. Categorize each function:
-   - **Identical** — matches an upstream function byte-for-byte (modulo relocation).
-   - **Equivalent** — fuzzy hash match within tolerance; likely same logic, different compilation.
-   - **Diverged** — fuzzy hash mismatch; vendor patched.
-   - **Novel** — no upstream counterpart; vendor-added.
+   - **Identical** -- matches an upstream function byte-for-byte (modulo relocation).
+   - **Equivalent** -- fuzzy hash match within tolerance; likely same logic, different compilation.
+   - **Diverged** -- fuzzy hash mismatch; vendor patched.
+   - **Novel** -- no upstream counterpart; vendor-added.
 4. Diverged and novel functions are the interesting ones. Patches that fix bugs are visible; patches that *introduce* bugs are visible; vendor-added code that's never been audited is visible.
 
 Output: a per-dependency "fork report" listing diverged and novel functions. The LLM can prioritize them: divergence in a parser is high-priority; divergence in a string-utility is low-priority.
@@ -1292,21 +1292,21 @@ Reachability is approximate (call graphs miss indirect calls; symbolic execution
 ### 9.5 Integration with existing vulnerability module
 
 The `vulnerability` module already provides:
-- `tools/intel_*.py` — NVD, OSV, GHSA, EPSS, KEV intel feeds.
-- `providers/` — OSV, NVD, Arch, Alpine, vendor advisory adapters.
-- `services/inventory.py` — package inventory normalization.
-- `evidence_validator.py` — the existing CVE finding validator.
-- `tools/blast_radius.py`, `tools/peer_compare.py` — risk context.
+- `tools/intel_*.py` -- NVD, OSV, GHSA, EPSS, KEV intel feeds.
+- `providers/` -- OSV, NVD, Arch, Alpine, vendor advisory adapters.
+- `services/inventory.py` -- package inventory normalization.
+- `evidence_validator.py` -- the existing CVE finding validator.
+- `tools/blast_radius.py`, `tools/peer_compare.py` -- risk context.
 
 The VR module's SCA layer is a thin consumer of these. It calls into the platform-shared dependency intel layer, gets CVE candidates, and then runs *exploitability confirmation* on each candidate via its reasoning loop.
 
 Exploitability confirmation answers: given a candidate CVE in this dependency, does the attack surface in *this* product actually expose it?
 
 Concrete decisions per candidate:
-- **Confirmed exploitable** — reachable function, the trigger conditions are present, a PoC reproduces.
-- **Confirmed not exploitable** — reachable function but trigger conditions absent (e.g., a CVE conditional on a config flag the product doesn't enable).
-- **Reachable, exploitability uncertain** — the LLM cannot confirm without operator-level investigation.
-- **Not reachable** — dead-stripped or behind a config gate the product doesn't expose.
+- **Confirmed exploitable** -- reachable function, the trigger conditions are present, a PoC reproduces.
+- **Confirmed not exploitable** -- reachable function but trigger conditions absent (e.g., a CVE conditional on a config flag the product doesn't enable).
+- **Reachable, exploitability uncertain** -- the LLM cannot confirm without operator-level investigation.
+- **Not reachable** -- dead-stripped or behind a config gate the product doesn't expose.
 
 The output is a `DependencyFinding` with severity adjusted from the upstream CVSS by reachability and exploitability evidence. A 9.8 critical CVE in an unreachable function may surface as `informational` for this product; a 5.3 medium CVE in a directly-reachable parser handling untrusted input may surface as `high`.
 
@@ -1341,10 +1341,10 @@ Sigstore-signed releases (`cosign`-signed container images, npm packages with pr
 ### 9.9 Findings type: dependency vs primary
 
 The finding model has to distinguish:
-- **Primary finding** — a bug in the customer's own code.
-- **Dependency finding (known CVE)** — a bug in a third-party dependency, already disclosed in public CVE feeds.
-- **Dependency finding (novel)** — a bug in a third-party dependency, not previously disclosed. *Disclosure target shifts*: it goes upstream first, not to the customer alone.
-- **Vendor-fork finding** — a bug in the vendor's diverged fork of an upstream library. Disclosure goes to the vendor (the customer is the vendor, often) and the upstream-disclosure question becomes "does upstream have this bug too?"
+- **Primary finding** -- a bug in the customer's own code.
+- **Dependency finding (known CVE)** -- a bug in a third-party dependency, already disclosed in public CVE feeds.
+- **Dependency finding (novel)** -- a bug in a third-party dependency, not previously disclosed. *Disclosure target shifts*: it goes upstream first, not to the customer alone.
+- **Vendor-fork finding** -- a bug in the vendor's diverged fork of an upstream library. Disclosure goes to the vendor (the customer is the vendor, often) and the upstream-disclosure question becomes "does upstream have this bug too?"
 
 The disclosure flow for a novel dependency finding is more complex: upstream maintainer contact, possibly CNA reassignment, customer notification on the timeline of the upstream fix. The module's disclosure tracker (D-04) supports this with a `disclosure_target` field that distinguishes upstream-vs-vendor.
 
@@ -1359,7 +1359,7 @@ This integrates with the replay verifier (§1): when a Reproducer for a dependen
 
 ### Open questions
 
-1. **Reachability tooling reliability.** Static reachability is approximate; symbolic is expensive. What's the default — static-only, symbolic-on-uncertain, or both? Per-engagement override?
+1. **Reachability tooling reliability.** Static reachability is approximate; symbolic is expensive. What's the default -- static-only, symbolic-on-uncertain, or both? Per-engagement override?
 2. **Fork-detection signature corpus.** We need fingerprints of upstream tagged releases of every common library. Building and maintaining this corpus is real work. Outsource (Pharos, public repos) or in-house?
 3. **Vendor-fork disclosure to upstream.** When a vendor fork has a bug that may also exist in upstream, are we ethically obligated to also report to upstream? When do customer disclosure terms permit this?
 4. **Exploitability confirmation budget.** Confirming each of 47 dependencies' CVEs costs turns. Do we confirm all, top-N by upstream CVSS, or top-N by reachability? Tradeoff between coverage and budget.
@@ -1371,7 +1371,7 @@ This integrates with the replay verifier (§1): when a Reproducer for a dependen
 
 ## 10. Training and Calibration
 
-Calibrating the module's LLM behavior without fine-tuning the production model. The reasoning is mostly negative — the things we *will not* do — and then a positive description of what calibration actually consists of.
+Calibrating the module's LLM behavior without fine-tuning the production model. The reasoning is mostly negative -- the things we *will not* do -- and then a positive description of what calibration actually consists of.
 
 ### 10.1 Why we don't fine-tune the production LLM
 
@@ -1428,7 +1428,7 @@ Rollback is a content-hash flip. The audit trail records which prompt version dr
 
 ### 10.5 Operator-correction-as-training-signal
 
-When an operator overrides an LLM decision ("reject this strategy, go with that one"), the override is a training signal. Not for fine-tuning — for the few-shot library and the strategy router.
+When an operator overrides an LLM decision ("reject this strategy, go with that one"), the override is a training signal. Not for fine-tuning -- for the few-shot library and the strategy router.
 
 Operator-correction pipeline:
 1. Override recorded with full context (prompt, decision, override action, override justification).
@@ -1455,11 +1455,11 @@ The glossary lives in the system prompt's preamble. It's terse (each term: one s
 ### 10.7 Specialist models for narrow tasks
 
 Some tasks are narrow enough that a specialist model is worth the operational cost:
-- **LLM4Decompile / RevenG** — cleaning up Hex-Rays output, recovering variable names, generating consistent type annotations. Specialist models, run on-prem on the workstation's GPU. Output feeds the evidence pack of the strategic loop.
-- **Embedding model for KB retrieval** — a code-aware embedding model (CodeBERT-class or larger) is necessary for semantic retrieval over the KB. Specialist; can be on-prem.
-- **Crash-signature deduplication** — a small classifier (could be non-LLM — a classical clustering model on stack traces) outperforms the strategic LLM at this task at a fraction of the cost.
+- **LLM4Decompile / RevenG** -- cleaning up Hex-Rays output, recovering variable names, generating consistent type annotations. Specialist models, run on-prem on the workstation's GPU. Output feeds the evidence pack of the strategic loop.
+- **Embedding model for KB retrieval** -- a code-aware embedding model (CodeBERT-class or larger) is necessary for semantic retrieval over the KB. Specialist; can be on-prem.
+- **Crash-signature deduplication** -- a small classifier (could be non-LLM -- a classical clustering model on stack traces) outperforms the strategic LLM at this task at a fraction of the cost.
 
-These specialists *are* fine-tunable on data we control — our own corpora, our own engagements (post-anonymization). Customer code does not enter their training data without explicit per-customer opt-in for the specific specialist.
+These specialists *are* fine-tunable on data we control -- our own corpora, our own engagements (post-anonymization). Customer code does not enter their training data without explicit per-customer opt-in for the specific specialist.
 
 The strategic LLM (the one running the reasoning loop) stays general and stays an API.
 
@@ -1478,7 +1478,7 @@ Steps 1–6 protect against regressions. Step 7 protects against systemic issues
 
 ### 10.9 Calibration drift detection
 
-Even without a model upgrade, the production model can shift behavior — RLHF updates, system-side prompt updates, infrastructure-side batching changes. The eval harness re-runs monthly on a fixed model identifier; pass rate trends are the drift signal.
+Even without a model upgrade, the production model can shift behavior -- RLHF updates, system-side prompt updates, infrastructure-side batching changes. The eval harness re-runs monthly on a fixed model identifier; pass rate trends are the drift signal.
 
 If pass rate drops on a previously-stable case set, the platform investigates. The investigation isn't "is the model worse"; it's "what changed." Sometimes the answer is the eval set drifted (a test binary's environment got an update); sometimes the answer is the model genuinely shifted.
 
@@ -1527,4 +1527,4 @@ The KB (§3) compensates for some of this. Operator steering compensates for the
 
 These topics are not exhaustive but they cover the main gaps left by docs 01–04: how the module produces evidence that survives time and machine drift; how it stays inside the legal lines; how it accumulates and reuses knowledge; how it integrates into a customer's existing software lifecycle; how multiple humans share one project; what it costs and how that cost is managed; how the module itself is verified; how it handles target classes that break the assumptions of the rest of the design; how it analyzes targets that are ecosystems of dependencies, not single binaries; and how the LLM that drives the loop is tuned without ever being fine-tuned on customer data.
 
-Each section's open questions are real — not rhetorical. They define the design surface the next round of decisions should land on.
+Each section's open questions are real -- not rhetorical. They define the design surface the next round of decisions should land on.

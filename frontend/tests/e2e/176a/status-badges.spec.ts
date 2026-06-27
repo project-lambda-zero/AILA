@@ -1,5 +1,5 @@
 /**
- * status-badges.spec.ts — D-05, D-21, D-22.
+ * status-badges.spec.ts -- D-05, D-21, D-22.
  *
  * - D-05: each task status badge carries the canonical class hook.
  * - D-21: --status-completed CSS variable differs from --severity-low.

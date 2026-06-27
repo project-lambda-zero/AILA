@@ -28,7 +28,7 @@ class BudgetConfig(BaseModel):
 class BudgetState(BaseModel):
     """Mutable dual-budget tracker.
 
-    Records consumption and grants extensions. Pure value type — persistence
+    Records consumption and grants extensions. Pure value type -- persistence
     is the caller's responsibility via `to_json` / `from_json`. Concurrent
     mutation is the caller's responsibility (typically owned by a single
     workflow run).
@@ -60,7 +60,7 @@ class BudgetState(BaseModel):
 
     @property
     def turn_fraction(self) -> float:
-        """0.0 to 1.0+ — how much of the turn budget is consumed."""
+        """0.0 to 1.0+ -- how much of the turn budget is consumed."""
         max_turns = self._max_turns
         if max_turns <= 0:
             return 1.0
@@ -87,7 +87,7 @@ class BudgetState(BaseModel):
         self.tool_time_used_seconds += seconds
 
     def grant_extension(self) -> None:
-        """Grant one extension — bumps both ceilings, leaves consumption alone."""
+        """Grant one extension -- bumps both ceilings, leaves consumption alone."""
         self.extensions_granted += 1
 
     @property

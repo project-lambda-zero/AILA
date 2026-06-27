@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 # ---------------------------------------------------------------------------
-# Module-level skip guard — live DB query, not an env var check.
+# Module-level skip guard -- live DB query, not an env var check.
 # ---------------------------------------------------------------------------
 
 
@@ -40,13 +40,13 @@ def _ubuntu_vm_registered() -> bool:
 
 if not _ubuntu_vm_registered():
     pytest.skip(
-        "ubuntu-vm not registered — skipping e2e suite",
+        "ubuntu-vm not registered -- skipping e2e suite",
         allow_module_level=True,
     )
 
 
 # ---------------------------------------------------------------------------
-# Module-scoped platform fixture — expensive init happens once per session.
+# Module-scoped platform fixture -- expensive init happens once per session.
 # ---------------------------------------------------------------------------
 
 
@@ -64,7 +64,7 @@ def platform():
 
 
 # ---------------------------------------------------------------------------
-# E2E test functions — ordered intentionally.
+# E2E test functions -- ordered intentionally.
 #
 # test_full_analysis_real_infrastructure runs FIRST because the four
 # report-mode tests (summary, count, findings, explain) all depend on a
@@ -82,7 +82,7 @@ def test_full_analysis_real_infrastructure(platform):
     SSH inventory -> OSV/Arch/Alpine advisories -> NVD/EPSS/KEV enrichment
     -> risk scoring -> report written to disk.
     No mocks. Real SSH, real APIs, real DB writes.
-    Run first — subsequent report-mode tests depend on this report existing.
+    Run first -- subsequent report-mode tests depend on this report existing.
     """
     response = platform.handle("run a full vulnerability analysis on ubuntu-vm")
     assert response.action_id == "vulnerability.analyze_fleet"

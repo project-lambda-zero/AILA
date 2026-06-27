@@ -109,7 +109,7 @@ def test_multi_host_blast_radius(tmp_path):
 
 
 def test_single_host_no_tags(tmp_path):
-    """CVE on 1 host with no AssetTagRecord entries — tags={} on that host entry."""
+    """CVE on 1 host with no AssetTagRecord entries -- tags={} on that host entry."""
     from aila.modules.vulnerability.tools.blast_radius import blast_radius
 
     settings = _make_settings(tmp_path)
@@ -140,7 +140,7 @@ def test_unknown_cve_returns_empty(tmp_path):
 
 
 def test_multiple_packages_same_host(tmp_path):
-    """CVE matching libssl + openssl on same host — both appear as separate host entries."""
+    """CVE matching libssl + openssl on same host -- both appear as separate host entries."""
     from aila.modules.vulnerability.tools.blast_radius import blast_radius
 
     settings = _make_settings(tmp_path)
@@ -151,7 +151,7 @@ def test_multiple_packages_same_host(tmp_path):
 
     result = blast_radius(cve_id="CVE-2024-MULTI", settings=settings)
 
-    # host_count is distinct hosts — just 1
+    # host_count is distinct hosts -- just 1
     assert result["host_count"] == 1
     # But hosts list has 2 entries (one per package)
     assert len(result["hosts"]) == 2

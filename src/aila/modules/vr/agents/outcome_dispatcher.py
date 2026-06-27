@@ -19,7 +19,7 @@ The other 8 outcome kinds (AssessmentReport, StrategyDescriptor,
 ProfileSpecDraft, ConfigDelta, PatchAssessmentReport, CrashTriageReport,
 CampaignLaunch, SubInvestigation) currently have no downstream consumer
 built. They get dispatch_status=SKIPPED with reason
-'no_downstream_consumer_yet' — these handlers land per-kind as the
+'no_downstream_consumer_yet' -- these handlers land per-kind as the
 relevant downstream subsystems ship (CampaignLaunch needs the v0.3
 fuzzing module; SubInvestigation needs M3.R-5 branching).
 """
@@ -108,7 +108,7 @@ class OutcomeDispatcherError(Exception):
     """
 
 
-# fix §237 — variant-hunt fork-time guards. MAX_VARIANT_DEPTH bounds
+# fix §237 -- variant-hunt fork-time guards. MAX_VARIANT_DEPTH bounds
 # the recursion chain so a runaway agent can't fork variants of variants
 # of variants forever. VARIANT_MIN_BUDGET_USD prevents spawning a child
 # whose $-budget can't pay for even a single round of reasoning.
@@ -144,7 +144,7 @@ def _canonical_descriptor_key(descriptor: dict[str, Any] | None) -> str:
     Old code computed the key from a 3-field fallback chain
     (``harness or function or function_name``) inline at both the
     read site (matching old rows) and the write site (new row). Any
-    drift between the two formulas — case, whitespace, key choice —
+    drift between the two formulas -- case, whitespace, key choice --
     silently broke the supersede match. Single normalization function
     so both sides land on the same string.
 
@@ -190,7 +190,7 @@ _NOT_YET_DISPATCHABLE: dict[OutcomeKind, str] = {
 class OutcomeDispatcher:
     """Routes accepted outcomes to their downstream artifacts.
 
-    Construction takes only the KnowledgeService — the other handlers
+    Construction takes only the KnowledgeService -- the other handlers
     use direct DB writes through UnitOfWork plus the platform task
     queue for child-investigation spawning. Tests can inject a fake
     KnowledgeService with the same ``store(namespace, content, ...)``
@@ -230,7 +230,7 @@ class OutcomeDispatcher:
             if outcome is None:
                 raise ValueError(f"outcome {outcome_id} not found")
             if outcome.state is None:
-                # fix §182 — legacy NULL state masked the bug where a row
+                # fix §182 -- legacy NULL state masked the bug where a row
                 # skipped the draft→approved→dispatched lifecycle entirely.
                 # Treat as a hard error so the operator sees it instead of
                 # the row silently being marked "already_dispatched".
@@ -281,7 +281,7 @@ class OutcomeDispatcher:
                 reason="already_dispatched",
             )
         if state != OUTCOME_STATE_APPROVED:
-            # fix §183 — supersedes §185. An unknown state means the
+            # fix §183 -- supersedes §185. An unknown state means the
             # outcome lifecycle is corrupted; SKIPPED is silent and
             # hides the corruption. Raise so the worker logs the
             # traceback and the caller marks the outcome FAILED.
@@ -337,7 +337,7 @@ class OutcomeDispatcher:
             SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError,
             AttributeError, LookupError, NameError, ImportError,
         ):
-            # fix §184 — narrow except masked UnboundLocalError on
+            # fix §184 -- narrow except masked UnboundLocalError on
             # `result` when an unexpected exception escaped before
             # `result` was assigned. Catch everything, log with the
             # full traceback, and reraise so the caller can mark the
@@ -433,16 +433,16 @@ class OutcomeDispatcher:
 
         Standalone investigations (no project_id) write a finding row
         with ``project_id=NULL`` per migration 057. Operator can link
-        the finding to a project later — listings filter by
+        the finding to a project later -- listings filter by
         ``project_id IS NULL`` to surface orphans.
         """
         target_row, inv = await self._load_target_for_investigation(investigation_id)
 
-        # fix §239 — variant-hunt advisory now stamps every DIRECT_FINDING
+        # fix §239 -- variant-hunt advisory now stamps every DIRECT_FINDING
         # outcome, not only kind=variant_hunt investigations. AUDIT and
         # NDAY children were silently skipping the stamp; operators saw
         # blank advisories on findings spawned through those paths. The
-        # advisory remains informational — `exhaustion_declared` when the
+        # advisory remains informational -- `exhaustion_declared` when the
         # agent's answer text declares variants are dead/absent (regex
         # match), `no_orders_no_exhaustion_phrase` when neither orders
         # nor a clear exhaustion phrase exist, `orders_present` when the
@@ -495,7 +495,7 @@ class OutcomeDispatcher:
         crash_signature = payload.get("crash_signature")
         poc_code = payload.get("poc_code")
 
-        # fix §186 + §235 — single UoW atomically inserts the finding
+        # fix §186 + §235 -- single UoW atomically inserts the finding
         # and links it to the investigation. Old code committed after
         # the insert and again after the link update; a crash between
         # the two left an orphan VRFindingRecord with no inv pointer.
@@ -538,7 +538,7 @@ class OutcomeDispatcher:
                 uow.session.add(inv_row)
             await uow.session.commit()
 
-        # fix §236 — variant spawn loop is non-atomic across child
+        # fix §236 -- variant spawn loop is non-atomic across child
         # investigations (each _spawn_variant_child has its own UoW +
         # ARQ enqueue). A crash mid-loop used to leave N children alive
         # leaving no record of what was already spawned, so re-dispatching
@@ -553,7 +553,7 @@ class OutcomeDispatcher:
         )
         spawn_errors: list[str] = []
         variants = payload.get("variant_hunt_orders")
-        # fix §238 — agents occasionally emit `variant_hunt_orders` as a
+        # fix §238 -- agents occasionally emit `variant_hunt_orders` as a
         # single dict instead of a list of dicts (when there's exactly
         # one order). Coerce to list. Anything that isn't a dict or list
         # gets dropped with an explicit log so silent corruption shows up.
@@ -659,7 +659,7 @@ class OutcomeDispatcher:
             payload.get("question") or payload.get("hypothesis")
             or f"Find variants of the issue identified in {parent.title}",
         )
-        # fix §234 — parent.cost_budget_usd is sometimes None (legacy
+        # fix §234 -- parent.cost_budget_usd is sometimes None (legacy
         # rows or operator-set ad-hoc investigations); `None * 0.5`
         # raised TypeError outside the narrow except filter, which
         # blew up dispatch with no result row. Use $5 as parent floor
@@ -698,7 +698,7 @@ class OutcomeDispatcher:
             child_id = child.id
             child_team_id = child.team_id
 
-        # fix §233 — enqueue the run_vr_investigate task. Without this
+        # fix §233 -- enqueue the run_vr_investigate task. Without this
         # the child sits in status=CREATED forever; the canonical
         # VARIANT_HUNT_ORDER outcome path produced zombie investigations
         # whereas the bundled _spawn_variant_child path correctly enqueued.
@@ -750,7 +750,7 @@ class OutcomeDispatcher:
             per outcome row)
           - Bundled ``variant_hunt_orders`` list inside a
             ``DIRECT_FINDING`` payload (one outcome row spawns N
-            children atomically — needed because the reasoning loop
+            children atomically -- needed because the reasoning loop
             terminates on the first submit)
 
         Returns the new investigation id. Raises ``ValueError`` when
@@ -770,7 +770,7 @@ class OutcomeDispatcher:
             payload.get("question") or payload.get("hypothesis")
             or f"Find variants of the issue identified in {parent.title}",
         )
-        # fix §237 — fork-time guards. depth from payload (default 1 =
+        # fix §237 -- fork-time guards. depth from payload (default 1 =
         # spawning level; child operates at depth+1). Refuse if either
         # the depth limit OR the minimum budget would be violated.
         # Defensive None handling for parent.cost_budget_usd (fix §234).
@@ -821,7 +821,7 @@ class OutcomeDispatcher:
             child_team_id = child.team_id
 
         # Enqueue the run_vr_investigate task so the child actually
-        # executes — without this the child investigation sits in
+        # executes -- without this the child investigation sits in
         # status=CREATED forever waiting for someone to drive it.
         # Same pattern as the API's create_investigation endpoint.
         try:
@@ -893,7 +893,7 @@ class OutcomeDispatcher:
         finding's investigation facts and UPDATEs the VRFindingRecord
         with ``poc_code`` + ``poc_language`` when done. We don't
         block dispatch on PoC generation (writer call is ~10-30s of
-        LLM time) — finding lands immediately, PoC trickles in.
+        LLM time) -- finding lands immediately, PoC trickles in.
         """
         from aila.modules.vr.workflow.task import run_vr_draft_poc
 
@@ -952,7 +952,7 @@ class OutcomeDispatcher:
                 reason="missing_profile_or_target_descriptor",
             )
 
-        # fix §262 + §263 — canonical descriptor key + row-level lock.
+        # fix §262 + §263 -- canonical descriptor key + row-level lock.
         # Old code computed the descriptor key inline twice (once for
         # the new row, once per old row) with no shared canonicalizer,
         # so trivial cosmetic differences ("MyHarness" vs "myharness")
@@ -1071,7 +1071,7 @@ class OutcomeDispatcher:
         workspace_id = target_row.workspace_id
         namespace = f"vr.profile_spec.workspace.{workspace_id}"
         content = (
-            f"Profile draft — {profile_name} ({profile_kind})\n"
+            f"Profile draft -- {profile_name} ({profile_kind})\n"
             f"spec={json.dumps(spec, sort_keys=True)}"
         )
         store_result = await self._knowledge.store(
@@ -1089,7 +1089,7 @@ class OutcomeDispatcher:
                 "outcome_id": outcome_id,
                 "status": "draft",
             },
-            # fix §264 — old dedup_key was (workspace, kind, name) only.
+            # fix §264 -- old dedup_key was (workspace, kind, name) only.
             # Two drafts that shared a profile_name but had different spec
             # dicts silently overwrote each other in KnowledgeService.
             # Mix in the canonical-JSON spec hash so genuine spec changes
@@ -1119,15 +1119,15 @@ class OutcomeDispatcher:
 
         Two parallel paths, both run when their inputs are present:
 
-        1. ``variant_hunt_orders`` (list[dict]) — spawn one child
+        1. ``variant_hunt_orders`` (list[dict]) -- spawn one child
            investigation per residual-gap candidate the agent named.
            This is the path that matters when the agent's verdict is
            'PATCH PRESENT but with residual gap candidates (X, Y, Z)'
-           — without spawning children for X/Y/Z, the candidates die in
+           -- without spawning children for X/Y/Z, the candidates die in
            the report and no follow-up audit ever happens.
 
         2. ``patch_descriptor`` ({vulnerable_ref, patched_ref, repo_url})
-           — kick off the N-day workflow that materialises the
+           -- kick off the N-day workflow that materialises the
            assessment into a finding + disclosure scaffold. Optional;
            skipped when the report is a pure patch-verification with no
            N-day disclosure path.
@@ -1137,7 +1137,7 @@ class OutcomeDispatcher:
         )
 
         # Path 1: variant-hunt fan-out for residual gap candidates.
-        # fix §266 — same idempotent spawn pattern as §236. Each
+        # fix §266 -- same idempotent spawn pattern as §236. Each
         # successful spawn writes back to the outcome payload so a
         # mid-loop crash + re-dispatch doesn't re-spawn the same N.
         spawned_indices: set[int] = set(
@@ -1185,13 +1185,13 @@ class OutcomeDispatcher:
                 except (ValueError, RuntimeError) as exc:
                     spawn_errors.append(f"{type(exc).__name__}:{exc}")
 
-        # Path 2: nday enqueue (optional — only when patch_descriptor present).
+        # Path 2: nday enqueue (optional -- only when patch_descriptor present).
         patch_descriptor = payload.get("patch_descriptor") or {}
         assessment = payload.get("assessment") or {}
         nday_handle_id: str | None = None
         nday_error: str | None = None
         if isinstance(patch_descriptor, dict) and patch_descriptor:
-            # fix §265 — explicit required-key check before enqueue. The
+            # fix §265 -- explicit required-key check before enqueue. The
             # nday workflow upstream blew up midway when any of these
             # were absent; raise at the dispatcher so the outcome ends
             # up FAILED with a clear reason instead of silently leaving
@@ -1218,7 +1218,7 @@ class OutcomeDispatcher:
             except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
                 nday_error = f"{type(exc).__name__}:{exc}"
 
-        # Both paths absent — at least the verdict prose lands in the
+        # Both paths absent -- at least the verdict prose lands in the
         # outcome row; report it as DISPATCHED so the UI shows green.
         if not spawned_children and nday_handle_id is None and not spawn_errors and not nday_error:
             return OutcomeDispatchResult(
@@ -1287,7 +1287,7 @@ class OutcomeDispatcher:
                 result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
             )
             if just_dispatched:
-                # fix §20 — single point for outcome.state writes.
+                # fix §20 -- single point for outcome.state writes.
                 # set_outcome_state adds the audit-trail row (and
                 # this outcome row) to the session; we still need
                 # the explicit session.add for the dispatch_status /
@@ -1300,12 +1300,12 @@ class OutcomeDispatcher:
                     reason=f"dispatched_by_outcome_dispatcher:{result.dispatch_target or '?'}",
                 )
             else:
-                # state unchanged — still persist the dispatch_status
+                # state unchanged -- still persist the dispatch_status
                 # / dispatch_target updates from the lines above.
                 uow.session.add(outcome)
 
             # When an outcome successfully dispatches, the investigation
-            # has reached its goal — any remaining active sibling
+            # has reached its goal -- any remaining active sibling
             # branches should stop burning turns on a question already
             # answered. Halt them + flip the investigation to COMPLETED
             # when no branches remain active.
@@ -1366,14 +1366,14 @@ class OutcomeDispatcher:
                         ),
                     )).all()
                     if not remaining:
-                        # fix §22 — single chokepoint for the status
+                        # fix §22 -- single chokepoint for the status
                         # transition. Phase B will replace the direct
                         # write with a workflow-engine transition call;
                         # in the meantime route every COMPLETED write
                         # through this helper so Phase B is a one-line
                         # swap. The dispatcher MUST NOT remain the
                         # writer of investigation.status per the SSOT
-                        # contract — engine state handlers own it.
+                        # contract -- engine state handlers own it.
                         await self._mark_investigation_completed(uow, inv)
                         _log.info(
                             "outcome_dispatcher COMPLETE investigation=%s "
@@ -1382,7 +1382,7 @@ class OutcomeDispatcher:
                         )
             await uow.commit()
 
-        # fix §104 — ARQ purge happens after the UoW commit. The purge
+        # fix §104 -- ARQ purge happens after the UoW commit. The purge
         # touches Redis, not Postgres, so we can't include it in the
         # SQLAlchemy transaction. Partial-failure semantics:
         #   1. DB commit succeeded → investigation row reads COMPLETED.
@@ -1409,7 +1409,7 @@ class OutcomeDispatcher:
         Today this is a direct ORM mutation, identical to the inline
         write it replaced. Phase B will replace the body with a call
         into the workflow engine's transition API so the dispatcher
-        no longer writes investigation status — engine state handlers
+        no longer writes investigation status -- engine state handlers
         own that field per the SSOT contract. Keeping the call site
         in one place means Phase B is a one-line swap, not a hunt for
         every COMPLETED writer in the dispatcher.
@@ -1450,7 +1450,7 @@ class OutcomeDispatcher:
                 if attempt == attempts:
                     _log.warning(
                         "outcome_dispatcher ARQ_PURGE giving up inv=%s "
-                        "attempt=%d/%d err=%s — investigation_setup safety net "
+                        "attempt=%d/%d err=%s -- investigation_setup safety net "
                         "catches any leaked dequeues",
                         investigation_id, attempt, attempts, exc,
                     )
@@ -1490,7 +1490,7 @@ def _compute_target_signature(target_id: str, payload: dict[str, Any]) -> str:
     region = str(payload.get("region_descriptor") or "")
     raw = f"{target_id}|{region}".encode()
     if not region:
-        # No region descriptor — fall back to a random sig so multiple
+        # No region descriptor -- fall back to a random sig so multiple
         # audit memos against the same target don't dedup over each other.
         return f"{target_id}|{uuid4()}"
     return hashlib.sha256(raw).hexdigest()

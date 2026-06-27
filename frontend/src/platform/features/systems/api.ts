@@ -135,7 +135,7 @@ function buildSearchPath(pathname: string, params: Record<string, string | numbe
 
 /**
  * Format a UTC ISO date string as a relative time string (e.g. "3 hours ago").
- * Returns "Never" for null/empty input. No external date library — simple arithmetic.
+ * Returns "Never" for null/empty input. No external date library -- simple arithmetic.
  */
 export function formatRelativeTime(dateString: string | null): string {
   if (!dateString) {

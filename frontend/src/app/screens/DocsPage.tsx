@@ -1,7 +1,7 @@
 import { AilaCard } from "@/components/aila/AilaCard";
 
 /**
- * DocsPage — operator-facing usage guide (D-03, D-33).
+ * DocsPage -- operator-facing usage guide (D-03, D-33).
  *
  * Fresh content authored for the operator console. NOT a README dump; NOT a
  * verbatim port of the removed onboarding wizard. Five H2 section headings are
@@ -39,7 +39,7 @@ export function DocsPage() {
           "Add system" action. You will need an SSH host, port, username,
           and either a password or a private key. After saving, the system
           appears in the list and can be targeted by scans. Health of the
-          SSH connection is reflected on the System Detail page — if a
+          SSH connection is reflected on the System Detail page -- if a
           scan fails with a connection error, re-check credentials there
           before opening a ticket.
         </p></AilaCard>
@@ -64,7 +64,7 @@ export function DocsPage() {
           Clicking a row opens the detail view with four sections: Summary
           (high-level run info), Findings (table with severity badges),
           Remediation (prose notes), and Metadata (raw key/value context).
-          Severity badges follow the platform palette — critical/high/medium
+          Severity badges follow the platform palette -- critical/high/medium
           are colored per theme, low and info are desaturated. Exports for
           JSON, CSV, and PDF are available on the detail sidebar.
         </p></AilaCard>

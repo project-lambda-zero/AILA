@@ -8,7 +8,7 @@ export interface EditModeToggleProps {
 }
 
 /**
- * EditModeToggle — lock/unlock toggle for dashboard edit mode (D-02).
+ * EditModeToggle -- lock/unlock toggle for dashboard edit mode (D-02).
  *
  * Locked state: shows Lock icon, "Locked" label in muted text.
  * Editing state: shows LockOpen icon, "Editing" label in amber accent text.

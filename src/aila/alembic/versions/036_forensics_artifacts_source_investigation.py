@@ -1,4 +1,4 @@
-"""036 — add source_investigation_id to forensics_artifacts.
+"""036 -- add source_investigation_id to forensics_artifacts.
 
 Lets the agent persist its observables/provenance as proper artifact
 rows at answer-submission time, while keeping intake/full-analysis

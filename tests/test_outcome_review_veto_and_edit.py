@@ -4,13 +4,13 @@ Two changes covered:
 
 (1) ``services/outcome_review.VETO_K`` raised from 1 to 2. A single
     sibling reject no longer flips the outcome state to ``rejected``.
-    Background: masson ANALYSIS_REPORT carried both Stage 1 + Stage 2
-    RAT config correctly, but a sibling reject built on the
+    Background: the test sample ANALYSIS_REPORT carried both Stage 1 +
+    Stage 2 RAT config correctly, but a sibling reject built on the
     encoding-filter false-negative bug (``list_strings(encoding=utf16le,
-    section=.rsrc) returns total=0``, fixed in bridge ``6133103`` +
-    ida-headless ``e189669``) vetoed it via the old 1-reject hard veto
-    despite a 2-1 approve majority. Raising to 2 requires a chorus
-    rather than a solo to kill an outcome.
+    section=.rsrc) returns total=0``, fixed in an earlier bridge +
+    ida-headless fix) vetoed it via the old 1-reject hard veto despite
+    a 2-1 approve majority. Raising to 2 requires a chorus rather than
+    a solo to kill an outcome.
 
 (2) New ``edit_outcome`` action on :class:`ReasoningTurnDecision`.
     Counterpart to the deferred ``request_edit`` vote -- this path
@@ -34,8 +34,8 @@ class TestVetoThreshold:
 
     def test_veto_k_is_two(self) -> None:
         # Hard-coded check: any future tweak to the constant fires a
-        # test failure that names the regression directly. Operator
-        # observed the 1-veto rule killing a correct masson
+        # test failure that names the regression directly. An observed
+        # bug let the 1-veto rule kill a correct test-sample
         # ANALYSIS_REPORT; this test pins the new value.
         assert VETO_K == 2
 

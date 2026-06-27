@@ -1,4 +1,4 @@
-"""M3.R-8 — Outcome dispatcher unit tests.
+"""M3.R-8 -- Outcome dispatcher unit tests.
 
 Tests cover the pure helpers (namespace builder, target_signature) and
 the routing-table coverage. DB-bound dispatch handlers are exercised in
@@ -33,7 +33,7 @@ class TestAuditMemoNamespace:
         assert _audit_memo_namespace("workspace", "ws-1", "team-1") == "vr.audit_memo.workspace.ws-1"
 
     def test_local_falls_through_to_workspace(self) -> None:
-        # Local memos still need a place — workspace is the natural default
+        # Local memos still need a place -- workspace is the natural default
         assert _audit_memo_namespace("local", "ws-1", "team-1") == "vr.audit_memo.workspace.ws-1"
 
     def test_no_workspace_no_team_falls_through_to_global(self) -> None:
@@ -68,7 +68,7 @@ class TestRoutingTableCoverage:
     """Verify _NOT_YET_DISPATCHABLE covers every kind not handled directly."""
 
     def test_six_kinds_have_real_handlers(self) -> None:
-        # These six are explicitly dispatched — should NOT appear in
+        # These six are explicitly dispatched -- should NOT appear in
         # _NOT_YET_DISPATCHABLE.
         for handled in (
             OutcomeKind.AUDIT_MEMO,
@@ -155,7 +155,7 @@ class TestKnowledgeStub:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Pure-handler tests using fakes (no DB) — exercise the validation +
+# Pure-handler tests using fakes (no DB) -- exercise the validation +
 # routing semantics of the 3 new dispatch kinds. The DB-bound load
 # step is monkey-patched out.
 # ────────────────────────────────────────────────────────────────────────────

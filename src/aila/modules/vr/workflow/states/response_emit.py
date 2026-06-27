@@ -1,4 +1,4 @@
-"""Response emit state — finalize project status and surface the result.
+"""Response emit state -- finalize project status and surface the result.
 
 The workflow's terminal handler. Walks the project row to either
 ``completed`` (a finding was persisted) or ``stalled`` (research surfaced
@@ -62,7 +62,7 @@ async def _set_status(project_id: str, status: str) -> None:
 
 async def state_response_emit(input: dict[str, Any], services: Any) -> StateResult:
     """Mark the project as completed/stalled and emit the terminal payload."""
-    del services  # unused — terminal state needs no services
+    del services  # unused -- terminal state needs no services
     project_id = str(input.get("project_id") or "")
     status = _resolve_status(input)
     await _set_status(project_id, status)

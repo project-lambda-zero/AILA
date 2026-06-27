@@ -49,7 +49,7 @@ function ProfileRow({ label, value }: { label: string; value: React.ReactNode })
 }
 
 // ---------------------------------------------------------------------------
-// Theme preview — a mini rendering of what the theme looks like.
+// Theme preview -- a mini rendering of what the theme looks like.
 // Each theme renders a 180-high card that IS the theme, not just swatches.
 // Inline styles are used so the preview is identical regardless of the
 // currently-active theme (the preview should always show its OWN look).
@@ -136,7 +136,7 @@ function ThemePreview({ theme }: { theme: Theme }) {
         className="relative h-28 overflow-hidden rounded-md"
         style={{ background: "#121212" }}
       >
-        {/* Subtle horizontal scanlines — 1px every 3px, opacity 0.06 */}
+        {/* Subtle horizontal scanlines -- 1px every 3px, opacity 0.06 */}
         <div
           aria-hidden
           className="absolute inset-0"
@@ -146,7 +146,7 @@ function ThemePreview({ theme }: { theme: Theme }) {
             mixBlendMode: "overlay",
           }}
         />
-        {/* Dusk glow — soft pink wash at the bottom */}
+        {/* Dusk glow -- soft pink wash at the bottom */}
         <div
           aria-hidden
           className="absolute inset-x-0 bottom-0"
@@ -156,7 +156,7 @@ function ThemePreview({ theme }: { theme: Theme }) {
               "radial-gradient(ellipse 90% 100% at 50% 100%, rgba(255,95,135,0.32) 0%, rgba(240,168,199,0.16) 35%, transparent 70%)",
           }}
         />
-        {/* Top hairline — transparent → accent → transparent (the techBorder cue) */}
+        {/* Top hairline -- transparent → accent → transparent (the techBorder cue) */}
         <div
           aria-hidden
           className="absolute inset-x-0 top-0 h-px"
@@ -194,7 +194,7 @@ function ThemePreview({ theme }: { theme: Theme }) {
             MIDNIGHT/CLOUD/8
           </div>
         </div>
-        {/* Cream-outlined button — the theme's button style */}
+        {/* Cream-outlined button -- the theme's button style */}
         <div
           className="absolute right-3 bottom-2 text-[9px] font-medium px-2 py-0.5"
           style={{
@@ -928,7 +928,7 @@ export function SettingsPage() {
           </Button>
         </div>
 
-        {/* Theme picker — mini previews rendered in each theme's actual style */}
+        {/* Theme picker -- mini previews rendered in each theme's actual style */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {themes.map((key) => {
             const meta = THEME_META[key];

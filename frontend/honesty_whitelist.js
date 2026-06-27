@@ -13,7 +13,7 @@
  * Maintenance:
  *   To suppress a finding: append a tuple here with a meaningful justification.
  *   To remove a suppression: delete the entry and fix the underlying code.
- *   Do NOT add inline suppression comments in source — use this registry.
+ *   Do NOT add inline suppression comments in source -- use this registry.
  */
 
 function validate(entries) {
@@ -35,18 +35,18 @@ function validate(entries) {
 
 export const HONESTY_WHITELIST = validate([
   // ---------------------------------------------------------------------------
-  // console_statement — intentional production console usage
+  // console_statement -- intentional production console usage
   // ---------------------------------------------------------------------------
 
   [
     "src/main.tsx",
     "console_statement",
-    "App bootstrap — console.error used for React error boundary reporting before structured logger is available at this layer",
+    "App bootstrap -- console.error used for React error boundary reporting before structured logger is available at this layer",
   ],
   [
     "src/app/ErrorBoundary.tsx",
     "console_statement",
-    "Error boundary — console.error logs uncaught React tree errors; no structured logger available at this layer",
+    "Error boundary -- console.error logs uncaught React tree errors; no structured logger available at this layer",
   ],
   [
     "src/app/router.tsx",
@@ -61,21 +61,21 @@ export const HONESTY_WHITELIST = validate([
   [
     "src/app/screens/ServerErrorPage.tsx",
     "console_statement",
-    "Error screen — logs raw error details to console for developer debugging; users only see the UI message",
+    "Error screen -- logs raw error details to console for developer debugging; users only see the UI message",
   ],
   [
     "src/lib/apiErrorHandler.ts",
     "console_statement",
-    "API error handler — console.error used for unexpected errors before structured logger hooks are wired at this layer",
+    "API error handler -- console.error used for unexpected errors before structured logger hooks are wired at this layer",
   ],
   [
     "src/platform/features/dashboard/widgetRegistry.ts",
     "console_statement",
-    "Widget registry — console.warn fires on duplicate widget registration; intentional developer-facing guard",
+    "Widget registry -- console.warn fires on duplicate widget registration; intentional developer-facing guard",
   ],
 
   // ---------------------------------------------------------------------------
-  // direct_env_access — import.meta.env.DEV at application entry points
+  // direct_env_access -- import.meta.env.DEV at application entry points
   // ---------------------------------------------------------------------------
 
   [
@@ -85,7 +85,7 @@ export const HONESTY_WHITELIST = validate([
   ],
 
   // ---------------------------------------------------------------------------
-  // theme_hardcode — hex color values in TSX files that cannot use CSS variables
+  // theme_hardcode -- hex color values in TSX files that cannot use CSS variables
   // ---------------------------------------------------------------------------
 
   [
@@ -106,7 +106,7 @@ export const HONESTY_WHITELIST = validate([
   [
     "src/platform/features/settings/SettingsPage.tsx",
     "theme_hardcode",
-    "SettingsPage renders live theme preview swatches for all 12 AILA themes. Each swatch must display its theme's exact brand colors regardless of the currently active theme, making CSS variable tokens incorrect here — they would resolve to the active theme, not the previewed one.",
+    "SettingsPage renders live theme preview swatches for all 12 AILA themes. Each swatch must display its theme's exact brand colors regardless of the currently active theme, making CSS variable tokens incorrect here -- they would resolve to the active theme, not the previewed one.",
   ],
   [
     "src/app/screens/ForbiddenPage.tsx",
@@ -116,31 +116,31 @@ export const HONESTY_WHITELIST = validate([
   [
     "src/app/screens/ServerErrorPage.tsx",
     "theme_hardcode",
-    "ServerErrorPage uses #ef4444 as fallback inside var(--color-critical, #ef4444) — the hex is a CSS fallback value, not a primary color assignment. The var() form is the canonical reference.",
+    "ServerErrorPage uses #ef4444 as fallback inside var(--color-critical, #ef4444) -- the hex is a CSS fallback value, not a primary color assignment. The var() form is the canonical reference.",
   ],
   [
     "src/app/screens/LoginPage.tsx",
     "theme_hardcode",
-    "LoginPage uses #000 as fallback inside var(--primary-foreground, #000) — CSS fallback value, not a primary assignment.",
+    "LoginPage uses #000 as fallback inside var(--primary-foreground, #000) -- CSS fallback value, not a primary assignment.",
   ],
   [
     "src/platform/features/systems/ConnectivityBadge.tsx",
     "theme_hardcode",
-    "ConnectivityBadge uses #97dbbe as fallback inside var(--color-connectivity-online, #97dbbe) — CSS fallback value only; the var() token is the canonical reference.",
+    "ConnectivityBadge uses #97dbbe as fallback inside var(--color-connectivity-online, #97dbbe) -- CSS fallback value only; the var() token is the canonical reference.",
   ],
   [
     "src/components/ui/input.tsx",
     "theme_hardcode",
-    "shadcn/ui input uses dark: Tailwind modifier with bracket hex values. These are Part 13 (Phase 183) violations — dark: classes need removal. Tracked in phase 183-13.",
+    "shadcn/ui input uses dark: Tailwind modifier with bracket hex values. These are Part 13 (Phase 183) violations -- dark: classes need removal. Tracked in phase 183-13.",
   ],
   [
     "src/components/ui/textarea.tsx",
     "theme_hardcode",
-    "shadcn/ui textarea uses dark: Tailwind modifier with bracket hex values. Part 13 (Phase 183) violation — tracked for dark: cleanup in phase 183-13.",
+    "shadcn/ui textarea uses dark: Tailwind modifier with bracket hex values. Part 13 (Phase 183) violation -- tracked for dark: cleanup in phase 183-13.",
   ],
 
   // ---------------------------------------------------------------------------
-  // double_cast — `as unknown as` patterns
+  // double_cast -- `as unknown as` patterns
   // ---------------------------------------------------------------------------
 
   [
@@ -160,7 +160,7 @@ export const HONESTY_WHITELIST = validate([
   ],
 
   // ---------------------------------------------------------------------------
-  // missing_response_type — authorizedRequestJson without <T>
+  // missing_response_type -- authorizedRequestJson without <T>
   // ---------------------------------------------------------------------------
 
   [
@@ -170,7 +170,7 @@ export const HONESTY_WHITELIST = validate([
   ],
 
   // ---------------------------------------------------------------------------
-  // theme_hardcode — viz components that pass colors to canvas/library APIs
+  // theme_hardcode -- viz components that pass colors to canvas/library APIs
   // ---------------------------------------------------------------------------
 
   [
@@ -185,7 +185,7 @@ export const HONESTY_WHITELIST = validate([
   ],
 
   // ---------------------------------------------------------------------------
-  // todo_comment — tracked aspirational comments
-  // (none currently — add entries with linked issue reference in detail when needed)
+  // todo_comment -- tracked aspirational comments
+  // (none currently -- add entries with linked issue reference in detail when needed)
   // ---------------------------------------------------------------------------
 ]);

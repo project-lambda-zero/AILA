@@ -57,7 +57,7 @@ export function useReadinessStream(projectId: string) {
     try {
       token = await getAuthTokenStandalone();
     } catch {
-      // unauthenticated — let the server reject
+      // unauthenticated -- let the server reject
     }
 
     let response: Response;
@@ -105,7 +105,7 @@ export function useReadinessStream(projectId: string) {
           ac.abort();
         }
       } catch {
-        // malformed — skip
+        // malformed -- skip
       }
     };
 
@@ -203,7 +203,7 @@ export function ReadinessStreamPanel({
           >
             <div className="flex items-center gap-2 min-w-0">
               <span className={TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}>
-                {e.status === "installed" ? "✓" : e.status === "missing" ? "✗" : "—"}
+                {e.status === "installed" ? "✓" : e.status === "missing" ? "✗" : "--"}
               </span>
               <span className="text-foreground truncate">{e.tool}</span>
               {e.version && <span className="text-text-muted shrink-0">{e.version}</span>}
@@ -222,7 +222,7 @@ export function ReadinessStreamPanel({
     {events.length > 0 && (
       <details className="mt-4">
         <summary className="text-xs font-mono text-text-muted cursor-pointer select-none hover:text-foreground">
-          xray log ({events.length} events) — expand for full stream
+          xray log ({events.length} events) -- expand for full stream
         </summary>
         <div className="mt-2 max-h-96 overflow-y-auto rounded border border-border bg-black/40">
           {events.map((e, i) => {
@@ -245,7 +245,7 @@ export function ReadinessStreamPanel({
               <div key={i} className="px-2 py-1 text-3xs font-mono border-b border-border/40 last:border-b-0">
                 <span className={`${color} font-semibold`}>[{stage}]</span>
                 {e.tool && <span className="text-foreground ml-2">{e.tool}</span>}
-                {e.message && <span className="text-text-muted ml-2">— {e.message}</span>}
+                {e.message && <span className="text-text-muted ml-2">-- {e.message}</span>}
                 {e.command && (
                   <div className="text-text-muted/70 text-4xs ml-6 mt-0.5 break-all">$ {e.command}</div>
                 )}

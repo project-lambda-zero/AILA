@@ -1,4 +1,4 @@
-"""Worker startup shim — fresh SelectorEventLoop installed right before arq.run_worker."""
+"""Worker startup shim -- fresh SelectorEventLoop installed right before arq.run_worker."""
 import sys as _sys
 from urllib.parse import urlparse
 
@@ -9,7 +9,7 @@ parsed = urlparse(redis_url)
 redis_host = parsed.hostname or "127.0.0.1"
 redis_port = parsed.port or 6379
 
-# Do all heavy imports first — they may touch asyncio/asyncpg and disturb the loop.
+# Do all heavy imports first -- they may touch asyncio/asyncpg and disturb the loop.
 import arq
 from aila.platform.tasks.worker import WorkerSettings, reaper
 from aila.platform.tasks import get_task_tuning
@@ -30,7 +30,7 @@ class _W(WorkerSettings):
 # Install a fresh SelectorEventLoop AFTER all imports, immediately before arq.
 # Imports may create+close asyncio loops (e.g. asyncpg cleanup), leaving the
 # thread-local loop in a closed/None state. arq.Worker.__init__ calls
-# asyncio.get_event_loop() — it must find an open SelectorEventLoop on Windows.
+# asyncio.get_event_loop() -- it must find an open SelectorEventLoop on Windows.
 import asyncio
 if _sys.platform == "win32":
     loop = asyncio.SelectorEventLoop()

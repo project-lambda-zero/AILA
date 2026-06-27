@@ -2,16 +2,16 @@
 
 Mirrors the vulnerability module's architecture (Phase 180/183):
 
-- ``FORENSICS_DISPATCHER_V1`` — ``routing -> mode_selection -> __succeeded__``.
+- ``FORENSICS_DISPATCHER_V1`` -- ``routing -> mode_selection -> __succeeded__``.
   Uses ``is_dispatcher=True`` + ``dispatches_to`` so the platform
   ``@platform_task`` wrapper (``_run_two_phase_dispatch``) drives both the
   dispatcher run and the inner-definition run through ``DurableStateMachine``,
   giving us cursor persistence, audit trails, retries, and resumability.
 
-- ``FORENSICS_FULL_ANALYSIS_V1`` — full evidence pipeline:
+- ``FORENSICS_FULL_ANALYSIS_V1`` -- full evidence pipeline:
   ``intake -> collection -> deep_analysis -> promotion -> resolution -> writeup -> response_emit -> __succeeded__``
 
-- ``FORENSICS_FREEFLOW_V1`` — bounded investigation:
+- ``FORENSICS_FREEFLOW_V1`` -- bounded investigation:
   ``freeflow -> writeup -> response_emit -> __succeeded__``
 
 Every ``StateSpec`` declares ``on_success`` to make the graph edges
@@ -66,7 +66,7 @@ async def _build_services(run_id: str) -> WorkflowServices:
 # Mirrors vulnerability._HTTP_TRANSIENT: bucket the *parent* of every SSH
 # transient so transport hiccups trigger engine-level retries (per state's
 # max_retries) instead of terminating the state. SSH layer raises AILAError
-# subclasses for both command-exit-nonzero *and* transport failures — we
+# subclasses for both command-exit-nonzero *and* transport failures -- we
 # treat the whole family as transient and let the per-file emit loops inside
 # each collector decide which specific failures are actually unrecoverable.
 _SSH_TRANSIENT: tuple[type[BaseException], ...] = (
@@ -79,7 +79,7 @@ _SSH_TRANSIENT: tuple[type[BaseException], ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Terminal emitter — assembles the final response payload
+# Terminal emitter -- assembles the final response payload
 # ---------------------------------------------------------------------------
 
 async def _state_response_emit(
@@ -97,7 +97,7 @@ async def _state_response_emit(
 
         async with UnitOfWork() as uow:
             if project_id and not investigation_id:
-                # Full-analysis path — mark the project completed.
+                # Full-analysis path -- mark the project completed.
                 proj = (await uow.session.exec(
                     _select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
                 )).first()
@@ -106,7 +106,7 @@ async def _state_response_emit(
                     uow.session.add(proj)
 
             if investigation_id:
-                # Freeflow path — mark the investigation completed.
+                # Freeflow path -- mark the investigation completed.
                 inv = (await uow.session.exec(
                     _select(InvestigationRunRecord).where(InvestigationRunRecord.id == investigation_id)
                 )).first()

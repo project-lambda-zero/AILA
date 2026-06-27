@@ -4,7 +4,7 @@
  * Tests that the executive dashboard loads with real backend data and that
  * the PDF download button triggers a file download.
  *
- * Uses real PostgreSQL backend — no mocks.
+ * Uses real PostgreSQL backend -- no mocks.
  */
 import { test, expect } from "@playwright/test";
 

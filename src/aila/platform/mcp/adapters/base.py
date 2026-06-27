@@ -1,4 +1,4 @@
-"""Adapter base types — AdapterContext + AdapterFn + AdapterResult."""
+"""Adapter base types -- AdapterContext + AdapterFn + AdapterResult."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -48,12 +48,12 @@ class AdapterResult:
 AdapterFn = Callable[[dict[str, Any], AdapterContext], AdapterResult]
 """Pure function: (raw MCP response, context) -> AdapterResult.
 
-Adapters MUST be pure — no DB writes, no MCP calls, no side effects.
+Adapters MUST be pure -- no DB writes, no MCP calls, no side effects.
 The executor (tool_executor.py) owns dispatch + persistence.
 """
 
 
-# fix §200 — registry of "read source / trace flow" tools, used by the
+# fix §200 -- registry of "read source / trace flow" tools, used by the
 # tool_executor to decide whether the current call satisfies an
 # outstanding survey-streak pivot directive. Populated at import time
 # by the ``@is_read_tool(server, tool)`` decorator applied to each
@@ -72,7 +72,7 @@ def is_read_tool(server_id: str, tool_name: str) -> Callable[[F], F]:
     """Decorator marking an adapter as a "read source / trace flow" tool.
 
     The tool_executor's pivot directive (``_directive.pivot``) is only
-    cleared when one of these tools is called — surveys, metadata
+    cleared when one of these tools is called -- surveys, metadata
     lookups, and search-only lookups do not satisfy the directive.
     Registration happens once at module import time; the decorator
     leaves the wrapped function unmodified.

@@ -25,38 +25,38 @@ depends_on = None
 
 SENTINEL_TEAM_ID = "default-team"
 
-# All 22 team-scoped tables — verified against actual __tablename__ in each model.
+# All 22 team-scoped tables -- verified against actual __tablename__ in each model.
 # Models without explicit __tablename__ use SQLModel default (lowercase classname).
 # Models with explicit __tablename__ are annotated below.
 TEAM_SCOPED_TABLES: list[str] = [
-    # Platform db_models.py — default tablenames (lowercase classname)
+    # Platform db_models.py -- default tablenames (lowercase classname)
     "managedsystemrecord",
     "workflowrunrecord",
     "permanentmemoryrecord",
     "reportartifactrecord",
     "artifactrecord",
     "auditeventrecord",
-    # Platform db_models.py — explicit __tablename__
+    # Platform db_models.py -- explicit __tablename__
     "user_records",            # UserRecord.__tablename__ = "user_records"
     "apikeyrecord",            # ApiKeyRecord.__tablename__ = "apikeyrecord"
     "refresh_token_records",   # RefreshTokenRecord.__tablename__ = "refresh_token_records"
-    # Vulnerability findings.py — default tablenames
+    # Vulnerability findings.py -- default tablenames
     "prioritizedfindingrecord",
     "assettagrecord",
     "remediationrecord",
-    # Vulnerability findings.py — explicit __tablename__
+    # Vulnerability findings.py -- explicit __tablename__
     "latest_finding_records",  # LatestFindingRecord.__tablename__ = "latest_finding_records"
     "finding_feedbacks",       # FindingFeedbackRecord.__tablename__ = "finding_feedbacks"
-    # Vulnerability distribution.py — default tablenames
+    # Vulnerability distribution.py -- default tablenames
     "inventoryartifactrecord",
     "scheduledscanrecord",
-    # SbD NFR db_models.py — explicit __tablename__
+    # SbD NFR db_models.py -- explicit __tablename__
     "sbd_nfr_session_record",
     "sbd_nfr_answer_record",
     "sbd_nfr_activity_record",
     "sbd_nfr_session_system_record",
     "sbd_nfr_resolution_result_record",
-    # Tasks models.py — explicit __tablename__
+    # Tasks models.py -- explicit __tablename__
     "taskrecord",              # TaskRecord.__tablename__ = "taskrecord"
 ]
 

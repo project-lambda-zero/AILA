@@ -27,7 +27,7 @@ StepFn = Callable[[dict[str, Any], list[dict[str, Any]], LLMRouting], Awaitable[
 # Default step order. Operators can override per task_type via
 # ``llm_pipeline_pre_call_steps_{task_type}`` /
 # ``llm_pipeline_post_call_steps_{task_type}`` (comma-separated) in
-# ConfigRegistry — see :meth:`LLMConfigProvider.resolve_step_order` (§157).
+# ConfigRegistry -- see :meth:`LLMConfigProvider.resolve_step_order` (§157).
 # These constants are still the SOURCE of TRUTH for which step names are
 # even legal: ``register`` rejects any name not present here so a typo in
 # the override config can't silently add a step the pipeline doesn't know.
@@ -65,9 +65,9 @@ class PipelineRunner:
     ) -> tuple[str, ...]:
         """Resolve step order for ``phase`` (``pre_call`` / ``post_call``).
 
-        fix §157 — looks up ``llm_pipeline_{phase}_steps_{task_type}`` (a
+        fix §157 -- looks up ``llm_pipeline_{phase}_steps_{task_type}`` (a
         comma-separated list) in ConfigRegistry. Unknown step names are
-        silently dropped — operators get to opt out of a step by name
+        silently dropped -- operators get to opt out of a step by name
         without breaking the run, but cannot inject a slot the pipeline
         does not handle. Falls back to ``default`` when no override exists.
         """

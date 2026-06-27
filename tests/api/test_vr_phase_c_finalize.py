@@ -1,4 +1,4 @@
-"""Phase C — investigation_finalize chokepoint + 4-trigger picker.
+"""Phase C -- investigation_finalize chokepoint + 4-trigger picker.
 
 The finalize module consolidates the 4 race-prone finalization paths
 (all_outcomes / rejected_quorum / wall_clock_idle_grace /
@@ -184,14 +184,14 @@ async def test_healthy_running_returns_no_trigger() -> None:
 
 
 # ----------------------------------------------------------------------
-# Trigger 1 — all_outcomes
+# Trigger 1 -- all_outcomes
 # ----------------------------------------------------------------------
 
 
 @pytest.mark.usefixtures("test_db")
 async def test_all_outcomes_trigger_fires() -> None:
     """Every active branch has a terminal outcome AND inv has no
-    primary_outcome_id — all_outcomes wins."""
+    primary_outcome_id -- all_outcomes wins."""
     target_id = await _seed_workspace_and_target("ao1")
     inv_id = await _seed_investigation(target_id=target_id)
     branch_ids = await _seed_branches(
@@ -210,7 +210,7 @@ async def test_all_outcomes_trigger_fires() -> None:
 
 @pytest.mark.usefixtures("test_db")
 async def test_primary_outcome_already_set_skips_all_outcomes() -> None:
-    """Synthesis already ran (primary_outcome_id set) — don't re-fire."""
+    """Synthesis already ran (primary_outcome_id set) -- don't re-fire."""
     target_id = await _seed_workspace_and_target("ao2")
     inv_id = await _seed_investigation(target_id=target_id)
     branch_ids = await _seed_branches(
@@ -235,7 +235,7 @@ async def test_primary_outcome_already_set_skips_all_outcomes() -> None:
 
 
 # ----------------------------------------------------------------------
-# Trigger 4 — all_terminal_no_outcome
+# Trigger 4 -- all_terminal_no_outcome
 # ----------------------------------------------------------------------
 
 
@@ -243,7 +243,7 @@ async def test_primary_outcome_already_set_skips_all_outcomes() -> None:
 async def test_all_terminal_no_outcome_trigger_fires() -> None:
     """Every branch in terminal status AND inv has no primary_outcome_id.
 
-    The orphan close case — branches abandoned without producing an outcome.
+    The orphan close case -- branches abandoned without producing an outcome.
     """
     target_id = await _seed_workspace_and_target("ato1")
     inv_id = await _seed_investigation(target_id=target_id)
@@ -259,7 +259,7 @@ async def test_all_terminal_no_outcome_trigger_fires() -> None:
 
 @pytest.mark.usefixtures("test_db")
 async def test_all_terminal_with_outcome_does_not_fire() -> None:
-    """An outcome exists (even without primary_outcome_id) — let
+    """An outcome exists (even without primary_outcome_id) -- let
     all_outcomes path handle it via rung 1."""
     target_id = await _seed_workspace_and_target("ato2")
     inv_id = await _seed_investigation(target_id=target_id)
@@ -281,7 +281,7 @@ async def test_all_terminal_with_outcome_does_not_fire() -> None:
 
 
 # ----------------------------------------------------------------------
-# Trigger 3 — wall_clock_idle_grace
+# Trigger 3 -- wall_clock_idle_grace
 # ----------------------------------------------------------------------
 
 
@@ -319,7 +319,7 @@ async def test_wall_clock_cap_with_recent_activity_does_not_fire() -> None:
     inv_id = await _seed_investigation(
         target_id=target_id, started_at=long_ago,
     )
-    # Branch updated 5 minutes ago — inside the 15-min idle grace
+    # Branch updated 5 minutes ago -- inside the 15-min idle grace
     await _seed_branches(
         investigation_id=inv_id,
         statuses=["active"],
@@ -355,7 +355,7 @@ async def test_turn_cap_exceeded_fires_wall_clock_trigger() -> None:
 
 
 # ----------------------------------------------------------------------
-# finalize_investigation public API — full pipeline
+# finalize_investigation public API -- full pipeline
 # ----------------------------------------------------------------------
 
 
@@ -398,8 +398,8 @@ async def test_finalize_investigation_carries_inv_id() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────
-# Orphan-branch close on terminal flip (BLOCK regression — Phase C
-# surgical bug fix for inv a23eb6ae-76bf-413d-a179-c930ad1cf2a0)
+# Orphan-branch close on terminal flip (BLOCK regression -- Phase C
+# surgical bug fix for inv <inv-uuid>)
 # ─────────────────────────────────────────────────────────────────
 
 
@@ -407,8 +407,8 @@ async def test_finalize_investigation_carries_inv_id() -> None:
 async def test_close_orphan_branches_on_terminal_closes_active() -> None:
     """services.branch_cleanup must flip 'active' branches to 'abandoned'.
 
-    Direct unit test of the helper. Closes the BLOCK operator-observed
-    bug: investigation 'completed' while one branch (wei) stayed
+    Direct unit test of the helper. Closes the BLOCK observed bug:
+    investigation 'completed' while one branch (wei) stayed
     'active' with growing turn_count. The helper called from every
     completion site forbids that combination from now on.
     """

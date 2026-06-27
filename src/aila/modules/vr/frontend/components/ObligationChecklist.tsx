@@ -6,12 +6,12 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
  *  `label` + `state` + optional `evidence_ref` (a clickable turn jump)
  *  + optional `tooltip` describing what would satisfy the obligation.
  *
- *  Backend wiring is pending — no obligation API endpoint exists yet.
+ *  Backend wiring is pending -- no obligation API endpoint exists yet.
  *  This component is built so it's drop-in once that endpoint ships;
  *  for now callers should render an empty list with a "no obligations
  *  tracked yet" placeholder.
  *
- *  Color-blind safe: we render icons (✓ / ✗ / —) alongside colour so
+ *  Color-blind safe: we render icons (✓ / ✗ / --) alongside colour so
  *  red-green distinction never carries semantic weight alone. */
 
 export type ObligationSeverity = "critical" | "required" | "recommended";
@@ -39,7 +39,7 @@ const SEVERITY_TONE: Record<
 const STATE_ICON: Record<ObligationState, string> = {
   met: "✓",
   unmet: "✗",
-  waived: "—",
+  waived: "--",
 };
 
 const STATE_TEXT_CLASS: Record<ObligationState, string> = {

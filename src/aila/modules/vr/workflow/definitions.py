@@ -18,7 +18,7 @@ State graph:
 Retry policy: setup and poc_development touch SSH/HTTP transports that
 flap under load; the engine retries them once or twice on transport-class
 exceptions (TimeoutError / ConnectionError / OSError). The reasoning
-states (research, advisory) and the terminal emitter are not retried —
+states (research, advisory) and the terminal emitter are not retried --
 they own their own LLM-error handling so an automatic retry would only
 double up on cost.
 """
@@ -61,7 +61,7 @@ async def _build_services(run_id: str) -> WorkflowServices:
 
 # Bucket the SSH / HTTP transient family for engine-level retries on the
 # states that touch the IDA bridge over HTTP and the analyzer over SSH.
-# Reasoning states are excluded — their handlers own their own LLM error
+# Reasoning states are excluded -- their handlers own their own LLM error
 # handling and a blind retry would just double LLM cost.
 _TRANSPORT_TRANSIENT: tuple[type[BaseException], ...] = (
     TimeoutError,
@@ -122,7 +122,7 @@ VR_INVESTIGATE_V1: WorkflowDefinition = WorkflowDefinition(
         ),
         "investigation_loop": StateSpec(
             handler=_h(state_investigation_loop),
-            # Long timeout — each turn is one LLM round trip; up to 25
+            # Long timeout -- each turn is one LLM round trip; up to 25
             # turns by default with a generous per-turn budget.
             timeout_s=7200.0,
             max_retries=0,

@@ -2,13 +2,13 @@
 can consume honestly.
 
 When an operator asks "look at CVE-2026-42945 variants", the agent
-needs to know whether NVD actually has data for that CVE — without
+needs to know whether NVD actually has data for that CVE -- without
 that signal it invents details ("recent/future RCE") instead of
 admitting it doesn't know. This helper:
 
   1. Extracts CVE-NNNN-NNNN tokens from a free-form question.
   2. Resolves each via the vulnerability module's registered
-     ``IntelService`` — the same aggregator the
+     ``IntelService`` -- the same aggregator the
      ``GET /vulnerability/cves/{id}`` endpoint uses. That service
      already orchestrates NVD + EPSS + KEV with caching + graceful
      fallback.
@@ -42,10 +42,10 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-# Permissive CVE pattern — catches CVE-2024-1 (1-digit historical) through
+# Permissive CVE pattern -- catches CVE-2024-1 (1-digit historical) through
 # CVE-2026-100000000 (8+ digits, increasingly common in 2024+). The IntelService
 # backend returns not_found for invalid ids, so the regex stays loose.
-# fix §187 — was \d{4,7}; 1-digit and 8+-digit serials were silently dropped.
+# fix §187 -- was \d{4,7}; 1-digit and 8+-digit serials were silently dropped.
 _CVE_RE = re.compile(r"\bCVE-\d{4}-\d+\b", re.IGNORECASE)
 
 
@@ -53,7 +53,7 @@ _CVE_RE = re.compile(r"\bCVE-\d{4}-\d+\b", re.IGNORECASE)
 class CVEResolution:
     """One resolved (or unresolved) CVE.
 
-    ``status`` is the discriminator the agent must read — values are a
+    ``status`` is the discriminator the agent must read -- values are a
     discriminated union:
       - ``found``           → real intel; consume description / CWE /
                               CVSS / EPSS / KEV.
@@ -62,12 +62,12 @@ class CVEResolution:
       - ``transport_error`` → NVD/IntelService unreachable (timeout,
                               network error) OR returned an inconclusive
                               fallback. Distinct from ``not_found``: agent
-                              MUST treat as "unknown — retry may resolve",
+                              MUST treat as "unknown -- retry may resolve",
                               NOT as "CVE doesn't exist".
       - ``error``           → other unhandled failure (parser, internal);
                               treat as 'unknown'.
 
-    fix §189 — added ``transport_error`` so the agent can distinguish
+    fix §189 -- added ``transport_error`` so the agent can distinguish
     "NVD says no record" from "we couldn't reach NVD". Conflating the
     two caused the agent to drop CVE context whenever NVD was down.
 
@@ -155,7 +155,7 @@ async def _get_intel_service() -> Any | None:
             get_worker_platform,
         )
     except (ImportError, AttributeError) as exc:
-        # fix §350 — DEFENSIVE: bootstrap import failure must not crash
+        # fix §350 -- DEFENSIVE: bootstrap import failure must not crash
         # the resolver; surface the traceback so packaging or circular-import
         # regression is diagnosable from a single warning.
         _log.warning(
@@ -166,7 +166,7 @@ async def _get_intel_service() -> Any | None:
     try:
         platform = await get_worker_platform()
     except (OSError, RuntimeError, ValueError, TypeError) as exc:
-        # fix §350 — DEFENSIVE: platform.get_worker_platform() races on
+        # fix §350 -- DEFENSIVE: platform.get_worker_platform() races on
         # cold start; surface traceback so a non-transient init failure
         # (config registry crash, DB unreachable) is debuggable.
         _log.warning(
@@ -200,7 +200,7 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
         return []
     svc = await _get_intel_service()
     if svc is None:
-        # fix §190 — upgrade from silent-WARN to operator-visible ERROR
+        # fix §190 -- upgrade from silent-WARN to operator-visible ERROR
         # so a misconfigured worker (--modules vr without vulnerability)
         # surfaces in log destinations and dashboards. Per the spec a
         # refuse-to-start is too aggressive (a VR module audit run may
@@ -211,7 +211,7 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
         # Use a distinctive marker `cve_intel.module_missing` that log
         # destinations / Grafana / Loki can grep on.
         _log.error(
-            "cve_intel.module_missing — vulnerability module not registered "
+            "cve_intel.module_missing -- vulnerability module not registered "
             "or runtime not initialized; CVE intel unavailable for %d id(s): %s. "
             "Agent will see status=error entries and treat the CVEs as unknown. "
             "Check worker `--modules` argument or platform module registry.",
@@ -222,7 +222,7 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
                 cve_id=cid,
                 status="error",
                 error=(
-                    "IntelService unavailable — vulnerability module not "
+                    "IntelService unavailable -- vulnerability module not "
                     "registered or runtime not initialized. Cannot enrich CVE "
                     "context; agent must treat the id as 'unknown'. Operator "
                     "alert raised via cve_intel.module_missing log marker."
@@ -236,7 +236,7 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
         try:
             knowledge = await svc.fetch_cve_intel(cve_id)
         except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:
-            # fix §188 — classify error type by exception class instead of
+            # fix §188 -- classify error type by exception class instead of
             # string-matching the message. A genuine NVD 404 reaches us as
             # httpx.HTTPStatusError(.response.status_code==404); transport
             # failures arrive as httpx.TimeoutException / httpx.NetworkError.
@@ -253,7 +253,7 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
                     error=(
                         "NVD returned 404 for this CVE id (invalid / "
                         "future-dated / rescinded). Do not invent "
-                        "details — surface that the intel lookup "
+                        "details -- surface that the intel lookup "
                         "failed and ask the operator for context if "
                         "the CVE id is critical to the investigation."
                     ),
@@ -265,12 +265,12 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
                     error=(
                         f"{type(exc).__name__}: NVD/IntelService unreachable "
                         f"({str(exc)[:200]}). Treat the CVE id as unknown for "
-                        f"this turn — a retry on the next investigation step "
+                        f"this turn -- a retry on the next investigation step "
                         f"may resolve."
                     ),
                 ))
             else:
-                # fix §350 — DEFENSIVE classifier: known shapes (httpx 404,
+                # fix §350 -- DEFENSIVE classifier: known shapes (httpx 404,
                 # timeout, network error) are bucketed cleanly; unknown
                 # exceptions land here as `status="error"` with class+msg
                 # in the payload, but the traceback now also reaches the
@@ -288,7 +288,7 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
                 ))
             continue
         if knowledge is None:
-            # fix §189 — fetch_cve_intel returns None for BOTH
+            # fix §189 -- fetch_cve_intel returns None for BOTH
             # "NVD definitively absent" AND "NVD lookup produced a
             # fallback-only record because the network failed". We
             # cannot distinguish from this layer; route to
@@ -302,7 +302,7 @@ async def resolve_cve_intel(cve_ids: list[str]) -> list[CVEResolution]:
                 error=(
                     "IntelService returned no record after cache + NVD "
                     "lookup. Could be NVD-doesn't-have-it OR NVD-was-"
-                    "down — distinguishing requires IntelService API "
+                    "down -- distinguishing requires IntelService API "
                     "extension. Agent must treat as unknown; do not "
                     "invent details and consider re-asking on next turn."
                 ),

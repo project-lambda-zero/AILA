@@ -10,7 +10,7 @@ audit format the security industry expects:
     Scope                (components audited)
     Assessment Overview  (severity counts + finding table)
     Findings & Tech Details
-      [VR-01] TITLE — SEVERITY
+      [VR-01] TITLE -- SEVERITY
         Description
         Risk Level (Likelihood + Impact)
         Proof of Concept     (code block)
@@ -23,7 +23,7 @@ schema. Hard rules enforced by the system prompt:
 
   - DO NOT invent facts not present in the inputs
   - Use the agent's affected_components verbatim for code locations
-  - Each finding maps to one outcome / one variant — never collapse
+  - Each finding maps to one outcome / one variant -- never collapse
   - Likelihood + Impact are integer 1-5; severity derives from them
     via the same matrix as the standard 5-point matrix:
         L+I=10  → CRITICAL
@@ -118,7 +118,7 @@ class FindingSection(BaseModel):
             "terms a senior engineer would read. State the mechanism "
             "(e.g. 'the length pass uses a fresh engine with is_args=0 "
             "while the value pass uses the shared engine with "
-            "is_args=1'). No business / executive framing here — that "
+            "is_args=1'). No business / executive framing here -- that "
             "lives in introduction / audit_summary."
         ),
     )
@@ -126,7 +126,7 @@ class FindingSection(BaseModel):
         default="",
         description=(
             "Code or shell snippet that demonstrates the bug. "
-            "Markdown-fenced is fine but not required — renderer "
+            "Markdown-fenced is fine but not required -- renderer "
             "treats it as a monospaced block. Leave empty when no "
             "PoC is available; the renderer will skip the section "
             "rather than show a placeholder."
@@ -161,7 +161,7 @@ class ReportContent(BaseModel):
     same visual structure.
     """
 
-    title: str = Field(description="Short report title — '<Target> Security Audit'.")
+    title: str = Field(description="Short report title -- '<Target> Security Audit'.")
     auditor: str = Field(
         default="AILA Vulnerability Research",
         description="Auditor name shown on the cover page.",
@@ -177,7 +177,7 @@ class ReportContent(BaseModel):
         description=(
             "2-4 sentences. What the auditor did, time spent, key "
             "outcomes at a high level. Mention the CVE if one was "
-            "referenced. Do not preview specific findings — that's "
+            "referenced. Do not preview specific findings -- that's "
             "what assessment_overview is for."
         ),
     )
@@ -194,7 +194,7 @@ class ReportContent(BaseModel):
         description=(
             "Concrete list of components audited. Pull from the "
             "investigation's affected_components and from "
-            "variants_hunted — every file / module / function the "
+            "variants_hunted -- every file / module / function the "
             "agent touched belongs here, even if it ended up clean."
         ),
     )
@@ -211,14 +211,14 @@ class ReportContent(BaseModel):
             "Every finding produced by the investigation, including "
             "variant-child findings. One FindingSection per bug. "
             "Sorted by severity descending (CRITICAL first). Empty "
-            "list when no bugs were confirmed — that's an honest "
+            "list when no bugs were confirmed -- that's an honest "
             "outcome too."
         ),
     )
     references: list[str] = Field(
         default_factory=list,
         description=(
-            "External references — CVE pages, advisory URLs, "
+            "External references -- CVE pages, advisory URLs, "
             "research papers, related commits. URLs only."
         ),
     )
@@ -230,7 +230,7 @@ class ReportContent(BaseModel):
 class ReportWriter:
     """LLM-backed writer producing enterprise audit content.
 
-    Stateless — one instance per call is fine. Underlying LLM is
+    Stateless -- one instance per call is fine. Underlying LLM is
     the platform's standard chat client with strict-schema mode
     (chat_structured).
     """
@@ -251,9 +251,9 @@ class ReportWriter:
             model_class=ReportContent,
         )
         if response.disabled:
-            raise RuntimeError("LLM kill-switch active — cannot generate report")
+            raise RuntimeError("LLM kill-switch active -- cannot generate report")
         content = ReportContent.model_validate(json.loads(response.content))
-        # Server-side severity normalization — derive label from
+        # Server-side severity normalization -- derive label from
         # (likelihood, impact) instead of trusting the LLM's pick.
         # Keeps the matrix consistent across all reports.
         normalized: list[FindingSection] = []
@@ -294,7 +294,7 @@ class ReportWriter:
             "- proof_of_concept is a small runnable snippet (test "
             "function, curl command, Python script). When the agent "
             "supplied a PoC in poc_drafts, USE IT. When no PoC was "
-            "supplied, leave proof_of_concept empty — the renderer "
+            "supplied, leave proof_of_concept empty -- the renderer "
             "will skip the section.\n"
             "- recommendation includes a corrected code snippet "
             "inline when the fix is small. End each recommendation "
@@ -323,7 +323,7 @@ class ReportWriter:
             "(audit-mcp, IDA, fuzzing, LLM reasoning) per the "
             "investigation's tool_call_summary.\n"
             "- Pull every confirmed finding into the findings "
-            "list — primary + every variant_hunt child finding. "
+            "list -- primary + every variant_hunt child finding. "
             "Empty findings list is fine when nothing was confirmed."
         )
 
@@ -348,7 +348,7 @@ class ReportWriter:
         out.append("")
 
         # Multi-persona deliberation panel verdicts. These are the
-        # AUTHORITATIVE inputs for your audit_summary + findings —
+        # AUTHORITATIVE inputs for your audit_summary + findings --
         # the panel already did the analysis; your job is to TRANSLATE
         # it into an operator-readable audit narrative, not to redo
         # the technical analysis.
@@ -366,7 +366,7 @@ class ReportWriter:
                 kind = v.get("outcome_kind") or "?"
                 conf = v.get("confidence") or "?"
                 ans = (v.get("answer") or "").strip()
-                out.append(f"## {persona} — {kind} (confidence: {conf})")
+                out.append(f"## {persona} -- {kind} (confidence: {conf})")
                 out.append(ans or "(no answer body)")
                 out.append("")
             out.append(
@@ -376,7 +376,7 @@ class ReportWriter:
                 "explicitly ('the audit panel converged on X'). If they "
                 "split, name the disagreement in operator terms, not "
                 "code-symbol jargon. Do NOT echo the persona prose verbatim "
-                "— translate it."
+                "-- translate it."
             )
             out.append("")
 
@@ -472,7 +472,7 @@ class ReportWriter:
             # Group by normalized prose prefix so the writer can see
             # "N submissions of the same root cause" vs "N distinct
             # bugs". Bucketing key: first 240 chars of the answer with
-            # whitespace collapsed and casefolded — enough to distinguish
+            # whitespace collapsed and casefolded -- enough to distinguish
             # genuinely different findings but tolerant of re-wording.
             import re as _re
             def _bucket(text: str) -> str:
@@ -491,7 +491,7 @@ class ReportWriter:
             )
             out.append(
                 "If the same cluster appears N times, the agent was re-asked "
-                "the same question N times and re-derived the same conclusion — "
+                "the same question N times and re-derived the same conclusion -- "
                 "this is high-confidence reproducibility, not N separate bugs. "
                 "Emit ONE FindingSection per cluster, and mention reproducibility "
                 "in audit_summary.",
@@ -501,7 +501,7 @@ class ReportWriter:
                 if not isinstance(o, dict):
                     continue
                 out.append(
-                    f"## Submission [{i}/{len(outcome_trail)}] — "
+                    f"## Submission [{i}/{len(outcome_trail)}] -- "
                     f"{(o.get('created_at') or '')[:19]} "
                     f"({o.get('kind', '?')}, conf={o.get('confidence', '?')})",
                 )

@@ -48,12 +48,12 @@ logger = logging.getLogger(__name__)
 # Per-process globals updated on every LLM call. Consumed by the masvs
 # parent_reconciler to gate stale-branch abandonment: when the LLM
 # endpoint has been unhealthy in the recent past, branches sitting
-# idle on retry-loops are NOT "stalled" by their own fault — they're
+# idle on retry-loops are NOT "stalled" by their own fault -- they're
 # waiting on the LLM. Abandoning them in that window destroys real
 # progress and is operator-prohibited.
 #
 # We update _LAST_LLM_ERROR_AT on every retryable exception even when
-# a later retry succeeds — the failure window is still real, the
+# a later retry succeeds -- the failure window is still real, the
 # branch did spend wall-clock time waiting, and any concurrent
 # branches may have hit the same outage.
 _LAST_LLM_OK_AT: float = 0.0
@@ -79,11 +79,11 @@ def is_llm_recently_unhealthy(window_s: float = 600.0) -> bool:
 
     Used by reconciler step 5 to gate stale-branch abandonment. A
     branch that has been idle through an LLM outage is waiting for
-    work, not stalled — abandoning it would destroy real progress.
+    work, not stalled -- abandoning it would destroy real progress.
 
     Args:
         window_s: How far back to look for the last error. Default 10
-            minutes — matches the worker's typical retry-window times
+            minutes -- matches the worker's typical retry-window times
             (5-10 retries with exponential backoff cap at 60s each).
     """
     if _LAST_LLM_ERROR_AT == 0.0:
@@ -91,7 +91,7 @@ def is_llm_recently_unhealthy(window_s: float = 600.0) -> bool:
     now = _time_mod.monotonic()
     if (now - _LAST_LLM_ERROR_AT) > window_s:
         return False
-    # Error within window — only "healthy" if a success has happened
+    # Error within window -- only "healthy" if a success has happened
     # strictly after the most recent error.
     return _LAST_LLM_OK_AT <= _LAST_LLM_ERROR_AT
 
@@ -251,17 +251,17 @@ class LLMResponse:
     disabled: bool = False
     finish_reason: str = ""
     # Pipeline metadata (Phase 116) -- default None, transparent to existing callers
-# Retry budget — TIGHT BY DESIGN.
+# Retry budget -- TIGHT BY DESIGN.
 #
-# Background (the change shipped on 2026-06-13 after operator
-# diagnosed the maddie / bc194403 stall on inv 86307908 et al):
+# Background (the change shipped on 2026-06-13 after the maddie /
+# <inv-uuid-a> stall was diagnosed on inv <inv-uuid-b> et al):
 #
 # The old budget was _MAX_RETRIES=100 × up-to-30s backoff = ~48 min
 # of in-task retry burn. That meant a single worker process would
 # pin itself on ONE task's retry loop for nearly an hour during any
 # sustained provider degradation (NVIDIA NIM 40 RPM throttling,
 # OpenRouter 503, OmniRoute restart). All other queued tasks
-# starved behind that worker, which was the operator-observed
+# starved behind that worker, which was the observed
 # "113 tasks queued, no progress" symptom right after the stall-
 # recovery sweep landed.
 #
@@ -284,9 +284,9 @@ class LLMResponse:
 # 429 with a "try again in N seconds" signal.
 #
 # Env knobs (defaults landed for the new fast-fail behavior):
-#   AILA_LLM_MAX_RETRIES        — in-call attempts cap (default 3)
-#   AILA_LLM_RETRY_BASE_DELAY_S — first-attempt backoff (default 1.0s)
-#   AILA_LLM_RETRY_MAX_DELAY_S  — per-attempt backoff cap (default 30.0s)
+#   AILA_LLM_MAX_RETRIES        -- in-call attempts cap (default 3)
+#   AILA_LLM_RETRY_BASE_DELAY_S -- first-attempt backoff (default 1.0s)
+#   AILA_LLM_RETRY_MAX_DELAY_S  -- per-attempt backoff cap (default 30.0s)
 _MAX_RETRIES = max(1, int(os.environ.get("AILA_LLM_MAX_RETRIES", "3")))
 _RETRY_BASE_DELAY = max(0.1, float(os.environ.get("AILA_LLM_RETRY_BASE_DELAY_S", "1.0")))
 _RETRY_MAX_DELAY = max(_RETRY_BASE_DELAY, float(os.environ.get("AILA_LLM_RETRY_MAX_DELAY_S", "30.0")))
@@ -390,7 +390,7 @@ class AilaLLMClient:
             run_id: Optional run identifier for cost tracking and budget enforcement.
             team_id: Optional team identifier for cost record scoping (Phase 175).
             max_output_tokens: Optional per-call cap on completion tokens
-                that overrides ``routing.max_tokens``. fix §309 — callers
+                that overrides ``routing.max_tokens``. fix §309 -- callers
                 with a known-bounded JSON response shape (e.g. PoC
                 drafts capped at ~1500 tokens of code + rationale) can
                 pass a tight ceiling so a runaway model can't burn 8k
@@ -411,7 +411,7 @@ class AilaLLMClient:
             )
 
         routing = await self._config.resolve_routing(task_type)
-        # fix §309 — apply per-call ceiling by cloning the frozen
+        # fix §309 -- apply per-call ceiling by cloning the frozen
         # LLMRouting dataclass with the smaller max_tokens. Never raise
         # above the routing-resolved cap (operator's configured ceiling
         # is authoritative); only narrow it.
@@ -815,7 +815,7 @@ class AilaLLMClient:
             except RateLimitError as exc:
                 # Honour Retry-After when the provider tells us how
                 # long to wait. NVIDIA NIM, OpenRouter, OpenAI all send
-                # this header on 429s — it's the most accurate delay we
+                # this header on 429s -- it's the most accurate delay we
                 # can pick. Fallback to exponential backoff (capped at
                 # _RETRY_MAX_DELAY) when the header is missing.
                 _record_llm_error()
@@ -873,7 +873,7 @@ class AilaLLMClient:
                     # Non-retryable LLM errors (ClassificationBlockedError, etc.)
                     raise
             except Exception as exc:
-                # ALL provider errors are transient — 500, 502, 503,
+                # ALL provider errors are transient -- 500, 502, 503,
                 # connection reset, timeout, DNS failure, etc. The only
                 # non-retryable errors are LLMError(retryable=False)
                 # which are caught above (classification blocks, schema
@@ -910,7 +910,7 @@ class AilaLLMClient:
         """Execute one API call WITHOUT pipeline recursion.
 
         Used by gate consensus retries (§101) and verify second-model
-        calls (§100) — both must bypass the pipeline (would recurse into
+        calls (§100) -- both must bypass the pipeline (would recurse into
         themselves) but still accumulate cost against the operator's
         run budget. Previously each step constructed its own
         ``AsyncOpenAI`` directly and the tokens were invisible to the
@@ -918,7 +918,7 @@ class AilaLLMClient:
         the platform builds the inner client the same way
         :meth:`_call_with_retry` does and records the same cost ledger.
 
-        Pipeline recursion is avoided structurally — we call
+        Pipeline recursion is avoided structurally -- we call
         :meth:`_single_call` directly instead of routing through
         :class:`PipelineRunner`.
         """
@@ -943,7 +943,7 @@ class AilaLLMClient:
                 tool_executor=tool_executor,
             )
 
-            # Cost recording — same shape as :meth:`_call_with_retry` so
+            # Cost recording -- same shape as :meth:`_call_with_retry` so
             # consensus / verify tokens land in the same per-run budget
             # and the operator's spend reports tell the truth (fix §100).
             try:

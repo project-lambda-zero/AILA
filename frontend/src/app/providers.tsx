@@ -16,7 +16,7 @@ import { apiErrorHandler } from "@/lib/apiErrorHandler";
  *
  * TanStack Query v5 (preflight FE-A) removed `defaultOptions.queries.onError`
  * in favour of cache-level handlers passed at construction time. This is the
- * only supported way to wire a global onError in v5 — queryCache.config
+ * only supported way to wire a global onError in v5 -- queryCache.config
  * is read-only post-construction.
  */
 export function makeQueryClient(): QueryClient {

@@ -14,7 +14,7 @@ __all__ = ["VRFuzzCampaignRecord", "VRFuzzCrashRecord"]
 
 
 class VRFuzzCampaignRecord(TeamScopedMixin, SQLModel, table=True):
-    """One fuzzing campaign — long-running, may produce many crashes."""
+    """One fuzzing campaign -- long-running, may produce many crashes."""
 
     __tablename__ = "vr_fuzz_campaigns"
 
@@ -76,7 +76,7 @@ class VRFuzzCampaignRecord(TeamScopedMixin, SQLModel, table=True):
 class VRFuzzCrashRecord(TeamScopedMixin, SQLModel, table=True):
     """One crash discovered by a campaign.
 
-    Dedup by (campaign_id, stack_hash) — a crash with the same stack
+    Dedup by (campaign_id, stack_hash) -- a crash with the same stack
     hash is registered as DUPLICATE pointing at the earliest matching
     crash. Operator promotes to vr_findings explicitly.
     """

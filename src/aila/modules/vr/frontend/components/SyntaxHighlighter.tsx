@@ -1,6 +1,6 @@
 /**
  * Lightweight syntax highlighter for PoC code previews
- * (08_FRONTEND_UX.md §Topic 4). Zero-dep — uses a small regex
+ * (08_FRONTEND_UX.md §Topic 4). Zero-dep -- uses a small regex
  * tokenizer keyed on language. Supports python / javascript / c /
  * bash; falls back to plain text for unknown languages.
  *
@@ -8,7 +8,7 @@
  * better at the small sizes we care about. The PoC preview is
  * scoped to short snippets where keyword/string/comment colouring
  * is enough signal. If a richer preview is needed later, swap this
- * component for a real highlighter — the prop surface won't change.
+ * component for a real highlighter -- the prop surface won't change.
  */
 
 type Lang = "python" | "javascript" | "ts" | "c" | "bash" | "text";

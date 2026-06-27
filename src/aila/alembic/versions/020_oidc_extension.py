@@ -1,4 +1,4 @@
-"""020 — extended OIDC providers (Phase 177, narrowed scope).
+"""020 -- extended OIDC providers (Phase 177, narrowed scope).
 
 Extends ``oidc_provider_records`` to support Google + generic OIDC alongside
 the existing Microsoft integration. ``tenant_id`` is kept nullable because
@@ -70,7 +70,7 @@ def upgrade() -> None:
         ),
     )
 
-    # Make tenant_id nullable — Google/generic providers do not use it.
+    # Make tenant_id nullable -- Google/generic providers do not use it.
     with op.batch_alter_table("oidc_provider_records") as batch_op:
         batch_op.alter_column(
             "tenant_id",

@@ -1,5 +1,5 @@
 /**
- * useReducedMotion.test.ts — unit tests for the useReducedMotion hook.
+ * useReducedMotion.test.ts -- unit tests for the useReducedMotion hook.
  *
  * The hook wraps motion/react's useReducedMotion, normalizing null → false.
  * We mock the motion/react module to control the return value.

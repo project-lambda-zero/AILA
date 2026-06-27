@@ -1,4 +1,4 @@
-"""Target contracts (v0.4.5 — backend-managed ingestion).
+"""Target contracts (v0.4.5 -- backend-managed ingestion).
 
 The operator never provides or sees MCP-internal ids. Per-kind
 descriptor carries only what the operator actually knows:
@@ -49,7 +49,7 @@ class TargetKind(StrEnum):
     IPA = "ipa"
     JAR = "jar"
     DOTNET_ASSEMBLY = "dotnet_assembly"
-    # v0.5 GA-54 — kernel + hypervisor target kinds
+    # v0.5 GA-54 -- kernel + hypervisor target kinds
     KERNEL_IMAGE = "kernel_image"
     KERNEL_MODULE = "kernel_module"
     HYPERVISOR_IMAGE = "hypervisor_image"
@@ -66,7 +66,7 @@ class TargetStatus(StrEnum):
 class AnalysisState(StrEnum):
     """Backend ingestion + capability-profile lifecycle (v0.4.5).
 
-    Operator-facing — the UI renders each value as a clear sentence
+    Operator-facing -- the UI renders each value as a clear sentence
     ('Pulling from GitHub…' / 'Analyzing in IDA…' / 'Ready' /
     'Failed: <reason>'). Code reads the enum; UI never shows the
     raw value.
@@ -87,7 +87,7 @@ class TargetTagSource(StrEnum):
 
 
 class TargetTag(BaseModel):
-    """One tag entry — combines string label with provenance."""
+    """One tag entry -- combines string label with provenance."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -111,14 +111,14 @@ class VRTargetCreate(BaseModel):
         default_factory=dict,
         description=(
             "Kind-specific operator-known fields. NEVER contains "
-            "backend MCP ids — those are populated automatically."
+            "backend MCP ids -- those are populated automatically."
         ),
     )
     primary_language: str | None = Field(
         default=None,
         max_length=32,
         description=(
-            "Optional — backend auto-detects post-ingestion when omitted."
+            "Optional -- backend auto-detects post-ingestion when omitted."
         ),
     )
     secondary_languages: list[str] = Field(default_factory=list)
@@ -141,7 +141,7 @@ class VRTargetSummary(BaseModel):
         description=(
             "When the operator uploaded a binary via POST /vr/targets/{id}/upload, "
             "this is the original filename. None otherwise. Projected from "
-            "the backend-internal mcp_handles_json — never settable directly."
+            "the backend-internal mcp_handles_json -- never settable directly."
         ),
     )
     android_package_name: str | None = Field(
@@ -151,7 +151,7 @@ class VRTargetSummary(BaseModel):
             "(e.g. 'com.examplecorp.selfservis') discovered by android-mcp's "
             "androguard_summary during STATIC_SUMMARY. None until that stage "
             "completes. Projected from mcp_handles_json.android_mcp_package_name "
-            "— never settable directly. Frontend uses this as the row "
+            "-- never settable directly. Frontend uses this as the row "
             "label once it is populated."
         ),
     )
@@ -184,7 +184,7 @@ class VRTargetSummary(BaseModel):
     analysis_stages: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Per-stage analysis status — ingestion / capability_profile / "
+            "Per-stage analysis status -- ingestion / capability_profile / "
             "function_ranking. Each stage carries its own state (pending / "
             "running / done / failed), started_at, completed_at, attempts, "
             "and error message. UI uses this to show progress + offer "
@@ -198,7 +198,7 @@ class VRTargetSummary(BaseModel):
 
 class VRTargetPatch(BaseModel):
     """Operator-mutable fields. ``workspace_id``, ``kind``, ``descriptor``
-    are immutable after creation — recreate the target instead."""
+    are immutable after creation -- recreate the target instead."""
 
     model_config = ConfigDict(extra="forbid")
 

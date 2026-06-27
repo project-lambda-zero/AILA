@@ -5,7 +5,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { useDashboardData } from "../hooks/useDashboardData";
 
 /**
- * ActiveScansWidget — shows currently active scan count.
+ * ActiveScansWidget -- shows currently active scan count.
  *
  * Checks module_data["vulnerability.active_scans"] first.
  * Falls back to showing total findings count if scan data is not available.

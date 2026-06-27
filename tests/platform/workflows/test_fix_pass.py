@@ -352,7 +352,7 @@ def test_migration_023_server_default_uses_text() -> None:
         src = (base / name).read_text()
         # The bad pattern must NOT appear.
         assert not re.search(r"server_default\s*=\s*sa\.func\.", src), (
-            f"{name} still uses server_default=sa.func.* — replace with sa.text()"
+            f"{name} still uses server_default=sa.func.* -- replace with sa.text()"
         )
 
 

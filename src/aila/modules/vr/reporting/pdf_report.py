@@ -103,7 +103,7 @@ async def render_investigation_pdf(investigation_id: str) -> bytes:
 
     # On-demand PoC: only when the agent submitted a real finding
     # (terminal exists) AND no PoC is attached yet. The drafted PoC
-    # is added to facts in-memory for THIS render only — persistence
+    # is added to facts in-memory for THIS render only -- persistence
     # to VRFindingRecord requires a finding row, which standalone
     # investigations (no project_id) don't have. Operator who wants
     # the PoC persisted should hit POST /vr/findings/{id}/draft-poc
@@ -123,7 +123,7 @@ async def _draft_poc_inline(facts: dict[str, Any]) -> dict[str, Any] | None:
     """Run PocWriter against the investigation facts and return a
     poc_drafts-shaped dict for in-memory inclusion in the PDF.
 
-    Returns None when the writer fails — the report renders without
+    Returns None when the writer fails -- the report renders without
     the Reproduction section rather than aborting the whole PDF.
     """
 
@@ -194,7 +194,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         )).all()
         # Synthesis-aware terminal pick: when the multi-persona panel
         # ran, the SynthesisAgent sets ``inv.primary_outcome_id`` on the
-        # consolidated verdict outcome. That IS the headline finding —
+        # consolidated verdict outcome. That IS the headline finding --
         # use it. Fall back to the latest outcome only when synthesis
         # didn't run (single-branch investigations or pre-panel data).
         terminal = None
@@ -252,7 +252,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
             .limit(80),
         )).all()
         # Total message count across all kinds (tool_call + executor
-        # responses + operator messages) — surfaced on the cover so
+        # responses + operator messages) -- surfaced on the cover so
         # the reader sees both turn count + total messages and isn't
         # confused when total >> turns (each turn writes ~2 messages).
         msg_count_row = (await uow.session.exec(
@@ -265,7 +265,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         # Variant-hunt children spawned by this investigation, with
         # their findings + PoC drafts. When the user exports the
         # PARENT, the report should describe every variant the system
-        # has explored — including PoC status. When the user exports
+        # has explored -- including PoC status. When the user exports
         # a child, this list is empty (children don't spawn variants).
         children = (await uow.session.exec(
             _select(VRInvestigationRecord)
@@ -280,7 +280,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
                 .order_by(VRFindingRecord.created_at.desc())
                 .limit(3),
             )).all()
-            # Pull the child's terminal outcome too — full answer,
+            # Pull the child's terminal outcome too -- full answer,
             # reasoning, structured payload (affected_components,
             # etc). The finding row only stores the projected fields;
             # the outcome row carries the agent's full submit text.
@@ -342,7 +342,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
                 })
             variants.append(variant_entry)
 
-        # Findings on THIS investigation's own target — if a PoC was
+        # Findings on THIS investigation's own target -- if a PoC was
         # auto-drafted (variant-child path) or operator-triggered,
         # surface the PoC code + metadata so the writer mentions it
         # in remediation / reproduction.
@@ -479,7 +479,7 @@ def _resolve_audit_metadata(
     # ACTIVE duration: sum of completed task-run intervals from
     # taskrecord (heartbeat - started). The wall-clock delta
     # between inv.created_at and inv.updated_at spans every idle
-    # hour between re-enqueues which is misleading — the user
+    # hour between re-enqueues which is misleading -- the user
     # wants "how long was the agent actually working".
     duration_seconds = _sum_active_task_runtime(inv.id)
 
@@ -525,7 +525,7 @@ def _resolve_audit_metadata(
                 # audit-mcp typically clones shallow (--depth=1) so
                 # 'git describe' can't walk ancestry to find any tag.
                 # Lazy-upgrade the clone to full history + all tags
-                # on first report — subsequent reports are instant.
+                # on first report -- subsequent reports are instant.
                 # ``--unshallow`` is a no-op when the clone is
                 # already full-history. 60s timeout covers a typical
                 # 30MB fetch on a residential connection.
@@ -533,10 +533,10 @@ def _resolve_audit_metadata(
                 _git(["fetch", "--tags", "origin"], clone, timeout=30)
                 # Closest tag, falling back to a short SHA when no
                 # tags exist (--always). For nginx this resolves to
-                # 'release-1.27.3-83-geff1108854' or similar — the
+                # 'release-1.27.3-83-geff1108854' or similar -- the
                 # tag plus distance plus SHA tail.
                 git_describe = _git(["describe", "--tags", "--always", commit_hash], clone, timeout=10)
-                # Every tag that CONTAINS this commit — tells the
+                # Every tag that CONTAINS this commit -- tells the
                 # reader which named releases are affected. Sorted
                 # by version under git's tag-sort heuristic.
                 tags_raw = _git(["tag", "--contains", commit_hash], clone, timeout=15)
@@ -569,7 +569,7 @@ def _resolve_audit_metadata(
 
 
 def _sum_active_task_runtime(investigation_id: str) -> int | None:
-    """Return total seconds the agent was actively working —
+    """Return total seconds the agent was actively working --
     sum of (completed_at - started_at) (or heartbeat - started)
     across every taskrecord row whose kwargs reference this
     investigation.
@@ -621,7 +621,7 @@ async def _resolve_code_excerpts(
     ``affected_components``.
 
     The agent's DIRECT_FINDING / ASSESSMENT_REPORT submit payload
-    carries an explicit ``affected_components`` list — the agent
+    carries an explicit ``affected_components`` list -- the agent
     saw these locations during its own tool calls, so it knows
     them concretely. We render the actual function bodies via
     audit-mcp; no regex mining of prose, no guessing.
@@ -754,7 +754,7 @@ def _extract_cve_id(text: str) -> str | None:
 # ----------------------------------------------------------------------
 
 
-# Midnight Cloud 8 palette — dark page, cream foreground text,
+# Midnight Cloud 8 palette -- dark page, cream foreground text,
 # pastel accents for severity / headings / syntax highlighting.
 # Sourced from the operator's neovim theme so the report visual
 # matches the editor they live in.
@@ -763,12 +763,12 @@ _BG_SURFACE     = colors.HexColor("#1f1d1d")  # table / mono block bg (slight li
 _BG_BORDER      = colors.HexColor("#3c3836")  # subtle separators
 _FG_TEXT        = colors.HexColor("#ffd7af")  # body cream
 _FG_MUTED       = colors.HexColor("#808080")  # comments / meta
-_FG_HEADING     = colors.HexColor("#97dbbe")  # mint — section_h1
-_FG_SUBHEAD     = colors.HexColor("#f0a8c7")  # peach — section_h2
-_FG_ACCENT      = colors.HexColor("#d7afd7")  # orchid — table headers
+_FG_HEADING     = colors.HexColor("#97dbbe")  # mint -- section_h1
+_FG_SUBHEAD     = colors.HexColor("#f0a8c7")  # peach -- section_h2
+_FG_ACCENT      = colors.HexColor("#d7afd7")  # orchid -- table headers
 _FG_LINK        = colors.HexColor("#af87d7")  # lavender
 
-# Severity badges — sit on _BG_PAGE; bright enough to stay legible.
+# Severity badges -- sit on _BG_PAGE; bright enough to stay legible.
 _SEVERITY_COLOR = {
     "CRITICAL":      colors.HexColor("#ff5f87"),  # pink-red, alert
     "HIGH":          colors.HexColor("#f0a8c7"),  # peach pink
@@ -788,7 +788,7 @@ _SEVERITY_COLOR = {
 #
 # Tahoma for body / headings (clean, no serifs, ships everywhere)
 # and a developer-grade mono (Cascadia Mono → Consolas → Courier)
-# used for code blocks — fits the security-research / editor aesthetic.
+# used for code blocks -- fits the security-research / editor aesthetic.
 # Registration is best-effort: missing font files fall through to
 # the next candidate and ultimately to ReportLab's built-in
 # Helvetica / Courier so the report still renders on any host.
@@ -852,7 +852,7 @@ _register_theme_fonts()
 def _build_styles() -> dict[str, ParagraphStyle]:
     """ParagraphStyle dictionary used across the report.
 
-    All styles target the dark Midnight Cloud 8 surface — cream
+    All styles target the dark Midnight Cloud 8 surface -- cream
     body text on the dark page, mint headings, peach subheads,
     pastel mono blocks for code excerpts.
     """
@@ -987,7 +987,7 @@ _MD_FENCE_RE = re.compile(r"^\s*```([\w+\-]*)\s*\n(.*?)\n\s*```\s*$", re.DOTALL)
 def _strip_md_fence(text: str) -> tuple[str, str]:
     """If ``text`` is a single markdown fenced block, return (inner, language).
 
-    Returns (text, "") when there's no fence — caller falls back to
+    Returns (text, "") when there's no fence -- caller falls back to
     heuristic language detection. Tolerates leading/trailing whitespace
     around the fence markers.
     """
@@ -1003,7 +1003,7 @@ def _append_section_h1(story: list[Any], title: str, styles: dict[str, Paragraph
     """Append a section h1 heading plus a thin accent rule.
 
     Mirrors the OZ/CS audit-report convention of headings with a
-    horizontal accent line extending to the right margin — gives
+    horizontal accent line extending to the right margin -- gives
     the eye a strong section break instead of floating colored text.
     """
     story.append(Paragraph(title, styles["section_h1"]))
@@ -1026,7 +1026,7 @@ def _format_code_block(
     Midnight Cloud palette.
 
     Uses XPreformatted (not Paragraph) so indentation, alignment,
-    and runs of spaces are preserved verbatim — Paragraph collapses
+    and runs of spaces are preserved verbatim -- Paragraph collapses
     whitespace and breaks Python / shell layouts. Falls back to plain
     mono XPreformatted when pygments is missing or the language has
     no lexer.
@@ -1103,7 +1103,7 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
         Scope                  (component list)
         Assessment Overview    (severity-count table)
         Findings & Tech Details
-          per FindingSection:  [VR-NN] TITLE — SEVERITY
+          per FindingSection:  [VR-NN] TITLE -- SEVERITY
                                Description
                                Risk Level (likelihood, impact)
                                Proof of Concept   (optional)
@@ -1162,7 +1162,7 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
     story.append(Paragraph(content.auditor, styles["cover_subtitle"]))
     story.append(Spacer(1, 0.3 * inch))
 
-    # Dominant severity callout — pick the highest severity among
+    # Dominant severity callout -- pick the highest severity among
     # findings (CRITICAL > HIGH > ... > INFORMATIONAL). When there
     # are no findings, render an INFORMATIONAL badge with the
     # "no confirmed bugs" copy.
@@ -1215,7 +1215,7 @@ def _render_pdf(*, facts: dict[str, Any], content: ReportContent) -> bytes:
         # Bucket outcomes by a normalized 240-char prose prefix.
         # Two outcomes that re-derive the same root cause in slightly
         # different wording land in the same bucket. Show ONE row per
-        # bucket — repeating 6 near-identical rows is worse than no
+        # bucket -- repeating 6 near-identical rows is worse than no
         # timeline at all.
         def _bucket_key(text: str) -> str:
             return re.sub(r"\s+", " ", (text or "")[:240]).casefold().strip()
@@ -1368,7 +1368,7 @@ _SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL"]
 
 def _dominant_severity(findings: list[Any]) -> str:
     """Highest severity present in the findings list. Returns
-    ``INFORMATIONAL`` when no findings exist — the cover badge
+    ``INFORMATIONAL`` when no findings exist -- the cover badge
     still needs SOMETHING to render.
     """
     if not findings:
@@ -1409,7 +1409,7 @@ def _append_cover_meta_table(
     elif meta.get("commit_hash"):
         cover_meta.append([
             "Patched in releases",
-            "NONE — commit not included in any tagged release; every published version is unpatched",
+            "NONE -- commit not included in any tagged release; every published version is unpatched",
         ])
     # Compact audit window: one row "2026-05-19 08:54 → 09:12 UTC (6m 54s)"
     # instead of three separate rows.
@@ -1576,7 +1576,7 @@ def _append_finding_block(
     """Render one FindingSection in the per-finding format.
 
     Layout (one per finding):
-        [ID] TITLE — SEVERITY        section_h1
+        [ID] TITLE -- SEVERITY        section_h1
           Description                 section_h2 + body
           Risk Level                  section_h2 + body
           Proof of Concept (opt)      section_h2 + mono
@@ -1787,7 +1787,7 @@ def _escape_for_paragraph(text: str) -> str:
     """ReportLab Paragraph treats input as XML-ish markup.
 
     Escape the three characters that would otherwise tear it: ``&``,
-    ``<``, ``>``. Newlines stay as-is — Paragraph collapses them to
+    ``<``, ``>``. Newlines stay as-is -- Paragraph collapses them to
     spaces unless we substitute ``<br/>`` (callers do that when they
     need preservation).
     """
@@ -1810,7 +1810,7 @@ def _draw_footer(canvas: Any, doc: Any) -> None:
     surface naturally.
     """
     del doc
-    # Full-page dark background — Midnight Cloud 8 page color.
+    # Full-page dark background -- Midnight Cloud 8 page color.
     canvas.saveState()
     canvas.setFillColor(_BG_PAGE)
     canvas.rect(0, 0, LETTER[0], LETTER[1], stroke=0, fill=1)
@@ -1824,6 +1824,6 @@ def _draw_footer(canvas: Any, doc: Any) -> None:
     canvas.drawRightString(
         LETTER[0] - 0.75 * inch,
         0.4 * inch,
-        "AILA Vulnerability Research — confidential",
+        "AILA Vulnerability Research -- confidential",
     )
     canvas.restoreState()

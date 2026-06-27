@@ -3,13 +3,13 @@
 When the analyzer machine has no internet access (air-gapped, restricted
 firewall, etc.), this service handles the full cycle:
 
-1. **Prepare** — on the *platform server*, download pip wheels / fetch
+1. **Prepare** -- on the *platform server*, download pip wheels / fetch
    .deb / .msi / .zip bundles into a local staging directory.
-2. **Upload** — push the bundle to the analyzer machine via SFTP.
-3. **Install** — run the appropriate install command on the analyzer
+2. **Upload** -- push the bundle to the analyzer machine via SFTP.
+3. **Install** -- run the appropriate install command on the analyzer
    via SSH (``pip install --no-index``, ``dpkg -i``, ``msiexec /i``,
    ``unzip``, etc.).
-4. **Verify** — re-run the tool's check_command to confirm it works.
+4. **Verify** -- re-run the tool's check_command to confirm it works.
 
 Supports Linux (apt / pip), macOS (brew / pip / dmg / zip), and
 Windows (pip / msi / zip) analyzer machines.
@@ -76,11 +76,11 @@ class OfflineInstallerService:
 
         try:
             if offline_type == "builtin":
-                # Tool ships with the OS — if we reach here the check_command failed,
+                # Tool ships with the OS -- if we reach here the check_command failed,
                 # meaning the tool genuinely isn't present even though it should be.
                 # Nothing we can install offline; report as not available.
                 _log.info(
-                    "%s is expected to be builtin on %s but check failed — "
+                    "%s is expected to be builtin on %s but check failed -- "
                     "OS may be minimal/stripped. Note: %s",
                     tool_name, analyzer_os,
                     os_block.get("offline_note", ""),
@@ -153,7 +153,7 @@ class OfflineInstallerService:
 
             elif offline_type == "brew":
                 _log.info(
-                    "Brew offline install not supported for %s — brew requires internet.",
+                    "Brew offline install not supported for %s -- brew requires internet.",
                     tool_name,
                 )
                 return False
@@ -451,7 +451,7 @@ class OfflineInstallerService:
     ) -> bool:
         """Run the check command to verify the tool is actually usable."""
         if not check_cmd:
-            _log.info("No check_cmd for %s — assuming success", tool_name)
+            _log.info("No check_cmd for %s -- assuming success", tool_name)
             return True
         try:
             await ssh.run_command(integration, check_cmd, timeout_seconds=30.0)

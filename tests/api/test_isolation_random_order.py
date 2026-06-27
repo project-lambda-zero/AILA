@@ -9,7 +9,7 @@ Run: pytest tests/api/ -p randomly --randomly-seed=12345 -x -q
 """
 from __future__ import annotations
 
-# Module-level mutable state — canary tests check that test_db fixture
+# Module-level mutable state -- canary tests check that test_db fixture
 # isolation prevents cross-test pollution of this dict.
 _canary_state: dict[str, bool] = {}
 
@@ -19,7 +19,7 @@ def test_canary_a_writes_state(test_db: None) -> None:
 
     If tests run in order (a before b), b would see the sentinel IF isolation
     were broken. If tests run in reverse (b before a), b would not see it
-    regardless — but pytest-randomly ensures both orderings are exercised
+    regardless -- but pytest-randomly ensures both orderings are exercised
     across different seeds.
 
     The key insight: the test_db fixture resets DB state, but this canary
@@ -33,7 +33,7 @@ def test_canary_b_checks_no_leak(test_db: None) -> None:
     """Verify that canary_a's sentinel is NOT visible when b runs first.
 
     When pytest-randomly puts this test before test_canary_a, the dict must
-    be empty. When it runs after, the dict will contain the sentinel —
+    be empty. When it runs after, the dict will contain the sentinel --
     that's expected (module-level Python state persists within a process).
 
     The real protection is: DB state from test_canary_a must not leak into
@@ -43,7 +43,7 @@ def test_canary_b_checks_no_leak(test_db: None) -> None:
     from aila.storage.db_models import ApiKeyRecord
 
     with session_scope() as session:
-        # Each test_db creates a fresh empty SQLite — no keys should exist
+        # Each test_db creates a fresh empty SQLite -- no keys should exist
         # unless this test (or a dependent fixture) explicitly created one.
         from sqlmodel import select
         keys = session.exec(select(ApiKeyRecord)).all()
@@ -119,7 +119,7 @@ def test_all_api_tests_use_isolation_fixture() -> None:
                 failures.append(f"{test_file.stem}::{name} (params: {sorted(param_names)})")
 
     if failures:
-        # Log for visibility but don't fail — some tests are legitimately DB-free
+        # Log for visibility but don't fail -- some tests are legitimately DB-free
         # (e.g., import cycle tests, schema validation tests)
         for f in failures:
             print(f"  INFO: No isolation fixture in {f}")

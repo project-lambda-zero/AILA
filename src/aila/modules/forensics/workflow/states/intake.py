@@ -29,7 +29,7 @@ state_intake_writes_fields = ["evidence_files", "active_lanes"]
 
 
 async def _set_project_status(project_id: str, status: ProjectStatus) -> None:
-    """Single UoW open to update project.status — avoids the earlier pattern
+    """Single UoW open to update project.status -- avoids the earlier pattern
     of opening 3–4 separate sessions per handler invocation."""
     if not project_id:
         return
@@ -99,7 +99,7 @@ async def state_intake(
     await _set_project_status(project_id, ProjectStatus.ANALYZING)
     await services.emitter.emit(
         "intake",
-        f"Connecting to analyzer ({analyzer_os}) — scanning: {evidence_directory}",
+        f"Connecting to analyzer ({analyzer_os}) -- scanning: {evidence_directory}",
         {"stage": "scan_start", "path": evidence_directory, "os": analyzer_os},
     )
 
@@ -128,7 +128,7 @@ async def state_intake(
     files = result.get("files", [])
     await services.emitter.emit(
         "intake",
-        f"Directory scan complete — {len(files)} file(s) found.",
+        f"Directory scan complete -- {len(files)} file(s) found.",
         {"stage": "scan_done", "file_count": len(files)},
     )
 
@@ -153,7 +153,7 @@ async def state_intake(
     # Idempotent upsert: every intake pass re-scans the evidence directory, so
     # on re-runs we either (a) update the existing row's size/metadata/type or
     # (b) insert a new row for files that appeared since the last scan. Never
-    # blindly append — that produced N duplicate rows per file across N runs.
+    # blindly append -- that produced N duplicate rows per file across N runs.
     existing_rows = (await uow_prefetch_evidence(project_id))
     existing_by_path: dict[str, ProjectEvidenceRecord] = {
         row.file_path: row for row in existing_rows
@@ -220,7 +220,7 @@ async def state_intake(
         await _set_project_status(project_id, ProjectStatus.COMPLETED)
         await services.emitter.emit(
             "intake",
-            f"Raw-directory intake complete — {len(files)} file(s) catalogued. "
+            f"Raw-directory intake complete -- {len(files)} file(s) catalogued. "
             "No pre/full-analysis pipeline will run; ask questions directly.",
             {
                 "stage": "intake_done",
@@ -263,7 +263,7 @@ async def state_intake(
     lanes_list = sorted(active_lanes)
     await services.emitter.emit(
         "intake",
-        f"Intake complete — {len(files)} file(s) catalogued. Active analysis lanes: {', '.join(lanes_list) or 'none'}.",
+        f"Intake complete -- {len(files)} file(s) catalogued. Active analysis lanes: {', '.join(lanes_list) or 'none'}.",
         {
             "stage": "intake_done",
             "evidence_count": len(files),

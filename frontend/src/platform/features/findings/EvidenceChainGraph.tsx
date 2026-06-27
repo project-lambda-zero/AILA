@@ -21,7 +21,7 @@ import { useEvidenceChain, type EvidenceNode, type EvidenceEdge } from "./api";
 type NodeType = "scan_session" | "advisory" | "cvss" | "epss" | "finding" | "triage";
 
 // ---------------------------------------------------------------------------
-// Layout constants — top-to-bottom layers
+// Layout constants -- top-to-bottom layers
 // ---------------------------------------------------------------------------
 
 const LAYER_Y: Record<string, number> = {
@@ -150,7 +150,7 @@ interface EvidenceChainGraphProps {
 }
 
 /**
- * EvidenceChainGraph — ReactFlow graph showing finding evidence provenance (UX-05).
+ * EvidenceChainGraph -- ReactFlow graph showing finding evidence provenance (UX-05).
  *
  * Layers (top to bottom):
  *   Scan Session → Advisory → Finding → CVSS + EPSS → Triage Decision

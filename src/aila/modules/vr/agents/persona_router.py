@@ -69,7 +69,7 @@ _ROLE_TASK_TYPE: dict[PersonaRole, str] = {
 }
 
 
-# Fallback when a branch has no persona — single-persona / legacy flow.
+# Fallback when a branch has no persona -- single-persona / legacy flow.
 _DEFAULT_TASK_TYPE = "vulnerability_research.audit"
 
 
@@ -95,7 +95,7 @@ def resolve_task_type(persona: PersonaVoice | str | None) -> str:
     """Resolve the LLM client task_type for a branch's persona.
 
     Returns ``vulnerability_research.audit`` when persona is None or
-    unrecognized — the legacy single-persona flow.
+    unrecognized -- the legacy single-persona flow.
     """
     role = persona_to_role(persona)
     if role is None:

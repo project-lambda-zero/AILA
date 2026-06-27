@@ -39,7 +39,7 @@ function normalizeSystemForm(detail: SystemMutationInput): SystemMutationInput {
 }
 
 // Load module panel contributions for system.detail slot once at module scope.
-// Zero panels are registered in Phase 142 — vulnerability module contributes in Phase 143.
+// Zero panels are registered in Phase 142 -- vulnerability module contributes in Phase 143.
 const moduleSpecs = loadModuleFrontendSpecs();
 const systemDetailPanels: PanelContribution[] = moduleSpecs
   .flatMap((spec) => spec.panels ?? [])
@@ -51,7 +51,7 @@ const systemDetailPanels: PanelContribution[] = moduleSpecs
 // ---------------------------------------------------------------------------
 
 /**
- * SystemDetailPage — tabbed system detail with URL-persisted tab state (D-05/D-06).
+ * SystemDetailPage -- tabbed system detail with URL-persisted tab state (D-05/D-06).
  *
  * Tabs: Overview, Tags, plus dynamic module-contributed tabs.
  * Tab state in ?tab= URL param. Each tab content shows LoadingSkeleton while loading.
@@ -105,7 +105,7 @@ export function SystemDetailPage() {
     );
   }
 
-  // 404 — redirect to /systems
+  // 404 -- redirect to /systems
   if (systemQuery.isError) {
     return (
       <div className="p-4 lg:p-6 flex flex-col gap-4">
@@ -123,7 +123,7 @@ export function SystemDetailPage() {
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       {/* sr-only section heading bridges PageShell h1 → card h3s for screen readers. */}
       <h2 className="sr-only">System overview</h2>
-      {/* Header — back-button only; title is rendered by PageShell */}
+      {/* Header -- back-button only; title is rendered by PageShell */}
       <div className="flex items-center gap-3">
         <Link to="/systems">
           <Button variant="outline" size="sm">← Systems</Button>
@@ -308,7 +308,7 @@ export function SystemDetailPage() {
             <SystemTags systemId={parsedSystemId} />
           </TabsContent>
 
-          {/* Module-contributed tabs (D-06) — slot: system.detail */}
+          {/* Module-contributed tabs (D-06) -- slot: system.detail */}
           {systemDetailPanels.map((panel) => {
             const PanelComponent = panel.render;
             return (

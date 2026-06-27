@@ -1,12 +1,12 @@
 """Structured logging foundation for AILA.
 
 Provides configure_logging(), RunIdFilter, human-readable and JSON formatters.
-Only stdlib imports — this module is infrastructure used by everything else.
+Only stdlib imports -- this module is infrastructure used by everything else.
 
 Two output modes are supported:
 - Human-readable (default): HH:MM:SS level logger message
 - JSON (json_output=True): single-line JSON with ISO 8601 timestamp (Phase 38 DEAD-05
-  fix — the previous implementation used a human datefmt for JSON output, producing
+  fix -- the previous implementation used a human datefmt for JSON output, producing
   non-sortable timestamps; now uses datetime.utcfromtimestamp + strftime to produce
   unambiguous, sortable, locale-independent timestamps ending in "Z").
 
@@ -22,7 +22,7 @@ import logging as _log
 import sys
 from datetime import datetime
 
-# Note: `import logging as _log` is safe here — this module's fully-qualified
+# Note: `import logging as _log` is safe here -- this module's fully-qualified
 # name is `aila.logging`, so Python resolves `logging` to the stdlib package,
 # not to this file. The importlib.import_module workaround is not needed.
 
@@ -46,7 +46,7 @@ class RunIdFilter(_log.Filter):
 
     def filter(self, record: _log.LogRecord) -> bool:
         """Attach the current run_id to the log record.  Always returns True."""
-        record.run_id = self.run_id  # dynamic attribute injection — LogRecord allows extra fields
+        record.run_id = self.run_id  # dynamic attribute injection -- LogRecord allows extra fields
         return True
 
     def set_run_id(self, run_id: str) -> None:
@@ -63,7 +63,7 @@ class _JsonFormatter(_log.Formatter):
 
     Output fields:
     - time: ISO 8601 UTC timestamp (e.g. "2026-04-02T14:30:00.123456Z").
-      Produced via datetime.utcfromtimestamp + strftime — unambiguous, sortable,
+      Produced via datetime.utcfromtimestamp + strftime -- unambiguous, sortable,
       no locale dependency (Phase 38 DEAD-05 fix: previous implementation used
       the human datefmt "%H:%M:%S" for JSON output, producing non-machine-readable
       timestamps).
@@ -89,7 +89,7 @@ class _JsonFormatter(_log.Formatter):
         )
 
 
-# Module-level singleton filter — shared across all configure_logging calls.
+# Module-level singleton filter -- shared across all configure_logging calls.
 _run_id_filter = RunIdFilter()
 
 

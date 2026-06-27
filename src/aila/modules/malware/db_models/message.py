@@ -1,6 +1,6 @@
 """Investigation message table definition (M3.R-1).
 
-Per D-43: conversational UX — operator + engine exchange typed
+Per D-43: conversational UX -- operator + engine exchange typed
 messages. Each message has a payload_kind matching one of the 10
 D-44 typed payloads; payload itself is a JSON dict (per-kind shape
 validated by the renderer / dispatcher, not at the DB layer).

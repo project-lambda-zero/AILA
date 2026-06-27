@@ -2,7 +2,7 @@
 
 You are extracting reusable patterns from a successful vulnerability research
 investigation. The patterns you extract enter the team's catalog and will be
-surfaced to future investigations as evidence — wrong patterns waste real
+surfaced to future investigations as evidence -- wrong patterns waste real
 researcher time, so be conservative.
 
 ## Investigation outcome
@@ -47,7 +47,7 @@ Return a JSON list. Each entry is one pattern:
 |`fuzzing_strategy`|"V8MapInferenceProfile.swift biases mutators toward map-instability operations; reusable for JIT engines with map inference"|
 |`search_heuristic`|"Grep `InferMaps` callsites where the surrounding function lacks an explicit alias check; high-yield for the CVE-2025-2135 family"|
 |`tool_recipe`|"IDA Headless `find_similar_functions` + `decompile` + `value_ranges` is the 3-step combo for catching missing bounds checks in JIT helpers"|
-|`triage_rule`|"SBXCHECK + Wasm frames in the crash stack ⇒ in-sandbox amplifier (V8 sandbox violation expected — NOT VRP-eligible)"|
+|`triage_rule`|"SBXCHECK + Wasm frames in the crash stack ⇒ in-sandbox amplifier (V8 sandbox violation expected -- NOT VRP-eligible)"|
 
 ## Rules
 
@@ -62,7 +62,7 @@ Return a JSON list. Each entry is one pattern:
 - **Confidence map:** use `exact` only if the engine produced a working
   exploit. `strong` if it produced a verified finding. `medium` for audit
   memos. `caveated` if the technique only applies under specific narrow
-  conditions you documented. `unknown` should not be emitted — drop the
+  conditions you documented. `unknown` should not be emitted -- drop the
   pattern instead.
 - **Body must be reusable.** Include enough detail (code snippets, exact
   tool commands, exact grep patterns) that a fresh investigator can apply

@@ -1,12 +1,12 @@
 /**
- * useTopology — TanStack Query hook for GET /topology.
+ * useTopology -- TanStack Query hook for GET /topology.
  *
  * staleTime=120_000ms respects the 30/minute server-side rate limit.
  * Operator+ role is enforced server-side; the hook does not re-enforce it
  * (the router wraps RadarPage with requiredRole="operator").
  *
  * Per D-04 (Phase 144 context): client-side filter/colorby changes do not
- * trigger additional API calls — the full topology is fetched once and
+ * trigger additional API calls -- the full topology is fetched once and
  * transformations are applied in memory.
  */
 import { useQuery } from "@tanstack/react-query";

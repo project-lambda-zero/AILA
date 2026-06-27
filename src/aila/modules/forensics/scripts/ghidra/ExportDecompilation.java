@@ -1,4 +1,4 @@
-// ExportDecompilation.java — Ghidra headless post-analysis script.
+// ExportDecompilation.java -- Ghidra headless post-analysis script.
 // Decompiles all functions and prints C-like pseudocode.
 // Usage: analyzeHeadless <project> <name> -import <binary> -postScript ExportDecompilation.java
 //

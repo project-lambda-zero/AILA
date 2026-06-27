@@ -1,7 +1,7 @@
 /**
- * command-palette.spec.ts — E2E tests for cmd+k command palette (UX-02).
+ * command-palette.spec.ts -- E2E tests for cmd+k command palette (UX-02).
  *
- * Uses REAL PostgreSQL backend — no mocks.
+ * Uses REAL PostgreSQL backend -- no mocks.
  * Auth injected via localStorage per established project pattern.
  */
 import { test, expect } from "@playwright/test";
@@ -32,7 +32,7 @@ test.describe("Command Palette (UX-02)", () => {
     await page.goto("/scans");
     await page.waitForTimeout(500);
 
-    // Open palette — no query
+    // Open palette -- no query
     await page.keyboard.press("Control+k");
     await page.waitForTimeout(500);
 

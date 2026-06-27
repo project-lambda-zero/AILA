@@ -62,7 +62,7 @@ def start_process(name: str, cmd: list[str], cwd: Path, env: dict | None = None)
 def main() -> int:
     procs: dict[str, subprocess.Popen] = {}
 
-    # 1. DB init (blocking — must finish before workers start)
+    # 1. DB init (blocking -- must finish before workers start)
     print("\033[97m[init]\033[0m Initializing database...")
     subprocess.call(
         [sys.executable, str(ROOT / "scripts" / "db_init.py")],
@@ -97,7 +97,7 @@ def main() -> int:
             cmd += ["-q", queue]
         procs[name] = start_process(name, cmd, cwd=ROOT)
 
-    # 6. Wait — Ctrl+C kills all
+    # 6. Wait -- Ctrl+C kills all
     print(f"\n\033[97m{'='*60}")
     print("  AILA running \u2014 6 services")
     print("  Backend:  http://localhost:8000")
@@ -142,7 +142,7 @@ def main() -> int:
 
 
 def _find_vite() -> list[str]:
-    """Find vite executable — npx, pnpm, or direct."""
+    """Find vite executable -- npx, pnpm, or direct."""
     # Try direct node_modules/.bin/vite first
     vite_bin = FRONTEND / "node_modules" / ".bin" / ("vite.cmd" if sys.platform == "win32" else "vite")
     if vite_bin.exists():

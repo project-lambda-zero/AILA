@@ -1,4 +1,4 @@
-"""Advisory state — score, classify, format, and persist a finding.
+"""Advisory state -- score, classify, format, and persist a finding.
 
 Pipeline:
 1. Pull crash_type from research / poc parsed_asan; fall back to
@@ -13,7 +13,7 @@ Pipeline:
    crash signature, and PoC metadata.
 
 DB write failures are logged and swallowed so the workflow still emits a
-response — the operator can re-derive the advisory from the workflow
+response -- the operator can re-derive the advisory from the workflow
 output even if persistence flapped.
 """
 from __future__ import annotations
@@ -98,7 +98,7 @@ async def _llm_narrative(
             "remediation": str(parsed.get("remediation") or ""),
         }
     except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
-        _log.warning("advisory narrative LLM error: %s — using fallback", exc)
+        _log.warning("advisory narrative LLM error: %s -- using fallback", exc)
         fn = research.get("vulnerable_function") or "the affected function"
         return {
             "summary": (

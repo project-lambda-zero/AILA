@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Tests for get_settings() memoization and init_directories() separation.
 
-Requirement: CONC-04 — get_settings() returns the same Settings instance
+Requirement: CONC-04 -- get_settings() returns the same Settings instance
 on every call; mkdir side effects extracted into init_directories().
 """
 
@@ -54,7 +54,7 @@ def test_get_settings_is_thin_wrapper() -> None:
 
     src = inspect.getsource(config.get_settings)
     assert "mkdir" not in src, (
-        "get_settings() must not contain mkdir calls — delegate to _build_settings()"
+        "get_settings() must not contain mkdir calls -- delegate to _build_settings()"
     )
 
 

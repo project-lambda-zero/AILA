@@ -1,4 +1,4 @@
-# VR Module — Installation & Operations Guide
+# VR Module -- Installation & Operations Guide
 
 Complete setup guide for the AILA Vulnerability Research module. Covers infrastructure, MCP servers, LLM configuration, target onboarding, investigation lifecycle, and troubleshooting.
 
@@ -19,8 +19,8 @@ Complete setup guide for the AILA Vulnerability Research module. Covers infrastr
 | Service | Role | Default URL |
 |---|---|---|
 | **audit-mcp** | Source code indexing, semantic search, function reading | `http://127.0.0.1:18822` |
-| **ida-headless-mcp** | Binary decompilation, function analysis (optional — only for binary targets) | `http://127.0.0.1:18821` |
-| **android-mcp** | Android APK audit: apktool, jadx, androguard, MobSF, signing checks, native-lib hardening (optional — only for `android_apk` targets) | `http://127.0.0.1:18823` |
+| **ida-headless-mcp** | Binary decompilation, function analysis (optional -- only for binary targets) | `http://127.0.0.1:18821` |
+| **android-mcp** | Android APK audit: apktool, jadx, androguard, MobSF, signing checks, native-lib hardening (optional -- only for `android_apk` targets) | `http://127.0.0.1:18823` |
 
 **LLM provider (at least one required):**
 - OpenAI API (GPT-4o, GPT-4o-mini)
@@ -55,7 +55,7 @@ make dev-status
 make db-init
 ```
 
-This creates all tables and stamps the Alembic migration head. Do NOT run this on an existing database — use `make migrate` for subsequent schema updates.
+This creates all tables and stamps the Alembic migration head. Do NOT run this on an existing database -- use `make migrate` for subsequent schema updates.
 
 **Existing database** (after pulling new code):
 ```bash
@@ -80,16 +80,16 @@ AILA_DATABASE_URL=postgresql+asyncpg://postgres:changeme@localhost:5432/aila
 # Redis
 AILA_PLATFORM_REDIS_URL=redis://127.0.0.1:6379/0
 
-# Auth — generate a random secret
+# Auth -- generate a random secret
 AILA_JWT_SECRET_KEY=<run: openssl rand -hex 32>
 
-# Admin password — used on first boot only, remove after
+# Admin password -- used on first boot only, remove after
 AILA_ADMIN_PASSWORD=YourSecurePassword
 
 # CORS
 AILA_CORS_ORIGINS=http://localhost:3000
 
-# LLM — pick your provider
+# LLM -- pick your provider
 OPENAI_API_KEY=sk-...
 AILA_PLATFORM_LLM_DEFAULT_MODEL=gpt-4o
 AILA_PLATFORM_LLM_BASE_URL=https://api.openai.com/v1
@@ -140,7 +140,7 @@ The audit-mcp server provides:
 - Function reading (by name or file:line range)
 - Cross-reference analysis
 
-### 3.2 ida-headless-mcp (optional — for binary targets)
+### 3.2 ida-headless-mcp (optional -- for binary targets)
 
 Only needed if you analyze compiled binaries (ELF, PE, Mach-O):
 
@@ -153,7 +153,7 @@ pip install -e .
 
 Requires a licensed IDA Pro installation.
 
-### 3.3 android-mcp (optional — for Android APK targets)
+### 3.3 android-mcp (optional -- for Android APK targets)
 
 Only needed if you analyze Android APKs (target kind `android_apk`). The
 server wraps apktool / jadx / androguard / MobSF / drozer / qark /
@@ -168,7 +168,7 @@ cd android-mcp
 pip install -e ".[dev]"
 ```
 
-OS prerequisites the server shells out to (install only what you need —
+OS prerequisites the server shells out to (install only what you need --
 each tool wrapper degrades to "binary not found" cleanly):
 
 | Wrapper | OS prereq | Notes |
@@ -194,7 +194,7 @@ each tool wrapper degrades to "binary not found" cleanly):
 AUDIT_MCP_URL=http://127.0.0.1:18822
 AUDIT_MCP_TIMEOUT=300
 # Multi-worker uvicorn fan-out. Set via env OR via `--workers N` on the
-# audit-mcp launch line. Linux / macOS only — Windows uvicorn multi-worker
+# audit-mcp launch line. Linux / macOS only -- Windows uvicorn multi-worker
 # is broken (proactor IOCP handle leak), keep `AUDIT_MCP_WORKERS=1` there.
 AUDIT_MCP_WORKERS=1
 # anyio worker-thread pool (default 64). Raise when you see "all threads
@@ -219,7 +219,7 @@ IDA_HEADLESS_TIMEOUT=120
 ANDROID_MCP_URL=http://127.0.0.1:18823
 # Absolute network ceiling for one bridge HTTP call (default 1800s).
 # Per-stage StageTracker timeouts (APK_DECODE 600s, JADX_DECOMPILE 900s,
-# INDEX_DECOMPILED 3600s, STATIC_SUMMARY 300s, MOBSF_SCAN 1800s) are tighter — the bridge ceiling
+# INDEX_DECOMPILED 3600s, STATIC_SUMMARY 300s, MOBSF_SCAN 1800s) are tighter -- the bridge ceiling
 # is only the absolute network cap, not the per-stage budget.
 ANDROID_MCP_TIMEOUT=1800
 # Override the default APK upload root (defaults to ~/.android-mcp/uploads).
@@ -242,7 +242,7 @@ ANDROID_MCP_TIMEOUT=1800
 # ANDROID_MCP_WORKDIR=/var/lib/android-mcp/work
 ```
 
-The audit-mcp `/runtime` endpoint returns live `{dedup: {inflight, hits, misses}, semaphores: {<tool>: {cap, available}}, thread_pool_limit}`. When agents complain "audit_mcp slow", read it first — `available: 0` on a tool is the bottleneck; bump its `AUDIT_MCP_TOOL_CAP_<TOOL>` cap. High `hits` with low `misses` means sibling branches are deduping the same call, which is the design.
+The audit-mcp `/runtime` endpoint returns live `{dedup: {inflight, hits, misses}, semaphores: {<tool>: {cap, available}}, thread_pool_limit}`. When agents complain "audit_mcp slow", read it first -- `available: 0` on a tool is the bottleneck; bump its `AUDIT_MCP_TOOL_CAP_<TOOL>` cap. High `hits` with low `misses` means sibling branches are deduping the same call, which is the design.
 
 Semble (the embedded code-chunk retriever inside audit-mcp) caches per-index pickles at `~/.audit-mcp/semble-cache/<index_id>.pkl`. After a clean restart, semble pickle reloads in ~9 s for repos audit-mcp has previously built; cold builds are minutes to hours depending on repo size, gated by `AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S`.
 
@@ -263,7 +263,7 @@ This starts all services:
 - AILA workers (one per queue: default, vr, vulnerability, forensics)
 - AILA frontend (Vite dev server, port 3000)
 
-`start.sh` does **not** currently spawn android-mcp — the operator
+`start.sh` does **not** currently spawn android-mcp -- the operator
 launches it in its own terminal (`python -m android_mcp --mode http
 --port 18823`) when Android APK targets are in play. Source-repo and
 binary investigations don't need it running.
@@ -584,7 +584,7 @@ python -m aila worker -q vr
 
 `TaskRecord.status` (Postgres), `workflow_state_cursor.current_state`
 (Postgres), and `arq:in-progress:<id>` (Redis) CAN desync. The D-86
-SKIP path coordinates all three. New drift paths are landmines —
+SKIP path coordinates all three. New drift paths are landmines --
 inspect all three before claiming a task is running or stuck.
 
 ### Cost tracking known-broken

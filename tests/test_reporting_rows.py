@@ -34,7 +34,7 @@ from aila.modules.vulnerability.reporting.rows import (
 )
 
 # ---------------------------------------------------------------------------
-# Helpers — build realistic finding dicts
+# Helpers -- build realistic finding dicts
 # ---------------------------------------------------------------------------
 
 def _finding(

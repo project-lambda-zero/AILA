@@ -8,13 +8,13 @@ per-tool synonym maps decay every time the upstream MCP adds a new tool.
 Solution: define families of kwarg names that share an intent ("how
 many results", "entity name", "address", ...), then walk the live tool
 catalog and ask, for each tool, "which member of this family does THIS
-tool actually accept?" — and alias every other family member to it.
+tool actually accept?" -- and alias every other family member to it.
 
 The families are intentionally tight. Two name groups that look similar
 but have distinct semantics (``path`` = repo root vs ``file_path`` = a
 specific file; ``depth`` vs ``limit``; ``query`` natural-language vs
 ``pattern`` regex) stay in separate families. When a tool accepts two
-members of the same family, that family is skipped for that tool —
+members of the same family, that family is skipped for that tool --
 ambiguity is left to the upstream validator to reject loudly rather
 than silently picking the wrong one.
 
@@ -75,7 +75,7 @@ def build_alias_map(
           * If exactly ONE family member appears in the tool's params,
             map the OTHER family members to it.
           * If zero or two+ members appear, do nothing for that family
-            on that tool (ambiguous — let the validator reject).
+            on that tool (ambiguous -- let the validator reject).
     """
     out: dict[str, dict[str, str]] = {}
     overrides = manual_overrides or {}
@@ -118,7 +118,7 @@ def normalize_kwargs(
         2. Look up the key in ``auto_map[action]``.
         3. If found, rename to the canonical name unless one is already
            set (in which case drop the duplicate and emit a note).
-        4. Otherwise pass through — the schema validator will catch
+        4. Otherwise pass through -- the schema validator will catch
            genuinely unknown args.
     """
     if not kwargs:

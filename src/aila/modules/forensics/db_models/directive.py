@@ -1,4 +1,4 @@
-"""Analyst directives — free-text guidance from a human analyst.
+"""Analyst directives -- free-text guidance from a human analyst.
 
 Directives are persistent project- or investigation-scoped notes the
 investigator reads in every turn so a human can steer the agent

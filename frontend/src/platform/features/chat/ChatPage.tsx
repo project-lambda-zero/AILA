@@ -38,16 +38,16 @@ import {
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "--";
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "—";
+  if (Number.isNaN(parsed.getTime())) return "--";
   return parsed.toLocaleString();
 }
 
 function shortTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "--";
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "—";
+  if (Number.isNaN(parsed.getTime())) return "--";
   return parsed.toLocaleString(undefined, {
     month: "short",
     day: "numeric",
@@ -249,7 +249,7 @@ function Composer({
             submit();
           }
         }}
-        placeholder="Ask the platform anything — Enter to send, Shift+Enter for newline."
+        placeholder="Ask the platform anything -- Enter to send, Shift+Enter for newline."
         disabled={disabled}
         rows={3}
         data-testid="chat-composer"

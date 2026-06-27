@@ -1,8 +1,8 @@
 """Unit tests for the producer-side helpers added to fuzz_service.
 
 Covers the §1.5 / §1.6 closure (08_FRONTEND_UX.md):
-- _read_reproducer_head — tolerates missing path, returns hex + size
-- _compose_crash_summary — one-line summary derived from crash_type +
+- _read_reproducer_head -- tolerates missing path, returns hex + size
+- _compose_crash_summary -- one-line summary derived from crash_type +
   top stack frame
 
 The _record_telemetry_snapshot helper is exercised end-to-end by the

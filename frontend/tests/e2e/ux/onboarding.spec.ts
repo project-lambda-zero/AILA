@@ -1,7 +1,7 @@
 /**
- * onboarding.spec.ts — E2E tests for the first-run onboarding wizard (UX-01).
+ * onboarding.spec.ts -- E2E tests for the first-run onboarding wizard (UX-01).
  *
- * Uses REAL PostgreSQL backend — no mocks.
+ * Uses REAL PostgreSQL backend -- no mocks.
  * Auth injected via localStorage per established project pattern.
  */
 import { test, expect } from "@playwright/test";
@@ -57,7 +57,7 @@ test.describe("Onboarding Wizard (UX-01)", () => {
     // Wizard should be gone
     await expect(page.getByText("Welcome to AILA")).not.toBeVisible({ timeout: 5_000 });
 
-    // Reload — wizard should NOT reappear (localStorage flag set)
+    // Reload -- wizard should NOT reappear (localStorage flag set)
     await page.reload();
     await page.waitForTimeout(2_000);
     await expect(page.getByText("Welcome to AILA")).not.toBeVisible();
@@ -74,7 +74,7 @@ test.describe("Onboarding Wizard (UX-01)", () => {
 
     await page.goto("/");
 
-    // Wait for step 1 — welcome
+    // Wait for step 1 -- welcome
     await expect(page.getByText("Welcome to AILA")).toBeVisible({ timeout: 10_000 });
 
     // Click "Get Started"

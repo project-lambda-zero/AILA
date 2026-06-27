@@ -172,7 +172,7 @@ export function DisclosuresPage() {
 
   return (
     <div className="space-y-4">
-      {/* CTA bar — toggles the inline create form below. */}
+      {/* CTA bar -- toggles the inline create form below. */}
       <div className="flex items-center justify-between">
         <button
           type="button"
@@ -202,7 +202,7 @@ export function DisclosuresPage() {
               aria-label="Investigation"
               className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
             >
-              <option value="">— pick an investigation —</option>
+              <option value="">-- pick an investigation --</option>
               {investigations.map((inv) => {
                 const linkCount = inv.linked_finding_ids?.length ?? 0;
                 const linkSuffix =
@@ -238,7 +238,7 @@ export function DisclosuresPage() {
                 aria-label="Disclosure track"
                 className="px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
               >
-                <option value="">— pick a track —</option>
+                <option value="">-- pick a track --</option>
                 {tracks.map((t) => (
                   <option key={t.track_id} value={t.track_id}>
                     {t.display_name} ({t.kind})
@@ -251,7 +251,7 @@ export function DisclosuresPage() {
                 aria-label="Workspace"
                 className="px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
               >
-                <option value="">— pick a workspace —</option>
+                <option value="">-- pick a workspace --</option>
                 {workspaces.map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name}
@@ -268,7 +268,7 @@ export function DisclosuresPage() {
                 aria-label="Proof-of-concept tier"
                 className="px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
               >
-                <option value="">— PoC tier (auto) —</option>
+                <option value="">-- PoC tier (auto) --</option>
                 {POC_TIERS.map((t) => (
                   <option key={t.value} value={t.value}>
                     {t.label}
@@ -323,7 +323,7 @@ export function DisclosuresPage() {
           aria-label="Filter by track"
           className="px-3 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
         >
-          <option value="">— all —</option>
+          <option value="">-- all --</option>
           {tracks.map((t) => (
             <option key={t.track_id} value={t.track_id}>
               {t.display_name} ({t.kind})
@@ -340,7 +340,7 @@ export function DisclosuresPage() {
           aria-label="Filter by status"
           className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
         >
-          <option value="">— all —</option>
+          <option value="">-- all --</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>
               {s}
@@ -397,20 +397,20 @@ export function DisclosuresPage() {
                 </td>
                 <td className="px-4 py-2 font-mono text-xs">{r.poc_tier}</td>
                 <td className="px-4 py-2 text-xs">
-                  {r.severity_rating ?? "—"}
+                  {r.severity_rating ?? "--"}
                 </td>
                 <td className="px-4 py-2 font-mono text-xs text-text-muted">
                   {r.embargo_until
                     ? new Date(r.embargo_until).toLocaleDateString()
-                    : "—"}
+                    : "--"}
                 </td>
                 <td className="px-4 py-2 font-mono text-xs">
-                  {r.vendor_reference ?? "—"}
+                  {r.vendor_reference ?? "--"}
                 </td>
                 <td className="px-4 py-2 font-mono text-xs text-right">
                   {r.bounty_awarded_usd != null
                     ? `$${r.bounty_awarded_usd.toLocaleString()}`
-                    : "—"}
+                    : "--"}
                 </td>
                 <td className="px-2 py-2 text-right">
                   <DeleteButton

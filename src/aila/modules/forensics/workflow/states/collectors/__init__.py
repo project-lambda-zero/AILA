@@ -2,7 +2,7 @@
 
 Each lane module exposes a single ``collect_<lane>_artifacts()`` coroutine
 that takes ``(ssh, integration, path, analyzer_os, emitter=None)`` and
-returns a list of artifact dicts. Collectors are pure transformers — they
+returns a list of artifact dicts. Collectors are pure transformers -- they
 do not touch the DB, emit progress via the optional ``emitter``, and never
 raise past their own boundary (one failed file never aborts the stage).
 """

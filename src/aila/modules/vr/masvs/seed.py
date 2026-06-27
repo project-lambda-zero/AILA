@@ -3,7 +3,7 @@
 A MASVS audit (``InvestigationKind.MASVS_AUDIT`` on the parent record,
 ``InvestigationKind.AUDIT`` on every child) fans out into one child
 :class:`VRInvestigation` per L1 control. Each child runs the *unchanged*
-vuln_researcher scout / critic / verifier chain — the MASVS layer only
+vuln_researcher scout / critic / verifier chain -- the MASVS layer only
 swaps the ``initial_question`` so the scout knows which OWASP
 requirement to evaluate.
 
@@ -12,7 +12,7 @@ requirement to evaluate.
 plus the parent target's ``apk_overview`` projection. The output is a
 plain-markdown prompt body consumed verbatim by the audit-only system
 prompt at :mod:`aila.modules.vr.agents.prompts.system_audit`; there is
-no template engine and no late binding — what the builder emits is what
+no template engine and no late binding -- what the builder emits is what
 the scout receives.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ class MasvsSeedBuilder:
     """Stateless builder producing one child's ``initial_question``.
 
     The class wraps a single static method (:meth:`build`) for naming
-    parity with the project IMPLEMENTATION_PLAN (S-2) — there is no
+    parity with the project IMPLEMENTATION_PLAN (S-2) -- there is no
     instance state. The class shape is preserved so a future iteration
     can register alternative builders (iOS-side MASVS, MASTG profile
     prompts, customer-bespoke audit templates) behind the same callsite
@@ -71,7 +71,7 @@ class MasvsSeedBuilder:
             ``VRInvestigationRecord.initial_question``.
         """
         overview: Mapping[str, Any] = apk_overview or {}
-        # fix §223 — ``overview.get('static_summary')`` may legitimately
+        # fix §223 -- ``overview.get('static_summary')`` may legitimately
         # hand back ``None`` (covered by the ``or {}``) but a partially-built
         # apk_overview from a buggy upstream stage could also stash a list,
         # string, or other non-Mapping. ``.get('package')`` on those raises
@@ -90,7 +90,7 @@ class MasvsSeedBuilder:
         index_id = _text_or_unknown(overview.get("audit_mcp_index_id"))
         jadx_class_count = _text_or_unknown(overview.get("jadx_class_count"))
 
-        # fix §222 — match the hints_block/apis_block pattern: empty
+        # fix §222 -- match the hints_block/apis_block pattern: empty
         # verification_steps would otherwise render as a blank section
         # heading with no body, telling the scout nothing.
         steps_block = (
@@ -98,7 +98,7 @@ class MasvsSeedBuilder:
                 f"{idx}. {step}"
                 for idx, step in enumerate(control.verification_steps, start=1)
             )
-            or "(none catalogued — use evidence hints below)"
+            or "(none catalogued -- use evidence hints below)"
         )
         hints_block = (
             "\n".join(f"  - {hint}" for hint in control.evidence_hints)
@@ -150,7 +150,7 @@ def _text_or_unknown(value: object) -> str:
 # already injects: (a) the persona system prompt, (b) the full tool
 # surface declaration, (c) the audit-kind outcome contract. Repeating
 # them in the seed bloated each child's per-turn context by ~3x with
-# zero added information — drop them. What stays is the irreducible
+# zero added information -- drop them. What stays is the irreducible
 # per-control payload: which MASVS control to audit, which APK, which
 # audit-mcp index to query, and the catalog's evidence hints.
 _PROMPT_TEMPLATE = """\

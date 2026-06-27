@@ -93,7 +93,7 @@ interface DataEnvelope<T> {
 // ---------------------------------------------------------------------------
 
 /**
- * useEvidenceChain — fetch the provenance graph for a finding (UX-05).
+ * useEvidenceChain -- fetch the provenance graph for a finding (UX-05).
  *
  * Calls GET /findings/{id}/evidence-chain.
  * Returns nodes and edges for ReactFlow rendering.
@@ -111,7 +111,7 @@ export function useEvidenceChain(findingId: number | null) {
 }
 
 /**
- * useFindingDetail — fetch full scoring detail for a single finding.
+ * useFindingDetail -- fetch full scoring detail for a single finding.
  *
  * Calls GET /vulnerability/findings/{id}.
  * Returns FindingDetail including parsed details_json blob.
@@ -129,7 +129,7 @@ export function useFindingDetail(findingId: number | null) {
 }
 
 /**
- * useCveIntel — fetch CVE intelligence with CVSS breakdown.
+ * useCveIntel -- fetch CVE intelligence with CVSS breakdown.
  *
  * Calls GET /vulnerability/cves/{cve_id}.
  * Returns description, CVSS vector + breakdown, EPSS, KEV.

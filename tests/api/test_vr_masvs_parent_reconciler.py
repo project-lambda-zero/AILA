@@ -1,4 +1,4 @@
-"""D-5 — ``sweep_masvs_audit_parents`` rolls parent batch status forward.
+"""D-5 -- ``sweep_masvs_audit_parents`` rolls parent batch status forward.
 
 The MASVS dispatcher commits the parent ``VRInvestigationRecord``
 (``kind=masvs_audit``) at ``status=CREATED`` and never writes to it
@@ -236,7 +236,7 @@ async def test_parent_flips_to_completed_when_all_children_terminal(
 async def test_failed_and_abandoned_children_count_as_terminal(
     test_db: None,
 ) -> None:
-    """Terminal set is COMPLETED ∪ FAILED ∪ ABANDONED — all flip parent."""
+    """Terminal set is COMPLETED ∪ FAILED ∪ ABANDONED -- all flip parent."""
     del test_db
     target_id = await _make_target("mixed-terminal")
     parent_id, _ = await _make_batch(

@@ -72,7 +72,7 @@ async def run_command_via_file(
     a file on the analyzer + SFTP download uses proper flow control and can
     transfer arbitrary-size output.
 
-    The remote temp file is cleaned up in a ``finally`` branch — if the run
+    The remote temp file is cleaned up in a ``finally`` branch -- if the run
     crashes mid-flight, the orphan file lives in the analyzer temp dir until
     the OS cleans its temp folder.
     """
@@ -97,14 +97,14 @@ async def run_command_via_file(
     try:
         # The command itself emits no stdout (everything went to the file),
         # so the SSH channel stays well below the 2 MB window. Exit code
-        # carries the command's real status — we ignore non-zero and still
+        # carries the command's real status -- we ignore non-zero and still
         # try to fetch so the file has partial/error output.
         try:
             await ssh.run_command(integration, redirected, timeout_seconds=timeout_seconds)
         except (OSError, TimeoutError, RuntimeError, AILAError):
             pass
 
-        # Download via SFTP — handles GB-sized outputs cleanly.
+        # Download via SFTP -- handles GB-sized outputs cleanly.
         await ssh.download_file(integration, remote_tmp, local_tmp_path, timeout_seconds=timeout_seconds)
 
         with open(local_tmp_path, encoding="utf-8", errors="ignore") as f:

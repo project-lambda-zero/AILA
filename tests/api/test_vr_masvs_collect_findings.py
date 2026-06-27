@@ -1,4 +1,4 @@
-"""R-1 — :func:`collect_findings` aggregates child outcomes per MASVS group.
+"""R-1 -- :func:`collect_findings` aggregates child outcomes per MASVS group.
 
 The aggregator (R-1) is the read path that turns a completed (or in-flight)
 MASVS audit batch into a :class:`MasvsAuditAggregate` for the PDF
@@ -20,7 +20,7 @@ The tests below cover:
   skipped without crashing the aggregate.
 
 The mapping rule itself has its own coverage in
-``tests/test_vr_masvs_verdict_mapper.py`` — these tests only verify the
+``tests/test_vr_masvs_verdict_mapper.py`` -- these tests only verify the
 aggregator wires the inputs and outputs correctly.
 """
 from __future__ import annotations
@@ -200,7 +200,7 @@ async def test_collect_findings_unknown_parent_raises(test_db: None) -> None:
 
 @pytest.mark.asyncio
 async def test_collect_findings_wrong_kind_raises(test_db: None) -> None:
-    """A non-MASVS investigation refuses with ``ValueError`` — defensive guard."""
+    """A non-MASVS investigation refuses with ``ValueError`` -- defensive guard."""
     del test_db
     target_id = await _make_target("wrong-kind")
     parent_id = await _make_parent(
@@ -382,7 +382,7 @@ async def test_collect_findings_preserves_parent_spec_version(
     The parent stores ``masvs_spec_version`` on
     ``secondary_target_refs_json`` at dispatch time so later catalog
     edits do not silently invalidate a shipped report. The aggregate
-    must report that pinned value verbatim — not the live catalog.
+    must report that pinned value verbatim -- not the live catalog.
     """
     del test_db
     target_id = await _make_target("pinned-version")

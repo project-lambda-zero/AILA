@@ -1,4 +1,4 @@
-"""Enrichment ARQ workers — barrel re-export."""
+"""Enrichment ARQ workers -- barrel re-export."""
 from __future__ import annotations
 
 from .profile_worker import run_capability_profile_build

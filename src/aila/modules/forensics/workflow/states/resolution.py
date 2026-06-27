@@ -125,7 +125,7 @@ async def state_resolution(
             _log.warning("ResolverAgent failed during resolution", exc_info=True)
             await services.emitter.emit(
                 "resolution",
-                "Resolver crashed — continuing with empty resolved-answers list.",
+                "Resolver crashed -- continuing with empty resolved-answers list.",
                 {"stage": "resolver_failed"},
             )
 

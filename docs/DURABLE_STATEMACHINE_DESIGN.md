@@ -1,4 +1,4 @@
-# DurableStateMachine — design as it actually exists
+# DurableStateMachine -- design as it actually exists
 
 This document describes `src/aila/platform/workflows/engine.py` and the
 public contracts in `src/aila/platform/workflows/types.py` exactly as
@@ -13,9 +13,9 @@ from the source.
 
 ## 1. What the durable state machine is for
 
-Every multi-step backend action in AILA — a vulnerability
+Every multi-step backend action in AILA -- a vulnerability
 investigation turn loop, a MASVS audit dispatch, a target ingestion,
-a forensics replay — runs as a state machine with **named states**
+a forensics replay -- runs as a state machine with **named states**
 and an **append-only audit trail**. The engine is responsible for
 moving the cursor from one state to the next, and for the database
 writes that make that move recoverable on crash.
@@ -23,14 +23,14 @@ writes that make that move recoverable on crash.
 The engine is **stateless**. All durable data lives in two Postgres
 tables:
 
-  - `workflow_state_cursor` — one row per `run_id`. Carries
+  - `workflow_state_cursor` -- one row per `run_id`. Carries
     `current_state`, `state_input` (the dict the current state
     handler will receive), `retries_in_state`, `definition_id`, and
     `version`. The whole row is the live state of the run.
     Migration 067 adds `archived_state` (nullable VARCHAR(128)) for
     pause/resume; NULL except when the cursor sits at `__paused__`.
     Resume swaps `archived_state` back to `current_state`.
-  - `workflow_state_transitions` — append-only event log. Two event
+  - `workflow_state_transitions` -- append-only event log. Two event
     kinds: `entered` (the engine has begun executing a state) and
     `exited:*` (the handler returned, raised, timed out, or was
     structurally short-circuited). Each row carries `from_state`,
@@ -48,16 +48,16 @@ two tables.
 Four terminals are reserved and auto-registered by every
 `WorkflowDefinition`:
 
-  - `__succeeded__` — handler-emitted clean exit. Reached by a state
+  - `__succeeded__` -- handler-emitted clean exit. Reached by a state
     whose handler returned `StateResult(next_state="__succeeded__", …)`.
-  - `__failed__` — non-retriable failure path. Reached when a state
+  - `__failed__` -- non-retriable failure path. Reached when a state
     raised an exception not listed in `retriable_on`, or when the
     retry budget was exhausted, or when output validation failed.
-  - `__cancelled__` — operator-initiated stop. Never reached by the
+  - `__cancelled__` -- operator-initiated stop. Never reached by the
     engine itself; reached only when an external actor (the operator
     or a cancel endpoint) writes `__cancelled__` directly to the
     cursor.
-  - `__crashed__` — engine-detected fatal condition. Reached on
+  - `__crashed__` -- engine-detected fatal condition. Reached on
     `MAX_STEPS_PER_JOB` breach, on `ServiceBuildError`, on a
     `failed_in_failure_handler` chain, or on any path where the
     engine cannot continue.
@@ -66,7 +66,7 @@ A fifth reserved name, `__paused__`, exists as a non-terminal cursor
 state for pause/resume semantics. Paused cursors store the prior
 `current_state` in the cursor's `archived_state` column (migration
 067) and resume by swapping it back. `__paused__` is NOT in
-`RESERVED_TERMINAL_STATES` — the engine loop skips it. Source:
+`RESERVED_TERMINAL_STATES` -- the engine loop skips it. Source:
 `src/aila/platform/workflows/types.py:36-42`.
 
 These four names are members of the frozenset
@@ -83,35 +83,35 @@ the reserved-set check in `_is_terminal`.
 
 ---
 
-## 3. `StateSpec` — the per-state contract (`types.py:132-194`)
+## 3. `StateSpec` -- the per-state contract (`types.py:132-194`)
 
 Every non-reserved state in a workflow is one `StateSpec` instance.
 The fields:
 
-  - `handler: HandlerFn` — async callable taking `(state_input,
+  - `handler: HandlerFn` -- async callable taking `(state_input,
     services)` and returning `StateResult`. This is the state's
     business logic.
-  - `timeout_s: float = 300.0` — wall-clock cap. The engine wraps
+  - `timeout_s: float = 300.0` -- wall-clock cap. The engine wraps
     every handler call in `asyncio.wait_for(handler(...),
     timeout=spec.timeout_s)`.
-  - `max_retries: int = 0` — per-state retry budget. Independent
+  - `max_retries: int = 0` -- per-state retry budget. Independent
     from ARQ's job-level retry count.
-  - `retriable_on: tuple[type[BaseException], ...] = ()` — exception
+  - `retriable_on: tuple[type[BaseException], ...] = ()` -- exception
     types that should trigger a retry instead of a failure
     transition. Must be a tuple (D-39, enforced in
     `__post_init__`).
-  - `on_failure: str | None = None` — name of the state to transition
+  - `on_failure: str | None = None` -- name of the state to transition
     to when the handler raises a non-retriable exception or exhausts
     retries. When unset, failure transitions to `__crashed__`.
-  - `on_success: str | None = None` — declarative success edge. Used
+  - `on_success: str | None = None` -- declarative success edge. Used
     only by the static DAG validator (`_validate_static_graph`); the
     engine itself reads `next_state` from the handler's
     `StateResult`.
-  - `terminal: bool = False` — explicit terminator. The engine's
+  - `terminal: bool = False` -- explicit terminator. The engine's
     `_is_terminal` check exits the loop before invoking the handler.
-  - `backoff: Callable[[int], float] | None = None` — overrides
+  - `backoff: Callable[[int], float] | None = None` -- overrides
     `default_backoff` for retry defer calculation.
-  - `output_schema: type[BaseModel] | None = None` — optional
+  - `output_schema: type[BaseModel] | None = None` -- optional
     Pydantic model validated against `result.output` before the
     cursor advances. Validation failure routes to `on_failure` (or
     `__failed__`).
@@ -124,34 +124,34 @@ mutated after construction. `__post_init__` enforces:
 
 ---
 
-## 4. `WorkflowDefinition` — the full graph (`types.py:338-456`)
+## 4. `WorkflowDefinition` -- the full graph (`types.py:338-456`)
 
 A workflow definition is the immutable plan the engine executes
 against. Fields:
 
-  - `definition_id: str` — stable identifier (max 128 chars,
+  - `definition_id: str` -- stable identifier (max 128 chars,
     `STATE_NAME_MAX_LEN`). Conventional shape is
     `"<domain>.<flow>.v<n>"`; bump the version suffix on
     incompatible state-graph changes.
-  - `start_state: str` — name of the state the engine enters first
+  - `start_state: str` -- name of the state the engine enters first
     when no cursor exists yet for the `run_id`.
-  - `states: Mapping[str, StateSpec]` — every non-terminal state in
+  - `states: Mapping[str, StateSpec]` -- every non-terminal state in
     the graph. Reserved terminals are merged in by `__post_init__`
     so the user code never has to declare them.
   - `services_factory: Callable[[str], Awaitable[WorkflowServices]]`
-    — coroutine called once per state execution to build a fresh
+    -- coroutine called once per state execution to build a fresh
     services bundle. Per D-11, services are never reused across
     state boundaries.
-  - `allow_phase_handoff: bool = False` — opt-in for two-level
+  - `allow_phase_handoff: bool = False` -- opt-in for two-level
     dispatch. When True, an `execute()` call whose cursor is on a
     reserved terminal but whose `definition_id` differs from the
     cursor's resets the cursor atomically to the new definition's
     start.
-  - `is_dispatcher: bool = False` — opt-in for the platform's
+  - `is_dispatcher: bool = False` -- opt-in for the platform's
     two-phase dispatch primitive (`@platform_task`). Dispatchers
     own run-record creation, both plan-json writes, dispatcher
     execution, inner definition resolution, and inner execution.
-  - `dispatches_to: dict[str, WorkflowDefinition] = {}` — required
+  - `dispatches_to: dict[str, WorkflowDefinition] = {}` -- required
     when `is_dispatcher=True`. Maps dispatcher decisions to the
     inner definitions they hand off to.
 
@@ -182,21 +182,21 @@ adjacency:
 
 ---
 
-## 5. The main loop — `DurableStateMachine.execute` (`engine.py:94-147`)
+## 5. The main loop -- `DurableStateMachine.execute` (`engine.py:94-147`)
 
 `execute(run_id, definition, initial_input) -> dict[str, Any]` is
 the only public entry point. The contract:
 
   1. The caller has already created a `WorkflowRunRecord` row (the
      parent run record) and the corresponding `TaskRecord` row. The
-     engine does not create those — it operates on a `run_id` that
+     engine does not create those -- it operates on a `run_id` that
      already exists in the parent tables.
   2. `initial_input` MUST be JSON-serializable. The engine runs a
      trial `json.dumps(initial_input, default=None)` at line 112
      before doing anything; non-serializable input raises `TypeError`
      immediately with a clear "Pydantic models must be
      `.model_dump(mode='json')` before passing as task kwargs"
-     message. This is the documented contract — Pydantic models,
+     message. This is the documented contract -- Pydantic models,
      dataclasses, arbitrary objects WILL NOT be silently coerced.
   3. The engine loads the cursor (creates a fresh one if absent),
      enters the `while not _is_terminal(...)` loop, calls
@@ -250,7 +250,7 @@ implements four branches:
     `version=0`. On `IntegrityError` (another worker inserted
     first), roll back, open a fresh session, re-read the row, and
     return it. Phase 178 fix 3 resolves the TOCTOU window between
-    "get returns None" and the INSERT — both racing workers serialise
+    "get returns None" and the INSERT -- both racing workers serialise
     on the PK constraint and the loser returns the winner's row
     without re-trying.
 
@@ -312,7 +312,7 @@ Without this branch, the engine would raise `UnknownNextStateError`
 
 The branch:
 
-  1. Open a fresh session — the lockless outer session must NOT be
+  1. Open a fresh session -- the lockless outer session must NOT be
      reused (GA1).
   2. `SELECT ... FOR UPDATE` the cursor row as the FIRST statement.
   3. If the cursor vanished (workflow completed under us), log
@@ -328,18 +328,18 @@ The branch:
      inner_def_id, ...}, ...)`. The dispatch layer is responsible
      for idempotency.
 
-Both concurrent retries WILL return `__succeeded__` — `FOR UPDATE`
+Both concurrent retries WILL return `__succeeded__` -- `FOR UPDATE`
 serialises reads but does not prevent both from succeeding. The
 dispatch layer's `@platform_task` wrapper is responsible for
 idempotency of dual-success injection.
 
 ---
 
-## 9. Per-step execution — `_step_once` (`engine.py:528-684`)
+## 9. Per-step execution -- `_step_once` (`engine.py:528-684`)
 
 This is the heart of the engine. Exactly five subphases.
 
-**Step 1 — `entered` audit row in its own transaction**
+**Step 1 -- `entered` audit row in its own transaction**
 (`engine.py:544-549`).
 
 The engine writes the `entered` row through `_log_entered`
@@ -354,10 +354,10 @@ The `entered` row carries `from_state=previous_state` (or
 11), `to_state=state.current`, and the full `state_input` snapshot.
 After commit, an SSE event is fanned out for the live UI.
 
-**Step 2 — services build** (`engine.py:551-566`).
+**Step 2 -- services build** (`engine.py:551-566`).
 
 `services = await definition.services_factory(run_id)`. Per D-45,
-build failure is non-retriable — the engine wraps the exception as
+build failure is non-retriable -- the engine wraps the exception as
 `ServiceBuildError(type(build_exc).__name__)` and routes to
 `_handle_failure` immediately, with `duration_ms=0`.
 
@@ -366,16 +366,16 @@ exception verbatim. The audit row will say
 `error_class="ServiceBuildError"` and the `error_message` will be
 the original exception's class name string.
 
-**Step 3 — handler under timeout** (`engine.py:568-605`).
+**Step 3 -- handler under timeout** (`engine.py:568-605`).
 
 `result = await asyncio.wait_for(spec.handler(state.input,
 services), timeout=spec.timeout_s)`. Three outcomes:
 
-  - **`TimeoutError`** — Per D-16, timeout is non-retriable even if
+  - **`TimeoutError`** -- Per D-16, timeout is non-retriable even if
     `TimeoutError` appears in `spec.retriable_on`. The engine short-
     circuits to `_handle_timeout` BEFORE the `retriable_on` check.
     The audit event is `exited:timeout`.
-  - **Any other `BaseException`** — The engine writes a structured
+  - **Any other `BaseException`** -- The engine writes a structured
     log line with the full traceback (encoded as
     `errors="backslashreplace"` ASCII so log shipping cannot fail
     on Unicode). Then checks `retriable_on` and `retries_in_state <
@@ -383,23 +383,23 @@ services), timeout=spec.timeout_s)`. Three outcomes:
     raises). Non-retriable or exhausted-budget path goes to
     `_handle_failure`. The audit event is either `exited:retry` or
     `exited:failed`.
-  - **Clean return** — Continue to step 4.
+  - **Clean return** -- Continue to step 4.
 
 `BaseException` is caught, not `Exception`. This includes
 `SystemExit`, `KeyboardInterrupt`, and `GeneratorExit`. The engine
 treats these the same as any other handler exception for audit
-purposes — the operator sees the class name in the audit log and
+purposes -- the operator sees the class name in the audit log and
 the engine decides retry vs failure by the exception's
 relationship to `retriable_on`.
 
-**Step 4 — next-state validation** (`engine.py:607-620`).
+**Step 4 -- next-state validation** (`engine.py:607-620`).
 
 `result.next_state` must be a state in `definition.states` OR a
 reserved terminal. If not, the engine constructs
 `UnknownNextStateError` and routes through `_handle_failure`. This
 catches handlers that return typo'd state names.
 
-**Step 4b — output validation** (`engine.py:622-662`, Phase 183
+**Step 4b -- output validation** (`engine.py:622-662`, Phase 183
 Plan 06).
 
 Two layers:
@@ -418,7 +418,7 @@ Both layers go to `_transition_to_failure`, which routes to
 `spec.on_failure` (or `__failed__`). The cursor never advances to
 `__succeeded__` on a validation failure.
 
-**Step 5 — atomic commit** (`engine.py:664-684`).
+**Step 5 -- atomic commit** (`engine.py:664-684`).
 
 The engine calls `_commit_transition` with `audit_event="exited:ok"`
 and the new state's `current=result.next_state`, `input=result.
@@ -431,19 +431,19 @@ output`. See §11 for the commit primitive.
 Four exit shapes, each implemented as its own method that routes
 through `_commit_transition`.
 
-  - `_handle_retry` (`engine.py:688-724`) — writes `exited:retry`
+  - `_handle_retry` (`engine.py:688-724`) -- writes `exited:retry`
     with the redacted exception class + message, advances the
     cursor with `retries_in_state += 1` (the cursor stays on the
     same state), then RAISES `arq.Retry(defer=backoff_fn(...))`.
     Returns `NoReturn` so the type system catches accidental
     fall-through. The backoff defer is `spec.backoff` if set,
     else `default_backoff`.
-  - `_handle_timeout` (`engine.py:726-760`) — writes
+  - `_handle_timeout` (`engine.py:726-760`) -- writes
     `exited:timeout`, transitions to `spec.on_failure` (or
     `__crashed__`), carries
     `state_input={"error_class": "TimeoutError", "failed_state":
     state.current}`.
-  - `_handle_failure` (`engine.py:762-830`) — non-retriable or
+  - `_handle_failure` (`engine.py:762-830`) -- non-retriable or
     exhausted-retries. Walks the definition for "is any other state
     naming the current state as its `on_failure` target?". If yes
     AND the current state raised, the audit event becomes
@@ -453,7 +453,7 @@ through `_commit_transition`.
     `exited:failed`, transition goes to `spec.on_failure` (or
     `__crashed__`), and `state_input` carries `error_class`,
     `error_message`, `failed_state`.
-  - `_transition_to_failure` (`engine.py:832-879`) — Phase 183
+  - `_transition_to_failure` (`engine.py:832-879`) -- Phase 183
     Plan 06's output-validation failure path. Same shape as
     `_handle_failure` but the error metadata is structured
     (`error`, `error_detail`, `previous_state`) instead of
@@ -472,7 +472,7 @@ from `WorkflowSafeMessage`.
 
 ---
 
-## 11. The atomic commit primitive — `_commit_transition` (`engine.py:932-1061`)
+## 11. The atomic commit primitive -- `_commit_transition` (`engine.py:932-1061`)
 
 Phase 178 fix 1, the load-bearing guarantee of the engine.
 
@@ -484,19 +484,19 @@ In ONE transaction:
   2. Verify `current_version == loaded_state.version`. If mismatch,
      raise `WorkflowConflictError`. The caller (ARQ) retries the
      whole job; the next attempt reloads the cursor and discovers
-     the new version (D-32 — no split-brain).
+     the new version (D-32 -- no split-brain).
   3. Write the `exited:*` audit row via `write_exited`. The audit
      row carries `from_state`, `to_state`, `event`, `output`,
      `duration_ms`, `error_class`, `error_message`. The `seq` is
      computed inside the same INSERT as `COALESCE(MAX(seq), -1) +
-     1` (Phase 178 fix 2 — race-safe). PK collisions retry under a
+     1` (Phase 178 fix 2 -- race-safe). PK collisions retry under a
      SAVEPOINT.
   4. UPDATE the cursor: `current_state=new_state.current`,
      `state_input=new_state.input`,
      `retries_in_state=new_state.retries_in_state`,
      `definition_id=definition.definition_id`,
      `version=loaded_version + 1`. The UPDATE uses
-     `.returning(run_id)` (Phase 178 fix 12 — `.returning()` instead
+     `.returning(run_id)` (Phase 178 fix 12 -- `.returning()` instead
      of driver-specific `rowcount`). If `result.first() is None`
      after the FOR UPDATE lock, the cursor was deleted externally
      (e.g., by the `parent_reconciler` during a retry window). The
@@ -510,22 +510,22 @@ In ONE transaction:
      is the only place the engine writes `heartbeat_at`. The reaper
      uses this to distinguish actively-progressing jobs from
      zombies. A missing TaskRecord (e.g. in tests) UPDATEs zero rows
-     — harmless. Per-task heartbeats are EXCLUSIVELY emitted here;
+     -- harmless. Per-task heartbeats are EXCLUSIVELY emitted here;
      no parallel heartbeat thread, no liveness key in Redis.
   6. Commit.
   7. After commit, fan out an SSE event with the
      `from_state`/`to_state`/`event`/`duration_ms`/error metadata so
-     the live UI sees the transition without polling. Best-effort —
+     the live UI sees the transition without polling. Best-effort --
      if the SSE bus is down, the engine does not roll back the
      commit.
 
-The contract — audit row + cursor advance commit together — is the
+The contract -- audit row + cursor advance commit together -- is the
 property that makes the system crash-safe. A SIGKILL between the
 two writes is impossible; either both land or neither does.
 
 ---
 
-## 12. The standalone cursor save — `_save_state` (`engine.py:1063-1109`)
+## 12. The standalone cursor save -- `_save_state` (`engine.py:1063-1109`)
 
 Same optimistic-lock semantics as `_commit_transition` but without
 the audit-write side. Retained for tests and for callers that need
@@ -594,13 +594,13 @@ Anything calling `DurableStateMachine.execute` MUST:
      `heartbeat_at` to it during commit; a missing row makes the
      heartbeat a no-op (acceptable but observable).
   3. Pass JSON-serializable `initial_input`. Pydantic models,
-     dataclasses, datetimes — all rejected at line 112 with a clear
+     dataclasses, datetimes -- all rejected at line 112 with a clear
      message. The contract is `dict[str, JSON-primitive]`.
   4. Treat `arq.Retry` as the only retry signal. `WorkflowConflictError`
      bubbling out means "another worker beat us"; ARQ retries the
      outer job; the next attempt reloads the cursor and sees the
      new version. Catching `WorkflowConflictError` and resuming is
-     a bug — the engine has already moved on under a different
+     a bug -- the engine has already moved on under a different
      worker.
 
 Anything NOT calling `DurableStateMachine.execute` MUST NOT:
@@ -618,10 +618,10 @@ Anything NOT calling `DurableStateMachine.execute` MUST NOT:
      terminal state. The engine treats terminals as absorbing.
      Reopening a "completed" workflow is a phase-handoff operation
      and goes through `allow_phase_handoff=True` on the new
-     definition — NOT a direct UPDATE on the cursor.
+     definition -- NOT a direct UPDATE on the cursor.
   5. Delete cursor or transition rows outside the engine's own
      paths. The engine has no logic to recover from a vanished
-     cursor mid-run — that's the `RuntimeError` path.
+     cursor mid-run -- that's the `RuntimeError` path.
 
 ---
 
@@ -639,7 +639,7 @@ The engine does NOT:
   - Reap zombies. The reaper is a separate component that reads
     `taskrecord.heartbeat_at`.
   - Pause workflows via `__paused__` cursor state. `RESERVED_PAUSED`
-    is engine-known but NOT terminal — the main loop does not exit
+    is engine-known but NOT terminal -- the main loop does not exit
     on it, and the cursor remains addressable for resume. The
     `archived_state` column (migration 067) preserves the prior
     `current_state` across the pause/resume cycle. Domain layers
@@ -658,7 +658,7 @@ The engine does NOT:
 Anything that wants to be a state machine in this codebase:
 
   1. Define one `WorkflowDefinition` with a stable `definition_id`.
-  2. Define one or more `StateSpec` entries — handler, timeout,
+  2. Define one or more `StateSpec` entries -- handler, timeout,
      `on_success`/`on_failure` edges, `retriable_on` if applicable.
   3. Define a `services_factory` that constructs the per-attempt
      services bundle.

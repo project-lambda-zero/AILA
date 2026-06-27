@@ -153,7 +153,7 @@ export function SolidEvidencePanel({ projectId }: Props) {
                       {r.source_investigation_id.slice(0, 8)}…
                     </button>
                   ) : (
-                    <span className="text-text-muted">—</span>
+                    <span className="text-text-muted">--</span>
                   )}
                 </td>
                 <td className="px-3 py-2 text-right">

@@ -3,15 +3,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Color, Mesh, Program, Renderer, Triangle } from "ogl";
 
 /**
- * Login-page CRT/terminal background — WebGL, theme-adaptive.
+ * Login-page CRT/terminal background -- WebGL, theme-adaptive.
  *
  * Replaces the prior tsparticles-based LoginParticles. Code-split via
  * React.lazy() in LoginPage.tsx so the ogl bundle (~25 KB gzipped)
  * is not pulled into the main chunk.
  *
  * Tint reads --color-accent at mount so it adapts to the active theme
- * (synthwave=pink, vaporwave=rose, aero=blue). Tuned conservatively —
- * subtle scanlines, mild glitch, gentle curvature, dimmer brightness —
+ * (synthwave=pink, vaporwave=rose, aero=blue). Tuned conservatively --
+ * subtle scanlines, mild glitch, gentle curvature, dimmer brightness --
  * so the panel feels like an atmospheric security-tool boot screen
  * rather than a marketing demo.
  *
@@ -232,7 +232,7 @@ void main() {
 }
 `;
 
-// Tuned for atmospheric login-screen tone — subtle, not demo-grade.
+// Tuned for atmospheric login-screen tone -- subtle, not demo-grade.
 const SCALE = 2.0;
 const GRID_MUL: Vec2 = [2, 1];
 const DIGIT_SIZE = 1.2;

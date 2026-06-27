@@ -1,4 +1,4 @@
-"""046 — VR disclosure submissions (Disclosure Lifecycle plan).
+"""046 -- VR disclosure submissions (Disclosure Lifecycle plan).
 
 Adds one new table ``vr_disclosure_submissions`` capturing the
 per-(finding, track) submission lifecycle. Built-in tracks are

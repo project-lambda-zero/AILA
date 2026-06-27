@@ -1,4 +1,4 @@
-"""Enrichment services — barrel re-export."""
+"""Enrichment services -- barrel re-export."""
 from __future__ import annotations
 
 from .function_ranker import (

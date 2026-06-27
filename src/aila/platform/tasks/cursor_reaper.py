@@ -53,7 +53,7 @@ _ACTIVE_STATUSES = (
     TaskStatus.WAITING,
 )
 
-# fix §58 — sweep covers ALL FOUR reserved terminal cursor states so
+# fix §58 -- sweep covers ALL FOUR reserved terminal cursor states so
 # __failed__ / __cancelled__ / __succeeded__ don't accumulate forever
 # (previously only __crashed__ was reaped, leaving the other three as
 # dead weight that blocked re-enqueue).
@@ -69,7 +69,7 @@ async def sweep_orphan_crashed_cursors() -> int:
     """Delete reserved-terminal cursors whose TaskRecord is terminal.
 
     The function name is kept for backwards compatibility (worker.py
-    imports it under this name) — semantically this now sweeps all
+    imports it under this name) -- semantically this now sweeps all
     four reserved terminals, not just ``__crashed__``.
 
     Returns the number of cursor rows deleted. Safe to call every
@@ -92,7 +92,7 @@ async def sweep_orphan_crashed_cursors() -> int:
                 .execution_options(synchronize_session=False)
             )
             result = await session.exec(stmt)
-            # fix §69 — some drivers (asyncpg in certain modes, ODBC)
+            # fix §69 -- some drivers (asyncpg in certain modes, ODBC)
             # emit -1 from result.rowcount when the deleted count is
             # unknown. ``or 0`` evaluated -1 as truthy, so the commit
             # fired and the log line said "cleared -1 orphan cursors".

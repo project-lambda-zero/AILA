@@ -1,8 +1,8 @@
-"""Resolver agent — maps questions to artifact families.
+"""Resolver agent -- maps questions to artifact families.
 
 The resolver takes a set of questions and attempts to answer them by
 querying existing artifacts and leads. Unlike the free-flow agent, it
-does NOT generate or execute scripts — it works purely with already-collected data.
+does NOT generate or execute scripts -- it works purely with already-collected data.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _llm_client_from_services(services: ForensicsWorkflowServices | None) -> Ail
     ServiceFactory singleton when the caller does not have a services
     bag on hand.
 
-    Fix §24 — every resolver path now shares the memoized
+    Fix §24 -- every resolver path now shares the memoized
     ``ServiceFactory.llm_client`` instance instead of constructing a
     fresh ``AilaLLMClient`` (with its own ConfigRegistry + SecretStore
     I/O) on every resolution.
@@ -44,7 +44,7 @@ class ResolverAgent:
         services: ForensicsWorkflowServices | None,
         project_id: str,
     ) -> None:
-        # fix §24 — services bag carries the memoized AilaLLMClient.
+        # fix §24 -- services bag carries the memoized AilaLLMClient.
         # Tests that don't need an LLM may pass services=None; in that
         # case _attempt_resolution falls back to the ServiceFactory
         # singleton via _llm_client_from_services.
@@ -164,7 +164,7 @@ class ResolverAgent:
         )
 
         try:
-            # fix §24 — share the run-scoped LLM client memoized on
+            # fix §24 -- share the run-scoped LLM client memoized on
             # ``services`` instead of building a fresh one (and a
             # fresh ConfigRegistry / SecretStore) per resolution.
             client = _llm_client_from_services(self._services)
@@ -176,7 +176,7 @@ class ResolverAgent:
                 ],
             )
             if resp.disabled:
-                _log.warning("LLM disabled — cannot resolve")
+                _log.warning("LLM disabled -- cannot resolve")
             else:
                 response = resp.content
                 start = response.find("{")

@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { WifiSlash } from "@phosphor-icons/react/dist/csr/WifiSlash";
 
 /**
- * 404 SIGNAL LOST — cyberpunk not-found page (D-16).
+ * 404 SIGNAL LOST -- cyberpunk not-found page (D-16).
  *
  * Uses the .glitch-text CSS class (keyframes in globals.css) for the heading
  * glitch animation. Respects reduced-motion via CSS media query.

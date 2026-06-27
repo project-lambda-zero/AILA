@@ -36,7 +36,7 @@ e2e_<sanitised_test_title>_<timestamp_ms>
 
 obtained from `helpers/db-seed.ts::getNamespace(testInfo)`. All seeded
 records carry the namespace as a literal substring of a name/title field
-(e.g. `title="Report — e2e_reports_render_1734200000000"`). The
+(e.g. `title="Report -- e2e_reports_render_1734200000000"`). The
 `namespacedTeardown(namespace)` fixture is invoked from `test.afterEach` and
 deletes by prefix.
 
@@ -50,7 +50,7 @@ cleaned up afterwards by re-running teardown with the same prefix
 
 If the dev API is offline at fixture setup time, `seedTasks` /
 `seedReports` raise a clear error. Tests that require real seeded data are
-skipped via `test.skip()` rather than silently using fake data — see
+skipped via `test.skip()` rather than silently using fake data -- see
 `feedback_no_mock_data` (project rule).
 
 ### Forced-error interception
@@ -87,9 +87,9 @@ npx playwright test tests/e2e/176a/ --list
 
 Every test asserts ALL THREE of:
 
-1. **URL** — `await expect(page).toHaveURL(/expected/)`.
-2. **Render** — at least one heading or region locator visible.
-3. **No-error** — `Internal Server Error` literal absent; AppErrorBoundary
+1. **URL** -- `await expect(page).toHaveURL(/expected/)`.
+2. **Render** -- at least one heading or region locator visible.
+3. **No-error** -- `Internal Server Error` literal absent; AppErrorBoundary
    fallback absent (unless the test is the crash-injection spec itself).
 
 Screenshot-only tests are forbidden. A screenshot is captured **in addition
@@ -105,7 +105,7 @@ required beyond the existing matrix.
 ## Maintenance notes
 
 - The `/__test__/crash` route used by `error-envelope.spec.ts` is gated on
-  `import.meta.env.DEV` in `frontend/src/app/router.tsx` — it is never
+  `import.meta.env.DEV` in `frontend/src/app/router.tsx` -- it is never
   registered in production bundles. Do not promote it to a non-DEV path.
 - Status badge selectors target the `aila-badge-status-<status>` class
   applied by `AilaBadge`; that class is the canonical hook. If `data-status`

@@ -69,7 +69,7 @@ describe("AilaTable onRowClick", () => {
     const row = screen.getAllByTestId("aila-table-row")[0];
     row.focus();
     // userEvent.keyboard sends a space; preventDefault is enforced by the
-    // onKeyDown handler — here we simply verify the handler fires.
+    // onKeyDown handler -- here we simply verify the handler fires.
     await userEvent.keyboard(" ");
 
     expect(onRowClick).toHaveBeenCalledTimes(1);

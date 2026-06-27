@@ -84,7 +84,7 @@ describe("AppErrorBoundary", () => {
       </MemoryRouter>,
     );
 
-    // Stack traces include function-call frames ("at ") — they must not be in the DOM.
+    // Stack traces include function-call frames ("at ") -- they must not be in the DOM.
     const fallback = screen.getByTestId("app-error-boundary-fallback");
     expect(fallback.textContent ?? "").not.toMatch(/\n\s+at\s/);
   });
@@ -116,7 +116,7 @@ describe("AppErrorBoundary", () => {
     );
     expect(firstMatch).not.toBeNull();
 
-    // Force several re-renders — any new Date().toISOString() call in render()
+    // Force several re-renders -- any new Date().toISOString() call in render()
     // would surface a new timestamp.
     forceRerender(1);
     rerender(

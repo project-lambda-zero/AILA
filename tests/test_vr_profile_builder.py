@@ -1,4 +1,4 @@
-"""M3.T-4 — Capability profile builder tests.
+"""M3.T-4 -- Capability profile builder tests.
 
 Covers the pure helpers (`_mitigations_from_dict`,
 `_infer_language_from_survey`) plus the rule-engine composition logic
@@ -166,7 +166,7 @@ class TestRuleTables:
         assert (TargetKind.CVE.value, "*") in _DEFAULT_REASONING_STRATEGY
 
     def test_v04_audit_only_languages_have_empty_fuzz_engines(self) -> None:
-        # PHP + Ruby are audit-only — explicit empty entry means we
+        # PHP + Ruby are audit-only -- explicit empty entry means we
         # surface 'no fuzz engines' rather than falling through to
         # an unrelated default.
         for lang in ("php", "ruby"):

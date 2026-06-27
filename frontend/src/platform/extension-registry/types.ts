@@ -15,7 +15,7 @@ export interface NavContribution {
    * Optional sidebar icon. Modules can pass any Phosphor icon (or any
    * React component returning an SVG) to surface an icon next to
    * their label in the sidebar nav. When omitted, the sidebar
-   * renders the label only — matches the original behaviour.
+   * renders the label only -- matches the original behaviour.
    */
   icon?: ComponentType<{ className?: string; size?: number | string }>;
 }
@@ -30,7 +30,7 @@ export interface RouteContribution {
   minRole?: AppRole;
   /**
    * Label used in the header breadcrumb for this exact match. When
-   * omitted, the header falls back to pathname-derived crumbs — which
+   * omitted, the header falls back to pathname-derived crumbs -- which
    * can produce intermediate links to paths the module never
    * registered (e.g. `/forensics/projects` when only `/forensics` and
    * `/forensics/projects/:id` exist). Setting this turns the module's

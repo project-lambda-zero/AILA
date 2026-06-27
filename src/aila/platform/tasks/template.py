@@ -13,7 +13,7 @@ task. The decorator:
    terminal state without introspecting the exception directly.
 3. Converts ``WorkflowConflictError`` into ``arq.worker.Retry(defer=...)``
    inside the wrapper (D-09). ARQ only honours ``Retry`` when raised from
-   the job body, not from ``on_job_end`` — the planner's clarification in
+   the job body, not from ``on_job_end`` -- the planner's clarification in
    the Phase 179 brief.
 4. Registers a :class:`PlatformTask` record keyed by the wrapped function's
    qualified name into the module-level ``_REGISTRY``. ``WorkerSettings``
@@ -74,7 +74,7 @@ class PlatformTask:
 
     Attributes:
         fn: The ARQ-callable wrapper (the coroutine ARQ invokes). Not the
-            original handler — the wrapper knows how to build TaskContext
+            original handler -- the wrapper knows how to build TaskContext
             and delegate to the workflow engine when ``definition`` is set.
         name: Qualified dotted name used as the registry key.
         track: ARQ queue suffix (e.g. ``"vulnerability"``).
@@ -139,7 +139,7 @@ class _Registry:
         return list(self._tasks.values())
 
     def clear(self) -> None:
-        """Test helper — clear the registry. Not called by production code."""
+        """Test helper -- clear the registry. Not called by production code."""
         self._tasks.clear()
 
 
@@ -155,7 +155,7 @@ async def _ensure_run_record(run_id: str, query_text: str) -> None:
     ``workflow_state_cursor`` has an FK → ``workflowrunrecord.id``, so the
     cursor INSERT fails with an IntegrityError (FK violation) when the run
     record is absent. This helper ensures the record exists before the engine
-    starts. Concurrent retries are safe — INSERT ON CONFLICT DO NOTHING.
+    starts. Concurrent retries are safe -- INSERT ON CONFLICT DO NOTHING.
     """
     from aila.storage.database import async_session_scope
     from aila.storage.db_models import WorkflowRunRecord
@@ -178,7 +178,7 @@ async def _update_plan_json(run_id: str, plan: dict[str, Any]) -> None:
     without RETURNING, making a rowcount==0 check a permanent no-op).
 
     If the returned row is None the ``WorkflowRunRecord`` is missing and
-    ``plan_json`` was never written — that is a data-integrity violation, not a
+    ``plan_json`` was never written -- that is a data-integrity violation, not a
     silent success. Raises ``WorkflowConflictError`` in that case.
     """
     from aila.storage.database import async_session_scope
@@ -200,7 +200,7 @@ async def _update_plan_json(run_id: str, plan: dict[str, Any]) -> None:
             )
             raise WorkflowConflictError(
                 f"WorkflowRunRecord missing for run_id={run_id!r} "
-                "— plan_json not persisted"
+                "-- plan_json not persisted"
             )
         await session.commit()
 
@@ -250,7 +250,7 @@ async def _run_two_phase_dispatch(
     # workflow_state_cursor (FK → workflowrunrecord.id).
     await _ensure_run_record(run_id, query_text)
 
-    # Step 2: first plan_json write — dispatcher definition + input hash.
+    # Step 2: first plan_json write -- dispatcher definition + input hash.
     await _update_plan_json(
         run_id,
         {
@@ -268,7 +268,7 @@ async def _run_two_phase_dispatch(
     )
 
     # Graceful failure: dispatcher did not emit selected_definition_id.
-    # DurableStateMachine.execute() returns state.input directly — the terminal
+    # DurableStateMachine.execute() returns state.input directly -- the terminal
     # handler's output dict. A successful dispatcher run carries
     # "selected_definition_id"; a crashed/failed run carries "error_class" /
     # "failed_state" instead.
@@ -287,7 +287,7 @@ async def _run_two_phase_dispatch(
             "dispatcher_output": dispatcher_output,
         }
 
-    # Step 4: output_payload IS dispatcher_output — engine returns state.input
+    # Step 4: output_payload IS dispatcher_output -- engine returns state.input
     # directly (no "output" wrapper key exists).
     output_payload = dispatcher_output
     if not isinstance(selected_id, str) or not selected_id:
@@ -318,7 +318,7 @@ async def _run_two_phase_dispatch(
         if isinstance(mode_val, str) and mode_val:
             operation_mode = mode_val
 
-    # Step 5: second plan_json write — inner definition + mode.
+    # Step 5: second plan_json write -- inner definition + mode.
     await _update_plan_json(
         run_id,
         {
@@ -341,7 +341,7 @@ async def _run_two_phase_dispatch(
     )
 
     # Step 7: extract and forward response.
-    # terminal_output is state.input from the inner engine run — the last
+    # terminal_output is state.input from the inner engine run -- the last
     # handler's output dict. state_response_emit places {"response": ...} at
     # the top level (no "output" wrapper key exists).
     response = terminal_output.get("response") if isinstance(terminal_output, dict) else None
@@ -456,7 +456,7 @@ def platform_task(
                         # D-05: workflow-engine task. Pass kwargs as initial_input.
                         # The engine inserts workflow_state_cursor with an FK
                         # to workflowrunrecord.id, so the run record MUST
-                        # exist before execute() touches the cursor — same
+                        # exist before execute() touches the cursor -- same
                         # invariant the two-phase path enforces. Without
                         # this the cursor INSERT raises IntegrityError, the
                         # transaction rolls back, and the engine reports the
@@ -488,7 +488,7 @@ def platform_task(
                 return result
 
             except WorkflowConflictError as conflict:
-                # D-09/D-14 last row: engine optimistic-lock conflict — let
+                # D-09/D-14 last row: engine optimistic-lock conflict -- let
                 # ARQ reschedule via its native Retry exception. The hook
                 # sees ``kind="retry_signalled"`` and leaves TaskRecord
                 # RUNNING (Branch 2).

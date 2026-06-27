@@ -1,4 +1,4 @@
-"""Research state — thin wrapper around :class:`NdayResearcher`.
+"""Research state -- thin wrapper around :class:`NdayResearcher`.
 
 The closed-loop reasoning, action dispatch, evidence pack, and
 obligation adjudication live on the agent. This state hydrates the

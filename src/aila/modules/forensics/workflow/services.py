@@ -1,4 +1,4 @@
-"""ForensicsWorkflowServices — wired service bag for workflow state handlers.
+"""ForensicsWorkflowServices -- wired service bag for workflow state handlers.
 
 Built once per workflow run by the ``_build_services`` factory in
 ``definitions.py``. Each state handler receives this as its ``services``
@@ -29,7 +29,7 @@ class ForensicsWorkflowServices:
     run_id: str
     settings: Settings
     emitter: ForensicsWorkflowEmitter
-    # fix §24 — expose the platform LLM client so state handlers and
+    # fix §24 -- expose the platform LLM client so state handlers and
     # the ResolverAgent stop constructing AilaLLMClient directly.
     # Memoized inside ServiceFactory; sharing the same instance keeps
     # ConfigRegistry / SecretStore I/O at one-per-run instead of

@@ -100,7 +100,7 @@ class ReportWriteTool(Tool):
         No files are written to disk. Returns a dict with report_path,
         summary_path, optional rows_path, and target_reports list using
         synthetic path strings derived from run_id. These serve as stable
-        reference keys stored in ReportArtifactRecord.path — the DB record
+        reference keys stored in ReportArtifactRecord.path -- the DB record
         is the sole source of truth (EXPORT-04).
 
         report_dir.mkdir() is kept so the directory is available for other

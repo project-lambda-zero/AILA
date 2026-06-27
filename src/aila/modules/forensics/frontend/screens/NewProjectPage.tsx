@@ -51,7 +51,7 @@ export function NewProjectPage() {
       setProjectId(id);
       setStep("readiness");
       // Readiness now streams live via ReadinessStreamPanel (autoStart). No
-      // blocking mutation here — the panel handles its own lifecycle and the
+      // blocking mutation here -- the panel handles its own lifecycle and the
       // user can watch installs progress in real time.
     } catch {
       // Error handled by mutation state
@@ -60,7 +60,7 @@ export function NewProjectPage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      {/* Section header — dedup'd from the shell's route title. Vaporwave flavor
+      {/* Section header -- dedup'd from the shell's route title. Vaporwave flavor
           via a neon gradient rule + retro mono/display pairing. */}
       <div className="space-y-1">
         <div
@@ -171,8 +171,8 @@ export function NewProjectPage() {
             <label className="block text-sm font-medium text-foreground mb-1">Project Kind</label>
             <div className="flex gap-3">
               {([
-                { id: "disk_evidence", label: "Disk Evidence", hint: "E01 / raw / memory / pcap — full pipeline runs" },
-                { id: "raw_directory", label: "Raw Directory", hint: "rootfs / loose logs — intake only, ask directly" },
+                { id: "disk_evidence", label: "Disk Evidence", hint: "E01 / raw / memory / pcap -- full pipeline runs" },
+                { id: "raw_directory", label: "Raw Directory", hint: "rootfs / loose logs -- intake only, ask directly" },
               ] as const).map((k) => (
                 <button
                   key={k.id}
@@ -191,7 +191,7 @@ export function NewProjectPage() {
             </div>
             <p className="mt-1 text-xs text-text-muted">
               {projectKind === "raw_directory"
-                ? "Raw Directory: the analyzer treats the evidence path as a real filesystem. No dissect, no pre/full-analysis — the investigator reads files directly when you ask questions."
+                ? "Raw Directory: the analyzer treats the evidence path as a real filesystem. No dissect, no pre/full-analysis -- the investigator reads files directly when you ask questions."
                 : "Disk Evidence: the analyzer runs the standard intake → collection → deep_analysis pipeline over disk images / memory dumps / pcaps in the directory."}
             </p>
           </div>
@@ -280,7 +280,7 @@ export function NewProjectPage() {
               onClick={() => navigate(`/forensics/projects/${projectId}`)}
               className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-secondary"
             >
-              Skip — Go to Dashboard
+              Skip -- Go to Dashboard
             </button>
             <button
               type="button"
@@ -300,7 +300,7 @@ export function NewProjectPage() {
             <dt className="text-text-muted">Name</dt>
             <dd className="text-foreground">{name}</dd>
             <dt className="text-text-muted">Machine</dt>
-            <dd className="text-foreground">{selectedSystem?.name ?? "—"}</dd>
+            <dd className="text-foreground">{selectedSystem?.name ?? "--"}</dd>
             <dt className="text-text-muted">OS</dt>
             <dd className="text-foreground capitalize">{analyzerOs === "windows" ? "🪟 Windows" : "🐧 Linux"}</dd>
             <dt className="text-text-muted">Kind</dt>
@@ -309,7 +309,7 @@ export function NewProjectPage() {
             <dd className="text-foreground font-mono text-xs">{evidenceDir}</dd>
             <dt className="text-text-muted">Readiness</dt>
             <dd className="text-foreground text-xs text-text-muted">
-              Checked — see dashboard Readiness tab for status
+              Checked -- see dashboard Readiness tab for status
             </dd>
           </dl>
           <div className="flex justify-end gap-2">

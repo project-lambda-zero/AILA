@@ -1,11 +1,11 @@
-"""Fuzzilli scraper — tails ``--storagePath`` for stats + crashes.
+"""Fuzzilli scraper -- tails ``--storagePath`` for stats + crashes.
 
 Fuzzilli's storage layout (matches Apple's reference impl):
 
   <storagePath>/
-    stats.json          — periodically rewritten by fuzzilli
-    corpus/             — programs in the active corpus
-    crashes/            — minimised crash reproducers, one file each
+    stats.json          -- periodically rewritten by fuzzilli
+    corpus/             -- programs in the active corpus
+    crashes/            -- minimised crash reproducers, one file each
                           (some Fuzzilli builds use 'distinct_crashes')
 
 This scraper polls stats.json for the campaign-level scalars and
@@ -60,7 +60,7 @@ class FuzzilliScraper:
             data.get("coverage")
             or data.get("edgeCoverage")
         )
-        # Fuzzilli reports coverage as a fraction (0..1) — convert to %.
+        # Fuzzilli reports coverage as a fraction (0..1) -- convert to %.
         if isinstance(cov, (int, float)) and 0 <= cov <= 1:
             cov = float(cov) * 100.0
         corpus = data.get("corpusSize") or data.get("corpus")
@@ -93,7 +93,7 @@ class FuzzilliScraper:
                 continue
             payload = path.read_bytes() if stat.st_size <= 64 * 1024 else b""
             # Fuzzilli filenames look like "crash-<signature>.js" or
-            # similar — use SHA-256 of the filename as the stack hash
+            # similar -- use SHA-256 of the filename as the stack hash
             # so reruns of the same minimised crash dedup.
             stack_hash = hashlib.sha256(path.name.encode("utf-8")).hexdigest()
             out.append(CrashRecord(

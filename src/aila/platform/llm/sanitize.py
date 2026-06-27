@@ -43,7 +43,7 @@ def register_injection_pattern(name: str, regex: str) -> None:
 
     Patterns are compiled with IGNORECASE (fix §153). If ``name`` is
     already registered the old entry is replaced (fix §155) and a
-    DEBUG line records the replacement — repeated registration is now
+    DEBUG line records the replacement -- repeated registration is now
     a no-op for the steady-state list, not a leak.
     """
     if name in _INJECTION_PATTERNS:

@@ -1,7 +1,7 @@
 """Periodic sweep that re-enqueues stalled VR investigations.
 
-When a VR task gets killed mid-execution — ``CancelledError`` from
-ARQ's ``max_job_time``, worker process restart, host kernel kill — no
+When a VR task gets killed mid-execution -- ``CancelledError`` from
+ARQ's ``max_job_time``, worker process restart, host kernel kill -- no
 exception handler runs, no cursor is written, no ``AUTO_CONTINUE``
 fires. The investigation row stays at ``status='running'`` (or
 ``status='created'`` if the very first enqueue was lost) with branches
@@ -20,17 +20,17 @@ one handles recovery.
 
 Eligibility (every clause MUST hold):
 
-* ``inv.status IN ('created', 'running')`` — only non-terminal
+* ``inv.status IN ('created', 'running')`` -- only non-terminal
   investigations can recover.
-* ``inv.pause_reason IS NULL`` — operator and self-paused
+* ``inv.pause_reason IS NULL`` -- operator and self-paused
   investigations (``operator`` / ``low_confidence`` / ``cost_budget``
   / ``awaiting_campaign`` / ``awaiting_mcp``) are intentional waits
   and MUST NOT be auto-resumed by this sweep. M3.R-6 resumer owns
   the auto-resume cases; operator owns the operator case.
-* ``inv.kind != 'masvs_audit'`` — the MASVS parent's lifecycle is
+* ``inv.kind != 'masvs_audit'`` -- the MASVS parent's lifecycle is
   owned by ``parent_reconciler``. The parent's child investigations
   are regular ``audit`` kind and ARE eligible.
-* ``inv.updated_at < NOW() - <idle threshold>`` — slow turns
+* ``inv.updated_at < NOW() - <idle threshold>`` -- slow turns
   (8-minute semantic searches, long reasoning) MUST not be double-
   fired. The threshold distinguishes "legitimately slow" from
   "really stalled".
@@ -51,12 +51,12 @@ Re-enqueue dispatch table:
   inv has any ``status='active'`` branches, fan out one submit
   per active branch with ``branch_id`` set. If no active branches
   exist (typically ``status='created'`` invs that never spawned),
-  submit once with only ``investigation_id`` — the
+  submit once with only ``investigation_id`` -- the
   ``investigation_setup`` state will spawn branches on first turn.
 
 Rate model:
 
-``rate_per_tick`` caps **total task submits** in one sweep call —
+``rate_per_tick`` caps **total task submits** in one sweep call --
 NOT investigation count. The unit matters: one investigation with 6
 active personas produces 6 submits, six 1-branch investigations also
 produce 6. The cap is what bounds the downstream LLM request rate.
@@ -71,8 +71,8 @@ synthesis tasks, etc.).
 
 Operator tunes via env vars:
 
-* ``AILA_VR_STALL_RECOVERY_LIMIT`` — submits per tick (default 6)
-* ``AILA_VR_STALL_RECOVERY_IDLE_MIN`` — idle threshold in minutes
+* ``AILA_VR_STALL_RECOVERY_LIMIT`` -- submits per tick (default 6)
+* ``AILA_VR_STALL_RECOVERY_IDLE_MIN`` -- idle threshold in minutes
   (default 15)
 
 ``bypass_dedup=True`` on every submit so a stale running-status
@@ -127,7 +127,7 @@ _SWEEPABLE_KINDS: tuple[str, ...] = (
 )
 
 # Reserved sentinel for "no branch_id, inv-level enqueue" path. Used
-# in the per-row result accounting only — never sent to the queue.
+# in the per-row result accounting only -- never sent to the queue.
 _INV_LEVEL = "__inv_level__"
 
 
@@ -183,7 +183,7 @@ async def _default_submit_fn(
     branch_id: str | None,
     team_id: str | None,
 ) -> None:
-    """Production submitter — binds to ``default_task_queue``.
+    """Production submitter -- binds to ``default_task_queue``.
 
     Deferred imports because this module sits in the worker boot
     path; we MUST not pull the task queue / module loader surface
@@ -363,7 +363,7 @@ async def sweep_stalled_investigations(
             continue
 
         # Fan out one submit per active branch. STOP at the cap mid-
-        # fan-out — partial recovery is fine; next tick continues.
+        # fan-out -- partial recovery is fine; next tick continues.
         for branch_id in branches:
             if result.enqueued >= cap:
                 break

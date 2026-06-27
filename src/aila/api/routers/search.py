@@ -42,7 +42,7 @@ async def global_search(
 ) -> DataEnvelope[list[SearchResult]]:
     """Search across systems, findings, sessions, and module entities.
 
-    Per T-138-15: uses parameterized ILIKE queries — never string concatenation.
+    Per T-138-15: uses parameterized ILIKE queries -- never string concatenation.
     Per T-138-24: max 50 results per entity type before pagination slice.
     """
     requested_types: set[str] | None = None
@@ -53,7 +53,7 @@ async def global_search(
     pattern = f"%{q}%"
 
     async with async_session_scope() as session:
-        # Search systems by name or host (parameterized — no SQL injection)
+        # Search systems by name or host (parameterized -- no SQL injection)
         if requested_types is None or "system" in requested_types:
             from sqlalchemy import or_
             from sqlmodel import select
@@ -76,7 +76,7 @@ async def global_search(
                         entity_type="system",
                         entity_id=str(row.id),
                         title=row.name,
-                        snippet=f"Host: {row.host} — {row.description}",
+                        snippet=f"Host: {row.host} -- {row.description}",
                     )
                 )
 

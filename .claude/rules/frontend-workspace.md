@@ -15,7 +15,7 @@ Module package names use kebab-case: `hello_world` → `@aila/hello-world-fronte
 ## Hard rules
 
 ### 1. Every bare import declared in package.json
-A module's source can only import packages that appear in that module's `package.json` `dependencies`, `peerDependencies`, or `devDependencies`. pnpm strict mode (`strict-peer-dependencies=true` in `.npmrc`) enforces this at install time — install fails if a module imports a package it didn't declare.
+A module's source can only import packages that appear in that module's `package.json` `dependencies`, `peerDependencies`, or `devDependencies`. pnpm strict mode (`strict-peer-dependencies=true` in `.npmrc`) enforces this at install time -- install fails if a module imports a package it didn't declare.
 
 When adding a new bare import, ALSO add the dep to the module's `package.json` and run `pnpm install` before committing.
 

@@ -1,5 +1,5 @@
 /**
- * viz-page.spec.ts — Smoke tests for /viz data visualization page.
+ * viz-page.spec.ts -- Smoke tests for /viz data visualization page.
  *
  * Coverage:
  *   - Page loads without JavaScript errors
@@ -7,7 +7,7 @@
  *   - Export buttons are present
  *   - URL remains /viz (no crash redirect)
  *
- * Uses real PostgreSQL backend — no mocks.
+ * Uses real PostgreSQL backend -- no mocks.
  * Gracefully handles empty state (no findings, no topology data).
  */
 import { test, expect } from "@playwright/test";
@@ -50,7 +50,7 @@ test.describe("Visualization page", () => {
     await page.goto("/viz");
     await page.waitForTimeout(3000);
 
-    // AilaCard wraps each chart — check for card-like containers
+    // AilaCard wraps each chart -- check for card-like containers
     // The page should render at least some card containers
     const cards = page.locator('[class*="card"], [class*="Card"], [class*="rounded"]');
     const cardCount = await cards.count();
@@ -63,7 +63,7 @@ test.describe("Visualization page", () => {
 
     // PNG/SVG export buttons should appear when charts have data
     // When in empty state, export buttons may still render in the card header
-    // Verify page is functional — no hard assertion on button count since data may be empty
+    // Verify page is functional -- no hard assertion on button count since data may be empty
     await expect(page).toHaveURL(/\/viz/);
     await expect(page).toHaveTitle(/Data Visualization|Visualization|AILA/);
   });
@@ -72,7 +72,7 @@ test.describe("Visualization page", () => {
     await page.goto("/viz");
     await page.waitForTimeout(3000);
 
-    // Look for the chart title text — rendered in all states (loading, empty, data)
+    // Look for the chart title text -- rendered in all states (loading, empty, data)
     const chartTitle = page.getByText(/Severity Distribution/i);
     await expect(chartTitle).toBeVisible({ timeout: 5000 });
   });

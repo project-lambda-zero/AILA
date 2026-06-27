@@ -1,4 +1,4 @@
-"""Fuzz launcher — translates a campaign's engine_id + engine_config
+"""Fuzz launcher -- translates a campaign's engine_id + engine_config
 into a shell command, SSHes to the workstation, starts the fuzzer in
 the background, and records the remote PID + corpus/crashes dirs.
 
@@ -85,13 +85,13 @@ def build_launch_command(
       Optional ``seed_dir``, ``dict_path``.
     - **honggfuzz**: ``target_binary``, ``seed_dir``.
     - **jazzer / cargo-fuzz / go-fuzz / atheris**: ``target_spec``
-      (engine-specific identifier — fully-qualified class name for
+      (engine-specific identifier -- fully-qualified class name for
       jazzer, package::target for cargo-fuzz, etc.).
     - **v8_d8_sbx**: ``d8_path``, ``poc_path`` (single PoC file to
       replay rather than a fuzzing campaign).
 
     `strategy_config` is reserved for future use (grammar files,
-    mutator weights). Currently unused — strategy is encoded in
+    mutator weights). Currently unused -- strategy is encoded in
     engine_config when needed.
     """
     del strategy_config  # reserved
@@ -191,7 +191,7 @@ def build_launch_command(
             f"--expose-gc --allow-natives-syntax "
             f"{shlex.quote(poc_path)}"
         )
-        # Not really a campaign — single PoC replay. Still goes through
+        # Not really a campaign -- single PoC replay. Still goes through
         # nohup so we can capture exit code + stdout/err for the
         # operator.
         return LaunchCommand(
@@ -215,8 +215,8 @@ def _wrap_nohup(cmd: str, workdir: str) -> str:
     and capture the PID for later observability + kill.
 
     Writes:
-      ${workdir}/fuzzer.pid    — backgrounded process id
-      ${workdir}/fuzzer.log    — combined stdout + stderr
+      ${workdir}/fuzzer.pid    -- backgrounded process id
+      ${workdir}/fuzzer.log    -- combined stdout + stderr
     """
     return (
         f"cd {workdir} && "

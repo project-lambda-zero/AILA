@@ -1,4 +1,4 @@
-"""S-2 — :class:`MasvsSeedBuilder` produces a faithful per-control prompt.
+"""S-2 -- :class:`MasvsSeedBuilder` produces a faithful per-control prompt.
 
 The aggregator at S-4 reads child investigation outcomes verbatim; the
 scout that produces those outcomes reads ``initial_question`` verbatim.
@@ -18,7 +18,7 @@ This test pins the contract for that string:
    decompiled directory, jadx class count) is interpolated correctly
    from the parent :class:`VRTargetSummary`'s ``apk_overview``.
 5. Missing or partial ``apk_overview`` payloads degrade to
-   ``"<unknown>"`` markers rather than raising — the dispatcher
+   ``"<unknown>"`` markers rather than raising -- the dispatcher
    dry-run path passes ``None`` when previewing the prompt.
 6. The prompt body is non-trivial for every catalogued control (catch
    silent template-key explosions on rare entries).
@@ -55,7 +55,7 @@ def _first_l1() -> MasvsControl:
         if c.level == MasvsLevel.L1:
             return c
     raise AssertionError(
-        "MASVS catalog has no L1 entries — test_l1_complete (C-2) "
+        "MASVS catalog has no L1 entries -- test_l1_complete (C-2) "
         "should fail before this test runs"
     )
 
@@ -64,7 +64,7 @@ def test_build_includes_every_verification_step_verbatim() -> None:
     """The mandatory invariant from IMPLEMENTATION_PLAN.md S-2.
 
     Runs across the full catalog (not just one control) so a per-row
-    bug — e.g. a step containing characters the renderer trims — is
+    bug -- e.g. a step containing characters the renderer trims -- is
     caught against every entry, not just whichever one happens to be
     first.
     """

@@ -1,4 +1,4 @@
-"""Windows Registry viewer — navigates and queries registry hives via SSH.
+"""Windows Registry viewer -- navigates and queries registry hives via SSH.
 
 Uses Dissect's registry parser (``dissect.regf``) and Python's built-in
 ``winreg`` (on Windows analyzers) to browse hives, list keys/values,
@@ -11,7 +11,7 @@ from aila.platform.tools._common import Tool
 
 TOOL_ALIAS = "registry_viewer"
 CAPABILITY = (
-    "Browse Windows registry hives — list keys, read values, search patterns, "
+    "Browse Windows registry hives -- list keys, read values, search patterns, "
     "and extract forensic artifacts (MRU, services, autoruns, USB, shellbags) via SSH."
 )
 

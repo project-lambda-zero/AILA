@@ -66,7 +66,7 @@ def _base_kwargs(*, event: str = "exited:ok") -> dict:
 
 
 def test_emit_swallows_redis_unavailable(monkeypatch) -> None:
-    """If Redis pool raises, emit must log a warning and return — never re-raise."""
+    """If Redis pool raises, emit must log a warning and return -- never re-raise."""
     import asyncio
 
     async def _broken_redis_ctx(*a, **kw):
@@ -80,7 +80,7 @@ def test_emit_swallows_redis_unavailable(monkeypatch) -> None:
 
 
 def test_emit_swallows_xadd_error(monkeypatch) -> None:
-    """If xadd raises, emit must log and return — never re-raise."""
+    """If xadd raises, emit must log and return -- never re-raise."""
     import asyncio
     from contextlib import asynccontextmanager
 

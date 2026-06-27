@@ -33,7 +33,7 @@ def create_hello_world_router() -> APIRouter:
 
     @router.get("/status", response_model=HelloWorldStatusResponse)
     async def hello_status(
-        # PROTECTED ENDPOINT — Rule 57 compliance: module health info must not
+        # PROTECTED ENDPOINT -- Rule 57 compliance: module health info must not
         # leak to anonymous callers. Unauthenticated requests receive HTTP 401.
         _auth: AuthContext = Depends(require_auth),
     ) -> HelloWorldStatusResponse:

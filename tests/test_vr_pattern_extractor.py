@@ -1,4 +1,4 @@
-"""PatternExtractor unit tests — pure helpers + the entry-to-create converter.
+"""PatternExtractor unit tests -- pure helpers + the entry-to-create converter.
 
 The full DB round-trip (load outcome → load transcript → call LLM → persist
 patterns) is exercised by integration tests once the test fixtures stand

@@ -97,14 +97,14 @@ class TestPaginatedResponseGeneric:
         assert p.pages == 2  # ceil(55/50)
 
     def test_pages_auto_computed_exact_division(self):
-        """ceil(100/50) = 2 — exact division gives correct pages."""
+        """ceil(100/50) = 2 -- exact division gives correct pages."""
         from aila.api.schemas.common import PaginatedResponse
 
         p = PaginatedResponse[str](total=100, page=1, page_size=50, pages=0, items=[])
         assert p.pages == 2
 
     def test_pages_auto_computed_single_item(self):
-        """ceil(1/50) = 1 — single item has 1 page."""
+        """ceil(1/50) = 1 -- single item has 1 page."""
         from aila.api.schemas.common import PaginatedResponse
 
         p = PaginatedResponse[str](total=1, page=1, page_size=50, pages=0, items=["x"])

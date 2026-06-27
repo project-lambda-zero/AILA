@@ -1,5 +1,5 @@
 /**
- * types.ts — Local TypeScript types for the Radar feature (Phase 144).
+ * types.ts -- Local TypeScript types for the Radar feature (Phase 144).
  * Maps 1:1 to TopologyNode/TopologyEdge shapes from GET /topology.
  */
 
@@ -83,5 +83,5 @@ export interface DataEnvelope<T> {
 
 export interface RadarFilter {
   search: string;
-  severities: string[]; // e.g. ["critical","high"] — empty means all
+  severities: string[]; // e.g. ["critical","high"] -- empty means all
 }

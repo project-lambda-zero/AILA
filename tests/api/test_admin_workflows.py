@@ -1,9 +1,9 @@
 """Integration tests for admin workflow inspection endpoints (Phase 181).
 
 Tests:
-- GET /admin/workflows/runs — list runs (admin only)
-- GET /admin/workflows/runs/{run_id}/transitions — list transitions
-- GET /admin/workflows/runs/{run_id}/transitions/{seq} — get one transition
+- GET /admin/workflows/runs -- list runs (admin only)
+- GET /admin/workflows/runs/{run_id}/transitions -- list transitions
+- GET /admin/workflows/runs/{run_id}/transitions/{seq} -- get one transition
 
 Run: pytest tests/api/test_admin_workflows.py -v
 """
@@ -151,7 +151,7 @@ async def test_list_runs_filter_no_match(
 async def test_list_run_transitions_empty(
     async_client, admin_token, workflow_run_with_cursor
 ):
-    """A run with no transitions returns [] — not 404."""
+    """A run with no transitions returns [] -- not 404."""
     rid = workflow_run_with_cursor
     resp = await async_client.get(
         f"/admin/workflows/runs/{rid}/transitions",

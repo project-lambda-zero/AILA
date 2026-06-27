@@ -8,7 +8,7 @@ interface ServerErrorPageProps {
 }
 
 /**
- * 500 SYSTEM ERROR — cyberpunk server error page (D-16).
+ * 500 SYSTEM ERROR -- cyberpunk server error page (D-16).
  *
  * Used by AppErrorBoundary to render unhandled render errors, and also
  * registered as a direct `/500` route for backend 5xx navigation.

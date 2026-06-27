@@ -1,5 +1,5 @@
 /**
- * useFindingsFacets — TanStack Query hook for GET /vulnerability/findings/facets.
+ * useFindingsFacets -- TanStack Query hook for GET /vulnerability/findings/facets.
  *
  * Returns the severity facet group for use in VIZ-01 (SeverityDonutChart).
  * Returns an empty object if the vulnerability module is unavailable.
@@ -28,7 +28,7 @@ export function useFindingsFacets() {
         const resp = await authorizedRequestJson<FacetsEnvelope>("/vulnerability/findings/facets");
         return { severity: resp?.data?.facets?.severity ?? {} };
       } catch {
-        // Vulnerability module may not be available — return empty
+        // Vulnerability module may not be available -- return empty
         return { severity: {} };
       }
     },

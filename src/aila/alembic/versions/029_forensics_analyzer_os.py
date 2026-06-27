@@ -1,4 +1,4 @@
-"""029 — add analyzer_os column to forensics_projects.
+"""029 -- add analyzer_os column to forensics_projects.
 
 Supports Windows and Linux analyzer machines by storing the OS type
 per project. Defaults to 'linux' for backward compatibility.

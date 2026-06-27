@@ -70,7 +70,7 @@ type Story = StoryObj<typeof meta>;
 // ---------------------------------------------------------------------------
 
 export const EmptyState: Story = {
-  name: "Empty State — no projects yet",
+  name: "Empty State -- no projects yet",
   parameters: { queryClient: makeQC(makePage([])) },
 };
 
@@ -80,7 +80,7 @@ export const LoadingSkeleton: Story = {
 };
 
 export const PopulatedList: Story = {
-  name: "Populated — 3 projects",
+  name: "Populated -- 3 projects",
   parameters: {
     queryClient: makeQC(makePage([
       makeProject({ name: "Case 001 Windows Analysis", status: "ready", investigation_count: 3 }),

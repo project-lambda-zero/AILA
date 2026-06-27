@@ -22,7 +22,7 @@ __all__ = ["PayloadKind"]
 class PayloadKind(StrEnum):
     """The D-44 typed payload kinds. Payload shape is per-kind dict.
 
-    Payload contents are not strictly typed by Pydantic — frontend
+    Payload contents are not strictly typed by Pydantic -- frontend
     renderers branch on ``payload_kind`` and consume the dict fields
     they need. Add typed Pydantic shapes per kind when a real consumer
     asks for one.

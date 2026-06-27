@@ -1,4 +1,4 @@
-"""audit-mcp bridge — AILA Tool wrapping the audit-mcp HTTP API.
+"""audit-mcp bridge -- AILA Tool wrapping the audit-mcp HTTP API.
 
 Mirrors ``IDABridgeTool``. The audit-mcp server (source code audit MCP,
 51 tools, GPU-accelerated graph engine) runs at the URL configured by
@@ -9,12 +9,12 @@ This bridge is the only place where the VR module touches the
 audit-mcp HTTP surface. Use it for source-code targets the same way
 ``IDABridgeTool`` is used for binary targets.
 
-Timeout: ``AUDIT_MCP_TIMEOUT`` env var, default 900 s (15 min — covers
+Timeout: ``AUDIT_MCP_TIMEOUT`` env var, default 900 s (15 min -- covers
 monorepo-scale ``fuzzing_targets`` on a fresh index that needs GPU CSR
 build + ranking, e.g. firefox cold 294 s on RTX 3080). Heavy graph
 queries (``dead_code``, ``scan_and_correlate``) that the server runs
 truly-async return ``status='pending'`` + a ``task_id``; callers poll
-with ``action='poll_task'`` until ``status='ready'`` — see
+with ``action='poll_task'`` until ``status='ready'`` -- see
 ``FunctionRankingDispatcher._rank_source`` for the poll pattern.
 """
 from __future__ import annotations
@@ -50,7 +50,7 @@ _XREF_ACTIONS = frozenset({
 })
 
 
-# JADX p-prefix rewriter — see _resolve_jadx_prefixes docstring.
+# JADX p-prefix rewriter -- see _resolve_jadx_prefixes docstring.
 _JADX_PREFIX_RE = re.compile(r"^p[0-9A-F]+(.+)$")
 
 
@@ -63,7 +63,7 @@ def _resolve_jadx_prefixes(root: Path, file_path: str) -> Path | None:
     digits, or its own internal rules by prefixing them with
     ``p<smali_line_number_hex>``:
 
-      ``ui`` → ``p182ui`` (most common — every Android app)
+      ``ui`` → ``p182ui`` (most common -- every Android app)
       ``do`` → ``p23do`` (Java keyword)
       ``if`` → ``p17if`` (Java keyword)
       ``2D`` → ``p9C2D`` (leading digit)
@@ -313,13 +313,13 @@ class AuditMcpBridgeTool(Tool):
         # ``record_call``-style async context manager; tests and
         # ad-hoc callers omit it and get a no-op (see ``_recorder.py``).
         self._recorder: BridgeRecorder = recorder or noop_recorder
-        # fix §207 — per-instance prewarm registry. Class-level storage
+        # fix §207 -- per-instance prewarm registry. Class-level storage
         # leaked across instances (tests saw stale state) and grew
         # monotonically in long-running workers (one entry per index_id,
         # never reclaimed).
         self._warmed_indexes: set[str] = set()
         self._warm_locks: dict[str, Any] = {}
-        # fix §208 — cache the resolved base URL on the instance. The
+        # fix §208 -- cache the resolved base URL on the instance. The
         # docstring originally promised per-call resolution so an
         # operator PATCH against /vr/mcp/servers/audit_mcp would take
         # effect without a restart; in practice every call paid ~5ms
@@ -339,17 +339,17 @@ class AuditMcpBridgeTool(Tool):
     #
     # On the first call to a new index_id we fire 16 parallel cheap
     # requests (summary + semble noop). Round-robin distribution
-    # gives each of the 4 workers ~4 calls — statistically certain to
+    # gives each of the 4 workers ~4 calls -- statistically certain to
     # warm them all. Subsequent calls go through unchanged.
     #
-    # fix §207 — moved to instance attrs in __init__.
+    # fix §207 -- moved to instance attrs in __init__.
     _PREWARM_FANOUT: int = 16
     _PREWARM_TIMEOUT_S: float = 90.0
 
     async def _resolve_base_url(self) -> str:
         if self._fixed_base_url is not None:
             return self._fixed_base_url
-        # fix §208 — cached on the instance for the bridge lifetime.
+        # fix §208 -- cached on the instance for the bridge lifetime.
         if self._resolved_base_url is not None:
             return self._resolved_base_url
         env_value = os.environ.get("AUDIT_MCP_URL")
@@ -369,17 +369,17 @@ class AuditMcpBridgeTool(Tool):
             ValueError,
             TypeError,
         ) as exc:
-            # fix §209 — broadened from (ValueError, RuntimeError,
+            # fix §209 -- broadened from (ValueError, RuntimeError,
             # ImportError). SQLAlchemy OperationalError, ConfigKeyError,
             # and anything else raised by ConfigRegistry().get used to
             # propagate and crash the bridge call. URL resolution is a
-            # config lookup — fail-safe to the default.
-            # fix §350 — traceback now reaches the fallback log so a
+            # config lookup -- fail-safe to the default.
+            # fix §350 -- traceback now reaches the fallback log so a
             # non-transient ConfigRegistry break (DB unreachable, schema
             # drift) is grep-able from the INFO line.
             logging.getLogger(__name__).info(
                 "audit_mcp_bridge: ConfigRegistry lookup failed "
-                "(%s: %s) — falling back to default URL",
+                "(%s: %s) -- falling back to default URL",
                 type(exc).__name__, exc,
                 exc_info=True,
             )
@@ -389,7 +389,7 @@ class AuditMcpBridgeTool(Tool):
     async def base_url(self) -> str:
         """Public accessor for the resolved bridge base URL.
 
-        fix §198 — exposes the cached resolution for downstream callers
+        fix §198 -- exposes the cached resolution for downstream callers
         (tool_executor's auto-steering path) so they don't have to
         hardcode ``http://127.0.0.1:18822`` and stay in sync with
         operator overrides via env / ConfigRegistry.
@@ -398,7 +398,7 @@ class AuditMcpBridgeTool(Tool):
 
     def invalidate_base_url(self) -> None:
         """Drop the cached base URL; next call re-resolves via env + config."""
-        # fix §208 — optional escape hatch for operators who PATCH the
+        # fix §208 -- optional escape hatch for operators who PATCH the
         # server config mid-run. The fixed-url path (test/DI) is
         # unaffected and stays sticky for the bridge's lifetime.
         self._resolved_base_url = None
@@ -409,7 +409,7 @@ class AuditMcpBridgeTool(Tool):
     # here (they're catalog-specific) and delegate alias resolution to
     # the shared module so ``ida_bridge.py`` uses the exact same code.
     #
-    # Families are intentionally tight — `path` and `file_path` are NOT
+    # Families are intentionally tight -- `path` and `file_path` are NOT
     # the same intent (repo root vs. one file), so they stay separate.
     # `query` (natural-language) and `pattern` (regex) are also distinct.
     # `depth` is kept separate from the how_many family because tools
@@ -459,12 +459,12 @@ class AuditMcpBridgeTool(Tool):
 
         Returns:
             Tool result dict. The ``status`` field is one of:
-            ``ready`` (result available), ``pending`` (async — poll
+            ``ready`` (result available), ``pending`` (async -- poll
             with ``action='poll_task'`` and ``task_id``), or ``error``.
         """
         if not action:
             return await self._list_tools()
-        # Bridge-side virtual tools — handled locally without HTTP.
+        # Bridge-side virtual tools -- handled locally without HTTP.
         # `read_lines` resolves index_id -> root_path via list_indexes
         # and slices the file from disk. Bypasses semble chunking and
         # all the broken indexers (read_function returning file headers,
@@ -476,7 +476,7 @@ class AuditMcpBridgeTool(Tool):
             logging.getLogger(__name__).info("audit_mcp_bridge %s", note)
 
         # Local kwarg validation against the live JSON Schema. Catches
-        # LLM-hallucinated args (e.g. fuzzing_targets(threshold=0.5) — no
+        # LLM-hallucinated args (e.g. fuzzing_targets(threshold=0.5) -- no
         # such param) and returns a structured "did you mean" error
         # before the HTTP round-trip. Without this, audit-mcp's bare
         # TypeError reply is too generic for the agent to recover from
@@ -492,7 +492,7 @@ class AuditMcpBridgeTool(Tool):
         # attempts in 48h on the SampleApp audit, 100% targeting
         # name='init' across 80 distinct branches. The bridge's
         # _suggest_function_names DID attach NEAREST hints to the
-        # error but agents ignored them — the agent's prompt structure
+        # error but agents ignored them -- the agent's prompt structure
         # treats 'error' as transient and keeps trying. Refuse the
         # generic-name call WITHOUT a roundtrip + with a STRONG
         # directive pointing at search_functions(pattern=...) +
@@ -508,7 +508,7 @@ class AuditMcpBridgeTool(Tool):
                     "error": (
                         f"audit_mcp.read_function rejected: {clean!r} is a "
                         f"generic Java method/constructor name that exists "
-                        f"on hundreds of classes in any Android app — the "
+                        f"on hundreds of classes in any Android app -- the "
                         f"function index can't disambiguate. Possible "
                         f"next moves:\n"
                         f"  (1) audit_mcp.search_functions(pattern='\\\\b{clean}\\\\b') "
@@ -518,7 +518,7 @@ class AuditMcpBridgeTool(Tool):
                         f"  (3) audit_mcp.read_lines(file_path=..., start=, end=) "
                         f"to read the body directly.\n"
                         f"Do NOT retry read_function with the bare name "
-                        f"{clean!r} — the result will be identical."
+                        f"{clean!r} -- the result will be identical."
                     ),
                     "_bridge_policy": "generic_name_blocked",
                 }
@@ -544,7 +544,7 @@ class AuditMcpBridgeTool(Tool):
             # class-level so every bridge instance in this worker process
             # shares the cap; if the tool is not heavy the helper returns
             # None and the call runs unbounded. Hold the semaphore across
-            # the HTTP send AND the response body read — that's the
+            # the HTTP send AND the response body read -- that's the
             # window during which audit-mcp is allocating the float32
             # blast-radius matrix on its side. Release after JSON parse
             # so the rest of the response processing runs unbounded.
@@ -618,7 +618,7 @@ class AuditMcpBridgeTool(Tool):
                         # name matches the file basename, they almost
                         # certainly meant "give me the class source".
                         # Trailmark indexes function bodies, not class
-                        # containers — so the lookup fails. Even for
+                        # containers -- so the lookup fails. Even for
                         # methods INSIDE the class, the indexer
                         # sometimes fails (JADX-decompiled Huawei SDK
                         # files with `/* JADX INFO: loaded from:
@@ -627,7 +627,7 @@ class AuditMcpBridgeTool(Tool):
                         # then loops 20+ times on the same broken
                         # call. Transparently rewrite to read_lines
                         # and return the class source as if it were a
-                        # function body — the agent reads, learns,
+                        # function body -- the agent reads, learns,
                         # moves on.
                         if file_hint and _looks_like_class_basename(name, file_hint):
                             rewrite_kwargs = {
@@ -654,7 +654,7 @@ class AuditMcpBridgeTool(Tool):
                                     "total_lines_in_file": total_lines,
                                     "content": content,
                                     "_bridge_note": (
-                                        f"{name!r} is a CLASS, not a function — "
+                                        f"{name!r} is a CLASS, not a function -- "
                                         f"audit-mcp's function index does not "
                                         f"track class containers. Auto-rewrote "
                                         f"to read_lines(file_path={file_hint!r}, "
@@ -670,7 +670,7 @@ class AuditMcpBridgeTool(Tool):
                                     ),
                                 }
                                 # Skip the nearest-names suggestion
-                                # below — we already gave the agent
+                                # below -- we already gave the agent
                                 # the file content.
                                 return payload
                         suggestions = await self._suggest_function_names(
@@ -683,7 +683,7 @@ class AuditMcpBridgeTool(Tool):
                                 f"{err}\n\nNEAREST INDEXED FUNCTION NAMES "
                                 f"(use one of these with read_function, OR "
                                 f"if none matches, the symbol genuinely "
-                                f"does NOT exist in this codebase — STOP "
+                                f"does NOT exist in this codebase -- STOP "
                                 f"trying this name and pivot to "
                                 f"semantic_search):\n"
                                 + "\n".join(f"  - {s}" for s in suggestions)
@@ -695,7 +695,7 @@ class AuditMcpBridgeTool(Tool):
             # symbol genuinely doesn't exist in the indexed tree (agent
             # hallucinated a name, the symbol is in an unindexed sibling
             # repo); or (b) the symbol exists but trailmark's call-graph
-            # indexer missed its forward edges — observed live with
+            # indexer missed its forward edges -- observed live with
             # ngx_http_init_phase_handlers having only 1 of ~10 real
             # outgoing calls indexed. Without a hint, the agent treats
             # both cases as "no edges = my hypothesis is wrong" and
@@ -765,7 +765,7 @@ class AuditMcpBridgeTool(Tool):
         """
         if not index_id or not name:
             return []
-        # Take the longest unambiguous prefix — drop trailing CamelCase
+        # Take the longest unambiguous prefix -- drop trailing CamelCase
         # tail. ``ensureStrBuf`` becomes ``ensureStrB`` then ``ensureS``
         # and finally ``ensure`` so search_functions finds appendStrBuf,
         # emitStrBuf, etc. via the StrBuf stem.
@@ -810,7 +810,7 @@ class AuditMcpBridgeTool(Tool):
     # The MCP server exposes the full JSON Schema for every tool via
     # GET /tools. Fetch once per process, hand the parsed form to
     # the prompt builder. The agent sees exact parameter names +
-    # required flag + default per tool, so it never has to guess —
+    # required flag + default per tool, so it never has to guess --
     # which is what was causing read_function(file_hint=...) etc.
     _SPEC_CACHE: list[dict[str, Any]] | None = None
     # Cache TTL: audit-mcp restarts can ship new tools / renamed kwargs.
@@ -850,7 +850,7 @@ class AuditMcpBridgeTool(Tool):
             return self.__class__._SPEC_CACHE
         if self.__class__._SPEC_CACHE is not None and cached_at is not None:
             logging.getLogger(__name__).info(
-                "audit_mcp_bridge: schema cache stale (%.0fs old, TTL %.0fs) — refetching",
+                "audit_mcp_bridge: schema cache stale (%.0fs old, TTL %.0fs) -- refetching",
                 now - cached_at, self.__class__._SPEC_CACHE_TTL_S,
             )
         base = await self._resolve_base_url()
@@ -861,7 +861,7 @@ class AuditMcpBridgeTool(Tool):
             raw = resp.json()
         except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
             logging.getLogger(__name__).warning(
-                "audit_mcp catalog fetch failed (%s) — agent will see "
+                "audit_mcp catalog fetch failed (%s) -- agent will see "
                 "name-only listing without schemas", exc,
             )
             # On fetch failure: keep any prior cache (better stale than
@@ -887,7 +887,7 @@ class AuditMcpBridgeTool(Tool):
             "name": "read_lines",
             "description": (
                 "Read a verbatim slice of source from a file in the "
-                "indexed repo. Bypasses every audit_mcp indexer — gives "
+                "indexed repo. Bypasses every audit_mcp indexer -- gives "
                 "you EXACTLY the lines you ask for. Use this when you "
                 "know the file path and the line range you need to "
                 "verify (e.g. after a semantic_search hit gave you the "
@@ -915,7 +915,7 @@ class AuditMcpBridgeTool(Tool):
             self._MANUAL_OVERRIDES,
         )
         logging.getLogger(__name__).info(
-            "audit_mcp_bridge: catalog loaded — %d tools, %d with alias maps",
+            "audit_mcp_bridge: catalog loaded -- %d tools, %d with alias maps",
             len(self.__class__._SPEC_CACHE),
             len(self.__class__._AUTO_ALIAS_MAP),
         )
@@ -928,7 +928,7 @@ class AuditMcpBridgeTool(Tool):
 
         Skipped entirely when ``AUDIT_MCP_WORKERS<=1`` (the Windows
         reality). With a single worker, 16 parallel calls don't warm
-        anything — they all serialize on the same async loop and just
+        anything -- they all serialize on the same async loop and just
         multiply the workload the worker has to chew through before
         the agent's REAL tool call gets a slot. That happened on
         investigation 417b469f: 3 branches simultaneously fired
@@ -947,7 +947,7 @@ class AuditMcpBridgeTool(Tool):
         """
         if index_id in self._warmed_indexes:
             return
-        # Skip pre-warm on single-worker deployments — see docstring.
+        # Skip pre-warm on single-worker deployments -- see docstring.
         workers = int(os.environ.get("AUDIT_MCP_WORKERS", "1") or "1")
         if workers <= 1:
             self._warmed_indexes.add(index_id)
@@ -1021,14 +1021,14 @@ class AuditMcpBridgeTool(Tool):
         """Validate ``kwargs`` against the live JSON Schema for ``action``.
 
         Returns None when the call is valid (or when validation must be
-        skipped — empty catalog, unknown action). Returns a structured
+        skipped -- empty catalog, unknown action). Returns a structured
         error dict suitable for direct return from ``forward()`` when
         the call would fail at audit-mcp anyway. The error message
         names the offending kwarg + the closest valid kwarg name via
         ``difflib.get_close_matches`` so the agent's next turn can
         self-correct without burning a retry.
 
-        Skipped for actions whose schema is missing or empty — those
+        Skipped for actions whose schema is missing or empty -- those
         are either bridge-internal pseudo-actions (``poll_task`` when
         the catalog hasn't loaded it) or genuinely unknown tools that
         the upstream server is best placed to reject.
@@ -1043,7 +1043,7 @@ class AuditMcpBridgeTool(Tool):
             # so unknown-action call patterns surface in worker logs
             # without blocking the call.
             logging.getLogger(__name__).info(
-                "audit_mcp_bridge: action %r not in /tools catalog (%d known) — forwarding anyway",
+                "audit_mcp_bridge: action %r not in /tools catalog (%d known) -- forwarding anyway",
                 action, len(specs),
             )
             return None
@@ -1056,7 +1056,7 @@ class AuditMcpBridgeTool(Tool):
         # Callers across AILA pass index_id uniformly; rewriting them all
         # to look up the root_path themselves would touch every site,
         # so the bridge does it transparently here. Only fires when the
-        # tool spec wants `path` and lacks `index_id` — leaves
+        # tool spec wants `path` and lacks `index_id` -- leaves
         # path-already-set or index_id-already-accepted cases alone.
         if (
             "path" in known_param_names
@@ -1086,7 +1086,7 @@ class AuditMcpBridgeTool(Tool):
                         f"{sorted(self.__class__._INDEX_ROOTS)}."
                     ),
                 }
-        # Unknown kwargs first — they're the loud LLM-hallucination case.
+        # Unknown kwargs first -- they're the loud LLM-hallucination case.
         unknown = [k for k in kwargs if k not in known_param_names]
         if unknown:
             suggestions = {}
@@ -1114,7 +1114,7 @@ class AuditMcpBridgeTool(Tool):
             )
             return {"status": "error", "error": error_msg}
 
-        # Missing required kwargs — fail loud rather than letting
+        # Missing required kwargs -- fail loud rather than letting
         # audit-mcp return a less actionable error.
         missing = sorted(required - set(kwargs))
         if missing:
@@ -1159,7 +1159,7 @@ class AuditMcpBridgeTool(Tool):
     # after the pickle + model resident footprint.
     #
     # Cheap tools (read_function, read_lines, search_functions,
-    # callers_of) stay unbounded — they're the interactive call
+    # callers_of) stay unbounded -- they're the interactive call
     # hot-path the agent reasons through.
     _HEAVY_TOOL_CAPS: dict[str, int] = {
         "fuzzing_targets":     2,
@@ -1332,7 +1332,7 @@ class AuditMcpBridgeTool(Tool):
                 # standard target ingestion does) emits these under a
                 # sibling `resources/` directory next to `sources/`.
                 # The audit_mcp index typically points at `sources/`
-                # (Java/Kotlin) only — so a request for
+                # (Java/Kotlin) only -- so a request for
                 # `res/layout/foo.xml` resolves to `sources/res/...`
                 # which doesn't exist. Walk up to the parent and try
                 # `resources/<path>` before declaring the file missing.
@@ -1361,11 +1361,11 @@ class AuditMcpBridgeTool(Tool):
                         )
                         abs_path = alt_path
                         # skip the JADX-prefix walker and "did you mean"
-                        # block below — we found the file.
+                        # block below -- we found the file.
                         # Fall through to the slice/return path.
                         pass
                     else:
-                        # didn't find via resources fallback either —
+                        # didn't find via resources fallback either --
                         # continue into JADX-prefix walker
                         pass
             # If we still haven't resolved abs_path to a real file, the

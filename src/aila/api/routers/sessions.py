@@ -1,9 +1,9 @@
 """Conversation session router for AILA REST API.
 
 Endpoints:
-  POST /sessions — create a conversation session (TASK-02)
-  POST /sessions/{session_id}/messages — add message + get response (TASK-03, TASK-04, TASK-06)
-  GET /sessions/{session_id}/messages — return full message history (TASK-05)
+  POST /sessions -- create a conversation session (TASK-02)
+  POST /sessions/{session_id}/messages -- add message + get response (TASK-03, TASK-04, TASK-06)
+  GET /sessions/{session_id}/messages -- return full message history (TASK-05)
 
 All session endpoints require reader+ role (D-23: even readers can chat).
 Sessions are scoped by user_id from the JWT (D-25).
@@ -385,12 +385,12 @@ async def _stream_message(
 
                 # platform.handle() is sync (D-03); call in this thread
                 # If platform.handle() does not support token_callback, tokens are not
-                # streamed individually — the full response is buffered and emitted as
+                # streamed individually -- the full response is buffered and emitted as
                 # a single token after completion (graceful fallback).
                 try:
                     result = platform.handle(query=req.content, token_callback=_token_cb)
                 except TypeError:
-                    # platform.handle() does not accept token_callback — fallback: buffer
+                    # platform.handle() does not accept token_callback -- fallback: buffer
                     result = platform.handle(query=req.content)
                     summary = str(getattr(result, "summary", "") or req.content)
                     response_text.clear()
@@ -417,7 +417,7 @@ async def _stream_message(
                     break
                 yield f"data: {json.dumps({'token': token, 'type': 'token'})}\n\n"
         except asyncio.CancelledError:
-            # D-09: client disconnected — cancel background task, discard queue
+            # D-09: client disconnected -- cancel background task, discard queue
             task.cancel()
             cancelled = True
             raise
@@ -446,7 +446,7 @@ async def _stream_message(
 
             await _persist_response()
 
-        # Done sentinel emitted OUTSIDE finally — only on normal completion
+        # Done sentinel emitted OUTSIDE finally -- only on normal completion
         if not cancelled:
             yield f"data: {json.dumps({'type': 'done', 'run_id': run_id_val})}\n\n"
 

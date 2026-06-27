@@ -1,11 +1,11 @@
-"""AFL++ scraper — tails ``out/default/fuzzer_stats`` + ``crashes/``.
+"""AFL++ scraper -- tails ``out/default/fuzzer_stats`` + ``crashes/``.
 
 AFL++'s output dir layout:
 
   <out>/default/
-    fuzzer_stats        — k=v lines, rewritten every ~30 s
-    queue/              — corpus
-    crashes/            — id:NNNNNN,sig:NNN,src:NNNNNN,op:OOO,...
+    fuzzer_stats        -- k=v lines, rewritten every ~30 s
+    queue/              -- corpus
+    crashes/            -- id:NNNNNN,sig:NNN,src:NNNNNN,op:OOO,...
                           one file per unique crash (AFL dedups by edge)
 
 ``fuzzer_stats`` keys we care about:

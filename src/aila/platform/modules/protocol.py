@@ -57,7 +57,7 @@ class ModuleRouteSpec:
 
     Platform calls router_factory() at startup and mounts the returned
     APIRouter under the declared prefix. Modules must NOT embed the prefix
-    in the router — the platform applies it here via include_router(prefix=...).
+    in the router -- the platform applies it here via include_router(prefix=...).
 
     These routes are the frontend/API contract for the module. Keep them
     explicit and stable: typed request bodies, response_model on every route,
@@ -143,7 +143,7 @@ class ModuleExecutionContext:
 
     Created once per AILAPlatform.handle() call and passed through
     ModuleRequest. Carries the memory store, report artifact store, and
-    event emitter — all request-scoped. The emitter is wired at the
+    event emitter -- all request-scoped. The emitter is wired at the
     orchestrator level with audit_db, run_history, and progress destinations.
 
     task_queue is the platform TaskQueue instance bound to the calling module.
@@ -199,7 +199,7 @@ class ModuleProtocol(Protocol):
     Modules declare their capabilities, required tools, and report filter keys
     at class level. The platform calls register_tools() once at startup and
     build_runtime() once per platform instance construction. handle() is never
-    called directly on the protocol — it lives on the ModuleRuntime returned
+    called directly on the protocol -- it lives on the ModuleRuntime returned
     by build_runtime().
     """
 
@@ -219,7 +219,7 @@ class ModuleProtocol(Protocol):
 
         The platform merges these with PLATFORM_TOOL_KEYS when building runtimes,
         so only module-specific tools need to be declared here.
-        Default implementation returns ["module_status"] — every module has access
+        Default implementation returns ["module_status"] -- every module has access
         to at least the platform-wide module_status tool without overriding.
         """
         return ["module_status"]
@@ -229,7 +229,7 @@ class ModuleProtocol(Protocol):
 
         Used by the platform to validate filter payloads before passing them to
         filter_report_rows(). Return an empty list if the module has no filterable reports.
-        Default implementation returns [] — modules without filterable reports need not
+        Default implementation returns [] -- modules without filterable reports need not
         override this.
         """
         return []
@@ -269,7 +269,7 @@ class ModuleProtocol(Protocol):
         Called by module workflow stages when a query includes filter parameters.
         Platform enforces that only keys declared in report_filter_keys() are
         accepted; modules own the actual filtering semantics.
-        Default implementation returns all rows unchanged — modules without
+        Default implementation returns all rows unchanged -- modules without
         filterable reports need not override this.
         """
         if not rows:
@@ -284,7 +284,7 @@ class ModuleProtocol(Protocol):
         Implementations MUST be idempotent: check SeedVersionRecord before
         inserting. If seed_version matches the installed version, return early.
         The AsyncSession is already open; do not create a new session_scope inside.
-        Default implementation is a no-op — modules without seed data need not
+        Default implementation is a no-op -- modules without seed data need not
         override this.
         """
         return
@@ -297,7 +297,7 @@ class ModuleProtocol(Protocol):
         Called by the platform runtime builder during pipeline assembly
         (see ``aila.platform.runtime.builder``). The platform then
         registers the validate step with the union of all module
-        validators — platform code never imports a specific module's
+        validators -- platform code never imports a specific module's
         validator class.
 
         Default returns an empty list. Modules that ship a validator
@@ -339,7 +339,7 @@ class ModuleProtocol(Protocol):
 
         Called by GET /systems/{id} to enrich system detail with module-specific
         data. Platform merges all non-empty module summaries into the response.
-        Default implementation returns an empty dict — modules override as needed.
+        Default implementation returns an empty dict -- modules override as needed.
 
         Args:
             system_id: Primary key of the ManagedSystemRecord to summarize.
@@ -412,7 +412,7 @@ class ModuleProtocol(Protocol):
         Called by GET /search. Each dict must contain at minimum:
         entity_type, entity_id, title, snippet.
 
-        OPTIONAL — platform checks hasattr() before calling.
+        OPTIONAL -- platform checks hasattr() before calling.
 
         Args:
             query: Raw search string from the client.
@@ -431,7 +431,7 @@ class ModuleProtocol(Protocol):
         Called by GET /dashboard. Each value is a zero-argument async callable
         returning a dict of module-specific stats.
 
-        OPTIONAL — platform checks hasattr() before calling.
+        OPTIONAL -- platform checks hasattr() before calling.
 
         Returns:
             Dict mapping provider name to a callable, e.g.:
@@ -445,7 +445,7 @@ class ModuleProtocol(Protocol):
         Called by GET /findings/workflow/states to list all registered workflows.
         Each key is a workflow identifier; each value has 'states' and 'transitions'.
 
-        OPTIONAL — platform checks hasattr() before calling.
+        OPTIONAL -- platform checks hasattr() before calling.
 
         Returns:
             Dict mapping workflow_id to state machine definition, e.g.:
@@ -457,7 +457,7 @@ class ModuleProtocol(Protocol):
     def notification_types(self) -> list[str]:
         """Return notification type identifiers this module can emit (D-37/D-32).
 
-        OPTIONAL — platform checks hasattr() before calling.
+        OPTIONAL -- platform checks hasattr() before calling.
 
         Returns:
             List of notification type strings, e.g.: ['scan_complete', 'kev_added']

@@ -1,4 +1,4 @@
-# VR Module — Complete Toolchain
+# VR Module -- Complete Toolchain
 
 Everything the research workstation needs, categorized by research phase. Combines lessons from Metis, Pharos, Trailmark, and 2026-era LLM-assisted VR tooling.
 
@@ -47,17 +47,17 @@ The bridges sit between the LLM action layer and the HTTP transport. They are th
 - **Circuit breaker + survey-streak pivot.** Repeated identical-shape failures (3-strike) and survey-tool streaks without a source read (3 consecutive `attack_surface` / `complexity_hotspots` / `fuzzing_targets` / `search_functions` without an intervening `read_function` / `decompile`) inject a hard "pivot" directive into the next prompt.
 - **Language-aware tool suppression.** `dead_code` and `unreachable_from_entrypoints` are hidden from the prompt for C++, Java, Kotlin, C#, Swift, Objective-C, and Scala targets where the indexer's reach analysis is unreliable.
 - **Lazy pre-warm fan-out.** When `AUDIT_MCP_WORKERS > 1` and a new `index_id` lands its first call, the bridge fires 16 cheap parallel requests so round-robin distribution warms each uvicorn worker's TypeResolver + semble + engine caches once. Skipped on `AUDIT_MCP_WORKERS=1` (the Windows reality).
-- **`read_lines` — bridge-side virtual tool.** No upstream MCP endpoint. The bridge resolves `index_id → root_path` via `/tools/list_indexes` and slices the file from disk. Use when an indexer returned a stale or wrong slice (`read_function` returning a file header, `search_constants` returning 0) and you need verbatim source.
+- **`read_lines` -- bridge-side virtual tool.** No upstream MCP endpoint. The bridge resolves `index_id → root_path` via `/tools/list_indexes` and slices the file from disk. Use when an indexer returned a stale or wrong slice (`read_function` returning a file header, `search_constants` returning 0) and you need verbatim source.
 - **IDA mutations.** Mutating IDA tools (`rename_function`, `rename_variable`, `set_comment`, `set_function_type`, `patch_bytes`, `patch_cff`, ...) return a `ticket_id` and apply asynchronously; the bridge polls `poll_mutation` for completion.
-- **android-mcp bridge — deliberately slim.** No schema-driven kwarg validation, no pre-warm fan-out, no kwarg alias map, no virtual tools. The five ingestion stages (`APK_DECODE` / `JADX_DECOMPILE` / `INDEX_DECOMPILED` / `STATIC_SUMMARY` / `MOBSF_SCAN`) call a small fixed set of actions with known parameters. Transport errors surface as `{"status": "error", "error": "..."}` so callers can branch on one uniform shape. `ANDROID_MCP_TIMEOUT` (default 1800 s) is the absolute network ceiling; the per-stage `StageTracker` timeouts in `services/stage_tracker.py` (APK_DECODE 600 s, JADX_DECOMPILE 900 s, INDEX_DECOMPILED 3600 s, STATIC_SUMMARY 300 s, MOBSF_SCAN 1800 s) are the actual per-stage budgets.
+- **android-mcp bridge -- deliberately slim.** No schema-driven kwarg validation, no pre-warm fan-out, no kwarg alias map, no virtual tools. The five ingestion stages (`APK_DECODE` / `JADX_DECOMPILE` / `INDEX_DECOMPILED` / `STATIC_SUMMARY` / `MOBSF_SCAN`) call a small fixed set of actions with known parameters. Transport errors surface as `{"status": "error", "error": "..."}` so callers can branch on one uniform shape. `ANDROID_MCP_TIMEOUT` (default 1800 s) is the absolute network ceiling; the per-stage `StageTracker` timeouts in `services/stage_tracker.py` (APK_DECODE 600 s, JADX_DECOMPILE 900 s, INDEX_DECOMPILED 3600 s, STATIC_SUMMARY 300 s, MOBSF_SCAN 1800 s) are the actual per-stage budgets.
 
-Operators and embedded harnesses can reach audit-mcp's HTTP API directly when they want a one-shot query (e.g. `mcp__audit_mcp_*` MCP tools exposed to outer agent harnesses). Inside AILA, the bridges are the canonical path — they carry the validation, dedup, pre-warm, and survey-streak logic the loop needs.
+Operators and embedded harnesses can reach audit-mcp's HTTP API directly when they want a one-shot query (e.g. `mcp__audit_mcp_*` MCP tools exposed to outer agent harnesses). Inside AILA, the bridges are the canonical path -- they carry the validation, dedup, pre-warm, and survey-streak logic the loop needs.
 
 ### Target ingestion stages
 
 VR target onboarding runs through `aila.modules.vr.services.target_analysis.TargetAnalysisService.analyze()`, which routes by `TargetKind` to one of two staged pipelines. Each stage has its own row in the target's `analysis_stages_json` JSON (migration `060_vr_target_analysis_stages`) with `state`, `attempts`, `started_at`, `completed_at`, and `error`. Stages that don't apply to the target's kind are pre-marked `DONE` (skipped) so `roll_up_overall_state` can converge on `READY` without inventing a kind-aware rollup.
 
-**Source-repo / binary pipeline** — every kind except `android_apk`: `source_repo`, `native_binary`, `apk` (legacy native APK kind routed to IDA), `ipa`, `jar`, `dotnet_assembly`, `kernel_image`, `kernel_module`, `hypervisor_image`, plus the descriptor-only kinds (`cve`, `protocol_capture`, `crash_input`, `patch_diff` — these pre-skip `INGESTION` via `_NO_INGEST_KINDS`):
+**Source-repo / binary pipeline** -- every kind except `android_apk`: `source_repo`, `native_binary`, `apk` (legacy native APK kind routed to IDA), `ipa`, `jar`, `dotnet_assembly`, `kernel_image`, `kernel_module`, `hypervisor_image`, plus the descriptor-only kinds (`cve`, `protocol_capture`, `crash_input`, `patch_diff` -- these pre-skip `INGESTION` via `_NO_INGEST_KINDS`):
 
 | Stage | What runs |
 |---|---|
@@ -65,16 +65,16 @@ VR target onboarding runs through `aila.modules.vr.services.target_analysis.Targ
 | `CAPABILITY_PROFILE` | semble warm-up + per-language tool catalog projection; populates the suppression set above |
 | `FUNCTION_RANKING` | `fuzzing_targets` ranking with per-language thresholds; persists ranked function index for the agent prompt |
 
-**Android-APK pipeline** — `android_apk` kind only (PRD §C-20). Six stages run in order; `REACT_NATIVE_EXTRACT` slots between `JADX_DECOMPILE` and `INDEX_DECOMPILED` so the audit-mcp index can also cover any extracted React Native JS bundles:
+**Android-APK pipeline** -- `android_apk` kind only (PRD §C-20). Six stages run in order; `REACT_NATIVE_EXTRACT` slots between `JADX_DECOMPILE` and `INDEX_DECOMPILED` so the audit-mcp index can also cover any extracted React Native JS bundles:
 
 | Stage | What runs |
 |---|---|
-| `APK_DECODE` | android-mcp `apktool_decode` — resource + AndroidManifest + smali decode. Persists `mcp_handles_json.android_mcp_decoded_dir`. |
-| `JADX_DECOMPILE` | android-mcp `jadx_decompile` — dex-to-Java decompilation. Persists `mcp_handles_json.android_mcp_decompiled_dir`. |
+| `APK_DECODE` | android-mcp `apktool_decode` -- resource + AndroidManifest + smali decode. Persists `mcp_handles_json.android_mcp_decoded_dir`. |
+| `JADX_DECOMPILE` | android-mcp `jadx_decompile` -- dex-to-Java decompilation. Persists `mcp_handles_json.android_mcp_decompiled_dir`. |
 | `REACT_NATIVE_EXTRACT` | Extracts React Native JavaScript bundles from APKs via the android-mcp `react_native_extract` tool. Persists handles for any recovered JS bundles so subsequent stages can index them. |
-| `INDEX_DECOMPILED` | audit-mcp `index_codebase(path=<decompiled_dir>, language="java")` over the jadx Java tree — polls until READY, then persists `mcp_handles_json.audit_mcp_decompiled_index_id` so VR personas auditing an APK get the same Trailmark / Semble surface (`semantic_search`, `callers_of`, `read_function`) they get against source-repo targets, rooted at the recovered Java methods. Soft-skips with `{"skipped": "no jadx output"}` when JADX_DECOMPILE produced no decompiled dir. |
-| `STATIC_SUMMARY` | android-mcp `androguard_summary` — package name, permissions, intent filters, signing certs. Persists `mcp_handles_json.android_mcp_static_summary`; `android_mcp_package_name` surfaces in the target row for the UI's display label. |
-| `MOBSF_SCAN` | android-mcp `mobsf_scan` — static-only MobSF scan. Gated on `MOBSF_API_KEY` on the AILA host; when unset the stage records `{"skipped": true}` and transitions `DONE` so the rollup still converges. Persists `mcp_handles_json.android_mcp_mobsf_scan`. |
+| `INDEX_DECOMPILED` | audit-mcp `index_codebase(path=<decompiled_dir>, language="java")` over the jadx Java tree -- polls until READY, then persists `mcp_handles_json.audit_mcp_decompiled_index_id` so VR personas auditing an APK get the same Trailmark / Semble surface (`semantic_search`, `callers_of`, `read_function`) they get against source-repo targets, rooted at the recovered Java methods. Soft-skips with `{"skipped": "no jadx output"}` when JADX_DECOMPILE produced no decompiled dir. |
+| `STATIC_SUMMARY` | android-mcp `androguard_summary` -- package name, permissions, intent filters, signing certs. Persists `mcp_handles_json.android_mcp_static_summary`; `android_mcp_package_name` surfaces in the target row for the UI's display label. |
+| `MOBSF_SCAN` | android-mcp `mobsf_scan` -- static-only MobSF scan. Gated on `MOBSF_API_KEY` on the AILA host; when unset the stage records `{"skipped": true}` and transitions `DONE` so the rollup still converges. Persists `mcp_handles_json.android_mcp_mobsf_scan`. |
 
 `aila.modules.vr.services.stage_tracker` owns idempotency, `RUNNING`-timeout reaping (separate `aila.modules.vr.services.target_analysis` reaper), and serialized commits. Operator-driven resume:
 
@@ -108,7 +108,7 @@ them into bug reports BEFORE concluding the MCP server is broken:
   functions: each result is
   `{file_path, start_line, end_line, content}`. They have their
   own adapters; do NOT fall through to generic JSON dump.
-- **`read_lines` is bridge-side virtual** — no upstream MCP
+- **`read_lines` is bridge-side virtual** -- no upstream MCP
   endpoint. The bridge resolves `index_id → root_path` via
   `/tools/list_indexes` then reads the file slice from disk. Use
   when an exact `(file_path, start, end)` is in hand and you need
@@ -140,14 +140,14 @@ rewrite. Operator-facing knobs:
 Diagnostics: `GET http://127.0.0.1:18822/runtime` returns live
 `{dedup: {inflight, hits, misses}, semaphores: {<tool>: {cap,
 available}}, thread_pool_limit}`. When agents report "audit_mcp slow"
-check this endpoint first — `available: 0` on a tool means it is the
+check this endpoint first -- `available: 0` on a tool means it is the
 bottleneck; bump the cap via env. High `misses` with low `hits` means
 sibling branches aren't asking the same questions (fine); high `hits`
 means dedup is doing real work.
 
 Backward compat: every existing tool keeps its current sync signature.
 The HTTP layer wraps them. Stdio transport (`audit_mcp/server.py`) is
-unchanged. Async tools (`tool.is_async == True`) now work — the HTTP
+unchanged. Async tools (`tool.is_async == True`) now work -- the HTTP
 transport previously refused them at startup with a hard `RuntimeError`.
 
 ---
@@ -296,17 +296,17 @@ apt install binutils file binwalk radare2
 # Crash triage
 pip install casr  # or build from source
 
-# IDA Pro — licensed, installed separately
-# Ghidra — download from ghidra-sre.org
-# OOAnalyzer — docker pull ghcr.io/cmu-sei/pharos
+# IDA Pro -- licensed, installed separately
+# Ghidra -- download from ghidra-sre.org
+# OOAnalyzer -- docker pull ghcr.io/cmu-sei/pharos
 
 # Windows fuzzing (on Windows research workstation)
-# WinAFL + DynamoRIO — build from source
-# Intel PT — requires compatible CPU + kernel support
+# WinAFL + DynamoRIO -- build from source
+# Intel PT -- requires compatible CPU + kernel support
 
 # Kernel fuzzing (on QEMU host)
 apt install qemu-system-x86
-# syzkaller — go install from source
+# syzkaller -- go install from source
 ```
 
 ---

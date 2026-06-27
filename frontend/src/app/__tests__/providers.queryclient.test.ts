@@ -27,7 +27,7 @@ describe("QueryClient (TanStack v5 cache wiring)", () => {
   it("does NOT wire onError via defaultOptions.queries (gap-fix-02 #1)", () => {
     const client = makeQueryClient();
     const defaults = client.getDefaultOptions();
-    // v5 removed defaultOptions.queries.onError — confirm it's unset.
+    // v5 removed defaultOptions.queries.onError -- confirm it's unset.
     expect((defaults.queries as { onError?: unknown } | undefined)?.onError).toBeUndefined();
   });
 

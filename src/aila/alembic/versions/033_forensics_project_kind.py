@@ -1,6 +1,6 @@
-"""033 — add project_kind column to forensics_projects.
+"""033 -- add project_kind column to forensics_projects.
 
-Distinguishes disk-evidence projects (the default — run the full
+Distinguishes disk-evidence projects (the default -- run the full
 collection + deep_analysis pipeline over disk images / memory dumps /
 pcaps) from raw-directory projects (rootfs-style: intake just
 enumerates the files and the free-flow investigator reads them

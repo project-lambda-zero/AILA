@@ -14,7 +14,7 @@ They emit progress via the platform emitter:
         return StateResult(output={...}, next_state="next_stage")
 
 All imports in real modules must come from aila.platform.* or the module's
-own package — never from another module's internals.
+own package -- never from another module's internals.
 
 The template uses a simplified TemplateWorkflowContext to keep the skeleton
 import-clean. Wire into the durable workflow engine by creating a

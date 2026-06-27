@@ -1,4 +1,4 @@
-# VR Module — Data Model
+# VR Module -- Data Model
 
 > **Status: design exploration.** This document predates the shipped VR
 > engine and describes an idealised contract, not current code. The
@@ -20,19 +20,19 @@
 > | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
 > | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
 
-The complete persistent shape of the VR module: every table, every relationship, every state machine, every query the runtime is expected to run, every migration that gets us there. Brainstorm-grade — what the data should look like if all the prior docs land coherently.
+The complete persistent shape of the VR module: every table, every relationship, every state machine, every query the runtime is expected to run, every migration that gets us there. Brainstorm-grade -- what the data should look like if all the prior docs land coherently.
 
 Cross-references:
-- prior design notes (D-01 .. D-06) — closed scope decisions
-- `docs/vr/01_REASONING_LOOP.md` — what `VRCaseState` and obligations look like at runtime
-- `docs/vr/03_EXPLOIT_AUTOMATION.md` — exploit tier model that drives `VRExploit` fields
-- `docs/vr/04_MULTI_TARGET.md` — the project graph this data model has to materialize
-- `docs/MODULE_STANDARD.md` — module ownership boundaries (the platform never imports from here)
-- `docs/DATABASE_MIGRATIONS.md` — Alembic conventions (no runtime DDL, append-only versions)
-- `src/aila/storage/mixins.py` — `TeamScopedMixin` that all team-owned VR tables inherit
-- `src/aila/modules/forensics/db_models/` — the forensics shape we are deliberately mirroring where it makes sense
+- prior design notes (D-01 .. D-06) -- closed scope decisions
+- `docs/vr/01_REASONING_LOOP.md` -- what `VRCaseState` and obligations look like at runtime
+- `docs/vr/03_EXPLOIT_AUTOMATION.md` -- exploit tier model that drives `VRExploit` fields
+- `docs/vr/04_MULTI_TARGET.md` -- the project graph this data model has to materialize
+- `docs/MODULE_STANDARD.md` -- module ownership boundaries (the platform never imports from here)
+- `docs/DATABASE_MIGRATIONS.md` -- Alembic conventions (no runtime DDL, append-only versions)
+- `src/aila/storage/mixins.py` -- `TeamScopedMixin` that all team-owned VR tables inherit
+- `src/aila/modules/forensics/db_models/` -- the forensics shape we are deliberately mirroring where it makes sense
 
-This document is data-only. It does not redesign the loop, the campaign manager, or the evidence graph — it commits them to columns.
+This document is data-only. It does not redesign the loop, the campaign manager, or the evidence graph -- it commits them to columns.
 
 ---
 
@@ -51,7 +51,7 @@ the accurate count includes `VRInvestigationTargetRecord`, an
 investigation \u2194 target join table not enumerated when the banner
 was drafted). The brainstorm diagram below this section names
 `VRObligation`, `VRFuzzingCampaign`, `VRAdvisory`, `VRDisclosure`,
-`VREvidenceNode/Edge`, etc. — design vocabulary, not the
+`VREvidenceNode/Edge`, etc. -- design vocabulary, not the
 implemented model. The authoritative model list lives at
 `src/aila/modules/vr/db_models/__init__.py`:
 
@@ -68,17 +68,17 @@ implemented model. The authoritative model list lives at
 
 Schema additions since the prior doc revision:
 
-- Migration 063 — `VRInvestigationMessageRecord.auto_steering_key`
+- Migration 063 -- `VRInvestigationMessageRecord.auto_steering_key`
   (nullable, partial UNIQUE on `(investigation_id, auto_steering_key)`).
-- Migration 064 — `VRInvestigationBranchRecord.persona_voice` NOT
+- Migration 064 -- `VRInvestigationBranchRecord.persona_voice` NOT
   NULL with `server_default='unspecified'`.
 
 A few invariants the schema is forced to maintain:
 
 - **A `VRTarget` always belongs to a `VRProject`.** No floating targets.
-- **A `VRHypothesis` always belongs to a `VRTarget`** (even cross-target patterns are modeled as a *hypothesis on the project*, expressed by a target with `kind = PROJECT_VIRTUAL` — see §3.2).
+- **A `VRHypothesis` always belongs to a `VRTarget`** (even cross-target patterns are modeled as a *hypothesis on the project*, expressed by a target with `kind = PROJECT_VIRTUAL` -- see §3.2).
 - **A `VRCrash` always belongs to a `VRFuzzingCampaign`.** Crashes that come from manual triggers, not fuzzing, get a synthetic "manual" campaign per target so the foreign-key always holds.
-- **A `VRExploit` references either `crash_id` xor `nday_task_id`** — exactly one of the two is non-NULL. Enforced as a `CHECK` constraint, not application logic.
+- **A `VRExploit` references either `crash_id` xor `nday_task_id`** -- exactly one of the two is non-NULL. Enforced as a `CHECK` constraint, not application logic.
 - **A `VRAdvisory` references at least one `VRExploit`** (or, for non-exploitable but reportable findings, at least one `VRCrash` with `triage_state='not_exploitable_disclosed'`).
 - **A `VRDisclosure` is 1:1 with a `VRAdvisory`.** The advisory is the body of the report; the disclosure record is the coordination state with the vendor.
 - **`VREvidenceNode.target_id` is nullable** (project-level nodes like CHAIN, PATTERN have NULL). `VREvidenceNode.project_id` is **not** nullable.
@@ -93,7 +93,7 @@ The shipped schema is the union of `db_models/` modules and the Alembic migratio
 |---|---|
 | `060_vr_target_analysis_stages` | `vr_target_analysis_stages_json` on `vr_targets` (per-stage status + timestamps + attempts + error); `aila.modules.vr.services.stage_tracker` owns idempotency + RUNNING-timeout reaping. |
 | `061_llm_idempotency_cache` | `llm_idempotency_cache` table keyed on `sha256(investigation_id, branch_id, turn_number, prompt_hash)`. Retries replay the cached decision so a transport hiccup never re-pays the LLM. Caller-supplied keys live in `vuln_researcher.run_turn`. |
-| `067_workflow_state_cursor_archived_state` (current head) | Adds `archived_state VARCHAR(128) NULL` to `workflow_state_cursor` for engine-level pause/resume — see `docs/DURABLE_STATEMACHINE_DESIGN.md`. Intermediate VR migrations — outcome review (`state` column on `vr_investigation_outcomes` plus `vr_outcome_reviews` table for sibling voting), `auto_steering_key` indexing on investigation messages, persona_voice NOT NULL backfill, TaskRecord `input_hash` + status CHECK constraint — are catalogued in `docs/DATABASE_MIGRATIONS.md`. |
+| `067_workflow_state_cursor_archived_state` (current head) | Adds `archived_state VARCHAR(128) NULL` to `workflow_state_cursor` for engine-level pause/resume -- see `docs/DURABLE_STATEMACHINE_DESIGN.md`. Intermediate VR migrations -- outcome review (`state` column on `vr_investigation_outcomes` plus `vr_outcome_reviews` table for sibling voting), `auto_steering_key` indexing on investigation messages, persona_voice NOT NULL backfill, TaskRecord `input_hash` + status CHECK constraint -- are catalogued in `docs/DATABASE_MIGRATIONS.md`. |
 
 ---
 
@@ -152,7 +152,7 @@ registered --[recon done]--> analyzing --[harness ready]--> fuzzing
 | `reported` | All exploitable findings on this target have advisories drafted. Target may still re-enter `fuzzing` for variant search. |
 | `archived` | Target excluded from further work in this project. |
 
-A target may be in *multiple conceptual phases simultaneously* (campaign running while exploit loop chases an earlier crash). The single `state` column captures the **dominant** phase — the one the project plan should display in the top-line view. Per-campaign and per-crash detail comes from those tables. We deliberately do not model this as an aggregate state graph; the operator wants one summary value, not a Cartesian product.
+A target may be in *multiple conceptual phases simultaneously* (campaign running while exploit loop chases an earlier crash). The single `state` column captures the **dominant** phase -- the one the project plan should display in the top-line view. Per-campaign and per-crash detail comes from those tables. We deliberately do not model this as an aggregate state graph; the operator wants one summary value, not a Cartesian product.
 
 ### 2.3 Hypothesis lifecycle
 
@@ -195,13 +195,13 @@ live on `VRInvestigationRecord`.
 
 ### 2.5 Outcome and persona enums
 
-Shipped: `OutcomeKind` (`contracts/outcome.py:39-50`, 11 values) —
+Shipped: `OutcomeKind` (`contracts/outcome.py:39-50`, 11 values) --
 `ASSESSMENT_REPORT`, `STRATEGY_DESCRIPTOR`, `PROFILE_SPEC_DRAFT`,
 `CONFIG_DELTA`, `VARIANT_HUNT_ORDER`, `PATCH_ASSESSMENT_REPORT`,
 `AUDIT_MEMO`, `DIRECT_FINDING`, `CRASH_TRIAGE_REPORT`,
 `CAMPAIGN_LAUNCH`, `SUB_INVESTIGATION`.
 
-`PersonaVoice` (`contracts/branch.py:39-62`, 9 values) — `HALVAR`,
+`PersonaVoice` (`contracts/branch.py:39-62`, 9 values) -- `HALVAR`,
 `MADDIE`, `YUKI`, `RENZO`, `NOOR`, `WEI`, `UNSPECIFIED`,
 `MERGE_RESULT`, `FORK_UNNAMED`.
 
@@ -240,11 +240,11 @@ discovered --[afl-tmin / similar]--> minimized --[dedup + classify]--> triaged
 
 | state | meaning |
 |---|---|
-| `discovered` | Raw crash from the fuzzer — input file, signal, top of stack only. |
+| `discovered` | Raw crash from the fuzzer -- input file, signal, top of stack only. |
 | `minimized` | Input minimized (afl-tmin or equivalent). Stable reproducer recorded. |
 | `triaged` | Deduplicated against existing crashes. Root cause classified (CWE candidate, allocator-relevant, etc.). |
 | `exploitable` | Tier-classified per `03_EXPLOIT_AUTOMATION.md`; the exploit loop has confirmed primitive existence. |
-| `not_exploitable` | Triage concluded no useful primitive. Stored anyway — useful evidence and may be re-classified if new info arrives. |
+| `not_exploitable` | Triage concluded no useful primitive. Stored anyway -- useful evidence and may be re-classified if new info arrives. |
 
 A crash never returns to a previous state via transition alone; if "not_exploitable" needs to flip to "exploitable," a *new* crash row is created with `re_triage_of` pointing at the original. This forces fresh evidence and gives the audit trail.
 
@@ -292,7 +292,7 @@ researching --[advisory + commit refs collected]--> patch_found --[diff understo
 | `poc_working` | PoC reliably reproduces against pre-patch; correctly fails against post-patch (the negative test). |
 | `advisory_written` | Internal write-up complete; if customer-facing, eligible for disclosure pipeline. |
 
-N-day tasks share a state machine with research-mode `VRExploit` only conceptually — they each have their own state column because the milestones are different. A single `state` enum that mixes both makes neither legible. This is the answer to open question 7 in `03_EXPLOIT_AUTOMATION.md`: **two state machines, separate tables, separate workflows; no shared `mode` flag.**
+N-day tasks share a state machine with research-mode `VRExploit` only conceptually -- they each have their own state column because the milestones are different. A single `state` enum that mixes both makes neither legible. This is the answer to open question 7 in `03_EXPLOIT_AUTOMATION.md`: **two state machines, separate tables, separate workflows; no shared `mode` flag.**
 
 ### 2.10 Disclosure lifecycle
 
@@ -315,7 +315,7 @@ undisclosed --[vendor contacted]--> reported --[ack received]--> acknowledged
 | `acknowledged` | Vendor responded with a tracking ID or human acknowledgment. |
 | `patch_pending` | Vendor confirmed they're working on a fix; expected ship date set or not set. |
 | `patched` | Patch shipped; CVE may or may not be assigned yet. |
-| `public` | Advisory is public — either coordinated release post-patch, or expired-deadline release. |
+| `public` | Advisory is public -- either coordinated release post-patch, or expired-deadline release. |
 
 `patched -> public` is operator-controlled even if a coordinated release date is set; the runtime never auto-publishes (D-04 keeps the human in the loop).
 
@@ -368,7 +368,7 @@ class VRProjectRecord(TeamScopedMixin, SQLModel, table=True):
     state: str = Field(default="created")
     workstation_id: int = Field(index=True)
     workspace_root: str = Field(sa_column=Column(Text))
-    # Posture report config — small JSON of include/exclude flags
+    # Posture report config -- small JSON of include/exclude flags
     report_config_json: str = Field(default="{}", sa_column=Column(Text))
     notes: str = Field(default="", sa_column=Column(Text))
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
@@ -434,7 +434,7 @@ class VRTargetRecord(TeamScopedMixin, SQLModel, table=True):
     path: str = Field(sa_column=Column(Text))
     sha256: str = Field(default="", sa_column=Column(Text))
     arch: str | None = Field(default=None, max_length=32)
-    # network_exposure / privilege_context — small structured JSON
+    # network_exposure / privilege_context -- small structured JSON
     surface_json: str = Field(default="{}", sa_column=Column(Text))
     mitigations_json: str = Field(default="{}", sa_column=Column(Text))
     state: str = Field(default="registered")
@@ -546,7 +546,7 @@ class VRHypothesisRecord(TeamScopedMixin, SQLModel, table=True):
     blocking_obligation_ids_json: str = Field(default="[]", sa_column=Column(Text))
     # When confirmed, the structural pattern signature derived from this hypothesis
     signature_json: str | None = Field(default=None, sa_column=Column(Text))
-    # Free-text reasoning trail — last summary written by the loop
+    # Free-text reasoning trail -- last summary written by the loop
     reasoning_summary: str = Field(default="", sa_column=Column(Text))
     rejected_reason: str = Field(default="", sa_column=Column(Text))
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
@@ -613,7 +613,7 @@ class VRFuzzingCampaignRecord(TeamScopedMixin, SQLModel, table=True):
     last_heartbeat_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     stopped_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
-    # Final stats locked at completion — execs, paths, coverage %, crashes
+    # Final stats locked at completion -- execs, paths, coverage %, crashes
     stats_json: str = Field(default="{}", sa_column=Column(Text))
     failure_reason: str = Field(default="", sa_column=Column(Text))
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
@@ -645,7 +645,7 @@ class VRCrashRecord(TeamScopedMixin, SQLModel, table=True):
     Dedup is by `crash_signature` (top-N stack frames + signal); rows with
     the same signature are folded into a single record at triage time.
 
-    `re_triage_of` chains a re-classified crash to its predecessor — used
+    `re_triage_of` chains a re-classified crash to its predecessor -- used
     when a `not_exploitable` crash is later found to be exploitable; the new
     row carries the new evidence, the old row stays for audit.
     """
@@ -709,7 +709,7 @@ EXPLOIT_STATES = (
 class VRExploitRecord(TeamScopedMixin, SQLModel, table=True):
     """One exploit / PoC.
 
-    Exactly one of `crash_id` or `nday_task_id` is non-NULL — the CHECK
+    Exactly one of `crash_id` or `nday_task_id` is non-NULL -- the CHECK
     constraint enforces the discriminator.
 
     Reliability: `successes` / `attempts` tracked turn-by-turn; the
@@ -742,7 +742,7 @@ class VRExploitRecord(TeamScopedMixin, SQLModel, table=True):
     tier: int = Field(default=1, sa_column=Column(Integer))  # Tier 1-4 from §3 of 03_EXPLOIT_AUTOMATION.md
     title: str = Field(max_length=512)
     primitive_vocab_json: str = Field(default="[]", sa_column=Column(Text))
-    # ARW, AAR, RIP, LEAK_libc, etc. — see open question 13 in 03_EXPLOIT_AUTOMATION.md
+    # ARW, AAR, RIP, LEAK_libc, etc. -- see open question 13 in 03_EXPLOIT_AUTOMATION.md
     script_path: str = Field(sa_column=Column(Text))
     script_content: str = Field(default="", sa_column=Column(Text))
     state: str = Field(default="drafting")
@@ -776,7 +776,7 @@ class VRAdvisoryRecord(TeamScopedMixin, SQLModel, table=True):
     """Disclosure-ready writeup for a single vulnerability.
 
     Links to the underlying `VRExploit` (or list, for chain advisories) via
-    the evidence graph rather than direct FK — a chain advisory references
+    the evidence graph rather than direct FK -- a chain advisory references
     multiple exploits across multiple targets, and we don't want N FK
     columns.
 
@@ -886,7 +886,7 @@ NDAY_STATES = (
 class VRNdayTaskRecord(TeamScopedMixin, SQLModel, table=True):
     """One CVE being researched for an N-day PoC.
 
-    Distinct from VRTarget — an N-day task identifies *which CVE in which
+    Distinct from VRTarget -- an N-day task identifies *which CVE in which
     upstream codebase*; the actual binary built for PoC execution is still
     a VRTarget under the same project.
 
@@ -1087,7 +1087,7 @@ class VRObligationRecord(TeamScopedMixin, SQLModel, table=True):
 Things considered and rejected:
 
 - **Turn / decision history.** Lives in the existing platform tables (`reasoning_graph_snapshots` and the `WorkflowRunRecord` / step records). VR adds `case_state_json` references inside hypothesis and exploit rows, but the canonical turn log is platform-owned. No `vr_turns` table.
-- **Artifact blobs as rows.** Decompilation listings, ASAN reports, GDB transcripts, exploit scripts — stored on the workstation filesystem under `project.workspace_root`, with paths recorded in the relevant row's `*_path` columns. The DB is metadata; large content stays on disk. The platform `report_repository` pattern is the model.
+- **Artifact blobs as rows.** Decompilation listings, ASAN reports, GDB transcripts, exploit scripts -- stored on the workstation filesystem under `project.workspace_root`, with paths recorded in the relevant row's `*_path` columns. The DB is metadata; large content stays on disk. The platform `report_repository` pattern is the model.
 - **Per-binary IDA database snapshot.** Path stored in `VRTargetRecord.analysis_db_path`. The IDB itself is not in the DB.
 - **Tool catalog / strategy registry.** Lives in code (`tool_keys.py`, `capabilities.py`), not in the DB. Same pattern as forensics.
 - **Advisory↔exploit join table.** A chain advisory references many exploits, but we model that through `VREvidenceEdgeRecord` (advisory node → exploit nodes via `enables_step`) rather than introducing a `vr_advisory_exploits` join table. The graph is already the join.
@@ -1103,15 +1103,15 @@ The hot-path queries below drive index choices. Two principles:
 
 Composite indexes worth calling out:
 
-- `ix_vr_evidence_edges_src(src_node_id, kind)` and the symmetric `_dst` — graph traversal in either direction is one index scan, no full-table.
-- `ix_vr_obligations_anchor(anchor_node_id)` — full-column index. A partial filter on `state='open'` would shrink the index by an order of magnitude; deferred until a measurement under load shows the full index isn't enough. Adding it later is a one-line migration.
-- `ix_vr_crashes_signature(crash_signature)` is per-target via the project_id correlation; if signature collisions across projects ever become a problem (they won't — the signature includes the binary hash) we'll add a composite.
+- `ix_vr_evidence_edges_src(src_node_id, kind)` and the symmetric `_dst` -- graph traversal in either direction is one index scan, no full-table.
+- `ix_vr_obligations_anchor(anchor_node_id)` -- full-column index. A partial filter on `state='open'` would shrink the index by an order of magnitude; deferred until a measurement under load shows the full index isn't enough. Adding it later is a one-line migration.
+- `ix_vr_crashes_signature(crash_signature)` is per-target via the project_id correlation; if signature collisions across projects ever become a problem (they won't -- the signature includes the binary hash) we'll add a composite.
 
 ---
 
 ## 5. Query Patterns
 
-The five queries the runtime runs most often. Each is shown in a SQLAlchemy-style sketch — close to what `StorageService` actually wraps. Team-scoping is omitted for clarity; the platform's row-level filter applies automatically.
+The five queries the runtime runs most often. Each is shown in a SQLAlchemy-style sketch -- close to what `StorageService` actually wraps. Team-scoping is omitted for clarity; the platform's row-level filter applies automatically.
 
 ### 5.1 All unresolved hypotheses for target X
 
@@ -1152,7 +1152,7 @@ Index used: `ix_vr_crashes_campaign_id`. Sort is done on the result set; cardina
 
 ### 5.3 All findings affecting library Z across all consumer binaries
 
-This is the cross-binary variant query — the *reason* the evidence graph spans the project. Two phases: (a) find all `confirmed_vulnerability` nodes in library Z's target, (b) walk `reached_via` edges to consumers.
+This is the cross-binary variant query -- the *reason* the evidence graph spans the project. Two phases: (a) find all `confirmed_vulnerability` nodes in library Z's target, (b) walk `reached_via` edges to consumers.
 
 ```python
 def findings_affecting_library(session, project_id: str, library_target_id: str) -> list[dict]:
@@ -1180,7 +1180,7 @@ def findings_affecting_library(session, project_id: str, library_target_id: str)
     return out
 ```
 
-Two index scans (project_id+target_id+kind, src_node_id+kind) and N point lookups. For a typical library with 5–20 findings and 3–10 consumers per finding, this is ~100 row reads — single-digit ms on PostgreSQL.
+Two index scans (project_id+target_id+kind, src_node_id+kind) and N point lookups. For a typical library with 5–20 findings and 3–10 consumers per finding, this is ~100 row reads -- single-digit ms on PostgreSQL.
 
 ### 5.4 Full evidence chain from hypothesis to advisory
 
@@ -1255,11 +1255,11 @@ Per-finding query is the pre-flight check the adjudicator runs before any state 
 
 ### 5.6 Other queries worth listing (without full SQL)
 
-- **"All campaigns whose process died but state is still `running`"** — watchdog query, runs on a 30s timer; uses `ix_vr_campaigns_heartbeat` with `last_heartbeat_at < now() - threshold`.
-- **"All exploits whose `target_build_hash` no longer matches a current target"** — re-build invalidation; uses `target_id` index then comparison.
-- **"All disclosures with `public_deadline_at < now() + 7d` and state ≠ `public`"** — disclosure dashboard; uses `ix_vr_disclosures_deadline`.
-- **"All confirmed RCE-class findings in this project, with consumer reachability"** — the example from `04_MULTI_TARGET.md` §6; combines 5.3 with a severity filter.
-- **"All chains rooted in network and reaching kernel"** — graph filter on `payload_json.initial_capability` and `final_capability`. With `payload_json` as Text, this is a slow scan; if it becomes hot, materialize `initial_capability` and `final_capability` as columns on `VREvidenceNodeRecord` for `kind = 'chain'`.
+- **"All campaigns whose process died but state is still `running`"** -- watchdog query, runs on a 30s timer; uses `ix_vr_campaigns_heartbeat` with `last_heartbeat_at < now() - threshold`.
+- **"All exploits whose `target_build_hash` no longer matches a current target"** -- re-build invalidation; uses `target_id` index then comparison.
+- **"All disclosures with `public_deadline_at < now() + 7d` and state ≠ `public`"** -- disclosure dashboard; uses `ix_vr_disclosures_deadline`.
+- **"All confirmed RCE-class findings in this project, with consumer reachability"** -- the example from `04_MULTI_TARGET.md` §6; combines 5.3 with a severity filter.
+- **"All chains rooted in network and reaching kernel"** -- graph filter on `payload_json.initial_capability` and `final_capability`. With `payload_json` as Text, this is a slow scan; if it becomes hot, materialize `initial_capability` and `final_capability` as columns on `VREvidenceNodeRecord` for `kind = 'chain'`.
 
 ---
 
@@ -1278,7 +1278,7 @@ Why split into four:
 
 - **No migration creates more than 4 tables.** Each is reviewable. A single 12-table migration is easy to write and impossible to review.
 - **Logical groupings.** A reader can name what each migration delivers from its filename.
-- **Independent rollback unit.** If we discover the obligation table needs reshape, we revert 043 alone, fix it, and re-apply — without touching the rest.
+- **Independent rollback unit.** If we discover the obligation table needs reshape, we revert 043 alone, fix it, and re-apply -- without touching the rest.
 - **Matches the existing forensics pattern.** Forensics did not ship in one migration either; it grew across 028→039.
 
 Conventions all four follow (matching `028_forensics_tables.py`):
@@ -1294,9 +1294,9 @@ Conventions all four follow (matching `028_forensics_tables.py`):
 
 What comes *later* than v0.1, deliberately not in these migrations:
 
-- Partial indexes for Postgres (`WHERE state='open'` on obligations, `WHERE state='running'` on campaigns) — added when we have a Postgres deployment under load and a measurement showing the full index isn't enough. Migration 044+.
-- A materialized `latest_finding` table analogous to `LatestFindingRecord` for cross-target queries — punted until usage data shows the per-finding queries are too slow.
-- An external object-storage offload column (`raw_input_storage_uri`) on `vr_crashes` for >100MB crashing inputs — added when on-disk space on the workstation becomes the bottleneck. Until then, paths are absolute on the workstation filesystem.
+- Partial indexes for Postgres (`WHERE state='open'` on obligations, `WHERE state='running'` on campaigns) -- added when we have a Postgres deployment under load and a measurement showing the full index isn't enough. Migration 044+.
+- A materialized `latest_finding` table analogous to `LatestFindingRecord` for cross-target queries -- punted until usage data shows the per-finding queries are too slow.
+- An external object-storage offload column (`raw_input_storage_uri`) on `vr_crashes` for >100MB crashing inputs -- added when on-disk space on the workstation becomes the bottleneck. Until then, paths are absolute on the workstation filesystem.
 
 The migration set passes an offline test: against the project's PostgreSQL test database, run `alembic upgrade head`, then `alembic downgrade base`, then `alembic upgrade head` again. No errors, no schema drift between the up/down/up cycle. This is the same gate every other module's migrations pass.
 
@@ -1316,14 +1316,14 @@ The migration set passes an offline test: against the project's PostgreSQL test 
 
 6. **Disclosure-state automation.** `patch_pending -> patched` could reasonably auto-advance when a configured "patched-version sensor" detects an upstream release. Should the schema reserve a `auto_advance_config_json` column on `VRDisclosureRecord` now, or keep disclosure strictly operator-driven and only revisit if automation pressure builds? Adding the column later is cheap; building features that assume it exists is the bigger cost.
 
-7. **N-day↔Target binding.** A single CVE may map to multiple builds (ubuntu-22.04 build, alpine build, Windows build) — different binaries, same upstream defect. Do we (a) one `VRNdayTask` per (CVE, build) pair, (b) one task with N target_ids in a join table, or (c) one task with one `target_id` and force per-build tasks even when redundant? Currently §3.3 commits to (c) implicitly. (b) is more honest about the data; (a) is the simplest.
+7. **N-day↔Target binding.** A single CVE may map to multiple builds (ubuntu-22.04 build, alpine build, Windows build) -- different binaries, same upstream defect. Do we (a) one `VRNdayTask` per (CVE, build) pair, (b) one task with N target_ids in a join table, or (c) one task with one `target_id` and force per-build tasks even when redundant? Currently §3.3 commits to (c) implicitly. (b) is more honest about the data; (a) is the simplest.
 
 8. **Evidence graph size.** §6 of `04_MULTI_TARGET.md` claims SQLModel relations are sufficient at <100K nodes per project. A long engagement on a complex product (firmware-grade) could produce hundreds of thousands of observation nodes if every decompilation snippet becomes a node. Where's the break point? Do we cap node creation per turn, or accept that the largest projects need a different storage backend, or both?
 
-9. **Cross-team visibility on shared advisories.** A vulnerability in a popular library affects many customers, possibly across teams within one operator org. The current model is strictly team-scoped — `team_id` on every row. If we ever need cross-team advisory pooling (one CVE, many customer engagements), we need either a project-wide vs team-wide flag on advisories or a separate "library advisory" object that engagements can attach to. Not v0.1, but the data model has to leave the door open.
+9. **Cross-team visibility on shared advisories.** A vulnerability in a popular library affects many customers, possibly across teams within one operator org. The current model is strictly team-scoped -- `team_id` on every row. If we ever need cross-team advisory pooling (one CVE, many customer engagements), we need either a project-wide vs team-wide flag on advisories or a separate "library advisory" object that engagements can attach to. Not v0.1, but the data model has to leave the door open.
 
 10. **Campaign config drift.** `vr_fuzzing_campaigns.config_json` is an opaque blob. Two campaigns with subtly different fuzzer configs (different mutators, different dictionaries) look identical in the dashboard and produce un-comparable results. Do we extract the high-leverage config fields (mutators_enabled, dictionary_path, sanitizer_set) as their own columns for queryability, or accept that the config blob is the source of truth and add UI rendering for it? The cost of extraction is migration overhead; the cost of not doing it is invisible apples-to-oranges comparisons in posture reports.
 
 11. **Updated_at on append-only tables.** `VROperatorSteeringRecord` is append-only via `supersedes`, yet still has `updated_at` from the convention. Drop the column for append-only tables, or keep the convention uniform and let `updated_at == created_at` on these rows? Uniformity is cheap; columns on the wire that always equal another column are a small dishonesty signal that the honesty audit may or may not flag.
 
-12. **Soft delete vs hard delete.** Nothing in this schema supports soft delete. Archive is a state, not a tombstone. If a project is deleted, its rows go away — no `deleted_at` column. Forensics took the same stance. But operators occasionally want to restore an accidentally-deleted project. Is the answer (a) backups (not in module scope), (b) a deferred-delete queue at the API layer (not a schema change), or (c) actual soft-delete columns on `VRProject` only? (a) and (b) keep the schema clean; (c) embeds policy in the data model. We've left it to (a/b).
+12. **Soft delete vs hard delete.** Nothing in this schema supports soft delete. Archive is a state, not a tombstone. If a project is deleted, its rows go away -- no `deleted_at` column. Forensics took the same stance. But operators occasionally want to restore an accidentally-deleted project. Is the answer (a) backups (not in module scope), (b) a deferred-delete queue at the API layer (not a schema change), or (c) actual soft-delete columns on `VRProject` only? (a) and (b) keep the schema clean; (c) embeds policy in the data model. We've left it to (a/b).

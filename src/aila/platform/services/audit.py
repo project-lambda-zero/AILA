@@ -19,7 +19,7 @@ def record_audit_event(
     """Write a single AuditEventRecord to the database within the active session.
 
     Called by the ThreadSafeEventEmitter's audit_db destination on every
-    PlatformEvent emission. The session is not committed here — the caller's
+    PlatformEvent emission. The session is not committed here -- the caller's
     transaction boundary controls commit timing. Raises ValueError if details
     is not JSON-serializable.
     """

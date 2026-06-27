@@ -1,4 +1,4 @@
-"""LLM idempotency cache — request-key keyed cache for retry-safe LLM calls.
+"""LLM idempotency cache -- request-key keyed cache for retry-safe LLM calls.
 
 Sits between the LLM client and the upstream API. Callers pass a
 ``request_key`` derived from (investigation_id, branch_id, turn_number,
@@ -11,12 +11,12 @@ The cache table is created by migration ``061_llm_idempotency_cache``.
 Design notes:
 * TTL is 7 days by default (migration server_default). Expired rows are
   pruned by the platform reaper cron (worker.py) which calls
-  :func:`purge_expired` once per minute (§123 — Phase E15). The /reset
+  :func:`purge_expired` once per minute (§123 -- Phase E15). The /reset
   endpoint does not cascade-delete by investigation_id; consumers that
   need that should call :func:`purge_for_investigation` explicitly.
 
 * Costs (prompt_tokens / completion_tokens / cost_usd) are stored on
-  the cache row so a HIT can record the COSTS THAT WERE SAVED — useful
+  the cache row so a HIT can record the COSTS THAT WERE SAVED -- useful
   for ROI dashboards and detecting whether the cache is doing anything.
 """
 from __future__ import annotations
@@ -74,7 +74,7 @@ class LLMIdempotencyCache(SQLModel, table=True):
 def make_request_key(*parts: Any) -> str:
     """Stable sha256 of the joined parts. Caller decides what's in.
 
-    fix §120 (companion) — dicts and lists are required to be JSON-clean.
+    fix §120 (companion) -- dicts and lists are required to be JSON-clean.
     The legacy ``default=str`` escape hatch was removed so a caller passing
     ``{"value": Decimal("1.0")}`` and ``{"value": "1.0"}`` no longer collide
     on the same key. Pre-serialize exotic types at the caller.
@@ -87,7 +87,7 @@ def make_request_key(*parts: Any) -> str:
             except (TypeError, ValueError) as exc:
                 raise TypeError(
                     "make_request_key part is not JSON-serializable "
-                    "(strict mode — pre-serialize exotic types): "
+                    "(strict mode -- pre-serialize exotic types): "
                     f"{exc}",
                 ) from exc
         else:
@@ -115,7 +115,7 @@ async def lookup_cached_response(
             )
         )).first()
     except SQLAlchemyError as exc:
-        # fix §124 — surface true DB failures at WARNING+ instead of swallowing
+        # fix §124 -- surface true DB failures at WARNING+ instead of swallowing
         # silently. The lookup remains best-effort (returns None so caller
         # falls back to a live LLM call) but the operator now sees broken-cache
         # symptoms in logs.
@@ -134,7 +134,7 @@ async def lookup_cached_response(
         return None
     expires = row.expires_at
     if expires is not None and expires.tzinfo is None:
-        # fix §122 — normalize legacy tz-naive expires_at to UTC.
+        # fix §122 -- normalize legacy tz-naive expires_at to UTC.
         from datetime import UTC
         expires = expires.replace(tzinfo=UTC)
     if expires is None or expires < utc_now():
@@ -172,7 +172,7 @@ async def store_response(
 
     now = utc_now()
     expires = now + timedelta(days=ttl_days)
-    # fix §120 — reject non-JSON-serializable values at write time. The
+    # fix §120 -- reject non-JSON-serializable values at write time. The
     # default=str escape hatch made `Decimal("1.0")` and `"1.0"` serialize
     # identically, so two semantically-different responses collided on the
     # same cache key. Force callers to pre-serialize anything exotic.
@@ -180,7 +180,7 @@ async def store_response(
         payload = json.dumps(response, sort_keys=True)
     except (TypeError, ValueError) as exc:
         _log.warning(
-            "idempotency cache write rejected for %s — response is not "
+            "idempotency cache write rejected for %s -- response is not "
             "JSON-serializable (%s); caller must pre-serialize.",
             request_key[:12], exc,
         )
@@ -248,7 +248,7 @@ async def purge_for_investigation(
     """Delete every cache row tied to ``investigation_id``.
 
     Used by ``/reset`` endpoints / explicit cascade deletes (§121). Returns
-    the count deleted, or 0 on transport error (best-effort — the data is
+    the count deleted, or 0 on transport error (best-effort -- the data is
     cache state, not source of truth).
     """
     if not investigation_id:
@@ -274,7 +274,7 @@ async def run_purge_expired_cron() -> int:
     """Open a session and call :func:`purge_expired`.
 
     Wired into ``platform/tasks/worker.py:reaper`` (§123). Standalone
-    function so the cron import surface stays narrow — the reaper does
+    function so the cron import surface stays narrow -- the reaper does
     not need to know about session scopes.
     """
     from aila.storage.database import async_session_scope

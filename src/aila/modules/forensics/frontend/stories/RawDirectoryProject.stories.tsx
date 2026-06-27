@@ -13,7 +13,7 @@ import type {
 } from "../types";
 
 // ---------------------------------------------------------------------------
-// Mock data — a raw_directory project pointing at a Linux rootfs copy
+// Mock data -- a raw_directory project pointing at a Linux rootfs copy
 // ---------------------------------------------------------------------------
 
 const PROJECT_ID = "proj-raw-001";
@@ -24,9 +24,9 @@ const SYSTEMS: RegisteredSystem[] = [
 
 const RAW_PROJECT: ProjectSummary = {
   id: PROJECT_ID,
-  name: "Dropbox rootfs — CASE-2203",
+  name: "Dropbox rootfs -- CASE-2203",
   description:
-    "A loose rootfs copy exported from the victim laptop. Intake only — no disk image, no dissect.",
+    "A loose rootfs copy exported from the victim laptop. Intake only -- no disk image, no dissect.",
   system_id: 1,
   system_name: "analyzer-01",
   evidence_directory: "/mnt/case/rootfs",
@@ -124,7 +124,7 @@ function makeQC({
 }
 
 // ---------------------------------------------------------------------------
-// Wizard story — the user toggles the new "Raw Directory" kind
+// Wizard story -- the user toggles the new "Raw Directory" kind
 // ---------------------------------------------------------------------------
 
 const wizardMeta = {
@@ -150,12 +150,12 @@ export default wizardMeta;
 type WizardStory = StoryObj<typeof wizardMeta>;
 
 export const NewProjectRawDirectoryToggle: WizardStory = {
-  name: "Wizard — Raw Directory toggle available",
+  name: "Wizard -- Raw Directory toggle available",
   parameters: { queryClient: makeQC({ systems: SYSTEMS }) },
 };
 
 // ---------------------------------------------------------------------------
-// Dashboard story — no full-analysis button, FetchRawFilePanel in its place
+// Dashboard story -- no full-analysis button, FetchRawFilePanel in its place
 // ---------------------------------------------------------------------------
 
 function DashboardWrapper({ queryClient }: { queryClient: QueryClient }) {
@@ -174,7 +174,7 @@ function DashboardWrapper({ queryClient }: { queryClient: QueryClient }) {
 }
 
 export const DashboardIntakeOnly: StoryObj = {
-  name: "Dashboard — intake only, no full-analysis button",
+  name: "Dashboard -- intake only, no full-analysis button",
   render: () => (
     <DashboardWrapper
       queryClient={makeQC({
@@ -187,7 +187,7 @@ export const DashboardIntakeOnly: StoryObj = {
 };
 
 export const DashboardWithRunningQuery: StoryObj = {
-  name: "Dashboard — investigation running against raw files",
+  name: "Dashboard -- investigation running against raw files",
   render: () => (
     <DashboardWrapper
       queryClient={makeQC({
@@ -200,11 +200,11 @@ export const DashboardWithRunningQuery: StoryObj = {
 };
 
 // ---------------------------------------------------------------------------
-// Fetch-raw panel in isolation — file vs directory selection
+// Fetch-raw panel in isolation -- file vs directory selection
 // ---------------------------------------------------------------------------
 
 export const FetchPanelFileList: StoryObj = {
-  name: "FetchRawFilePanel — listing evidence",
+  name: "FetchRawFilePanel -- listing evidence",
   render: () => (
     <QueryClientProvider client={makeQC({ evidence: RAW_EVIDENCE })}>
       <div className="max-w-xl">
@@ -215,7 +215,7 @@ export const FetchPanelFileList: StoryObj = {
 };
 
 export const FetchPanelEmpty: StoryObj = {
-  name: "FetchRawFilePanel — no files catalogued yet",
+  name: "FetchRawFilePanel -- no files catalogued yet",
   render: () => (
     <QueryClientProvider client={makeQC({ evidence: [] })}>
       <div className="max-w-xl">

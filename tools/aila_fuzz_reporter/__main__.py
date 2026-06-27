@@ -1,4 +1,4 @@
-"""``python -m aila_fuzz_reporter`` — drive the scrape loop.
+"""``python -m aila_fuzz_reporter`` -- drive the scrape loop.
 
 Usage:
 
@@ -133,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
                     "crash POSTed signature=%s type=%s",
                     crash.crash_signature, crash.crash_type,
                 )
-        # 3) Sleep with interruptibility — break out fast on signal.
+        # 3) Sleep with interruptibility -- break out fast on signal.
         slept = 0.0
         while stop["go"] and slept < args.interval:
             time.sleep(min(1.0, args.interval - slept))

@@ -1,4 +1,4 @@
-"""VRWorkflowServices — wired service bag for VR workflow state handlers.
+"""VRWorkflowServices -- wired service bag for VR workflow state handlers.
 
 Built once per workflow run by ``definitions._build_services``. Each state
 handler receives this as its ``services`` argument. Construction is done
@@ -46,7 +46,7 @@ class VRWorkflowServices:
         llm_client: Platform LLM client for agent reasoning steps.
         ssh: Platform SSH service for file transfer + remote command
             execution against analyzer / PoC workstations.
-        ingestion: VR target ingestion service — uploads, git clones,
+        ingestion: VR target ingestion service -- uploads, git clones,
             HTTP downloads onto the analyzer machine via SSH.
     """
 

@@ -19,7 +19,7 @@ import {
 } from "../queries";
 import { formatBranchDisplayName } from "../branchDisplay";
 
-/** EvidenceGraphPage — 08_FRONTEND_UX.md §1.9.
+/** EvidenceGraphPage -- 08_FRONTEND_UX.md §1.9.
  *
  *  Backend has no project-evidence-graph endpoint yet, so we synthesise
  *  a graph from existing investigation data:
@@ -199,7 +199,7 @@ export function EvidenceGraphPage() {
                 <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40">
                   <AilaBadge severity="info" size="sm">operator-only</AilaBadge>
                   <p className="text-3xs text-text-muted mt-1">
-                    "Manually close" — backend pending.
+                    "Manually close" -- backend pending.
                   </p>
                 </div>
               )}
@@ -258,7 +258,7 @@ function openUrlForNode(node: GraphNodeInput): string | null {
   }
   if (node.kind === "crash") {
     const o = meta?.outcome as { id?: string } | undefined;
-    // Outcomes don't carry crash_id directly — fall back to a generic
+    // Outcomes don't carry crash_id directly -- fall back to a generic
     // fuzz crashes list; once a crash → outcome mapping ships, this
     // resolves to /vr/fuzz/crashes/:id.
     if (o?.id) return `/vr/fuzz/campaigns`;
@@ -276,7 +276,7 @@ function openUrlForNode(node: GraphNodeInput): string | null {
 /** Status card surfacing the backend evidence-graph endpoint
  *  (08_FRONTEND_UX.md §1.9). When the snapshot is present the
  *  EvidenceGraph below uses the server-computed x/y positions
- *  directly — the client-side concentric/grid/radial layouts only
+ *  directly -- the client-side concentric/grid/radial layouts only
  *  apply when the snapshot is unavailable. */
 function ServerSnapshotStatus({
   investigationId,
@@ -290,7 +290,7 @@ function ServerSnapshotStatus({
       <div>
         <AilaBadge severity={error ? "high" : ready ? "low" : "info"} size="sm">
           {error
-            ? "server snapshot unavailable — using client layout"
+            ? "server snapshot unavailable -- using client layout"
             : isLoading
               ? "loading server snapshot…"
               : "server layout in use"}

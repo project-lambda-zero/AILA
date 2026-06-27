@@ -1,5 +1,5 @@
 /**
- * FindingsTrendChart — VIZ-02.
+ * FindingsTrendChart -- VIZ-02.
  *
  * Area chart showing findings count over time from real dashboard trend data.
  * The recharts-using JSX lives in ./FindingsTrendChart.view and is loaded

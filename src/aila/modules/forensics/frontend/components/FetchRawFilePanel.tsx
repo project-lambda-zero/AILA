@@ -14,7 +14,7 @@ interface Props {
 }
 
 /**
- * Fetch-Raw panel — for ``project_kind === "raw_directory"`` projects.
+ * Fetch-Raw panel -- for ``project_kind === "raw_directory"`` projects.
  * Picks one evidence row (file or directory as recorded during intake)
  * and streams it back; directories are zipped on the analyzer before
  * they ship.
@@ -58,7 +58,7 @@ export function FetchRawFilePanel({ projectId, compact = false }: Props) {
         className="w-full text-xs border border-border rounded px-2 py-1 bg-background font-mono"
       >
         <option value="">
-          {items.length === 0 ? "— no files catalogued —" : "— pick a file or directory —"}
+          {items.length === 0 ? "-- no files catalogued --" : "-- pick a file or directory --"}
         </option>
         {items.map((f) => (
           <option key={f.id} value={f.id}>
@@ -87,7 +87,7 @@ export function FetchRawFilePanel({ projectId, compact = false }: Props) {
     )}
     {!evidenceQ.isLoading && items.length === 0 && (
       <p className="text-xs text-text-muted mt-2">
-        No files catalogued yet — wait for intake to complete or
+        No files catalogued yet -- wait for intake to complete or
         re-run readiness.
       </p>
     )}</AilaCard>

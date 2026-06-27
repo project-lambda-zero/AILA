@@ -1,8 +1,8 @@
-"""TaskQueue — platform-owned task submission API.
+"""TaskQueue -- platform-owned task submission API.
 
 Modules receive a TaskQueue instance on context.task_queue and call submit()
 to enqueue background work. They never touch ARQ, Redis, or TaskRecord
-directly — the platform owns the infrastructure boundary.
+directly -- the platform owns the infrastructure boundary.
 
 Per D-27/HANG-03: submit() is async. Await it from any async context
 (FastAPI routes, @platform_task handlers).
@@ -67,7 +67,7 @@ class TaskQueue:
 
     def __init__(
         self,
-        config_registry: object,  # ConfigRegistry — avoid circular import at module level
+        config_registry: object,  # ConfigRegistry -- avoid circular import at module level
         module_id: str,
     ) -> None:
         """Bind TaskQueue to a module_id for module boundary enforcement.
@@ -96,13 +96,13 @@ class TaskQueue:
 
         Validates module boundary (MOD-10 / D-04), persists a TaskRecord
         (MOD-06), checks dependency DAG for cycles (MOD-11 / D-14), and
-        enqueues to ARQ. Redis is REQUIRED — if the broker cannot be
+        enqueues to ARQ. Redis is REQUIRED -- if the broker cannot be
         reached, ``WorkerUnreachableError`` is raised BEFORE any DB record
         is persisted so the caller sees a clean 503 and no orphan task
         records accumulate.
 
         Args:
-            track: Task track name — maps 1:1 to ARQ queue key (D-02 / MOD-07).
+            track: Task track name -- maps 1:1 to ARQ queue key (D-02 / MOD-07).
             fn: Callable belonging to THIS module. Cross-module callables are
                 rejected at submit time (D-04 / MOD-10).
             kwargs: Keyword arguments passed to fn. Must be JSON-serializable.
@@ -130,7 +130,7 @@ class TaskQueue:
         fn_module = self._extract_module_id(fn_path)
         self._enforce_module_boundary(fn_path, fn_module)
 
-        # SEC-07: SHA-256 task dedup. fix §73 — drop ``default=str`` so two
+        # SEC-07: SHA-256 task dedup. fix §73 -- drop ``default=str`` so two
         # semantically different kwarg sets (Decimal("1.0") vs "1.0", UUID
         # vs UUID-string, datetime vs ISO string) no longer stringify-collide
         # into the same dedup hash. Callers must pass JSON-clean kwargs.
@@ -141,7 +141,7 @@ class TaskQueue:
         # hand back its id WITHOUT enqueueing a new task. The caller thinks
         # success; the worker exits; nothing's in the queue. The branch
         # idles forever.
-        # Diagnosed on inv bc194403 maddie branch 20367ea3: AUTO_CONTINUE
+        # Diagnosed on inv <inv-uuid-a> maddie branch <inv-uuid-b>: AUTO_CONTINUE
         # from investigation_emit hit dedup against its own running task.
         # Mix a UUID into the hash input when bypass_dedup is set so the
         # dedup query never matches the caller (different hash) AND the
@@ -159,7 +159,7 @@ class TaskQueue:
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 "TaskQueue.submit kwargs must be JSON-serializable "
-                f"(strict mode — §73): {exc}",
+                f"(strict mode -- §73): {exc}",
             ) from exc
 
         if not bypass_dedup:
@@ -178,7 +178,7 @@ class TaskQueue:
 
 
         # Fail-fast Redis reachability check (no DB record written yet). This
-        # is the single source of truth for "broker is usable" — if the check
+        # is the single source of truth for "broker is usable" -- if the check
         # passes but the actual enqueue later fails, that exception is also
         # surfaced as WorkerUnreachableError so no orphan DB record remains.
         redis_url = None
@@ -186,7 +186,7 @@ class TaskQueue:
             redis_url = self._get_redis_url()
             if not redis_url:
                 raise WorkerUnreachableError(
-                    "Task queue Redis URL is not configured — submission rejected."
+                    "Task queue Redis URL is not configured -- submission rejected."
                 )
 
         initial_status = TaskStatus.WAITING if depends_on else TaskStatus.QUEUED
@@ -209,7 +209,7 @@ class TaskQueue:
             try:
                 await session.commit()
             except IntegrityError:
-                # fix §72 — the partial UNIQUE index on input_hash WHERE
+                # fix §72 -- the partial UNIQUE index on input_hash WHERE
                 # status IN (queued, running, waiting) caught the race
                 # between two concurrent submit() calls with identical
                 # fn+kwargs. The loser falls back to a dedup return of
@@ -232,7 +232,7 @@ class TaskQueue:
                         input_hash[:12], winner.id,
                     )
                     return TaskHandle(task_id=str(winner.id))
-                # No active winner row — the race resolved to a terminal
+                # No active winner row -- the race resolved to a terminal
                 # state between the integrity error and our re-read. Bail.
                 raise
             await session.refresh(record)
@@ -242,7 +242,7 @@ class TaskQueue:
             try:
                 await self._validate_dag(task_id, depends_on)
             except ValueError:
-                # fix §74 — rollback path now also deletes the workflow_state_cursor
+                # fix §74 -- rollback path now also deletes the workflow_state_cursor
                 # row keyed by run_id == task_id so a parallel worker that loaded
                 # the cursor between INSERT and rollback can't leave it orphaned.
                 async with async_session_scope() as session:
@@ -257,7 +257,7 @@ class TaskQueue:
 
         if not depends_on:
             if redis_url is None:
-                raise ValueError("Redis URL is not configured — check AILA_PLATFORM_REDIS_URL")
+                raise ValueError("Redis URL is not configured -- check AILA_PLATFORM_REDIS_URL")
             # Per-investigation backpressure: when this submission is for
             # an investigation that already has N >= cap tasks in flight,
             # defer the new task so other investigations (or other modules)
@@ -277,7 +277,7 @@ class TaskQueue:
             )
             if not enqueued:
                 # Roll back the DB record so a failed enqueue does not leave
-                # a ghost "queued" task sitting in the DB forever. fix §74 —
+                # a ghost "queued" task sitting in the DB forever. fix §74 --
                 # also clean up any workflow_state_cursor that was created
                 # by a parallel worker between the INSERT commit and this
                 # rollback.
@@ -290,7 +290,7 @@ class TaskQueue:
                         await session.commit()
                 await self._delete_orphan_cursor(task_id)
                 raise WorkerUnreachableError(
-                    f"Task queue Redis is unreachable (url={redis_url}) — submission rejected."
+                    f"Task queue Redis is unreachable (url={redis_url}) -- submission rejected."
                 )
 
         return TaskHandle(task_id=task_id)
@@ -465,7 +465,7 @@ class TaskQueue:
             return env_url
         try:
             url = self._config_registry.get(CONFIG_NS_PLATFORM, CONFIG_KEY_REDIS_URL)  # type: ignore[attr-defined]  # ConfigRegistry duck-typed
-            # ConfigRegistry.get is async — if we got a coroutine, skip it
+            # ConfigRegistry.get is async -- if we got a coroutine, skip it
             if hasattr(url, "__await__"):
                 _log.debug("ConfigRegistry.get returned coroutine in sync context, using env fallback")
                 return None
@@ -491,10 +491,10 @@ class TaskQueue:
         ``asyncio.to_thread``). In that case ``asyncio.run()`` is safe because no
         loop is present in the current thread.
 
-        ``submit()`` (``async def``) uses ``_arq_enqueue_async`` instead — the async
+        ``submit()`` (``async def``) uses ``_arq_enqueue_async`` instead -- the async
         variant avoids spawning a thread pool and awaits ARQ directly.
 
-        DO NOT call ``_arq_enqueue`` from ``async def`` code — use ``_arq_enqueue_async``.
+        DO NOT call ``_arq_enqueue`` from ``async def`` code -- use ``_arq_enqueue_async``.
         If this method is called from an async context (running loop detected), it logs
         a warning and raises ``RuntimeError`` so the violation is surfaced immediately
         rather than silently deadlocking.
@@ -507,9 +507,9 @@ class TaskQueue:
         # and the caller violated the invariant.
         try:
             _asyncio.get_running_loop()
-            # A running loop was found — this is the violation case.
+            # A running loop was found -- this is the violation case.
             _log.error(
-                "task_queue._arq_enqueue called from async context — use _arq_enqueue_async instead"
+                "task_queue._arq_enqueue called from async context -- use _arq_enqueue_async instead"
             )
             raise RuntimeError(
                 "_arq_enqueue called from an async context; use _arq_enqueue_async instead"
@@ -517,7 +517,7 @@ class TaskQueue:
         except RuntimeError as _loop_err:
             if "_arq_enqueue called from an async context" in str(_loop_err):
                 raise
-            # RuntimeError from get_running_loop() means no loop present — safe to proceed.
+            # RuntimeError from get_running_loop() means no loop present -- safe to proceed.
 
         async def _enqueue() -> bool:
             settings = RedisSettings.from_dsn(redis_url)
@@ -547,13 +547,13 @@ class TaskQueue:
                 await pool.aclose()
 
         try:
-            # No running loop in this thread (validated above) — asyncio.run() is safe.
+            # No running loop in this thread (validated above) -- asyncio.run() is safe.
             return _asyncio.run(_enqueue())
         except Exception as exc:
             # Redis/broker is unreachable. Callers surface this as
             # WorkerUnreachableError. There is NO sync fallback.
             _log.error(
-                "Redis unavailable (url=%s): %s — submission will be rejected.",
+                "Redis unavailable (url=%s): %s -- submission will be rejected.",
                 redis_url,
                 exc,
             )
@@ -573,7 +573,7 @@ class TaskQueue:
         """Async variant of _arq_enqueue for callers in an async context.
 
         Use this when calling from ``async def`` code. The sync ``_arq_enqueue``
-        raises if called from an async context — use this method instead.
+        raises if called from an async context -- use this method instead.
         Returns True on success, False if Redis is unreachable.
 
         ``defer_seconds`` > 0 schedules the job to be picked up that many
@@ -601,7 +601,7 @@ class TaskQueue:
             return True
         except Exception as exc:
             _log.error(
-                "Redis unavailable (url=%s): %s — async submission rejected.",
+                "Redis unavailable (url=%s): %s -- async submission rejected.",
                 redis_url,
                 exc,
             )

@@ -1,4 +1,4 @@
-"""MASVS catalog data model — one control per row, immutable.
+"""MASVS catalog data model -- one control per row, immutable.
 
 A MASVS control encodes a single OWASP Mobile Application Security
 Verification Standard verification requirement. The catalog (in
@@ -75,7 +75,7 @@ class MasvsControl:
     group:
         Which of the eight MASVS groups this control belongs to.
     level:
-        Verification level — ``L1`` / ``L2`` / ``R``.
+        Verification level -- ``L1`` / ``L2`` / ``R``.
     title:
         Short single-sentence requirement statement from the spec.
     description:

@@ -70,7 +70,7 @@ export function AppSidebar({ moduleSpecs }: AppSidebarProps) {
 
       <SidebarContent>
         {/*
-          B13 — wrap the primary navigation rail in a `<nav>` landmark
+          B13 -- wrap the primary navigation rail in a `<nav>` landmark
           so assistive tech can jump straight to it via the rotor and
           axe-core's `landmark-one-main` / `region` rules see the menu
           tree as a recognized navigation region (not orphan list
@@ -80,7 +80,7 @@ export function AppSidebar({ moduleSpecs }: AppSidebarProps) {
         <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col">
           <ScrollArea className="flex-1">
             {sections.map((section, index) => {
-              // Admin section — hidden from non-admin users (D-14, T-140-10)
+              // Admin section -- hidden from non-admin users (D-14, T-140-10)
               if (section.id === "admin" && !isAllowedRole(role, "admin")) {
                 return null;
               }

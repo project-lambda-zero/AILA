@@ -274,7 +274,7 @@ async def test_public_providers_only_shows_enabled(
         },
     )
 
-    # No auth — public endpoint
+    # No auth -- public endpoint
     resp = await async_client.get("/auth/oidc/providers/public")
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]

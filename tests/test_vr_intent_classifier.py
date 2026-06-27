@@ -1,6 +1,6 @@
 """Operator intent classifier tests.
 
-Deterministic — no LLM calls. Each test pins a specific operator phrasing
+Deterministic -- no LLM calls. Each test pins a specific operator phrasing
 to its expected OperatorIntent so the heuristic rule table can be edited
 without silent regressions.
 """
@@ -64,7 +64,7 @@ class TestCorrection:
         "you missed the bounds check",
         "actually no, look upstream",
         "actually, the encoder runs after",
-        "incorrect — the field is signed",
+        "incorrect -- the field is signed",
         "no, the dispatcher returns void",
     ])
     def test_correction_keywords(self, text: str) -> None:
@@ -128,7 +128,7 @@ class TestUnclassified:
 
 
 class TestRulePriority:
-    """Earlier rules in _RULES take precedence — these tests pin behavior."""
+    """Earlier rules in _RULES take precedence -- these tests pin behavior."""
 
     def test_stop_and_look_at_x_is_branch_command(self) -> None:
         # 'stop' wins over 'look at' because branch commands come first

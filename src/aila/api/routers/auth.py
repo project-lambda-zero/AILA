@@ -1,15 +1,15 @@
 """Authentication router: API key management and JWT token issuance.
 
 Endpoints:
-  POST /auth/token      — Exchange raw API key for JWT (PUBLIC: no Bearer required)
-  POST /auth/refresh    — Exchange refresh token for new access token (PUBLIC)
-  POST /auth/keys       — Create new API key (ADMIN only)
-  GET  /auth/keys       — List all API keys (ADMIN only)
-  DELETE /auth/keys/{key_id} — Revoke an API key (ADMIN only)
+  POST /auth/token      -- Exchange raw API key for JWT (PUBLIC: no Bearer required)
+  POST /auth/refresh    -- Exchange refresh token for new access token (PUBLIC)
+  POST /auth/keys       -- Create new API key (ADMIN only)
+  GET  /auth/keys       -- List all API keys (ADMIN only)
+  DELETE /auth/keys/{key_id} -- Revoke an API key (ADMIN only)
 
 All endpoints except POST /auth/token and POST /auth/refresh require a valid
 Bearer JWT. The protected sub-router uses APIRouter(dependencies=[Depends(require_api_key)])
-to ensure auth is applied at router level — no per-route drift (RESEARCH Pitfall 5).
+to ensure auth is applied at router level -- no per-route drift (RESEARCH Pitfall 5).
 """
 from __future__ import annotations
 
@@ -153,7 +153,7 @@ async def refresh_token(request: Request, body: RefreshRequest) -> RefreshRespon
     """Exchange a refresh token for a new access token.
 
     D-06: No re-sending of the raw API key needed. Refresh token carries
-    key_id for blacklist check — revoked keys invalidate refresh tokens too.
+    key_id for blacklist check -- revoked keys invalidate refresh tokens too.
 
     Args:
         request: Contains the refresh token JWT string.
@@ -259,7 +259,7 @@ async def list_api_keys(
 ) -> ApiKeyListResponse:
     """List API keys. Pass active_only=true to exclude revoked keys.
 
-    D-09: Admin only. Raw keys are never returned — only prefix, id, role.
+    D-09: Admin only. Raw keys are never returned -- only prefix, id, role.
 
     Args:
         active_only: When True, exclude keys with revoked_at set.
@@ -303,7 +303,7 @@ async def revoke_api_key(
     """Revoke an API key by setting its revoked_at timestamp.
 
     D-07: Revocation makes all outstanding JWTs for that key_id immediately
-    invalid via the D-11 blacklist check. D-10: No role patching — revoke
+    invalid via the D-11 blacklist check. D-10: No role patching -- revoke
     and re-create is the intended workflow.
     D-12: Revocation event logged to AuditEventRecord.
 

@@ -131,7 +131,7 @@ export const OneFailed: Story = {
 };
 
 export const MixedInvestigations: Story = {
-  name: "Mixed — running + completed + failed",
+  name: "Mixed -- running + completed + failed",
   render: () => (
     <DashboardWrapper
       queryClient={makeQC(

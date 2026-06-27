@@ -1,5 +1,5 @@
 /**
- * AILA Component Library — barrel export (D-15).
+ * AILA Component Library -- barrel export (D-15).
  *
  * All 7 AILA cyberpunk components exported from a single entry point.
  * Import from "@/components/aila" in feature pages.

@@ -25,7 +25,7 @@ const VERDICT_COLOR: Record<
  *  and renders the function name as a button. On click, fires a custom
  *  event so the surrounding page (or future search palette) can resolve
  *  the function in the relevant target. For v0.5 we don't have a
- *  global function index — the click navigates to the campaign target's
+ *  global function index -- the click navigates to the campaign target's
  *  Functions-of-interest tab and seeds a hash filter. */
 function ClickableStackTrace({
   raw,
@@ -37,7 +37,7 @@ function ClickableStackTrace({
   return (
     <pre className="text-xs font-mono text-foreground whitespace-pre-wrap overflow-x-auto bg-surface p-3 rounded-md max-h-96 overflow-y-auto leading-relaxed">
       {lines.map((line, i) => {
-        // Match `func_name(...)` or `func_name+0x` or `func_name at` —
+        // Match `func_name(...)` or `func_name+0x` or `func_name at` --
         // the function name precedes either ( or + or whitespace.
         const m = line.match(/(\b[A-Za-z_][A-Za-z0-9_:.@$]*)/);
         if (!m) return <div key={i}>{line || "\u00a0"}</div>;
@@ -51,7 +51,7 @@ function ClickableStackTrace({
               type="button"
               title={`Locate ${fn} in this target's Functions-of-interest tab`}
               onClick={() => {
-                // Future: navigate to /vr/targets/:id?tab=functions&fn=… —
+                // Future: navigate to /vr/targets/:id?tab=functions&fn=… --
                 // not wired because crash row doesn't carry target_id and the
                 // campaign→target lookup is an extra fetch. v0.6 work.
                 window.dispatchEvent(
@@ -122,21 +122,21 @@ export function FuzzCrashDetailPage() {
         </div>
         <div>
           <dt className="text-text-muted text-xs">Triage reason</dt>
-          <dd className="text-xs">{crash.triage_reason ?? "—"}</dd>
+          <dd className="text-xs">{crash.triage_reason ?? "--"}</dd>
         </div>
         <div className="col-span-2">
           <dt className="text-text-muted text-xs">Signature</dt>
           <dd className="font-mono text-xs">
-            {crash.crash_signature ?? "—"}
+            {crash.crash_signature ?? "--"}
           </dd>
         </div>
       </dl></AilaCard>
 
-      {/* Triage chain — narrative of triage events that touched this crash.
+      {/* Triage chain -- narrative of triage events that touched this crash.
           Per 08_FRONTEND_UX.md §1.6 / §2.4. Real per-turn reasoning rows
           (decompile_function / data_flow_trace / hypothesis_create /
           exploitability_assess) still require a crash → reasoning-turn join
-          table — backend pending. What we DO render today is the
+          table -- backend pending. What we DO render today is the
           triage_chain on the crash row itself: every verdict change with
           actor, timestamp, reason, and free-form notes (migration 053 +
           POST /vr/fuzz/crashes/:id/triage). */}
@@ -156,7 +156,7 @@ export function FuzzCrashDetailPage() {
               bucket created (stack hash matched) on{" "}
               {crash.discovered_at
                 ? new Date(crash.discovered_at).toLocaleString()
-                : "—"}
+                : "--"}
             </span>
           </div>
         </li>
@@ -234,10 +234,10 @@ export function FuzzCrashDetailPage() {
       <p className="mt-2 text-3xs text-text-muted">
         Per-turn reasoning rows (decompile_function / data_flow_trace /
         hypothesis_create / exploitability_assess from §2.4) still
-        require a crash → reasoning-turn join table — backend pending.
+        require a crash → reasoning-turn join table -- backend pending.
       </p></AilaCard>
 
-      {/* LLM one-line summary (§1.6) — derived from the structured
+      {/* LLM one-line summary (§1.6) -- derived from the structured
           report; placeholder when not present. */}
       <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
         LLM summary
@@ -251,7 +251,7 @@ export function FuzzCrashDetailPage() {
         </p>
       )}</AilaCard>
 
-      {/* Minimised input — hex view (§1.6). Backend exposes a path
+      {/* Minimised input -- hex view (§1.6). Backend exposes a path
           (and size); the bytes themselves require a future
           GET /vr/fuzz/crashes/{id}/reproducer endpoint. */}
       <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
@@ -261,7 +261,7 @@ export function FuzzCrashDetailPage() {
         <button
           type="button"
           disabled
-          title="Re-run reproducer on workstation — backend pending"
+          title="Re-run reproducer on workstation -- backend pending"
           className="text-xs px-2 py-1 rounded bg-accent text-white opacity-50 cursor-not-allowed"
         >
           Re-run (pending)
@@ -271,7 +271,7 @@ export function FuzzCrashDetailPage() {
         <div>
           <dt className="text-text-muted text-xs">Path on worker host</dt>
           <dd className="font-mono text-xs break-all">
-            {crash.reproducer_path ?? "—"}
+            {crash.reproducer_path ?? "--"}
           </dd>
         </div>
         <div>
@@ -279,13 +279,13 @@ export function FuzzCrashDetailPage() {
           <dd className="font-mono text-xs">
             {crash.reproducer_size_bytes != null
               ? `${crash.reproducer_size_bytes.toLocaleString()} bytes`
-              : "—"}
+              : "--"}
           </dd>
         </div>
       </dl>
       <HexView data={null} filename={crash.reproducer_path?.split(/[\\/]/).pop() ?? null} /></AilaCard>
 
-      {/* Stack trace — clickable frames per §1.6. Each frame jumps to
+      {/* Stack trace -- clickable frames per §1.6. Each frame jumps to
           the target's functions-of-interest tab scrolled to that
           function. Frame click is a no-op when no target_id is known. */}
       <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">

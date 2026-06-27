@@ -602,14 +602,14 @@ async def probe_modules(
 ) -> SubsystemHealth:
     """Summarize per-module activity by iterating the platform module registry.
 
-    Platform stays generic — it never imports module IDs. For each
+    Platform stays generic -- it never imports module IDs. For each
     registered module the probe:
 
       1. Calls ``module.health_summary(session, team_id)`` if the
          module implements it (modules with non-WorkflowRunRecord
-         storage — e.g. fuzz campaigns — can produce a richer summary).
+         storage -- e.g. fuzz campaigns -- can produce a richer summary).
       2. Falls back to a generic ``WorkflowRunRecord`` query on the
-         module's ``module_id`` — works for every module that emits
+         module's ``module_id`` -- works for every module that emits
          workflow runs without any module-specific code.
 
     A module is 'stale' when no activity is recorded in the last 24h.
@@ -710,7 +710,7 @@ def _module_summary_message(summaries: list[ModuleHealthSummary]) -> str:
 async def _module_summary_from_runs(
     session: Any, team_id: str | None, module_id: str
 ) -> ModuleHealthSummary:
-    """Summarize a module by its WorkflowRunRecord history — generic
+    """Summarize a module by its WorkflowRunRecord history -- generic
     fallback used when a module does not implement health_summary()."""
     from sqlalchemy import func
     from sqlmodel import select

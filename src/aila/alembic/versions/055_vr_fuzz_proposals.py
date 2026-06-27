@@ -1,6 +1,6 @@
-"""055 — VR fuzz campaign proposals (operator-in-the-loop, pre-prepared).
+"""055 -- VR fuzz campaign proposals (operator-in-the-loop, pre-prepared).
 
-Adds ``vr_fuzz_campaign_proposals`` — the operator-facing queue of
+Adds ``vr_fuzz_campaign_proposals`` -- the operator-facing queue of
 fuzz suggestions emitted by reasoning agents. The audit-first
 reasoning loop NEVER spins up a fuzz campaign on its own. When the
 model identifies a function or region worth runtime exercise it emits
@@ -14,7 +14,7 @@ otherwise have to write by hand:
   - harness_build_command (compiler invocation that produces the
     binary the fuzzer drives)
   - harness_target_path (where the built binary lives on the
-    workstation after build — fed into engine_config.target_binary)
+    workstation after build -- fed into engine_config.target_binary)
   - seed_corpus_json ([{filename, content_base64}, …])
   - dictionary_content (optional AFL/libfuzzer .dict body)
 
@@ -85,7 +85,7 @@ def upgrade() -> None:
         ),
         sa.Column("suggested_strategy_id", sa.String(length=32), nullable=True),
         sa.Column("suggested_duration_hours", sa.Integer(), nullable=True),
-        # PRE-FUZZ PREP — the model fills these so the operator does
+        # PRE-FUZZ PREP -- the model fills these so the operator does
         # not write the harness, build, or seed corpus by hand. On
         # accept the ProposalPreparer SCPs everything to the
         # workstation and runs the build.

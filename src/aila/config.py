@@ -53,7 +53,7 @@ def _resolve_project_path(value: str | Path) -> Path:
         An absolute Path.
 
     Raises:
-        ValueError: If the path starts with "~" — container/server environments
+        ValueError: If the path starts with "~" -- container/server environments
             cannot expand home-directory paths.  Set an absolute path via the
             relevant AILA_* environment variable instead.
     """
@@ -97,7 +97,7 @@ def _resolve_database_url(value: str | None = None) -> str:
 class Settings:
     """Infrastructure-only settings for the AILA platform.
 
-    Carries 8 fields — the minimum needed to locate the database, report files,
+    Carries 8 fields -- the minimum needed to locate the database, report files,
     secret keyring, active key version, HTTP timeout, and API server bindings.
     Nothing module-specific lives here (Phase 40 HONEST-01 fix: Settings was
     previously bloated with module-config fields that belonged in ConfigRegistry).
@@ -153,7 +153,7 @@ def init_directories(settings: Settings | None = None) -> None:
 
     Creates report_dir, the data/ directory, and the secret_keyring_path parent.
     This is intentionally separated from Settings construction (Phase 41 STD-09 fix:
-    build_platform_settings() must NOT call mkdir — that caused side effects during
+    build_platform_settings() must NOT call mkdir -- that caused side effects during
     config inspection and test setup).
 
     Call init_directories() once during platform startup (e.g. in the CLI entrypoint)

@@ -43,7 +43,7 @@ def test_regression_detached_instance_key_id(test_db: None) -> None:
         session.add(record)
         session.commit()
         session.refresh(record)
-        key_id = record.id  # snapshot before session closes — the fix
+        key_id = record.id  # snapshot before session closes -- the fix
 
     # After session scope exits, the record is detached.
     # If the fix reverted and code used record.id here instead of key_id,
@@ -84,7 +84,7 @@ def test_regression_redis_url_ipv4_parsing() -> None:
     assert resolved_host == "127.0.0.1"
 
 
-# ---- Bug 3: ARQ worker settings — explicit functions/cron_jobs -------------
+# ---- Bug 3: ARQ worker settings -- explicit functions/cron_jobs -------------
 
 
 def test_regression_worker_settings_has_functions() -> None:
@@ -98,11 +98,11 @@ def test_regression_worker_settings_has_functions() -> None:
 
     assert hasattr(WorkerSettings, "functions")
     assert len(WorkerSettings.functions) > 0, (
-        "WorkerSettings.functions empty — @platform_task registry bootstrap failed"
+        "WorkerSettings.functions empty -- @platform_task registry bootstrap failed"
     )
     assert hasattr(WorkerSettings, "cron_jobs")
     assert len(WorkerSettings.cron_jobs) > 0, (
-        "WorkerSettings.cron_jobs empty — reaper not scheduled"
+        "WorkerSettings.cron_jobs empty -- reaper not scheduled"
     )
     for fn in WorkerSettings.functions:
         assert callable(fn)
@@ -144,9 +144,9 @@ def test_regression_analyze_payload_target_names() -> None:
     source = scans_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
-    # Find the string "target_names" in the source — it must appear
+    # Find the string "target_names" in the source -- it must appear
     assert "target_names" in source, (
-        "scans.py does not contain 'target_names' — the fix may have been reverted"
+        "scans.py does not contain 'target_names' -- the fix may have been reverted"
     )
 
 
@@ -164,7 +164,7 @@ def test_regression_run_platform_handle_importable() -> None:
     which carries the ``@platform_task`` decorator. The alias preserves
     the ARQ-importable surface (``module_path:name``) while the actual
     two-level dispatch lives in the workflow module. The decorator
-    signature is ``(ctx, **kwargs)`` — ``query`` / ``module_payload`` /
+    signature is ``(ctx, **kwargs)`` -- ``query`` / ``module_payload`` /
     ``options`` are passed as keyword arguments via the wrapper, not as
     named parameters.
     """
@@ -176,7 +176,7 @@ def test_regression_run_platform_handle_importable() -> None:
     # not a bound method. The @platform_task decorator uses functools.wraps,
     # so ``inspect.isfunction`` returns True.
     assert inspect.isfunction(run_platform_handle), (
-        "run_platform_handle must be a plain function, not a bound method — "
+        "run_platform_handle must be a plain function, not a bound method -- "
         "ARQ cannot serialize bound methods"
     )
 
@@ -200,7 +200,7 @@ def test_regression_run_platform_handle_importable() -> None:
     # Must be in the __all__ export of the module
     from aila.api.routers import scans
     assert "run_platform_handle" in scans.__all__, (
-        "run_platform_handle not in scans.__all__ — module public surface incomplete"
+        "run_platform_handle not in scans.__all__ -- module public surface incomplete"
     )
 
 
@@ -238,12 +238,12 @@ def test_regression_platform_module_id_bypass(test_db: None) -> None:
 
     # Also verify _extract_module_id returns __platform__ for aila.api.* paths
     # (aila.api is under aila but not aila.modules, so it should return the
-    # first meaningful segment — the fix maps aila.platform.* -> __platform__
+    # first meaningful segment -- the fix maps aila.platform.* -> __platform__
     # and aila.api.* gets the fallback; but the bypass is on the TaskQueue side)
     assert MODULE_ID_PLATFORM == "__platform__"
 
 
-# Phase 179: worker._import_fn deleted — the @platform_task registry
+# Phase 179: worker._import_fn deleted -- the @platform_task registry
 # replaces dotted-path lookup with explicit registration. The regression
 # test for _import_fn is removed; ARQ function resolution is covered by
 # tests/platform/tasks/test_worker_rewrite.py.

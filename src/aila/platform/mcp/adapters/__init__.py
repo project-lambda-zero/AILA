@@ -18,7 +18,7 @@ Coverage (v0.3 v2):
     materially helps (decompile, xrefs, taint, call graphs, diffs,
     mitigations, ...).
   - **Generic adapter** for the remaining ~110 tools across the two MCP
-    servers — every tool in ``KNOWN_TOOLS`` is callable immediately;
+    servers -- every tool in ``KNOWN_TOOLS`` is callable immediately;
     structured rendering is added per-tool as real investigations need it.
 """
 from __future__ import annotations

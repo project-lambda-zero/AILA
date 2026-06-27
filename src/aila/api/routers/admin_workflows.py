@@ -57,7 +57,7 @@ router = APIRouter(
 )
 
 _MAX_RUNS = 200          # safety cap per call
-_MAX_TRANSITIONS = 500  # safety cap — prevents unbounded reads on high-retry runs
+_MAX_TRANSITIONS = 500  # safety cap -- prevents unbounded reads on high-retry runs
 
 
 class WorkflowRunView(BaseModel):

@@ -128,7 +128,7 @@ from .db_models import (
 )
 from .workflow.task import run_vr_claim_verifier, run_vr_investigate
 
-# SSE polling cadence for the messages stream — 1s feels live without
+# SSE polling cadence for the messages stream -- 1s feels live without
 # hammering the DB. Heartbeat every 15s keeps proxies from idling out.
 _SSE_POLL_INTERVAL_S = 1.0
 _SSE_HEARTBEAT_S = 15.0
@@ -210,8 +210,8 @@ class _ReenqueueBody(BaseModel):
     evaluates the string against the function's module globals when
     FastAPI builds the route's body validator. A class scoped INSIDE
     ``create_vr_router`` is invisible at that point and pydantic
-    raises ``PydanticUserError: '...' is not fully defined`` — which
-    fails ``/openapi.json`` with 500 (operator-observed after the
+    raises ``PydanticUserError: '...' is not fully defined`` -- which
+    fails ``/openapi.json`` with 500 (observed after the
     cutover restart).
 
     When ``kind`` is supplied, the investigation's kind is updated
@@ -288,7 +288,7 @@ def _summary_from_record(
     """Project a ``VRProjectRecord`` row to the public ``VRProjectSummary``.
 
     Target metadata (target_class, input_source, format) lives on the
-    linked vr_targets row — callers can fetch it via /api/vr/targets/{id}.
+    linked vr_targets row -- callers can fetch it via /api/vr/targets/{id}.
     """
     return VRProjectSummary(
         id=record.id,
@@ -546,7 +546,7 @@ def _target_summary(record: Any) -> VRTargetSummary:
     # APK-specific projection. Per VRTargetSummary.apk_overview: rolls up
     # every key the 5-stage android pipeline writes into mcp_handles_json
     # so the TargetDetailPage Android section has a single dict to render.
-    # Kept None when the target isn't android_apk OR no handle yet — the
+    # Kept None when the target isn't android_apk OR no handle yet -- the
     # frontend treats None as "section not applicable / not ready".
     apk_overview: dict[str, Any] | None = None
     if record.kind == TargetKind.ANDROID_APK.value:
@@ -554,12 +554,12 @@ def _target_summary(record: Any) -> VRTargetSummary:
         # operator can see how far the chain has progressed.
         overview: dict[str, Any] = {}
         # Per-key projection. NOTE: android_mcp_mobsf_scan (the raw MobSF
-        # report) is intentionally NOT projected verbatim — it's a
+        # report) is intentionally NOT projected verbatim -- it's a
         # multi-MB JSON blob that bloated vuln_researcher prompts to >1M
         # tokens per turn and OOM'd the LLM proxy. Instead we surface a
         # one-line summary (count + severity buckets) that fits the prompt
         # context. Operators can still query the full report via
-        # GET /vr/targets/{id}/mobsf-report (NOT YET IMPLEMENTED — read
+        # GET /vr/targets/{id}/mobsf-report (NOT YET IMPLEMENTED -- read
         # _mcp_handles_json.android_mcp_mobsf_scan directly from DB for
         # now). Same for android_mcp_static_summary: project the digest,
         # not the full androguard dump.
@@ -581,7 +581,7 @@ def _target_summary(record: Any) -> VRTargetSummary:
         # androguard output (34KB+ per-package metadata) is excessive to
         # include in every LLM turn.
         #
-        # fix §268 — `android_mcp_static_summary` now stores a pointer
+        # fix §268 -- `android_mcp_static_summary` now stores a pointer
         # to a JSON artifact (`_artifact_path`) plus pre-computed
         # digest fields (counts already as `*_count` keys). The
         # legacy inline form (full payload as a dict) is still
@@ -597,7 +597,7 @@ def _target_summary(record: Any) -> VRTargetSummary:
             ):
                 if static_full.get(k) is not None:
                     digest[k] = static_full[k]
-            # Counts only — don't dump 38 permission strings + 29 exported
+            # Counts only -- don't dump 38 permission strings + 29 exported
             # component class names into every LLM turn.
             for k in (
                 "permissions", "dangerous_permissions", "exported_activities",
@@ -613,14 +613,14 @@ def _target_summary(record: Any) -> VRTargetSummary:
             overview["static_summary"] = digest
 
         # mobsf_scan digest: bucket-count summary. The full report is at
-        # most operator-facing — agents don't need it in every prompt.
+        # most operator-facing -- agents don't need it in every prompt.
         #
-        # fix §269 — ``android_mcp_mobsf_scan`` now stores a pointer
+        # fix §269 -- ``android_mcp_mobsf_scan`` now stores a pointer
         # to ``target_artifacts/{target_id}/mobsf_scan.json`` plus a
         # pre-computed digest (``security_score``, ``trackers_detected``,
         # ``findings_by_severity``) and an explicit ``prompt_safe=False``.
         # The legacy inline-full form (rows ingested pre-§269) is still
-        # accepted — we recompute the buckets when no pre-computed
+        # accepted -- we recompute the buckets when no pre-computed
         # digest is present.
         mobsf_full = handles.get("android_mcp_mobsf_scan") or {}
         if isinstance(mobsf_full, dict) and mobsf_full:
@@ -761,7 +761,7 @@ async def _compute_live_investigation_cost(
     investigation. Joins via TaskRecord.kwargs_json containing the
     investigation_id since LLMCostRecord.run_id == TaskRecord.id.
 
-    Returns 0.0 on any error (best-effort — budget gauge degrades to
+    Returns 0.0 on any error (best-effort -- budget gauge degrades to
     the stored zero rather than crashing the read path).
     """
     try:
@@ -1531,7 +1531,7 @@ def create_vr_router() -> APIRouter:
         status_code=status.HTTP_204_NO_CONTENT,
         summary=(
             "Delete a VR project and all of its findings. Targets created "
-            "from this project's spec are NOT deleted — they live in the "
+            "from this project's spec are NOT deleted -- they live in the "
             "workspace independently."
         ),
     )
@@ -2087,7 +2087,7 @@ def create_vr_router() -> APIRouter:
             target_id = record.id
 
         # Auto-enqueue backend ingestion (v0.4.5). Operator does not
-        # have to click anything — the dispatch starts immediately.
+        # have to click anything -- the dispatch starts immediately.
         try:
             from .workflow.task import run_target_analysis
 
@@ -2101,7 +2101,7 @@ def create_vr_router() -> APIRouter:
                 team_id=auth.team_id,
             )
         except (OSError, RuntimeError, HTTPException) as exc:
-            # Don't fail the create — operator can retry analyze
+            # Don't fail the create -- operator can retry analyze
             # via POST /vr/targets/{id}/analyze. Persist the reason
             # on the row so the UI shows it.
             async with UnitOfWork() as uow:
@@ -2330,7 +2330,7 @@ def create_vr_router() -> APIRouter:
                 )
 
             # Cascade stub + log dependents. None of these tables hold
-            # evidence — vr_projects is operator-created scaffolding,
+            # evidence -- vr_projects is operator-created scaffolding,
             # vr_target_tag_index is denormalized tag lookup,
             # vr_investigation_targets is a join row (already guarded
             # by the inv_count check above), vr_mcp_call_log is historical
@@ -2413,7 +2413,7 @@ def create_vr_router() -> APIRouter:
         status_code=status.HTTP_202_ACCEPTED,
         summary=(
             "Re-run the backend ingestion pipeline for a target. "
-            "Idempotent — also runs automatically on target create."
+            "Idempotent -- also runs automatically on target create."
         ),
     )
     @limiter.limit("10/minute")
@@ -2459,7 +2459,7 @@ def create_vr_router() -> APIRouter:
             "Resume target analysis from the last completed stage. "
             "Resets any FAILED stages back to PENDING and re-enqueues "
             "the full ingest → profile → ranking pipeline. Stages "
-            "already DONE are skipped (idempotent — StageTracker)."
+            "already DONE are skipped (idempotent -- StageTracker)."
         ),
     )
     @limiter.limit("10/minute")
@@ -2496,7 +2496,7 @@ def create_vr_router() -> APIRouter:
 
         # Reset FAILED stages to PENDING so the next analyze run picks
         # them up. DONE stages stay DONE (idempotent skip in tracker).
-        # RUNNING stages stay RUNNING — the reaper will fail them on
+        # RUNNING stages stay RUNNING -- the reaper will fail them on
         # timeout if they're actually dead.
         stages = parse_stages(row.analysis_stages_json)
         reset_count = 0
@@ -2506,7 +2506,7 @@ def create_vr_router() -> APIRouter:
                 status_obj.error = None
                 status_obj.started_at = None
                 status_obj.completed_at = None
-                # Keep attempts counter — operator visibility into retry depth.
+                # Keep attempts counter -- operator visibility into retry depth.
                 stages.set(stage_name, status_obj)
                 reset_count += 1
         await save_target_stages(target_id, stages)
@@ -2561,7 +2561,7 @@ def create_vr_router() -> APIRouter:
         summary=(
             "Re-run a target's ingestion. Git-backed kinds "
             "(source_repo / patch_diff / cve) hit audit-mcp's "
-            "refresh_index — idempotent when upstream did not "
+            "refresh_index -- idempotent when upstream did not "
             "move (returns status=current). android_apk targets "
             "reset every applicable APK stage to PENDING and "
             "re-enqueue the staged-analysis worker (returns "
@@ -2586,8 +2586,8 @@ def create_vr_router() -> APIRouter:
         For ``kind=android_apk`` targets the call resets every
         applicable APK stage (APK_DECODE / JADX_DECOMPILE /
         INDEX_DECOMPILED / STATIC_SUMMARY / MOBSF_SCAN) back to
-        PENDING — leaving any stage currently RUNNING untouched so
-        the reaper owns it — and re-enqueues
+        PENDING -- leaving any stage currently RUNNING untouched so
+        the reaper owns it -- and re-enqueues
         ``run_target_analysis`` on the vr worker queue. The
         response carries ``status="rebuilding"`` with the count of
         stages reset and the new task_id.
@@ -2624,8 +2624,8 @@ def create_vr_router() -> APIRouter:
 
         # Android APK targets follow a different ingestion path (no
         # audit-mcp refresh_index involved). Reset every applicable
-        # APK stage back to PENDING — leaving RUNNING stages alone so
-        # we don't race a live worker — and re-enqueue
+        # APK stage back to PENDING -- leaving RUNNING stages alone so
+        # we don't race a live worker -- and re-enqueue
         # ``run_target_analysis`` on the vr worker queue.
         if kind_str == TargetKind.ANDROID_APK.value:
             from aila.api.deps import get_task_queue
@@ -2690,7 +2690,7 @@ def create_vr_router() -> APIRouter:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
                     f"Target {display_name!r} has no audit-mcp index "
-                    "yet — run analysis (POST /targets/{id}/analyze or "
+                    "yet -- run analysis (POST /targets/{id}/analyze or "
                     "resume-analysis) before refreshing."
                 ),
             )
@@ -2790,7 +2790,7 @@ def create_vr_router() -> APIRouter:
         from .workflow.task import run_target_analysis
 
         # 1) Resolve target + verify kind is uploadable.
-        # android_apk is NOT in this set — it has its dedicated multipart
+        # android_apk is NOT in this set -- it has its dedicated multipart
         # endpoint POST /vr/targets/upload-apk that runs the four-stage
         # ingestion pipeline. This legacy upload path handles raw binary
         # kinds only.
@@ -2865,7 +2865,7 @@ def create_vr_router() -> APIRouter:
             )
 
         # 3) Persist binary_id + filename into _mcp_handles_json (internal).
-        #    Operators only see "Ready" — they don't see this id.
+        #    Operators only see "Ready" -- they don't see this id.
         import json as _json
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
@@ -3000,7 +3000,7 @@ def create_vr_router() -> APIRouter:
             ) from exc
 
         # 3) Stream to a temp file in the same directory and hash on the
-        #    fly. Atomic rename only after we know the digest — keeps
+        #    fly. Atomic rename only after we know the digest -- keeps
         #    half-written partials out of the SHA-named slot.
         sha256 = hashlib.sha256()
         fd, tmp_str = tempfile.mkstemp(
@@ -3034,7 +3034,7 @@ def create_vr_router() -> APIRouter:
         digest = sha256.hexdigest()
         apk_path = team_dir / f"{digest}.apk"
         if apk_path.exists():
-            # Same content already on disk — discard the duplicate copy.
+            # Same content already on disk -- discard the duplicate copy.
             tmp_path.unlink(missing_ok=True)
         else:
             try:
@@ -3140,7 +3140,7 @@ def create_vr_router() -> APIRouter:
 
         Refuses with 409 when the target is not an ``android_apk`` or
         when ``STATIC_SUMMARY`` has not yet populated
-        ``apk_overview.static_summary`` — the per-control prompt builder
+        ``apk_overview.static_summary`` -- the per-control prompt builder
         needs at least the package name / version / decompiled-index id
         cells for a useful scout brief.
 
@@ -3148,7 +3148,7 @@ def create_vr_router() -> APIRouter:
         the parent + children commit: each child id either lands in the
         ``vr`` queue via ``run_vr_investigate`` or surfaces in the
         response's ``enqueue_errors`` map. Partial failures do NOT roll
-        back the records — the operator can retry an individual child
+        back the records -- the operator can retry an individual child
         via ``POST /vr/investigations/{id}/re-enqueue``.
 
         Idempotency (D-3): when the target already has an active MASVS
@@ -3156,7 +3156,7 @@ def create_vr_router() -> APIRouter:
         PAUSED) whose catalog version matches the current
         :data:`aila.modules.vr.masvs.CATALOG_VERSION`, the endpoint
         returns that parent's ids verbatim with ``idempotent_reuse=True``
-        and HTTP 200 — no second parent or sibling children are
+        and HTTP 200 -- no second parent or sibling children are
         materialized, and the ARQ queue is not re-touched. A parent in
         a terminal status (COMPLETED / FAILED / ABANDONED) does NOT
         block a fresh dispatch: an operator deliberately re-running an
@@ -3226,7 +3226,7 @@ def create_vr_router() -> APIRouter:
             # ``idempotent_reuse=True`` so the client can distinguish a
             # reuse from a fresh dispatch. The catalog-version match
             # parses each candidate's secondary_target_refs_json rather
-            # than running a JSON-shaped LIKE — secondary_target_refs_json
+            # than running a JSON-shaped LIKE -- secondary_target_refs_json
             # is a Text column on every backend, and the candidate set
             # per (target, kind, active status) is tiny (typically 0 or
             # 1). Terminal parents (COMPLETED / FAILED / ABANDONED) are
@@ -3330,7 +3330,7 @@ def create_vr_router() -> APIRouter:
                 kind=InvestigationKind.MASVS_AUDIT.value,
                 title=f"MASVS audit: {package_label}",
                 initial_question=(
-                    f"MASVS audit batch parent — {len(l1_controls)} child "
+                    f"MASVS audit batch parent -- {len(l1_controls)} child "
                     "investigations dispatched, one per OWASP MASVS L1 "
                     f"control (catalog {CATALOG_VERSION}). See child "
                     "investigations for per-control evidence and verdicts."
@@ -3378,7 +3378,7 @@ def create_vr_router() -> APIRouter:
                     investigation_id=child.id,
                     status=BranchStatus.ACTIVE.value,
                     fork_reason="primary",
-                    # Phase E §177/§178 — every primary branch carries
+                    # Phase E §177/§178 -- every primary branch carries
                     # the lead-researcher persona ('halvar'). Without
                     # this, alembic 064 defaults the NULL write to
                     # 'unspecified' and the frontend renders "Unnamed
@@ -3391,7 +3391,7 @@ def create_vr_router() -> APIRouter:
             await uow.session.refresh(parent)
 
         # D-2: submit each child to the vr ARQ queue via the existing
-        # run_vr_investigate task — same code path as a one-off
+        # run_vr_investigate task -- same code path as a one-off
         # /vr/investigations dispatch. The full scout / critic / verifier
         # chain then runs against each child with the standard
         # android_apk tool surface (android_mcp + audit_mcp against the
@@ -3480,7 +3480,7 @@ def create_vr_router() -> APIRouter:
             "(cover + executive summary + per-control subsections), "
             "and streams it back with Content-Type application/pdf and "
             "Content-Disposition attachment. Partial reports are "
-            "valid — children still in flight render as INCONCLUSIVE "
+            "valid -- children still in flight render as INCONCLUSIVE "
             "rows so an operator can hand the CISO a checkpoint copy "
             "without waiting for the full ~60min batch."
         ),
@@ -3519,7 +3519,7 @@ def create_vr_router() -> APIRouter:
           an operator with cross-target audit ids can't accidentally
           download a report under the wrong target context).
         * **409** when the parent exists but its ``kind`` is not
-          ``masvs_audit``. The renderer is specific to MASVS batches —
+          ``masvs_audit``. The renderer is specific to MASVS batches --
           a one-off audit investigation has its own
           ``GET /investigations/{id}/report.pdf`` route.
 
@@ -3614,7 +3614,7 @@ def create_vr_router() -> APIRouter:
         # section is present, the renderer falls back to the raw
         # agent_summary. The PDF endpoint never makes LLM calls.
         # build_pdf is sync (CPU-bound ReportLab render). The
-        # investigation-report endpoint follows the same pattern —
+        # investigation-report endpoint follows the same pattern --
         # render directly on the event loop. The aggregate is bounded
         # (≤53 L1 verdicts), so the render stays well inside ASGI
         # request-budget territory.
@@ -3643,7 +3643,7 @@ def create_vr_router() -> APIRouter:
             "Drives the operator-facing per-control table (U-2): one "
             "verdict row per child investigation, grouped by MASVS "
             "control group, with verifier confidence and evidence "
-            "links. Same aggregation pipeline the PDF report uses — "
+            "links. Same aggregation pipeline the PDF report uses -- "
             "partial aggregates are valid (children still in flight "
             "render as INCONCLUSIVE)."
         ),
@@ -3672,11 +3672,11 @@ def create_vr_router() -> APIRouter:
           exists but points at a different target (defensive guard
           against pasted audit ids under the wrong target context).
         * **409** when the parent exists but its ``kind`` is not
-          ``masvs_audit`` — the aggregator is specific to MASVS
+          ``masvs_audit`` -- the aggregator is specific to MASVS
           batches.
 
         Aggregation is forwarded to :func:`collect_findings`. The
-        endpoint does *not* materialize the PDF — clients that want
+        endpoint does *not* materialize the PDF -- clients that want
         the PDF call ``GET /vr/targets/{id}/masvs-report`` instead.
         """
         del request
@@ -3813,7 +3813,7 @@ def create_vr_router() -> APIRouter:
                 investigation_id=record.id,
                 status=BranchStatus.ACTIVE.value,
                 fork_reason="primary",
-                # fix §177/§178 — primary persona is HALVAR (lead
+                # fix §177/§178 -- primary persona is HALVAR (lead
                 # researcher). Auto-deliberation siblings cover the
                 # other 5 personas (noor/maddie/yuki/renzo/wei).
                 persona_voice=PersonaVoice.HALVAR.value,
@@ -3889,7 +3889,7 @@ def create_vr_router() -> APIRouter:
         # shows real numbers and the canonical verdict per row without
         # an N+1 round-trip to the detail endpoint. Previous behavior
         # passed 0 for every count, so even completed investigations
-        # appeared empty on the list — and there was no way to see at
+        # appeared empty on the list -- and there was no way to see at
         # a glance whether an investigation had landed a finding.
         if rows:
 
@@ -4070,7 +4070,7 @@ def create_vr_router() -> APIRouter:
                         if isinstance(vc, (int, float)):
                             verifier_confidence = float(vc)
 
-        # Live cost — aggregate LLMCostRecord by run_id matching this
+        # Live cost -- aggregate LLMCostRecord by run_id matching this
         # investigation's TaskRecord ids. The stored cost_actual_usd has
         # no writers so without this override every read returned $0
         # regardless of actual spend, making the budget gauge decorative.
@@ -4166,7 +4166,7 @@ def create_vr_router() -> APIRouter:
             if oc is None:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Investigation has no canonical outcome yet — nothing to verify.",
+                    detail="Investigation has no canonical outcome yet -- nothing to verify.",
                 )
             try:
                 payload = _json.loads(oc.payload_json or "{}")
@@ -4262,7 +4262,7 @@ def create_vr_router() -> APIRouter:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
-                        f"Outcome is {oc.outcome_kind} — only "
+                        f"Outcome is {oc.outcome_kind} -- only "
                         f"assessment_report outcomes can be promoted to "
                         f"direct_finding (other kinds already have their "
                         f"own dispatch path)."
@@ -4616,7 +4616,7 @@ def create_vr_router() -> APIRouter:
             # operator-reopen task's first emit pass sees a complete
             # primary outcome, resolves to COMPLETED with no active
             # siblings (turn_count > 0 excludes the brand-new branch
-            # itself), and immediately re-closes the investigation —
+            # itself), and immediately re-closes the investigation --
             # observed live on inv 70f454ad-..., 3 seconds between
             # /reopen API call and inv.status flipping back to
             # COMPLETED. Operator reopens are explicit intent to
@@ -4629,15 +4629,15 @@ def create_vr_router() -> APIRouter:
             # Abandon any prior halvar branches still in a non-terminal
             # state (active or paused) before spawning the new one.
             # BranchStatus values: ACTIVE / PAUSED / MERGED / PROMOTED
-            # / ABANDONED / COMPLETED — only ACTIVE and PAUSED are
+            # / ABANDONED / COMPLETED -- only ACTIVE and PAUSED are
             # "live" for our purposes. Without this, repeated reopen /
             # re-enqueue cycles accumulate multiple halvar branches on
-            # the same investigation — each cycle (operator pause →
+            # the same investigation -- each cycle (operator pause →
             # reopen, or crashed-then-reenqueued) leaves the prior
             # halvar alive, and downstream consumers (parent_reconciler
             # branch priority, sibling-consensus quorum, BranchTreePage)
             # double-count. Branches in already-terminal states
-            # (abandoned, completed, merged, promoted) stay untouched —
+            # (abandoned, completed, merged, promoted) stay untouched --
             # those are real history.
             from aila.modules.vr.contracts.branch import BranchStatus as _BS
             _live_halvars = (await uow.session.exec(
@@ -4653,7 +4653,7 @@ def create_vr_router() -> APIRouter:
                 investigation_id=inv.id,
                 status=BranchStatus.ACTIVE.value,
                 fork_reason=f"operator_reopen:{auth.user_id}",
-                # fix §177/§178 — reopen creates a fresh primary that
+                # fix §177/§178 -- reopen creates a fresh primary that
                 # carries the lead-researcher persona; without this,
                 # the reopened investigation's frontend shows "Unnamed
                 # branch" until auto-deliberation populates siblings.
@@ -4679,7 +4679,7 @@ def create_vr_router() -> APIRouter:
                 prior_outcome_id or "none",
             )
 
-        # Submit fresh task for the new branch — same code path as
+        # Submit fresh task for the new branch -- same code path as
         # dispatcher / resume. Goes through the regular vr ARQ queue
         # and picks up the existing investigation state (case_state
         # on existing branches stays put; the new branch starts at
@@ -4708,7 +4708,7 @@ def create_vr_router() -> APIRouter:
             "root branch(es) to turn 0 with empty case state, flips "
             "investigation back to CREATED. Operator can then "
             "re-enqueue to start over with the same target + strategy "
-            "but a fresh reasoning history. DESTRUCTIVE — no soft-undo."
+            "but a fresh reasoning history. DESTRUCTIVE -- no soft-undo."
         ),
     )
     @limiter.limit("5/minute")
@@ -4734,7 +4734,7 @@ def create_vr_router() -> APIRouter:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
-            # Refuse to reset a running investigation — operator must
+            # Refuse to reset a running investigation -- operator must
             # pause first so the engine isn't writing while we wipe.
             if inv.status == InvestigationStatus.RUNNING.value:
                 raise HTTPException(
@@ -4773,7 +4773,7 @@ def create_vr_router() -> APIRouter:
 
             # 3) Drop forked branches; reset root branches to turn 0. A root
             # branch is one whose parent_branch_id was NULL in the original
-            # data — that's the only invariant. `fork_reason` is free-form
+            # data -- that's the only invariant. `fork_reason` is free-form
             # ('primary', 'auto_deliberation:maddie', etc.) and unsafe to
             # match by string. Capture root-ness BEFORE we null self-FKs.
             root_branch_ids = {b.id for b in branches if b.parent_branch_id is None}
@@ -4811,7 +4811,7 @@ def create_vr_router() -> APIRouter:
 
             # 4) Reset investigation row itself. message_count + outcome_count
             # are projections derived at summary time (count from the message /
-            # outcome tables), not stored columns — they update implicitly once
+            # outcome tables), not stored columns -- they update implicitly once
             # the deletes above commit.
             inv.status = InvestigationStatus.CREATED.value
             inv.pause_reason = None
@@ -4862,7 +4862,7 @@ def create_vr_router() -> APIRouter:
                     detail=f"Investigation {investigation_id} not found.",
                 )
             # Always sync strategy_family to kind's default when the
-            # operator re-enqueues with an explicit kind — covers both
+            # operator re-enqueues with an explicit kind -- covers both
             # 'change the kind' and 'fix a mismatch where the strategy
             # was stuck on the wrong default from earlier create-time
             # bug'. Without this, an investigation created with
@@ -4880,7 +4880,7 @@ def create_vr_router() -> APIRouter:
             # Cancel any stale run_vr_investigate TaskRecord still in
             # queued/running/waiting for THIS investigation. Without
             # this, TaskQueue.submit() (SEC-07 dedup, queue.py L128)
-            # returns the existing handle when input_hash matches —
+            # returns the existing handle when input_hash matches --
             # and the matching hash is exactly (fn=run_vr_investigate,
             # kwargs={investigation_id: <id>}). When a previous worker
             # crashed leaving its TaskRecord in 'running' without a
@@ -4923,7 +4923,7 @@ def create_vr_router() -> APIRouter:
             await uow.session.commit()
             await uow.session.refresh(inv)
         # (committed before submit so the next submit() sees a clean
-        # dedup table — same UoW would race with the dedup_session
+        # dedup table -- same UoW would race with the dedup_session
         # opened inside TaskQueue.submit.)
 
         task_queue = get_task_queue("vr", request)
@@ -4986,7 +4986,7 @@ def create_vr_router() -> APIRouter:
                 if primary_branch is None:
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Investigation has no primary branch — DB inconsistency.",
+                        detail="Investigation has no primary branch -- DB inconsistency.",
                     )
                 branch_id = primary_branch.id
 
@@ -5118,7 +5118,7 @@ def create_vr_router() -> APIRouter:
             "Trigger PocWriter to draft an exploit / PoC for this "
             "finding. Runs asynchronously via the VR worker; result "
             "lands on VRFindingRecord.poc_code when complete. Safe "
-            "to call multiple times — each call overwrites the "
+            "to call multiple times -- each call overwrites the "
             "previous draft."
         ),
     )
@@ -6165,7 +6165,7 @@ def create_vr_router() -> APIRouter:
     @router.delete(
         "/patterns/{pattern_id}",
         status_code=status.HTTP_204_NO_CONTENT,
-        summary="Delete a pattern. No cascade — patterns are leaf rows.",
+        summary="Delete a pattern. No cascade -- patterns are leaf rows.",
     )
     @limiter.limit("10/minute")
     async def delete_pattern(
@@ -6479,7 +6479,7 @@ def create_vr_router() -> APIRouter:
         response_model=DataEnvelope[VRDisclosureSubmissionSummary],
         summary=(
             "Regenerate the structured sections from the underlying "
-            "finding (advisory + PoC). Replaces any operator edits — "
+            "finding (advisory + PoC). Replaces any operator edits -- "
             "frontend prompts before invoking (08_FRONTEND_UX.md §1.8)."
         ),
     )
@@ -6522,7 +6522,7 @@ def create_vr_router() -> APIRouter:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=(
                         f"Finding {row.finding_id} backing this submission "
-                        f"is missing — cannot regenerate."
+                        f"is missing -- cannot regenerate."
                     ),
                 )
             now = utc_now()
@@ -6686,7 +6686,7 @@ def create_vr_router() -> APIRouter:
             "Enqueue a launcher task that SSHes to the campaign's "
             "analysis_system_id, starts the fuzzer per its engine_id, "
             "and records the remote PID + corpus/crashes dirs. "
-            "Idempotent — returns the existing PID when the campaign "
+            "Idempotent -- returns the existing PID when the campaign "
             "is already running."
         ),
     )
@@ -6761,7 +6761,7 @@ def create_vr_router() -> APIRouter:
         summary=(
             "Delete a fuzz campaign and all of its crash records. The "
             "underlying target is left untouched. Crashes that were "
-            "promoted to findings keep the finding row — the back-link "
+            "promoted to findings keep the finding row -- the back-link "
             "goes stale."
         ),
     )
@@ -6953,7 +6953,7 @@ def create_vr_router() -> APIRouter:
     @router.post(
         "/fuzz/proposals/{proposal_id}/reject",
         response_model=DataEnvelope[VRFuzzCampaignProposalSummary],
-        summary="Reject a pending fuzz proposal — reason recorded.",
+        summary="Reject a pending fuzz proposal -- reason recorded.",
     )
     @limiter.limit("30/minute")
     async def reject_fuzz_proposal(
@@ -7552,7 +7552,7 @@ def create_vr_router() -> APIRouter:
 
     # ─── MCP server health + config (operator surface) ────────────────────
     #
-    # AILA is orchestration only — every analysis call is forwarded to one
+    # AILA is orchestration only -- every analysis call is forwarded to one
     # of these external MCP servers. The operator needs visibility into
     # which ones are reachable and an ability to retarget them at a
     # different workstation without editing env vars (D-33).

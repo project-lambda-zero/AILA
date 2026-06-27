@@ -81,7 +81,7 @@ export function MachineReadinessCheck({ readinessResult, isLoading, onRetry, onC
                     </AilaBadge>
                   </td>
                   <td className="px-3 py-2 text-text-muted text-xs font-mono">
-                    {tool.version ?? tool.message ?? "—"}
+                    {tool.version ?? tool.message ?? "--"}
                   </td>
                 </tr>
               ))}

@@ -59,7 +59,7 @@ export function FindingsListPage() {
             aria-label="Filter by disclosure status"
             className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
           >
-            <option value="">— all —</option>
+            <option value="">-- all --</option>
             {distinctStatuses.map((s) => (
               <option key={s} value={s}>
                 {s}
@@ -74,7 +74,7 @@ export function FindingsListPage() {
             aria-label="Filter by crash type"
             className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
           >
-            <option value="">— all —</option>
+            <option value="">-- all --</option>
             {distinctCrashes.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -126,7 +126,7 @@ export function FindingsListPage() {
                 if (!r.id) return null;
                 const cvssScore = r.cvss_score ?? null;
                 const evidenceCount = r.evidence_count ?? 0;
-                // Project-less global detail route — works for every
+                // Project-less global detail route -- works for every
                 // finding regardless of whether project_id is set.
                 const target = `/vr/findings/${encodeURIComponent(r.id)}`;
                 // Title fallback chain so audit-derived findings with
@@ -157,13 +157,13 @@ export function FindingsListPage() {
                       </div>
                     </td>
                     <td className="px-4 py-2 font-mono text-xs">
-                      {r.crash_type ?? "—"}
+                      {r.crash_type ?? "--"}
                     </td>
                     <td className="px-4 py-2 font-mono text-xs">
-                      {r.cwe_id ?? "—"}
+                      {r.cwe_id ?? "--"}
                     </td>
                     <td className="px-4 py-2 font-mono text-xs text-right">
-                      {cvssScore != null ? cvssScore.toFixed(1) : "—"}
+                      {cvssScore != null ? cvssScore.toFixed(1) : "--"}
                     </td>
                     <td className="px-4 py-2 text-right">
                       {evidenceCount > 0 ? (
@@ -178,10 +178,10 @@ export function FindingsListPage() {
                       {r.disclosure_status}
                     </td>
                     <td className="px-4 py-2 font-mono text-3xs text-text-muted">
-                      {r.project_id ? r.project_id.slice(0, 8) : "—"}
+                      {r.project_id ? r.project_id.slice(0, 8) : "--"}
                     </td>
                     <td className="px-4 py-2 font-mono text-xs">
-                      {r.assigned_cve_id ?? "—"}
+                      {r.assigned_cve_id ?? "--"}
                     </td>
                   </tr>
                 );

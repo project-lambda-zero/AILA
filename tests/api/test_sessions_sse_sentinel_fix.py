@@ -1,6 +1,6 @@
 """Test: SSE done-sentinel is not yielded inside a finally block.
 
-RED phase: This test validates the structural fix — the `cancelled` flag
+RED phase: This test validates the structural fix -- the `cancelled` flag
 pattern must exist in _stream_generator so the done sentinel is only
 yielded on normal (non-cancelled) completion, outside the finally block.
 """
@@ -42,6 +42,6 @@ def test_done_sentinel_yield_not_in_finally() -> None:
                     # Check if the yield contains 'done' in its string representation
                     yield_source = ast.dump(finally_node)
                     assert "done" not in yield_source.lower(), (
-                        "Found a yield with 'done' inside a finally block — "
+                        "Found a yield with 'done' inside a finally block -- "
                         "the done sentinel must be yielded outside finally"
                     )

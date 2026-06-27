@@ -1,12 +1,12 @@
 /**
- * CostPage — LLM cost intelligence and ROI dashboard.
+ * CostPage -- LLM cost intelligence and ROI dashboard.
  *
  * Phase 175: visualises monthly cost trend (with per-model breakdown) and
  * compares LLM spend to the human-equivalent cost AILA replaced.
  *
  * Endpoints:
- *   GET /cost/history?months=N   — monthly cost aggregated by model
- *   GET /cost/roi?months=N        — LLM cost vs human-equivalent ROI
+ *   GET /cost/history?months=N   -- monthly cost aggregated by model
+ *   GET /cost/roi?months=N        -- LLM cost vs human-equivalent ROI
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -22,7 +22,7 @@ import { EmptyState } from "@/components/aila/EmptyState";
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
-// Types — mirror src/aila/api/schemas/cost.py
+// Types -- mirror src/aila/api/schemas/cost.py
 // ---------------------------------------------------------------------------
 
 interface ModelCostEntry {
@@ -80,7 +80,7 @@ function formatTokens(value: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Trend bar — inline horizontal bar per month
+// Trend bar -- inline horizontal bar per month
 // ---------------------------------------------------------------------------
 
 function MonthlyTrend({ months }: { months: MonthlyCostEntry[] }) {
@@ -199,7 +199,7 @@ export function CostPage() {
           Total Cost ({historyMonths}m)
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {historyQuery.isLoading ? "—" : formatUsd(grandTotal, 2)}
+          {historyQuery.isLoading ? "--" : formatUsd(grandTotal, 2)}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Sum of monthly spend
@@ -209,10 +209,10 @@ export function CostPage() {
           Cost / Scan
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {roiQuery.isLoading ? "—" : formatUsd(costPerRun, 4)}
+          {roiQuery.isLoading ? "--" : formatUsd(costPerRun, 4)}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
-          {roi ? `${roi.run_count} runs · ${roiMonths}m` : "—"}
+          {roi ? `${roi.run_count} runs · ${roiMonths}m` : "--"}
         </p></AilaCard>
 
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
@@ -220,7 +220,7 @@ export function CostPage() {
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1 flex items-center gap-1.5">
           {historyQuery.isLoading || trendDelta === null
-            ? "—"
+            ? "--"
             : `${trendDelta >= 0 ? "+" : ""}${trendDelta.toFixed(1)}%`}
           {trendDelta !== null && trendDelta >= 0 && (
             <TrendUp className="h-5 w-5 text-high" />
@@ -242,7 +242,7 @@ export function CostPage() {
           }`}
         >
           {roiQuery.isLoading || !roi
-            ? "—"
+            ? "--"
             : `${roi.roi_percentage >= 0 ? "+" : ""}${roi.roi_percentage.toFixed(1)}%`}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">

@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "VR module v0.1 benchmark suite — 20 retired CVEs for validation",
+    "description": "VR module v0.1 benchmark suite -- 20 retired CVEs for validation",
     "selection_criteria": [
       "Public patch commit exists",
       "Vulnerable version downloadable or buildable",
@@ -8,9 +8,9 @@
       "Mix of crash types, target classes, and difficulty tiers"
     ],
     "tiers": {
-      "1": "Obvious trigger — single function, clear overflow/UAF, PoC is trivial",
-      "2": "Needs analysis — multi-function data flow, requires understanding the protocol/format",
-      "3": "Complex — deep call chains, heap grooming, or logic bugs requiring domain expertise"
+      "1": "Obvious trigger -- single function, clear overflow/UAF, PoC is trivial",
+      "2": "Needs analysis -- multi-function data flow, requires understanding the protocol/format",
+      "3": "Complex -- deep call chains, heap grooming, or logic bugs requiring domain expertise"
     },
     "metrics": [
       "detection_rate: root cause correctly identified (out of 20)",
@@ -307,7 +307,7 @@
       "build_artifact": null,
       "poc_language": "c",
       "expected_cvss_min": 7.8,
-      "notes": "Pipe buffer flag not cleared — allows overwriting read-only files. Trivial PoC, one-shot."
+      "notes": "Pipe buffer flag not cleared -- allows overwriting read-only files. Trivial PoC, one-shot."
     },
     {
       "cve_id": "CVE-2023-2868",

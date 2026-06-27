@@ -1,4 +1,4 @@
-"""Phase 143 Plan 02 — create finding_feedbacks table.
+"""Phase 143 Plan 02 -- create finding_feedbacks table.
 
 Revision ID: 006_plan_143_finding_feedback
 Revises: 005_plan_143_findings_kev_workflow
@@ -8,7 +8,7 @@ Adds:
 - finding_feedbacks table for operator feedback on individual findings (FIND-10)
 
 Feedback reasons: incorrect | doesnt_apply
-Feedback records are append-only — operators cannot delete their own feedback.
+Feedback records are append-only -- operators cannot delete their own feedback.
 """
 from __future__ import annotations
 

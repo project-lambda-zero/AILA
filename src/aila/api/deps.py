@@ -2,7 +2,7 @@
 
 Provides get_platform(), get_config_registry(), get_tool_registry(), and
 get_task_queue() for injection into route handlers. Do NOT use session_scope
-as a FastAPI dependency directly — see RESEARCH Pitfall 3 (deadlock under load).
+as a FastAPI dependency directly -- see RESEARCH Pitfall 3 (deadlock under load).
 """
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def get_task_queue(module_id: str, request: Request) -> AsyncTaskQueue:
     """Return the platform-backed AsyncTaskQueue for the given module.
 
     Modules call this from route handlers and receive an AsyncTaskQueue Protocol
-    instance — not the concrete TaskQueue class. The queue is constructed from
+    instance -- not the concrete TaskQueue class. The queue is constructed from
     the initialized platform runtime so config and module boundary enforcement
     come from one place.
 

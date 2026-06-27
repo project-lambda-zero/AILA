@@ -52,7 +52,7 @@ git checkout -b feat/<module>/<short-description>
 ## 2. Module Development
 
 A module is a self-contained domain unit under `src/aila/modules/<module_id>/`.
-The platform discovers and wires modules at boot — adding one requires no
+The platform discovers and wires modules at boot -- adding one requires no
 platform edits beyond registration.
 
 ### Scaffold
@@ -89,9 +89,9 @@ Optional: `api_router.py`, `db_models/`, `frontend/`. The full contract is
 ### Working reference
 
 [`src/aila/modules/hello_world/`](../src/aila/modules/hello_world/) is the
-canonical minimal-but-complete module. It exercises every required surface —
+canonical minimal-but-complete module. It exercises every required surface --
 runtime, capabilities, tool keys, workflow, contracts, tools, services,
-reporting, and `api_router.py` — and is the recommended reference when shaping
+reporting, and `api_router.py` -- and is the recommended reference when shaping
 a new module.
 
 ### Register
@@ -198,7 +198,7 @@ that block PRs:
 - **No TODO / FIXME** in committed code. File an issue.
 - **No dead code.** If it is not called, delete it. No "moved to X" comments,
   no re-exports kept "for now".
-- **No legacy preservation.** Refactors cut over fully — no shims, no parallel
+- **No legacy preservation.** Refactors cut over fully -- no shims, no parallel
   APIs, no compatibility wrappers unless explicitly requested.
 
 ---
@@ -210,7 +210,7 @@ Summary:
 
 - **Runner:** `pytest` with `pytest-asyncio` for async tests.
 - **HTTP:** `httpx.AsyncClient` with `ASGITransport`. Do **not** use
-  Starlette's `TestClient` — it deadlocks on SSE and async routes.
+  Starlette's `TestClient` -- it deadlocks on SSE and async routes.
 - **Layout:** mirror the source tree under `tests/`. API tests under
   `tests/api/`, module tests under `tests/modules/<module_id>/` or prefixed
   as `tests/test_<module_id>_*.py` (and `tests/api/test_<module_id>_*.py`
@@ -242,16 +242,16 @@ python -m pytest tests/modules/<module_id> -x -q
 2. Push the branch and open a PR against `main`.
 3. PR description must state:
    - **What changed.** The user-visible or system-visible behavior.
-   - **Why.** The motivation — the bug, the requirement, the design force.
+   - **Why.** The motivation -- the bug, the requirement, the design force.
    - **Scope.** Modules, platform subsystems, or surfaces touched.
    - **Issue link.** `Closes #<n>` or `Refs #<n>` where applicable.
-4. CI re-runs every gate. Failures block merge — fix them, do not retry.
+4. CI re-runs every gate. Failures block merge -- fix them, do not retry.
 5. Address review comments by amending commits where it keeps history clean,
    or by adding follow-up commits where the review trail matters. Squash on
    merge unless the history is intentionally preserved.
 
 A PR is mergeable when gates pass, review is resolved, and the change is a
-coherent unit — not a partial migration that leaves the design contradicting
+coherent unit -- not a partial migration that leaves the design contradicting
 itself.
 
 ---

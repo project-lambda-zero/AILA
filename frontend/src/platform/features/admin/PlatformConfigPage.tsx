@@ -1,5 +1,5 @@
 /**
- * PlatformConfigPage — admin view/edit of all platform configuration entries.
+ * PlatformConfigPage -- admin view/edit of all platform configuration entries.
  *
  * ADM-03: Fetches GET /config (all namespaces), groups entries by namespace,
  * renders each group as an AilaCard with an AilaTable. Each row has an inline
@@ -55,7 +55,7 @@ interface ConfigUpdateRequest {
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "--";
   return new Date(value).toLocaleString();
 }
 
@@ -179,7 +179,7 @@ function EditRowForm({ entry, onSave, onCancel, isPending }: EditRowFormProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Namespace group — AilaCard with AilaTable
+// Namespace group -- AilaCard with AilaTable
 // ---------------------------------------------------------------------------
 
 interface NamespaceGroupProps {
@@ -372,7 +372,7 @@ export function PlatformConfigPage() {
           Total Entries
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {configQuery.data?.total ?? "—"}
+          {configQuery.data?.total ?? "--"}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           All namespaces
@@ -382,7 +382,7 @@ export function PlatformConfigPage() {
           Namespaces
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {configQuery.isLoading ? "—" : namespaceCount}
+          {configQuery.isLoading ? "--" : namespaceCount}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Module groups

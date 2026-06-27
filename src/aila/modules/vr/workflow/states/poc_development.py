@@ -1,4 +1,4 @@
-"""PoC development state — generate, compile, run, and verify a PoC.
+"""PoC development state -- generate, compile, run, and verify a PoC.
 
 Loop shape (bounded by ``config.poc_max_attempts``):
 1. Ask the LLM for PoC source given the research findings.
@@ -11,7 +11,7 @@ Loop shape (bounded by ``config.poc_max_attempts``):
 6. Parse the captured ASAN output (if any) and compute a dedup signature.
 
 If no SSH integration is available the loop short-circuits with a
-``status="untested"`` payload — useful for offline analysis where the PoC
+``status="untested"`` payload -- useful for offline analysis where the PoC
 can only be drafted, not executed.
 
 Compilation failure is recorded against the attempt count and surfaced in
@@ -35,7 +35,7 @@ __all__ = ["LLMDisabledByOperatorError", "state_poc_development"]
 _log = logging.getLogger(__name__)
 
 
-# fix §303 — dedicated exception for the LLM kill-switch state. The
+# fix §303 -- dedicated exception for the LLM kill-switch state. The
 # prior code raised `RuntimeError("LLM disabled by operator")` which
 # the outer try/except caught alongside transient httpx errors and
 # transient pydantic ValidationErrors, smearing operator intent into
@@ -54,9 +54,9 @@ class LLMDisabledByOperatorError(Exception):
     """
 
 
-# fix §302 — schema for chat_structured. Replaces the prior
+# fix §302 -- schema for chat_structured. Replaces the prior
 # brace-counting `find("{")` / `rfind("}")` JSON parse that §301
-# names as a bug — anything resembling a JSON object inside the
+# names as a bug -- anything resembling a JSON object inside the
 # rationale or a markdown code fence would defeat the parser. The
 # strict json_schema response_format on the LLM side guarantees a
 # valid PoCResponse on success, and chat_structured handles the
@@ -131,14 +131,14 @@ def _build_user_prompt(
         for entry in history[-3:]:
             parts.append(
                 f"  attempt {entry['attempt']} ({entry['language']}): "
-                f"{entry['outcome']} — {entry.get('detail', '')[:240]}"
+                f"{entry['outcome']} -- {entry.get('detail', '')[:240]}"
             )
         parts.append("")
     parts.append("Return a single JSON object matching the response contract.")
     return "\n".join(parts)
 
 
-# fix §307 — first 3 attempts are routed to a cheaper draft task type;
+# fix §307 -- first 3 attempts are routed to a cheaper draft task type;
 # attempts ≥ 4 escalate to the full vulnerability_research model. The
 # rationale: early attempts iterate on the rough shape (does the
 # pwntools layout look right? does the C buffer math line up?) and a
@@ -166,7 +166,7 @@ async def _llm_poc(
 ) -> PoCResponse:
     """Ask the LLM for one PoC; return a validated PoCResponse.
 
-    fix §302 — swapped `chat` for `chat_structured` against PoCResponse.
+    fix §302 -- swapped `chat` for `chat_structured` against PoCResponse.
     The strict JSON-schema response_format on the LLM side eliminates
     the prior `find("{") / rfind("}")` heuristic that §301 flags as
     fragile: anything resembling a JSON object inside the rationale or
@@ -175,11 +175,11 @@ async def _llm_poc(
     parse failure, so a transient JSON malformation no longer aborts
     a whole attempt.
 
-    fix §307 — task_type is now a parameter (default: final tier) so
+    fix §307 -- task_type is now a parameter (default: final tier) so
     the attempt loop can pass the cheaper draft task_type for early
     iterations.
     """
-    # fix §309 — cap completion tokens at 2048. The PoCResponse schema
+    # fix §309 -- cap completion tokens at 2048. The PoCResponse schema
     # is bounded (filename ≤128 chars, rationale ≤512 chars, code is
     # the dominant component but a single-file PoC is rarely more
     # than ~1200-1500 tokens of source). Without a cap, a misbehaving
@@ -202,7 +202,7 @@ async def _llm_poc(
         raise LLMDisabledByOperatorError("LLM disabled by operator")
     # chat_structured guarantees the content matches PoCResponse on
     # success, but LLMResponse carries it as a JSON string (no
-    # `.parsed` field — see synthesis_agent for the same pattern).
+    # `.parsed` field -- see synthesis_agent for the same pattern).
     try:
         return PoCResponse.model_validate_json(response.content)
     except ValueError as exc:
@@ -282,7 +282,7 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
     last_language: str = "python"
     last_filename: str = "poc.py"
 
-    # fix §308 — track the "best" non-crashing attempt by a closeness
+    # fix §308 -- track the "best" non-crashing attempt by a closeness
     # heuristic. The prior code surfaced LAST attempt's language/code
     # in the untested_payload, which biased the operator's manual
     # follow-up toward whatever the LLM emitted last (often a
@@ -295,7 +295,7 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
     best_language: str = "python"
     best_score: int = -1
 
-    # fix §304 — hard cap the operator-tunable poc_max_attempts at 25.
+    # fix §304 -- hard cap the operator-tunable poc_max_attempts at 25.
     # The config row is operator-editable through the platform config
     # UI and a misconfigured value of 1000 would launch a $500+ PoC
     # session (every attempt is one LLM call + one compile + one run
@@ -307,12 +307,12 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
     max_attempts = min(raw_max, operator_max_attempts_ceiling)
     if raw_max > operator_max_attempts_ceiling:
         _log.warning(
-            "poc_development: poc_max_attempts=%d exceeds ceiling %d — "
+            "poc_development: poc_max_attempts=%d exceeds ceiling %d -- "
             "clamping. Operator should fix the config or raise the ceiling.",
             raw_max, operator_max_attempts_ceiling,
         )
     for attempt in range(1, max_attempts + 1):
-        # fix §305 — exponential backoff with jitter between attempts.
+        # fix §305 -- exponential backoff with jitter between attempts.
         # The prior implementation re-fired the full LLM + compile + run
         # pipeline immediately on every continue, so a flaky LLM tier
         # (rate-limited / transient 503) or a wedged poc_runner socket
@@ -333,7 +333,7 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
                 task_type=_task_type_for_attempt(attempt),
             )
         except LLMDisabledByOperatorError:
-            # fix §303 — operator pulled the kill switch. Do NOT burn
+            # fix §303 -- operator pulled the kill switch. Do NOT burn
             # additional attempts; surface the untested payload now.
             return StateResult(
                 next_state="advisory",
@@ -384,7 +384,7 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             timeout_seconds=services.config.poc_timeout_seconds,
             memory_limit_mb=services.config.poc_memory_limit_mb,
         )
-        # fix §306 — explicit \`is True\` check. The previous
+        # fix §306 -- explicit \`is True\` check. The previous
         # \`if run_result.get(\"crash_detected\"):\` would treat the string
         # \"false\", the integer 0 wrapped in a string, or any non-empty
         # JSON-serialized truthy-looking value as a crash. The
@@ -401,7 +401,7 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
                 "detail": f"exit={run_result.get('exit_code')}",
             })
             break
-        # fix §308 — score this attempt's closeness-to-crash. Longer
+        # fix §308 -- score this attempt's closeness-to-crash. Longer
         # stderr_tail or any non-zero exit code is "closer" than a
         # clean 0-byte stderr exit. Update best_* whenever this
         # attempt outscores the prior best so the untested_payload
@@ -423,10 +423,10 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
         })
 
     if crash_payload is None:
-        # fix §308 — fall back to best_* (highest closeness-to-crash
+        # fix §308 -- fall back to best_* (highest closeness-to-crash
         # score) instead of last_*. If no attempts produced any
         # measurable signal (best_score stayed at -1), fall back to
-        # last_* — that's still the only thing we can show.
+        # last_* -- that's still the only thing we can show.
         surfaced_code = best_code if best_score >= 0 else last_code
         surfaced_lang = best_language if best_score >= 0 else last_language
         return StateResult(

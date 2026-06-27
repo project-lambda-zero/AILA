@@ -2,7 +2,7 @@
  * system-detail.spec.ts
  *
  * E2E tests for the /systems/:id detail page.
- * Uses REAL PostgreSQL backend — no mocks, no MSW, no route intercepts.
+ * Uses REAL PostgreSQL backend -- no mocks, no MSW, no route intercepts.
  *
  * Auth: POST /auth/login with local dev credentials, token injected via localStorage.
  * Data: one system seeded in beforeAll, cleaned up in afterAll.
@@ -118,7 +118,7 @@ test.describe("System Detail", () => {
 
   test.afterAll(async ({ request }) => {
     await deleteSystem(request, tokens.access_token, testSystemId).catch(() => {
-      // Ignore — may already be deleted
+      // Ignore -- may already be deleted
     });
   });
 
@@ -197,7 +197,7 @@ test.describe("System Detail", () => {
     // Tags tab content loads (either shows form or empty tag state)
     await page.waitForTimeout(2_000);
 
-    // The tab content should be visible — check the tag section exists
+    // The tab content should be visible -- check the tag section exists
     // Either there's an "Add tag" form or an empty state message
     const tagSection = page.locator('[data-value="tags"]');
     await expect(tagSection).toBeVisible({ timeout: 10_000 });

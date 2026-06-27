@@ -118,7 +118,7 @@ def test_within_sla_not_flagged(tmp_path):
     _setup_db(settings)
 
     now = datetime.now(UTC)
-    # Immediate SLA = 1 day; 0.5 days = 50% utilization — below 80% threshold
+    # Immediate SLA = 1 day; 0.5 days = 50% utilization -- below 80% threshold
     _insert_finding(
         settings,
         host="host-ok",
@@ -143,7 +143,7 @@ def test_breach_at_80_percent(tmp_path):
     _setup_db(settings)
 
     now = datetime.now(UTC)
-    # Immediate SLA = 1 day; 0.81 days = 81% utilization — warning level
+    # Immediate SLA = 1 day; 0.81 days = 81% utilization -- warning level
     _insert_finding(
         settings,
         host="host-warn",
@@ -172,7 +172,7 @@ def test_breach_at_100_percent(tmp_path):
     _setup_db(settings)
 
     now = datetime.now(UTC)
-    # High SLA = 7 days; 7.1 days = ~101.4% — breach level
+    # High SLA = 7 days; 7.1 days = ~101.4% -- breach level
     _insert_finding(
         settings,
         host="host-breach",
@@ -199,7 +199,7 @@ def test_breach_at_150_percent(tmp_path):
     _setup_db(settings)
 
     now = datetime.now(UTC)
-    # Moderate SLA = 30 days; 46 days = ~153.3% — critical level
+    # Moderate SLA = 30 days; 46 days = ~153.3% -- critical level
     _insert_finding(
         settings,
         host="host-critical",

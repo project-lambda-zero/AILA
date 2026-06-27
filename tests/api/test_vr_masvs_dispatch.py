@@ -1,18 +1,18 @@
-"""D-1 + D-2 — ``POST /vr/targets/{target_id}/masvs-audit`` materializes
+"""D-1 + D-2 -- ``POST /vr/targets/{target_id}/masvs-audit`` materializes
 records and submits each child to the ``vr`` ARQ queue.
 
 Smoke coverage for the batch dispatcher endpoint that D-1 stood up and
 D-2 wired to ``run_vr_investigate``. The test asserts the invariants
 the downstream tasks D-3 / R-1 rely on:
 
-1. **Parent invariant** — exactly one ``VRInvestigationRecord`` with
+1. **Parent invariant** -- exactly one ``VRInvestigationRecord`` with
    ``kind=masvs_audit`` is created per call. ``parent_investigation_id``
    on the parent is ``None`` (it is the batch root); the parent's
    ``secondary_target_refs_json`` records the catalog spec version so
    D-3 idempotency can compare same-target / same-version dispatches
    without re-reading the catalog.
 
-2. **Children invariants** — one ``VRInvestigationRecord`` per L1
+2. **Children invariants** -- one ``VRInvestigationRecord`` per L1
    control. Every child carries ``kind=audit`` (the existing kind so
    the standard vuln_researcher dispatch handles it unchanged),
    ``parent_investigation_id`` pointing at the parent, the catalog's
@@ -21,23 +21,23 @@ the downstream tasks D-3 / R-1 rely on:
    by spot-checking that the control id appears verbatim in the
    question body), and one ``ACTIVE`` primary branch row.
 
-3. **Response invariants** — the JSON envelope carries the parent id,
+3. **Response invariants** -- the JSON envelope carries the parent id,
    one child id per L1 control in catalog order, the catalog version,
    the summed child budget, and ``enqueue_errors`` (D-2). Child rows
    stay in ``CREATED`` status until the worker picks the task up.
 
-4. **D-2 success path** — when the task queue is reachable, every
+4. **D-2 success path** -- when the task queue is reachable, every
    child id lands in the ``vr`` queue via ``run_vr_investigate`` with
    ``kwargs={"investigation_id": <child_id>}`` and ``enqueue_errors``
    is empty.
 
-5. **D-2 failure path** — when the task queue is unavailable (the
+5. **D-2 failure path** -- when the task queue is unavailable (the
    ``app.state.platform = None`` baseline the test fixture sets),
    every child id surfaces in ``enqueue_errors`` with the
    service-unavailable detail. The records are still committed so the
    operator can retry via ``POST /vr/investigations/{id}/re-enqueue``.
 
-6. **Refusal invariants** — non-android_apk targets and android_apk
+6. **Refusal invariants** -- non-android_apk targets and android_apk
    targets without a populated ``static_summary`` are rejected with
    409 (not 500, not a silent half-dispatch).
 """
@@ -99,7 +99,7 @@ async def _insert_android_apk_target(
     """Insert a workspace + target row pair directly via UnitOfWork.
 
     The MASVS dispatcher cares about ``kind``, ``team_id``, and
-    ``mcp_handles_json`` only — no need to spin up the full
+    ``mcp_handles_json`` only -- no need to spin up the full
     POST /vr/workspaces + POST /vr/targets dance, and bypassing the
     ingestion machinery keeps this an endpoint test, not an integration
     test of the C-19 upload pipeline.
@@ -271,7 +271,7 @@ async def test_dispatch_submits_each_child_to_vr_queue(
     3. Every submit call carries ``track="vr"``, ``fn=run_vr_investigate``,
        and ``kwargs={"investigation_id": <one of the child ids>}``.
     4. The set of investigation ids the dispatcher submitted equals
-       the set returned in the response — no child is silently dropped.
+       the set returned in the response -- no child is silently dropped.
     """
     del test_db
 
@@ -333,7 +333,7 @@ async def test_dispatch_submits_each_child_to_vr_queue(
 
     assert set(submitted_inv_ids) == set(child_ids), (
         "Set of investigation ids submitted to the queue diverged from "
-        "the response's child_investigation_ids — D-2 dropped or "
+        "the response's child_investigation_ids -- D-2 dropped or "
         "duplicated a child."
     )
 
@@ -451,11 +451,11 @@ async def test_dispatch_is_idempotent_on_same_catalog_version(
     )
     assert second_payload["enqueue_errors"] == {}, (
         "D-3: idempotent reuse does NOT re-touch the ARQ queue, so "
-        "enqueue_errors must always be empty on the reuse branch — "
+        "enqueue_errors must always be empty on the reuse branch -- "
         "operators retry individual stuck children via /re-enqueue."
     )
 
-    # Verify the DB did not double — still exactly 1 parent + N children
+    # Verify the DB did not double -- still exactly 1 parent + N children
     # for this target, not 2 parents + 2N children.
     async with UnitOfWork() as uow:
         parents = (await uow.session.exec(
@@ -535,7 +535,7 @@ async def test_dispatch_re_dispatches_when_existing_parent_is_terminal(
         "return a NEW parent id, not the terminal one."
     )
 
-    # Both parents now coexist on the target — the terminal one and
+    # Both parents now coexist on the target -- the terminal one and
     # the fresh active one. That is the expected post-condition.
     async with UnitOfWork() as uow:
         parents = (await uow.session.exec(

@@ -1,11 +1,11 @@
-"""034 — analyst verdicts on directives + forensics_solid_evidence table.
+"""034 -- analyst verdicts on directives + forensics_solid_evidence table.
 
 Extends forensics_analyst_directives with a tri-state ``verdict`` column
 (NULL = free-text guidance as before; ``"true"`` / ``"false"`` =
 analyst-tagged verdict of a prior investigation) plus back-links to the
 investigation + answer candidate that produced it.
 
-Adds the ``forensics_solid_evidence`` table — durable, per-project rows
+Adds the ``forensics_solid_evidence`` table -- durable, per-project rows
 holding analyst-confirmed (TRUE) or analyst-rejected (FALSE) findings.
 These surface both in the Solid Evidence tab and in every future
 investigation's system prompt so the agent does not re-chase already

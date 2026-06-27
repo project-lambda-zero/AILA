@@ -1,4 +1,4 @@
-"""Forensics module database models — barrel re-export.
+"""Forensics module database models -- barrel re-export.
 
 All table classes are imported here for external consumption.
 Individual model definitions live in domain submodules.

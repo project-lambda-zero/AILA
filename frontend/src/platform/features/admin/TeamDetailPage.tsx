@@ -1,5 +1,5 @@
 /**
- * TeamDetailPage — admin-only team detail with member management (Phase 177).
+ * TeamDetailPage -- admin-only team detail with member management (Phase 177).
  *
  * Shows a single team with full member list. Admins can:
  *  - Rename / update description.
@@ -86,7 +86,7 @@ function roleSeverity(role: string): "critical" | "medium" | "neutral" {
 }
 
 function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "--";
   return new Date(value).toLocaleString();
 }
 

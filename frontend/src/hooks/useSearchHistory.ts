@@ -38,7 +38,7 @@ function saveHistory(items: SearchHistoryItem[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   } catch {
-    // localStorage unavailable — ignore
+    // localStorage unavailable -- ignore
   }
 }
 
@@ -71,7 +71,7 @@ interface UseSearchHistoryReturn {
 }
 
 /**
- * useSearchHistory — persist and retrieve search history from localStorage.
+ * useSearchHistory -- persist and retrieve search history from localStorage.
  *
  * Used by CommandPalette to show recent searches in the empty-query state.
  * Records a search entry when the user selects a search result.

@@ -1,4 +1,4 @@
-"""PoC runner — uploads, compiles, and executes vulnerability PoCs over SSH.
+"""PoC runner -- uploads, compiles, and executes vulnerability PoCs over SSH.
 
 v0.1 sandbox: PoCs run inside ``/tmp/aila_vr/`` fenced by GNU ``timeout`` and
 ``ulimit -v``. The wrapper always exits 0 and embeds the real PoC exit code

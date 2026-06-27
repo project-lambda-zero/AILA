@@ -2,7 +2,7 @@
  * Minimal type stubs for ogl@0.0.116.
  *
  * ogl ships without .d.ts files (it's a small ESM-only WebGL library).
- * These stubs cover only the surface used by LoginFaultyTerminal —
+ * These stubs cover only the surface used by LoginFaultyTerminal --
  * Renderer / Program / Mesh / Triangle / Color. Anything outside this
  * surface is intentionally untyped; add fields here as needed.
  */

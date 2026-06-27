@@ -1,4 +1,4 @@
-"""Setup state — ingest the target, upload to IDA MCP, prime budgets.
+"""Setup state -- ingest the target, upload to IDA MCP, prime budgets.
 
 Responsibilities:
 1. Resolve the target onto the analyzer workstation based on input_source:
@@ -21,7 +21,7 @@ once setup begins.
 
 The output dict propagates ``analysis_integration`` and ``poc_integration``
 so downstream states (research, poc_development) can target the correct
-machine — the PoC machine may be a different host (e.g. the vulnerable
+machine -- the PoC machine may be a different host (e.g. the vulnerable
 software is installed only there).
 """
 from __future__ import annotations
@@ -48,10 +48,10 @@ __all__ = ["VR_UPLOAD_STAGING", "SetupBudgetExceededError", "state_setup"]
 _log = logging.getLogger(__name__)
 
 _POLL_INTERVAL_S = 2.0
-# fix §298 — raised to 600s (10min) AND made explicit-error-on-exhaust.
+# fix §298 -- raised to 600s (10min) AND made explicit-error-on-exhaust.
 # Prior 60s budget fired before large-binary IDA analysis finished on
 # anything bigger than a small library, and the helpers below
-# _log.warning(...) then `return last` — handing a not-yet-ready
+# _log.warning(...) then `return last` -- handing a not-yet-ready
 # payload to the caller as if it were a successful analysis. Down-
 # stream tools then hit "binary not indexed" errors per call.
 # A truthful explicit failure surfaces the timeout at the setup
@@ -65,14 +65,14 @@ class SetupBudgetExceededError(RuntimeError):
 
     Carries ``binary_id`` so downstream / operator tooling can
     correlate against the in-flight MCP analysis. Engine treats this
-    as non-retriable by default — extending the budget requires
+    as non-retriable by default -- extending the budget requires
     operator intent (env override, code change), not a blind retry.
     """
 
     def __init__(self, binary_id: str, waited_s: float) -> None:
         super().__init__(
             f"IDA analysis polling exceeded {waited_s:.0f}s budget for "
-            f"binary_id={binary_id} (cap={_POLL_BUDGET_S:.0f}s) — "
+            f"binary_id={binary_id} (cap={_POLL_BUDGET_S:.0f}s) -- "
             f"either the IDA bridge is wedged or the binary is too large "
             f"for the configured budget; bump _POLL_BUDGET_S or restart "
             f"the audit-mcp / IDA pipeline",
@@ -180,7 +180,7 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
     if not binary_id:
         raise RuntimeError(f"upload returned no binary_id: {upload}")
 
-    # fix §299 — track wall-clock via time.monotonic(). The prior
+    # fix §299 -- track wall-clock via time.monotonic(). The prior
     # \`waited += _POLL_INTERVAL_S\` after each \`asyncio.sleep\` counted
     # POLL iterations, not real time: every \`ida_bridge.forward\` adds
     # tens-of-ms to seconds of httpx latency that the counter ignored,
@@ -188,7 +188,7 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
     # before failing. Operators set the budget against wall-clock
     # expectations; track wall-clock.
     #
-    # fix §300 — single \`current\` variable in place of the prior
+    # fix §300 -- single \`current\` variable in place of the prior
     # \`upload\` / \`last\` duality. The original code seeded \`last = upload\`,
     # then checked \`upload.get(...)\` (NEVER changes after upload) at the
     # top of every loop AND \`last.get(...)\` (updated each iteration) at
@@ -215,9 +215,9 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
 
 async def _wait_until_ready(ida_bridge: Any, binary_id: str) -> dict[str, Any]:
     """Poll an existing binary_id until analysis is ready or budget exhausts."""
-    # fix §299 — wall-clock via time.monotonic() (see _upload_and_wait
+    # fix §299 -- wall-clock via time.monotonic() (see _upload_and_wait
     # covering the full rationale; same shape, no upload payload to seed).
-    # fix §300 — \`current\` naming consistent with _upload_and_wait.
+    # fix §300 -- \`current\` naming consistent with _upload_and_wait.
     start = time.monotonic()
     current: dict[str, Any] = {}
     while True:
@@ -263,7 +263,7 @@ async def _ingest_target(
         local_path = VR_UPLOAD_STAGING / upload_filename
         if not local_path.is_file():
             raise FileNotFoundError(
-                f"{label}: staged upload not found at {local_path} — the "
+                f"{label}: staged upload not found at {local_path} -- the "
                 "API may have cleaned it before setup ran, or the multipart "
                 "handler never wrote it",
             )
@@ -296,7 +296,7 @@ async def _ingest_target(
         )
 
     raise ValueError(
-        f"{label}: unsupported input_source '{input_source}' — "
+        f"{label}: unsupported input_source '{input_source}' -- "
         "expected 'upload' | 'git_repo' | 'http_url'",
     )
 

@@ -9,7 +9,7 @@ Drives ``HonestVulnResearcher.run_turn`` in a loop until one of:
 
 On any exit reason the loop forwards the terminating turn's metadata to
 the emit state for finalization. The loop itself does NOT mark the
-investigation COMPLETED — that's emit's job.
+investigation COMPLETED -- that's emit's job.
 """
 from __future__ import annotations
 
@@ -49,14 +49,14 @@ __all__ = ["state_investigation_loop"]
 _log = logging.getLogger(__name__)
 
 # Per-task turn budget. Loop returns on submit, status flip, researcher
-# error, or when this cap hits — at which point investigation_emit
+# error, or when this cap hits -- at which point investigation_emit
 # auto-re-enqueues another task (status stays RUNNING) until the
 # overall branch.turn_count hits _OVERALL_TURN_CAP. Configurable via
 # env so an operator running a deep variant chase can extend without
 # a code change.
 _DEFAULT_MAX_TURNS = int(os.environ.get("VR_MAX_TURNS_PER_TASK", "70"))
 
-# fix §286 — module-level executor + bridges singleton, lazily built
+# fix §286 -- module-level executor + bridges singleton, lazily built
 # on first task wakeup of each worker process.
 #
 # Prior code constructed a fresh IDABridgeTool / AuditMcpBridgeTool /
@@ -133,7 +133,7 @@ async def _is_loop_alive(investigation_id: str, branch_id: str) -> tuple[bool, s
         if inv.status != InvestigationStatus.RUNNING.value:
             return False, f"inv_status_flipped:{inv.status}"
 
-        # Branch-level pause / abandon — §288 closes this.
+        # Branch-level pause / abandon -- §288 closes this.
         branch = (await uow.session.exec(
             _select(VRInvestigationBranchRecord).where(
                 VRInvestigationBranchRecord.id == branch_id,
@@ -144,7 +144,7 @@ async def _is_loop_alive(investigation_id: str, branch_id: str) -> tuple[bool, s
         if branch.status != BranchStatus.ACTIVE.value:
             return False, f"branch_status_flipped:{branch.status}"
 
-        # Cursor SSOT — Phase B's pause writes __paused__ here.
+        # Cursor SSOT -- Phase B's pause writes __paused__ here.
         cursor = await uow.session.get(WorkflowStateCursor, branch_id)
         if cursor is not None:
             if cursor.current_state == RESERVED_PAUSED:
@@ -152,7 +152,7 @@ async def _is_loop_alive(investigation_id: str, branch_id: str) -> tuple[bool, s
             if cursor.current_state in RESERVED_TERMINAL_STATES:
                 return False, f"cursor_terminal:{cursor.current_state}"
 
-    # Phase B.5 — per-investigation cancellation token. Process-local;
+    # Phase B.5 -- per-investigation cancellation token. Process-local;
     # cross-process synchronization is via the cursor SSOT (which the
     # block above already checked). The token catches the case where
     # pause was triggered AFTER the cursor read above but BEFORE this
@@ -186,7 +186,7 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
 
     max_turns = int(input.get("max_turns") or _DEFAULT_MAX_TURNS)
 
-    # fix §289 — strict input validation. cve_intel + applicable_patterns
+    # fix §289 -- strict input validation. cve_intel + applicable_patterns
     # flow through state input dicts and the workflow engine persists
     # them as JSON; a corrupted resume (e.g. a hand-edited state row
     # turning the list into a string, or a non-JSON-safe value sneaking
@@ -219,7 +219,7 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
         cve_intel=raw_cve_intel,
         applicable_patterns=raw_patterns,
     )
-    executor = _get_executor()  # fix §286 — shared per-worker-process singleton
+    executor = _get_executor()  # fix §286 -- shared per-worker-process singleton
 
     last_turn_idx = 0
     last_outcome_id: str | None = None
@@ -227,7 +227,7 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
     exit_reason = "max_turns"
 
     for turn_attempt in range(1, max_turns + 1):
-        # fix §287 + §288 — single UoW polls inv.status, branch.status,
+        # fix §287 + §288 -- single UoW polls inv.status, branch.status,
         # AND cursor.current_state (Phase B SSOT). Operator pauses at
         # any of the three layers are visible.
         alive, alive_reason = await _is_loop_alive(investigation_id, branch_id)

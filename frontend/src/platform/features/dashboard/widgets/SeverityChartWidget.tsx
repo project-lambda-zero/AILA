@@ -6,12 +6,12 @@ import { useFindingsFacets } from "@platform/features/viz/useFindingsFacets";
 import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
 /**
- * SeverityChartWidget — donut/pie chart showing finding severity distribution.
+ * SeverityChartWidget -- donut/pie chart showing finding severity distribution.
  *
  * Reads the severity facet group from GET /vulnerability/findings/facets
  * (same source as the standalone Viz donut). The dashboard /fleet_stats
  * counters drop non-canonical criticality values (e.g. "Moderate", "Planned",
- * "Immediate") so they are unsuitable for a multi-segment chart — the facet
+ * "Immediate") so they are unsuitable for a multi-segment chart -- the facet
  * endpoint preserves the raw distribution.
  *
  * Empty slices (count === 0) are filtered out so the chart never renders a

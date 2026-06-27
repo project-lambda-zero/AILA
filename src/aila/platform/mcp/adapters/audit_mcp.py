@@ -64,8 +64,8 @@ __all__ = [
 # (cyc=6969) ranked #1 in complexity_hotspots, called read_function
 # on it, looped on "Function OpenJPEG not indexed" because the name is
 # a namespace identifier inside a single ~7000-line wrapper. The fix
-# is NOT to hide that signal — high complexity in a vendored codec is
-# real information — but to TAG it so the agent's next move is "register
+# is NOT to hide that signal -- high complexity in a vendored codec is
+# real information -- but to TAG it so the agent's next move is "register
 # uclouvain/openjpeg as its own target" rather than "read this function".
 _DROP_CATEGORIES: frozenset[str] = frozenset({"test_payload", "generated_code"})
 
@@ -127,15 +127,15 @@ def _classify_hotspot(entry: dict[str, Any]) -> tuple[str, str]:
     normalised = file_path.replace("\\", "/").lower()
     filename = normalised.rsplit("/", 1)[-1] if normalised else ""
 
-    # Compiled-bundle check first — most actionable, most distinctive.
+    # Compiled-bundle check first -- most actionable, most distinctive.
     if any(filename.endswith(suf) for suf in _COMPILED_BUNDLE_SUFFIXES):
         return (
             "compiled_bundle",
             "Emscripten/asm.js bundle. Find upstream C source and "
-            "register it as a separate VR target — do NOT read_function this IIFE.",
+            "register it as a separate VR target -- do NOT read_function this IIFE.",
         )
     # Emscripten IIFE signature (single moduleArg param) without the
-    # filename giveaway — covers renamed bundles.
+    # filename giveaway -- covers renamed bundles.
     params = entry.get("parameters") or []
     if (
         isinstance(params, list)
@@ -146,7 +146,7 @@ def _classify_hotspot(entry: dict[str, Any]) -> tuple[str, str]:
         return (
             "compiled_bundle",
             "Emscripten IIFE wrapping compiled code (single moduleArg param). "
-            "Find upstream source — do NOT read_function this.",
+            "Find upstream source -- do NOT read_function this.",
         )
 
     if normalised:
@@ -184,7 +184,7 @@ def _classify_hotspot(entry: dict[str, Any]) -> tuple[str, str]:
     ):
         return (
             "compiled_bundle",
-            f"Single function spans {end - start} lines from top of file — "
+            f"Single function spans {end - start} lines from top of file -- "
             "likely codegen. Find upstream source.",
         )
 
@@ -199,7 +199,7 @@ def _split_by_category(
     ``real`` and ``attention_required`` entries each get an injected
     ``_classification`` field carrying the ``(category, hint)`` pair so
     the renderer can format them differently. ``attention_required``
-    holds compiled_bundle + vendored_library — kept in the response but
+    holds compiled_bundle + vendored_library -- kept in the response but
     rendered with category tag + drill-in hint so the agent knows the
     right next move. Test payloads and generated code are silently
     dropped (returned in ``dropped_count`` so the prompt can say
@@ -236,7 +236,7 @@ def _split_by_category(
 #   50000 → covers ~600+ lines of typical C, enough for every
 #           in-tree nginx function we've seen the agent need.
 # The FULL body is always preserved in payload.pseudocode (message
-# store) — this cap is only the per-turn slice the agent sees via
+# store) -- this cap is only the per-turn slice the agent sees via
 # observables. Future fix: stream a structured summary (signature
 # + N anchor lines around each search_source hit) for functions
 # that overflow this cap.
@@ -311,7 +311,7 @@ def adapt_fuzzing_targets(
     if len(attention) > 10:
         attention_lines.append(f"  ... and {len(attention) - 10} more")
 
-    drop_note = f" — dropped {dropped} test/generated entries" if dropped else ""
+    drop_note = f" -- dropped {dropped} test/generated entries" if dropped else ""
 
     sections: list[str] = [
         f"audit-mcp fuzzing_targets: {len(real)} real candidate(s), "
@@ -323,7 +323,7 @@ def adapt_fuzzing_targets(
     if attention_lines:
         sections.extend([
             "",
-            "SUBSYSTEMS / VENDORED (do NOT read_function these — see hint):",
+            "SUBSYSTEMS / VENDORED (do NOT read_function these -- see hint):",
             *attention_lines,
         ])
     obs_value = "\n".join(sections)
@@ -355,7 +355,7 @@ def adapt_attack_surface(
 
     audit_mcp returns the list under the key ``entrypoints`` with
     fields ``{node_id, kind, trust_level, asset_value, description}``
-    — NOT the ``surfaces|entries|results`` + ``name|symbol|route``
+    -- NOT the ``surfaces|entries|results`` + ``name|symbol|route``
     shape the adapter previously assumed. As a result every call to
     attack_surface rendered as "0 entry points" even though firefox
     has 5,195 of them and openjpeg has 37.
@@ -381,7 +381,7 @@ def adapt_attack_surface(
 
     sections: list[str] = [
         f"attack_surface: {len(entries)} entry point(s) across "
-        f"{len(by_kind)} kind(s) — "
+        f"{len(by_kind)} kind(s) -- "
         + ", ".join(f"{k}:{len(v)}" for k, v in sorted(by_kind.items(), key=lambda kv: -len(kv[1])))
     ]
     for kind, kentries in sorted(by_kind.items(), key=lambda kv: -len(kv[1])):
@@ -403,7 +403,7 @@ def adapt_attack_surface(
             if tags:
                 line += f" {tags}"
             if desc:
-                line += f" — {desc[:120]}"
+                line += f" -- {desc[:120]}"
             sections.append(line)
         if len(kentries) > _PER_KIND_PREVIEW:
             sections.append(f"  ... and {len(kentries) - _PER_KIND_PREVIEW} more {kind} entries")
@@ -486,7 +486,7 @@ def adapt_complexity_hotspots(
     if len(attention) > 10:
         attention_lines.append(f"  ... and {len(attention) - 10} more")
 
-    drop_note = f" — dropped {dropped} test/generated entries" if dropped else ""
+    drop_note = f" -- dropped {dropped} test/generated entries" if dropped else ""
 
     sections: list[str] = [
         f"complexity_hotspots: {len(real)} real function(s), "
@@ -498,7 +498,7 @@ def adapt_complexity_hotspots(
     if attention_lines:
         sections.extend([
             "",
-            "SUBSYSTEMS / VENDORED (do NOT read_function these — see hint):",
+            "SUBSYSTEMS / VENDORED (do NOT read_function these -- see hint):",
             *attention_lines,
         ])
     obs_value = "\n".join(sections)
@@ -786,7 +786,7 @@ def adapt_read_function(
     )
     # audit-mcp's read_function returns the actual function body in
     # `content`. The `source` field is the PROVIDER TAG (e.g. "semble",
-    # "trailmark") — a literal string identifying which backend served
+    # "trailmark") -- a literal string identifying which backend served
     # the read. Earlier adapter code read `source` first, took the
     # literal "semble" string, and stored THAT as the function body.
     # Every read_function observable for months was just the string
@@ -843,7 +843,7 @@ def adapt_read_function(
             f"  audit_mcp.read_lines(index_id=<I>, file_path={path!r}, "
             f"start={next_start}, end={min(next_start + 500, end_line_total)})\n"
             f"DO NOT draw conclusions about absence of code in the "
-            f"unseen tail — call read_lines first.\n\n"
+            f"unseen tail -- call read_lines first.\n\n"
         )
         obs_value = banner + kept
         truncation_suffix = "  ⚠ TRUNCATED"
@@ -856,7 +856,7 @@ def adapt_read_function(
 
 
 # ----------------------------------------------------------------------
-# search_* family — specialized dense rendering
+# search_* family -- specialized dense rendering
 # ----------------------------------------------------------------------
 
 # Per-result observable cap for search_* adapters. 30000 chars covers
@@ -893,7 +893,7 @@ def _render_matches_dense(raw: dict[str, Any]) -> tuple[str, int]:
     if len(body) > _MAX_OBS_SEARCH:
         kept = body[:_MAX_OBS_SEARCH].rsplit("\n", 1)[0]
         body = kept + (
-            f"\n... [truncated — {len(matches)} matches total, full"
+            f"\n... [truncated -- {len(matches)} matches total, full"
             f" {len(body)} chars in message store; narrow your pattern"
             f" or add file_path scope to reduce noise]"
         )
@@ -904,7 +904,7 @@ def _adapt_search(tool_label: str) -> Any:
     """Factory: produce a specialized search_* adapter for one tool name.
 
     Same dense rendering for every search_* tool (search_source,
-    search_macros, search_constants, search_types, search_functions) —
+    search_macros, search_constants, search_types, search_functions) --
     only the summary label changes.
     """
     def _adapter(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
@@ -927,7 +927,7 @@ def _adapt_search(tool_label: str) -> Any:
     return _adapter
 
 
-# fix §245 — adapt_search_functions used to be bound here too (factory
+# fix §245 -- adapt_search_functions used to be bound here too (factory
 # output) and then overwritten ~80 lines below by the specialised
 # implementation. The factory binding was dead code with refactor risk
 # (delete-either-line silently swaps behaviour). The specialised
@@ -948,7 +948,7 @@ def _adapt_search_functions_specialized(
     returns {name, qualified_name, kind, file_path, line_start,
     line_end, cyclomatic_complexity} with file_path/line_start often
     null (trailmark loses source locations). The generic path then
-    produced '?:?:' for every row — useless 'evidence' that agents
+    produced '?:?:' for every row -- useless 'evidence' that agents
     cited as if it were a file:line reference.
 
     Render each match as:
@@ -979,7 +979,7 @@ def _adapt_search_functions_specialized(
         if fp and ls:
             loc = f"{fp}:{ls}" + (f"-{le}" if le else "")
         else:
-            loc = "[no location indexed — use read_lines after locating via semantic_search]"
+            loc = "[no location indexed -- use read_lines after locating via semantic_search]"
             no_location += 1
         line = f"{name} [{flag_str}] @ {loc}"
         if qn and qn != name:
@@ -989,13 +989,13 @@ def _adapt_search_functions_specialized(
     if no_location:
         body += (
             f"\n\n[{no_location}/{len(matches)} matches have no indexed "
-            f"file_path/line — audit_mcp's function indexer lost their "
+            f"file_path/line -- audit_mcp's function indexer lost their "
             f"locations. Use semantic_search(query=\"<function_name>\") "
             f"to find the real definition, then read_lines for the body.]"
         )
     if len(body) > _MAX_OBS_SEARCH:
         body = body[:_MAX_OBS_SEARCH] + (
-            f"\n... [truncated — {len(matches)} matches total, full body "
+            f"\n... [truncated -- {len(matches)} matches total, full body "
             f"in message store]"
         )
     payload = {
@@ -1019,17 +1019,17 @@ adapt_search_functions = _adapt_search_functions_specialized
 
 
 # ----------------------------------------------------------------------
-# semantic_search + find_related — chunk-based dense rendering
+# semantic_search + find_related -- chunk-based dense rendering
 # ----------------------------------------------------------------------
 #
 # These return `results[]` where each entry is a code CHUNK with full
-# function body (or function span) in a `content` field — different
+# function body (or function span) in a `content` field -- different
 # shape from search_*'s match snippets. The old path (generic adapter)
 # json.dumps(indent=2)'d the whole response and truncated at 15000
 # chars, so the agent saw quoted/escaped/indented JSON with ~3-4 of
 # 8 results bleeding past the cap. Now: dense block per chunk so the
 # agent gets real readable source.
-# fix §247 — coupled to _shared.MAX_OBS_DUMP_CHARS (32 KiB) so the cap
+# fix §247 -- coupled to _shared.MAX_OBS_DUMP_CHARS (32 KiB) so the cap
 # moves in lockstep with the rest of the system. The whole rendered
 # block list shares the same budget as one bounded_dump; per-block
 # budget is a quarter of that, ensuring a single 200 KiB chunk can't
@@ -1058,7 +1058,7 @@ def _render_chunks_dense(raw: dict[str, Any]) -> tuple[str, int]:
     total_chars = 0
     dropped = 0
     for r in results:
-        # fix §246 — coerce non-dict result to {"content": str(r)} so
+        # fix §246 -- coerce non-dict result to {"content": str(r)} so
         # it still renders (with no metadata) instead of vanishing. The
         # prior `continue` silently dropped results, making the agent
         # observe N-1 chunks for an N-element response with no marker.
@@ -1076,7 +1076,7 @@ def _render_chunks_dense(raw: dict[str, Any]) -> tuple[str, int]:
         score_tag = f"score={score:.3f} " if isinstance(score, (int, float)) else ""
         header = f"=== {fp}:{s_line}-{e_line} [{lang}] {score_tag}===\n"
         block = header + content + "\n"
-        # fix §247 — per-block cap. A single overweight chunk used to
+        # fix §247 -- per-block cap. A single overweight chunk used to
         # trip the total-chars guard, get dropped whole, and leak its
         # entire payload across the budget for neighbouring chunks.
         if len(block) > _MAX_PER_CHUNK:
@@ -1093,7 +1093,7 @@ def _render_chunks_dense(raw: dict[str, Any]) -> tuple[str, int]:
     body = "\n".join(blocks)
     if dropped:
         body += (
-            f"\n... [truncated — {dropped} of {len(results)} chunks omitted "
+            f"\n... [truncated -- {dropped} of {len(results)} chunks omitted "
             f"past {_MAX_OBS_CHUNKS}-char cap; narrow query or filter_paths "
             f"to surface more]"
         )
@@ -1151,7 +1151,7 @@ def adapt_find_related(
 
 
 # ----------------------------------------------------------------------
-# read_lines — bridge-side virtual tool, raw file slice
+# read_lines -- bridge-side virtual tool, raw file slice
 # ----------------------------------------------------------------------
 
 
@@ -1195,7 +1195,7 @@ def adapt_read_lines(
             f"The content you expected past line {total} DOES NOT EXIST in "
             f"this file. STOP re-requesting the same range. If you're "
             f"looking for a symbol that should be here, switch to "
-            f"semantic_search(query=\"<symbol_name>\") — it will find the "
+            f"semantic_search(query=\"<symbol_name>\") -- it will find the "
             f"file that actually contains it."
         )
     elif isinstance(total, int) and isinstance(end, int) and end < total - 50:
@@ -1221,7 +1221,7 @@ def adapt_read_lines(
     }
     obs_body = (header + body)[:_MAX_OBS_READ_FUNCTION]
     if len(header) + len(body) > _MAX_OBS_READ_FUNCTION:
-        obs_body += f"\n\n[truncated — full {line_count} lines in message {ctx.call_id}]"
+        obs_body += f"\n\n[truncated -- full {line_count} lines in message {ctx.call_id}]"
     summary = f"read_lines {file_path}:{start}-{end} ({line_count} lines / {total} total)"
     if isinstance(total, int) and req_end_int and req_end_int > total:
         summary += "  ⚠ PAST EOF"

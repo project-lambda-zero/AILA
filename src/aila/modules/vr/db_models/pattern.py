@@ -63,7 +63,7 @@ class VRPatternRecord(TeamScopedMixin, SQLModel, table=True):
     scope: str = Field(default="local", max_length=16, index=True)
     superseded_by: str | None = Field(default=None, max_length=64, index=True)
 
-    # Mirror entry id in KnowledgeService — populated on insert by PatternStore.
+    # Mirror entry id in KnowledgeService -- populated on insert by PatternStore.
     knowledge_entry_id: int | None = Field(default=None, index=True)
 
     # Usage counters (v1 increments times_retrieved on retrieve; full

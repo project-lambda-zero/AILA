@@ -24,7 +24,7 @@ _SAMPLE_PAYLOAD = {
     "root_cause": "Missing alias check on InferMaps allows JIT to materialise a wrong-typed object.",
     "poc_code": "var a = ...; for (let i = 0; i < 100; i++) jit(a);",
     "summary": "JIT type-confuses on aliased map-inference input",
-    "affected_component": "V8 8.x — 11.x",
+    "affected_component": "V8 8.x -- 11.x",
     "impact": "Renderer RCE via JIT-produced type confusion.",
     "mitigation_suggestion": "Reinstate alias check before InferMaps.",
     "expected_vs_actual": "Expected: alias check rejects. Actual: JIT proceeds.",
@@ -200,5 +200,5 @@ class TestSpecificTrackBehaviour:
     def test_conference_cfp_no_program_url(self) -> None:
         cfp = get_track("conference_cfp")
         assert cfp is not None
-        # Conference CFP isn't a bounty portal — operator picks their conf
+        # Conference CFP isn't a bounty portal -- operator picks their conf
         assert cfp.program_url is None

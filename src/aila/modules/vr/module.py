@@ -1,7 +1,7 @@
 """VR (vulnerability research) module entrypoint.
 
 Implements ModuleProtocol. This file is the only file the platform imports
-directly — all wiring (capability profiles, tool registration, runtime
+directly -- all wiring (capability profiles, tool registration, runtime
 construction, route declarations, seed data, and health checks) happens here.
 
 Auto-discovered by the platform via ``pkgutil.iter_modules`` on
@@ -141,7 +141,7 @@ class VRModule(ModuleProtocol):
         rows: list[JsonObject],
         filters: JsonObject | None = None,
     ) -> list[JsonObject]:
-        """No filterable reports — return rows unchanged."""
+        """No filterable reports -- return rows unchanged."""
         del filters
         return list(rows)
 
@@ -231,7 +231,7 @@ def _register_vr_periodic_sweeps() -> None:
     """Register VR's per-tick maintenance sweeps with the platform reaper.
 
     Called from :func:`create_module` so the registration is a side-effect
-    of module instantiation — the same lifecycle hook the platform uses
+    of module instantiation -- the same lifecycle hook the platform uses
     for capability profiles + tool keys + route specs. This is the
     operator-visible chokepoint where "VR module owns these sweeps" is
     declared; the platform iterates the registry without knowing VR
@@ -247,12 +247,12 @@ def _register_vr_periodic_sweeps() -> None:
     if "vr.finalize" in all_periodic_sweeps():
         return
 
-    # vr.stage_tracker — reaps stuck target-analysis stages whose
+    # vr.stage_tracker -- reaps stuck target-analysis stages whose
     # workers never recorded a terminal transition. Returns an int
     # count of stages reaped.
     register_periodic_sweep("vr.stage_tracker", reap_stuck_stages)
 
-    # vr.branch_reaper — flips orphan ACTIVE branches whose parent
+    # vr.branch_reaper -- flips orphan ACTIVE branches whose parent
     # investigation is ALREADY terminal. Independent of finalize:
     # finalize drives RUNNING investigations to terminal; branch_reaper
     # cleans up branches left behind under investigations that already
@@ -261,7 +261,7 @@ def _register_vr_periodic_sweeps() -> None:
     # branches).
     register_periodic_sweep("vr.branch_reaper", sweep_orphan_active_branches)
 
-    # vr.masvs_parent_reconciler — drives the parent batch state
+    # vr.masvs_parent_reconciler -- drives the parent batch state
     # machine (CREATED → RUNNING → COMPLETED) for MASVS audits.
     # MASVS-SPECIFIC: this sweep walks parent investigations of kind
     # masvs_audit and rolls up child statuses.
@@ -270,7 +270,7 @@ def _register_vr_periodic_sweeps() -> None:
         sweep_masvs_audit_parents,
     )
 
-    # vr.finalize — Phase C chokepoint. Walks RUNNING investigations
+    # vr.finalize -- Phase C chokepoint. Walks RUNNING investigations
     # and applies the deterministic 4-trigger picker:
     #
     #   1. all_outcomes              -> synthesis_enqueued
@@ -288,7 +288,7 @@ def _register_vr_periodic_sweeps() -> None:
     # run on the cron.
     register_periodic_sweep("vr.finalize", sweep_finalizable_investigations)
 
-    # vr.stall_recovery — recovery backstop for tasks killed mid-
+    # vr.stall_recovery -- recovery backstop for tasks killed mid-
     # execution by CancelledError, worker restart, or host kill.
     # Every other cutover fix assumes the task body returns or
     # raises through Exception; CancelledError inherits from

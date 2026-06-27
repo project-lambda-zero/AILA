@@ -2,7 +2,7 @@
 
 Replace MODULE_DESCRIPTION with a concrete description the routing agent
 will use to decide when to dispatch requests to this module. The description
-and examples are embedded directly in LLM prompts — write for LLM consumption.
+and examples are embedded directly in LLM prompts -- write for LLM consumption.
 """
 from __future__ import annotations
 

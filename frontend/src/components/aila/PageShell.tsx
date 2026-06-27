@@ -5,7 +5,7 @@ import { PageHeaderProvider, usePageHeaderOverrides } from "@/components/aila/Pa
 import { cn } from "@/lib/utils"
 
 /**
- * PageShell — every top-level page wraps in this. Carries the
+ * PageShell -- every top-level page wraps in this. Carries the
  * cyber-tech aesthetic in one place so individual pages stay
  * focused on their actual content:
  *
@@ -32,11 +32,11 @@ import { cn } from "@/lib/utils"
  *     ...page body...
  *   </PageShell>
  *
- * Existing AilaCard usages with techBorder/glow remain unchanged —
+ * Existing AilaCard usages with techBorder/glow remain unchanged --
  * the shell wraps everything, doesn't replace per-card decoration.
  */
 export interface PageShellProps {
-  /** Page title — rendered as h1 in the sticky header. */
+  /** Page title -- rendered as h1 in the sticky header. */
   title: ReactNode
   /** Optional subtitle line under the title. */
   subtitle?: ReactNode
@@ -48,11 +48,11 @@ export interface PageShellProps {
   actions?: ReactNode
   /** Page body. */
   children: ReactNode
-  /** Suppress the L-shaped corner brackets — useful for full-bleed maps/canvases. */
+  /** Suppress the L-shaped corner brackets -- useful for full-bleed maps/canvases. */
   hideCornerAccents?: boolean
   /** Suppress the top hairline. */
   hideTechBorder?: boolean
-  /** Override the wrapper className (rare — for non-standard layouts). */
+  /** Override the wrapper className (rare -- for non-standard layouts). */
   className?: string
   /** Override the inner content className. */
   contentClassName?: string
@@ -126,7 +126,7 @@ function PageShellInner({
     </>
   ) : null
 
-  // Top hairline — same treatment as AilaCard.techBorder, page scope.
+  // Top hairline -- same treatment as AilaCard.techBorder, page scope.
   const hairline = !hideTechBorder ? (
     <span
       aria-hidden

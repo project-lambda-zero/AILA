@@ -2,7 +2,7 @@
 
 Modules register their per-tick maintenance sweeps via
 :func:`register_periodic_sweep`. The platform worker's reaper block
-(``_run_reaper_block``) iterates this registry on every cron tick — the
+(``_run_reaper_block``) iterates this registry on every cron tick -- the
 worker has no awareness of which modules own which sweeps. This closes
 the layering violation where ``aila.platform.tasks.worker`` used to
 hardcode imports from ``aila.modules.vr.*``.

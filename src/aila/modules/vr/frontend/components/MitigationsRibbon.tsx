@@ -5,7 +5,7 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
  *  Renders one badge per protection (NX/ASLR/PIE/Canary/CFI/CET/RELRO)
  *  with green/red/gray tone reflecting present/absent/unknown. Hover
  *  reveals provenance ("from checksec" / "from IDA structures pass" /
- *  "inferred from imports"). Operator-friendly — every label is plain
+ *  "inferred from imports"). Operator-friendly -- every label is plain
  *  English with the technical token in parentheses. */
 export interface MitigationFlags {
   nx?: boolean | null;
@@ -61,7 +61,7 @@ export function MitigationsRibbon({
             key={spec.key}
             severity={t.severity}
             size="sm"
-            title={`${spec.label} — ${t.text} (source: ${source})`}
+            title={`${spec.label} -- ${t.text} (source: ${source})`}
           >
             {spec.short}: {t.text}
           </AilaBadge>

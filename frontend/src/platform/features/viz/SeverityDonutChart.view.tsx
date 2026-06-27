@@ -1,5 +1,5 @@
 /**
- * SeverityDonutChart.view — recharts-using inner JSX for the donut chart.
+ * SeverityDonutChart.view -- recharts-using inner JSX for the donut chart.
  *
  * Loaded lazily from the wrapper so recharts stays out of the root entry.
  * Receives already-derived slices + colors as props; the data-fetch and

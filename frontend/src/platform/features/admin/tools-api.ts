@@ -1,7 +1,7 @@
 /**
  * API layer for the Admin Tools Console (/admin/tools).
  *
- * Uses authorizedRequestJson<T> exclusively — no raw fetch, no hardcoded /api/ paths.
+ * Uses authorizedRequestJson<T> exclusively -- no raw fetch, no hardcoded /api/ paths.
  * Every call has an explicit type parameter (honesty rule 11).
  */
 

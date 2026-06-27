@@ -1,4 +1,4 @@
-"""Phase B — atomic pause/resume + cursor SSOT.
+"""Phase B -- atomic pause/resume + cursor SSOT.
 
 Exercises the pause_investigation_atomic / resume_investigation_atomic
 task bodies (vr/workflow/pause_resume.py) and the cursor SSOT contract
@@ -211,7 +211,7 @@ async def test_pause_cursor_already_paused_skips_re_flip() -> None:
             select(WorkflowStateCursor)
             .where(WorkflowStateCursor.run_id == branch_id),
         )).first()
-    # Already paused — archived_state should NOT have been overwritten
+    # Already paused -- archived_state should NOT have been overwritten
     # (it was None on seed; the UPDATE is gated on current_state != __paused__).
     assert cursor.current_state == RESERVED_PAUSED
     assert cursor.archived_state is None
@@ -243,7 +243,7 @@ async def test_pause_handles_unknown_reason() -> None:
 async def test_pause_flips_active_branches_to_paused() -> None:
     """Pause must flip every active branch's projection status to paused.
 
-    Phase B operator-observed bug: UI rendered investigation as paused
+    Phase B observed bug: UI rendered investigation as paused
     but every branch chip stayed green-and-pulsing because the cursor
     SSOT was correct but ``vr_investigation_branches.status`` was never
     touched.
@@ -285,7 +285,7 @@ async def test_pause_flips_active_branches_to_paused() -> None:
 async def test_resume_flips_paused_branches_back_to_active() -> None:
     """Resume must reverse pause's branch-status flip.
 
-    Symmetric with ``test_pause_flips_active_branches_to_paused`` —
+    Symmetric with ``test_pause_flips_active_branches_to_paused`` --
     closes the operator-visible UI gap where resume left branch chips
     stuck on the paused colour.
     """
@@ -353,7 +353,7 @@ async def test_resume_restores_cursor_from_archive() -> None:
 
 @pytest.mark.usefixtures("test_db")
 async def test_resume_fans_out_one_task_per_paused_cursor() -> None:
-    """Per §34 — resume must submit ONE task per cursor, not just one for primary."""
+    """Per §34 -- resume must submit ONE task per cursor, not just one for primary."""
     target_id = await _seed_target("re2")
     inv_id = await _seed_inv(target_id)
     branch_ids = [await _seed_branch(inv_id) for _ in range(3)]
@@ -423,7 +423,7 @@ async def test_resume_with_no_paused_cursors_returns_zero_resumed() -> None:
 
 
 # ----------------------------------------------------------------------
-# §233 — variant_hunt_order enqueues child investigation
+# §233 -- variant_hunt_order enqueues child investigation
 # ----------------------------------------------------------------------
 
 
@@ -431,7 +431,7 @@ async def test_resume_with_no_paused_cursors_returns_zero_resumed() -> None:
 async def test_dispatch_variant_hunt_order_enqueues_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """§233 — standalone VARIANT_HUNT_ORDER outcome must enqueue
+    """§233 -- standalone VARIANT_HUNT_ORDER outcome must enqueue
     run_vr_investigate for the child investigation. Prior to the fix
     the child sat at status=CREATED forever (zombie investigation).
     """
@@ -513,7 +513,7 @@ pytestmark = pytest.mark.asyncio
 
 
 # ----------------------------------------------------------------------
-# §47 / §54 — frontend cursor exposure via VRBranchSummary
+# §47 / §54 -- frontend cursor exposure via VRBranchSummary
 # ----------------------------------------------------------------------
 
 

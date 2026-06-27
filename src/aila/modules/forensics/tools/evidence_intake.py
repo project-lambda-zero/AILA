@@ -39,7 +39,7 @@ class EvidenceIntakeTool(Tool):
             action: Must be 'scan'.
             evidence_directory: Path on analyzer machine.
             integration: SSH connection fields.
-            analyzer_os: Target OS — ``"linux"`` or ``"windows"``.
+            analyzer_os: Target OS -- ``"linux"`` or ``"windows"``.
 
         Returns:
             Dict with 'files' list of classified evidence items.

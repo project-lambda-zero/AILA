@@ -65,7 +65,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 function TextBlock({ text }: { text: string | undefined }) {
-  if (!text) return <p className="font-mono text-xs text-text-muted italic">—</p>;
+  if (!text) return <p className="font-mono text-xs text-text-muted italic">--</p>;
   return <p className="font-mono text-xs text-text leading-relaxed">{text}</p>;
 }
 
@@ -84,12 +84,12 @@ interface FindingDetailSheetProps {
 // ---------------------------------------------------------------------------
 
 /**
- * FindingDetailSheet — full-detail slide-over for a vulnerability finding.
+ * FindingDetailSheet -- full-detail slide-over for a vulnerability finding.
  *
  * Shows CVE description, CVSS breakdown, scoring facts/inference/
  * recommended action, and metadata. Wires to:
- *   GET /vulnerability/findings/{id}   — scoring detail + details_json
- *   GET /vulnerability/cves/{cve_id}   — CVE description + CVSS breakdown
+ *   GET /vulnerability/findings/{id}   -- scoring detail + details_json
+ *   GET /vulnerability/cves/{cve_id}   -- CVE description + CVSS breakdown
  */
 export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDetailSheetProps) {
   const detailQuery = useFindingDetail(open ? findingId : null);
@@ -184,7 +184,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
             <AilaCard variant="default" padding="sm" techBorder glow><SectionLabel>CVE Description</SectionLabel>
             {intelQuery.isLoading && <LoadingSkeletonGroup lines={3} />}
             {!intelQuery.isLoading && (
-              <TextBlock text={intel?.description || (isCve ? undefined : "Advisory-only finding — no CVE description available.")} />
+              <TextBlock text={intel?.description || (isCve ? undefined : "Advisory-only finding -- no CVE description available.")} />
             )}
             {intel?.nvd_url && (
               <a
@@ -200,7 +200,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
             {/* CVSS breakdown */}
             {intel?.cvss_breakdown && intel.cvss_breakdown.length > 0 && (
               <AilaCard variant="default" padding="sm" techBorder glow><SectionLabel>
-                CVSS {intel.cvss_score !== null ? intel.cvss_score?.toFixed(1) : "—"} · {intel.base_severity ?? "—"}
+                CVSS {intel.cvss_score !== null ? intel.cvss_score?.toFixed(1) : "--"} · {intel.base_severity ?? "--"}
               </SectionLabel>
               {intel.cvss_vector && (
                 <p className="font-mono text-[10px] text-text-muted mb-2 break-all">{intel.cvss_vector}</p>
@@ -249,7 +249,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
               <dt className="text-text-muted">Package</dt>
               <dd className="text-text">{finding.package}</dd>
               <dt className="text-text-muted">Installed</dt>
-              <dd className="text-text">{finding.details.installed_version ?? "—"}</dd>
+              <dd className="text-text">{finding.details.installed_version ?? "--"}</dd>
               <dt className="text-text-muted">Fix available</dt>
               <dd className={finding.fixed_version ? "text-severity-low font-medium" : "text-text-muted"}>
                 {finding.fixed_version ?? "None published"}

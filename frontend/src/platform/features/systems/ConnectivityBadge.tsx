@@ -2,14 +2,14 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import type { ConnectivityStatus } from "./api";
 
 /**
- * ConnectivityBadge — SSH reachability status indicator (D-04).
+ * ConnectivityBadge -- SSH reachability status indicator (D-04).
  *
  * Pure component. No hooks, no queries. Takes the status string already
  * present in the enriched system row data.
  *
  * Renders a 6px colored dot preceding an AilaBadge label:
  * - reachable: mint green dot + info badge "ONLINE"
- * - unreachable: red dot + critical badge "OFFLINE" (no pulse — pulse reserved for security findings)
+ * - unreachable: red dot + critical badge "OFFLINE" (no pulse -- pulse reserved for security findings)
  * - unknown/null: gray dot + neutral badge "UNKNOWN"
  */
 export function ConnectivityBadge({ status }: { status: ConnectivityStatus | null }) {

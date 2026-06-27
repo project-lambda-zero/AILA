@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 # A destination is any callable that accepts a PlatformEvent and keyword context.
-# Context kwargs are optional — destinations may ignore what they don't need.
+# Context kwargs are optional -- destinations may ignore what they don't need.
 DestinationFn = Callable[..., None]
 
 
@@ -34,7 +34,7 @@ class EventEmitter:
         """Add a named destination callable to the fan-out list.
 
         Destinations receive every future emitted event. The name is used for
-        debugging only — it is not surfaced in event payloads. Destinations are
+        debugging only -- it is not surfaced in event payloads. Destinations are
         registered at emitter construction time, not per-event, so the set is
         stable for the lifetime of a request.
         """
@@ -66,7 +66,7 @@ class ThreadSafeEventEmitter(EventEmitter):
         """Enqueue the event and attempt to drain the queue under a non-blocking lock.
 
         If another thread is already draining, this call exits immediately after
-        enqueuing — the event is still in the queue and will be delivered by the
+        enqueuing -- the event is still in the queue and will be delivered by the
         draining thread before it releases the lock.
         """
         self._queue.put(event)
@@ -101,10 +101,10 @@ def build_emitter(
     """Construct an EventEmitter with four destinations wired.
 
     Destinations (per EMIT-01):
-      1. audit_db       — writes AuditEventRecord via record_audit_event
-      2. run_history    — appends WorkflowEvent to run_state.events
-      3. progress       — calls progress_callback(ProgressUpdate(...)) if provided
-      4. redis_stream   — publishes to Redis Stream for SSE frontend consumption
+      1. audit_db       -- writes AuditEventRecord via record_audit_event
+      2. run_history    -- appends WorkflowEvent to run_state.events
+      3. progress       -- calls progress_callback(ProgressUpdate(...)) if provided
+      4. redis_stream   -- publishes to Redis Stream for SSE frontend consumption
     """
     from aila.platform.contracts.platform import ProgressUpdate
     from aila.platform.services.audit import record_audit_event
@@ -122,7 +122,7 @@ def build_emitter(
                 details=event.details or {},
             )
         except sqlalchemy.exc.SQLAlchemyError:
-            # Session may be in a failed transaction state — don't let audit
+            # Session may be in a failed transaction state -- don't let audit
             # event failure cascade and kill the entire scan
             import logging as _logging
             _logging.getLogger(__name__).debug("audit_db emit failed (session may be in failed state)", exc_info=True)

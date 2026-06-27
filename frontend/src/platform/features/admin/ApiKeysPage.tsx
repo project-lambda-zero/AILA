@@ -1,12 +1,12 @@
 /**
- * ApiKeysPage — admin API key management with create and revoke.
+ * ApiKeysPage -- admin API key management with create and revoke.
  *
  * ADM-02: Lists all API keys (including revoked history). Admins can:
- * - Create a new key (label + role) via Dialog — raw key shown once.
+ * - Create a new key (label + role) via Dialog -- raw key shown once.
  * - Revoke an active key via confirmation Dialog.
  *
  * Uses real backend: GET/POST/DELETE /auth/keys.
- * No mock data — revoked_at presence determines key status.
+ * No mock data -- revoked_at presence determines key status.
  */
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -81,7 +81,7 @@ function roleSeverity(
 }
 
 function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "--";
   return new Date(value).toLocaleString();
 }
 
@@ -179,11 +179,11 @@ function CreateKeyDialog({
         </DialogHeader>
 
         {createdKey ? (
-          // Success view — show raw key once
+          // Success view -- show raw key once
           <div className="flex flex-col gap-4">
             <div className="rounded-[4px] border border-accent/40 bg-accent/10 px-4 py-3">
               <p className="font-mono text-xs text-accent font-semibold mb-1">
-                Copy this key now — it will not be shown again.
+                Copy this key now -- it will not be shown again.
               </p>
               <p className="font-mono text-xs text-text-muted">
                 Store it securely. Once dismissed, the raw key cannot be recovered.
@@ -213,7 +213,7 @@ function CreateKeyDialog({
               </div>
               <div className="flex flex-col gap-0.5">
                 <p className="font-mono text-xs text-text-muted">Label</p>
-                <p className="font-mono text-xs text-text">{createdKey.label || "—"}</p>
+                <p className="font-mono text-xs text-text">{createdKey.label || "--"}</p>
               </div>
             </div>
 
@@ -353,7 +353,7 @@ function RevokeKeyDialog({
             </div>
             <div className="flex flex-col gap-0.5">
               <p className="font-mono text-xs text-text-muted">Label</p>
-              <p className="font-mono text-xs text-text">{keyItem.label || "—"}</p>
+              <p className="font-mono text-xs text-text">{keyItem.label || "--"}</p>
             </div>
           </div>
 
@@ -424,7 +424,7 @@ function buildColumns(
       header: "Label",
       accessorKey: "label",
       cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text">{String(getValue()) || "—"}</span>
+        <span className="font-mono text-xs text-text">{String(getValue()) || "--"}</span>
       ),
     },
     {
@@ -537,7 +537,7 @@ export function ApiKeysPage() {
           Total Keys
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {keysQuery.isLoading ? "—" : totalKeys}
+          {keysQuery.isLoading ? "--" : totalKeys}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">All time</p></AilaCard>
 
@@ -545,7 +545,7 @@ export function ApiKeysPage() {
           Active Keys
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {keysQuery.isLoading ? "—" : activeKeys}
+          {keysQuery.isLoading ? "--" : activeKeys}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Not revoked
@@ -555,7 +555,7 @@ export function ApiKeysPage() {
           Revoked Keys
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {keysQuery.isLoading ? "—" : revokedKeys}
+          {keysQuery.isLoading ? "--" : revokedKeys}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Invalidated

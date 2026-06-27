@@ -2,9 +2,9 @@
 
 Two callables here populate the ARQ ``WorkerSettings``:
 
-* :func:`_on_job_start` — load the TaskRecord, set ``RUNNING`` on first try,
+* :func:`_on_job_start` -- load the TaskRecord, set ``RUNNING`` on first try,
   bind structlog, populate ``WorkflowRunRecord.plan_json`` for engine tasks.
-* :func:`_on_job_end` — single source of truth for TaskRecord terminal
+* :func:`_on_job_end` -- single source of truth for TaskRecord terminal
   state. Reads the per-job outcome stashed by the ``@platform_task``
   wrapper and drives one of six D-14 branches.
 
@@ -71,7 +71,7 @@ class _JobOutcome:
         result: Return value on ``kind == "success"``. ``None`` otherwise.
         exception: The raised exception (if any). Carried for debug logging
             only; never persisted verbatim to avoid leaking stack frames.
-        exception_class: ``type(exc).__name__`` — safe to label metrics with.
+        exception_class: ``type(exc).__name__`` -- safe to label metrics with.
     """
 
     kind: OutcomeKind
@@ -88,7 +88,7 @@ def _stash_outcome(job_id: str, job_try: int, outcome: _JobOutcome) -> None:
 
     Bounded to :data:`_OUTCOME_STASH_MAX` entries. The historical FIFO
     eviction dropped the OLDEST inserted keys, which were exactly the
-    long-running tasks operators care about — a MASVS audit with 318
+    long-running tasks operators care about -- a MASVS audit with 318
     investigation_loop tasks running 50 turns each could roll the
     stash past _OUTCOME_STASH_MAX between a long task's stash-write and
     its on_job_end read, and the long task got marked DEAD_LETTER (§77).
@@ -101,14 +101,14 @@ def _stash_outcome(job_id: str, job_try: int, outcome: _JobOutcome) -> None:
     outcome before any eviction can touch them.
     """
     if len(_OUTCOME_STASH) >= _OUTCOME_STASH_MAX:
-        # Drop the LRU head — dict iteration order is insertion order,
+        # Drop the LRU head -- dict iteration order is insertion order,
         # but every successful _pop_outcome ALSO removes the key, and
         # any other read goes through this stash. So the head IS the
         # least recently touched at this point.
         for key in list(_OUTCOME_STASH.keys())[:_OUTCOME_STASH_SWEEP_BATCH]:
             _OUTCOME_STASH.pop(key, None)
     # Move-to-end semantics: if the same (job_id, job_try) is being
-    # re-stashed (rare — would mean the wrapper re-fired), pop+reinsert
+    # re-stashed (rare -- would mean the wrapper re-fired), pop+reinsert
     # so it ends up at the dict tail.
     _OUTCOME_STASH.pop((job_id, job_try), None)
     _OUTCOME_STASH[(job_id, job_try)] = outcome
@@ -130,7 +130,7 @@ async def _on_job_start(ctx: dict[str, Any]) -> None:
     re-deriving the plan.
 
     Best-effort: a missing TaskRecord is logged at WARNING and the hook
-    returns without raising — ARQ still runs the job body.
+    returns without raising -- ARQ still runs the job body.
     """
     from aila.platform.tasks.template import _REGISTRY
     from aila.storage.database import async_session_scope
@@ -145,13 +145,13 @@ async def _on_job_start(ctx: dict[str, Any]) -> None:
         ).first()
         if record is None:
             _log.warning(
-                "on_job_start: TaskRecord %s not found — hook is best-effort, "
+                "on_job_start: TaskRecord %s not found -- hook is best-effort, "
                 "ARQ will still execute the job.",
                 task_id,
             )
             return
 
-        # fix §76 — reset started_at on EVERY attempt so the reaper's
+        # fix §76 -- reset started_at on EVERY attempt so the reaper's
         # fallback (started_at < fresh_cutoff when heartbeat_at IS NULL)
         # measures the CURRENT attempt's lifetime, not the original
         # submission. Without this, retry N inherits attempt 1's
@@ -169,7 +169,7 @@ async def _on_job_start(ctx: dict[str, Any]) -> None:
         )
 
         # Phase 181 audit trail (D-13 + D-38 from 178): populate plan_json
-        # covering the timeline page snapshot. fix §84 — always overwrite on
+        # covering the timeline page snapshot. fix §84 -- always overwrite on
         # job_try == 1 instead of skipping when plan_json IS NOT NULL.
         # A phase-handoff that reused the run_id with a fresh definition
         # previously left the prior definition's plan_json behind, so the
@@ -211,7 +211,7 @@ async def _on_job_start(ctx: dict[str, Any]) -> None:
 
 
 async def _on_job_end(ctx: dict[str, Any]) -> None:
-    """ARQ ``on_job_end`` hook — the single source of truth for terminal state.
+    """ARQ ``on_job_end`` hook -- the single source of truth for terminal state.
 
     Reads the outcome stash written by :func:`~aila.platform.tasks.template.platform_task`
     and drives one of six D-14 branches:
@@ -247,7 +247,7 @@ async def _on_job_end(ctx: dict[str, Any]) -> None:
             ).first()
             if record is None:
                 _log.warning(
-                    "on_job_end: TaskRecord %s not found — nothing to finalize.",
+                    "on_job_end: TaskRecord %s not found -- nothing to finalize.",
                     task_id,
                 )
                 return
@@ -265,7 +265,7 @@ async def _on_job_end(ctx: dict[str, Any]) -> None:
             dead_letter_exception_class = "Unknown"
 
             if outcome is None:
-                # Defensive branch — should be rare. Treat as a crash between
+                # Defensive branch -- should be rare. Treat as a crash between
                 # wrapper and hook: mark DEAD_LETTER so the row does not
                 # stay stuck in RUNNING.
                 values["status"] = TaskStatus.DEAD_LETTER
@@ -348,7 +348,7 @@ async def _on_job_end(ctx: dict[str, Any]) -> None:
         if terminal_branch == "success":
             await _enqueue_dependents(task_id)
 
-        # fix §130 — terminal state (any branch that wrote completed_at)
+        # fix §130 -- terminal state (any branch that wrote completed_at)
         # is the canonical wire-point for RunMemory.clear(). Without
         # this, the in-memory token / scratchpad map grows by one entry
         # per task and never shrinks across worker uptime. Skipped for
@@ -362,7 +362,7 @@ async def _on_job_end(ctx: dict[str, Any]) -> None:
                     _run_memory.clear(task_id)
             except (ImportError, AttributeError) as exc:
                 _log.debug(
-                    "_on_job_end: RunMemory.clear skipped for %s — %s",
+                    "_on_job_end: RunMemory.clear skipped for %s -- %s",
                     task_id, exc,
                 )
 
@@ -400,7 +400,7 @@ def _serialize_definition(definition: Any) -> dict[str, Any]:
     """JSON-safe snapshot of a :class:`WorkflowDefinition` for plan_json.
 
     ``WorkflowDefinition`` is a frozen dataclass whose ``states`` mapping
-    references live handler callables and service factories — not
+    references live handler callables and service factories -- not
     JSON-serializable. We persist only the graph shape Phase 181's timeline
     needs: ``definition_id``, ``start_state``, and the list of state names
     with their ``terminal`` flag and ``max_retries``. Handler identities
@@ -442,18 +442,18 @@ async def _enqueue_dependents(completed_task_id: str) -> None:
 
     Three fixes in one place:
 
-    * §134 — the historical implementation flipped status to QUEUED in
+    * §134 -- the historical implementation flipped status to QUEUED in
       the DB but never enqueued to Redis. The orphan-queued sweep then
       killed the dependent ~60s later. Now ``_arq_enqueue_async`` runs
       after each commit so the queue and DB stay consistent.
-    * §135 — the historical implementation scanned EVERY WAITING task on
+    * §135 -- the historical implementation scanned EVERY WAITING task on
       every completion. Now we pre-filter with a substring LIKE on
       ``depends_on_json`` so the WHERE clause never returns rows that
       can't possibly depend on this task. The JSON-decode +
       dependency-readiness check still runs per candidate, but the
       candidate set is bounded by the substring match instead of the
       whole WAITING table.
-    * §136 — dependency completion check now compares deduplicated sets,
+    * §136 -- dependency completion check now compares deduplicated sets,
       so a duplicate dep entry like ``["a", "a", "b"]`` no longer keeps
       the dependent stuck at WAITING forever.
     """
@@ -461,7 +461,7 @@ async def _enqueue_dependents(completed_task_id: str) -> None:
 
     promoted_records: list[TaskRecord] = []
     async with async_session_scope() as session:
-        # fix §135 — narrow candidate set with a substring LIKE so the
+        # fix §135 -- narrow candidate set with a substring LIKE so the
         # JSON-decode loop only sees rows that may actually reference the
         # completed task. Index on depends_on_json (added implicitly by
         # Postgres on Text) makes the pattern scan cheap relative to a
@@ -491,7 +491,7 @@ async def _enqueue_dependents(completed_task_id: str) -> None:
                     )
                 ).all()
             }
-            # fix §136 — compare deduplicated sets so ``["a", "a", "b"]``
+            # fix §136 -- compare deduplicated sets so ``["a", "a", "b"]``
             # is treated as ``{"a", "b"}`` and matches ``dep_records`` keys.
             unique_deps = set(deps)
             if dep_records.keys() == unique_deps and all(
@@ -506,14 +506,14 @@ async def _enqueue_dependents(completed_task_id: str) -> None:
     if not promoted_records:
         return
 
-    # fix §134 — actually enqueue to ARQ now that the rows are QUEUED. A
+    # fix §134 -- actually enqueue to ARQ now that the rows are QUEUED. A
     # row that's flipped in DB but absent from arq:queue:* gets reaped by
     # the orphan-queued sweep ~60s later, so the dependent never runs.
     redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
     if not redis_url:
         _log.warning(
             "_enqueue_dependents: %d task(s) promoted but Redis URL is "
-            "unset — orphan-queued sweep will reap them.",
+            "unset -- orphan-queued sweep will reap them.",
             len(promoted_records),
         )
         return

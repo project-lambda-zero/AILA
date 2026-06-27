@@ -103,7 +103,7 @@ def test_handler_emits_envelope_for_typed_error() -> None:
 
 
 def test_handler_handles_pre_existing_aila_error_without_http_status() -> None:
-    """Pre-existing AILAError subclasses lack ClassVar http_status — handler must
+    """Pre-existing AILAError subclasses lack ClassVar http_status -- handler must
     fall back to 500 and still emit the envelope shape (preflight BE-E)."""
     app = _build_app({"/raise": AuthenticationError})
     client = TestClient(app, raise_server_exceptions=False)
@@ -113,7 +113,7 @@ def test_handler_handles_pre_existing_aila_error_without_http_status() -> None:
 
     assert resp.status_code == 500
     _assert_envelope_shape(body)
-    # Derived code — either a class-name-derived token or INTERNAL_ERROR fallback.
+    # Derived code -- either a class-name-derived token or INTERNAL_ERROR fallback.
     assert body["code"]
     # message must NOT leak str(exc) ("boom").
     assert "boom" not in body["message"].lower()

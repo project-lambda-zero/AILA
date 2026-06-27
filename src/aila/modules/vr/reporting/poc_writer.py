@@ -47,7 +47,7 @@ class PocDraft(BaseModel):
     to execute or whether it's a skeleton awaiting their hardening.
     """
 
-    title: str = Field(description="Short PoC title — what it demonstrates.")
+    title: str = Field(description="Short PoC title -- what it demonstrates.")
     language: str = Field(
         description=(
             "PoC source language: 'python', 'c', 'cpp', 'bash', "
@@ -128,7 +128,7 @@ class PocDraft(BaseModel):
 class PocWriter:
     """LLM-backed PoC writer. Construction takes a ServiceFactory.
 
-    Stateless — one instance produces many PoCs concurrently. The
+    Stateless -- one instance produces many PoCs concurrently. The
     ``write`` method is the only public entry point.
     """
 
@@ -162,7 +162,7 @@ class PocWriter:
             model_class=PocDraft,
         )
         if response.disabled:
-            raise RuntimeError("LLM kill-switch active — cannot draft PoC")
+            raise RuntimeError("LLM kill-switch active -- cannot draft PoC")
         return PocDraft.model_validate(json.loads(response.content))
 
     @staticmethod
@@ -247,6 +247,6 @@ class PocWriter:
             "most natural language for this target. Make the PoC "
             "self-contained and runnable. If critical information is "
             "missing, set can_run=False and list the gaps in "
-            "missing_inputs — do not fabricate."
+            "missing_inputs -- do not fabricate."
         )
         return "\n".join(out)

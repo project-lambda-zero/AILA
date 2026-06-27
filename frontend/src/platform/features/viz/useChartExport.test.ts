@@ -1,5 +1,5 @@
 /**
- * useChartExport.test.ts — unit tests for the useChartExport hook.
+ * useChartExport.test.ts -- unit tests for the useChartExport hook.
  *
  * Tests state machine transitions: initial state, null element error,
  * isExporting lifecycle, and SVG-not-found error.
@@ -123,7 +123,7 @@ describe("useChartExport", () => {
     const container = makeContainerWithSvg();
 
     const linkClickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    // URL.createObjectURL is not in jsdom — stub it
+    // URL.createObjectURL is not in jsdom -- stub it
     const createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
     const revokeObjectURL = vi.fn();
     vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });

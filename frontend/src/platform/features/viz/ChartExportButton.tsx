@@ -1,5 +1,5 @@
 /**
- * ChartExportButton — VIZ-05.
+ * ChartExportButton -- VIZ-05.
  *
  * Small PNG/SVG export button pair for chart containers.
  * Accepts a ref to the chart's outer div element for html2canvas capture.

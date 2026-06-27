@@ -19,7 +19,7 @@ from aila.platform.contracts.reasoning import (
 from aila.platform.exceptions import ValidationError
 from aila.platform.llm.client import AilaLLMClient
 
-# fix §132 — imports first, then module-level statements (PEP 8 / E402).
+# fix §132 -- imports first, then module-level statements (PEP 8 / E402).
 _log = logging.getLogger(__name__)
 
 __all__ = ["CyberReasoningEngine"]
@@ -40,7 +40,7 @@ _TOOL_PREFIXES: tuple[str, ...] = (
 # separately from this cap.
 _MAX_AGENT_KEYS_TOTAL: int = 50
 
-# fix §131 — DEFAULT profile table. Operators add new domains without a
+# fix §131 -- DEFAULT profile table. Operators add new domains without a
 # code deploy by writing the profile JSON to ConfigRegistry under the key
 # ``reasoning_domain_profile_{domain_id}`` (a JSON object with the same
 # field shape as ReasoningDomainProfile). The engine loads overrides
@@ -104,7 +104,7 @@ class CyberReasoningEngine:
         config_registry: Any | None = None,
     ) -> None:
         self._llm_client = llm_client
-        # fix §131 — optional registry lets operators add a domain profile
+        # fix §131 -- optional registry lets operators add a domain profile
         # by writing JSON to ConfigRegistry without a code deploy. Cached
         # on first lookup to avoid repeated registry round-trips.
         self._config_registry = config_registry
@@ -165,7 +165,7 @@ class CyberReasoningEngine:
                 cached = ReasoningDomainProfile(**payload)
         except (ValueError, TypeError, ValidationError) as exc:
             _log.debug(
-                "reasoning: profile override for %s ignored — %s",
+                "reasoning: profile override for %s ignored -- %s",
                 domain_id, exc,
             )
         self._profile_override_cache[domain_id] = cached
@@ -205,11 +205,11 @@ class CyberReasoningEngine:
         raw = self._extract_json_object(response.content)
         # LLMs sometimes return null for required string fields.
         # Patch the raw dict so validation doesn't crash the turn,
-        # but log a warning — the model should be producing these.
+        # but log a warning -- the model should be producing these.
         for str_field in ('expected_observation', 'reasoning'):
             if str_field in raw and raw[str_field] is None:
                 _log.warning(
-                    'LLM returned null for required field %s — defaulting to empty string. '
+                    'LLM returned null for required field %s -- defaulting to empty string. '
                     'This indicates the model is not reasoning properly.',
                     str_field,
                 )
@@ -229,14 +229,14 @@ class CyberReasoningEngine:
             nested_cmd = nested.get('command') if nested else None
             if isinstance(nested_cmd, str) and nested_cmd:
                 raw['command'] = nested_cmd
-                _log.info('LLM nested command under tool_run key — lifted to top level')
+                _log.info('LLM nested command under tool_run key -- lifted to top level')
             elif nested and isinstance(nested.get('tool'), str):
                 raw['command'] = json.dumps({
                     'tool': nested['tool'],
                     'args': nested.get('args') or {},
                 })
                 _log.info(
-                    'LLM nested tool/args under tool_run key — synthesized '
+                    'LLM nested tool/args under tool_run key -- synthesized '
                     'command for tool=%s', nested['tool'],
                 )
             elif isinstance(raw.get('tool'), str):
@@ -245,7 +245,7 @@ class CyberReasoningEngine:
                     'args': raw.get('args') or {},
                 })
                 _log.info(
-                    'LLM emitted top-level tool/args instead of nested command — '
+                    'LLM emitted top-level tool/args instead of nested command -- '
                     'synthesized command for tool=%s', raw['tool'],
                 )
         return ReasoningTurnDecision.model_validate(raw)
@@ -264,7 +264,7 @@ class CyberReasoningEngine:
 
         # Merge live hypotheses across turns instead of replacing.
         # The LLM emits its CURRENT view each turn, but it may forget
-        # to repeat earlier ones — that previously caused live
+        # to repeat earlier ones -- that previously caused live
         # hypotheses to vanish silently. We:
         #   1. Start with the existing live list
         #   2. Drop any whose id is in the new rejected set
@@ -274,8 +274,8 @@ class CyberReasoningEngine:
         # only way to remove a hypothesis is to explicitly reject it.
         # Rejection dedup by id only (last-claim wins). The previous
         # (id, claim) tuple dedup let duplicates accumulate whenever
-        # the agent rephrased a rejection's claim text turn-to-turn —
-        # observed live on investigation 8cf6144f: r1, r_gc_layout,
+        # the agent rephrased a rejection's claim text turn-to-turn --
+        # observed live on investigation <inv-uuid>: r1, r_gc_layout,
         # r_obj_moved_missing_from_source all appeared twice in
         # maddie's rejected list with slightly different wording.
         rejected_by_id: dict[str, Any] = {}
@@ -320,7 +320,7 @@ class CyberReasoningEngine:
         # Cap agent-self-set observables to keep case_state bounded:
         #   (1) max 10 NEW keys per turn (anti-spam)
         #   (2) block writes to tool / directive namespaces
-        #   (3) max 50 TOTAL agent-set keys across all turns — LRU evict
+        #   (3) max 50 TOTAL agent-set keys across all turns -- LRU evict
         #       oldest by dict-insertion order; tool + directive keys
         #       are NEVER evicted (they're preserved by the partition
         #       in render_case_model and live separately from the cap).
@@ -375,7 +375,7 @@ class CyberReasoningEngine:
             if case_state.contract.depends_on:
                 parts.append(f"  depends_on    = {case_state.contract.depends_on}")
         else:
-            parts.append("Contract: (not parsed yet — derive it this turn)")
+            parts.append("Contract: (not parsed yet -- derive it this turn)")
 
         # Partition observables so tool-generated readings (read_function
         # bodies, taint_paths_to results, callers_of edges, semantic
@@ -389,7 +389,7 @@ class CyberReasoningEngine:
         # / ``ida_headless:*`` / ``ida_headless.*`` / ``android_mcp:*``
         # / ``android_mcp.*``. ``_directive.*`` is already lifted to its
         # own top-of-prompt section so we drop them. Everything else is
-        # "agent-set scratchpad" — useful in moderation, hard-capped
+        # "agent-set scratchpad" -- useful in moderation, hard-capped
         # here too.
         tool_prefixes = (
             "audit_mcp:", "audit_mcp.",
@@ -406,11 +406,11 @@ class CyberReasoningEngine:
             else:
                 agent_obs.append((k, v))
         if tool_obs:
-            parts.append("Observables — tool readings (cached source / graph data — DO NOT re-fetch if listed here):")
+            parts.append("Observables -- tool readings (cached source / graph data -- DO NOT re-fetch if listed here):")
             for key, value in tool_obs[-80:]:
                 parts.append(f"  - {key} = {value}")
         if agent_obs:
-            parts.append("Observables — agent scratchpad (most recent 15):")
+            parts.append("Observables -- agent scratchpad (most recent 15):")
             for key, value in agent_obs[-15:]:
                 parts.append(f"  - {key} = {value}")
         if not tool_obs and not agent_obs:
@@ -577,7 +577,7 @@ class CyberReasoningEngine:
         if answer is None or not str(answer).strip():
             return "answer is empty"
         if not primary_artifact:
-            return "provenance.primary_artifact is empty — need a concrete citation"
+            return "provenance.primary_artifact is empty -- need a concrete citation"
         if required_artifacts:
             cited = {primary_artifact, *(corroboration or [])}
             required = {artifact.split("] ", 1)[-1] for artifact in required_artifacts}
@@ -727,7 +727,7 @@ class CyberReasoningEngine:
         example follow-up), because the slice spans BOTH objects plus
         the prose between them. ``json.JSONDecoder.raw_decode`` walks
         one value starting at the given offset and returns where it
-        stopped — so we can ignore everything past the first object.
+        stopped -- so we can ignore everything past the first object.
         """
         start = text.find("{")
         if start < 0:

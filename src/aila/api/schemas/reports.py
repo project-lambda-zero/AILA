@@ -114,7 +114,7 @@ class ReportSummary(APIModel):
     """
 
     id: str = Field(description="WorkflowRunRecord id (string UUID)")
-    title: str = Field(description="Report title — derived from workflow query_text")
+    title: str = Field(description="Report title -- derived from workflow query_text")
     target: str = Field(description="Primary scanned target (host / fleet label)")
     created_at: datetime = Field(description="Run creation timestamp")
     status: str = Field(description="Run status: running | completed | failed")

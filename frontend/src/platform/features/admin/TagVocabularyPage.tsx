@@ -127,7 +127,7 @@ function DeleteVocabDialog({
 const SLUG_PATTERN = /^[a-z0-9_-]+$/i;
 
 /**
- * TagVocabularyPage — admin-only management of asset tag keys (v6.0).
+ * TagVocabularyPage -- admin-only management of asset tag keys (v6.0).
  *
  * Lists every tag key in the vocabulary with a usage count derived from the
  * current systems sample, lets admins add new keys (POST /tags/vocabulary),
@@ -141,7 +141,7 @@ const SLUG_PATTERN = /^[a-z0-9_-]+$/i;
  */
 export function TagVocabularyPage() {
   const vocabQuery = useTagVocabulary();
-  // page_size=250 is the backend cap (see systems router) — covers the common
+  // page_size=250 is the backend cap (see systems router) -- covers the common
   // case while keeping a single round-trip for usage tallying.
   const systemsQuery = useSystems(1, 250);
   const createMutation = useCreateTagVocab();
@@ -162,7 +162,7 @@ export function TagVocabularyPage() {
     for (const system of systems) {
       const seenKeys = new Set<string>();
       for (const tag of system.tags ?? []) {
-        // Count each key once per system — assigning the same key twice with
+        // Count each key once per system -- assigning the same key twice with
         // different values (env=prod, env=staging) shouldn't inflate usage.
         if (seenKeys.has(tag.tag_key)) continue;
         seenKeys.add(tag.tag_key);
@@ -216,7 +216,7 @@ export function TagVocabularyPage() {
           Total Keys
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {vocabQuery.isLoading ? "—" : vocabulary.length}
+          {vocabQuery.isLoading ? "--" : vocabulary.length}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Defaults + custom
@@ -225,7 +225,7 @@ export function TagVocabularyPage() {
           Custom Keys
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {vocabQuery.isLoading ? "—" : userDefinedCount}
+          {vocabQuery.isLoading ? "--" : userDefinedCount}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Added by admins
@@ -234,7 +234,7 @@ export function TagVocabularyPage() {
           Keys In Use
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {systemsQuery.isLoading || vocabQuery.isLoading ? "—" : inUseCount}
+          {systemsQuery.isLoading || vocabQuery.isLoading ? "--" : inUseCount}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Assigned to ≥1 system
@@ -358,7 +358,7 @@ export function TagVocabularyPage() {
                     </td>
                     <td className="px-4 py-2 align-top">
                       <span className="font-mono text-xs text-text-muted">
-                        {entry.description || "—"}
+                        {entry.description || "--"}
                       </span>
                     </td>
                     <td className="px-4 py-2 align-top">
@@ -375,7 +375,7 @@ export function TagVocabularyPage() {
                     <td className="px-4 py-2 align-top text-right">
                       {systemsQuery.isLoading ? (
                         <span className="font-mono text-xs text-text-muted">
-                          —
+                          --
                         </span>
                       ) : (
                         <span

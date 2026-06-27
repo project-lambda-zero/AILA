@@ -2,12 +2,12 @@
  * admin-surfaces.spec.ts
  *
  * E2E tests for all four admin pages:
- *   /admin/audit    — Audit Logs (ADM-01)
- *   /admin/api-keys — API Keys (ADM-02)
- *   /admin/config   — Platform Config (ADM-03)
- *   /admin/health   — System Health (ADM-04)
+ *   /admin/audit    -- Audit Logs (ADM-01)
+ *   /admin/api-keys -- API Keys (ADM-02)
+ *   /admin/config   -- Platform Config (ADM-03)
+ *   /admin/health   -- System Health (ADM-04)
  *
- * Uses REAL PostgreSQL backend — no mocks, no MSW, no route intercepts.
+ * Uses REAL PostgreSQL backend -- no mocks, no MSW, no route intercepts.
  * Auth: admin token injected via localStorage (Zustand auth store format).
  * Cleanup: API keys created during tests are revoked in afterAll.
  */
@@ -62,7 +62,7 @@ async function getHealth(
 }
 
 // ---------------------------------------------------------------------------
-// Auth helpers — page setup
+// Auth helpers -- page setup
 // ---------------------------------------------------------------------------
 
 async function setupAdminPage(page: Page, tokens: TokenPair, path: string): Promise<void> {
@@ -86,7 +86,7 @@ test.describe("Admin Surfaces", () => {
     // Clean up any API keys created during tests
     for (const keyId of createdKeyIds) {
       await revokeApiKey(request, tokens.access_token, keyId).catch(() => {
-        // Ignore — may already be revoked
+        // Ignore -- may already be revoked
       });
     }
   });
@@ -120,7 +120,7 @@ test.describe("Admin Surfaces", () => {
     test("audit table renders or shows empty state after load", async ({ page }) => {
       await setupAdminPage(page, tokens, "/admin/audit");
 
-      // Wait for loading to finish — either table headers or empty state
+      // Wait for loading to finish -- either table headers or empty state
       await page.waitForSelector(
         'text=Run ID, text=No audit events',
         { timeout: 15_000 },
@@ -137,7 +137,7 @@ test.describe("Admin Surfaces", () => {
       const hasEvents = await page.getByText("Export CSV").isVisible().catch(() => false);
       const hasEmpty = await page.getByText("No audit events").isVisible().catch(() => false);
 
-      // One of these must be true — either data loaded or empty state shown
+      // One of these must be true -- either data loaded or empty state shown
       expect(hasEvents || hasEmpty).toBe(true);
     });
 
@@ -300,7 +300,7 @@ test.describe("Admin Surfaces", () => {
         { timeout: 15_000 },
       );
 
-      // Page should not have crashed — heading still visible
+      // Page should not have crashed -- heading still visible
       await expect(page.getByRole("heading", { name: "Platform Config" })).toBeVisible();
     });
 
@@ -370,7 +370,7 @@ test.describe("Admin Surfaces", () => {
       // Click refresh
       await page.getByRole("button", { name: "Refresh" }).click();
 
-      // Page remains stable — heading still visible
+      // Page remains stable -- heading still visible
       await expect(page.getByRole("heading", { name: "System Health" })).toBeVisible({
         timeout: 5_000,
       });

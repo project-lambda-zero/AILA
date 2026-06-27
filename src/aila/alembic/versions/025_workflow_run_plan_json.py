@@ -1,4 +1,4 @@
-"""025 — workflow_run_records.plan_json (Phase 178).
+"""025 -- workflow_run_records.plan_json (Phase 178).
 
 Adds a nullable JSONB column to the ``workflowrunrecord`` table. Phase 178
 does NOT populate this column; Phase 179's ``@platform_task`` wrapper will

@@ -1,4 +1,4 @@
-"""030 — add task_id column to forensics_investigations.
+"""030 -- add task_id column to forensics_investigations.
 
 Stores the ARQ task ID so the SSE event stream endpoint can
 look up the Redis Stream key for live progress tracking.

@@ -2,7 +2,7 @@
  * findings-table.spec.ts
  *
  * E2E tests for the /vulnerability/findings table view.
- * Uses REAL PostgreSQL backend — no mocks, no MSW, no route intercepts.
+ * Uses REAL PostgreSQL backend -- no mocks, no MSW, no route intercepts.
  *
  * Coverage:
  *   - Page renders with heading and severity chart
@@ -19,7 +19,7 @@ import { test, expect, type APIRequestContext } from "@playwright/test";
 import { API_BASE, getTokens, injectAuthState, type TokenPair } from "../helpers/auth";
 
 // ---------------------------------------------------------------------------
-// Seeding helpers — insert findings directly via API where possible,
+// Seeding helpers -- insert findings directly via API where possible,
 // or via the internal test-seeding endpoint if available.
 // ---------------------------------------------------------------------------
 
@@ -151,7 +151,7 @@ test.describe("Findings Table", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Filter interaction tests — URL state
+  // Filter interaction tests -- URL state
   // -------------------------------------------------------------------------
 
   test("clicking a severity chip adds ?severity= to URL", async ({ page }) => {
@@ -224,7 +224,7 @@ test.describe("Findings Table", () => {
     // Use a filter combination that returns no results
     await page.goto("/vulnerability/findings?severity=CRITICAL&workflow_state=verified&kev=true");
 
-    // Either empty state or table — if table has data for this combo it won't show empty state
+    // Either empty state or table -- if table has data for this combo it won't show empty state
     // Just verify the page doesn't crash and heading is visible
     await expect(
       page.getByRole("heading", { name: "Vulnerability Findings" }),
@@ -260,7 +260,7 @@ test.describe("Findings Table", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Table content (conditional — only when seeding is supported)
+  // Table content (conditional -- only when seeding is supported)
   // -------------------------------------------------------------------------
 
   test("table shows findings rows when seeded data exists", async ({ page, request }) => {

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Platform config constants — public re-exports for modules
+# Platform config constants -- public re-exports for modules
 #
 # Modules that need to look up platform config keys (e.g. redis_url) must
 # obtain them via aila.platform.contracts.platform, NOT via
@@ -72,7 +72,7 @@ class RouteDecision(BaseModel):
     """The routing decision produced by ModuleRouter for a single query.
 
     Carried on RunState.route and echoed in PlatformResponse.route so every
-    downstream system — modules, CLI, API — knows why a particular action was
+    downstream system -- modules, CLI, API -- knows why a particular action was
     selected and how confident the router was.
     """
 
@@ -123,7 +123,7 @@ class WorkflowEvent(BaseModel):
     """A single workflow stage transition event recorded for a run.
 
     Appended to RunState.events as each pipeline stage completes. Surfaced in
-    PlatformResponse.state_history when debug=True — omitted in production to
+    PlatformResponse.state_history when debug=True -- omitted in production to
     keep responses compact.
     """
 

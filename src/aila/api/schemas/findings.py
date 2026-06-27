@@ -100,7 +100,7 @@ BULK_ALLOWED_WORKFLOW_STATES: tuple[str, ...] = (
 class BulkStatusUpdateRequest(APIModel):
     """Request body for PATCH /findings/bulk (D-14, API-16).
 
-    All finding_ids are updated atomically — all succeed or all fail (D-14).
+    All finding_ids are updated atomically -- all succeed or all fail (D-14).
     At least one of status or workflow_state must be provided.
     status must be one of BULK_ALLOWED_STATUSES.
     workflow_state must be one of BULK_ALLOWED_WORKFLOW_STATES.

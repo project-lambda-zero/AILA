@@ -22,7 +22,7 @@ import type {
 
 import type { BlobResponsePayload } from "@platform/api/http";
 
-/** Authed blob request — mirrors authorizedRequestJson but returns a blob payload. */
+/** Authed blob request -- mirrors authorizedRequestJson but returns a blob payload. */
 async function authorizedRequestBlob(
   pathname: string,
   body: unknown,
@@ -125,7 +125,7 @@ export function useCreateDirective(projectId: string) {
       queryClient.invalidateQueries({
         queryKey: ["forensics", "directives", projectId],
       });
-      toast.success("Directive added — AILA will read it on next turn.");
+      toast.success("Directive added -- AILA will read it on next turn.");
     },
     onError: (err: Error) => {
       toast.error(`Failed to add directive: ${err.message}`);
@@ -216,7 +216,7 @@ export function useRerunInvestigation(projectId: string) {
       const newId = envelope.data?.id ?? "";
       toast.success(
         newId
-          ? `Rerun started — new investigation ${newId.slice(0, 8)}`
+          ? `Rerun started -- new investigation ${newId.slice(0, 8)}`
           : "Rerun started"
       );
     },
@@ -245,7 +245,7 @@ export function useCancelInvestigation(projectId: string) {
         queryKey: ["forensics", "investigation-poll", projectId, investigationId],
       });
       if (result.data.already_terminal) {
-        toast.info("Investigation already finished — nothing to cancel.");
+        toast.info("Investigation already finished -- nothing to cancel.");
       } else {
         toast.success("Investigation stopped.");
       }
@@ -290,11 +290,11 @@ export function useTagInvestigation(projectId: string) {
       });
       if (variables.body.verdict === "true") {
         toast.success(
-          "Tagged as TRUE finding — future runs will treat it as ground truth."
+          "Tagged as TRUE finding -- future runs will treat it as ground truth."
         );
       } else {
         toast.success(
-          "Tagged as FALSE finding — future runs will skip this hypothesis."
+          "Tagged as FALSE finding -- future runs will skip this hypothesis."
         );
       }
     },
@@ -326,7 +326,7 @@ export function useSuppressFinding(projectId: string) {
         queryKey: ["forensics", "directives", projectId],
       });
       toast.success(
-        "Marked as false positive — hidden from findings, future runs will treat as benign."
+        "Marked as false positive -- hidden from findings, future runs will treat as benign."
       );
     },
     onError: (err: Error) => {
@@ -353,7 +353,7 @@ export function useUnsuppressFinding(projectId: string) {
       queryClient.invalidateQueries({
         queryKey: ["forensics", "directives", projectId],
       });
-      toast.success("Unsuppressed — the finding will re-appear.");
+      toast.success("Unsuppressed -- the finding will re-appear.");
     },
     onError: (err: Error) => {
       toast.error(`Failed to unsuppress: ${err.message}`);

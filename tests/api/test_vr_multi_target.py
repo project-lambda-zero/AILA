@@ -225,7 +225,7 @@ async def test_attach_idempotent_updates_role(
     assert r1.status_code == 201
     id1 = r1.json()["data"]["id"]
 
-    # Re-attach with different role — should update, not duplicate
+    # Re-attach with different role -- should update, not duplicate
     r2 = await async_client.post(
         f"/vr/investigations/{inv_id}/targets", headers=_auth(admin_token),
         json={"target_id": secondary, "role": "derived_fork", "rationale": "second"},

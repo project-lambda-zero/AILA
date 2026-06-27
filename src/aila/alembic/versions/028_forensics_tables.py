@@ -1,4 +1,4 @@
-"""028 — create forensics module tables.
+"""028 -- create forensics module tables.
 
 Adds all tables required by the forensics investigation module:
   - forensics_projects

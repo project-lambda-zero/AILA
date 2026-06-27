@@ -165,7 +165,7 @@ async def test_render_returns_markdown_body_and_validation(
     assert payload["body_format"] == "markdown"
     assert "Background" in payload["body"]
     assert "JSCallReducer::ReduceJSCall" in payload["body"]
-    # blog_post requires title + summary — finding has neither directly,
+    # blog_post requires title + summary -- finding has neither directly,
     # so validation_errors will list them.
     assert isinstance(payload["validation_errors"], list)
 

@@ -46,7 +46,7 @@ function makeInvestigation(steps: AgentStep[], overrides: Partial<InvestigationD
     status: "completed",
     attempts_used: steps.length,
     max_attempts: 10,
-    final_answer: "explorer.exe and userinit.exe ran normally. A suspicious cmd.exe was spawned from winlogon.exe (PID 4892). Registry autoruns contain an entry pointing to C:\\Users\\Public\\svchost32.exe — likely persistence mechanism.",
+    final_answer: "explorer.exe and userinit.exe ran normally. A suspicious cmd.exe was spawned from winlogon.exe (PID 4892). Registry autoruns contain an entry pointing to C:\\Users\\Public\\svchost32.exe -- likely persistence mechanism.",
     confidence: "high",
     steps,
     ...overrides,

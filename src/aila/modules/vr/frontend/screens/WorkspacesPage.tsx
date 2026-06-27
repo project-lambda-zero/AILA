@@ -19,7 +19,7 @@ const THEMES: { value: WorkspaceTheme; label: string }[] = [
 ];
 
 function formatDate(value?: string | null): string {
-  if (!value) return "—";
+  if (!value) return "--";
   try {
     return new Date(value).toLocaleString();
   } catch {

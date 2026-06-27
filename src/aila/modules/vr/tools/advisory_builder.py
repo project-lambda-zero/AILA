@@ -1,4 +1,4 @@
-"""Advisory builder — CVSS scoring, CWE mapping, vendor-ready formatting.
+"""Advisory builder -- CVSS scoring, CWE mapping, vendor-ready formatting.
 
 Loads CVSS templates and CWE mappings from the VR module's data files,
 applies caller-supplied overrides, and computes CVSS 3.1 base scores using

@@ -1,24 +1,24 @@
-"""Zeek network security monitor runner — PCAP analysis over SSH.
+"""Zeek network security monitor runner -- PCAP analysis over SSH.
 
 Zeek (formerly Bro) processes PCAPs into structured log files with deep
 protocol analysis that goes far beyond tshark. It generates:
 
-- conn.log      — every connection (TCP/UDP/ICMP) with duration, bytes, state
-- dns.log       — full DNS transactions with query/response/TTL
-- http.log      — HTTP requests with host, URI, method, user-agent, MIME type, status
-- ssl.log       — TLS/SSL handshakes with SNI, issuer, subject, JA3/JA3S hashes
-- files.log     — every file transferred over any protocol with MIME type and hashes
-- x509.log      — certificate details
-- smtp.log      — email metadata
-- pe.log        — portable executable metadata from transferred files
-- notice.log    — Zeek's built-in anomaly/threat detections
-- weird.log     — protocol violations and anomalies
-- dhcp.log      — DHCP leases (IP assignment history)
-- kerberos.log  — Kerberos auth events
-- smb_files.log — SMB file transfers
-- dpd.log       — dynamic protocol detection events
-- ssh.log       — SSH connection attempts with version strings
-- ftp.log       — FTP commands and responses
+- conn.log      -- every connection (TCP/UDP/ICMP) with duration, bytes, state
+- dns.log       -- full DNS transactions with query/response/TTL
+- http.log      -- HTTP requests with host, URI, method, user-agent, MIME type, status
+- ssl.log       -- TLS/SSL handshakes with SNI, issuer, subject, JA3/JA3S hashes
+- files.log     -- every file transferred over any protocol with MIME type and hashes
+- x509.log      -- certificate details
+- smtp.log      -- email metadata
+- pe.log        -- portable executable metadata from transferred files
+- notice.log    -- Zeek's built-in anomaly/threat detections
+- weird.log     -- protocol violations and anomalies
+- dhcp.log      -- DHCP leases (IP assignment history)
+- kerberos.log  -- Kerberos auth events
+- smb_files.log -- SMB file transfers
+- dpd.log       -- dynamic protocol detection events
+- ssh.log       -- SSH connection attempts with version strings
+- ftp.log       -- FTP commands and responses
 
 What Zeek can do that tshark cannot:
 - JA3/JA3S TLS fingerprinting (identify malware by TLS handshake pattern)
@@ -36,7 +36,7 @@ from aila.platform.tools._common import Tool
 
 TOOL_ALIAS = "zeek_runner"
 CAPABILITY = (
-    "Run Zeek network security monitor for deep PCAP analysis — structured logs, "
+    "Run Zeek network security monitor for deep PCAP analysis -- structured logs, "
     "JA3 fingerprinting, file extraction, anomaly detection, and protocol analysis."
 )
 

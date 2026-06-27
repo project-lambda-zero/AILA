@@ -12,13 +12,13 @@ import { useMemo, useState } from "react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 
-/** EvidenceGraph — first-class evidence rendering surface from
+/** EvidenceGraph -- first-class evidence rendering surface from
  *  08_FRONTEND_UX.md §1.9 / §3.
  *
  *  Six node types, five edge types. Node tones come from AILA design
  *  tokens (passed via inline `style.background` because ReactFlow
  *  needs concrete colours and CSS vars don't resolve inside SVG fills
- *  on the edges layer — same gotcha as Recharts, per CLAUDE.md
+ *  on the edges layer -- same gotcha as Recharts, per CLAUDE.md
  *  mistake #4).
  *
  *  Server-side layout is now authoritative: callers can pass
@@ -81,7 +81,7 @@ const EDGE_STYLE: Record<
 };
 
 /** Lay out nodes in concentric tiers by kind. Cheap dagre alternative
- *  that works without an extra dep — hypotheses ring inside, evidence
+ *  that works without an extra dep -- hypotheses ring inside, evidence
  *  outside, crashes/exploits/advisories on the perimeter, obligations
  *  off to one side. */
 function layout(nodes: GraphNodeInput[]): Map<string, { x: number; y: number }> {
@@ -257,7 +257,7 @@ export function EvidenceGraph({
     // is missing or empty (08_FRONTEND_UX.md §1.9).
     if (serverPositions && serverPositions.size > 0) {
       // Server coords are id-keyed against the original rawNodes
-      // — clip to the filtered subset to honour search/filter
+      // -- clip to the filtered subset to honour search/filter
       // without re-running the layout client-side.
       const filtered = new Map<string, { x: number; y: number }>();
       for (const n of filteredNodes) {
@@ -400,7 +400,7 @@ export function EvidenceGraph({
           onChange={(e) => setLayoutAlgo(e.target.value as LayoutAlgo)}
           className="px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border-default"
           aria-label="Layout algorithm"
-          title="Layout algorithm — concentric tiers, single radial ring, or kind-grouped grid"
+          title="Layout algorithm -- concentric tiers, single radial ring, or kind-grouped grid"
         >
           <option value="concentric">layout: concentric</option>
           <option value="radial">layout: radial</option>

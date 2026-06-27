@@ -2,7 +2,7 @@
  * findings-bulk-actions.spec.ts
  *
  * E2E tests for bulk selection and bulk action toolbar.
- * Uses REAL PostgreSQL backend — no mocks.
+ * Uses REAL PostgreSQL backend -- no mocks.
  *
  * Coverage:
  *   - Bulk actions toolbar is hidden when no rows selected

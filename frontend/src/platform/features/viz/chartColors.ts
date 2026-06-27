@@ -1,9 +1,9 @@
 /**
- * chartColors — shared theme-aware color resolver for Recharts.
+ * chartColors -- shared theme-aware color resolver for Recharts.
  *
  * Recharts renders into SVG and applies color props as SVG presentation
  * attributes (e.g. `<path fill="...">`). Browsers do NOT resolve CSS
- * `var(--token)` inside SVG presentation attributes — only inside CSS
+ * `var(--token)` inside SVG presentation attributes -- only inside CSS
  * properties via inline `style` or stylesheets. The result: any chart that
  * passed `fill="var(--color-critical)"` rendered as an empty box.
  *

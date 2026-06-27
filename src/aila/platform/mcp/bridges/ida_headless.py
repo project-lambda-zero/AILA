@@ -1,4 +1,4 @@
-"""IDA Headless MCP bridge — AILA Tool wrapping the HTTP API.
+"""IDA Headless MCP bridge -- AILA Tool wrapping the HTTP API.
 
 Translates AILA tool ``forward()`` calls into HTTP POST requests against
 the IDA Headless MCP HTTP API.  The bridge is stateless: all binary state
@@ -45,7 +45,7 @@ __all__ = ["IDABridgeTool"]
 def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
     """Project an MCP tool catalog entry into the form the prompt
     builder + agent need. See ``audit_mcp_bridge._compact_spec`` for
-    rationale — duplicated rather than imported to keep tools/
+    rationale -- duplicated rather than imported to keep tools/
     package free of cross-bridge coupling.
     """
     name = str(raw.get("name") or "")
@@ -115,7 +115,7 @@ class IDABridgeTool(Tool):
         self._timeout = timeout or float(
             os.environ.get("IDA_HEADLESS_TIMEOUT", "120"),
         )
-        # fix §211 — per-instance schema cache + alias map. Class-level
+        # fix §211 -- per-instance schema cache + alias map. Class-level
         # storage leaked across instances (tests saw stale state) and
         # was never invalidated when the upstream IDA MCP server
         # reloaded its tool catalog.
@@ -128,8 +128,8 @@ class IDABridgeTool(Tool):
         self._known_params: dict[str, frozenset[str]] = {}
         # Wall-clock cap for the auto-retry loop on status='pending'
         # responses. On observed live traffic, build_call_tree /
-        # deflat_function on large binaries (masson PE sample, 1.4MB)
-        # routinely takes 90-180s of server-side work before landing
+        # deflat_function on large binaries (a large Delphi PE sample,
+        # roughly 1.4MB) routinely takes 90-180s of server-side work before landing
         # ready. The earlier 90s default was tight enough that those
         # tools surfaced pending to the agent and burned a turn. 240s
         # gives even the heavy graph builders headroom; override via
@@ -189,15 +189,15 @@ class IDABridgeTool(Tool):
             if isinstance(cfg_value, str) and cfg_value.strip():
                 return cfg_value.rstrip("/")
         except (SQLAlchemyError, OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:
-            # fix §212 — broadened from (ValueError, RuntimeError,
+            # fix §212 -- broadened from (ValueError, RuntimeError,
             # ImportError). SQLAlchemy errors from ConfigRegistry().get
             # used to propagate and crash the bridge call. URL
-            # resolution is a config lookup — fail-safe to the default.
-            # fix §350 — traceback added; mirror of audit_mcp_bridge §315
+            # resolution is a config lookup -- fail-safe to the default.
+            # fix §350 -- traceback added; mirror of audit_mcp_bridge §315
             # so a ConfigRegistry break is debuggable from either bridge.
             logging.getLogger(__name__).info(
                 "ida_bridge: ConfigRegistry lookup failed "
-                "(%s: %s) — falling back to default URL",
+                "(%s: %s) -- falling back to default URL",
                 type(exc).__name__, exc,
                 exc_info=True,
             )
@@ -216,9 +216,9 @@ class IDABridgeTool(Tool):
     #     those. Tools with specialized address params (from_address +
     #     to_address, sink_address, etc.) accept two family members at
     #     once, so the algorithm correctly leaves those alone.
-    #   * 7 tools take ``limit`` — same `how_many` shape as audit_mcp.
+    #   * 7 tools take ``limit`` -- same `how_many` shape as audit_mcp.
     #   * `depth` and `max_depth` co-exist (call_chain takes depth,
-    #     interprocedural_taint takes max_depth) — same `depth` family.
+    #     interprocedural_taint takes max_depth) -- same `depth` family.
     _KW_FAMILIES: dict[str, set[str]] = {
         "how_many": {
             "limit", "top_k", "top_n", "n", "count", "max_results",
@@ -304,7 +304,7 @@ class IDABridgeTool(Tool):
     # -- so an agent reading ``count_only`` output and passing the
     # observed encoding value back as a filter got zero matches
     # (false negative that killed sibling-branch second-stage hunts
-    # on masson). The ida-headless side now normalizes too; this
+    # on an observed sample). The ida-headless side now normalizes too; this
     # alias map is the defense that ships without an MCP restart and
     # keeps the bridge tolerant to either label spelling forever.
     _ENCODING_VALUE_ALIASES: dict[str, str] = {
@@ -706,7 +706,7 @@ class IDABridgeTool(Tool):
                     "status": "error",
                     "error": f"Non-JSON response from {action}: {resp.text[:200]}",
                 }
-            # fix §214 — whitelist known statuses explicitly; unknown values
+            # fix §214 -- whitelist known statuses explicitly; unknown values
             # used to fall through to "ready" when HTTP was 2xx, silently
             # turning {"status": "queued"} into a success in the call log.
             payload_status = payload.get("status") if isinstance(payload, dict) else None
@@ -866,7 +866,7 @@ class IDABridgeTool(Tool):
                 self._dedup_store(dedup_fp, payload)
             return payload
 
-    # fix §211 — _SPEC_CACHE moved to instance attr in __init__.
+    # fix §211 -- _SPEC_CACHE moved to instance attr in __init__.
 
     async def _list_tools(self) -> dict:
         """Return available MCP tool names + schemas."""
@@ -890,7 +890,7 @@ class IDABridgeTool(Tool):
             raw = resp.json()
         except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
             logging.getLogger(__name__).warning(
-                "ida_headless catalog fetch failed (%s) — agent will see "
+                "ida_headless catalog fetch failed (%s) -- agent will see "
                 "name-only listing without schemas", exc,
             )
             self._spec_cache = []
@@ -905,7 +905,7 @@ class IDABridgeTool(Tool):
         )
         self._known_params = build_known_params(self._spec_cache)
         logging.getLogger(__name__).info(
-            "ida_bridge: catalog loaded — %d tools, %d with alias maps",
+            "ida_bridge: catalog loaded -- %d tools, %d with alias maps",
             len(self._spec_cache),
             len(self._auto_alias_map),
         )
@@ -927,14 +927,14 @@ class IDABridgeTool(Tool):
         if not file_path:
             return {"status": "error", "error": "file_path is required for upload"}
         target = Path(file_path)
-        # is_file() does a sync stat — wrap so we don't stall the loop
+        # is_file() does a sync stat -- wrap so we don't stall the loop
         # when the file lives on a slow volume.
         if not await asyncio.to_thread(target.is_file):
             return {"status": "error", "error": f"File not found: {file_path}"}
         base = await self._resolve_base_url()
         url = f"{base}/upload"
 
-        # fix §213 — stream the file in 64KB chunks instead of slurping
+        # fix §213 -- stream the file in 64KB chunks instead of slurping
         # the entire binary into memory. The previous read_bytes()
         # approach required N bytes of resident worker RAM for an
         # N-byte upload; a 4GB binary could OOM the worker and kill
@@ -947,7 +947,7 @@ class IDABridgeTool(Tool):
         except OSError as exc:
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
         boundary = uuid.uuid4().hex
-        # Sanitize filename for the Content-Disposition header — double
+        # Sanitize filename for the Content-Disposition header -- double
         # quotes inside filenames would break the multipart framing.
         safe_name = target.name.replace('"', "_").replace("\r", "_").replace("\n", "_")
         preamble = (

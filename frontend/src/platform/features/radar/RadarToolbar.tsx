@@ -1,5 +1,5 @@
 /**
- * RadarToolbar.tsx — Toolbar for the Network Radar page (Phase 144).
+ * RadarToolbar.tsx -- Toolbar for the Network Radar page (Phase 144).
  *
  * Provides:
  * - Color-by Select dropdown (Vulnerabilities / Services / Distro / Connectivity)

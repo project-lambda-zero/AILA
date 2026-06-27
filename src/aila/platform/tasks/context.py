@@ -1,4 +1,4 @@
-"""TaskContext — runtime context injected into every @platform_task body.
+"""TaskContext -- runtime context injected into every @platform_task body.
 
 Phase 179 (D-04): the platform no longer leaks ARQ's `ctx: dict` shape into
 module code. Module tasks receive a frozen ``TaskContext`` with exactly the

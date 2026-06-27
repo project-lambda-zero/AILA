@@ -1,7 +1,7 @@
 """Tests for platform task queue data models (Phase 54, Plan 01).
 
 TDD RED phase: These tests verify the foundational data contracts for the
-task queue infrastructure — TaskRecord, TaskStatus, TaskHandle,
+task queue infrastructure -- TaskRecord, TaskStatus, TaskHandle,
 TaskExecutionContext, and ProgressEvent.
 """
 

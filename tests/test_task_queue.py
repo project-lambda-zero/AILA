@@ -1,11 +1,11 @@
-"""Tests for TaskQueue — platform task submission API (Phase 54, Plan 03).
+"""Tests for TaskQueue -- platform task submission API (Phase 54, Plan 03).
 
 TDD RED → GREEN: These tests verify the submit API, module boundary enforcement,
 DAG cycle detection, Redis fallback, and ConfigRegistry integration.
 
 DB isolation pattern: each test function that needs a DB creates its own
 engine via create_engine(), calls SQLModel.metadata.create_all(), and
-injects it into the global _ENGINES cache — matching the api/conftest.py
+injects it into the global _ENGINES cache -- matching the api/conftest.py
 pattern (RESEARCH Pitfall 6: metadata collision if shared engine).
 """
 
@@ -323,13 +323,13 @@ class TestValidateDag:
                 mock_scope.side_effect = lambda: _real_scope(engine)
 
                 tq = TaskQueue(config_registry=MockRegistry(), module_id="vulnerability")
-                # C depends on B — no cycle
+                # C depends on B -- no cycle
                 tq._validate_dag("task-c", [b_id])
         finally:
             _remove_engine(db_url)
 
     def test_cycle_raises_value_error(self, tmp_path) -> None:
-        """A depends on B and B depends on A is a cycle — must raise ValueError."""
+        """A depends on B and B depends on A is a cycle -- must raise ValueError."""
         from aila.platform.tasks import TaskQueue, TaskRecord, TaskStatus
 
         db_url = f"sqlite:///{tmp_path / 'dag_cycle.db'}"
@@ -491,7 +491,7 @@ class TestSyncFallback:
 
 
 # ---------------------------------------------------------------------------
-# submit() — integration tests
+# submit() -- integration tests
 # ---------------------------------------------------------------------------
 
 
@@ -567,9 +567,9 @@ class TestSubmit:
             with patch("aila.platform.tasks.queue.session_scope") as mock_scope:
                 mock_scope.side_effect = lambda: _real_scope(engine)
                 tq = TaskQueue(config_registry=MockRegistry(), module_id="vulnerability")
-                # Submit A (no deps) — sync fallback, ends up DONE
+                # Submit A (no deps) -- sync fallback, ends up DONE
                 handle_a = tq.submit(track="vuln", fn=fn, kwargs={})
-                # Submit B depending on A — should be WAITING
+                # Submit B depending on A -- should be WAITING
                 handle_b = tq.submit(
                     track="vuln", fn=fn, kwargs={}, depends_on=[handle_a.task_id]
                 )

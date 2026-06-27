@@ -1,5 +1,5 @@
 /**
- * Toaster — thin wrapper around sonner's Toaster for consistent AILA styling.
+ * Toaster -- thin wrapper around sonner's Toaster for consistent AILA styling.
  *
  * Re-exports `toast` from sonner so callers only need:
  *   import { toast } from "@/components/ui/sonner";

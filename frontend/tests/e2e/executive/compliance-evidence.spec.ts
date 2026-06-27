@@ -4,7 +4,7 @@
  * Tests that the compliance evidence package endpoint returns a valid ZIP
  * archive for systems with scan data, and a 404 for unknown systems.
  *
- * Uses real PostgreSQL backend — no mocks.
+ * Uses real PostgreSQL backend -- no mocks.
  */
 import { test, expect } from "@playwright/test";
 
@@ -44,7 +44,7 @@ test.describe("Compliance Evidence Package (EXEC-03)", () => {
   }) => {
     const tokens = await getTokens(request);
 
-    // First, find a system that exists — list systems
+    // First, find a system that exists -- list systems
     const systemsResp = await request.get(`${API_BASE}/systems`, {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
@@ -64,7 +64,7 @@ test.describe("Compliance Evidence Package (EXEC-03)", () => {
       return;
     }
 
-    // Try the first system — may or may not have findings
+    // Try the first system -- may or may not have findings
     const systemId = systems[0].id;
     const resp = await request.get(
       `${API_BASE}/executive/systems/${String(systemId)}/evidence-package`,

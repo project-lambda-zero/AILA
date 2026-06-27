@@ -6,7 +6,7 @@ import { exchangeOidcCode } from "@platform/api/auth";
 import { useAuthStore } from "@platform/auth/useAuthStore";
 
 /**
- * OIDC callback route — handles the redirect from the Microsoft identity provider.
+ * OIDC callback route -- handles the redirect from the Microsoft identity provider.
  *
  * Route: /auth/callback (public, no ProtectedRoute)
  *

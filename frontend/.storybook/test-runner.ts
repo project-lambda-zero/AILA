@@ -13,10 +13,10 @@ import { waitForPageReady } from "@storybook/test-runner"
  *   # Start Storybook in one terminal:
  *   npm run storybook
  *
- *   # In another terminal — create/update baselines:
+ *   # In another terminal -- create/update baselines:
  *   npm run test-storybook -- --update-snapshot
  *
- *   # In CI — compare against baselines:
+ *   # In CI -- compare against baselines:
  *   npm run test-storybook
  */
 const config: TestRunnerConfig = {

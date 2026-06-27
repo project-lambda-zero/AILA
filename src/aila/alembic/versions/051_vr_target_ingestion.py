@@ -1,19 +1,19 @@
-"""051 — VR target auto-ingestion (v0.4.5).
+"""051 -- VR target auto-ingestion (v0.4.5).
 
 Backend now ingests every target transparently. Operator never provides
 or sees MCP-internal ids. Adds:
 
-  analysis_state           — pending / ingesting / ready / failed
-  analysis_state_message   — operator-visible progress / error string
-  analysis_started_at      — when the ingestion job kicked off
-  analysis_completed_at    — when it finished
-  _mcp_handles_json        — backend-only: audit_mcp index_id + ida binary_id
-                              etc. Underscore prefix marks 'internal — never
+  analysis_state           -- pending / ingesting / ready / failed
+  analysis_state_message   -- operator-visible progress / error string
+  analysis_started_at      -- when the ingestion job kicked off
+  analysis_completed_at    -- when it finished
+  _mcp_handles_json        -- backend-only: audit_mcp index_id + ida binary_id
+                              etc. Underscore prefix marks 'internal -- never
                               exposed in contracts or UI'.
 
 No backward compatibility. Existing rows are reset to ``pending`` so the
 new ingestion pipeline owns the lifecycle. Legacy descriptor fields
-(audit_mcp_index_id, binary_id) are stripped — they were never operator-
+(audit_mcp_index_id, binary_id) are stripped -- they were never operator-
 fillable.
 
 Revision ID: 051_vr_target_ingestion

@@ -88,7 +88,7 @@ type Story = StoryObj<typeof meta>;
 // ---------------------------------------------------------------------------
 
 export const Loading: Story = {
-  name: "Loading — checking readiness",
+  name: "Loading -- checking readiness",
   args: {
     readinessResult: null,
     isLoading: true,
@@ -108,7 +108,7 @@ export const AllReady: Story = {
 };
 
 export const PartialFailure: Story = {
-  name: "Partial Failure — some tools missing",
+  name: "Partial Failure -- some tools missing",
   args: {
     readinessResult: PARTIAL_FAILURE,
     isLoading: false,
@@ -128,7 +128,7 @@ export const SSHUnreachable: Story = {
 };
 
 export const WindowsAnalyzer: Story = {
-  name: "Windows Analyzer — all ready",
+  name: "Windows Analyzer -- all ready",
   args: {
     readinessResult: WINDOWS_READY,
     isLoading: false,

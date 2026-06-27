@@ -3,13 +3,13 @@
 Provides user account management and username/password authentication.
 
 Endpoints:
-  POST /auth/login          — Authenticate with username/password, get JWT tokens (PUBLIC)
-  POST /auth/refresh/user   — Exchange user refresh token for new access token (PUBLIC)
-  POST /auth/logout         — Revoke a user refresh token (PUBLIC with valid token)
-  GET  /users               — List users, paginated (ADMIN only)
-  POST /users               — Create user account (ADMIN only)
-  GET  /users/{user_id}     — Get a single user (ADMIN only)
-  PATCH /users/{user_id}    — Update user fields, including soft-delete (ADMIN only)
+  POST /auth/login          -- Authenticate with username/password, get JWT tokens (PUBLIC)
+  POST /auth/refresh/user   -- Exchange user refresh token for new access token (PUBLIC)
+  POST /auth/logout         -- Revoke a user refresh token (PUBLIC with valid token)
+  GET  /users               -- List users, paginated (ADMIN only)
+  POST /users               -- Create user account (ADMIN only)
+  GET  /users/{user_id}     -- Get a single user (ADMIN only)
+  PATCH /users/{user_id}    -- Update user fields, including soft-delete (ADMIN only)
 
 Per D-13: argon2id password hashing.
 Per D-17: admin-invite only registration.
@@ -125,7 +125,7 @@ async def _check_hibp(password: str) -> bool:
     5 chars to the HIBP API, checks if the full SHA1 suffix appears in the response.
 
     Returns True if the password is breached, False if clean or if the API
-    is unreachable (fail-open per NIST 800-63B — never block on HIBP failure).
+    is unreachable (fail-open per NIST 800-63B -- never block on HIBP failure).
     """
     sha1 = hashlib.sha1(password.encode("utf-8"), usedforsecurity=False).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
@@ -142,11 +142,11 @@ async def _check_hibp(password: str) -> bool:
         return False
     except Exception:
         SILENT_FAILURE_TOTAL.labels(component="hibp").inc()
-        return False  # fail open — HIBP unreachable
+        return False  # fail open -- HIBP unreachable
 
 
 # ---------------------------------------------------------------------------
-# Auth endpoints (public — no auth required)
+# Auth endpoints (public -- no auth required)
 # ---------------------------------------------------------------------------
 
 
@@ -155,7 +155,7 @@ async def _check_hibp(password: str) -> bool:
 async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenResponse]:
     """Authenticate with username and password, return JWT access + refresh tokens.
 
-    Per T-138-10: always returns "Invalid credentials" on failure — never reveals
+    Per T-138-10: always returns "Invalid credentials" on failure -- never reveals
     whether the username or password was wrong.
     Per D-46: login events (success and failure) dual-written to structlog AND AuditEventRecord.
     """
@@ -186,7 +186,7 @@ async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenRespo
             raise _invalid
 
         if user.hashed_password is None:
-            # OIDC-only account — cannot login with password
+            # OIDC-only account -- cannot login with password
             _slog.info("login_failed", username=body.username, reason="no_password_set")
             record_audit_event(
                 session,
@@ -320,7 +320,7 @@ async def refresh_user_token(request: Request, refresh_token: str = Query(..., d
 
 
 @limiter.limit("10/minute")
-@router.post("/auth/logout", response_model=DataEnvelope[LogoutResponse], summary="Logout — revoke refresh token")
+@router.post("/auth/logout", response_model=DataEnvelope[LogoutResponse], summary="Logout -- revoke refresh token")
 async def logout(request: Request, refresh_token: str = Query(..., description="Refresh token to revoke")) -> DataEnvelope[LogoutResponse]:
     """Revoke a user refresh token, invalidating further refresh attempts."""
     token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
@@ -342,7 +342,7 @@ async def list_user_sessions(
     """Return all active (non-revoked, non-expired) refresh token sessions for the authenticated user.
 
     Per T-140-17: endpoint requires authentication; only returns sessions for auth.user_id.
-    Per T-140-18: token_hash is never returned — only metadata (IP, user-agent, timestamps).
+    Per T-140-18: token_hash is never returned -- only metadata (IP, user-agent, timestamps).
     """
     async with async_session_scope() as session:
         stmt = (
@@ -433,7 +433,7 @@ async def create_user(
     """Create a new user account. Admin only.
 
     Per D-17: admin-invite only registration.
-    Per D-19: NIST 800-63B — min 8 chars, HaveIBeenPwned breach check.
+    Per D-19: NIST 800-63B -- min 8 chars, HaveIBeenPwned breach check.
     Per D-18: role must be in VALID_ROLES.
     Per D-46: user creation event dual-written to structlog AND AuditEventRecord.
     """

@@ -129,7 +129,7 @@ def _disable_slowapi_limiter() -> Generator[None, None, None]:
     user identity, blowing the per-endpoint quotas within seconds. With
     a single in-memory bucket shared by all admin-token tests, the
     fastest fix is to skip rate limiting entirely in the test
-    process — production behaviour is verified separately by the auth
+    process -- production behaviour is verified separately by the auth
     test suite which exercises the limiter directly.
     """
     from aila.api.limiter import limiter

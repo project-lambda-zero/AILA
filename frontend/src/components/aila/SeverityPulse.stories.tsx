@@ -12,7 +12,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "Wrapper that conditionally applies the severity-pulse CSS animation (D-18). Pure CSS keyframe — opacity 1 → 0.5 → 1. Respects prefers-reduced-motion. No JS animation code.",
+          "Wrapper that conditionally applies the severity-pulse CSS animation (D-18). Pure CSS keyframe -- opacity 1 → 0.5 → 1. Respects prefers-reduced-motion. No JS animation code.",
       },
     },
   },

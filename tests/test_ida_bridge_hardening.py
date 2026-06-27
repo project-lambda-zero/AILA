@@ -1,7 +1,7 @@
 """Bridge + adapter hardening: dead-worker fail-fast, per-call dedup,
 xref-pagination hint.
 
-Three independent fixes against observed failure modes on the masson
+Three independent fixes against observed failure modes in one observed
 investigation:
 
 (B) Bridge fail-fast on dead arbiter. ida-headless can leave the
@@ -57,7 +57,7 @@ class TestDeadWorkerDetection:
 
     def test_matches_canonical_dead_arbiter_shape(self) -> None:
         # status=pending + worker_phase=exiting_idle + hb_age >= 600
-        # matches the live failure mode observed on masson.
+        # matches the live failure mode observed on a test sample.
         assert IDABridgeTool._looks_like_dead_worker(self._payload())
 
     def test_pending_alone_does_not_trip(self) -> None:

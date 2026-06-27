@@ -1,5 +1,5 @@
 /**
- * ScheduledReportsPage — admin-only scheduled report configurations.
+ * ScheduledReportsPage -- admin-only scheduled report configurations.
  *
  * Lists scheduled reports with cron expressions and recipient lists. Admins
  * can create new reports, manually trigger a run, or delete a report.
@@ -34,7 +34,7 @@ import {
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
-// Types — mirror src/aila/api/schemas/endpoints.py:ScheduledReport*
+// Types -- mirror src/aila/api/schemas/endpoints.py:ScheduledReport*
 // ---------------------------------------------------------------------------
 
 interface ScheduledReport {
@@ -77,7 +77,7 @@ interface DataEnvelope<T> {
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "--";
   return new Date(value).toLocaleString();
 }
 
@@ -401,7 +401,7 @@ function buildColumns(
       cell: ({ getValue }) => {
         const emails = parseRecipients(String(getValue() ?? "[]"));
         if (emails.length === 0) {
-          return <span className="font-mono text-xs text-text-muted">—</span>;
+          return <span className="font-mono text-xs text-text-muted">--</span>;
         }
         return (
           <span
@@ -533,14 +533,14 @@ export function ScheduledReportsPage() {
           Total Reports
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {reportsQuery.isLoading ? "—" : reports.length}
+          {reportsQuery.isLoading ? "--" : reports.length}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">All configured</p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Active
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {reportsQuery.isLoading ? "—" : activeCount}
+          {reportsQuery.isLoading ? "--" : activeCount}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Firing on schedule
@@ -549,7 +549,7 @@ export function ScheduledReportsPage() {
           Paused
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {reportsQuery.isLoading ? "—" : reports.length - activeCount}
+          {reportsQuery.isLoading ? "--" : reports.length - activeCount}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Won't fire automatically

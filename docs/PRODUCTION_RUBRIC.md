@@ -1,7 +1,7 @@
 # Production Rubric
 
 Pre-merge readiness checklist for any change that lands a feature module
-in production. Run every gate below — green across the board is the bar.
+in production. Run every gate below -- green across the board is the bar.
 
 The rubric is enforced by `make check` plus targeted tests; the per-item
 rows below explain *what* each gate asserts and *why* a green result means
@@ -43,7 +43,7 @@ the upstream advisories shift independently of the codebase).
 | Gate | Command | Pass criterion |
 |------|---------|---------------|
 | Backend unit tests | `python -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_e2e_live.py` | Every test the module adds passes. Pre-existing failures are documented in the PR description, not silenced. |
-| Module-specific tests | Tests under `tests/<module>_*.py` cover every state machine branch, every error path, every contract field a caller relies on. | Domain logic, not plumbing — the test would actually break if the bug came back. No `assert True`-style sentinels. |
+| Module-specific tests | Tests under `tests/<module>_*.py` cover every state machine branch, every error path, every contract field a caller relies on. | Domain logic, not plumbing -- the test would actually break if the bug came back. No `assert True`-style sentinels. |
 | Frontend unit tests | `pnpm -r run test` | Vitest passes across every workspace package, including the module's own `tests/` folder. |
 | Optional E2E | `pytest tests/test_e2e.py` (Playwright + live infra) | Green only when the change affects user-visible flows; otherwise skipped and noted in the PR. |
 
@@ -84,9 +84,9 @@ Test conduct:
 | HTTP responses | Success bodies wrap in `DataEnvelope`. Errors raise typed exceptions or `HTTPException`; see `docs/API_ERRORS.md` for the envelope contract. |
 | LLM calls | Route through `AilaLLMClient` (`platform.llm.client`) with a routing `task_type`. Modules never instantiate `openai.AsyncOpenAI` directly. |
 | Task functions | Decorated with `@platform_task`. All kwargs JSON-serializable (Pydantic models pass `.model_dump(mode="json")`). |
-| Task results | Surface results through the module's own result table (`vr_findings`, `scan_findings`, …). `TaskRecord.result_path` is a retired legacy column — do not populate it (INFRA-06 retirement). |
+| Task results | Surface results through the module's own result table (`vr_findings`, `scan_findings`, …). `TaskRecord.result_path` is a retired legacy column -- do not populate it (INFRA-06 retirement). |
 | Frontend imports | Every bare import declared in the module's `package.json`. Shared deps reference `pnpm-workspace.yaml` catalogs (`catalog:react19`, `catalog:router`, …), never literal versions for shared packages. |
-| Frontend router | Import from `react-router` only. `react-router-dom` is gone — v7 unified the package. |
+| Frontend router | Import from `react-router` only. `react-router-dom` is gone -- v7 unified the package. |
 | Frontend Tailwind | If the module ships UI, add `@source "../../../src/aila/modules/<id>/frontend/**/*.{ts,tsx}";` to `frontend/src/styles/globals.css`. Tailwind v4 scans relative to that file and won't pick up classes in module dirs otherwise. |
 | Frontend Tailwind arbitrary values | `h-[720px]`, `bg-[#131313]` and similar arbitrary-value classes do NOT generate CSS in Tailwind v4. Use inline `style={{ height: 720 }}` for arbitrary numerics. |
 | Frontend chart colors | Recharts `fill` attributes on SVG elements do not resolve `var(--color-*)`. Pull computed colors via the `useThemeChartColors()` hook, not raw CSS-var strings. |
@@ -114,7 +114,7 @@ Test conduct:
 |------|-----|
 | Module README | `src/aila/modules/<name>/README.md` reflects the current contracts, routes, and tools. |
 | Top-level docs | If the change shifts an externally-visible contract (auth surface, error envelope, LLM behaviour), `docs/SECURITY_MODEL.md`, `docs/API_ERRORS.md`, `docs/LLM_INTEGRATION.md`, or `docs/DATA_PROTECTION.md` are updated in the same PR. |
-| Env vars | Any new env var lands in `.env.example` with a default appropriate for local development and a comment if production needs a different value. Windows operators run via `start.sh`, which injects `.env` vars into PowerShell-spawned workers via a `set KEY=VAL && ` cmd-line prefix — so the var name must be a literal in `.env` (the sed-with-no-key footgun: a missing key is silently ignored; use the append pattern from `docs/ENV_VARS.md`). |
+| Env vars | Any new env var lands in `.env.example` with a default appropriate for local development and a comment if production needs a different value. Windows operators run via `start.sh`, which injects `.env` vars into PowerShell-spawned workers via a `set KEY=VAL && ` cmd-line prefix -- so the var name must be a literal in `.env` (the sed-with-no-key footgun: a missing key is silently ignored; use the append pattern from `docs/ENV_VARS.md`). |
 | PR description | Lists the gates that ran green, the migrations involved, and the operator actions required at deploy (env vars to add, workers to restart). |
 
 ---
@@ -146,7 +146,7 @@ Test conduct:
 Carry-overs callers may hit while the gates above stay green. Document
 per-module exposure in the PR if the change touches these areas:
 
-- **VR cost gauge** — `VRInvestigationRecord.cost_actual_usd` is not
+- **VR cost gauge** -- `VRInvestigationRecord.cost_actual_usd` is not
   written by the LLM client. The aggregator
   `_compute_live_investigation_cost()` joins
   `LLMCostRecord.run_id == TaskRecord.id`, but `run_id` actually holds
@@ -154,10 +154,10 @@ per-module exposure in the PR if the change touches these areas:
   not the ARQ `TaskRecord.id`. The correct fix is an extra hop through
   `workflow_run_records`; until that lands, the budget gauge
   underreports for VR investigations. See `docs/LLM_INTEGRATION.md`.
-- **Restricted-behavior env values** — `.env.example` ships `transparent`
+- **Restricted-behavior env values** -- `.env.example` ships `transparent`
   for `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_RESTRICTED_BEHAVIOR_*`. The
   resolver only recognises `redact`; any other value (including
   `transparent`) falls back to `fail`. See `docs/DATA_PROTECTION.md`.
-- **JWT secret in dev** — Missing `AILA_JWT_SECRET_KEY` synthesises a
+- **JWT secret in dev** -- Missing `AILA_JWT_SECRET_KEY` synthesises a
   random secret per process start and invalidates every issued JWT on
   restart. Production deployments MUST set it explicitly.

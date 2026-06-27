@@ -1,7 +1,7 @@
 """Forensics module entrypoint.
 
 Implements ModuleProtocol. This file is the only file the platform imports
-directly — all wiring happens here.
+directly -- all wiring happens here.
 """
 from __future__ import annotations
 
@@ -237,7 +237,7 @@ class ForensicsModule(ModuleProtocol):
             return {}
 
     async def report_count(self, _run_id: str, _session: Any) -> dict[str, int]:
-        """Return empty dict — forensics does not own workflow run reports."""
+        """Return empty dict -- forensics does not own workflow run reports."""
         return {}
 
     def health_checks(self) -> dict[str, object]:
@@ -271,7 +271,7 @@ class ForensicsModule(ModuleProtocol):
                     if not system_ids:
                         return {
                             "status": "up",
-                            "detail": "No forensics projects configured — skipping SSH probe",
+                            "detail": "No forensics projects configured -- skipping SSH probe",
                         }
                     systems = (await session.exec(
                         select(ManagedSystemRecord).where(
@@ -282,7 +282,7 @@ class ForensicsModule(ModuleProtocol):
                 if not systems:
                     return {
                         "status": "up",
-                        "detail": "No analyzer systems found — skipping SSH probe",
+                        "detail": "No analyzer systems found -- skipping SSH probe",
                     }
 
                 ssh = await get_ssh_service(get_settings())
@@ -310,7 +310,7 @@ class ForensicsModule(ModuleProtocol):
                         last_error = f"unexpected output: {output.strip()[:80]}"
                     except (OSError, TimeoutError, ConnectionError, RuntimeError, ValueError) as exc:
                         last_error = f"{type(exc).__name__}: {exc}"
-                        _log.debug("forensics.ssh_reachability: %s (%s) — %s", system.name, system.host, last_error)
+                        _log.debug("forensics.ssh_reachability: %s (%s) -- %s", system.name, system.host, last_error)
 
                 _log.warning("forensics.ssh_reachability: all forensics systems unreachable. Last: %s", last_error)
                 return {

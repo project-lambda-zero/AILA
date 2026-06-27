@@ -2,15 +2,15 @@
 
 Three tracks ship in v0.5 phase 3:
 
-  linux_distros           — private list (vendor-sec@lists.openwall.org).
+  linux_distros           -- private list (vendor-sec@lists.openwall.org).
                             Embargo 14 days max per list policy.
                             PoC private; distros build patches under embargo.
-  oss_security            — public mailing list (oss-security@lists.openwall.org).
+  oss_security            -- public mailing list (oss-security@lists.openwall.org).
                             Post AFTER embargo lifts. Sanitized PoC OK.
-  kernel_org_security     — security@kernel.org direct. Embargo 7-30 days.
+  kernel_org_security     -- security@kernel.org direct. Embargo 7-30 days.
                             CVE pre-assigned via the kernel.org CNA.
 
-Pattern matches v0.3's chrome_vrp / mozilla_bb structure — each is a
+Pattern matches v0.3's chrome_vrp / mozilla_bb structure -- each is a
 small subclass with a render() that emits the operator-pasteable body
 in the format that program expects (mailing-list message, security@
 email, GHSA YAML).
@@ -49,7 +49,7 @@ class LinuxDistrosTrack(DisclosureTrack):
     severity_schema = "cvss"
     notes = (
         "Private mailing list for Linux distro security teams. Embargo "
-        "is HARD-CAPPED at 14 days from first email by list policy — "
+        "is HARD-CAPPED at 14 days from first email by list policy -- "
         "request an extension only with strong justification. PoC stays "
         "on-list; do not forward off-list."
     )
@@ -145,7 +145,7 @@ class OssSecurityTrack(DisclosureTrack):
             _section("Technical details", str(finding_payload.get("root_cause") or "")),
             _section(
                 "Reproducer (sanitized)",
-                str(finding_payload.get("sanitized_poc") or "(descriptive only — full PoC stays private)"),
+                str(finding_payload.get("sanitized_poc") or "(descriptive only -- full PoC stays private)"),
             ),
             _section("Credit", str(finding_payload.get("attribution") or "")),
             "",

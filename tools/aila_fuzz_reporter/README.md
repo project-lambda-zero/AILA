@@ -2,7 +2,7 @@
 
 Sidecar that ships fuzzer telemetry + crashes from a running fuzz
 campaign into AILA. Runs alongside the fuzzer on the dedicated
-workstation (D-33) — AILA itself never invokes the fuzzer.
+workstation (D-33) -- AILA itself never invokes the fuzzer.
 
 ## What it does
 
@@ -23,7 +23,7 @@ Every `--interval` seconds:
 ## Quickstart
 
 ```bash
-# 1) Install — the sidecar is pure-stdlib, no pip deps.
+# 1) Install -- the sidecar is pure-stdlib, no pip deps.
 git clone https://github.com/project-lambda-zero/AILA
 cp -r AILA/tools/aila_fuzz_reporter /opt/
 
@@ -70,7 +70,7 @@ dependency accepts whichever path is configured.
 
 - HTTP failures retry with exponential backoff (1 s → 30 s, 5
   attempts).
-- `4xx` responses are non-retryable — the sidecar logs the body
+- `4xx` responses are non-retryable -- the sidecar logs the body
   and moves on. Common causes: stale API key, validation errors.
 - Crashes are deduplicated locally by `stack_hash` so restarting
   the sidecar against the same campaign + crash dir does not
@@ -120,7 +120,7 @@ journalctl -fu aila-fuzz-reporter@<campaign_id>.service
   (or AILA's `POST /vr/fuzz/campaigns/{id}/launch` endpoint, which
   SSHes to the workstation and runs the launcher commands defined
   in `aila.modules.vr.services.fuzz_launcher`).
-- Does **not** classify crashes — `crash_type` is left as the engine
+- Does **not** classify crashes -- `crash_type` is left as the engine
   reports it (AFL++ op suffix, libFuzzer artifact kind, etc.) or
   `None` for Fuzzilli. AILA's existing auto-triage in
   `register_crash` runs on the backend.

@@ -26,7 +26,7 @@ def build_http_client(
 ) -> httpx.Client:
     """Construct an httpx.Client configured with platform defaults.
 
-    TLS verification is operator-controlled via the verify parameter — True by
+    TLS verification is operator-controlled via the verify parameter -- True by
     default, overridable per provider via the <provider>_verify_tls config field.
     Proxy is resolved by the caller (registry-first, then env var fallback) and
     passed here as a single URL string. The platform User-Agent and timeout are

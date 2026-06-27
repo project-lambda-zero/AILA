@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { authorizedRequestJson, requestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
-// Backend response types — mirror src/aila/api/schemas/endpoints.py
+// Backend response types -- mirror src/aila/api/schemas/endpoints.py
 // ---------------------------------------------------------------------------
 
 export interface FleetStats {
@@ -48,7 +48,7 @@ export interface HealthResponse {
  * Fetches aggregated platform dashboard data from GET /dashboard.
  *
  * Refreshes via SSE-driven query invalidation on ``scan_complete`` and
- * ``finding_arrived`` events (see SSEProvider.tsx) — RT-04.
+ * ``finding_arrived`` events (see SSEProvider.tsx) -- RT-04.
  * Also polls every 60 seconds as a fallback when SSE is disconnected.
  * staleTime: 30_000 prevents redundant refetches between SSE events.
  *

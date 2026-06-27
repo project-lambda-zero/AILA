@@ -48,7 +48,7 @@ import type {
 } from "../types";
 
 // ─────────────────────────────────────────────────────────────────────
-// Status palette — matches the dots on the detail page.
+// Status palette -- matches the dots on the detail page.
 // ─────────────────────────────────────────────────────────────────────
 
 const STATUS_DOT: Record<InvestigationStatus, string> = {
@@ -83,9 +83,9 @@ const KIND_ICON: Record<InvestigationKind, Icon> = {
 // ─────────────────────────────────────────────────────────────────────
 
 function relativeTime(value?: string | null): string {
-  if (!value) return "—";
+  if (!value) return "--";
   const t = new Date(value).getTime();
-  if (Number.isNaN(t)) return "—";
+  if (Number.isNaN(t)) return "--";
   const delta = Date.now() - t;
   const s = Math.floor(delta / 1000);
   if (s < 60) return `${s}s ago`;
@@ -113,7 +113,7 @@ function verdictTextColor(verdict?: string | null): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// InvestigationCard — one investigation per row, ~80px tall.
+// InvestigationCard -- one investigation per row, ~80px tall.
 //
 // Replaces the old 14-column table. Status dot (pulses if live) + kind
 // icon on the left, title/target/verdict in the middle, outcome /
@@ -327,7 +327,7 @@ function InvestigationCard({
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// StatusPill — single toggle button used by the status filter row.
+// StatusPill -- single toggle button used by the status filter row.
 // ─────────────────────────────────────────────────────────────────────
 
 function StatusPill({
@@ -386,7 +386,7 @@ function StatusPill({
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// InvestigationsListPage — card list with KPIs, status pills and
+// InvestigationsListPage -- card list with KPIs, status pills and
 // optional target grouping. Replaces the old 14-column table.
 // ─────────────────────────────────────────────────────────────────────
 
@@ -511,7 +511,7 @@ export function InvestigationsListPage() {
     return copy;
   }, [filtered]);
 
-  // Group by target — preserves the sorted order so the first group
+  // Group by target -- preserves the sorted order so the first group
   // shown is the target with the most "important" investigation.
   const grouped = useMemo(() => {
     const m = new Map<string, VRInvestigationSummary[]>();
@@ -569,7 +569,7 @@ export function InvestigationsListPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Stats bar — compact inline, no boxes */}
+      {/* Stats bar -- compact inline, no boxes */}
       <AilaCard techBorder glow padding="sm">
         <div className="flex items-center justify-between gap-6 flex-wrap">
           <div className="flex items-center gap-5 flex-wrap">
@@ -652,7 +652,7 @@ export function InvestigationsListPage() {
             <textarea
               value={formQuestion}
               onChange={(e) => setFormQuestion(e.target.value)}
-              placeholder="Initial question — what are you asking the engine to investigate?"
+              placeholder="Initial question -- what are you asking the engine to investigate?"
               rows={3}
               aria-label="Initial question"
               className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
@@ -694,7 +694,7 @@ export function InvestigationsListPage() {
                   aria-label="Target"
                   className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
                 >
-                  <option value="">— Pick a target —</option>
+                  <option value="">-- Pick a target --</option>
                   {orderedWsIds.map((wsId) => (
                     <optgroup key={wsId} label={wsName(wsId)}>
                       {(byWs.get(wsId) ?? [])
@@ -705,7 +705,7 @@ export function InvestigationsListPage() {
                         .map((t) => (
                           <option key={t.id} value={t.id}>
                             {t.display_name} · {t.kind} ·{" "}
-                            {t.primary_language ?? "—"} · {t.analysis_state}
+                            {t.primary_language ?? "--"} · {t.analysis_state}
                           </option>
                         ))}
                     </optgroup>
@@ -788,7 +788,7 @@ export function InvestigationsListPage() {
         </AilaCard>
       )}
 
-      {/* Status pills — primary axis the operator scans by */}
+      {/* Status pills -- primary axis the operator scans by */}
       <div className="flex flex-wrap items-center gap-1.5">
         <StatusPill
           id=""
@@ -1038,7 +1038,7 @@ export function InvestigationsListPage() {
         />
       )}
 
-      {/* Card list — either flat or grouped by target */}
+      {/* Card list -- either flat or grouped by target */}
       {!isLoading && !isError && sorted.length > 0 && !groupByTarget && (
         <StaggeredList as="ul" className="flex flex-col gap-2">
           {sorted.map((inv) => (

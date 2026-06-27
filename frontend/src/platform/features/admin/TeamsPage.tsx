@@ -1,5 +1,5 @@
 /**
- * TeamsPage — admin-only multi-team management (Phase 177).
+ * TeamsPage -- admin-only multi-team management (Phase 177).
  *
  * Lists all teams with member counts. Admins can create new teams and
  * click a row to navigate to the team detail page. Uses the
@@ -64,7 +64,7 @@ interface CreateTeamRequest {
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "--";
   return new Date(value).toLocaleString();
 }
 
@@ -180,7 +180,7 @@ function buildColumns(): ColumnDef<Team>[] {
       accessorKey: "description",
       cell: ({ getValue }) => (
         <span className="font-mono text-xs text-text-muted">
-          {String(getValue() || "—")}
+          {String(getValue() || "--")}
         </span>
       ),
     },
@@ -262,25 +262,25 @@ export function TeamsPage() {
           Teams
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {teamsQuery.isLoading ? "—" : teams.length}
+          {teamsQuery.isLoading ? "--" : teams.length}
         </p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Members
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {crossQuery.isLoading ? "—" : totalMembers}
+          {crossQuery.isLoading ? "--" : totalMembers}
         </p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Systems
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {crossQuery.isLoading ? "—" : totalSystems}
+          {crossQuery.isLoading ? "--" : totalSystems}
         </p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Workflow runs
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {crossQuery.isLoading ? "—" : totalRuns}
+          {crossQuery.isLoading ? "--" : totalRuns}
         </p></AilaCard>
       </div>
 

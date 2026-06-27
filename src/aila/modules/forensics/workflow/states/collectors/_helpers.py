@@ -23,7 +23,7 @@ def truncate(text: str, limit: int = DEFAULT_OUTPUT_LIMIT) -> str:
     """Truncate text with an explicit marker so consumers know data was cut."""
     if len(text) <= limit:
         return text
-    return text[:limit] + f"\n\n[TRUNCATED — original output was {len(text):,} bytes]"
+    return text[:limit] + f"\n\n[TRUNCATED -- original output was {len(text):,} bytes]"
 
 
 def sq(path: str, analyzer_os: str) -> str:
@@ -42,7 +42,7 @@ def vol_cmd(analyzer_os: str) -> str:
        (the built-in Volume Label utility), exits 0.3s with ``The system
        cannot find the drive specified``.
     2. ``python -m volatility3`` and ``python -m volatility3.cli`` both
-       fail — neither package ships a ``__main__``.
+       fail -- neither package ships a ``__main__``.
     3. ``python -c "from volatility3.cli import main; main()"`` works
        technically, but argparse's error messages show the prog as
        ``-c`` (because Python sets ``sys.argv[0]='-c'``) which led me
@@ -54,7 +54,7 @@ def vol_cmd(analyzer_os: str) -> str:
     stdio cleanly through paramiko, and avoids every PATH collision.
 
     Timeouts are enforced by the caller through ``ssh.run_command(timeout_seconds=...)``,
-    not by shell-wrapping — wrapping in ``timeout N cmd /c ...`` on Windows
+    not by shell-wrapping -- wrapping in ``timeout N cmd /c ...`` on Windows
     consumes the trailing ``-f <path>`` argv tokens and makes Vol3 see
     "-f unexpected".
     """

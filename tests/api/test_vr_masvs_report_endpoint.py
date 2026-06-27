@@ -1,4 +1,4 @@
-"""R-3 — ``GET /vr/targets/{target_id}/masvs-report`` streams the MASVS PDF.
+"""R-3 -- ``GET /vr/targets/{target_id}/masvs-report`` streams the MASVS PDF.
 
 End-to-end smoke coverage for the report download endpoint that R-3
 wires up on top of the R-1 aggregator + R-2a/R-2b PDF renderer. Each
@@ -7,19 +7,19 @@ test inserts the minimal DB shape the endpoint requires (one
 ``kind='masvs_audit'`` and zero children) and exercises the HTTP
 contract:
 
-1. **Happy path** — 200, ``application/pdf`` content-type, valid PDF
+1. **Happy path** -- 200, ``application/pdf`` content-type, valid PDF
    byte stream (``%PDF-`` header), and a ``Content-Disposition`` header
    whose filename embeds the APK package + audit generation date.
-2. **404 unknown target** — missing target id never returns 500.
-3. **404 unknown audit** — valid target + missing audit id returns 404.
-4. **409 wrong parent kind** — the parent exists but is not a MASVS
+2. **404 unknown target** -- missing target id never returns 500.
+3. **404 unknown audit** -- valid target + missing audit id returns 404.
+4. **409 wrong parent kind** -- the parent exists but is not a MASVS
    audit batch root.
-5. **404 cross-target** — the parent exists but belongs to a different
+5. **404 cross-target** -- the parent exists but belongs to a different
    target than the one in the URL path (defensive guard against
    operators pasting an audit id under the wrong target context).
 
 Two focused unit tests at the bottom pin the filename / sanitiser
-helpers without going through HTTP — they catch a regression in the
+helpers without going through HTTP -- they catch a regression in the
 slugger faster than a full request round-trip.
 """
 from __future__ import annotations
@@ -84,7 +84,7 @@ async def _insert_target(*, slug: str, kind: str = "android_apk") -> str:
     """Insert a workspace + android_apk target row pair.
 
     Bypasses the ingestion machinery the same way the dispatch tests
-    do — the report endpoint only needs ``kind`` + ``team_id`` +
+    do -- the report endpoint only needs ``kind`` + ``team_id`` +
     ``mcp_handles_json`` to project a target summary.
     """
     async with UnitOfWork() as uow:
@@ -179,14 +179,14 @@ async def test_report_happy_path_returns_pdf(
     )
     assert disposition.endswith('.pdf"'), disposition
     assert resp.headers.get("cache-control") == "no-store", (
-        "R-3: the report stream is per-request — operators downloading "
+        "R-3: the report stream is per-request -- operators downloading "
         "twice must hit the renderer twice, not a stale CDN copy."
     )
 
     body = resp.content
     assert body.startswith(b"%PDF-"), (
         "R-3: response body must begin with the PDF magic. The renderer "
-        "produced something else — typically a stray write that broke "
+        "produced something else -- typically a stray write that broke "
         "the byte stream."
     )
     # Parse with pypdf to confirm the structure survived the wire.
@@ -240,7 +240,7 @@ async def test_report_returns_409_when_parent_kind_not_masvs_audit(
 ) -> None:
     """A non-MASVS parent investigation produces a 409 instead of a
     silent render under the wrong kind. The one-off investigation
-    report has its own endpoint — refusing here keeps the two reports
+    report has its own endpoint -- refusing here keeps the two reports
     distinguishable.
     """
     del test_db
@@ -310,7 +310,7 @@ async def test_report_requires_audit_id_query_param(
 
 
 # ───────────────────────────────────────────────────────────────────
-# Pure unit tests for the filename helpers — fast, no HTTP, no DB.
+# Pure unit tests for the filename helpers -- fast, no HTTP, no DB.
 # Catch a sanitiser regression before the slow integration tests run.
 # ───────────────────────────────────────────────────────────────────
 

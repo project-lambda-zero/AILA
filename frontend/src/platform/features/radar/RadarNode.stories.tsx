@@ -1,5 +1,5 @@
 /**
- * RadarNode.stories.tsx — Storybook stories for the RadarNode custom ReactFlow node.
+ * RadarNode.stories.tsx -- Storybook stories for the RadarNode custom ReactFlow node.
  *
  * Stories render the node inside a ReactFlowProvider with a fixed container
  * so the handles and SVG display correctly without a full ReactFlow canvas.

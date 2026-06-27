@@ -57,7 +57,7 @@ class VRRuntime:
 
         payload = VRProjectCreate.model_validate(request.payload or {})
         _log.info(
-            "vr.nday request validated run_id=%s name=%s — workflow trigger via POST /vr/projects",
+            "vr.nday request validated run_id=%s name=%s -- workflow trigger via POST /vr/projects",
             request.run_id, payload.name,
         )
 

@@ -1,4 +1,4 @@
-"""Generic fallback adapter — used for any registered MCP tool without a
+"""Generic fallback adapter -- used for any registered MCP tool without a
 specialized adapter.
 
 This means the engine can invoke ALL 135 MCP tools (81 ida-headless +
@@ -8,7 +8,7 @@ specialized adapters in their respective modules; everything else
 defaults to this TEXT adapter.
 
 Design contract: NEVER fabricate fields. The generic adapter does not
-invent semantics — it just packages the raw response, stamps
+invent semantics -- it just packages the raw response, stamps
 provenance, and pushes a bounded preview into observables. Frontend
 renderers branching on ``payload_kind == TEXT`` see the raw response
 under ``data`` for inspection.
@@ -28,7 +28,7 @@ __all__ = ["adapt_generic"]
 def adapt_generic(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Wrap any MCP response as a TEXT payload with bounded observables.
 
-    fix §277 — the per-call observable cap comes from
+    fix §277 -- the per-call observable cap comes from
     ``_shared.MAX_OBS_DUMP_CHARS`` via :func:`bounded_dump`; there is
     no local override. After the §271 shrink (100 MB → 32 KiB) this
     means a 50 MB raw response no longer rides verbatim in
@@ -45,7 +45,7 @@ def adapt_generic(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
         "source_provenance": provenance_stamp(ctx),
     }
 
-    # fix §276 — surface upstream error state. The summary line already
+    # fix §276 -- surface upstream error state. The summary line already
     # mentions ``error=...`` when the MCP response carries it, but the
     # AdapterResult was kind=TEXT with no other signal so the executor
     # treated the call as a success and the agent saw an "ok"-marked

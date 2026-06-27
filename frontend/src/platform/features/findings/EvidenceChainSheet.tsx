@@ -25,7 +25,7 @@ interface EvidenceChainSheetProps {
 // ---------------------------------------------------------------------------
 
 /**
- * EvidenceChainSheet — slide-over panel with the ReactFlow evidence graph (UX-05).
+ * EvidenceChainSheet -- slide-over panel with the ReactFlow evidence graph (UX-05).
  *
  * Renders a "Show Evidence Chain" trigger button. When clicked, opens a Sheet
  * containing the EvidenceChainGraph for the given finding ID.
@@ -60,7 +60,7 @@ export function EvidenceChainSheet({ findingId, findingLabel }: EvidenceChainShe
             <SheetDescription className="font-mono text-xs text-text-muted">
               {findingLabel
                 ? `Provenance graph for: ${findingLabel}`
-                : `Finding #${findingId} — scan → advisory → score → triage`}
+                : `Finding #${findingId} -- scan → advisory → score → triage`}
             </SheetDescription>
           </SheetHeader>
 

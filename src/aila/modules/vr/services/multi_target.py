@@ -5,7 +5,7 @@ investigation. The primary target stays unchanged on the investigation
 row; secondary targets live exclusively in ``vr_investigation_targets``.
 
 Future v0.4 phases will add multi-strategy orchestration that consumes
-these attachments — the engine can reason across all attached targets
+these attachments -- the engine can reason across all attached targets
 in one turn.
 """
 from __future__ import annotations
@@ -89,7 +89,7 @@ class MultiTargetService:
                 )
 
             # Disallow attaching the primary target a second time as a
-            # secondary — it's already the primary.
+            # secondary -- it's already the primary.
             if inv.target_id == target_id:
                 raise MultiTargetServiceError(
                     f"target {target_id} is already this investigation's primary "
@@ -103,7 +103,7 @@ class MultiTargetService:
                 ),
             )).first()
             if existing is not None:
-                # Idempotent — update role + rationale if changed
+                # Idempotent -- update role + rationale if changed
                 mutated = False
                 if existing.role != role.value:
                     existing.role = role.value

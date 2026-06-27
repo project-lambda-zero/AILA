@@ -3,26 +3,26 @@
 Implements the 6 D-41 branch operations on an investigation's branch
 tree:
 
-  fork      — spawn a new ACTIVE branch from a parent. New branch
+  fork      -- spawn a new ACTIVE branch from a parent. New branch
               inherits parent's case_state snapshot + optional persona
               voice + fork_reason. Parent stays ACTIVE.
-  merge     — consolidate two ACTIVE branches into a new ACTIVE branch.
+  merge     -- consolidate two ACTIVE branches into a new ACTIVE branch.
               Both originals → MERGED with merged_into_branch_id set.
               New branch's case_state = absorb(absorb(empty, a), b).
-  promote   — mark a branch as the authoritative one. Sibling ACTIVE
+  promote   -- mark a branch as the authoritative one. Sibling ACTIVE
               branches transition to ABANDONED with reason.
-  abandon   — close a branch without promotion. Status → ABANDONED,
+  abandon   -- close a branch without promotion. Status → ABANDONED,
               closed_at + closed_reason set.
-  pause     — temporarily stop driving the branch. Status → PAUSED.
-  resume    — re-activate a PAUSED branch. Status → ACTIVE.
+  pause     -- temporarily stop driving the branch. Status → PAUSED.
+  resume    -- re-activate a PAUSED branch. Status → ACTIVE.
 
 This module owns ONLY the state transitions. The investigation_loop
 state in workflow/states/ still drives turns; in v1 it drives only the
 primary branch. Multi-branch driving (loop iterates all ACTIVE branches
-per cycle) is a follow-up — schema + operations support it now.
+per cycle) is a follow-up -- schema + operations support it now.
 
 Per the no-overengineering rule: case-state merging on merge() is
-intentionally simple — the CyberReasoningEngine.absorb() method is
+intentionally simple -- the CyberReasoningEngine.absorb() method is
 sequential per-decision; merging two static states is approximated by
 hypothesis union + rejected union + observable update. If a real
 investigation produces a merge that's lossy, refine then.
@@ -61,7 +61,7 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-# fix §149 — per-investigation branch cap. 24 = 6 personas * 4 fork
+# fix §149 -- per-investigation branch cap. 24 = 6 personas * 4 fork
 # generations, comfortable headroom for legitimate operator branching
 # without permitting runaway fork-bombs (each fork enqueues one ARQ
 # task; uncapped fork cycles can exhaust the worker pool). Operator-
@@ -104,7 +104,7 @@ class BranchManager:
 
     Each operation is one async method that opens a UnitOfWork,
     performs the transition atomically, and returns a
-    ``BranchOpResult``. All transitions enforce status guards — calling
+    ``BranchOpResult``. All transitions enforce status guards -- calling
     promote on an ABANDONED branch raises BranchManagerError rather
     than silently no-op.
     """
@@ -121,7 +121,7 @@ class BranchManager:
         at_turn: int | None = None,
     ) -> BranchOpResult:
         """Spawn a new ACTIVE branch from ``parent_branch_id``."""
-        # fix §178 — default to a known marker so the frontend (and §180
+        # fix §178 -- default to a known marker so the frontend (and §180
         # NOT NULL alembic migration) never sees a null persona_voice.
         # Callers that supply a persona (auto_deliberation, operator
         # picker) keep their value; callers that don't (older API
@@ -129,7 +129,7 @@ class BranchManager:
         if not persona_voice or not persona_voice.strip():
             persona_voice = "fork_unnamed"
         async with UnitOfWork() as uow:
-            # fix §149 — branch count cap. Counts ACTIVE branches
+            # fix §149 -- branch count cap. Counts ACTIVE branches
             # (terminal-status rows do not contribute to fork pressure)
             # and refuses the fork above the cap. The cap is enforced
             # inside the UoW so concurrent forks racing on the same
@@ -157,7 +157,7 @@ class BranchManager:
             if parent.status != BranchStatus.ACTIVE.value:
                 raise BranchManagerError(
                     f"cannot fork from branch {parent_branch_id} in status "
-                    f"{parent.status!r} — only ACTIVE branches are forkable",
+                    f"{parent.status!r} -- only ACTIVE branches are forkable",
                 )
 
             child = VRInvestigationBranchRecord(
@@ -167,11 +167,11 @@ class BranchManager:
                 persona_voice=persona_voice,
                 fork_reason=fork_reason,
                 fork_at_turn=at_turn,
-                # fix §112 — strip parent's rejected/resolved hypothesis
+                # fix §112 -- strip parent's rejected/resolved hypothesis
                 # bookkeeping from the forked copy. Carrying these
                 # forward verbatim caused sibling-consensus rejection
                 # (vuln_researcher) to count each branch's rejections
-                # independently — the child never learned the parent
+                # independently -- the child never learned the parent
                 # had killed h7, so both branches re-walked the dead
                 # end. The child re-derives rejection from its own
                 # evidence stream if its turns lead there.
@@ -214,7 +214,7 @@ class BranchManager:
                 if branch.status != BranchStatus.ACTIVE.value:
                     raise BranchManagerError(
                         f"cannot merge branch {branch.id} in status {branch.status!r}"
-                        f" — only ACTIVE branches are mergeable",
+                        f" -- only ACTIVE branches are mergeable",
                     )
                 if branch.investigation_id != self.investigation_id:
                     raise BranchManagerError(
@@ -226,23 +226,23 @@ class BranchManager:
                 _decode(a.case_state_json), _decode(b.case_state_json),
             )
 
-            # fix §115 — preserve lineage. Pick branch A's parent first
+            # fix §115 -- preserve lineage. Pick branch A's parent first
             # (deterministic on argument order); fall back to B's parent
             # when A was a root. Result: the branch tree UI walks from
             # the merged child back to a real ancestor instead of
             # rendering it as an orphan new root next to a/b.
             # Closes §40 (speculative survivor-pointer note) as a
-            # side-effect — same code path.
+            # side-effect -- same code path.
             inherited_parent = a.parent_branch_id or b.parent_branch_id
 
             merged = VRInvestigationBranchRecord(
                 investigation_id=self.investigation_id,
                 parent_branch_id=inherited_parent,
                 status=BranchStatus.ACTIVE.value,
-                persona_voice="merge_result",  # fix §177 — structural marker, never null
+                persona_voice="merge_result",  # fix §177 -- structural marker, never null
                 fork_reason=f"merge: {merge_reason}" if merge_reason else "merge",
                 case_state_json=_encode(merged_state),
-                # fix §113 — turn_count carries the higher of the two
+                # fix §113 -- turn_count carries the higher of the two
                 # source histories. The merged branch "inherits" A+B's
                 # reasoning depth so subsequent turn-cap checks see
                 # the inflated value. This is INTENTIONAL: a merged
@@ -251,7 +251,7 @@ class BranchManager:
                 # max() preserves the cap's intent (work-done depth)
                 # without double-counting like a + b would.
                 turn_count=max(a.turn_count, b.turn_count),
-                # fix §114 — cost moves to the survivor. Source-branch
+                # fix §114 -- cost moves to the survivor. Source-branch
                 # costs are zeroed below so the investigation-level
                 # sum (Σ branches.branch_cost_usd) reads
                 # (a + b) + 0 + 0 = (a + b) instead of double-counted
@@ -266,12 +266,12 @@ class BranchManager:
                 branch.merged_into_branch_id = merged.id
                 branch.closed_reason = merge_reason or "merged"
                 branch.closed_at = now
-                # fix §114 — zero source-branch costs after transfer.
+                # fix §114 -- zero source-branch costs after transfer.
                 # The cost is now carried solely by ``merged``; the
                 # investigation-total aggregator sums all branches
                 # naively and would otherwise double-count.
                 branch.branch_cost_usd = 0.0
-                # fix §21 — status write routed through chokepoint.
+                # fix §21 -- status write routed through chokepoint.
                 self._emit_branch_status_event(
                     uow, branch, BranchStatus.MERGED,
                     reason=merge_reason or "merged", at=now,
@@ -317,7 +317,7 @@ class BranchManager:
             branch.promoted = True
             branch.closed_reason = reason or "promoted"
             branch.closed_at = now
-            # fix §21 — status write routed through chokepoint.
+            # fix §21 -- status write routed through chokepoint.
             self._emit_branch_status_event(
                 uow, branch, BranchStatus.PROMOTED,
                 reason=reason or "promoted", at=now,
@@ -327,7 +327,7 @@ class BranchManager:
             for sib in siblings:
                 sib.closed_reason = f"superseded by promoted branch {branch_id}"
                 sib.closed_at = now
-                # fix §21 — status write routed through chokepoint.
+                # fix §21 -- status write routed through chokepoint.
                 self._emit_branch_status_event(
                     uow, sib, BranchStatus.ABANDONED,
                     reason=sib.closed_reason, at=now,
@@ -364,7 +364,7 @@ class BranchManager:
             now = utc_now()
             branch.closed_reason = reason or "abandoned by operator"
             branch.closed_at = now
-            # fix §21 — status write routed through chokepoint.
+            # fix §21 -- status write routed through chokepoint.
             self._emit_branch_status_event(
                 uow, branch, BranchStatus.ABANDONED,
                 reason=branch.closed_reason, at=now,
@@ -386,7 +386,7 @@ class BranchManager:
     ) -> BranchOpResult:
         """Temporarily stop driving the branch."""
         async with UnitOfWork() as uow:
-            # fix §64 — refuse to pause under a terminal investigation.
+            # fix §64 -- refuse to pause under a terminal investigation.
             # Without this guard an operator can pause a branch under
             # a COMPLETED/FAILED/ABANDONED investigation, leaving an
             # orphan PAUSED branch the reaper skips and resume()
@@ -401,15 +401,15 @@ class BranchManager:
             }:
                 raise BranchManagerError(
                     f"cannot pause branch on {inv.status!r} investigation "
-                    f"{self.investigation_id} — branch would orphan",
+                    f"{self.investigation_id} -- branch would orphan",
                 )
 
             branch = await self._load_branch(uow, branch_id)
             if branch.status != BranchStatus.ACTIVE.value:
                 raise BranchManagerError(
-                    f"cannot pause branch {branch_id} in status {branch.status!r} — must be ACTIVE",
+                    f"cannot pause branch {branch_id} in status {branch.status!r} -- must be ACTIVE",
                 )
-            # fix §21 — status write routed through chokepoint.
+            # fix §21 -- status write routed through chokepoint.
             self._emit_branch_status_event(
                 uow, branch, BranchStatus.PAUSED, reason=reason,
             )
@@ -430,7 +430,7 @@ class BranchManager:
     ) -> BranchOpResult:
         """Re-activate a PAUSED branch.
 
-        fix §39 — DESIGN DECISION: resume() flips the branch back to
+        fix §39 -- DESIGN DECISION: resume() flips the branch back to
         ACTIVE but does NOT enqueue a fresh ARQ task. The Phase B
         cursor-SSOT contract (DURABLE_STATEMACHINE_DESIGN §15) makes
         the cursor the single source of truth for "is this branch
@@ -446,16 +446,16 @@ class BranchManager:
         notices the ACTIVE flip. The MASVS reconciler's wake-enqueue
         path picks it up for MASVS work. Phase B adds the engine-
         side re-enqueue for everything else; THIS METHOD stays as it
-        is — by design — so Phase B is a one-line swap on the
+        is -- by design -- so Phase B is a one-line swap on the
         engine side, not a delete here plus an add there.
         """
         async with UnitOfWork() as uow:
             branch = await self._load_branch(uow, branch_id)
             if branch.status != BranchStatus.PAUSED.value:
                 raise BranchManagerError(
-                    f"cannot resume branch {branch_id} in status {branch.status!r} — must be PAUSED",
+                    f"cannot resume branch {branch_id} in status {branch.status!r} -- must be PAUSED",
                 )
-            # fix §21 — status write routed through chokepoint.
+            # fix §21 -- status write routed through chokepoint.
             self._emit_branch_status_event(
                 uow, branch, BranchStatus.ACTIVE, reason=reason,
             )
@@ -483,7 +483,7 @@ class BranchManager:
         (discovery_research + variant_hunt + patch_diff_analysis).
 
         Differs from fork():
-          - parent_branch_id is OPTIONAL — the new branch can start from
+          - parent_branch_id is OPTIONAL -- the new branch can start from
             the investigation root (no parent) for genuinely parallel
             strategies that don't share state.
           - strategy_family is REQUIRED and gets tagged on the new row
@@ -505,7 +505,7 @@ class BranchManager:
                 if parent.status != BranchStatus.ACTIVE.value:
                     raise BranchManagerError(
                         f"cannot spawn from parent {parent_branch_id} in "
-                        f"status {parent.status!r} — must be ACTIVE",
+                        f"status {parent.status!r} -- must be ACTIVE",
                     )
                 inherited_case_state = _strip_directives_from_state(parent.case_state_json or "{}")
                 parent_at_turn = parent.turn_count
@@ -586,7 +586,7 @@ class BranchManager:
         """Load the parent VRInvestigationRecord for this manager (fix §64).
 
         Used by pause() to refuse pausing under a terminal investigation.
-        No FOR UPDATE — the check is advisory (a race where the
+        No FOR UPDATE -- the check is advisory (a race where the
         investigation flips terminal between this read and the branch
         write is harmless: the branch becomes a PAUSED orphan that
         Phase B's reaper will sweep, same outcome as the current
@@ -614,7 +614,7 @@ class BranchManager:
     ) -> None:
         """Single chokepoint for branch.status transitions (fix §21).
 
-        Today this is a direct ORM mutation — identical to the inline
+        Today this is a direct ORM mutation -- identical to the inline
         ``branch.status = …`` writes it replaced. Phase B will swap
         the body for a workflow-engine transition call so branch.status
         gains the same SSOT discipline investigation.status has: no
@@ -678,7 +678,7 @@ def _strip_rejected_from_state(raw_json: str) -> str:
     rejected/resolved lists; it re-derives rejection from its own
     evidence if/when its turns reach that conclusion.
 
-    Live ``hypotheses`` are kept — those are the parent's open
+    Live ``hypotheses`` are kept -- those are the parent's open
     investigative threads the child legitimately inherits and may
     continue working on (or independently reject).
     """

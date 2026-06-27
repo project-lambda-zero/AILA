@@ -48,7 +48,7 @@ class ProjectEvidenceRecord(SQLModel, table=True):
     file_path: str = Field(sa_column=Column(Text))
     evidence_type: str = Field(default="unknown", index=True)
     file_hash_sha256: str | None = None
-    # BIGINT — disk images / E01s routinely exceed int32 (2GB); 100GB+ common.
+    # BIGINT -- disk images / E01s routinely exceed int32 (2GB); 100GB+ common.
     size_bytes: int | None = Field(default=None, sa_column=Column(BigInteger))
     metadata_json: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))

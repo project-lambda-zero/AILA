@@ -1,7 +1,7 @@
-"""Target ingestion — transfer uploaded files, clone repos, download URLs.
+"""Target ingestion -- transfer uploaded files, clone repos, download URLs.
 
 Responsible for getting the target onto the analysis workstation and
-returning the workstation-side path. Does NOT upload to IDA MCP — that
+returning the workstation-side path. Does NOT upload to IDA MCP -- that
 is the setup state handler's job after ingestion completes.
 """
 from __future__ import annotations

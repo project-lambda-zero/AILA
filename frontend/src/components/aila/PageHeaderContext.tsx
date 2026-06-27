@@ -1,5 +1,5 @@
 /**
- * PageHeaderContext — lets detail pages override the static route title
+ * PageHeaderContext -- lets detail pages override the static route title
  * supplied to PageFrame at render time. Without this, /vr/projects/:id
  * pages can only ever show "VR Project Detail" (the route title) instead
  * of the live project name.
@@ -48,7 +48,7 @@ export function PageHeaderProvider({ children }: { children: React.ReactNode }) 
 /**
  * Read the active page-header overrides from inside PageShell. Returns
  * an empty object if no provider is mounted (which means PageShell is
- * being rendered outside the normal routed-page tree — fine, defaults
+ * being rendered outside the normal routed-page tree -- fine, defaults
  * to PageFrame-passed props).
  */
 export function usePageHeaderOverrides(): PageHeaderOverrides {
@@ -62,7 +62,7 @@ export function usePageHeaderOverrides(): PageHeaderOverrides {
  * `undefined`) fall through to the static props from PageFrame /
  * router.tsx. Explicitly passing `null` clears that field.
  *
- * Pass primitives where possible — objects allocated inline in render
+ * Pass primitives where possible -- objects allocated inline in render
  * trigger re-syncs every render, which is harmless but wasteful.
  */
 export function useUpdatePageHeader(overrides: PageHeaderOverrides) {

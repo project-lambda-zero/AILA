@@ -390,7 +390,7 @@ function renderMarkdown(md: string): string {
     const block = rawBlock.replace(/\n+$/, "");
     if (!block.trim()) continue;
 
-    // Heading — first line is # ... ###### ... with the rest ignored as a block header.
+    // Heading -- first line is # ... ###### ... with the rest ignored as a block header.
     const heading = block.match(/^(#{1,6})\s+(.+)$/);
     if (heading && !block.includes("\n")) {
       const level = heading[1].length;
@@ -404,7 +404,7 @@ function renderMarkdown(md: string): string {
       continue;
     }
 
-    // Unordered list — all lines start with - or *
+    // Unordered list -- all lines start with - or *
     const ulLines = block.split("\n");
     if (ulLines.every((l) => /^[-*]\s+/.test(l))) {
       const items = ulLines
@@ -444,7 +444,7 @@ function renderMarkdown(md: string): string {
       continue;
     }
 
-    // Paragraph — keep internal single newlines as <br />
+    // Paragraph -- keep internal single newlines as <br />
     const paragraph = block.split("\n").map(inline).join("<br />");
     rendered.push(`<p class="my-1.5 leading-relaxed">${paragraph}</p>`);
   }

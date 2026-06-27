@@ -101,7 +101,7 @@ async def test_health_top_level_status_valid(async_client):
 
 async def test_health_no_auth_required(async_client):
     """GET /health requires no Authorization header (public endpoint)."""
-    # No Authorization header — must NOT return 401 or 403
+    # No Authorization header -- must NOT return 401 or 403
     response = await async_client.get("/health")
     assert response.status_code not in (401, 403), (
         f"GET /health should be public but returned {response.status_code}"

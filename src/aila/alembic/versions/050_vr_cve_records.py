@@ -1,7 +1,7 @@
-"""050 — VR CVE records + feed state (v0.4 GA-51).
+"""050 -- VR CVE records + feed state (v0.4 GA-51).
 
-vr_cve_records — one row per ingested CVE (NVD / GHSA / MITRE / manual)
-vr_cve_feed_state — per-source poller checkpoint
+vr_cve_records -- one row per ingested CVE (NVD / GHSA / MITRE / manual)
+vr_cve_feed_state -- per-source poller checkpoint
 
 Revision ID: 050_vr_cve_records
 Revises: 049_vr_branch_strategy_family

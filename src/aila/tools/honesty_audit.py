@@ -1,40 +1,40 @@
-"""honesty_audit — AST-based structural honesty checker for Python code.
+"""honesty_audit -- AST-based structural honesty checker for Python code.
 
 Detects thirty-three categories of structural dishonesty:
 
-1. unused_parameter    — function parameter accepted but never referenced in body.
-2. misleading_name     — function name implies intelligence but body only forwards.
-3. docstring_mismatch  — docstring claims caching/persistence but body has none.
-4. import_boundary     — module imports from another module's package.
-5. dead_isinstance     — isinstance check on a parameter that already has a type annotation.
-6. redundant_conversion — str(already_str), int(already_int), Path(already_path).
-7. private_in_all      — underscore-prefixed name exported in __all__.
-8. bare_exception_wrap — except Exception that raises a less-specific type (destroys info).
-9. always_true_default — parameter with Optional/None default that is ALWAYS overridden by callers.
-10. god_object_dispatch — single function with 4+ if/elif branches on a string action parameter.
-11. todo_in_code        — TODO/FIXME/HACK/XXX comment in production source.
-12. silent_exception    — except Exception with pass or bare default assignment (no logging).
-13. production_assert   — assert statement in production code (stripped under -O).
-14. do_nothing_wrapper  — function body is a single return of another call with no added logic.
-15. dead_config_field   — Pydantic/config field declared but never read anywhere in the codebase.
-16. sync_in_async       — sync session_scope() called inside async def without asyncio.to_thread.
-17. api_imports_module_internals — api/platform/storage code imports modules/ internals.
-18. asyncio_in_module   — asyncio.to_thread/run, ThreadPoolExecutor or concurrent.futures in modules/.
-19. response_model_dict — @router.* decorator specifies response_model=dict/Dict.
-20. bare_dict_return_endpoint — endpoint handler returns a raw dict literal or dict() call.
-21. noqa_inline         — inline # noqa comment in production source (use honesty_whitelist.py instead).
-22. http_client_in_module — module imports httpx/requests/urllib3/aiohttp directly (use platform services).
-23. direct_db_in_module — module imports sqlalchemy.create_engine/asyncpg/psycopg2 directly (use platform UoW).
-24. tautological_docstring — docstring restates function name with no additional information.
-25. commented_out_code  — commented-out Python statement (import/def/class/if/for/return/raise).
-26. except_return_default — except handler returns an empty default ([], {}, None, 0, "") hiding real failures.
-27. nested_if_collapsible — if body is a single if with no else; can be combined with `and`.
-28. pointless_pass      — pass as sole body of non-abstract, non-stub function.
-29. f_string_no_interpolation — f-string with no embedded expressions (plain string suffices).
-30. single_use_variable — variable assigned then immediately returned with no other reference.
-31. placeholder_return  — function body is only a docstring + return {} or return []; no real logic.
-32. log_format_concat   — logging call uses string concatenation/f-string instead of %-formatting.
-33. broad_exception_catch — except Exception without a justifying comment (catches everything indiscriminately).
+1. unused_parameter    -- function parameter accepted but never referenced in body.
+2. misleading_name     -- function name implies intelligence but body only forwards.
+3. docstring_mismatch  -- docstring claims caching/persistence but body has none.
+4. import_boundary     -- module imports from another module's package.
+5. dead_isinstance     -- isinstance check on a parameter that already has a type annotation.
+6. redundant_conversion -- str(already_str), int(already_int), Path(already_path).
+7. private_in_all      -- underscore-prefixed name exported in __all__.
+8. bare_exception_wrap -- except Exception that raises a less-specific type (destroys info).
+9. always_true_default -- parameter with Optional/None default that is ALWAYS overridden by callers.
+10. god_object_dispatch -- single function with 4+ if/elif branches on a string action parameter.
+11. todo_in_code        -- TODO/FIXME/HACK/XXX comment in production source.
+12. silent_exception    -- except Exception with pass or bare default assignment (no logging).
+13. production_assert   -- assert statement in production code (stripped under -O).
+14. do_nothing_wrapper  -- function body is a single return of another call with no added logic.
+15. dead_config_field   -- Pydantic/config field declared but never read anywhere in the codebase.
+16. sync_in_async       -- sync session_scope() called inside async def without asyncio.to_thread.
+17. api_imports_module_internals -- api/platform/storage code imports modules/ internals.
+18. asyncio_in_module   -- asyncio.to_thread/run, ThreadPoolExecutor or concurrent.futures in modules/.
+19. response_model_dict -- @router.* decorator specifies response_model=dict/Dict.
+20. bare_dict_return_endpoint -- endpoint handler returns a raw dict literal or dict() call.
+21. noqa_inline         -- inline # noqa comment in production source (use honesty_whitelist.py instead).
+22. http_client_in_module -- module imports httpx/requests/urllib3/aiohttp directly (use platform services).
+23. direct_db_in_module -- module imports sqlalchemy.create_engine/asyncpg/psycopg2 directly (use platform UoW).
+24. tautological_docstring -- docstring restates function name with no additional information.
+25. commented_out_code  -- commented-out Python statement (import/def/class/if/for/return/raise).
+26. except_return_default -- except handler returns an empty default ([], {}, None, 0, "") hiding real failures.
+27. nested_if_collapsible -- if body is a single if with no else; can be combined with `and`.
+28. pointless_pass      -- pass as sole body of non-abstract, non-stub function.
+29. f_string_no_interpolation -- f-string with no embedded expressions (plain string suffices).
+30. single_use_variable -- variable assigned then immediately returned with no other reference.
+31. placeholder_return  -- function body is only a docstring + return {} or return []; no real logic.
+32. log_format_concat   -- logging call uses string concatenation/f-string instead of %-formatting.
+33. broad_exception_catch -- except Exception without a justifying comment (catches everything indiscriminately).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -50,7 +50,7 @@ Whitelist:
     in the finding's message AND detail appears in the finding's message.
 
 Design constraints (D-04):
-    AST analysis only — no runtime inspection.
+    AST analysis only -- no runtime inspection.
     No external dependencies beyond stdlib (ast, sys, pathlib, dataclasses).
 """
 
@@ -109,10 +109,10 @@ _ACTION_PARAM_NAMES: frozenset[str] = frozenset({"action", "operation", "command
 # Comment markers that indicate unfinished promises (rule 11).
 _TODO_PATTERN = _re.compile(r"#\s*(TODO|FIXME|HACK|XXX)\b", _re.IGNORECASE)
 
-# Rule 21 — noqa inline comments.
+# Rule 21 -- noqa inline comments.
 _NOQA_PATTERN = _re.compile(r"#\s*noqa\b")
 
-# Rule 18 — asyncio threading primitives banned from modules/.
+# Rule 18 -- asyncio threading primitives banned from modules/.
 # These identifiers flag usage of asyncio.to_thread, asyncio.run,
 # ThreadPoolExecutor, and concurrent.futures imports inside module files.
 _ASYNCIO_THREAD_ATTRS: frozenset[str] = frozenset({
@@ -129,18 +129,18 @@ _NOQA_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
 # Alembic paths are exempt from Rule 21.
 # Both the auto-generated migration files (alembic/versions/) and the hand-written
 # alembic/env.py legitimately use # noqa: F401 for side-effect imports that populate
-# SQLModel.metadata — they cannot use honesty_whitelist.py because the import must
+# SQLModel.metadata -- they cannot use honesty_whitelist.py because the import must
 # appear at the module level and ruff processes it independently.
 _ALEMBIC_PATH_PATTERN = _re.compile(r"[/\\]alembic[/\\]")
 
-# Rule 22 — HTTP client libraries banned from modules/.
+# Rule 22 -- HTTP client libraries banned from modules/.
 # Modules must use platform HTTP services (SSHService, IDA bridge, etc.),
 # not construct their own httpx/requests/aiohttp clients.
 _HTTP_CLIENT_MODULES: frozenset[str] = frozenset({
     "httpx", "requests", "urllib3", "aiohttp",
 })
 
-# Rule 23 — Direct DB connection libraries banned from modules/.
+# Rule 23 -- Direct DB connection libraries banned from modules/.
 # Modules use UnitOfWork from aila.platform.uow for all DB access.
 # Direct engine/connection construction bypasses team scoping and audit.
 _DIRECT_DB_MODULES: frozenset[str] = frozenset({
@@ -150,7 +150,7 @@ _DIRECT_DB_CALLABLES: frozenset[str] = frozenset({
     "create_engine", "create_async_engine",
 })
 
-# Rule 25 — Commented-out code detection.
+# Rule 25 -- Commented-out code detection.
 # Matches lines that look like commented-out Python statements.
 _COMMENTED_CODE_RE = _re.compile(
     r'^\s*#\s*'
@@ -166,16 +166,16 @@ _COMMENTED_CODE_EXEMPTIONS: tuple[str, ...] = (
     "investigation", "documentation", "explanation", "describes",
 )
 
-# Rule 29 — f-string without interpolation.
+# Rule 29 -- f-string without interpolation.
 # Ruff F541 catches this too but may be disabled; this is the structural backup.
 
-# Rule 32 — Logging calls using string concatenation or f-strings.
+# Rule 32 -- Logging calls using string concatenation or f-strings.
 # Correct: _log.info("x=%s", x).  Wrong: _log.info(f"x={x}") or _log.info("x=" + str(x)).
 _LOG_METHODS: frozenset[str] = frozenset({
     "debug", "info", "warning", "warn", "error", "exception", "critical",
 })
 
-# Names that indicate logging is present (rule 12 — silent exception check).
+# Names that indicate logging is present (rule 12 -- silent exception check).
 _LOGGING_IDENTIFIERS: frozenset[str] = frozenset({
     "logger", "logging", "log", "LOGGER", "LOG",
     "warn", "warning", "error", "info", "debug", "exception", "critical",
@@ -223,7 +223,7 @@ def _walk_returns_shallow(node: ast.AST):
     """Yield Return nodes from *node*'s subtree without recursing into nested function/class bodies.
 
     Unlike ``ast.walk``, this generator stops at any ``FunctionDef``,
-    ``AsyncFunctionDef``, or ``ClassDef`` node — so return statements inside
+    ``AsyncFunctionDef``, or ``ClassDef`` node -- so return statements inside
     nested helper functions are invisible to the caller.  This prevents false
     positives in Rule 20 (bare_dict_return_endpoint) where an outer endpoint
     delegates work to an inner ``async def _helper()`` that legitimately
@@ -322,7 +322,7 @@ def _is_stub_body(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Return True when the function body is a bare ``...`` (Ellipsis) stub.
 
     Protocol / ABC abstract methods have ``...`` as their entire body.  They
-    declare signatures but contain no executable code — flagging unused params
+    declare signatures but contain no executable code -- flagging unused params
     there is meaningless.
     """
     stmts = func.body
@@ -511,7 +511,7 @@ def _is_forward_call_body(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
     stmt = real_stmts[0]
 
-    # Extract the expression — could be Return or bare Expr.
+    # Extract the expression -- could be Return or bare Expr.
     if isinstance(stmt, ast.Return) and stmt.value is not None:
         expr = stmt.value
     elif isinstance(stmt, ast.Expr):
@@ -556,7 +556,7 @@ def _get_docstring(func: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
 def _docstring_claims_caching(docstring: str) -> bool:
     """Return True if the docstring claims THIS function caches/persists results.
 
-    Only flags phrases like 'caches the result' or 'memoizes' — not functions
+    Only flags phrases like 'caches the result' or 'memoizes' -- not functions
     that merely interact with a cache ('reads from cache', 'updates cache entry').
     """
     low = docstring.lower()
@@ -606,7 +606,7 @@ class _HonestyVisitor(ast.NodeVisitor):
         self._in_protocol_class: bool = False
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        # Detect Protocol classes — skip their methods for unused_parameter
+        # Detect Protocol classes -- skip their methods for unused_parameter
         is_protocol = any(
             (isinstance(b, ast.Name) and b.id == "Protocol")
             or (isinstance(b, ast.Attribute) and b.attr == "Protocol")
@@ -644,10 +644,10 @@ class _HonestyVisitor(ast.NodeVisitor):
         self, func: ast.FunctionDef | ast.AsyncFunctionDef
     ) -> None:
         """Rule: unused_parameter."""
-        # Skip stubs — Protocol/ABC abstract bodies.
+        # Skip stubs -- Protocol/ABC abstract bodies.
         if _is_stub_body(func) or _has_stub_decorator(func):
             return
-        # Skip Protocol class methods — they define interfaces, not implementations.
+        # Skip Protocol class methods -- they define interfaces, not implementations.
         if self._in_protocol_class:
             return
 
@@ -707,7 +707,7 @@ class _HonestyVisitor(ast.NodeVisitor):
     def _check_dead_isinstance(
         self, func: ast.FunctionDef | ast.AsyncFunctionDef
     ) -> None:
-        """Rule: dead_isinstance — isinstance check on a typed parameter."""
+        """Rule: dead_isinstance -- isinstance check on a typed parameter."""
         # Build a map of param_name → annotation_type_name
         typed_params: dict[str, str] = {}
         for arg in list(func.args.args) + list(func.args.kwonlyargs):
@@ -736,7 +736,7 @@ class _HonestyVisitor(ast.NodeVisitor):
     def _check_god_object_dispatch(
         self, func: ast.FunctionDef | ast.AsyncFunctionDef
     ) -> None:
-        """Rule: god_object_dispatch — 4+ if/elif branches on an action string parameter."""
+        """Rule: god_object_dispatch -- 4+ if/elif branches on an action string parameter."""
         # Check if any parameter has an action-like name
         action_params = set()
         for arg in list(func.args.args) + list(func.args.kwonlyargs):
@@ -764,18 +764,18 @@ class _HonestyVisitor(ast.NodeVisitor):
                         break
 
         # CRUD tools (upsert/list/get/delete on one resource) are acceptable
-        # at 3-5 branches. Flag only when branches exceed 6 — indicating
+        # at 3-5 branches. Flag only when branches exceed 6 -- indicating
         # multiple unrelated concerns in one tool, not standard CRUD.
         if branch_count >= 7:
             self._emit(
                 func.lineno,
                 "god_object_dispatch",
-                f"function '{func.name}' has {branch_count} action-dispatch branches — "
+                f"function '{func.name}' has {branch_count} action-dispatch branches -- "
                 f"consider splitting into separate single-concern tools",
             )
 
     def _check_private_in_all(self, tree: ast.Module) -> None:
-        """Rule: private_in_all — underscore-prefixed name in __all__."""
+        """Rule: private_in_all -- underscore-prefixed name in __all__."""
         for node in ast.walk(tree):
             if not isinstance(node, ast.Assign):
                 continue
@@ -798,7 +798,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                         )
 
     def _check_bare_exception_wrap(self, tree: ast.Module) -> None:
-        """Rule: bare_exception_wrap — except Exception that raises a less-specific type."""
+        """Rule: bare_exception_wrap -- except Exception that raises a less-specific type."""
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
@@ -825,10 +825,10 @@ class _HonestyVisitor(ast.NodeVisitor):
                     break
 
     def _check_todo_in_code(self, source: str) -> None:
-        """Rule: todo_in_code — TODO/FIXME/HACK/XXX in production source.
+        """Rule: todo_in_code -- TODO/FIXME/HACK/XXX in production source.
 
         Scans raw source lines for comment markers.  A TODO is a promise
-        embedded in code that nobody tracks — either do the work or file
+        embedded in code that nobody tracks -- either do the work or file
         an issue and delete the comment.
         """
         for lineno, line in enumerate(source.splitlines(), start=1):
@@ -838,18 +838,18 @@ class _HonestyVisitor(ast.NodeVisitor):
                 self._emit(
                     lineno,
                     "todo_in_code",
-                    f"'{tag}' comment found — either resolve it or track it in an issue",
+                    f"'{tag}' comment found -- either resolve it or track it in an issue",
                 )
 
     def _check_silent_exception(self, tree: ast.Module) -> None:
-        """Rule: silent_exception — except Exception with pass or bare assignment, no logging.
+        """Rule: silent_exception -- except Exception with pass or bare assignment, no logging.
 
         Catches the pattern where an exception is swallowed silently:
         ``except Exception: pass`` or ``except Exception: x = {}``.
         If the handler body references any logging identifier, it is not silent.
-        Finalizer methods (__del__) are excluded — silent cleanup is standard there.
+        Finalizer methods (__del__) are excluded -- silent cleanup is standard there.
         """
-        # Build a set of line ranges for __del__ methods — silent cleanup is standard there.
+        # Build a set of line ranges for __del__ methods -- silent cleanup is standard there.
         del_ranges: set[range] = set()
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "__del__":
@@ -879,9 +879,9 @@ class _HonestyVisitor(ast.NodeVisitor):
                     body_ids.add(child.attr)
 
             if body_ids & _LOGGING_IDENTIFIERS:
-                continue  # has logging — not silent
+                continue  # has logging -- not silent
 
-            # Check for raise — if it re-raises, it's not silent
+            # Check for raise -- if it re-raises, it's not silent
             has_raise = any(isinstance(s, ast.Raise) for s in body)
             if has_raise:
                 continue
@@ -904,7 +904,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                 )
 
     def _check_production_assert(self, tree: ast.Module) -> None:
-        """Rule: production_assert — assert in non-test code.
+        """Rule: production_assert -- assert in non-test code.
 
         ``assert`` statements are stripped when Python runs with ``-O``.
         Production invariants must use explicit ``if not x: raise`` instead.
@@ -914,13 +914,13 @@ class _HonestyVisitor(ast.NodeVisitor):
                 self._emit(
                     node.lineno,
                     "production_assert",
-                    "'assert' in production code — stripped under python -O, use explicit raise",
+                    "'assert' in production code -- stripped under python -O, use explicit raise",
                 )
 
     def _check_do_nothing_wrapper(
         self, func: ast.FunctionDef | ast.AsyncFunctionDef
     ) -> None:
-        """Rule: do_nothing_wrapper — function body is a single return of a call.
+        """Rule: do_nothing_wrapper -- function body is a single return of a call.
 
         Flags functions whose entire body (excluding docstring) is
         ``return some_function(args)`` where the function adds no validation,
@@ -928,7 +928,7 @@ class _HonestyVisitor(ast.NodeVisitor):
 
         Excluded:
         - Dunder methods and framework contracts (forward, handle, run, _execute).
-        - Private helpers (underscore prefix) — internal delegation is fine.
+        - Private helpers (underscore prefix) -- internal delegation is fine.
         - Named accessors/factories under 4 statements (to_payload, create_*, get_*).
         - Property-style accessors (modules, tools, keys, etc.).
         """
@@ -939,7 +939,7 @@ class _HonestyVisitor(ast.NodeVisitor):
         }:
             return
 
-        # Skip private helpers — internal delegation is a valid pattern
+        # Skip private helpers -- internal delegation is a valid pattern
         if func.name.startswith("_"):
             return
 
@@ -983,7 +983,7 @@ class _HonestyVisitor(ast.NodeVisitor):
         if not isinstance(stmt.value, ast.Call):
             return
 
-        # The return value is a single function call — this is a do-nothing wrapper
+        # The return value is a single function call -- this is a do-nothing wrapper
         # Get the callee name for the message
         callee = stmt.value.func
         if isinstance(callee, ast.Attribute):
@@ -996,12 +996,12 @@ class _HonestyVisitor(ast.NodeVisitor):
         self._emit(
             func.lineno,
             "do_nothing_wrapper",
-            f"function '{func.name}' body is just 'return {callee_name}(...)' — "
+            f"function '{func.name}' body is just 'return {callee_name}(...)' -- "
             f"consider inlining at call sites",
         )
 
     def _check_sync_session_in_async(self, tree: ast.Module) -> None:
-        """Rule: sync_in_async — session_scope() called directly in async def.
+        """Rule: sync_in_async -- session_scope() called directly in async def.
 
         The correct pattern is to define a sync inner function that uses
         session_scope(), then pass it to asyncio.to_thread().  Calling
@@ -1042,12 +1042,12 @@ class _HonestyVisitor(ast.NodeVisitor):
                         child.lineno,
                         "sync_in_async",
                         f"sync 'session_scope()' called directly in async def "
-                        f"'{node.name}' — wrap in a sync helper and use "
+                        f"'{node.name}' -- wrap in a sync helper and use "
                         f"asyncio.to_thread()",
                     )
 
     def _check_api_imports_modules(self, tree: ast.Module) -> None:
-        """Rule: api_imports_module_internals — guarded layers import module internals.
+        """Rule: api_imports_module_internals -- guarded layers import module internals.
 
         Files under aila/api/, aila/platform/, and aila/storage/ must not import
         directly from aila.modules.*. Those layers must use module contracts,
@@ -1068,7 +1068,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                         self._emit(
                             node.lineno,
                             "api_imports_module_internals",
-                            f"{layer} file imports '{alias.name}' — use module contracts, registry lookups, or injected adapters instead",
+                            f"{layer} file imports '{alias.name}' -- use module contracts, registry lookups, or injected adapters instead",
                         )
                 continue
 
@@ -1079,7 +1079,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                     self._emit(
                         node.lineno,
                         "api_imports_module_internals",
-                        f"{layer} file imports from '{node.module}' — use module contracts, registry lookups, or injected adapters instead",
+                        f"{layer} file imports from '{node.module}' -- use module contracts, registry lookups, or injected adapters instead",
                     )
 
     def _check_import_boundary(self, tree: ast.Module, module_id: str) -> None:
@@ -1106,7 +1106,7 @@ class _HonestyVisitor(ast.NodeVisitor):
             return
         # aila.modules.{segment}...
         rest = dotted[len("aila.modules."):]
-        # rest may be empty (bare "aila.modules" import — not a violation) or
+        # rest may be empty (bare "aila.modules" import -- not a violation) or
         # "{other_id}" or "{other_id}.something"
         if not rest:
             return
@@ -1146,7 +1146,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                             )
 
     def _check_asyncio_in_module(self, tree: ast.Module) -> None:
-        """Rule 18: asyncio_in_module — threading primitives banned from modules/.
+        """Rule 18: asyncio_in_module -- threading primitives banned from modules/.
 
         Platform services own the threading boundary. Module code must never
         call asyncio.to_thread, asyncio.run, loop.run_until_complete,
@@ -1154,7 +1154,7 @@ class _HonestyVisitor(ast.NodeVisitor):
         concurrent.futures. These are platform-layer responsibilities.
         """
         for node in ast.walk(tree):
-            # concurrent.futures import — flag the import itself
+            # concurrent.futures import -- flag the import itself
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
@@ -1162,7 +1162,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                             self._emit(
                                 node.lineno,
                                 "asyncio_in_module",
-                                f"asyncio_in_module: 'import {alias.name}' — "
+                                f"asyncio_in_module: 'import {alias.name}' -- "
                                 f"threading belongs to the platform layer, not modules",
                             )
                 elif isinstance(node, ast.ImportFrom):
@@ -1171,7 +1171,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                         self._emit(
                             node.lineno,
                             "asyncio_in_module",
-                            f"asyncio_in_module: 'from {mod} import ...' — "
+                            f"asyncio_in_module: 'from {mod} import ...' -- "
                             f"threading belongs to the platform layer, not modules",
                         )
                 continue
@@ -1190,15 +1190,15 @@ class _HonestyVisitor(ast.NodeVisitor):
                             self._emit(
                                 node.lineno,
                                 "asyncio_in_module",
-                                f"asyncio_in_module: 'asyncio.{attr}()' call — "
+                                f"asyncio_in_module: 'asyncio.{attr}()' call -- "
                                 f"threading belongs to the platform layer, not modules",
                             )
                     else:
-                        # run_until_complete / run_in_executor — any object (loop variable)
+                        # run_until_complete / run_in_executor -- any object (loop variable)
                         self._emit(
                             node.lineno,
                             "asyncio_in_module",
-                            f"asyncio_in_module: '.{attr}()' call — "
+                            f"asyncio_in_module: '.{attr}()' call -- "
                             f"threading belongs to the platform layer, not modules",
                         )
             elif isinstance(func_node, ast.Name) and func_node.id in _THREAD_CLASS_NAMES:
@@ -1210,10 +1210,10 @@ class _HonestyVisitor(ast.NodeVisitor):
                 )
 
     def _check_http_client_in_module(self, tree: ast.Module) -> None:
-        """Rule 22: http_client_in_module — direct HTTP client imports in modules/.
+        """Rule 22: http_client_in_module -- direct HTTP client imports in modules/.
 
         Modules must not construct their own HTTP clients. HTTP transport
-        is a platform concern — use SSHService, IDABridgeTool, or platform
+        is a platform concern -- use SSHService, IDABridgeTool, or platform
         HTTP helpers. Direct httpx/requests/urllib3/aiohttp imports bypass
         platform connection management and observability.
         """
@@ -1225,7 +1225,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                         self._emit(
                             node.lineno,
                             "http_client_in_module",
-                            f"http_client_in_module: 'import {alias.name}' — "
+                            f"http_client_in_module: 'import {alias.name}' -- "
                             f"HTTP clients belong to the platform layer, not modules",
                         )
             elif isinstance(node, ast.ImportFrom):
@@ -1235,12 +1235,12 @@ class _HonestyVisitor(ast.NodeVisitor):
                     self._emit(
                         node.lineno,
                         "http_client_in_module",
-                        f"http_client_in_module: 'from {mod} import ...' — "
+                        f"http_client_in_module: 'from {mod} import ...' -- "
                         f"HTTP clients belong to the platform layer, not modules",
                     )
 
     def _check_direct_db_in_module(self, tree: ast.Module) -> None:
-        """Rule 23: direct_db_in_module — direct DB driver imports in modules/.
+        """Rule 23: direct_db_in_module -- direct DB driver imports in modules/.
 
         Modules access the database exclusively through ``UnitOfWork`` from
         ``aila.platform.uow``. Direct imports of connection-layer libraries
@@ -1256,7 +1256,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                         self._emit(
                             node.lineno,
                             "direct_db_in_module",
-                            f"direct_db_in_module: 'import {alias.name}' — "
+                            f"direct_db_in_module: 'import {alias.name}' -- "
                             f"use UnitOfWork from aila.platform.uow instead",
                         )
             elif isinstance(node, ast.ImportFrom):
@@ -1266,7 +1266,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                     self._emit(
                         node.lineno,
                         "direct_db_in_module",
-                        f"direct_db_in_module: 'from {mod} import ...' — "
+                        f"direct_db_in_module: 'from {mod} import ...' -- "
                         f"use UnitOfWork from aila.platform.uow instead",
                     )
                 # Also catch create_engine / create_async_engine from sqlalchemy
@@ -1276,7 +1276,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                             self._emit(
                                 node.lineno,
                                 "direct_db_in_module",
-                                f"direct_db_in_module: 'from {mod} import {alias.name}' — "
+                                f"direct_db_in_module: 'from {mod} import {alias.name}' -- "
                                 f"use UnitOfWork from aila.platform.uow instead",
                             )
 
@@ -1323,7 +1323,7 @@ class _HonestyVisitor(ast.NodeVisitor):
             self._emit(
                 lineno,
                 "commented_out_code",
-                "commented_out_code: line looks like commented-out Python — "
+                "commented_out_code: line looks like commented-out Python -- "
                 "delete dead code instead of commenting it out",
             )
 
@@ -1350,12 +1350,12 @@ class _HonestyVisitor(ast.NodeVisitor):
                 self._emit(
                     node.lineno,
                     "except_return_default",
-                    "except_return_default: except returns empty default — "
+                    "except_return_default: except returns empty default -- "
                     "this silently hides failures; log or propagate instead",
                 )
 
     def _check_nested_if_collapsible(self, tree: ast.Module) -> None:
-        """Rule 27: if whose body is a single if (no else on either) — combine with and."""
+        """Rule 27: if whose body is a single if (no else on either) -- combine with and."""
         for node in ast.walk(tree):
             if not isinstance(node, ast.If):
                 continue
@@ -1369,7 +1369,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                     node.lineno,
                     "nested_if_collapsible",
                     "nested_if_collapsible: nested if with no else on either branch "
-                    "— combine with 'and' for readability",
+                    "-- combine with 'and' for readability",
                 )
 
     def _check_pointless_pass(self, tree: ast.Module) -> None:
@@ -1396,14 +1396,14 @@ class _HonestyVisitor(ast.NodeVisitor):
                 node.lineno,
                 "pointless_pass",
                 f"pointless_pass: '{node.name}()' body is only 'pass' "
-                f"— implement or mark @abstractmethod",
+                f"-- implement or mark @abstractmethod",
             )
 
     def _check_f_string_no_interpolation(self, tree: ast.Module) -> None:
         """Rule 29: f-string with no embedded expressions.
 
         Skips JoinedStr nodes that appear as format_spec inside a
-        FormattedValue — those are formatting directives (e.g. ``<6``
+        FormattedValue -- those are formatting directives (e.g. ``<6``
         in ``f"{'ID':<6}"``) and are not independent f-strings.
         """
         format_spec_ids: set[int] = set()
@@ -1449,7 +1449,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                     prev.lineno,
                     "single_use_variable",
                     f"single_use_variable: '{name}' is assigned and immediately returned "
-                    f"— return the expression directly",
+                    f"-- return the expression directly",
                 )
 
     def _check_placeholder_return(self, tree: ast.Module) -> None:
@@ -1466,11 +1466,11 @@ class _HonestyVisitor(ast.NodeVisitor):
             if isinstance(val, ast.Dict) and not val.keys:
                 self._emit(node.lineno, "placeholder_return",
                            f"placeholder_return: '{node.name}()' returns empty dict {{}} "
-                           f"— implement or raise NotImplementedError")
+                           f"-- implement or raise NotImplementedError")
             elif isinstance(val, (ast.List, ast.Tuple)) and not val.elts:
                 self._emit(node.lineno, "placeholder_return",
                            f"placeholder_return: '{node.name}()' returns empty collection "
-                           f"— implement or raise NotImplementedError")
+                           f"-- implement or raise NotImplementedError")
 
     def _check_log_format_concat(self, tree: ast.Module) -> None:
         """Rule 32: logging call uses f-string or concatenation instead of %-formatting."""
@@ -1485,11 +1485,11 @@ class _HonestyVisitor(ast.NodeVisitor):
             first_arg = node.args[0]
             if isinstance(first_arg, ast.JoinedStr):
                 self._emit(node.lineno, "log_format_concat",
-                           f"log_format_concat: logging.{func.attr}(f'...') — "
+                           f"log_format_concat: logging.{func.attr}(f'...') -- "
                            f"use %-formatting: .{func.attr}('x=%s', x)")
             elif isinstance(first_arg, ast.BinOp) and isinstance(first_arg.op, ast.Add):
                 self._emit(node.lineno, "log_format_concat",
-                           f"log_format_concat: logging.{func.attr}('...' + ...) — "
+                           f"log_format_concat: logging.{func.attr}('...' + ...) -- "
                            f"use %-formatting: .{func.attr}('x=%s', x)")
 
     def _check_broad_exception_catch(self, tree: ast.Module) -> None:
@@ -1502,7 +1502,7 @@ class _HonestyVisitor(ast.NodeVisitor):
             if not isinstance(node, ast.ExceptHandler):
                 continue
             if node.type is None:
-                # bare except: — even worse, but rule 12 covers this
+                # bare except: -- even worse, but rule 12 covers this
                 continue
             exc_name = ""
             if isinstance(node.type, ast.Name):
@@ -1515,11 +1515,11 @@ class _HonestyVisitor(ast.NodeVisitor):
                 node.lineno,
                 "broad_exception_catch",
                 "broad_exception_catch: 'except Exception' catches everything indiscriminately "
-                "— catch specific exception types",
+                "-- catch specific exception types",
             )
 
     def _check_response_model_dict(self, tree: ast.Module) -> None:
-        """Rule 19: response_model_dict — @router.* with response_model=dict/Dict.
+        """Rule 19: response_model_dict -- @router.* with response_model=dict/Dict.
 
         FastAPI endpoints must return a typed Pydantic schema, not a bare dict.
         Using response_model=dict bypasses response validation and schema
@@ -1550,7 +1550,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                             dec.lineno,
                             "response_model_dict",
                             f"response_model_dict: endpoint '{node.name}' uses "
-                            f"response_model={val.id} — use a typed Pydantic schema instead",
+                            f"response_model={val.id} -- use a typed Pydantic schema instead",
                         )
                     # response_model=typing.Dict
                     elif isinstance(val, ast.Attribute) and val.attr == "Dict":
@@ -1558,7 +1558,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                             dec.lineno,
                             "response_model_dict",
                             f"response_model_dict: endpoint '{node.name}' uses "
-                            f"response_model=typing.Dict — use a typed Pydantic schema instead",
+                            f"response_model=typing.Dict -- use a typed Pydantic schema instead",
                         )
                     # response_model=dict | None  (BinOp with left=dict)
                     elif isinstance(val, ast.BinOp):
@@ -1568,11 +1568,11 @@ class _HonestyVisitor(ast.NodeVisitor):
                                 dec.lineno,
                                 "response_model_dict",
                                 f"response_model_dict: endpoint '{node.name}' uses "
-                                f"response_model={left.id} | ... — use a typed Pydantic schema instead",
+                                f"response_model={left.id} | ... -- use a typed Pydantic schema instead",
                             )
 
     def _check_bare_dict_return_endpoint(self, tree: ast.Module) -> None:
-        """Rule 20: bare_dict_return_endpoint — endpoint handler returns a raw dict.
+        """Rule 20: bare_dict_return_endpoint -- endpoint handler returns a raw dict.
 
         Functions decorated with @router.* must return a Pydantic model instance,
         not a plain dict literal or dict() call. Raw dict returns bypass response
@@ -1607,17 +1607,17 @@ class _HonestyVisitor(ast.NodeVisitor):
                     continue
                 ret_val = child.value
 
-                # return {"key": val}  — ast.Dict literal
+                # return {"key": val}  -- ast.Dict literal
                 if isinstance(ret_val, ast.Dict):
                     self._emit(
                         child.lineno,
                         "bare_dict_return_endpoint",
                         f"bare_dict_return_endpoint: endpoint '{node.name}' returns a raw "
-                        f"dict literal — return a typed Pydantic model instead",
+                        f"dict literal -- return a typed Pydantic model instead",
                     )
                     continue
 
-                # return dict(...)  — dict() constructor call
+                # return dict(...)  -- dict() constructor call
                 if (
                     isinstance(ret_val, ast.Call)
                     and isinstance(ret_val.func, ast.Name)
@@ -1626,7 +1626,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                     self._emit(
                         child.lineno,
                         "bare_dict_return_endpoint",
-                        f"bare_dict_return_endpoint: endpoint '{node.name}' returns dict() — "
+                        f"bare_dict_return_endpoint: endpoint '{node.name}' returns dict() -- "
                         f"return a typed Pydantic model instead",
                     )
                     continue
@@ -1646,12 +1646,12 @@ class _HonestyVisitor(ast.NodeVisitor):
                                     child.lineno,
                                     "bare_dict_return_endpoint",
                                     f"bare_dict_return_endpoint: endpoint '{node.name}' returns "
-                                    f"JSONResponse(content={{...}}) — return a typed Pydantic model instead",
+                                    f"JSONResponse(content={{...}}) -- return a typed Pydantic model instead",
                                 )
                                 break
 
     def _check_noqa_inline(self, source: str, filepath: str) -> None:
-        """Rule 21: noqa_inline — inline # noqa comments in production source.
+        """Rule 21: noqa_inline -- inline # noqa comments in production source.
 
         All linter suppressions must go through honesty_whitelist.py with a
         documented justification. Inline # noqa is banned because it silently
@@ -1667,7 +1667,7 @@ class _HonestyVisitor(ast.NodeVisitor):
             if normalized.endswith(suffix):
                 return
 
-        # Alembic migrations are auto-generated — exempt from this rule
+        # Alembic migrations are auto-generated -- exempt from this rule
         if _ALEMBIC_PATH_PATTERN.search(normalized):
             return
 
@@ -1676,7 +1676,7 @@ class _HonestyVisitor(ast.NodeVisitor):
                 self._emit(
                     lineno,
                     "noqa_inline",
-                    f"noqa_inline: inline '# noqa' comment on line {lineno} — "
+                    f"noqa_inline: inline '# noqa' comment on line {lineno} -- "
                     f"use honesty_whitelist.py with a documented justification instead",
                 )
 
@@ -1690,7 +1690,7 @@ class HonestyAuditor:
 
     The whitelist file (honesty_whitelist.py at the project root) defines
     HONESTY_WHITELIST as a list of (filename_suffix, function_name, detail) string
-    triples.  A finding is suppressed when all three fields match — this prevents
+    triples.  A finding is suppressed when all three fields match -- this prevents
     accidentally suppressing findings in other files with the same function name.
 
     All analysis is AST-based (D-04 constraint): no imports are executed, no

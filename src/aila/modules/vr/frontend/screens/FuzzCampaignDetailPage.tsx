@@ -150,7 +150,7 @@ export function FuzzCampaignDetailPage() {
 
       {/* State control + Launcher (§1.5). Launch button enqueues an
           ARQ task that SSHes to the campaign's analysis_system_id and
-          starts the fuzzer per its engine_id. Idempotent — clicking
+          starts the fuzzer per its engine_id. Idempotent -- clicking
           while running returns the existing PID. */}
       <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
         <h2 className="text-sm font-semibold text-foreground">
@@ -165,7 +165,7 @@ export function FuzzCampaignDetailPage() {
             }
             title={
               campaign.analysis_system_id
-                ? "Enqueue the launcher ARQ task — SSHes to the workstation and starts the fuzzer"
+                ? "Enqueue the launcher ARQ task -- SSHes to the workstation and starts the fuzzer"
                 : "Set analysis_system_id on the campaign before launching"
             }
             className="px-3 py-1.5 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-500 disabled:opacity-40"
@@ -208,7 +208,7 @@ export function FuzzCampaignDetailPage() {
       )}</AilaCard>
 
 
-      {/* Rebuild + Tune (§1.5) — campaign config knobs. Backend wiring
+      {/* Rebuild + Tune (§1.5) -- campaign config knobs. Backend wiring
           pending: rebuild requires a /campaigns/:id/rebuild endpoint
           that re-runs harness generation; tune requires PATCH on
           engine_config + strategy_config (the schemas exist on the
@@ -269,7 +269,7 @@ export function FuzzCampaignDetailPage() {
           <dd className="font-mono text-foreground">
             {campaign.execs_per_sec != null
               ? campaign.execs_per_sec.toLocaleString()
-              : "—"}
+              : "--"}
           </dd>
         </div>
         <div>
@@ -283,7 +283,7 @@ export function FuzzCampaignDetailPage() {
           <dd className="font-mono text-foreground">
             {campaign.coverage_pct != null
               ? `${campaign.coverage_pct.toFixed(2)}%`
-              : "—"}
+              : "--"}
           </dd>
         </div>
         <div>
@@ -295,7 +295,7 @@ export function FuzzCampaignDetailPage() {
           <dd className="font-mono text-xs text-text-muted">
             {campaign.started_at
               ? new Date(campaign.started_at).toLocaleString()
-              : "—"}
+              : "--"}
           </dd>
         </div>
         <div>
@@ -303,7 +303,7 @@ export function FuzzCampaignDetailPage() {
           <dd className="font-mono text-xs text-text-muted">
             {campaign.stopped_at
               ? new Date(campaign.stopped_at).toLocaleString()
-              : "—"}
+              : "--"}
           </dd>
         </div>
         <div>
@@ -311,12 +311,12 @@ export function FuzzCampaignDetailPage() {
           <dd className="font-mono text-xs text-text-muted">
             {campaign.last_progress_at
               ? new Date(campaign.last_progress_at).toLocaleString()
-              : "—"}
+              : "--"}
           </dd>
         </div>
       </dl></AilaCard>
 
-      {/* Live charts (§1.5 — coverage / crashes / corpus / stability).
+      {/* Live charts (§1.5 -- coverage / crashes / corpus / stability).
           v0.5: derived from scalar metrics + crash discovery timestamps.
           Real time-series telemetry stream is backend pending. */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -325,7 +325,7 @@ export function FuzzCampaignDetailPage() {
         </h3>
         {crashes.length === 0 ? (
           <p className="text-xs text-text-muted">
-            No crashes yet — chart populates once the engine finds one.
+            No crashes yet -- chart populates once the engine finds one.
           </p>
         ) : (
           <AilaChart
@@ -365,7 +365,7 @@ export function FuzzCampaignDetailPage() {
         <CoverageChart campaignId={cid} /></AilaCard>
       </div>
 
-      {/* Resource band (§1.5 — per-instance CPU/mem/IO from workstation polls) */}
+      {/* Resource band (§1.5 -- per-instance CPU/mem/IO from workstation polls) */}
       <AilaCard  techBorder glow><h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
         Workstation resources
       </h3>
@@ -435,7 +435,7 @@ export function FuzzCampaignDetailPage() {
                     {c.stack_hash.slice(0, 16)}…
                   </td>
                   <td className="px-2 py-1 font-mono">
-                    {c.crash_type ?? "—"}
+                    {c.crash_type ?? "--"}
                   </td>
                   <td className="px-2 py-1">
                     <AilaBadge severity={VERDICT_COLOR[c.triage_verdict]} size="sm">
@@ -444,12 +444,12 @@ export function FuzzCampaignDetailPage() {
                   </td>
                   <td className="px-2 py-1 font-mono">{c.severity}</td>
                   <td className="px-2 py-1 max-w-xs truncate">
-                    {c.crash_signature ?? "—"}
+                    {c.crash_signature ?? "--"}
                   </td>
                   <td className="px-2 py-1 font-mono text-text-muted">
                     {c.discovered_at
                       ? new Date(c.discovered_at).toLocaleString()
-                      : "—"}
+                      : "--"}
                   </td>
                 </tr>
               ))}
@@ -528,7 +528,7 @@ function CoverageChart({ campaignId }: { campaignId: string }) {
   );
 }
 
-/** "Stuck" detection — render an amber badge when the campaign has been
+/** "Stuck" detection -- render an amber badge when the campaign has been
  *  running but hasn't reported progress in > 4h (08_FRONTEND_UX.md §1.5). */
 function StuckBadge({
   lastProgressAt,

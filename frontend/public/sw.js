@@ -1,5 +1,5 @@
 /**
- * AILA Service Worker — offline GET cache (UX-07).
+ * AILA Service Worker -- offline GET cache (UX-07).
  *
  * Strategy: Network-first for all API GET requests.
  * On network failure, serve from Cache API with last-known response.
@@ -13,7 +13,7 @@ const CACHE_NAME = "aila-api-cache-v1";
 const API_PATTERN = /https?:\/\/(?:localhost|127\.0\.0\.1):8000\//;
 
 self.addEventListener("install", (event) => {
-  // Activate immediately — don't wait for old SW to die
+  // Activate immediately -- don't wait for old SW to die
   event.waitUntil(self.skipWaiting());
 });
 
@@ -45,7 +45,7 @@ self.addEventListener("fetch", (event) => {
     fetch(request)
       .then((response) => {
         if (response.ok) {
-          // Clone before consuming — cache the successful response
+          // Clone before consuming -- cache the successful response
           const cloned = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
             // Store with last-sync timestamp header injected
@@ -64,12 +64,12 @@ self.addEventListener("fetch", (event) => {
         return response;
       })
       .catch(async () => {
-        // Network failed — try cache
+        // Network failed -- try cache
         const cached = await caches.match(request);
         if (cached) {
           return cached;
         }
-        // Nothing cached — return a 503 JSON error
+        // Nothing cached -- return a 503 JSON error
         return new Response(
           JSON.stringify({ error: "offline", detail: "No cached response available." }),
           {

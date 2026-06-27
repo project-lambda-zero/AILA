@@ -1,5 +1,5 @@
 /**
- * GeographicMap.stories.tsx — Storybook stories for VIZ-04.
+ * GeographicMap.stories.tsx -- Storybook stories for VIZ-04.
  *
  * Note: Leaflet requires a DOM with CSS loaded. The map will render correctly
  * in Storybook only when leaflet/dist/leaflet.css is included in the preview.
@@ -39,7 +39,7 @@ const meta: Meta<typeof GeographicMap> = {
 export default meta;
 type Story = StoryObj<typeof GeographicMap>;
 
-/** Most common state — no nodes have lat/lng tags. Safe to render anywhere. */
+/** Most common state -- no nodes have lat/lng tags. Safe to render anywhere. */
 export const EmptyState: Story = {
   decorators: [
     (Story) => (
@@ -52,7 +52,7 @@ export const EmptyState: Story = {
   ],
 };
 
-/** Nodes with lat/lng tags — renders a Leaflet map. Requires leaflet.css in Storybook preview. */
+/** Nodes with lat/lng tags -- renders a Leaflet map. Requires leaflet.css in Storybook preview. */
 export const WithGeoNodes: Story = {
   decorators: [
     (Story) => (
@@ -98,7 +98,7 @@ export const WithGeoNodes: Story = {
   ],
 };
 
-/** Node with no valid geo tags — falls through to empty state. */
+/** Node with no valid geo tags -- falls through to empty state. */
 export const NoValidGeoTags: Story = {
   decorators: [
     (Story) => (

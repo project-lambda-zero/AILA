@@ -29,7 +29,7 @@ WorkflowDefinition
 ```
 
 A fifth reserved state, `__paused__`, exists for engine-level pause / resume
-(Phase B). It is NOT a terminal — the cursor sits at `__paused__` while
+(Phase B). It is NOT a terminal -- the cursor sits at `__paused__` while
 the prior `current_state` is preserved in the cursor's `archived_state` column
 (migration 067). Resume swaps `archived_state` back to `current_state`.
 `__paused__` is not a member of `RESERVED_TERMINAL_STATES`; the main engine
@@ -291,7 +291,7 @@ terminal = await analyze_fleet(
 )
 ```
 
-Task kwargs become `initial_input` in the engine. `initial_input` is stored in a JSONB column. Non-serializable objects crash the INSERT. The engine validates this at `execute()` entry with `json.dumps()` and raises a clear `TypeError` if it fails. Validated at `DurableStateMachine.execute()` entry via `json.dumps(initial_input, default=None)` — see `src/aila/platform/workflows/engine.py:112`.
+Task kwargs become `initial_input` in the engine. `initial_input` is stored in a JSONB column. Non-serializable objects crash the INSERT. The engine validates this at `execute()` entry with `json.dumps()` and raises a clear `TypeError` if it fails. Validated at `DurableStateMachine.execute()` entry via `json.dumps(initial_input, default=None)` -- see `src/aila/platform/workflows/engine.py:112`.
 
 ### Do not: put datetimes, UUIDs, or enums directly in `output`
 
@@ -345,7 +345,7 @@ await session.merge(run_record)
 await session.commit()
 ```
 
-The orchestrator and engine may both create `WorkflowRunRecord` rows for the same `run_id`. Use `merge()` or `INSERT ON CONFLICT DO NOTHING`. Live merge sites in `src/aila/platform/runtime/orchestrator.py` — grep for `_merge_live_hypotheses` to locate.
+The orchestrator and engine may both create `WorkflowRunRecord` rows for the same `run_id`. Use `merge()` or `INSERT ON CONFLICT DO NOTHING`. Live merge sites in `src/aila/platform/runtime/orchestrator.py` -- grep for `_merge_live_hypotheses` to locate.
 
 ### Do not: hard-code state transitions in handler logic
 

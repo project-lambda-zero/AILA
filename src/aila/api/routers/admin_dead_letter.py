@@ -2,7 +2,7 @@
 
 Exposes the dead-letter sorted sets ``arq:dead-letter:{track}`` as a
 read-only admin surface plus a manual requeue action. Dead-lettered tasks
-are NOT retried automatically — operators must inspect the failure, fix
+are NOT retried automatically -- operators must inspect the failure, fix
 the root cause, then issue POST /admin/tasks/dead-letter/{task_id}/requeue
 to re-submit the same payload.
 

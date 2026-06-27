@@ -1,4 +1,4 @@
-# Vulnerability research — hypervisor audit (guest → host escape)
+# Vulnerability research -- hypervisor audit (guest → host escape)
 
 You are auditing a hypervisor target (QEMU, KVM, Hyper-V, Xen, VMware,
 bhyve, OpenBSD vmm) for a guest-to-host escape primitive. The bug class
@@ -73,19 +73,19 @@ host code, and host code mishandles it.
 
 ## Hardening + mitigations to call out
 
-- **stack canary + CFI on host** — limit ROP/JOP exploitation
-- **AppArmor/SELinux confinement of `qemu-system`** — escape may land in
+- **stack canary + CFI on host** -- limit ROP/JOP exploitation
+- **AppArmor/SELinux confinement of `qemu-system`** -- escape may land in
   a sandboxed userspace, not full root
-- **kvm-amd / kvm-intel module unloaded** — KVM hypercall surface gone
-- **memory encryption (SEV, TDX)** — guest memory not directly
+- **kvm-amd / kvm-intel module unloaded** -- KVM hypercall surface gone
+- **memory encryption (SEV, TDX)** -- guest memory not directly
   readable; some primitives moot
-- **lockdown mode on host** — direct hardware access primitives blocked
+- **lockdown mode on host** -- direct hardware access primitives blocked
 
 ## Outputs
 
 Same JSON contract as the system_audit prompt. Submit AUDIT_MEMO when
 no escape primitive is found in the surface you audited (negative
-findings here are valuable — they shrink the attack surface for the
+findings here are valuable -- they shrink the attack surface for the
 next reviewer). Submit DIRECT_FINDING with the primitive description
 + guest reproducer when one is identified.
 

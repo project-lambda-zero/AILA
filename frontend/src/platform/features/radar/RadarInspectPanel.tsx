@@ -1,5 +1,5 @@
 /**
- * RadarInspectPanel.tsx — Slide-over inspect panel for network topology nodes (Phase 144).
+ * RadarInspectPanel.tsx -- Slide-over inspect panel for network topology nodes (Phase 144).
  *
  * Opens when a node is clicked in the RadarGraph. Displays:
  * - System name, host, distro header
@@ -116,7 +116,7 @@ export function RadarInspectPanel({ node, open, onClose }: RadarInspectPanelProp
             {node.is_stale && (
               <div className="mt-1">
                 <AilaBadge severity="critical" size="sm">
-                  STALE — data may be outdated
+                  STALE -- data may be outdated
                 </AilaBadge>
               </div>
             )}
@@ -227,7 +227,7 @@ export function RadarInspectPanel({ node, open, onClose }: RadarInspectPanelProp
                         {port.port}/{port.protocol}
                       </span>
                       <span className="font-mono text-[10px] text-muted-foreground truncate">
-                        {port.process_name ?? "—"} ({port.local_address})
+                        {port.process_name ?? "--"} ({port.local_address})
                       </span>
                     </div>
                   ))}
@@ -342,7 +342,7 @@ function SystemInfoSection({
         {metadata.is_stale && (
           <div className="mt-1">
             <AilaBadge severity="medium" size="sm">
-              stale — last scan did not refresh this data
+              stale -- last scan did not refresh this data
             </AilaBadge>
           </div>
         )}

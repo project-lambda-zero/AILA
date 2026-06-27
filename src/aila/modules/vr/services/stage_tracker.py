@@ -1,4 +1,4 @@
-"""StageTracker — durable per-stage status mutator for target analysis.
+"""StageTracker -- durable per-stage status mutator for target analysis.
 
 Usage:
 
@@ -15,7 +15,7 @@ Usage:
                     primary_language=lang,
                 )
         except StageAlreadyDone:
-            # Stage was already DONE — idempotent skip. Caller can
+            # Stage was already DONE -- idempotent skip. Caller can
             # safely return without redoing the work.
             return
         # On any other exception inside `async with`, the tracker
@@ -90,7 +90,7 @@ _DEFAULT_TIMEOUTS: dict[StageName, float] = {
     StageName.INGESTION: 14400.0,
     StageName.CAPABILITY_PROFILE: 1800.0,
     StageName.FUNCTION_RANKING: 1800.0,  # 30 min  covers cold-CSR firefox-scale rank + retry slack
-    # Android stages — PRD §C-20 + F-3. Numbers sized for the operator-
+    # Android stages -- PRD §C-20 + F-3. Numbers sized for the operator-
     # observable upper bound of each tool: apktool on a 200 MB APK
     # ~5 min; jadx on the same ~15 min; audit-mcp Trailmark + Semble
     # build over a 10k-class jadx Java tree can take 30-60 min (parse
@@ -105,7 +105,7 @@ _DEFAULT_TIMEOUTS: dict[StageName, float] = {
     StageName.MOBSF_SCAN: 1800.0,
 }
 
-# fix §117 — runtime asserts at each lookup site (see __init__ and
+# fix §117 -- runtime asserts at each lookup site (see __init__ and
 # reap_stuck_stages below) fail loudly in the worker log on the first
 # call against an unregistered stage. The previous import-time check
 # only fired during module load; a stage added without a timeout entry
@@ -139,7 +139,7 @@ class StageInFlightError(StageTrackerError):
     """Raised on context-enter when another worker is currently running
     this stage (RUNNING state, within the configured stage_timeout_s).
 
-    Callers should NOT retry immediately — wait for the in-flight
+    Callers should NOT retry immediately -- wait for the in-flight
     worker to finish, OR run the reaper to free a truly-stuck stage.
     """
 
@@ -163,7 +163,7 @@ def parse_stages(stages_json: str | None) -> TargetAnalysisStages:
 
 
 async def load_target_stages(target_id: str) -> TargetAnalysisStages:
-    """Read-only convenience — load stages without entering a tracker."""
+    """Read-only convenience -- load stages without entering a tracker."""
     async with UnitOfWork() as uow:
         row = (await uow.session.exec(
             _select(VRTargetRecord).where(VRTargetRecord.id == target_id),
@@ -229,7 +229,7 @@ async def save_target_stages(
     a useful one-liner.
 
     `extra_columns` lets the caller write work-product columns in the
-    SAME transaction that flips the stage state — eliminating the
+    SAME transaction that flips the stage state -- eliminating the
     crash-window between persisting work output and recording the
     state transition.
     """
@@ -245,7 +245,7 @@ async def save_target_stages(
 
 
 # ─────────────────────────────────────────────────────────────────────
-# StageTracker — the main context manager
+# StageTracker -- the main context manager
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -265,7 +265,7 @@ class StageTracker:
     ) -> None:
         self.target_id = target_id
         self.stage = stage
-        # fix §117 — fail loudly in the worker log on first use of a
+        # fix §117 -- fail loudly in the worker log on first use of a
         # stage missing from _DEFAULT_TIMEOUTS; never silently fall back
         # to a 30-min cap that would mask drift in production.
         if stage_timeout_s is not None:
@@ -281,7 +281,7 @@ class StageTracker:
         self._stages: TargetAnalysisStages | None = None
 
     async def __aenter__(self) -> StageTracker:
-        # fix §320 — SELECT FOR UPDATE on the target row so two workers
+        # fix §320 -- SELECT FOR UPDATE on the target row so two workers
         # racing through __aenter__ serialize on the row lock; the loser
         # observes RUNNING (or DONE) and raises StageInFlight instead of
         # both writing RUNNING and double-running the stage.
@@ -320,14 +320,14 @@ class StageTracker:
                             f"(within {self.stage_timeout_s}s timeout)",
                         )
                     _log.warning(
-                        "stage_tracker: %s/%s was RUNNING for %.0fs (> %.0fs timeout) — "
+                        "stage_tracker: %s/%s was RUNNING for %.0fs (> %.0fs timeout) -- "
                         "taking over (attempt %d)",
                         self.target_id, self.stage.value,
                         (now - started).total_seconds(),
                         self.stage_timeout_s,
                         current.attempts + 1,
                     )
-                # else: RUNNING without started_at — broken row, just take over
+                # else: RUNNING without started_at -- broken row, just take over
 
             # Transition to RUNNING with incremented attempt counter,
             # writing inside the same UoW that holds the row lock.
@@ -347,7 +347,7 @@ class StageTracker:
         return self
 
     async def __aexit__(self, _exc_type, exc, _tb) -> bool:
-        # fix §321 — re-read under SELECT FOR UPDATE so the reaper and
+        # fix §321 -- re-read under SELECT FOR UPDATE so the reaper and
         # __aexit__ serialize on the row lock. If the reaper claimed
         # this stage (FAILED with the `reaper:` prefix that
         # `reap_stuck_stages` writes) while the work was in-flight,
@@ -409,7 +409,7 @@ class StageTracker:
                 uow.session.add(row)
                 await uow.session.commit()
             except (SQLAlchemyError, OSError, RuntimeError) as save_exc:
-                # fix §322 — if the work itself succeeded (exc is None)
+                # fix §322 -- if the work itself succeeded (exc is None)
                 # but the state-commit failed, the caller MUST know:
                 # otherwise they treat the stage as DONE while the DB
                 # still says RUNNING and the next worker double-runs the
@@ -425,7 +425,7 @@ class StageTracker:
                     raise
 
         # Returning False/None propagates the exception; True swallows.
-        # Never swallow — caller wants to know.
+        # Never swallow -- caller wants to know.
         return False
 
     def record_output(self, **extra_columns: Any) -> None:
@@ -444,7 +444,7 @@ class StageTracker:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Reaper — flips stuck RUNNING stages to FAILED:timeout
+# Reaper -- flips stuck RUNNING stages to FAILED:timeout
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -453,11 +453,11 @@ async def reap_stuck_stages() -> int:
     those stages to FAILED with a `timeout` error message.
 
     Returns the number of stages reaped. Intended to be called from
-    the periodic worker cron (1-minute interval is fine — each call
+    the periodic worker cron (1-minute interval is fine -- each call
     is a single SELECT for candidates + one targeted UPDATE per
     offending row, each in its own UoW).
     """
-    # fix §325 — snapshot candidate ids in a short read-only UoW, then
+    # fix §325 -- snapshot candidate ids in a short read-only UoW, then
     # process each row in its OWN UoW. Previously a single deferred
     # commit at the end of the loop meant one bad row dropped every
     # other staged mutation; now each row commits (or rolls back)
@@ -465,7 +465,7 @@ async def reap_stuck_stages() -> int:
     async with UnitOfWork() as uow:
         candidates = (await uow.session.exec(
             _select(VRTargetRecord.id).where(
-                # fix §116 / §324 — broaden the scan to every state
+                # fix §116 / §324 -- broaden the scan to every state
                 # whose rolled-up value can hide a stuck RUNNING stage.
                 # AnalysisState only has 4 values (PENDING / INGESTING /
                 # READY / FAILED); RUNNING stages roll up to INGESTING
@@ -478,7 +478,7 @@ async def reap_stuck_stages() -> int:
                     AnalysisState.FAILED.value,
                 ]),
             )
-            # fix §119 — cap per-pass work. With 10k stuck rows in one
+            # fix §119 -- cap per-pass work. With 10k stuck rows in one
             # pass the reaper would hold a transaction for minutes and
             # block legitimate __aenter__/__aexit__ row locks; bound it
             # to 200 and let the next cron tick drain the rest.
@@ -486,7 +486,7 @@ async def reap_stuck_stages() -> int:
         )).all()
 
     reaped = 0
-    # fix §118 — collect every per-row failure and log each; previously
+    # fix §118 -- collect every per-row failure and log each; previously
     # the first raise aborted the whole pass and stuck rows past the
     # failure point waited for the next cron tick (or forever, if the
     # same row reliably blew up).
@@ -498,16 +498,16 @@ async def reap_stuck_stages() -> int:
                     _select(VRTargetRecord).where(VRTargetRecord.id == target_id),
                 )).first()
                 if row is None:
-                    # Target deleted between scan and per-row UoW — skip.
+                    # Target deleted between scan and per-row UoW -- skip.
                     continue
-                # fix §323 — snapshot the row's stages BEFORE any
+                # fix §323 -- snapshot the row's stages BEFORE any
                 # mutation so the UPDATE below carries an optimistic-
                 # concurrency WHERE clause keyed on
                 # analysis_stages_json. If __aexit__ legitimately
                 # completed the stage (or another reaper pass already
                 # flipped it) between our SELECT and our UPDATE, the
                 # JSON string differs and the UPDATE matches zero rows
-                # — the legitimate write survives and we back off.
+                # -- the legitimate write survives and we back off.
                 original_stages_json = row.analysis_stages_json
                 stages = parse_stages(original_stages_json)
                 mutated = False
@@ -516,7 +516,7 @@ async def reap_stuck_stages() -> int:
                 for stage_name, status in stages.all_stages():
                     if status.state != StageState.RUNNING:
                         continue
-                    # fix §117 — same runtime guard as StageTracker.__init__;
+                    # fix §117 -- same runtime guard as StageTracker.__init__;
                     # an unregistered stage drift surfaces in the reaper log
                     # instead of silently inheriting the 30-min cap.
                     if stage_name not in _DEFAULT_TIMEOUTS:
@@ -534,7 +534,7 @@ async def reap_stuck_stages() -> int:
                     if age <= timeout_s:
                         continue
                     _log.warning(
-                        "stage_tracker.reaper: target=%s stage=%s RUNNING for %.0fs (> %.0fs) — marking FAILED:timeout",
+                        "stage_tracker.reaper: target=%s stage=%s RUNNING for %.0fs (> %.0fs) -- marking FAILED:timeout",
                         row.id, stage_name.value, age, timeout_s,
                     )
                     stages.set(stage_name, StageStatus(
@@ -551,7 +551,7 @@ async def reap_stuck_stages() -> int:
 
                 rolled = roll_up_overall_state(stages)
                 new_stages_json = stages.model_dump_json()
-                # fix §118 — when several stages fail in one reap pass,
+                # fix §118 -- when several stages fail in one reap pass,
                 # concatenate every failure into the legacy single-column
                 # analysis_state_message instead of silently dropping all
                 # but the first. Operators reading the legacy column now
@@ -587,7 +587,7 @@ async def reap_stuck_stages() -> int:
                 if upd_result.first() is None:
                     _log.info(
                         "stage_tracker.reaper: target=%s stages mutated between "
-                        "SELECT and UPDATE — backing off (legitimate writer wins)",
+                        "SELECT and UPDATE -- backing off (legitimate writer wins)",
                         target_id,
                     )
                     await uow.session.rollback()
@@ -595,7 +595,7 @@ async def reap_stuck_stages() -> int:
                 await uow.session.commit()
                 reaped += row_reaped
         except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
-            # fix §118 — log AND collect; the next row still gets a
+            # fix §118 -- log AND collect; the next row still gets a
             # chance. The collected list drives the post-loop summary
             # log so an operator scanning the worker log sees how many
             # rows survived a bad cron tick.

@@ -78,7 +78,7 @@ class ModuleRegistry:
         """Build and return a runtime instance for every registered module.
 
         Each module receives a tool scope restricted to its declared required_tools()
-        merged with PLATFORM_TOOL_KEYS. This is the per-module isolation boundary —
+        merged with PLATFORM_TOOL_KEYS. This is the per-module isolation boundary --
         a module cannot call tools it has not declared.
         """
         from aila.platform.runtime.builder import PLATFORM_TOOL_KEYS  # local import avoids circular

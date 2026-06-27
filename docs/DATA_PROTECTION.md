@@ -263,7 +263,7 @@ server-side via `logger.exception(...)`; only the persisted row is sanitized.
 | Variable | Code fallback | Shipped in `.env.example` | Effect |
 |---|---|---|---|
 | `AILA_PLATFORM_DATA_POSTURE_MODE` | `standard` | `transparent` | Global posture: `transparent` / `standard` / `paranoid`. |
-| `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_RESTRICTED_BEHAVIOR_{TASK_TYPE}` | `fail` | `transparent` for `scoring` and `synthesis` (no-op — see note) | Per task type: `redact` (replace tokens and continue) is the only non-default; any other value, including the shipped `transparent`, resolves to `fail`. |
+| `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_RESTRICTED_BEHAVIOR_{TASK_TYPE}` | `fail` | `transparent` for `scoring` and `synthesis` (no-op -- see note) | Per task type: `redact` (replace tokens and continue) is the only non-default; any other value, including the shipped `transparent`, resolves to `fail`. |
 
 The `transparent` value in `.env.example` for the restricted-behavior keys is
 a no-op: `_resolve_restricted_behavior()` recognises only `redact` as the

@@ -64,7 +64,7 @@ function saveItems(items: RecentItem[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   } catch {
-    // localStorage unavailable — ignore
+    // localStorage unavailable -- ignore
   }
 }
 

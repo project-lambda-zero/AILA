@@ -47,7 +47,7 @@ def _require_operator(auth: AuthContext = Depends(require_user_or_api_key)) -> A
 
 
 # ---------------------------------------------------------------------------
-# Vocabulary management (admin only) — T-138-23
+# Vocabulary management (admin only) -- T-138-23
 # ---------------------------------------------------------------------------
 
 
@@ -154,7 +154,7 @@ async def delete_vocabulary_entry(
 
 
 # ---------------------------------------------------------------------------
-# Tag assignment on systems (operator+) — T-138-23
+# Tag assignment on systems (operator+) -- T-138-23
 # ---------------------------------------------------------------------------
 
 

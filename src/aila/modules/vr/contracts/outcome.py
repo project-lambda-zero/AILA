@@ -105,7 +105,7 @@ class VROutcomeSummary(BaseModel):
     dispatch_status: OutcomeDispatchStatus = OutcomeDispatchStatus.PENDING
     dispatch_target: str | None = Field(
         default=None,
-        description="Downstream artifact id — campaign_id / finding_id / spawned investigation_id / audit_memo_id.",
+        description="Downstream artifact id -- campaign_id / finding_id / spawned investigation_id / audit_memo_id.",
     )
     created_at: datetime | None = None
     state: str = Field(

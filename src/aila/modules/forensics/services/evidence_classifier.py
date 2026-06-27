@@ -16,12 +16,12 @@ _log = logging.getLogger(__name__)
 
 __all__ = ["classify_evidence_directory"]
 
-# Patterns are evaluated in definition order — more specific patterns
+# Patterns are evaluated in definition order -- more specific patterns
 # must come first. Previously ``\.raw$ -> disk_image`` shadowed every
 # memory image named ``*.raw`` (DumpIt / FTK Imager / winpmem output),
 # so the memory lane never activated on Windows analyzer workflows.
 _EVIDENCE_PATTERNS: dict[str, str] = {
-    # memory dumps — must be listed BEFORE the generic ``\.raw$`` disk
+    # memory dumps -- must be listed BEFORE the generic ``\.raw$`` disk
     # pattern so memory names win. Covers common Windows/Linux tools:
     # winpmem / DumpIt / FTK Imager / Belkasoft / MagnetRAM / AVML / LiME.
     r"\.mem$": "memory_dump",
@@ -34,7 +34,7 @@ _EVIDENCE_PATTERNS: dict[str, str] = {
     r"\.avml$": "memory_dump",
     r"\.crash$": "memory_dump",
     r"\.raw\.gz$": "memory_dump",
-    # Name-shape matches — anything whose basename looks like a memory
+    # Name-shape matches -- anything whose basename looks like a memory
     # image wins over the generic ``.raw`` disk fallback.
     r"memory[^/\\]*\\.raw$": "memory_dump",
     r"memory[^/\\]*\.raw\.gz$": "memory_dump",
@@ -134,7 +134,7 @@ async def classify_evidence_directory(
         settings: Application settings for SSH service construction.
         integration: SSH connection fields.
         evidence_directory: Absolute path on the analyzer machine.
-        analyzer_os: Target OS — ``"linux"`` or ``"windows"``.
+        analyzer_os: Target OS -- ``"linux"`` or ``"windows"``.
         emitter: Optional progress emitter for xray visibility.
         project_kind: ``"disk_evidence"`` (default) or ``"raw_directory"``.
             Raw-directory scans tag unknown files as ``raw_file`` / text
@@ -175,7 +175,7 @@ async def classify_evidence_directory(
     ls_output = await ssh.run_command(integration, cmd, timeout_seconds=60.0)
     await _xray(
         "ls_returned",
-        f"xray: directory listing returned — {len(ls_output)} bytes, {len(ls_output.splitlines())} lines",
+        f"xray: directory listing returned -- {len(ls_output)} bytes, {len(ls_output.splitlines())} lines",
         {"bytes": len(ls_output), "lines": len(ls_output.splitlines())},
     )
 
@@ -222,7 +222,7 @@ async def classify_evidence_directory(
         })
 
     if project_kind == "raw_directory":
-        # Raw-directory projects treat every file as itself — no split-disk
+        # Raw-directory projects treat every file as itself -- no split-disk
         # collapsing, no disk-image semantics. Skip straight to return.
         _log.info(
             "intake (raw_directory): classified %d file(s); skipping split-disk collapse",
@@ -231,7 +231,7 @@ async def classify_evidence_directory(
         return {"files": files, "total": len(files)}
 
     # Collapse split disk images to their head piece. A split raw (.raw.001,
-    # .raw.002, ...) or E01 (.E01, .E02, ...) is ONE logical disk — dissect
+    # .raw.002, ...) or E01 (.E01, .E02, ...) is ONE logical disk -- dissect
     # auto-loads the remaining parts from the .001/.E01 head. Running every
     # split member as a standalone evidence item would multiply every dissect
     # query by the number of parts (e.g. 7×20=140 queries for a 7-part disk)
@@ -258,7 +258,7 @@ async def classify_evidence_directory(
     if removed_parts:
         _log.info(
             "intake: collapsed %d split-disk member(s) under their .001/.E01 head "
-            "— dissect auto-loads the parts", len(removed_parts),
+            "-- dissect auto-loads the parts", len(removed_parts),
         )
         await _xray(
             "split_collapsed",

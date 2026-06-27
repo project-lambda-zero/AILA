@@ -1,4 +1,4 @@
-"""Enrichment contract models — barrel re-export."""
+"""Enrichment contract models -- barrel re-export."""
 from __future__ import annotations
 
 from .ranking import (

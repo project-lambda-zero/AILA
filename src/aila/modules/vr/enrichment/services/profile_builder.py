@@ -1,9 +1,9 @@
-"""Capability profile builder — D-51 dispatcher.
+"""Capability profile builder -- D-51 dispatcher.
 
 Routes by target kind to the appropriate MCP, collects orientation +
 classification signals, and merges them through a rule engine into
 ``TargetCapabilityProfile``. Same dispatcher pattern as
-``function_ranker.py`` — no heuristics in Python beyond rule lookups;
+``function_ranker.py`` -- no heuristics in Python beyond rule lookups;
 the MCPs do the actual classification.
 
   source target  → audit-mcp ``detect_languages`` + ``attack_surface``
@@ -19,13 +19,13 @@ Rule engine maps (target_kind, primary_language) onto the D-51
 output (overrides persist as ``capability_profile_json.overrides``).
 
 Haiku finalize for ambiguous target_class is wired as an optional
-hook on the dispatcher constructor — pass an LLM callable to enable
+hook on the dispatcher constructor -- pass an LLM callable to enable
 the fallback. Without it the builder emits the rule-engine output
 directly. Deferred to when the rule engine actually produces a tie.
 """
 from __future__ import annotations
 
-import asyncio  # fix §225 — parallel IDA forward fan-out in _gather_binary_signals
+import asyncio  # fix §225 -- parallel IDA forward fan-out in _gather_binary_signals
 import json
 import logging
 from typing import Any
@@ -71,7 +71,7 @@ _APPLICABLE_MCP_BY_KIND: dict[str, list[str]] = {
     TargetKind.PROTOCOL_CAPTURE.value: [],
     TargetKind.CRASH_INPUT.value:     ["ida_headless"],
     TargetKind.PATCH_DIFF.value:      ["audit_mcp"],
-    # v0.5 GA-54 — kernel + hypervisor
+    # v0.5 GA-54 -- kernel + hypervisor
     TargetKind.KERNEL_IMAGE.value:    ["ida_headless", "audit_mcp"],
     TargetKind.KERNEL_MODULE.value:   ["ida_headless"],
     TargetKind.HYPERVISOR_IMAGE.value: ["ida_headless", "audit_mcp"],
@@ -80,7 +80,7 @@ _APPLICABLE_MCP_BY_KIND: dict[str, list[str]] = {
 # (target_kind, primary_language) → applicable fuzzing engines. Source
 # missing OR language missing falls back to NATIVE_BINARY defaults.
 _APPLICABLE_FUZZING_ENGINES: dict[tuple[str, str], list[str]] = {
-    # v0.3 — single-target engines per (kind, language)
+    # v0.3 -- single-target engines per (kind, language)
     (TargetKind.NATIVE_BINARY.value, "c"):          ["afl++_qemu", "libfuzzer"],
     (TargetKind.NATIVE_BINARY.value, "c++"):        ["afl++_qemu", "libfuzzer"],
     (TargetKind.NATIVE_BINARY.value, "javascript"): ["fuzzilli_v8"],
@@ -100,28 +100,28 @@ _APPLICABLE_FUZZING_ENGINES: dict[tuple[str, str], list[str]] = {
     (TargetKind.JAR.value, "java"):                 ["jazzer"],
     (TargetKind.JAR.value, "kotlin"):               ["jazzer"],
 
-    # v0.4 GA-53 — expanded profile coverage
-    # PHP / Ruby are audit-only — no usable fuzzer ecosystem
+    # v0.4 GA-53 -- expanded profile coverage
+    # PHP / Ruby are audit-only -- no usable fuzzer ecosystem
     (TargetKind.SOURCE_REPO.value, "php"):          [],
     (TargetKind.SOURCE_REPO.value, "ruby"):         [],
-    # Swift / Objective-C — IPA + native paths
+    # Swift / Objective-C -- IPA + native paths
     (TargetKind.SOURCE_REPO.value, "swift"):        ["libfuzzer-swift"],
     (TargetKind.IPA.value, "swift"):                ["libfuzzer-swift"],
     (TargetKind.IPA.value, "objc"):                 ["libfuzzer"],
-    # Android extension — libFuzzer-Android for native libs in APK
+    # Android extension -- libFuzzer-Android for native libs in APK
     (TargetKind.ANDROID_APK.value, "c++"):          ["libfuzzer-android"],
     (TargetKind.ANDROID_APK.value, "c"):            ["libfuzzer-android"],
-    # .NET — sharpfuzz coverage-guided fuzzer
+    # .NET -- sharpfuzz coverage-guided fuzzer
     (TargetKind.DOTNET_ASSEMBLY.value, "c#"):       ["sharpfuzz"],
     (TargetKind.DOTNET_ASSEMBLY.value, "f#"):       ["sharpfuzz"],
 
-    # v0.5 GA-56 — kernel + hypervisor fuzzers
+    # v0.5 GA-56 -- kernel + hypervisor fuzzers
     (TargetKind.KERNEL_IMAGE.value, "c"):           ["syzkaller", "kafl"],
     (TargetKind.KERNEL_MODULE.value, "c"):          ["syzkaller", "kafl"],
     (TargetKind.HYPERVISOR_IMAGE.value, "c"):       ["afl++", "qemu-fuzz"],
     (TargetKind.HYPERVISOR_IMAGE.value, "c++"):     ["afl++", "qemu-fuzz"],
 
-    # fix §226 — explicit (kind, '*') wildcard fallback when language detection
+    # fix §226 -- explicit (kind, '*') wildcard fallback when language detection
     # returned empty/unknown. Lookup in _compose_profile falls through to these
     # when (kind, lang) misses. Empty list = "no fuzzer recommendation, drive
     # the investigation via reasoning strategies" (an honest signal, not a
@@ -145,7 +145,7 @@ _DEFAULT_REASONING_STRATEGY: dict[tuple[str, str], str] = {
     (TargetKind.CVE.value, "*"):                    "vulnerability_research.variant_hunt",
     (TargetKind.PATCH_DIFF.value, "*"):             "vulnerability_research.patch_diff_analysis",
     (TargetKind.CRASH_INPUT.value, "*"):            "vulnerability_research.crash_triage",
-    # v0.4 GA-53 — audit-only and mobile source-audit defaults
+    # v0.4 GA-53 -- audit-only and mobile source-audit defaults
     (TargetKind.SOURCE_REPO.value, "php"):          "vulnerability_research.source_audit",
     (TargetKind.SOURCE_REPO.value, "ruby"):         "vulnerability_research.source_audit",
     (TargetKind.SOURCE_REPO.value, "python"):       "vulnerability_research.source_audit",
@@ -154,7 +154,7 @@ _DEFAULT_REASONING_STRATEGY: dict[tuple[str, str], str] = {
     (TargetKind.ANDROID_APK.value, "*"):            "vulnerability_research.discovery_research",
     (TargetKind.IPA.value, "*"):                    "vulnerability_research.discovery_research",
     (TargetKind.DOTNET_ASSEMBLY.value, "*"):        "vulnerability_research.discovery_research",
-    # v0.5 GA-56 — kernel-first audit; fuzz invoked from narrowed surface
+    # v0.5 GA-56 -- kernel-first audit; fuzz invoked from narrowed surface
     (TargetKind.KERNEL_IMAGE.value, "*"):           "vulnerability_research.kernel_audit",
     (TargetKind.KERNEL_MODULE.value, "*"):          "vulnerability_research.kernel_audit",
     (TargetKind.HYPERVISOR_IMAGE.value, "*"):       "vulnerability_research.hypervisor_audit",
@@ -174,7 +174,7 @@ _DEFAULT_DISCLOSURE_TRACKS: dict[str, list[str]] = {
     TargetKind.PROTOCOL_CAPTURE.value: ["cert_cc", "vendor_direct"],
     TargetKind.CRASH_INPUT.value:     ["vendor_direct", "blog_post"],
     TargetKind.PATCH_DIFF.value:      ["blog_post"],
-    # v0.5 GA-57 — kernel + hypervisor disclosure
+    # v0.5 GA-57 -- kernel + hypervisor disclosure
     # Linux kernel finding → kernel_org_security primary, linux_distros for
     # distro coordination, oss_security for public after embargo, plus the
     # researcher's blog post.
@@ -212,7 +212,7 @@ _DEFAULT_COST_USD: dict[str, float] = {
     TargetKind.PROTOCOL_CAPTURE.value: 15.0,
     TargetKind.CRASH_INPUT.value:     15.0,
     TargetKind.PATCH_DIFF.value:      15.0,
-    # v0.5 — kernel work involves syzkaller campaigns + more turns
+    # v0.5 -- kernel work involves syzkaller campaigns + more turns
     TargetKind.KERNEL_IMAGE.value:    60.0,
     TargetKind.KERNEL_MODULE.value:   45.0,
     TargetKind.HYPERVISOR_IMAGE.value: 75.0,
@@ -228,7 +228,7 @@ class CapabilityProfileBuilder:
 
     Construction injects both MCP bridges so the builder can route by
     target kind. Optional ``llm_finalize`` callable enables Haiku
-    finalization for ambiguous target classifications — when None,
+    finalization for ambiguous target classifications -- when None,
     builder emits rule-engine output directly.
     """
 
@@ -256,7 +256,7 @@ class CapabilityProfileBuilder:
         Reads MCP handles (binary_id, audit_mcp_index_id) from the
         target's private ``_mcp_handles_json`` column populated by
         TargetAnalysisService. Refuses to run when handles are missing
-        — operator gets a clear 'target not analyzed yet' message.
+        -- operator gets a clear 'target not analyzed yet' message.
 
         Wrapped in StageTracker (stage = CAPABILITY_PROFILE). Returns
         None when the stage is skipped (already DONE or in flight) so
@@ -269,7 +269,7 @@ class CapabilityProfileBuilder:
                 descriptor = json.loads(target_row.descriptor_json or "{}")
                 kind_str = target_row.kind
 
-                # fix §224 — gather methods return (signals, attempted, failed)
+                # fix §224 -- gather methods return (signals, attempted, failed)
                 # so we can refuse to mark the stage DONE when half-or-more of
                 # the MCP calls failed (previously a wedged bridge produced an
                 # empty-shell profile silently flipped to DONE).
@@ -294,13 +294,13 @@ class CapabilityProfileBuilder:
                     )
                 else:
                     # Unsupported kinds (cve / protocol_capture / crash_input /
-                    # patch_diff) — no MCP gather. Operator can still drive
+                    # patch_diff) -- no MCP gather. Operator can still drive
                     # investigations from descriptor alone.
                     signals = {
                         "primary_language": descriptor.get("primary_language") or "",
                     }
 
-                # fix §224 — refuse "silent empty profile" when majority of MCP
+                # fix §224 -- refuse "silent empty profile" when majority of MCP
                 # signals failed. Only enforced when attempts were made (the
                 # unsupported-kind branch above sets attempted=0 by design).
                 if signals_attempted > 0 and signals_failed >= signals_attempted / 2:
@@ -315,14 +315,14 @@ class CapabilityProfileBuilder:
                 profile = self._compose_profile(target_row, signals)
 
                 # Build the merged capability_profile_json that the persist
-                # helper used to write — but write it via the tracker's
+                # helper used to write -- but write it via the tracker's
                 # record_output so it lands in the same commit as the
                 # stage's DONE transition.
                 existing = json.loads(target_row.capability_profile_json or "{}")
-                # fix §227 — only preserve sidecar keys that are NOT proper
+                # fix §227 -- only preserve sidecar keys that are NOT proper
                 # model fields. If any of these names is later promoted to a
                 # TargetCapabilityProfile field, the freshly-composed value
-                # MUST win — otherwise the old sidecar silently overwrites
+                # MUST win -- otherwise the old sidecar silently overwrites
                 # the new field forever (it was added to existing by some
                 # past build that didn't yet know about the field).
                 _preserved_candidates = ("function_ranking", "enrichment_errors", "overrides")
@@ -351,22 +351,22 @@ class CapabilityProfileBuilder:
                 )
                 return profile
         except StageAlreadyDoneError:
-            _log.info("profile_builder: target %s already built — skip", target_id)
+            _log.info("profile_builder: target %s already built -- skip", target_id)
             return None
         except StageInFlightError:
-            _log.info("profile_builder: target %s in-flight — skip", target_id)
+            _log.info("profile_builder: target %s in-flight -- skip", target_id)
             return None
 
     async def _gather_source_signals(
         self, handles: dict[str, Any],
     ) -> tuple[dict[str, Any], int, int]:
-        # fix §224 — returns (signals, n_attempted, n_failed) so build() can
+        # fix §224 -- returns (signals, n_attempted, n_failed) so build() can
         # detect "all MCP signals failed" instead of silently producing an
         # empty-shell profile when audit-mcp is wedged.
         index_id = handles.get("audit_mcp_index_id")
         if not index_id:
             raise ProfileBuilderError(
-                "target not analyzed yet — call POST /vr/targets/{id}/analyze "
+                "target not analyzed yet -- call POST /vr/targets/{id}/analyze "
                 "or wait for the auto-ingestion to complete",
             )
 
@@ -383,7 +383,7 @@ class CapabilityProfileBuilder:
         else:
             failed += 1
 
-        # fix — audit_mcp's `attack_surface` response shape is
+        # fix -- audit_mcp's `attack_surface` response shape is
         # `{"entrypoints": [{node_id, trust_level, kind, asset_value,
         # description, framework?}, ...]}`. There is no `status` key on
         # the success path and no `frameworks` / `entrypoint_count`
@@ -413,7 +413,7 @@ class CapabilityProfileBuilder:
         else:
             failed += 1
 
-        # fix — pull the fuzz-target ranking directly so the profile builder
+        # fix -- pull the fuzz-target ranking directly so the profile builder
         # does NOT depend on the function_ranking stage having finished first.
         # The data is the same as what FunctionRanker persists, but the order
         # of stage completion isn't guaranteed; reading it here keeps the
@@ -433,22 +433,22 @@ class CapabilityProfileBuilder:
     async def _gather_binary_signals(
         self, handles: dict[str, Any],
     ) -> tuple[dict[str, Any], int, int]:
-        # fix §224 — returns (signals, n_attempted, n_failed) so build() can
+        # fix §224 -- returns (signals, n_attempted, n_failed) so build() can
         # detect "all MCP signals failed" instead of silently producing an
         # empty-shell profile when IDA bridge is wedged.
-        # fix §225 — fan all 7 IDA forwards out concurrently via asyncio.gather.
+        # fix §225 -- fan all 7 IDA forwards out concurrently via asyncio.gather.
         # Previously sequential at ~30 s each (~3.5 min total); now bounded by
-        # the slowest action (~30 s). Bridge concurrency is safe — IDA worker
+        # the slowest action (~30 s). Bridge concurrency is safe -- IDA worker
         # serializes per binary_id internally; multiple actions for the same
         # binary already share that lock.
         binary_id = handles.get("binary_id")
         if not binary_id:
             raise ProfileBuilderError(
-                "target not analyzed yet — call POST /vr/targets/{id}/analyze "
+                "target not analyzed yet -- call POST /vr/targets/{id}/analyze "
                 "or wait for the auto-ingestion to complete",
             )
 
-        # (label, kwargs) — order is the gather-output order below.
+        # (label, kwargs) -- order is the gather-output order below.
         binary_actions: tuple[tuple[str, dict[str, Any]], ...] = (
             ("binary_survey",       {"action": "binary_survey",       "binary_id": binary_id}),
             ("checksec",            {"action": "checksec",            "binary_id": binary_id}),
@@ -512,7 +512,7 @@ class CapabilityProfileBuilder:
             signals["capa_matches"] = capa_resp.get("matches") or []
             signals["raw_capa_scan"] = capa_resp
 
-        # §1.4 — Imports + Exports tabs read these signals directly.
+        # §1.4 -- Imports + Exports tabs read these signals directly.
         if "imports" in by_label:
             signals["imports"] = by_label["imports"].get("imports") or []
         if "exports" in by_label:
@@ -542,7 +542,7 @@ class CapabilityProfileBuilder:
 
         applicable_mcp_servers = list(_APPLICABLE_MCP_BY_KIND.get(target_row.kind, []))
 
-        # fix §226 — empty primary_language hits (kind, '') which is never a
+        # fix §226 -- empty primary_language hits (kind, '') which is never a
         # registered key; fall through to the (kind, '*') wildcard before the
         # empty-list default, so the lookup is explicit rather than silent.
         engines_key = (target_row.kind, primary_language.lower())
@@ -569,7 +569,7 @@ class CapabilityProfileBuilder:
             if "fuzzilli_v8" in applicable_fuzzing_engines:
                 applicable_strategies.extend(["differential", "fuzzilli", "v8MapInference"])
 
-        # §1.4 — Attack surface tab projects:
+        # §1.4 -- Attack surface tab projects:
         # source targets → audit-mcp `frameworks` + actual `entrypoints`
         #                  list + top-10 `ranked_targets` (the closest
         #                  proxy we have for libnghttp2 / libevent /
@@ -607,7 +607,7 @@ class CapabilityProfileBuilder:
                     else "info"
                 ),
             })
-        # Top-10 ranked targets — until audit_mcp's `attack_surface` is
+        # Top-10 ranked targets -- until audit_mcp's `attack_surface` is
         # framework-aware enough to surface libnghttp2 / libevent /
         # dispatch-table handlers, the fuzz-target ranking is the best
         # proxy for the real attack surface of a network daemon.
@@ -629,7 +629,7 @@ class CapabilityProfileBuilder:
                 "fuzz_priority_score": entry.get("fuzz_priority_score"),
             })
         # Entry points (binary targets) collapse to a single row when
-        # large — the operator drills into the IDA MCP for the full list.
+        # large -- the operator drills into the IDA MCP for the full list.
         entry_points = signals.get("entry_points") or []
         if entry_points:
             attack_surface_items.append({

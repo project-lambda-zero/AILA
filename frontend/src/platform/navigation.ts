@@ -66,7 +66,7 @@ export interface SidebarSection {
 }
 
 const platformSidebarItems: SidebarItem[] = [
-  // Top (Platform) section — D-06
+  // Top (Platform) section -- D-06
   {
     id: "platform.overview",
     slot: "sidebar.main",
@@ -96,7 +96,7 @@ const platformSidebarItems: SidebarItem[] = [
     label: "Tasks",
     to: "/tasks",
     order: 36,
-    description: "Background task queue — all modules",
+    description: "Background task queue -- all modules",
     icon: ListChecksIcon,
     section: "platform",
   },
@@ -107,11 +107,11 @@ const platformSidebarItems: SidebarItem[] = [
     label: "Chat",
     to: "/chat",
     order: 37,
-    description: "Ask the platform questions — streaming responses",
+    description: "Ask the platform questions -- streaming responses",
     icon: ChatCircleDotsIcon,
     section: "platform",
   },
-  // Admin section — D-06, D-14
+  // Admin section -- D-06, D-14
   {
     id: "platform.admin.users",
     slot: "sidebar.main",
@@ -148,7 +148,7 @@ const platformSidebarItems: SidebarItem[] = [
     minRole: "admin",
     blockedMessage: "Audit logs require admin role.",
   },
-  // Part 9: Admin Tools Console — operator-level live tool invocation.
+  // Part 9: Admin Tools Console -- operator-level live tool invocation.
   {
     id: "platform.admin.tools",
     slot: "sidebar.main",
@@ -161,7 +161,7 @@ const platformSidebarItems: SidebarItem[] = [
     minRole: "operator",
     blockedMessage: "Tools console requires operator role.",
   },
-  // Plan 183-11: Admin Workflow Inspector — DurableStateMachine run browser.
+  // Plan 183-11: Admin Workflow Inspector -- DurableStateMachine run browser.
   {
     id: "platform.admin.workflows",
     slot: "sidebar.main",
@@ -224,7 +224,7 @@ const platformSidebarItems: SidebarItem[] = [
     minRole: "admin",
     blockedMessage: "Tag vocabulary management requires admin role.",
   },
-  // v6.0: Saved filter administration — surface user/team filter configurations.
+  // v6.0: Saved filter administration -- surface user/team filter configurations.
   {
     id: "platform.admin.saved-filters",
     slot: "sidebar.main",
@@ -237,7 +237,7 @@ const platformSidebarItems: SidebarItem[] = [
     minRole: "admin",
     blockedMessage: "Saved filter administration requires admin role.",
   },
-  // v6.0: Task queue admin — drain/requeue/dead-letter controls.
+  // v6.0: Task queue admin -- drain/requeue/dead-letter controls.
   {
     id: "platform.admin.task-queue",
     slot: "sidebar.main",
@@ -250,7 +250,7 @@ const platformSidebarItems: SidebarItem[] = [
     minRole: "admin",
     blockedMessage: "Task queue administration requires admin role.",
   },
-  // Phase 177 — multi-team admin console
+  // Phase 177 -- multi-team admin console
   {
     id: "platform.admin.teams",
     slot: "sidebar.main",
@@ -263,7 +263,7 @@ const platformSidebarItems: SidebarItem[] = [
     minRole: "admin",
     blockedMessage: "Team management requires admin role.",
   },
-  // v6.0: Dead letter queue — exhausted-retry inspection and requeue.
+  // v6.0: Dead letter queue -- exhausted-retry inspection and requeue.
   {
     id: "platform.admin.dead-letter",
     slot: "sidebar.main",
@@ -276,7 +276,7 @@ const platformSidebarItems: SidebarItem[] = [
     minRole: "admin",
     blockedMessage: "Dead letter queue requires admin role.",
   },
-  // v6.0: Automation schedules — cron-driven actions registered by modules.
+  // v6.0: Automation schedules -- cron-driven actions registered by modules.
   {
     id: "platform.admin.automation",
     slot: "sidebar.main",
@@ -287,7 +287,7 @@ const platformSidebarItems: SidebarItem[] = [
     icon: ArrowsClockwiseIcon,
     section: "admin",
   },
-  // v6.0: Scheduled reports — emailed report runs on a cron.
+  // v6.0: Scheduled reports -- emailed report runs on a cron.
   {
     id: "platform.admin.scheduled-reports",
     slot: "sidebar.main",
@@ -300,7 +300,7 @@ const platformSidebarItems: SidebarItem[] = [
     minRole: "admin",
     blockedMessage: "Scheduled reports require admin role.",
   },
-  // v6.0: Cost intelligence — LLM spend, ROI, model breakdown.
+  // v6.0: Cost intelligence -- LLM spend, ROI, model breakdown.
   {
     id: "platform.admin.cost",
     slot: "sidebar.main",
@@ -313,7 +313,7 @@ const platformSidebarItems: SidebarItem[] = [
     minRole: "admin",
     blockedMessage: "Cost intelligence requires admin role.",
   },
-  // v6.0: Executive dashboard — fleet posture and downloadable artifacts.
+  // v6.0: Executive dashboard -- fleet posture and downloadable artifacts.
   {
     id: "platform.admin.executive",
     slot: "sidebar.main",
@@ -326,7 +326,7 @@ const platformSidebarItems: SidebarItem[] = [
     minRole: "admin",
     blockedMessage: "Executive dashboard requires admin role.",
   },
-  // Phase 177 — OIDC providers (Microsoft, Google, generic)
+  // Phase 177 -- OIDC providers (Microsoft, Google, generic)
   {
     id: "platform.admin.oidc",
     slot: "sidebar.main",
@@ -339,7 +339,7 @@ const platformSidebarItems: SidebarItem[] = [
     minRole: "admin",
     blockedMessage: "OIDC provider management requires admin role.",
   },
-  // Docs — operator-facing usage guide (D-03, D-33)
+  // Docs -- operator-facing usage guide (D-03, D-33)
   {
     id: "platform.docs",
     slot: "sidebar.main",
@@ -350,7 +350,7 @@ const platformSidebarItems: SidebarItem[] = [
     icon: BookOpenIcon,
     section: "settings",
   },
-  // Settings — bottom section
+  // Settings -- bottom section
   {
     id: "platform.settings",
     slot: "sidebar.main",
@@ -418,7 +418,7 @@ export function getSidebarSections(moduleSpecs: ModuleFrontendSpec[]): SidebarSe
       // SidebarItem.icon so module-contributed nav rows render the
       // module's chosen icon. Before this change, only platformSidebarItems
       // got icons; spec.nav items always rendered iconless.
-      // Cast is safe — NavContribution.icon is typed as a generic
+      // Cast is safe -- NavContribution.icon is typed as a generic
       // ComponentType, SidebarItem.icon expects Phosphor's Icon (a
       // narrower ForwardRef type). Every Phosphor icon satisfies both.
       icon: (item.icon ?? undefined) as Icon | undefined,
@@ -483,7 +483,7 @@ export function getSidebarSections(moduleSpecs: ModuleFrontendSpec[]): SidebarSe
 }
 
 /**
- * Legacy entry builder — retained for any code that still calls buildSidebarEntries.
+ * Legacy entry builder -- retained for any code that still calls buildSidebarEntries.
  * New AppSidebar uses getSidebarSections instead.
  */
 export function buildSidebarEntries(moduleSpecs: ModuleFrontendSpec[]): SidebarEntry[] {

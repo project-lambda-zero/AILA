@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
 
 /**
- * AILA theme system — extended pack.
+ * AILA theme system -- extended pack.
  *
  * Twelve themes, each a named era / cultural moment, engineered to be
  * recognizable within a second of opening the app:
@@ -10,17 +10,17 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
  *                       (echel0n/midnight-cloud-8). Warm charcoal base,
  *                       cream foreground, hot-pink + lavender accents,
  *                       mint highlights. Distinct from synthwave's pure
- *                       neon — softer, atmospheric, vaguely melancholic.
+ *                       neon -- softer, atmospheric, vaguely melancholic.
  *                       Default theme.
  *   - frutiger-aero:  2004-2012 iPod/Vista aqua glass, Bliss sky, bokeh
  *   - synthwave:      1984 neon grid + chromatic aberration
  *   - vaporwave:      1995 Windows 98 + pastel mall aesthetic
  *   - ps1:            1994 Sony PlayStation gray console, RGBY PS logo
- *   - ps2:            2000 PlayStation 2 — deep black + cyan dot field
+ *   - ps2:            2000 PlayStation 2 -- deep black + cyan dot field
  *   - cyberpunk-2077: 2077 NCPD yellow/cyan/magenta, Rage Italic glitch
  *   - matrix:         1999 green digital rain, phosphor CRT
  *   - truman-show:    1998 pastel 50s suburbia, hidden camera vignette
- *   - half-life-1:    1998 Black Mesa — lambda orange, industrial gray
+ *   - half-life-1:    1998 Black Mesa -- lambda orange, industrial gray
  *   - y2k-fever:      1999-2001 holographic chrome + iMac blueberry
  *   - vendetta:       V-for-Vendetta blood-red on black, Fawkes propaganda
  *

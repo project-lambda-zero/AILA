@@ -187,7 +187,7 @@ async def test_login_unknown_user(auth_client, test_db):
 
 @pytest.mark.asyncio
 async def test_login_inactive_user(auth_client, admin_user):
-    """Deactivated user cannot login — returns 401."""
+    """Deactivated user cannot login -- returns 401."""
     # Deactivate the user
     with session_scope() as s:
         u = s.get(UserRecord, admin_user.id)
@@ -242,7 +242,7 @@ async def test_user_jwt_accesses_endpoints(auth_client, admin_user_token):
     )
     # User JWT is typ=user_access; existing /auth/keys uses require_api_key
     # which expects typ=access. This test verifies user JWTs are rejected by
-    # old-style endpoints (backward compat — user JWTs are for new endpoints).
+    # old-style endpoints (backward compat -- user JWTs are for new endpoints).
     # 401 is expected because require_api_key expects typ='access' not 'user_access'
     assert resp.status_code in (200, 401)
 
@@ -279,7 +279,7 @@ async def test_api_key_still_works(auth_client, admin_token):
 
 @pytest.mark.asyncio
 async def test_api_key_accesses_admin_endpoints(auth_client, admin_token):
-    """Admin API key can access /auth/keys — backward compat preserved."""
+    """Admin API key can access /auth/keys -- backward compat preserved."""
     resp = await auth_client.get(
         "/auth/keys",
         headers={"Authorization": f"Bearer {admin_token}"},

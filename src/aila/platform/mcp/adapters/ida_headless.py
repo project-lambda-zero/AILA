@@ -50,13 +50,13 @@ __all__ = [
 ]
 
 
-# fix §278 — pseudocode / disasm observable caps are the shared
+# fix §278 -- pseudocode / disasm observable caps are the shared
 # MAX_OBS_DUMP_CHARS (32 KiB). The prior comment narrated a "50000
 # chars covers ~600 lines" budget but the constants had drifted to
-# 100 MB — the bounded-slice rationale was code-comment fiction.
+# 100 MB -- the bounded-slice rationale was code-comment fiction.
 # Specialised renderers downstream still keep the raw response in
 # the message store; only the observable preview rides this cap.
-# fix §279 — _MAX_OBS_CALLSITES previously sat at 25 alongside the
+# fix §279 -- _MAX_OBS_CALLSITES previously sat at 25 alongside the
 # shared MAX_LIST_PREVIEW (20). One list-preview convention across
 # every adapter; if a specific tool ever needs a wider preview we
 # pass the cap explicitly at the call site instead of growing the
@@ -75,7 +75,7 @@ _log = logging.getLogger(__name__)
 
 
 def _assert_binary_id_match(raw: dict[str, Any], ctx: AdapterContext) -> None:
-    """fix §280 — guard against cross-binary contamination.
+    """fix §280 -- guard against cross-binary contamination.
 
     IDA-headless tools key cached analysis by ``binary_id``. When the
     upstream MCP server has a cache-mismatch or wrong-handle bug it
@@ -124,7 +124,7 @@ def _assert_binary_id_match(raw: dict[str, Any], ctx: AdapterContext) -> None:
 @is_read_tool("ida_headless", "decompile")
 def adapt_decompile(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``decompile`` response to DECOMPILED_FUNCTION payload."""
-    # fix §280 — guard against cross-binary contamination at entry.
+    # fix §280 -- guard against cross-binary contamination at entry.
     _assert_binary_id_match(raw, ctx)
     function_name = str(raw.get("function_name") or raw.get("name") or "<unknown>")
     address = str(raw.get("address") or ctx.args.get("address_or_name") or "")
@@ -142,7 +142,7 @@ def adapt_decompile(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
 
     obs_value = pseudocode[:MAX_OBS_DUMP_CHARS]
     if len(pseudocode) > MAX_OBS_DUMP_CHARS:
-        obs_value += f"\n\n[truncated — full {line_count} lines in message {ctx.call_id}]"
+        obs_value += f"\n\n[truncated -- full {line_count} lines in message {ctx.call_id}]"
 
     return AdapterResult(
         payload_kind=PayloadKind.DECOMPILED_FUNCTION,
@@ -572,7 +572,7 @@ def adapt_pseudocode_slice_view(
 
 def adapt_diff_function(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     """Map ``diff_function`` to PATCH_DIFF payload."""
-    # fix §280 — diff_function may carry separate old/new binary
+    # fix §280 -- diff_function may carry separate old/new binary
     # ids; the helper checks ``ctx.args['binary_id']`` (single) when
     # present and no-ops otherwise.
     _assert_binary_id_match(raw, ctx)
@@ -591,7 +591,7 @@ def adapt_diff_function(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResu
     }
     obs_body = unified[:MAX_OBS_DUMP_CHARS]
     if len(unified) > MAX_OBS_DUMP_CHARS:
-        obs_body += f"\n... [truncated — {line_count} lines total in message {ctx.call_id}]"
+        obs_body += f"\n... [truncated -- {line_count} lines total in message {ctx.call_id}]"
     obs_value = (
         f"diff_function {old_name} vs {new_name} ({line_count} lines):\n{obs_body}"
         if obs_body

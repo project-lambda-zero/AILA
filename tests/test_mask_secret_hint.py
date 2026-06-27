@@ -1,4 +1,4 @@
-"""Tests for mask_secret_hint() — D-05 prefix+mask / length-only contract."""
+"""Tests for mask_secret_hint() -- D-05 prefix+mask / length-only contract."""
 from __future__ import annotations
 
 import pytest

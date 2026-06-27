@@ -1,11 +1,11 @@
 /**
- * TransitionTimeline — compact audit trail for a workflow run (Phase 181).
+ * TransitionTimeline -- compact audit trail for a workflow run (Phase 181).
  *
  * Shows one row per WorkflowStateTransition in seq-ascending order.
  * Displayed inside TaskDetailPanel below the metadata table.
  *
  * Design: mono font, cyberpunk density, event-type colour coding.
- * No accordion — all rows visible, scroll container clips overflow.
+ * No accordion -- all rows visible, scroll container clips overflow.
  */
 import type { TransitionView } from "./transitions";
 
@@ -14,7 +14,7 @@ import type { TransitionView } from "./transitions";
 // ---------------------------------------------------------------------------
 
 function formatDuration(ms: number | null): string {
-  if (ms === null) return "—";
+  if (ms === null) return "--";
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
 }
@@ -107,7 +107,7 @@ function TransitionRow({ row }: { row: TransitionView }) {
         <div className="ml-8 mt-0.5 rounded-[2px] border border-destructive/40 bg-destructive/5 px-2 py-1 font-mono text-[10px] text-destructive">
           {row.error_class}
           {row.error_message && row.error_message !== row.error_class ? (
-            <span className="opacity-75"> — {row.error_message}</span>
+            <span className="opacity-75"> -- {row.error_message}</span>
           ) : null}
         </div>
       )}

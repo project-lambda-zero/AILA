@@ -31,7 +31,7 @@ RESERVED_CANCELLED: Final[str] = "__cancelled__"
 RESERVED_CRASHED: Final[str] = "__crashed__"
 
 # Phase B (cutover): non-terminal pause state. The cursor sits here when
-# the operator pauses an investigation. Distinct from terminals — paused
+# the operator pauses an investigation. Distinct from terminals -- paused
 # cursors are resumable via :func:`pause_investigation` /
 # :func:`resume_investigation` tasks (see vr.workflow.tasks.pause_resume).
 # The prior ``current_state`` is preserved on ``archived_state`` so resume
@@ -256,7 +256,7 @@ def _validate_static_graph(
     must reference a state that exists in the definition. Catches typos
     and stale references immediately.
 
-    Tier 2 (runs when the graph is fully annotated — every non-terminal
+    Tier 2 (runs when the graph is fully annotated -- every non-terminal
     user state declares ``on_success``): builds the forward-edge adjacency
     list from ``on_success`` + ``on_failure`` edges and verifies:
 
@@ -407,7 +407,7 @@ class WorkflowDefinition:
 
         # Phase 183 Bug 10 fix: start_state must not be a reserved terminal.
         # A definition whose start_state is e.g. "__succeeded__" would exit
-        # immediately without calling any handler — silent no-op behaviour
+        # immediately without calling any handler -- silent no-op behaviour
         # that is always a programming error.
         if self.start_state in RESERVED_TERMINAL_STATES:
             raise ValueError(

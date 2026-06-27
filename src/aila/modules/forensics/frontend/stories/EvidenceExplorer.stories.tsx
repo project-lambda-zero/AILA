@@ -50,7 +50,7 @@ function makeQC(evidence?: EvidenceItem[], artifacts?: PaginatedResponse<Normali
 }
 
 // ---------------------------------------------------------------------------
-// Meta — renders side by side
+// Meta -- renders side by side
 // ---------------------------------------------------------------------------
 
 interface ExplorerArgs {
@@ -83,12 +83,12 @@ type Story = StoryObj<ExplorerArgs>;
 // ---------------------------------------------------------------------------
 
 export const EmptyState: Story = {
-  name: "Empty — no evidence ingested",
+  name: "Empty -- no evidence ingested",
   args: { queryClient: makeQC([], makeArtifactPage([])) },
 };
 
 export const LoadedMixedFamilies: Story = {
-  name: "Loaded — mixed artifact families",
+  name: "Loaded -- mixed artifact families",
   args: {
     queryClient: makeQC(
       [
@@ -108,7 +108,7 @@ export const LoadedMixedFamilies: Story = {
 };
 
 export const FilteredView: Story = {
-  name: "Filtered — persistence family only",
+  name: "Filtered -- persistence family only",
   args: {
     queryClient: (() => {
       const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });

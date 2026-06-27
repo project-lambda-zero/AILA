@@ -29,7 +29,7 @@ import { authorizedRequestJson } from "@platform/api/http";
 import { useAuthStore } from "@platform/auth/useAuthStore";
 
 // ---------------------------------------------------------------------------
-// Types — mirror src/aila/api/schemas/endpoints.py SavedFilter*
+// Types -- mirror src/aila/api/schemas/endpoints.py SavedFilter*
 // ---------------------------------------------------------------------------
 
 interface SavedFilter {
@@ -83,7 +83,7 @@ function formatTimestamp(value: string | null | undefined): string {
   return new Date(value).toLocaleString();
 }
 
-/** Validate a JSON string — returns null if valid, error message otherwise. */
+/** Validate a JSON string -- returns null if valid, error message otherwise. */
 function validateJson(value: string): string | null {
   if (value.trim() === "") return "Filter criteria cannot be empty.";
   try {

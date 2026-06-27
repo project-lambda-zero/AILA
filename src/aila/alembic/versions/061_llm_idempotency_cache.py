@@ -1,4 +1,4 @@
-"""llm_idempotency_cache — request-key keyed cache for retry-safe LLM calls.
+"""llm_idempotency_cache -- request-key keyed cache for retry-safe LLM calls.
 
 Adds:
   - `llm_idempotency_cache` table
@@ -16,7 +16,7 @@ Schema:
   expires_at       TIMESTAMP WITH TIME ZONE NOT NULL  -- TTL 7d, periodic prune
 
 The LLM client checks this cache by request_key before every API call. On
-HIT, returns the cached response and skips the network round-trip — the
+HIT, returns the cached response and skips the network round-trip -- the
 exact same prompt cannot produce a different answer on retry, but DOES
 cost real money every time. On MISS, calls the API, persists the response
 under request_key, returns.
@@ -24,11 +24,11 @@ under request_key, returns.
 When run_vr_investigate fires with max_tries>1 and the first try crashes
 after the LLM call but before the tool result is durably saved, the retry
 gets the cached LLM response back and proceeds directly to the tool
-dispatch — no duplicate Claude call, no double-billing.
+dispatch -- no duplicate Claude call, no double-billing.
 
 Cache key derivation is the caller's responsibility (see chat_structured
 in aila/platform/llm/client.py). The caller decides what counts as
-"same request" — for vr investigations this includes the case_state hash
+"same request" -- for vr investigations this includes the case_state hash
 so a different turn with different context yields a different key even
 if the user_prompt accidentally collides.
 

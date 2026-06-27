@@ -2,9 +2,9 @@
  * E2E: Scheduled Reports Management (EXEC-02)
  *
  * Tests that the scheduled reports management UI loads, can create a report,
- * and can delete it — using the real backend.
+ * and can delete it -- using the real backend.
  *
- * Uses real PostgreSQL backend — no mocks.
+ * Uses real PostgreSQL backend -- no mocks.
  */
 import { test, expect } from "@playwright/test";
 
@@ -32,7 +32,7 @@ test.describe("Scheduled Reports Management (EXEC-02)", () => {
     const resp = await request.get(`${API_BASE}/scheduled-reports`, {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
-    // Admin credentials expected in E2E env — 200 or 403 (non-admin test user)
+    // Admin credentials expected in E2E env -- 200 or 403 (non-admin test user)
     expect([200, 403]).toContain(resp.status());
     if (resp.status() === 200) {
       const body = (await resp.json()) as { data: unknown[] };
@@ -60,7 +60,7 @@ test.describe("Scheduled Reports Management (EXEC-02)", () => {
     });
 
     if (createResp.status() === 403) {
-      test.skip(); // Non-admin test user — skip CRUD test
+      test.skip(); // Non-admin test user -- skip CRUD test
       return;
     }
 

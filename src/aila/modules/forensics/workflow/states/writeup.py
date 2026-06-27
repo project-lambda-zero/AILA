@@ -53,7 +53,7 @@ async def state_writeup(
     content_chars = len(writeup_data.get("content", "") or "")
     await services.emitter.emit(
         "writeup",
-        f"Write-up built in {build_elapsed:.1f}s — {content_chars:,} markdown chars",
+        f"Write-up built in {build_elapsed:.1f}s -- {content_chars:,} markdown chars",
         {
             "stage": "writeup_built",
             "elapsed_s": round(build_elapsed, 1),
@@ -80,7 +80,7 @@ async def state_writeup(
 
     await services.emitter.emit(
         "writeup",
-        f"Write-up persisted: {writeup_id[:8]} — ready in the Write-ups tab",
+        f"Write-up persisted: {writeup_id[:8]} -- ready in the Write-ups tab",
         {"stage": "writeup_persisted", "writeup_id": writeup_id},
     )
 

@@ -16,7 +16,7 @@ import socket
 import pytest
 
 # ---------------------------------------------------------------------------
-# Guards — skip entire module if infra isn't available
+# Guards -- skip entire module if infra isn't available
 # ---------------------------------------------------------------------------
 
 def _infra_available() -> bool:
@@ -44,11 +44,11 @@ def _infra_available() -> bool:
 
 
 if not _infra_available():
-    pytest.skip("Live infrastructure not available — skipping e2e", allow_module_level=True)
+    pytest.skip("Live infrastructure not available -- skipping e2e", allow_module_level=True)
 
 
 # ---------------------------------------------------------------------------
-# Module-scoped platform — expensive init once
+# Module-scoped platform -- expensive init once
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
@@ -69,7 +69,7 @@ def full_analysis_response(platform):
 
 
 # ---------------------------------------------------------------------------
-# 1. Full analysis pipeline — the foundation test
+# 1. Full analysis pipeline -- the foundation test
 # ---------------------------------------------------------------------------
 
 class TestFullAnalysisPipeline:
@@ -123,7 +123,7 @@ class TestFullAnalysisPipeline:
 
 
 # ---------------------------------------------------------------------------
-# 2. Report query modes — all depend on persisted report from full_analysis
+# 2. Report query modes -- all depend on persisted report from full_analysis
 # ---------------------------------------------------------------------------
 
 class TestReportModes:
@@ -148,11 +148,11 @@ class TestReportModes:
         assert count is not None, f"No count in payload: {payload}"
         assert isinstance(count, int) and count >= 0
 
-    @pytest.mark.xfail(reason="LLM router inconsistently routes findings queries — needs prompt tuning")
+    @pytest.mark.xfail(reason="LLM router inconsistently routes findings queries -- needs prompt tuning")
     def test_report_findings(self, platform, full_analysis_response):
         """Findings mode returns a response with payload.
 
-        LLM routing is non-deterministic — if the router fails to parse this
+        LLM routing is non-deterministic -- if the router fails to parse this
         specific phrasing, we retry with an alternative query. The test validates
         that the platform CAN serve findings, not that one exact prompt always works.
         """
@@ -167,7 +167,7 @@ class TestReportModes:
                 return  # success
             except Exception:
                 continue
-        pytest.fail("All findings queries failed — router could not serve findings")
+        pytest.fail("All findings queries failed -- router could not serve findings")
 
     def test_explain_cves(self, platform, full_analysis_response):
         """Explain mode returns per-CVE explanations."""
@@ -177,7 +177,7 @@ class TestReportModes:
 
 
 # ---------------------------------------------------------------------------
-# 3. Multi-distro analysis — all 4 VMs
+# 3. Multi-distro analysis -- all 4 VMs
 # ---------------------------------------------------------------------------
 
 class TestMultiDistro:
@@ -227,7 +227,7 @@ class TestToolCalls:
 
 
 # ---------------------------------------------------------------------------
-# 5. Data integrity — DB records created by the pipeline
+# 5. Data integrity -- DB records created by the pipeline
 # ---------------------------------------------------------------------------
 
 class TestDataIntegrity:
@@ -274,7 +274,7 @@ class TestDataIntegrity:
         """LatestFindingRecord table should have rows if the scan found vulnerabilities.
 
         A system with all packages up-to-date may legitimately produce zero findings.
-        We verify the query executes without error — count >= 0 is the contract.
+        We verify the query executes without error -- count >= 0 is the contract.
         """
         from sqlmodel import select
 
@@ -286,14 +286,14 @@ class TestDataIntegrity:
         settings = build_platform_settings(get_settings())
         with session_scope(settings) as session:
             count = len(list(session.exec(select(LatestFindingRecord)).all()))
-        assert count >= 0  # query succeeded — schema is correct
+        assert count >= 0  # query succeeded -- schema is correct
 
     def test_report_artifacts_on_disk(self, full_analysis_response):
         """Report file referenced in artifacts must exist on disk."""
         from pathlib import Path
         for artifact_type, artifact_id in full_analysis_response.artifacts.items():
             if "report" in artifact_type:
-                # artifact_id may be a path or a DB record ID — check if it's a path
+                # artifact_id may be a path or a DB record ID -- check if it's a path
                 p = Path(artifact_id)
-                if p.suffix:  # has file extension — it's a path
+                if p.suffix:  # has file extension -- it's a path
                     assert p.exists(), f"Report artifact not on disk: {p}"

@@ -1,20 +1,20 @@
-"""DisclosureService — orchestrates submission lifecycle for one finding.
+"""DisclosureService -- orchestrates submission lifecycle for one finding.
 
 Operations:
-  create()    — POST a new (finding, track) submission. Validates track
+  create()    -- POST a new (finding, track) submission. Validates track
                 exists, finding exists, finding is in this workspace, and
                 that the track accepts the poc_tier. Renders the body
                 immediately so the operator sees the draft.
 
-  list()      — filterable + paginated list
+  list()      -- filterable + paginated list
 
-  get()       — single fetch
+  get()       -- single fetch
 
-  patch()     — operator-driven state transitions + field updates.
+  patch()     -- operator-driven state transitions + field updates.
                 Re-renders body when severity / poc_tier / embargo
                 changes.
 
-  render()    — explicit re-render (idempotent — useful after the finding
+  render()    -- explicit re-render (idempotent -- useful after the finding
                 row's payload has been updated externally).
 
 Out of scope for v1:
@@ -140,8 +140,8 @@ class DisclosureService:
 
         async with UnitOfWork() as uow:
             # Resolve the disclosure's anchor finding. Two paths:
-            #   1. caller gave finding_id directly — load it.
-            #   2. caller gave investigation_id — look up the
+            #   1. caller gave finding_id directly -- load it.
+            #   2. caller gave investigation_id -- look up the
             #      investigation, then resolve its linked_finding_ids:
             #        * exactly 1 linked → use it
             #        * 0 linked        → auto-create a stub finding
@@ -182,7 +182,7 @@ class DisclosureService:
                         f"finding_id directly instead of investigation_id",
                     )
                 else:
-                    # Zero linked findings — auto-create a stub. The stub
+                    # Zero linked findings -- auto-create a stub. The stub
                     # carries the investigation's project + workspace
                     # context so the disclosure has something concrete
                     # to bind to; downstream the operator can flesh it

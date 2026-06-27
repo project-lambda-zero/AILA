@@ -4,7 +4,7 @@ The ``AilaClient`` is a thin HTTP wrapper around the existing AILA
 fuzz endpoints (PATCH /vr/fuzz/campaigns/:id, POST /vr/fuzz/crashes,
 POST /vr/fuzz/campaigns/:id/telemetry). It handles auth via API key,
 retries transient failures with exponential backoff, and never raises
-into the scrape loop — failures log + return False so the loop keeps
+into the scrape loop -- failures log + return False so the loop keeps
 running.
 
 Each per-engine scraper implements ``Scraper.poll()`` and
@@ -68,7 +68,7 @@ class Scraper(Protocol):
         """Return the latest telemetry sample or None when nothing to report.
 
         Called every ``--interval`` seconds. Returning None tells the
-        runner "no change since last poll" — runner skips the PATCH.
+        runner "no change since last poll" -- runner skips the PATCH.
         """
         ...
 
@@ -116,7 +116,7 @@ class AilaClient:
         )
 
     def post_telemetry(self, sample: Sample) -> bool:
-        """POST /vr/fuzz/campaigns/:id/telemetry — explicit time-series sample.
+        """POST /vr/fuzz/campaigns/:id/telemetry -- explicit time-series sample.
 
         Use this in addition to patch_campaign when you want to write
         a row even though no scalar moved (e.g. periodic heartbeat).
@@ -135,7 +135,7 @@ class AilaClient:
         )
 
     def post_crash(self, crash: CrashRecord) -> bool:
-        """POST /vr/fuzz/crashes — register one crash for this campaign."""
+        """POST /vr/fuzz/crashes -- register one crash for this campaign."""
         body = {
             "campaign_id": self.campaign_id,
             "stack_hash": crash.stack_hash,
@@ -210,7 +210,7 @@ class AilaClient:
 
 
 def stack_hash_of(stack_trace: str) -> str:
-    """Compute the AILA-canonical stack hash — SHA-256 of the top frames.
+    """Compute the AILA-canonical stack hash -- SHA-256 of the top frames.
 
     Matches the platform's expectation in fuzz_service.register_crash
     which dedupes by ``(campaign_id, stack_hash)``. The function names

@@ -1,7 +1,7 @@
 """CVE record + feed-state tables (v0.4 GA-51).
 
-vr_cve_records — one row per CVE (NVD / GHSA / MITRE / manual).
-vr_cve_feed_state — checkpoint per source so the poller knows where to
+vr_cve_records -- one row per CVE (NVD / GHSA / MITRE / manual).
+vr_cve_feed_state -- checkpoint per source so the poller knows where to
                     resume. One row per source.
 """
 from __future__ import annotations

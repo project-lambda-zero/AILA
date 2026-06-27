@@ -4,7 +4,7 @@ import { render } from "@testing-library/react";
 import { AilaCard, type AilaCardDecoration } from "@/components/aila/AilaCard";
 
 /**
- * D21 — covers the `decorations` array API that replaces four deprecated
+ * D21 -- covers the `decorations` array API that replaces four deprecated
  * boolean props (`glass`, `cornerAccents`, `techBorder`, `glow`). The
  * legacy booleans keep rendering the same DOM and emit a one-time
  * per-session `console.warn` in dev. The dedupe is module-scoped so
@@ -61,7 +61,7 @@ describe("AilaCard decorations", () => {
   it("emits a console.warn naming each deprecated boolean prop that is set", () => {
     // The dedupe is module-scoped, so a single render is sufficient
     // to observe the FIRST warn per prop. Subsequent suites that touch
-    // the same flag won't re-warn — that's the intended contract.
+    // the same flag won't re-warn -- that's the intended contract.
     render(
       <AilaCard glass cornerAccents techBorder glow>
         body
@@ -72,7 +72,7 @@ describe("AilaCard decorations", () => {
       const hits = allCalls.filter((m: string) => m.includes(`\`${prop}\``));
       // Either 1 (first observation of this flag) or 0 (an earlier
       // suite already warned). The contract is "at most once per
-      // session" — either outcome is acceptable here as long as it's
+      // session" -- either outcome is acceptable here as long as it's
       // not >1.
       expect(hits.length).toBeLessThanOrEqual(1);
     }

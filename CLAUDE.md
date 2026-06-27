@@ -207,7 +207,7 @@ Multi-step behavior uses staged workflows with named states, not nested conditio
 - Platform owns: routing, runtime, services, contracts, tools, task queue
 - Modules own: domain logic, module-specific contracts/tools/services, reports, workflow
 - Platform never imports from `aila.modules.*`
-- Modules never import from each other (Python OR frontend — pnpm strict mode enforces this at install time by failing on undeclared bare imports)
+- Modules never import from each other (Python OR frontend -- pnpm strict mode enforces this at install time by failing on undeclared bare imports)
 
 ### 6. Frontend dep ownership
 - Every bare import in a module's frontend MUST be declared in that module's `package.json` (deps, peerDeps, or devDeps)

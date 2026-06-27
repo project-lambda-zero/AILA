@@ -50,7 +50,7 @@ def _require_admin(auth: AuthContext = Depends(require_user_or_api_key)) -> Auth
 def _validate_cron(expression: str) -> None:
     """Validate cron expression via croniter (T-138-20).
 
-    Never pass cron expressions to shell — only store after validation.
+    Never pass cron expressions to shell -- only store after validation.
     """
     try:
         from croniter import croniter

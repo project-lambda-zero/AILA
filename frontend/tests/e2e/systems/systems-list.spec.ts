@@ -2,7 +2,7 @@
  * systems-list.spec.ts
  *
  * E2E tests for the /systems list page.
- * Uses REAL PostgreSQL backend — no mocks, no MSW, no route intercepts.
+ * Uses REAL PostgreSQL backend -- no mocks, no MSW, no route intercepts.
  * Per project memory: "mocked tests are worthless for verifying adapters work."
  *
  * Auth: POST /auth/login with local dev credentials, token injected via localStorage.
@@ -125,7 +125,7 @@ test.describe("Systems List", () => {
   test.afterAll(async ({ request }) => {
     for (const id of createdIds) {
       await deleteSystem(request, tokens.access_token, id).catch(() => {
-        // Ignore delete errors — system may already be removed
+        // Ignore delete errors -- system may already be removed
       });
     }
   });
@@ -232,7 +232,7 @@ test.describe("Systems List", () => {
     // Wait for page to settle
     await page.waitForTimeout(2_000);
 
-    // If no vocabulary entries exist, the tag filter bar is not shown — that's acceptable.
+    // If no vocabulary entries exist, the tag filter bar is not shown -- that's acceptable.
     // This test verifies the filter bar does NOT crash the page regardless of vocab state.
     await expect(page.getByRole("heading", { name: "Systems" })).toBeVisible({ timeout: 10_000 });
   });

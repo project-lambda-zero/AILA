@@ -1,11 +1,11 @@
-"""SynthesisAgent — consolidates persona-panel outcomes into one verdict.
+"""SynthesisAgent -- consolidates persona-panel outcomes into one verdict.
 
 Triggered by ``investigation_emit._maybe_trigger_synthesis`` once every
 persona branch in the multi-deliberation panel has produced a terminal
 outcome. Reads every branch's last terminal outcome (researcher /
 critic / implementer), feeds them to an LLM that synthesises a single
 final answer with explicit agreement/disagreement structure, and
-writes the synthesis as a new outcome on the primary branch — then
+writes the synthesis as a new outcome on the primary branch -- then
 sets ``inv.primary_outcome_id`` so the investigation surfaces one
 authoritative verdict in the UI + report.
 
@@ -40,7 +40,7 @@ __all__ = ["SynthesisAgent", "SynthesisResponse"]
 
 _log = logging.getLogger(__name__)
 
-# Investigation statuses that mean "still alive — synthesis may write".
+# Investigation statuses that mean "still alive -- synthesis may write".
 # Anything outside this set (PAUSED / COMPLETED / FAILED / ABANDONED) means
 # the operator or another agent closed the investigation while the LLM
 # call was in flight; UoW 2 aborts in that case (fix §160).
@@ -126,7 +126,7 @@ class SynthesisAgent:
 
         D-101 architecture: ONE canonical outcome row per investigation
         holds every persona's submission inside ``payload.panel_contributions``.
-        Synthesis reads that array (NOT per-branch outcome rows — there
+        Synthesis reads that array (NOT per-branch outcome rows -- there
         is only one row), produces a consolidated narrative via LLM,
         writes ``panel_summary`` into the canonical row's payload, and
         flips ``inv.status`` to COMPLETED + ``stopped_at``.
@@ -168,7 +168,7 @@ class SynthesisAgent:
                 return {"status": "skipped", "reason": "no_panel_contributions"}
 
             # Build the per-persona panel from contributions. answer_brief
-            # carries up to 4000 chars of each persona's submission —
+            # carries up to 4000 chars of each persona's submission --
             # enough for the synthesiser without extra DB round-trips.
             panel: list[dict[str, Any]] = []
             for c in contributions:
@@ -188,10 +188,10 @@ class SynthesisAgent:
             if not panel:
                 return {"status": "skipped", "reason": "no_valid_contributions"}
 
-        # fix §159 — switch to chat_structured so the response is
+        # fix §159 -- switch to chat_structured so the response is
         # schema-validated; the renderer never has to parse free-text
         # markdown that might drift.
-        # fix §158 — broaden the narrow ``except RuntimeError`` so
+        # fix §158 -- broaden the narrow ``except RuntimeError`` so
         # systemic LLM failures (TimeoutError, httpx errors, validation
         # failures, etc.) are visible instead of crashing the worker.
         # BudgetExceededError is reraised so the caller sees the budget
@@ -212,7 +212,7 @@ class SynthesisAgent:
             # Catch systemic LLM failure shapes (TimeoutError is a subclass
             # of OSError; httpx transport errors, LLM client errors, JSON
             # decode errors via ValueError, schema validation failures).
-            # fix §350 — traceback now reaches operator log so transient
+            # fix §350 -- traceback now reaches operator log so transient
             # LLM transport failures vs. permanent schema/auth failures
             # are distinguishable from the warning alone.
             _log.warning(
@@ -240,10 +240,10 @@ class SynthesisAgent:
             return {"status": "failed", "reason": "empty_llm_response"}
 
         # Update the canonical row's payload in-place. Don't create a
-        # new outcome row — D-101 mandates exactly one canonical row per
+        # new outcome row -- D-101 mandates exactly one canonical row per
         # investigation.
         async with UnitOfWork() as uow:
-            # fix §160 — SELECT FOR UPDATE on the investigation row so
+            # fix §160 -- SELECT FOR UPDATE on the investigation row so
             # we hold a row-lock for the full UoW; if the operator
             # paused the investigation between UoW 1 and UoW 2, the
             # status re-check below sees the PAUSED state and aborts.
@@ -257,13 +257,13 @@ class SynthesisAgent:
             )).first()
             if inv_row is None:
                 return {"status": "skipped", "reason": "investigation_disappeared"}
-            # fix §160 — re-check status under lock. If the operator
+            # fix §160 -- re-check status under lock. If the operator
             # paused (or another path closed) the investigation while
             # the LLM call was in flight, abort cleanly without
             # overwriting the operator's terminal state.
             if inv_row.status not in _ALIVE_STATUSES:
                 _log.info(
-                    "synthesis aborted inv=%s — status=%s no longer alive "
+                    "synthesis aborted inv=%s -- status=%s no longer alive "
                     "(paused or closed mid-synthesis)",
                     self.investigation_id, inv_row.status,
                 )
@@ -338,9 +338,9 @@ def _synthesis_confidence(panel: list[dict[str, Any]]) -> OutcomeConfidence:
     """Heuristic: take the median of the panel's confidences, downgrade
     one notch if any panel member disagrees with the majority on
     outcome_kind (CRITIC says PATCH_PRESENT, RESEARCHER says
-    DIRECT_FINDING — that's real disagreement).
+    DIRECT_FINDING -- that's real disagreement).
     """
-    # fix §326 — rank 0 ('exact' confidence) must round-trip to
+    # fix §326 -- rank 0 ('exact' confidence) must round-trip to
     # OutcomeConfidence.EXACT, not STRONG. The reverse map was lossy.
     rank_to_conf = {
         0: OutcomeConfidence.EXACT,
@@ -349,17 +349,17 @@ def _synthesis_confidence(panel: list[dict[str, Any]]) -> OutcomeConfidence:
         3: OutcomeConfidence.CAVEATED,
         4: OutcomeConfidence.UNKNOWN,
     }
-    # fix §161 — 'weak' is NOT in OutcomeConfidence; drop the alias.
+    # fix §161 -- 'weak' is NOT in OutcomeConfidence; drop the alias.
     # Personas that emit 'weak' fall through to the .get(default=4)
     # ('unknown') rank, which is the same end-state CAVEATED would
     # have produced via the disagreement penalty.
     conf_rank = {"exact": 0, "strong": 1, "medium": 2, "caveated": 3, "unknown": 4}
     ranks = sorted(conf_rank.get(p.get("confidence", "unknown"), 4) for p in panel)
     median = ranks[len(ranks) // 2]
-    # fix §327 — graduated disagreement penalty: the notch downgrade
+    # fix §327 -- graduated disagreement penalty: the notch downgrade
     # scales with the number of distinct outcome_kinds in the panel.
     # Unanimous (1 kind): no penalty. 2-way split (e.g. critic disagrees
-    # against researcher on PATCH_PRESENT vs DIRECT_FINDING): one notch —
+    # against researcher on PATCH_PRESENT vs DIRECT_FINDING): one notch --
     # the prior flat penalty. 3-way split (one persona finds a bug, one
     # sees a patch, one writes an audit-memo): two notches because a
     # panel that cannot even agree on whether anything was found is
@@ -377,7 +377,7 @@ def _mark_investigation_completed(inv_row: VRInvestigationRecord) -> None:
     """Set ``inv`` to COMPLETED + stopped_at/updated_at in a single helper
     so every synthesis writer flips the same three fields the same way.
 
-    fix §162 — replaces inline ``inv.status = COMPLETED.value`` writes
+    fix §162 -- replaces inline ``inv.status = COMPLETED.value`` writes
     with a shared helper. When E1 ships its sibling ``_mark_investigation_completed``
     at the outcome_dispatcher layer (§22), this local helper can be
     swapped out for the shared one without touching call sites.
@@ -389,7 +389,7 @@ def _mark_investigation_completed(inv_row: VRInvestigationRecord) -> None:
 
 
 def _render_panel(panel: list[dict[str, Any]]) -> str:
-    # fix §165 — panel content (answer / reasoning / persona_voice) is
+    # fix §165 -- panel content (answer / reasoning / persona_voice) is
     # derived from upstream tool results and arbitrary LLM outputs. Pass
     # every dynamic string through ``sanitize_input`` before splicing it
     # into the synthesiser's prompt so a persona that pasted an
@@ -398,7 +398,7 @@ def _render_panel(panel: list[dict[str, Any]]) -> str:
     lines: list[str] = [
         "# Persona deliberation panel",
         "",
-        f"Investigation produced {len(panel)} terminal outcomes — one per "
+        f"Investigation produced {len(panel)} terminal outcomes -- one per "
         f"persona branch. Each branch reasoned independently against its "
         f"own LLM routing. Your job is to read all three and produce ONE "
         f"consolidated verdict.",
@@ -424,16 +424,16 @@ def _render_panel(panel: list[dict[str, Any]]) -> str:
     lines.append(
         "# Synthesis instruction\n\n"
         "Produce ONE consolidated verdict in markdown. Structure:\n"
-        "1. **Headline verdict** — single sentence stating whether the "
+        "1. **Headline verdict** -- single sentence stating whether the "
         "investigation found a bug, found a patch in place, or could not "
         "establish either.\n"
-        "2. **Points of agreement** — what all personas agreed on, with "
+        "2. **Points of agreement** -- what all personas agreed on, with "
         "specific source citations.\n"
-        "3. **Points of disagreement** — where personas reached different "
+        "3. **Points of disagreement** -- where personas reached different "
         "conclusions, what each claimed, and which has the stronger evidence.\n"
-        "4. **Unresolved questions** — what the panel collectively could not "
+        "4. **Unresolved questions** -- what the panel collectively could not "
         "settle and what would be needed to resolve.\n"
-        "5. **Recommended next actions** — variant hunts to spawn, operator "
+        "5. **Recommended next actions** -- variant hunts to spawn, operator "
         "questions to answer, refs to audit instead.\n\n"
         "Be honest about disagreement. A synthesis that erases dissent is "
         "worse than a synthesis that names it explicitly."
@@ -450,14 +450,14 @@ _SYSTEM_PROMPT = (
     "Rules:\n"
     "- Be honest about disagreement. If the critic dissents from the "
     "researcher's hypothesis, name the dissent explicitly. Do not "
-    "average the answers — pick the verdict with the strongest "
+    "average the answers -- pick the verdict with the strongest "
     "source-level evidence and explain why.\n"
     "- Quote specific file:line citations from the panel members' "
     "answers when describing the verdict. Do not invent new citations.\n"
     "- If the panel collectively could not establish a verdict, say so "
     "and list the open questions. 'Inconclusive' is an honest outcome.\n"
     "- Variant_hunt_orders the panel produced are aggregated by the "
-    "dispatcher automatically. You do not need to repeat them — just "
+    "dispatcher automatically. You do not need to repeat them -- just "
     "reference the count and the most important ones in your "
     "recommended next actions.\n"
     "- The synthesis lands as the investigation's primary outcome, "

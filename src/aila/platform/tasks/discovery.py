@@ -1,10 +1,10 @@
-"""Network discovery job for AILA — SSH-based port, service, and connection collection.
+"""Network discovery job for AILA -- SSH-based port, service, and connection collection.
 
 Runs as an arq cron job every 15 minutes (D-07/D-08). Collects open ports
 (ss -tlnp), active connections (ss -tnp), and running services (systemctl)
 from all registered ManagedSystemRecords.
 
-SSH commands are hardcoded constants — never constructed from user input (T-138-28).
+SSH commands are hardcoded constants -- never constructed from user input (T-138-28).
 Each scan overwrites previous results per system (D-09).
 Unreachable systems are marked stale, never blocking the scan (D-10).
 """
@@ -46,7 +46,7 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-# Hardcoded SSH command constants — never constructed from user input (T-138-28).
+# Hardcoded SSH command constants -- never constructed from user input (T-138-28).
 _CMD_LISTENING = "ss -tlnp"
 _CMD_CONNECTIONS = "ss -tnp"
 _CMD_SERVICES = "systemctl list-units --type=service --state=running --no-pager --plain"
@@ -79,7 +79,7 @@ _PROCESS_RE = re.compile(r'users:\(\("([^"]+)",pid=(\d+)')
 
 
 # ---------------------------------------------------------------------------
-# SSH output parsers — pure functions, easily testable (T-138-26)
+# SSH output parsers -- pure functions, easily testable (T-138-26)
 # ---------------------------------------------------------------------------
 
 
@@ -90,7 +90,7 @@ def parse_ss_listening(output: str) -> list[dict]:
     process_name (str | None), pid (int | None).
 
     Lines that do not match the expected State/Local/Peer/Process format are
-    silently skipped (strict parsing per T-138-26 — reject malformed lines).
+    silently skipped (strict parsing per T-138-26 -- reject malformed lines).
     """
     results: list[dict] = []
     lines = output.splitlines()
@@ -99,7 +99,7 @@ def parse_ss_listening(output: str) -> list[dict]:
         # Skip header line and empty lines
         if not line or line.startswith("State") or line.startswith("Netid"):
             continue
-        # Split on whitespace — columns: State, Recv-Q, Send-Q, Local, Peer, Process
+        # Split on whitespace -- columns: State, Recv-Q, Send-Q, Local, Peer, Process
         parts = line.split()
         if len(parts) < 4:
             continue
@@ -483,7 +483,7 @@ async def _collect_system_network_data(
     """SSH into system and collect ports, connections, services, and metadata.
 
     Returns:
-        Tuple of (ports, connections, services, metadata) — each a list of
+        Tuple of (ports, connections, services, metadata) -- each a list of
         dicts (ports/connections/services) plus a single metadata dict keyed
         for the SystemMetadataRecord columns.
 
@@ -511,7 +511,7 @@ async def _collect_system_network_data(
         "host_key_fingerprint": system.host_key_fingerprint,
     }
 
-    # Collect each command independently — partial results are valid
+    # Collect each command independently -- partial results are valid
     try:
         listening_output = await ssh_service.run_command(
             integration, _CMD_LISTENING, timeout_seconds=_SSH_TIMEOUT_SECONDS
@@ -606,7 +606,7 @@ async def _collect_system_metadata(
 
 
 # ---------------------------------------------------------------------------
-# DB persistence (D-09 — overwrite per scan)
+# DB persistence (D-09 -- overwrite per scan)
 # ---------------------------------------------------------------------------
 
 
@@ -756,7 +756,7 @@ async def _mark_system_stale(system_id: int) -> None:
 async def network_discovery_job(ctx: dict) -> None:
     """Collect ports, services, and connections from all registered systems.
 
-    arq cron job entry point — registered in WorkerSettings.cron_jobs at 15-min
+    arq cron job entry point -- registered in WorkerSettings.cron_jobs at 15-min
     intervals (D-08). Never blocks on a single unreachable system (D-10).
 
     For each system:
@@ -773,7 +773,7 @@ async def network_discovery_job(ctx: dict) -> None:
         systems = list((await session.exec(select(ManagedSystemRecord))).all())
 
     if not systems:
-        _log.info("network_discovery_job: no registered systems — nothing to do")
+        _log.info("network_discovery_job: no registered systems -- nothing to do")
         return
 
     # Build IP -> system_id mapping for edge detection (D-04)
@@ -795,7 +795,7 @@ async def network_discovery_job(ctx: dict) -> None:
                 system.id, ports, services, edges, collected_at, metadata,
             )
             _log.debug(
-                "network_discovery_job: %s — %d ports, %d services, %d edges, gateway=%s external=%s",
+                "network_discovery_job: %s -- %d ports, %d services, %d edges, gateway=%s external=%s",
                 system.name,
                 len(ports),
                 len(services),
@@ -806,7 +806,7 @@ async def network_discovery_job(ctx: dict) -> None:
             succeeded += 1
         except Exception:
             _log.warning(
-                "network_discovery_job: system %s (%s) unreachable — marking stale",
+                "network_discovery_job: system %s (%s) unreachable -- marking stale",
                 system.name,
                 system.host,
                 exc_info=True,
@@ -820,7 +820,7 @@ async def network_discovery_job(ctx: dict) -> None:
             failed += 1
 
     _log.info(
-        "network_discovery_job: complete — %d succeeded, %d failed/stale",
+        "network_discovery_job: complete -- %d succeeded, %d failed/stale",
         succeeded,
         failed,
     )

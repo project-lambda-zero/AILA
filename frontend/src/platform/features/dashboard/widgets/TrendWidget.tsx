@@ -19,7 +19,7 @@ function isTrendDataArray(value: unknown): value is TrendDataPoint[] {
 }
 
 /**
- * TrendWidget — time-series area chart of findings over time.
+ * TrendWidget -- time-series area chart of findings over time.
  *
  * Reads module_data["vulnerability.trend"] which should be an array of
  * { date: string, count: number } objects. Shows empty state when not available.

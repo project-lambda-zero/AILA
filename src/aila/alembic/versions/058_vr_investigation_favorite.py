@@ -1,6 +1,6 @@
-"""058 — add is_favorite flag to vr_investigations.
+"""058 -- add is_favorite flag to vr_investigations.
 
-Workspace-wide boolean (not per-user) — matches the existing flat
+Workspace-wide boolean (not per-user) -- matches the existing flat
 column model on vr_investigations. Default false so existing rows
 backfill cleanly without a sentinel migration.
 
@@ -32,7 +32,7 @@ def upgrade() -> None:
             server_default=sa.text("false"),
         ),
     )
-    # Partial index — most investigations won't be starred, so a partial
+    # Partial index -- most investigations won't be starred, so a partial
     # index on (is_favorite=true) keeps the favorites query O(starred-count).
     op.create_index(
         "ix_vr_investigations_is_favorite_true",

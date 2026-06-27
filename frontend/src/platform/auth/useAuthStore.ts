@@ -25,7 +25,7 @@ interface AuthState {
   getAccessToken: () => Promise<string>;
 }
 
-// Module-level proactive refresh timer — lives outside React lifecycle
+// Module-level proactive refresh timer -- lives outside React lifecycle
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 // Mutex to prevent concurrent refresh calls (race between proactive timer + 401 interceptor)
 let refreshInFlight: Promise<void> | null = null;
@@ -163,9 +163,9 @@ export const useAuthStore = create<AuthState>()(
             return accessToken;
           }
         } catch {
-          // Malformed token — fall through to refresh
+          // Malformed token -- fall through to refresh
         }
-        // Token near expiry or malformed — refresh first
+        // Token near expiry or malformed -- refresh first
         await get().refreshTokens();
         const newToken = get().accessToken;
         if (!newToken) {
@@ -177,7 +177,7 @@ export const useAuthStore = create<AuthState>()(
     {
       name: "aila-auth",
       storage: createJSONStorage(() => localStorage),
-      // Only persist serializable token data — no function refs (D-12)
+      // Only persist serializable token data -- no function refs (D-12)
       partialize: (state) => ({
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
@@ -201,12 +201,12 @@ export const useAuthStore = create<AuthState>()(
           const { exp } = decodeUserTokenClaims(accessToken);
           const nowSeconds = Math.floor(Date.now() / 1000);
           if (exp > nowSeconds) {
-            // Valid token — mark authenticated and schedule proactive refresh
+            // Valid token -- mark authenticated and schedule proactive refresh
             state.status = "authenticated";
             const expiresIn = exp - nowSeconds;
             scheduleProactiveRefresh(expiresIn);
           } else if (refreshToken) {
-            // Access token expired — keep the session and refresh in the
+            // Access token expired -- keep the session and refresh in the
             // background. Do NOT clear tokens: the refresh token is long-
             // lived and refresh may succeed silently.
             state.status = "authenticated";
@@ -216,7 +216,7 @@ export const useAuthStore = create<AuthState>()(
             state.status = "unauthenticated";
           }
         } catch {
-          // Malformed token — go to login, don't hang
+          // Malformed token -- go to login, don't hang
           state.status = "unauthenticated";
         }
       },

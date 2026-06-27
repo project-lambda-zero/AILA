@@ -39,7 +39,7 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
         try {
           localStorage.setItem("aila-sidebar-open", String(open));
         } catch {
-          // localStorage unavailable — ignore
+          // localStorage unavailable -- ignore
         }
       }}
     >
@@ -47,7 +47,7 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
         Skip-to-main-content link (B8). First focusable element in the
         DOM so a keyboard user lands here on initial Tab. Visually
         hidden until focused (sr-only → focus:not-sr-only). The href
-        target — <main id="main" tabIndex={-1}> below — is made
+        target -- <main id="main" tabIndex={-1}> below -- is made
         programmatically focusable so activation moves focus into the
         content region, not just the scroll position.
       */}
@@ -69,7 +69,7 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
           {children}
         </main>
         {/*
-          B13 — low-prominence contentinfo footer. Renders the app
+          B13 -- low-prominence contentinfo footer. Renders the app
           version + short git SHA so a reviewer / support engineer can
           identify the exact build from a screenshot. Kept inside
           SidebarInset so the sidebar overlay doesn't paint over it.
@@ -86,11 +86,11 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
           <span>{buildIdentity}</span>
         </footer>
       </SidebarInset>
-      {/* CommandPalette renders via portal — outside layout flow (D-09, D-10) */}
+      {/* CommandPalette renders via portal -- outside layout flow (D-09, D-10) */}
       <CommandPalette />
 
       {/*
-        App-level cyber-tech overlay — corner brackets + top hairline
+        App-level cyber-tech overlay -- corner brackets + top hairline
         rendered ONCE here so every route gets the treatment without
         each page having to opt in. All decoration uses
         --color-accent so it theme-adapts (synthwave pink, vaporwave

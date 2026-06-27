@@ -24,7 +24,7 @@ const meta = {
     severity: {
       control: "select",
       options: ["critical", "high", "medium", "low", "info", "neutral"],
-      description: "Severity level — determines color scheme",
+      description: "Severity level -- determines color scheme",
     },
     size: {
       control: "select",
@@ -165,7 +165,7 @@ export const WithIcons: Story = {
     docs: {
       description: {
         story:
-          "Phosphor Icons (@phosphor-icons/react) integrated with severity badges. Fill weight used for active severity states (D-08). Icons are 12px to match badge font-size. Tree-shakeable — only imported icons are bundled.",
+          "Phosphor Icons (@phosphor-icons/react) integrated with severity badges. Fill weight used for active severity states (D-08). Icons are 12px to match badge font-size. Tree-shakeable -- only imported icons are bundled.",
       },
     },
   },

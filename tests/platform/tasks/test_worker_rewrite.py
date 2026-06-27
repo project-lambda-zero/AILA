@@ -1,4 +1,4 @@
-"""Phase 179 Task 2 — worker.py rewrite invariants.
+"""Phase 179 Task 2 -- worker.py rewrite invariants.
 
 Asserts the slim WorkerSettings shape (D-07..D-14), proves deleted symbols
 no longer exist, and exercises the reaper's orphan-lock reconciliation

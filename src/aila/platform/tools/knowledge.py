@@ -17,7 +17,7 @@ __all__ = [
     "KnowledgeStoreTool",
 ]
 
-# Module-level lazy singleton — never loaded unless a knowledge tool is actually used (per D-08).
+# Module-level lazy singleton -- never loaded unless a knowledge tool is actually used (per D-08).
 _EMBEDDING_MODEL = None
 _EMBEDDING_LOCK = threading.Lock()
 
@@ -68,11 +68,11 @@ class KnowledgeStoreTool(Tool):
     async def forward(self, content: str, metadata: dict | None = None) -> dict:
         content = require_text(content, tool_name="KnowledgeStoreTool", field_name="content")
         meta = dict(metadata or {})
-        # Extract dedup sentinel before storing — do not persist _dedup_key inside entry_metadata (per D-06)
+        # Extract dedup sentinel before storing -- do not persist _dedup_key inside entry_metadata (per D-06)
         dedup_key: str | None = meta.pop("_dedup_key", None)
 
         model = _get_embedding_model()
-        # Embedding computed outside transaction — keep write lock short (per research pitfall 2)
+        # Embedding computed outside transaction -- keep write lock short (per research pitfall 2)
         # pgvector accepts list[float], not raw bytes (Pitfall 3)
         embedding_list = model.encode(content).tolist()
         meta_json = json.dumps(meta)
@@ -89,7 +89,7 @@ class KnowledgeStoreTool(Tool):
                     existing_id = row[0]
 
             if existing_id is not None:
-                # UPDATE path — search_vector auto-maintained by PostgreSQL generated column
+                # UPDATE path -- search_vector auto-maintained by PostgreSQL generated column
                 update_stmt = (
                     update(KnowledgeEntryRecord)
                     .where(KnowledgeEntryRecord.id == existing_id)
@@ -133,8 +133,8 @@ class KnowledgeStoreTool(Tool):
 class KnowledgeRetrieveTool(Tool):
     """Platform tool for pgvector + tsvector hybrid retrieval from the knowledge store.
 
-    Runs two queries — a pgvector cosine distance KNN query and a PostgreSQL
-    tsvector full-text search — then merges results by scoring each entry on a
+    Runs two queries -- a pgvector cosine distance KNN query and a PostgreSQL
+    tsvector full-text search -- then merges results by scoring each entry on a
     weighted sum: 0.6 * vector_similarity + 0.4 * FTS_rank. Results are
     namespace-scoped so each agent only retrieves its own stored knowledge.
 
@@ -239,7 +239,7 @@ class KnowledgeRetrieveTool(Tool):
             vec_info = vec_map.get(entry_id)
             fts_rank = fts_map.get(entry_id)
 
-            # Normalise scores — missing leg contributes 0.0
+            # Normalise scores -- missing leg contributes 0.0
             # pgvector cosine_distance: 0.0 (identical) to 2.0 (opposite)
             vec_score = 1.0 - (vec_info["distance"] / 2.0) if vec_info is not None else 0.0
             # ts_rank: positive values, typically 0.0-1.0, can exceed 1.0

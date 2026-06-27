@@ -87,7 +87,7 @@ VIRTUAL_PATH = {virtual_path!r}
 MAX_BYTES = {max_bytes}
 ANALYZER_OS = {analyzer_os!r}
 
-# Normalise separators — accept either backslash or forward-slash paths.
+# Normalise separators -- accept either backslash or forward-slash paths.
 raw = VIRTUAL_PATH.replace("\\", "/").rstrip("/").lstrip("/")
 
 # Strip a leading drive letter if present; dissect mounts Windows volumes
@@ -300,7 +300,7 @@ def _build_raw_extraction_script(
     """Return a script that reads a real filesystem path on the analyzer.
 
     Unlike :func:`_build_extraction_script`, this never opens a disk
-    image — it reads the file (or zips the directory) directly from the
+    image -- it reads the file (or zips the directory) directly from the
     analyzer's local filesystem. Used by raw-directory projects where
     the evidence dir *is* the artefact.
     """
@@ -463,7 +463,7 @@ def _parse_header(stdout: str) -> dict:
     needle = "##AILA-RETRIEVE## "
     idx = stdout.rfind(needle)
     if idx == -1:
-        # Script exited early with an error JSON on its own line — find it.
+        # Script exited early with an error JSON on its own line -- find it.
         for line in reversed(stdout.strip().splitlines()):
             line = line.strip()
             if line.startswith("{") and line.endswith("}"):

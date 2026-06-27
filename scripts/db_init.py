@@ -60,7 +60,7 @@ def _alembic_head_revision() -> str:
     script = ScriptDirectory.from_config(cfg)
     head = script.get_current_head()
     if head is None:
-        raise SystemExit("alembic has no head revision — migration tree is empty")
+        raise SystemExit("alembic has no head revision -- migration tree is empty")
     return head
 
 
@@ -116,9 +116,9 @@ def main() -> None:
     if current is None:
         print("No schema detected. Creating tables from SQLModel.metadata...")
     elif current == head:
-        print("Schema is at head — running create_all to pick up any newly-registered tables...")
+        print("Schema is at head -- running create_all to pick up any newly-registered tables...")
     else:
-        print(f"Schema at revision {current!r}, head is {head!r} — running create_all...")
+        print(f"Schema at revision {current!r}, head is {head!r} -- running create_all...")
 
     asyncio.run(_create_all(url))
 

@@ -49,7 +49,7 @@ def analyzer():
 
 
 # ----------------------------------------------------------------------
-# Rung 1 — empty / "N/A" → INCONCLUSIVE
+# Rung 1 -- empty / "N/A" → INCONCLUSIVE
 # ----------------------------------------------------------------------
 
 
@@ -76,7 +76,7 @@ def test_literal_na_is_inconclusive(analyzer) -> None:
 
 
 # ----------------------------------------------------------------------
-# Rung 2 — INFO (external doc required) takes priority over PASS/FAIL
+# Rung 2 -- INFO (external doc required) takes priority over PASS/FAIL
 # ----------------------------------------------------------------------
 
 
@@ -103,7 +103,7 @@ def test_info_phrase_in_head_wins(analyzer, phrase) -> None:
 
 def test_info_phrase_anywhere_dominates_fail(analyzer) -> None:
     """INFO check scans the FULL text, not just the head."""
-    text = "VIOLATION CONFIRMED — but resolution REQUIRES ARCHITECTURE DOCUMENT"
+    text = "VIOLATION CONFIRMED -- but resolution REQUIRES ARCHITECTURE DOCUMENT"
     label, _ = analyzer._analyze_verdict_from_text(
         {"answer": text}, fallback_label="FAIL",
     )
@@ -111,7 +111,7 @@ def test_info_phrase_anywhere_dominates_fail(analyzer) -> None:
 
 
 # ----------------------------------------------------------------------
-# Rung 3 — REVIEW marker in head
+# Rung 3 -- REVIEW marker in head
 # ----------------------------------------------------------------------
 
 
@@ -132,7 +132,7 @@ def test_with_hardening_notes_is_review(analyzer) -> None:
 
 
 # ----------------------------------------------------------------------
-# Rung 4 — head has both PASS + FAIL → earliest position wins
+# Rung 4 -- head has both PASS + FAIL → earliest position wins
 # ----------------------------------------------------------------------
 
 
@@ -145,7 +145,7 @@ def test_head_fail_earlier_than_pass_wins_fail(analyzer) -> None:
 
 
 def test_head_pass_earlier_than_fail_wins_pass(analyzer) -> None:
-    text = "PASSED — no symmetric key reuse. Old version had a FAIL but is fixed."
+    text = "PASSED -- no symmetric key reuse. Old version had a FAIL but is fixed."
     label, _ = analyzer._analyze_verdict_from_text(
         {"answer": text}, fallback_label="X",
     )
@@ -153,7 +153,7 @@ def test_head_pass_earlier_than_fail_wins_pass(analyzer) -> None:
 
 
 # ----------------------------------------------------------------------
-# Rung 5/6 — head has only one marker
+# Rung 5/6 -- head has only one marker
 # ----------------------------------------------------------------------
 
 
@@ -161,12 +161,12 @@ def test_head_pass_earlier_than_fail_wins_pass(analyzer) -> None:
     "phrase",
     [
         "PASSED. All security-relevant random values use SecureRandom.",
-        "STRONG CONFIDENCE — PASS. App conforms to MASVS control.",
+        "STRONG CONFIDENCE -- PASS. App conforms to MASVS control.",
         "COMPLIANCE VERIFIED. No credential-replay violation detected.",
         "SUBSTANTIALLY MEETS the control requirement.",
         "NO EXTERNALLY REACHABLE deserialization vulnerability found.",
         "AUDIT COMPLETE: NO MASVS-PRIVACY-1 violations found.",
-        "PATCH PRESENT — Authorization rules ARE enforced server-side.",
+        "PATCH PRESENT -- Authorization rules ARE enforced server-side.",
         "DO NOT PERFORM SENSITIVE state-changing operations without auth.",
         "VERDICT: COMPLIANT with MSTG-CODE-2.",
     ],
@@ -214,7 +214,7 @@ def test_non_compliant_not_matched_as_compliant(analyzer) -> None:
 
 def test_non_dash_compliant_not_matched_as_compliant(analyzer) -> None:
     label, _ = analyzer._analyze_verdict_from_text(
-        {"answer": "NON-COMPLIANT — does not meet MSTG-CRYPTO-3."},
+        {"answer": "NON-COMPLIANT -- does not meet MSTG-CRYPTO-3."},
         fallback_label="X",
     )
     assert label == "FAIL"
@@ -243,7 +243,7 @@ def test_body_mixed_pass_and_fail_is_review(analyzer) -> None:
     )
     body = (
         "Section A: COMPLIANCE VERIFIED for the auth flow. "
-        "Section B: VIOLATION CONFIRMED — the token revocation path is missing."
+        "Section B: VIOLATION CONFIRMED -- the token revocation path is missing."
     )
     assert len(head) >= 400, "head must be >= 400 chars to push markers into body"
     label, _ = analyzer._analyze_verdict_from_text(
@@ -253,7 +253,7 @@ def test_body_mixed_pass_and_fail_is_review(analyzer) -> None:
 
 
 # ----------------------------------------------------------------------
-# Rung 11 — no markers anywhere → fallback label
+# Rung 11 -- no markers anywhere → fallback label
 # ----------------------------------------------------------------------
 
 
@@ -276,7 +276,7 @@ def test_no_markers_returns_fallback(analyzer) -> None:
 
 def test_answer_brief_used_when_answer_missing(analyzer) -> None:
     label, _ = analyzer._analyze_verdict_from_text(
-        {"answer_brief": "PASSED — no symmetric key reuse."},
+        {"answer_brief": "PASSED -- no symmetric key reuse."},
         fallback_label="FAIL",
     )
     assert label == "PASS"

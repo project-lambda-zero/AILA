@@ -54,7 +54,7 @@ class VRFindingRecord(SQLModel, table=True):
     cvss_score: float | None = Field(default=None, sa_column=Column(Float))
     cwe_id: str | None = Field(default=None, max_length=16)
     advisory_json: str = Field(default="{}", sa_column=Column(Text))
-    # Coordinated-disclosure tracking — these mutate over the disclosure timeline.
+    # Coordinated-disclosure tracking -- these mutate over the disclosure timeline.
     disclosure_status: str = Field(default="undisclosed", index=True, max_length=32)
     vendor_contact: str | None = Field(default=None, sa_column=Column(Text))
     reported_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))

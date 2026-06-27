@@ -14,7 +14,7 @@ import { TransitionTimeline } from "./TransitionTimeline";
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(value: string | null) {
-  return value ? new Date(value).toLocaleString() : "—";
+  return value ? new Date(value).toLocaleString() : "--";
 }
 
 function normalizeTaskStatus(value: string | null): TaskStatus | undefined {
@@ -287,7 +287,7 @@ export function TasksPage() {
       {/* Split layout: table + detail */}
       {!tasksQuery.isLoading && (
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-          {/* Task table — takes remaining width */}
+          {/* Task table -- takes remaining width */}
           <div className="flex-1 min-w-0">
             {tasks.length === 0 ? (
               <EmptyState
@@ -331,7 +331,7 @@ export function TasksPage() {
             )}
           </div>
 
-          {/* Detail panel — fixed width on desktop */}
+          {/* Detail panel -- fixed width on desktop */}
           <div className="w-full lg:w-80 xl:w-96 shrink-0">
             <TaskDetailPanel taskId={selectedTaskId} />
           </div>

@@ -1,4 +1,4 @@
-"""Deep analysis state handler — heavy extraction pass.
+"""Deep analysis state handler -- heavy extraction pass.
 
 Runs AFTER basic collection and BEFORE lead promotion. Targets suspicious
 files identified during collection with expensive tools: SHA-256 hashing,
@@ -51,7 +51,7 @@ async def state_deep_analysis(
     analyzer_os = input.get("analyzer_os", "linux")
 
     await services.emitter.emit(
-        "deep_analysis", "Starting deep analysis — hashing, strings, capa on suspicious files..."
+        "deep_analysis", "Starting deep analysis -- hashing, strings, capa on suspicious files..."
     )
 
     from aila.modules.forensics.tools._ssh_helper import get_ssh_service
@@ -95,7 +95,7 @@ async def state_deep_analysis(
 
     await services.emitter.emit(
         "deep_analysis",
-        f"Deep analysis complete — {artifact_count} artifacts extracted from {len(targets)} files.",
+        f"Deep analysis complete -- {artifact_count} artifacts extracted from {len(targets)} files.",
         {"artifact_count": artifact_count, "by_family": artifacts_by_family},
     )
 
@@ -133,7 +133,7 @@ def _select_analysis_targets(evidence_files: list[dict[str, Any]]) -> list[dict[
 
         if ext in _SUSPICIOUS_EXTENSIONS and size <= _MAX_BINARY_SIZE:
             targets.append(f)
-        # Intentionally NOT adding disk_image / memory_dump / pcap —
+        # Intentionally NOT adding disk_image / memory_dump / pcap --
         # those are handled by collection-stage collectors, and running
         # binary-analysis tools on them hangs the workflow.
     return targets
@@ -315,7 +315,7 @@ async def _run_ghidra_list_functions(
 
     Attempts to run ``analyzeHeadless`` with a ListFunctions script. If
     Ghidra is not installed or the script is missing, this gracefully
-    returns None — the analysis continues with other tools.
+    returns None -- the analysis continues with other tools.
     """
     from aila.modules.forensics.tools._ssh_helper import temp_dir
 

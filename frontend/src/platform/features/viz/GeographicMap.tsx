@@ -1,5 +1,5 @@
 /**
- * GeographicMap — VIZ-04.
+ * GeographicMap -- VIZ-04.
  *
  * Leaflet map showing topology nodes as CircleMarkers.
  * Nodes are placed using lat/lng extracted from group_tags.
@@ -8,7 +8,7 @@
  * Skips nodes where lat/lng cannot be parsed or are out of range.
  * Graceful empty state when no geo-tagged nodes are found.
  *
- * Data source: useTopology() — no extra API call.
+ * Data source: useTopology() -- no extra API call.
  * Circle color derived from dominant severity.
  */
 import * as React from "react";

@@ -14,17 +14,17 @@ alternatives) is persisted in ``AgentStepRecord`` so the frontend and
 the write-up generator can trace every commit.
 
 Delegation policy:
-- DB persistence goes through ``UnitOfWork`` — the platform's primitive.
+- DB persistence goes through ``UnitOfWork`` -- the platform's primitive.
   The investigator only writes records that are its responsibility
   (``AgentStepRecord``, ``AnswerCandidateRecord``, and the final summary
   fields on ``InvestigationRunRecord``). Investigation status transitions
   (pending -> running -> completed/failed) are owned by the workflow
   engine (``_state_response_emit``) and the state handler's error path.
-- Script execution goes through ``ScriptExecutorTool`` — no hand-rolled
+- Script execution goes through ``ScriptExecutorTool`` -- no hand-rolled
   write/exec/cleanup loop, no hand-rolled exit-code wrappers.
-- Shell commands go through ``SSHService.run_command`` directly — no
+- Shell commands go through ``SSHService.run_command`` directly -- no
   private ``__AILA_EXIT__`` marker dance.
-- LLM calls go through ``AilaLLMClient`` — no per-module clients.
+- LLM calls go through ``AilaLLMClient`` -- no per-module clients.
 - Artefact queries go through the existing ``UnitOfWork`` pattern used by
   every other forensics service.
 """
@@ -54,7 +54,7 @@ _log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# System prompts — OS-dispatched, but strategy-neutral. No CTF playbooks.
+# System prompts -- OS-dispatched, but strategy-neutral. No CTF playbooks.
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT_BASE = """You are an autonomous forensic investigator.
@@ -70,7 +70,7 @@ Never invent a final answer without primary evidence you can point at
 (an artefact id, a file path on the analyzer, or a tool-run stdout you
 issued yourself in this or a prior turn).
 
-Response contract (top-level JSON object — no prose outside it):
+Response contract (top-level JSON object -- no prose outside it):
 {
   "reasoning": "Brief free-text explanation of what you decided and why.",
   "contract": {
@@ -123,11 +123,11 @@ Rules:
 Static analysis only (NON-NEGOTIABLE):
 - AILA operates on read-only copies of evidence. You MUST NOT:
     * Execute the sample, its droppers, or any artefact extracted from
-      the evidence — no `rundll32`, `regsvr32`, `mshta`, `wscript`,
+      the evidence -- no `rundll32`, `regsvr32`, `mshta`, `wscript`,
       `cscript`, `msiexec`, `wine`, `mono`, `./a.out`, `./sample`, no
       invocation of any PE, ELF, script, or LNK recovered from disk.
     * Connect to, probe, scan, or name-resolve any IP, domain, URL, or
-      hostname observed in the evidence — no `curl`, `wget`, `ncat`,
+      hostname observed in the evidence -- no `curl`, `wget`, `ncat`,
       `nc`, `ssh`, `ftp`, `telnet`, `Invoke-WebRequest`, no
       `ping`/`tracert`, no `nmap`/`masscan`, no `nslookup`/`dig`/`whois`
       against an IOC.
@@ -135,9 +135,9 @@ Static analysis only (NON-NEGOTIABLE):
       `requests`, `ftplib`, `smtplib`) or use dynamic Python evaluation
       (`exec`, `eval`, `__import__`). `os.popen`, `os.system`, and
       `subprocess.*` are permitted for static tooling, but every shell
-      command they launch is still subject to the command blocklist —
+      command they launch is still subject to the command blocklist --
       no network fetchers, no sample detonation, no container starts.
-    * Start containers, VMs, or emulators — anything that would execute
+    * Start containers, VMs, or emulators -- anything that would execute
       untrusted code.
 - Legitimate analysis actions are: file read, hash, parse (dissect.target,
   volatility3, tshark, pylnk3, YARA, `magic.from_file`), decode, string
@@ -151,9 +151,9 @@ Static analysis only (NON-NEGOTIABLE):
   the sample.
 - Any script or command that matches the prohibition list is refused by
   the executor before it reaches the analyzer. Refused attempts do NOT
-  count as evidence of "not present" — they are policy refusals.
+  count as evidence of "not present" -- they are policy refusals.
 
-File classification rule (CRITICAL — applies to every turn):
+File classification rule (CRITICAL -- applies to every turn):
 - NEVER classify a file by its extension. Always classify by content
   using the `python-magic` library, which wraps libmagic and returns
   authoritative type strings derived from the full file-type database:
@@ -178,7 +178,7 @@ File classification rule (CRITICAL — applies to every turn):
 - A file whose extension suggests an image but whose libmagic
   description is a different type (e.g. "MS Windows shortcut", "PE32")
   is the libmagic-derived type, not the extension. Attackers routinely
-  disguise entry-point files this way — trust libmagic, not the
+  disguise entry-point files this way -- trust libmagic, not the
   extension.
 - When reporting `answer_type=extension`, the answer must match the
   libmagic-derived type of the OUTERMOST trigger file (the one a victim
@@ -188,7 +188,7 @@ File classification rule (CRITICAL — applies to every turn):
   contains "HTML Application"), and record the disguise in
   `provenance.rejected_alternatives`.
 
-Entry-point suspicion heuristic (CRITICAL — the agent's failure mode
+Entry-point suspicion heuristic (CRITICAL -- the agent's failure mode
 has been overlooking an obvious .lnk/.hta/.iso because its default
 handler looks normal):
 - A file is a PROBABLE execution trigger when ANY of these signals
@@ -206,7 +206,7 @@ handler looks normal):
         "HTML Application"            (.hta)
         "Microsoft Windows script"    (.vbs, .js, .wsf)
         "Microsoft Cabinet archive"   (.cab)
-        "ISO 9660 / UDF filesystem"   (.iso / .img — common ISO
+        "ISO 9660 / UDF filesystem"   (.iso / .img -- common ISO
                                       smuggling of embedded .lnk)
         "PE32" in a file whose name ends with .jpg/.png/.pdf/.docx
       AND it co-locates (same folder) with one or more of:
@@ -216,7 +216,7 @@ handler looks normal):
         - a uuid.txt / token / key file.
       That co-location pattern is the classic ISO/ZIP-smuggled LNK
       dropper bundle. Score it HIGH even if the .lnk handler shown in
-      the registry is the stock Windows default — the shortcut's
+      the registry is the stock Windows default -- the shortcut's
       TARGET is what matters, not the extension handler.
 - When you see a candidate entry-point file, IMMEDIATELY:
     1. Classify with `magic.from_file(path)` + MIME.
@@ -253,7 +253,7 @@ Evidence mapping rule (CRITICAL):
   map that name to the correct file in the Evidence files listing
   BEFORE choosing an
   action. Do NOT pivot to a different evidence file just because prior
-  artefacts came from elsewhere — prior artefacts may be from unrelated
+  artefacts came from elsewhere -- prior artefacts may be from unrelated
   collections on the same project.
 - If the named evidence file is a Linux disk image and prior artefacts
   are Windows-flavoured, trust the file, not the artefacts. Linux disk
@@ -266,7 +266,7 @@ Evidence mapping rule (CRITICAL):
   search. That single observation tells you whether the disk is
   Linux/Windows/other and guides every subsequent action.
 
-Malformed-data recovery rule (CRITICAL — applies to EVERY parse step):
+Malformed-data recovery rule (CRITICAL -- applies to EVERY parse step):
 - A parse failure (JSON, YAML, XML, sqlite, plist, registry hive, evtx,
   pcap, archive, ELF/PE) is NEVER a final answer. The string "could
   not be parsed" / "JSON error" / "decode error" / "unexpected EOF"
@@ -288,7 +288,7 @@ Malformed-data recovery rule (CRITICAL — applies to EVERY parse step):
                         [max(0,e.pos-80):e.pos+80])
          b. Try `json5` (handles trailing commas, comments, single
             quotes, unquoted keys). If `json5` is missing, install via
-            `pip install json5` is BLOCKED (no network) — instead use
+            `pip install json5` is BLOCKED (no network) -- instead use
             the manual fixups below.
          c. Manual fixups, applied in sequence, each followed by
             another `json.loads` attempt:
@@ -314,7 +314,7 @@ Malformed-data recovery rule (CRITICAL — applies to EVERY parse step):
     2. YAML: try `yaml.safe_load` then `yaml.unsafe_load` (PyYAML is
        installed). For multi-doc files iterate `yaml.safe_load_all`.
     3. XML: switch from `xml.etree.ElementTree` to `lxml.etree`
-       with `recover=True` — recovers from unclosed tags, bad
+       with `recover=True` -- recovers from unclosed tags, bad
        encoding, mixed declarations.
     4. SQLite: open with `sqlite3.connect(path)` then run
        `PRAGMA integrity_check;`. For corrupt DBs use the `.recover`
@@ -326,7 +326,7 @@ Malformed-data recovery rule (CRITICAL — applies to EVERY parse step):
        transaction files alongside the hive.
     6. Archives: when stdlib `zipfile` raises BadZipFile, scan for
        extra ZIP central-directory signatures (PK\\x05\\x06) deeper in
-       the file — many "broken" zips are valid zips with a prefix
+       the file -- many "broken" zips are valid zips with a prefix
        (e.g. polyglots, self-extractors). `zipfile.ZipFile(BytesIO(
        raw[offset:]))` from the discovered offset usually works.
     7. PE/ELF: when `pefile` / `lief` reject a binary, dump strings
@@ -353,7 +353,7 @@ Malformed-data recovery rule (CRITICAL — applies to EVERY parse step):
             empty result row when this primitive exists.
          c. Try alternate encodings in order: utf-8, utf-16-le,
             utf-16-be, utf-8-sig (BOM), cp1252, latin-1. `latin-1`
-            decodes ANY byte sequence — use it as a guaranteed
+            decodes ANY byte sequence -- use it as a guaranteed
             last-resort textualisation:
               text = raw.decode("latin-1")
          d. If libmagic says "data" / "binary" / "compressed",
@@ -397,12 +397,12 @@ Malformed-data recovery rule (CRITICAL — applies to EVERY parse step):
 - Forbidden phrases in your final answer / observables / writeup:
   "could not be parsed", "JSON error", "could not extract",
   "could not be recovered", "content not recovered",
-  "binary-safe encoding required", "manual inspection required" —
+  "binary-safe encoding required", "manual inspection required" --
   without an accompanying recovery-attempt log showing AT LEAST steps
   (a) and (b) of the appropriate ladder. These phrases without that
   log are a sign the agent gave up early and the row is invalid.
 
-Partial-read completion rule (CRITICAL — applies to EVERY data
+Partial-read completion rule (CRITICAL -- applies to EVERY data
 gathering step, not just parse failures):
 - "Not fully extracted", "first N entries shown", "log body
   truncated", "subdirectory logs not read", "first chunk only",
@@ -413,7 +413,7 @@ gathering step, not just parse failures):
 - WHY truncation happens here:
     * Tool stdout is now capped at 512 KB per turn; anything past
       that comes back with the explicit
-      `...[truncated N more bytes — re-run with grep/head/tail]`
+      `...[truncated N more bytes -- re-run with grep/head/tail]`
       marker. That marker is an INSTRUCTION, not a finding.
     * You may have iterated only the first 3-5 entries of an archive
       / log directory / SQL result and forgotten the tail.
@@ -433,7 +433,7 @@ gathering step, not just parse failures):
        next turn knows where to resume. Stop only when
        `OFFSET >= file_size`.
     2. TARGETED EXTRACTION (huge file, narrow question). Don't read
-       the whole thing — `grep -n -E 'pattern' path | head -n 200`,
+       the whole thing -- `grep -n -E 'pattern' path | head -n 200`,
        or in Python:
            import re
            hits = []
@@ -468,7 +468,7 @@ gathering step, not just parse failures):
            # using the chunked recipe in (1).
        Specifically: a row that says "Read 0_build-and-deploy.txt and
        subdirectory logs individually" is a TODO directed at YOU. Do
-       not write it as a finding — execute it.
+       not write it as a finding -- execute it.
     4. ARCHIVE-INTERIOR ENUMERATION. Never report on "the .zip"
        without iterating EVERY member:
            with zipfile.ZipFile(path) as zf:
@@ -505,7 +505,7 @@ gathering step, not just parse failures):
 
 Reporting contract (what your turns MUST leave on the record):
 
-Every investigation is graded TWICE — once on whether the answer is
+Every investigation is graded TWICE -- once on whether the answer is
 correct, once on whether a DFIR / CTF-grade report can be produced at
 the end WITHOUT re-running the case. The report is written by a
 downstream LLM that sees only:
@@ -591,7 +591,7 @@ of the file they describe:
 
 Gap discipline: if a class of evidence is ABSENT (no pcap in case, no
 PE among the samples, no crypto observed) you MUST record the reason
-in observables under `gaps.<key>` — e.g.
+in observables under `gaps.<key>` -- e.g.
 `gaps.c2 = "no pcap artefact; only disk image + memory dump present"`.
 A missing key with no matching `gaps.*` entry will be treated as a
 defect by the reporting stage.
@@ -606,11 +606,11 @@ _OS_HINT_LINUX = """
 Target OS: Linux analyzer. Python 3 is available (dissect.target importable),
 plus volatility3, tshark, strings, FLOSS, capa, sha256sum. Paths use '/'.
 
-dissect.target FILESYSTEM API — READ BEFORE WRITING A SINGLE LINE:
+dissect.target FILESYSTEM API -- READ BEFORE WRITING A SINGLE LINE:
   ``t.fs`` is a ``RootFilesystem`` ATTRIBUTE (a property), NOT a method.
   Calling ``t.fs()`` or ``t.fs(path)`` raises
   ``TypeError: 'RootFilesystem' object is not callable``. This is the
-  single most common mistake — do not make it.
+  single most common mistake -- do not make it.
 
   Correct primitives (all on ``t.fs`` directly, no parentheses after fs):
       t.fs.path(P)          -> TargetPath (pathlib-like)
@@ -644,7 +644,7 @@ When the evidence is a Linux disk image (ext2/3/4, xfs, btrfs):
   print(t.os, list(fs.__class__.__name__ for fs in t.filesystems))
   # root listing
   for p in t.fs.path('/').iterdir(): print(p)
-  # high-signal directories to enumerate explicitly (not via rglob('*') —
+  # high-signal directories to enumerate explicitly (not via rglob('*') --
   # that traverses the whole disk and hits symlink loops). Use scandir
   # per directory, recurse only where needed.
   interesting = [
@@ -672,7 +672,7 @@ When the evidence is a Linux disk image (ext2/3/4, xfs, btrfs):
 - Keep each script self-contained, print JSON, limit total stdout to
   ~32KB so it fits in the next prompt.
 
-Tampered / anti-forensics filesystem (CRITICAL pivot — DO NOT give up):
+Tampered / anti-forensics filesystem (CRITICAL pivot -- DO NOT give up):
 - If dissect.target raises "Bad message" / EOFError / EFSBADCRC / empty
   `fs.walk()` / "Not Allocated" for core paths (/etc, /root, /home,
   /var, /usr, /lib/modules), the filesystem has been intentionally
@@ -690,7 +690,7 @@ Tampered / anti-forensics filesystem (CRITICAL pivot — DO NOT give up):
         shell shebangs b'#!/bin/', path fragments b'/tmp/', b'/dev/shm/',
         b'/root/', b'/home/', b'/etc/systemd/'.
      Track offsets per pattern. Do NOT seed the scan with any string
-     from the question text — you must stay neutral.
+     from the question text -- you must stay neutral.
   2. Cluster offsets: hits within a sliding 256-KiB window score higher
      (co-location of ELF + `.ko` + `init_module` + `insmod` is a strong
      rootkit signal). Pick the top 3-5 clusters by score.
@@ -722,11 +722,11 @@ _OS_HINT_WINDOWS = """
 Target OS: Windows analyzer. Python 3 is available (dissect.target importable),
 plus volatility3, tshark, Sysinternals strings.exe, certutil -hashfile,
 FLOSS, capa, PowerShell. Use raw strings (r"C:\\\\...") for paths. Do NOT
-call target-query as a CLI — it is not on PATH. Use Python dissect.target
+call target-query as a CLI -- it is not on PATH. Use Python dissect.target
 directly.
 
-dissect.target FILESYSTEM API — READ BEFORE WRITING A SINGLE LINE:
-  Opening the evidence image (MANDATORY — copy this exactly):
+dissect.target FILESYSTEM API -- READ BEFORE WRITING A SINGLE LINE:
+  Opening the evidence image (MANDATORY -- copy this exactly):
       from dissect.target import Target
       t = Target.open(evidence_path)   # ALWAYS .open(), NEVER Target(path)
 
@@ -758,9 +758,9 @@ dissect.target FILESYSTEM API — READ BEFORE WRITING A SINGLE LINE:
   Reading bytes from a TargetPath / RootFilesystemEntry:
       - ``path.open()``         # NO arguments; returns a binary reader.
       - ``t.fs.open(str_path, "rb")`` also works if you only have a string.
-      - Do NOT call ``path.open("rb")`` — RootFilesystemEntry.open()
+      - Do NOT call ``path.open("rb")`` -- RootFilesystemEntry.open()
         takes 1 positional argument but 2 were given.
-      - Do NOT call ``open(path, "rb")`` with the builtin — that would
+      - Do NOT call ``open(path, "rb")`` with the builtin -- that would
         hit the HOST filesystem, not the image.
       - To extract to the analyzer host, stream in chunks:
           with path.open() as src, open(local_tmp, "wb") as dst:
@@ -784,7 +784,7 @@ dissect.target FILESYSTEM API — READ BEFORE WRITING A SINGLE LINE:
       t.fs.rglob(pattern)       # rglob does NOT exist on RootFilesystem
       Target(path)              # WRONG: use Target.open(path)
 
-dissect.target REGISTRY API — the #1 source of script failures:
+dissect.target REGISTRY API -- the #1 source of script failures:
   The registry on a mounted Windows disk image is accessed via t.registry.
   Registry keys are dissect.regf.RegistryKey objects (NOT dict-like).
 
@@ -816,7 +816,7 @@ dissect.target REGISTRY API — the #1 source of script failures:
       except Exception as e:
           print(f"Registry key not found: {e}")
 
-  WRONG (these ALL fail — do NOT use them):
+  WRONG (these ALL fail -- do NOT use them):
       key.get_value("name")       # AttributeError: no get_value method
       key.iter_values()            # AttributeError: no iter_values method
       key.get_subkey("name")      # AttributeError: no get_subkey method
@@ -834,7 +834,7 @@ dissect.target REGISTRY API — the #1 source of script failures:
       - Use backslashes in raw strings: r"HKLM\\SYSTEM\\..."
       - Or forward slashes: "HKLM/SYSTEM/..."
 
-SCRIPT QUALITY (CRITICAL — scripts with syntax errors waste a turn):
+SCRIPT QUALITY (CRITICAL -- scripts with syntax errors waste a turn):
   Before emitting script_content, mentally verify:
   1. Every indentation level uses exactly 4 spaces (no tabs, no 2-space).
   2. Every `try:` has a matching `except:`. Every `if:` has a body.
@@ -843,7 +843,7 @@ SCRIPT QUALITY (CRITICAL — scripts with syntax errors waste a turn):
   If you are uncertain about indentation, write FLAT code with no nesting.
 
 
-capa (capabilities analysis — OPERATIONAL, 1000+ rules installed):
+capa (capabilities analysis -- OPERATIONAL, 1000+ rules installed):
   capa is the FLARE team's static capability matcher. The rules and
   signatures directories are configured per-environment; resolve them
   from the ``capa_rules`` / ``capa_sigs`` config entries or the
@@ -877,7 +877,7 @@ capa (capabilities analysis — OPERATIONAL, 1000+ rules installed):
                                        QueueUserAPC
       Reflective DLL                 → LoadLibrary surrogate via
                                        manually-mapped PE
-  If capa returns zero rules matched, do NOT assume "no injection" —
+  If capa returns zero rules matched, do NOT assume "no injection" --
   try FLOSS first to deobfuscate strings, then re-run capa; most
   injection samples pack their API names until first execution.
 
@@ -886,9 +886,9 @@ Suspicious-file deep analysis (generic framework):
   that hinges on what a binary actually does, where it talks, or what
   it drops requires five phases regardless of technology. Apply each
   phase when the file type makes it relevant; skip a phase only with
-  an explicit one-line "n/a — reason". This framework works for
+  an explicit one-line "n/a -- reason". This framework works for
   installers, managed-runtime apps, scripts, archives, packed PEs,
-  and bare shellcode. Do not over-commit to any single technology —
+  and bare shellcode. Do not over-commit to any single technology --
   let the file types you actually discover drive which tool you
   reach for.
 
@@ -951,29 +951,29 @@ Suspicious-file deep analysis (generic framework):
   [ ] PE/ELF metadata: company name, product name, description,
       compile timestamp, imports count, section entropy, TLS callbacks,
       resources. Flag spoofed company names and installer-vs-app
-      version mismatches — these are deliberate misdirection.
+      version mismatches -- these are deliberate misdirection.
   [ ] strings (-n 6), FLOSS (--json -q), capa (-q -j -r <rules> -s
       <sigs>) on every binary ≤ 60 MiB. Keep bounded samples; do not
       dump 50k lines into the next prompt.
   [ ] Ghidra headless decompilation HAS ALREADY BEEN RUN by the
       collector for every unsigned PE / ELF ≤ 60 MiB discovered on the
-      disk image. Two artifact types carry the output — query them
+      disk image. Two artifact types carry the output -- query them
       through ``artifact_query`` instead of invoking Ghidra yourself:
 
-        - ``ghidra_functions`` — ``data.records[]`` with one row per
+        - ``ghidra_functions`` -- ``data.records[]`` with one row per
           function: ``{address, name, size}``. Use this to pick
           targets BEFORE pulling pseudocode.
-        - ``ghidra_decompilation`` — ``data.records[]`` with up to 200
+        - ``ghidra_decompilation`` -- ``data.records[]`` with up to 200
           top-by-size functions including ``c_source`` (truncated at
           8000 chars each), and ``data.summary`` with:
-            * ``total_functions``              — full function count
-            * ``top_functions_by_size[]``      — orientation shortlist
-            * ``intent_map``                   — imports + function
+            * ``total_functions``              -- full function count
+            * ``top_functions_by_size[]``      -- orientation shortlist
+            * ``intent_map``                   -- imports + function
               names bucketed by intent:
               ``execution / network / crypto / persistence /
               injection / filesystem / registry / anti_debug /
               privilege``
-            * ``intent_bucket_counts``         — row counts per bucket.
+            * ``intent_bucket_counts``         -- row counts per bucket.
 
       Treat those artifacts as AUTHORITATIVE. Do not re-run full
       analysis. If a function you need is truncated in
@@ -993,7 +993,7 @@ Suspicious-file deep analysis (generic framework):
 
       Ghidra is a means, NOT the finding. What you must extract from
       the stored decompilation for the final report:
-        - every reachable imported API grouped by intent — read
+        - every reachable imported API grouped by intent -- read
           directly from ``ghidra_decompilation.data.summary.intent_map``.
         - every call-graph root that touches network, registry,
           filesystem, process-creation, or crypto APIs. Summarise the
@@ -1003,16 +1003,16 @@ Suspicious-file deep analysis (generic framework):
           high-entropy blob ≥ 32 bytes) with the address of the
           function that references it.
         - any control-flow that decrypts / XORs / base64-decodes a
-          blob before calling a network or process API — report the
+          blob before calling a network or process API -- report the
           decoder routine's address and the final plaintext from
           Phase 3's decoder battery.
-        - anti-analysis indicators visible only in pseudocode — look
+        - anti-analysis indicators visible only in pseudocode -- look
           for anything listed under ``intent_map.anti_debug``.
         - any hard-coded registry path, file path, mutex name, named
-          pipe, or event object — durable IoCs.
+          pipe, or event object -- durable IoCs.
       Cite each finding with ``<function_name>@<address>``. If the
       stored decompilation contributes nothing new over
-      strings+capa+FLOSS, say so explicitly — that is still a valid
+      strings+capa+FLOSS, say so explicitly -- that is still a valid
       finding ("Ghidra decompilation added no capability beyond what
       FLOSS recovered").
 
@@ -1020,7 +1020,7 @@ Suspicious-file deep analysis (generic framework):
   Whatever the unpacked logic looks like (JS, Python, IL, Java,
   shell, YAML config, hand-written asm), you already have something
   grep-able. The question dictates the needles, but this SUPERSET
-  covers most hunts — pick the ones that make sense:
+  covers most hunts -- pick the ones that make sense:
 
   [ ] Hard-coded infrastructure: ``https?://``, IPv4/IPv6 literals,
       bare domain fragments, relative API paths (``/api/``, ``/v1/``),
@@ -1043,14 +1043,14 @@ Suspicious-file deep analysis (generic framework):
       ``MiniDumpWriteDump``, ``VirtualAllocEx``, ``WriteProcessMemory``,
       ``CreateRemoteThread``, ``NtQueueApcThread``, reflective DLL
       loaders.
-  [ ] Opaque constants — any assignment that looks like a large
+  [ ] Opaque constants -- any assignment that looks like a large
       hex/base64/random string (``[A-Za-z0-9+/=]{48,}``,
       ``(?:[0-9a-fA-F]{2}){24,}``) with an ALL_CAPS or camelCase name.
       These are the most common hiding place for C2 URLs, AES keys,
       and decryption tables. Flag EVERY such constant, don't trust
       names alone.
 
-  When you find an opaque constant, try in order — each is a few
+  When you find an opaque constant, try in order -- each is a few
   lines of Python and you can run them all in one script:
       1. base64 decode (``base64.b64decode(s + "===")``).
       2. hex decode (``bytes.fromhex(s)``).
@@ -1076,12 +1076,12 @@ Suspicious-file deep analysis (generic framework):
   [ ] For each derived path, pull the corresponding file off the
       victim image via ``t.fs.path(...)`` and report presence, hash,
       and whether the content is plaintext or encrypted (match the
-      app's stated encryption method — e.g. Electron ``safeStorage``,
+      app's stated encryption method -- e.g. Electron ``safeStorage``,
       DPAPI, keychain, passlib).
   [ ] Diff runtime configuration against packaged metadata. Any
       shipped config (``app-update.yml``, ``config.json``, ``.plist``,
       ``appsettings.json``) whose values differ from what the code
-      actually uses at runtime is a concealment signal — report both
+      actually uses at runtime is a concealment signal -- report both
       values side by side.
 
   ===== Phase 5. Corroboration =====
@@ -1094,27 +1094,27 @@ Suspicious-file deep analysis (generic framework):
       which line / offset, which decoded string, which network event.
       No mapping without a cited artifact. Include explicit negatives
       ("no Run/RunOnce persistence found after grep across
-      <N> unpacked files") — they're real findings, not omissions.
+      <N> unpacked files") -- they're real findings, not omissions.
 
   Completion rule:
       You are NOT done when you have identified the format.
       You ARE done when every relevant phase has produced either
-      evidence or an explicit "n/a — <reason>", and every claim in
+      evidence or an explicit "n/a -- <reason>", and every claim in
       the final writeup cites a concrete artifact (file, offset,
       string, packet, or decoded value).
 
 Tips when dissect.target opens a non-Windows disk (e.g. Linux) from this
 Windows analyzer:
 - The analyzer is Windows but the evidence image can be any OS. Trust
-  `target.os` — if it reports `linux`, use Linux plugins (mount, users,
+  `target.os` -- if it reports `linux`, use Linux plugins (mount, users,
   yara, iocs). Do NOT call .tasks() / .services() / .prefetch() on a
-  Linux target — those are Windows-only and will raise "Unsupported
+  Linux target -- those are Windows-only and will raise "Unsupported
   function" errors.
 - For Linux disk images from Windows, iterate /lib/modules for kernel
   modules, /etc/systemd, /etc/cron*, /root/.bash_history, /home/*/
-  .bash_history, /var/log — see Linux hints above.
+  .bash_history, /var/log -- see Linux hints above.
 
-Tampered / anti-forensics filesystem (CRITICAL pivot — DO NOT give up):
+Tampered / anti-forensics filesystem (CRITICAL pivot -- DO NOT give up):
 - NTFS tamper indicators: $MFT entries with zero'd FILE record, orphaned
   $DATA attributes, missing $LogFile, $UsnJrnl truncated, or dissect
   reporting "invalid run list" / "sparse cluster" across system
@@ -1132,7 +1132,7 @@ Tampered / anti-forensics filesystem (CRITICAL pivot — DO NOT give up):
         path fragments b'/tmp/', b'/dev/shm/', b'C:\\\\Users\\\\',
         b'C:\\\\Windows\\\\System32\\\\', b'HKEY_', b'Run\\\\',
         shell/cmd shebangs b'#!/bin/', b'@echo off', b'powershell'.
-     Do NOT seed the scan with any string from the question text — stay
+     Do NOT seed the scan with any string from the question text -- stay
      neutral.
   2. Cluster offsets: hits within 256-KiB windows score higher (PE+MZ+
      .dll+Run\\\\ ⇒ Windows persistence; ELF+.ko+init_module+insmod ⇒
@@ -1264,7 +1264,7 @@ sample question):
      by ZIP magic when t.fs() rejects calls), write to %TEMP%, and
      extract with stdlib `zipfile` / `tarfile` / `py7zr`.
      If the archive is on the host evidence_dir directly, just open
-     it with the matching module — no dissect needed.
+     it with the matching module -- no dissect needed.
   3. Print the full file tree of the extracted archive: every
      filename, size, libmagic description, MIME type, and SHA-256.
   4. For each interior file, call `magic.from_file(path)` and
@@ -1381,7 +1381,7 @@ def _command_rejection(command: str) -> str | None:
     for needle in _COMMAND_BLOCKLIST:
         if needle in low:
             return (
-                f"blocked: dynamic-analysis prohibited — command contains "
+                f"blocked: dynamic-analysis prohibited -- command contains "
                 f"'{needle.strip()}'. Static analysis only: do NOT execute "
                 f"the sample, do NOT contact remote hosts, do NOT probe "
                 f"IOCs."
@@ -1498,7 +1498,7 @@ class HonestInvestigator:
 
         Persists each turn as an ``AgentStepRecord`` and the final answer
         (if any) as an ``AnswerCandidateRecord``. Does NOT transition the
-        investigation status — that is owned by the workflow engine's
+        investigation status -- that is owned by the workflow engine's
         terminal state and the freeflow state handler's error path.
         """
         from sqlmodel import select
@@ -1553,7 +1553,7 @@ class HonestInvestigator:
 
         for turn in range(1, max_turns + 1):
             # Analyst-initiated stop: cheap indexed PK lookup at the top
-            # of each iteration. We don't poll inside _run_turn — that
+            # of each iteration. We don't poll inside _run_turn -- that
             # would race with ssh commands already in flight. Between
             # turns is the safe boundary.
             if await self._is_cancelled():
@@ -1578,7 +1578,7 @@ class HonestInvestigator:
             if emitter:
                 await emitter.emit(
                     "freeflow",
-                    f"Turn {turn}/{max_turns} — planning next action...",
+                    f"Turn {turn}/{max_turns} -- planning next action...",
                     {
                         "stage": "turn_start",
                         "attempt": turn,
@@ -1608,7 +1608,7 @@ class HonestInvestigator:
             except (OSError, TimeoutError, RuntimeError, ValueError, KeyError,
                     IndexError, TypeError, AttributeError, AILAError) as exc:
                 _log.exception(
-                    "HonestInvestigator turn %d raised — persisting as failure step",
+                    "HonestInvestigator turn %d raised -- persisting as failure step",
                     turn,
                 )
                 turn_result = {
@@ -1630,7 +1630,7 @@ class HonestInvestigator:
                 if emitter:
                     await emitter.emit(
                         "freeflow",
-                        f"Turn {turn} EXCEPTION — {type(exc).__name__}: {str(exc)[:160]}",
+                        f"Turn {turn} EXCEPTION -- {type(exc).__name__}: {str(exc)[:160]}",
                         {"stage": "turn_exception", "attempt": turn,
                          "error_type": type(exc).__name__, "error": str(exc)[:500]},
                     )
@@ -1668,7 +1668,7 @@ class HonestInvestigator:
             # Persist any new structured findings the agent has
             # accumulated so far as ArtifactRecord rows. The service
             # de-dups on (artifact_type, sha256(data_json)) so calling
-            # this every turn is safe — only genuinely new findings
+            # this every turn is safe -- only genuinely new findings
             # produce new rows. We skip the always-on summary row
             # here; that's reserved for the submission path below.
             try:
@@ -1712,7 +1712,7 @@ class HonestInvestigator:
             if emitter:
                 await emitter.emit(
                     "freeflow",
-                    f"Turn {turn} persisted — action={turn_result.get('action')}"
+                    f"Turn {turn} persisted -- action={turn_result.get('action')}"
                     + (" (answer submitted)" if turn_result.get("submitted") else ""),
                     {
                         "stage": "turn_persisted",
@@ -1751,7 +1751,7 @@ class HonestInvestigator:
                 # provenance) as proper ArtifactRecord rows so the
                 # Artifacts tab can show what the investigation
                 # discovered. The helper swallows its own failures and
-                # logs at WARNING — it must never destabilise the
+                # logs at WARNING -- it must never destabilise the
                 # submission path.
                 try:
                     from aila.modules.forensics.services.investigation_artifacts import (
@@ -1935,7 +1935,7 @@ class HonestInvestigator:
         if emitter:
             await emitter.emit(
                 "freeflow",
-                f"Turn {turn}: LLM returned in {elapsed:.1f}s — action={action}",
+                f"Turn {turn}: LLM returned in {elapsed:.1f}s -- action={action}",
                 {
                     "stage": "llm_query_done",
                     "step": turn,
@@ -2011,7 +2011,7 @@ class HonestInvestigator:
             if emitter:
                 await emitter.emit(
                     "freeflow",
-                    f"Turn {turn}: running command — {cmd[:160]}",
+                    f"Turn {turn}: running command -- {cmd[:160]}",
                     {"stage": "ssh_exec_command", "step": turn, "command": cmd},
                 )
             exec_res = await self._execute_command(cmd)
@@ -2056,7 +2056,7 @@ class HonestInvestigator:
             if emitter:
                 await emitter.emit(
                     'freeflow',
-                    f'Turn {turn}: artifact query — {search_text or "list all"} ({result.get("exit_code")})',
+                    f'Turn {turn}: artifact query -- {search_text or "list all"} ({result.get("exit_code")})',
                     {'stage': 'artifact_query', 'step': turn},
                 )
             return result
@@ -2131,7 +2131,7 @@ class HonestInvestigator:
             dropped = len(s) - limit
             return (
                 f"  {label}: {kept}\n"
-                f"  ...[truncated {dropped:,} more bytes — re-run with grep/head/tail "
+                f"  ...[truncated {dropped:,} more bytes -- re-run with grep/head/tail "
                 f"to view more]"
             )
 
@@ -2203,7 +2203,7 @@ class HonestInvestigator:
             _log.warning("script blocked for investigation %s: %s", self.investigation_id, rejection)
             return {"stdout": "", "stderr": rejection, "exit_code": 1}
 
-        # Pre-flight syntax check — catch IndentationError/SyntaxError before
+        # Pre-flight syntax check -- catch IndentationError/SyntaxError before
         # wasting an SSH round-trip and a turn on broken Python.
         try:
             compile(script_content, '<investigator_script>', 'exec')
@@ -2212,7 +2212,7 @@ class HonestInvestigator:
             _log.warning('script syntax error for investigation %s: %s', self.investigation_id, msg)
             return {'stdout': '', 'stderr': msg, 'exit_code': 1}
 
-        # Pre-flight dissect API lint — catch the top mistakes before SSH.
+        # Pre-flight dissect API lint -- catch the top mistakes before SSH.
         _dissect_mistakes = [
             ('Target(', 'Target.open(', 'Use Target.open(path), not Target(path)'),
             ('.rglob(', '.walk(', 'RootFilesystem has no rglob(). Use t.fs.walk() or t.fs.path().iterdir()'),
@@ -2224,7 +2224,7 @@ class HonestInvestigator:
         ]
         for bad, good, explanation in _dissect_mistakes:
             if bad in script_content and 'Target.open(' not in script_content.split(bad, maxsplit=1)[0][-20:] if bad == 'Target(' else True:
-                msg = f'API mistake: found `{bad}` — {explanation}. Use `{good}` instead.'
+                msg = f'API mistake: found `{bad}` -- {explanation}. Use `{good}` instead.'
                 _log.warning('script API lint for investigation %s: %s', self.investigation_id, msg)
                 return {'stdout': '', 'stderr': msg, 'exit_code': 1}
 
@@ -2456,7 +2456,7 @@ class HonestInvestigator:
             text = (row.text or "").strip().replace("\n", " ")
             if len(text) > 600:
                 text = text[:597] + "..."
-            line = f"[{scope}] {stamp} — {text}"
+            line = f"[{scope}] {stamp} -- {text}"
             if row.strategy_family and row.verdict is None:
                 steering.pinned_strategy_family = row.strategy_family
             if row.required_artifact and row.verdict is None:

@@ -1,4 +1,4 @@
-"""045 — VR pattern catalog (Knowledge Transfer plan GA-41).
+"""045 -- VR pattern catalog (Knowledge Transfer plan GA-41).
 
 Adds one new table ``vr_patterns`` that stores the structured fields of
 each reusable pattern. The body + embedding live in the mirrored

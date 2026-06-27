@@ -242,7 +242,7 @@ class TestRiskScoringAgentKnowledgeParams:
              patch.object(agent, "_store_cached_signal_assessment"), \
              patch(
                  "aila.modules.vulnerability.agents.scoring.agent.load_cached_signal_assessment",
-                 return_value=MagicMock(),  # cache hit — signal_source = "cache"
+                 return_value=MagicMock(),  # cache hit -- signal_source = "cache"
              ), \
              patch.object(agent, "_analyze_candidate", side_effect=AssertionError("must not call model")), \
              patch(

@@ -1,4 +1,4 @@
-"""vr_auto_steering_dedup_key — exact-key dedup column for auto-steering messages.
+"""vr_auto_steering_dedup_key -- exact-key dedup column for auto-steering messages.
 
 Adds:
   - ``vr_investigation_messages.auto_steering_key`` (nullable VARCHAR(128))
@@ -12,12 +12,12 @@ Adds:
     regular operator/engine messages (no ``auto_steering_key``) are not
     constrained.
 
-Closes §331, §332 (dedup window was LIMIT 40 — too small for 6-branch
+Closes §331, §332 (dedup window was LIMIT 40 -- too small for 6-branch
 fan-out; now exact-match indexed lookup is O(log n)) and §338 (race
 between ``_already_posted`` and ``_post`` for two concurrent rule hits
 on the same key).
 
-Pre-existing rows are unaffected — the column defaults NULL.
+Pre-existing rows are unaffected -- the column defaults NULL.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def upgrade() -> None:
     # is set. Regular messages (NULL) are not constrained. PostgreSQL
     # honours WHERE clauses on UNIQUE indexes; on SQLite the WHERE clause
     # is also accepted (tests use SQLite in-memory). MySQL does not
-    # support partial indexes — this codebase targets PostgreSQL.
+    # support partial indexes -- this codebase targets PostgreSQL.
     op.create_index(
         "uq_vr_investigation_messages_auto_steering_key",
         "vr_investigation_messages",

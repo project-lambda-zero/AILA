@@ -1,4 +1,4 @@
-"""048 — vr_investigation_targets join table (v0.4 GA-49).
+"""048 -- vr_investigation_targets join table (v0.4 GA-49).
 
 Multi-target investigation support. An investigation has one primary
 target in vr_investigations.target_id (unchanged) PLUS optional

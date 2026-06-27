@@ -17,9 +17,9 @@ Cross-browser coverage is scoped to the most critical flows to keep CI time reas
 
 These spec files run in all three browsers:
 
-- `tests/e2e/auth/login.spec.ts` — Login form, auth flow, logout, redirect
-- `tests/e2e/dashboard/dashboard.spec.ts` — Widget grid, drag handles, JS errors
-- `tests/e2e/systems/systems-list.spec.ts` — Systems table, filters, badges
+- `tests/e2e/auth/login.spec.ts` -- Login form, auth flow, logout, redirect
+- `tests/e2e/dashboard/dashboard.spec.ts` -- Widget grid, drag handles, JS errors
+- `tests/e2e/systems/systems-list.spec.ts` -- Systems table, filters, badges
 
 **Rationale:** These three flows cover the auth gate and the two most used features.
 Running the full suite in three browsers would be impractical in a dev environment.

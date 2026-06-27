@@ -107,7 +107,7 @@ def test_vr_module_registers_expected_sweep_names() -> None:
         assert names.index(peer) < finalize_idx, (
             f"{peer} must register before vr.finalize (got order {names})"
         )
-    # vr.stall_recovery is the recovery backstop — must run AFTER vr.finalize
+    # vr.stall_recovery is the recovery backstop -- must run AFTER vr.finalize
     # so finalize gets the first crack at every inv. stall_recovery only
     # re-enqueues invs that finalize chose not to terminate (still in
     # status=running with no live task).

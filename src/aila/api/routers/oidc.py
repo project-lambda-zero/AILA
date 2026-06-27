@@ -1,4 +1,4 @@
-"""OIDC router for AILA REST API — multi-provider authentication (Phase 177).
+"""OIDC router for AILA REST API -- multi-provider authentication (Phase 177).
 
 Supports three provider_type values:
 
@@ -142,7 +142,7 @@ class OIDCProviderPublicResponse(BaseModel):
     """Minimal public representation (used by the login page).
 
     Exposes only fields needed to render a provider chooser. Never includes
-    client_id, client_secret, tenant_id, or issuer_url — those are admin-only.
+    client_id, client_secret, tenant_id, or issuer_url -- those are admin-only.
     """
 
     id: str
@@ -381,7 +381,7 @@ async def _load_enabled_provider(provider_id: str | None = None) -> OIDCProvider
 async def list_public_providers() -> DataEnvelope[list[OIDCProviderPublicResponse]]:
     """Return enabled providers for the login page selector.
 
-    Publicly accessible — only exposes provider id, display name, and type.
+    Publicly accessible -- only exposes provider id, display name, and type.
     No secrets, no issuer URLs, no client ids.
     """
     async with async_session_scope() as session:
@@ -568,7 +568,7 @@ async def _verify_id_token(
             matching_key = key
             break
     if matching_key is None and jwks.get("keys"):
-        # Some IdPs publish single-key JWKS without a kid — accept it.
+        # Some IdPs publish single-key JWKS without a kid -- accept it.
         matching_key = jwks["keys"][0]
     if matching_key is None:
         raise HTTPException(

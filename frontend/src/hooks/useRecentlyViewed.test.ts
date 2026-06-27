@@ -1,5 +1,5 @@
 /**
- * useRecentlyViewed.test.ts — unit tests for the useRecentlyViewed hook.
+ * useRecentlyViewed.test.ts -- unit tests for the useRecentlyViewed hook.
  *
  * Tests localStorage CRUD, excluded paths, deduplication, MAX_ITEMS cap,
  * path-to-label conversion, and clearRecent.
@@ -73,7 +73,7 @@ describe("useRecentlyViewed", () => {
     expect(result.current.items.every((i) => i.path !== "/auth/callback")).toBe(true);
   });
 
-  it("deduplicates by path — same path does not appear twice", () => {
+  it("deduplicates by path -- same path does not appear twice", () => {
     // Seed localStorage with one /systems entry
     const existing = [
       { path: "/systems", label: "Systems", visitedAt: Date.now() - 5000 },
@@ -133,10 +133,10 @@ describe("useRecentlyViewed", () => {
 });
 
 // ---------------------------------------------------------------------------
-// pathToLabel — test via the hook's label output
+// pathToLabel -- test via the hook's label output
 // ---------------------------------------------------------------------------
 
-describe("useRecentlyViewed — label generation", () => {
+describe("useRecentlyViewed -- label generation", () => {
   beforeEach(() => {
     localStorage.clear();
   });

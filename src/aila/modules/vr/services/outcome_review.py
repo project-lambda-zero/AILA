@@ -120,7 +120,7 @@ class QuorumOutcome:
 def compute_quorum(non_proposing_sibling_count: int) -> int:
     """Approve threshold for a draft outcome.
 
-    fix §148 — derive K from the count of non-proposing branches
+    fix §148 -- derive K from the count of non-proposing branches
     (a static investigation-level count), NOT from active-only siblings.
     Stale-abandoned siblings used to reduce the denominator, so a single
     approve vote could ship an outcome when 4 of 5 siblings had been
@@ -153,14 +153,14 @@ def set_outcome_state(
 ) -> bool:
     """Single point for ``vr_investigation_outcomes.state`` writes.
 
-    Fix §20 — every direct ``outcome.state = ...`` write goes through
+    Fix §20 -- every direct ``outcome.state = ...`` write goes through
     this helper so the audit trail (``AuditEventRecord`` in the
     platform audit table) records the prior→new transition plus the
     caller-supplied reason. Without that row a forensic question of
     'who flipped this outcome and when' has only ``_log.info`` chatter
     to chase.
 
-    Caller still owns the commit boundary — this helper adds the
+    Caller still owns the commit boundary -- this helper adds the
     outcome row + the audit row to the active session and returns.
 
     Args:
@@ -179,12 +179,12 @@ def set_outcome_state(
 
     §14 known callers (single source of truth for outcome state
     transitions across the codebase):
-      - ``services/outcome_review.evaluate_quorum`` — draft → approved /
+      - ``services/outcome_review.evaluate_quorum`` -- draft → approved /
         rejected based on sibling votes.
-      - ``agents/outcome_dispatcher._update_outcome_status`` —
+      - ``agents/outcome_dispatcher._update_outcome_status`` --
         approved → dispatched on successful downstream ship.
     The synthesis_agent path (``agents/synthesis_agent``) does NOT
-    write ``outcome.state`` — it updates ``payload_json`` and
+    write ``outcome.state`` -- it updates ``payload_json`` and
     ``confidence`` on the canonical row and flips investigation
     ``status`` instead; the outcome's state continues to be owned by
     the two callers above. New writers MUST route through this
@@ -202,7 +202,7 @@ def set_outcome_state(
     outcome.state = new_state
     uow.session.add(outcome)
 
-    # Audit trail. Platform-owned audit table — same table the
+    # Audit trail. Platform-owned audit table -- same table the
     # workflow engine writes its transition rows to (engine.py:1000)
     # so an operator querying by run_id sees a single chronological
     # stream of state changes.
@@ -239,7 +239,7 @@ async def upsert_review(
     Idempotent per (outcome_id, reviewer_branch_id): the latest call
     replaces any prior vote from the same branch. Caller is responsible
     for separately calling :func:`evaluate_quorum` after the upsert
-    completes — the two are split so a transaction can group several
+    completes -- the two are split so a transaction can group several
     reviews and evaluate quorum once at the end.
 
     Raises ``ValueError`` on unknown vote string, missing outcome row,
@@ -253,13 +253,13 @@ async def upsert_review(
     review row as ``suggested_edits_json`` and is **consumed by the
     synthesis agent** when it merges per-persona panel contributions
     into the canonical outcome. See :class:`aila.modules.vr.agents.
-    synthesis_agent.SynthesisAgent.run` — that is the ONE place
+    synthesis_agent.SynthesisAgent.run` -- that is the ONE place
     suggested edits get folded back into the canonical narrative.
 
     Structured per-row semantics for downstream readers:
 
     - ``suggested_edits_json``      stored as JSON (this function).
-    - ``applied_by_synthesis: bool`` IMPLICIT contract — there is no
+    - ``applied_by_synthesis: bool`` IMPLICIT contract -- there is no
       column for it; the synthesis agent's panel-merge step is the
       sole consumer and operates idempotently (its ``panel_summary``
       marker on the canonical outcome means the merge has incorporated
@@ -267,9 +267,9 @@ async def upsert_review(
       column on the review row would let the synthesis agent record
       provenance per suggestion, but the current contract is "all
       review rows belonging to the canonical outcome MUST be reread
-      on every synthesis run" — no per-row applied bit required.
+      on every synthesis run" -- no per-row applied bit required.
 
-    DESIGN (fix §170): chose option (b) from prior design notes §4 —
+    DESIGN (fix §170): chose option (b) from prior design notes §4 --
     synthesis-agent consumption rather than a frontend Apply button.
     Rationale: (a) needs a frontend project + operator-gated API + a
     second write path on the canonical outcome; (b) reuses the
@@ -304,7 +304,7 @@ async def upsert_review(
                 f"reviewer branch {reviewer_branch_id} not found",
             )
 
-        # Wipe any prior vote from this branch on this outcome — the
+        # Wipe any prior vote from this branch on this outcome -- the
         # UNIQUE(outcome_id, reviewer_branch_id) constraint forces the
         # delete-then-insert dance because sqlmodel doesn't expose an
         # ON CONFLICT helper across dialects.
@@ -328,19 +328,19 @@ async def upsert_review(
         await uow.commit()
         await uow.session.refresh(row)
 
-    # fix §170 — synthesis agent consumes — see merge_panel_contributions
-    # (i.e. SynthesisAgent.run in agents/synthesis_agent.py — the
+    # fix §170 -- synthesis agent consumes -- see merge_panel_contributions
+    # (i.e. SynthesisAgent.run in agents/synthesis_agent.py -- the
     # consolidator step that reads every contribution + review on the
     # canonical outcome and folds them into ``panel_summary``).
     #
-    # DESIGN: option (b) chosen — agent-driven consumption rather than
+    # DESIGN: option (b) chosen -- agent-driven consumption rather than
     # a frontend-Apply path. Until the synthesis agent's
     # _load_panel_reviews step lands (TODO: wire the SELECT against
     # vr_investigation_outcome_reviews into SynthesisAgent.run so it
     # passes suggested_edits into the LLM panel-render), this WARNING
     # is the visible-in-logs marker that a request_edit vote is
     # waiting on synthesis pickup. After the wiring lands, drop the
-    # warning — the merge step makes the suggestion non-silent by
+    # warning -- the merge step makes the suggestion non-silent by
     # construction.
     #
     # NOTE on ``applied_by_synthesis``: the docstring above documents
@@ -350,7 +350,7 @@ async def upsert_review(
     # synthesis is a no-op once panel_summary is set.
     if suggested:
         _log.warning(
-            "outcome_review.suggested_edits_pending_synthesis — "
+            "outcome_review.suggested_edits_pending_synthesis -- "
             "outcome=%s branch=%s persona=%s vote=%s edits_keys=%s. "
             "Suggestion stored on review row; will be picked up by "
             "SynthesisAgent.run on next synthesis (see fix §170 "
@@ -376,7 +376,7 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
     Sibling halt happens here: when state flips to APPROVED, every
     sibling branch with ``status == 'active'`` and no terminal outcome
     submitted yet is closed with reason ``sibling_outcome_approved``.
-    This frees worker capacity immediately — without the halt, siblings
+    This frees worker capacity immediately -- without the halt, siblings
     keep being re-enqueued and burn turns on a question already
     answered.
     """
@@ -408,7 +408,7 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
 
         # Count siblings that exist to review (any non-proposing branch
         # in the same investigation). Closed branches still count as
-        # eligible reviewers — they could have voted before closing —
+        # eligible reviewers -- they could have voted before closing --
         # but we don't expect new votes from them.
         siblings = (await uow.session.exec(
             _select(VRInvestigationBranchRecord).where(
@@ -419,13 +419,13 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
         non_proposing_count = len(siblings)
         quorum_k = compute_quorum(non_proposing_count)
         # ACTIVE siblings are the only ones the halt loop touches. The
-        # ``PAUSED`` filter below is defensive — PAUSED is already not
+        # ``PAUSED`` filter below is defensive -- PAUSED is already not
         # in ACTIVE, but if someone broadens this filter later the halt
         # guard at the per-sibling loop will still skip them.
         active_siblings = [
             b for b in siblings if b.status == BranchStatus.ACTIVE.value
         ]
-        # fix §78 — count PAUSED siblings as "potentially voting once
+        # fix §78 -- count PAUSED siblings as "potentially voting once
         # resumed". The no-active-voters auto-approve must NOT fire
         # when there are PAUSED siblings that could vote later; treating
         # them as dead voters would let the operator's pause survive a
@@ -451,13 +451,13 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
         # Fallback: siblings exist (quorum_k > 0) but every single one
         # is already non-active (completed/abandoned) and the recorded
         # votes are still below quorum. Nobody can ever vote on this
-        # outcome — auto-approve so the investigation can settle.
+        # outcome -- auto-approve so the investigation can settle.
         # Stamps the transition with a distinct reason so the operator
         # can audit which outcomes shipped without sibling corroboration.
         # The pre-submit draft_pending gate (vuln_researcher) is the
         # primary mitigation; this is the safety net for investigations
         # that predate the gate or hit the gate's blind spots.
-        # fix §78 — gate the fallback on PAUSED count too: if there are
+        # fix §78 -- gate the fallback on PAUSED count too: if there are
         # paused siblings, they may resume and vote, so do not collapse
         # to auto-approve. Operator action (pause) blocks auto-settle.
         if (
@@ -496,7 +496,7 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
 
         transition_occurred = new_state != prior_state
         if transition_occurred:
-            # fix §20 — route the state write through set_outcome_state
+            # fix §20 -- route the state write through set_outcome_state
             # so the audit trail (AuditEventRecord) captures the
             # prior->new flip alongside the quorum derivation reason.
             set_outcome_state(uow, outcome, new_state, reason=transition_reason)
@@ -505,11 +505,11 @@ async def evaluate_quorum(outcome_id: str) -> QuorumOutcome:
             # done rather than perpetually active.
             if new_state == OUTCOME_STATE_APPROVED:
                 for sibling in active_siblings:
-                    # fix §78 — defensive guard: skip PAUSED branches
+                    # fix §78 -- defensive guard: skip PAUSED branches
                     # should they ever appear in active_siblings (the filter
                     # above currently excludes them, but a future change
                     # could broaden it). Operator-paused branches must
-                    # NOT be flipped to ABANDONED here — the pause is
+                    # NOT be flipped to ABANDONED here -- the pause is
                     # the operator's explicit hold; halting via ABANDONED
                     # would lose that semantic and prevent resume.
                     if sibling.status == BranchStatus.PAUSED.value:
@@ -586,28 +586,28 @@ async def post_draft_review_request(
         f"This outcome will NOT dispatch until siblings corroborate it. "
         f"Your next turn MUST be a submit_outcome_review action with one "
         f"of these votes:\n"
-        f"  - approve       — you have independently verified the claims "
+        f"  - approve       -- you have independently verified the claims "
         f"and they hold.\n"
-        f"  - reject        — at least one claim is wrong (file path, "
+        f"  - reject        -- at least one claim is wrong (file path, "
         f"line number, semantics). One reject vetoes the whole outcome.\n"
-        f"  - request_edit  — claims are mostly right but need correction. "
+        f"  - request_edit  -- claims are mostly right but need correction. "
         f"Include suggested_edits with specific changes.\n"
-        f"  - abstain       — you have not investigated this code path "
+        f"  - abstain       -- you have not investigated this code path "
         f"and cannot judge.\n"
         f"\n"
-        f"DO NOT keep generating new hypotheses while a draft is up — "
+        f"DO NOT keep generating new hypotheses while a draft is up -- "
         f"review the existing one. The submit_outcome_review action "
         f"requires you to GROUND every claim against actual source via "
         f"audit_mcp.read_lines / read_function before you can approve. "
         f"If you cannot ground a claim, vote reject or abstain."
     )
-    # fix §248 — exact-key dedup via the indexed ``auto_steering_key``
+    # fix §248 -- exact-key dedup via the indexed ``auto_steering_key``
     # column added by migration 063 (originally for auto_steering, but
-    # the column is generic — it's the canonical "system-authored
+    # the column is generic -- it's the canonical "system-authored
     # message dedup sentinel"). No new migration needed.
     #
     # Why no separate ``dedup_key`` column: 063 already provides the
-    # exact shape we need — VARCHAR(128) NULL with a partial UNIQUE
+    # exact shape we need -- VARCHAR(128) NULL with a partial UNIQUE
     # index on (investigation_id, auto_steering_key) WHERE NOT NULL,
     # and a composite index for the read path. Adding a parallel
     # ``dedup_key`` column would duplicate schema for the same purpose;
@@ -640,7 +640,7 @@ async def post_draft_review_request(
         msg = VRInvestigationMessageRecord(
             investigation_id=investigation_id,
             branch_id=proposing_branch_id,
-            # fix §250 — system-authored. Previously OPERATOR (the only
+            # fix §250 -- system-authored. Previously OPERATOR (the only
             # broadcast-tagged kind). vuln_researcher.py:1077 broadcast
             # filter expanded to {OPERATOR, SYSTEM} so siblings still see
             # this message; SenderKind enum + the filter update ship
@@ -654,13 +654,13 @@ async def post_draft_review_request(
                 "outcome_id": outcome_id,
             }),
             operator_intent=OperatorIntent.STEERING.value,
-            # fix §248 — populate the indexed dedup column so the
+            # fix §248 -- populate the indexed dedup column so the
             # UNIQUE constraint catches concurrent re-entry races.
             auto_steering_key=auto_steering_key,
             created_at=utc_now(),
         )
         uow.session.add(msg)
-        # fix §251 — ``uow.commit()`` is the canonical UnitOfWork API:
+        # fix §251 -- ``uow.commit()`` is the canonical UnitOfWork API:
         # ``platform/uow.py`` defines it as a thin wrapper around
         # ``self.session.commit()``. Both call shapes commit the
         # currently-open transaction, but ``uow.commit()`` is preferred
@@ -669,12 +669,12 @@ async def post_draft_review_request(
         # Other call sites in this file (lines ~210, ~378) already use
         # this form; the inconsistent ``uow.session.commit()`` callers
         # in pattern_store / outcome_dispatcher / target_analysis are
-        # not structural drift — same behaviour today — but should
+        # not structural drift -- same behaviour today -- but should
         # converge on ``uow.commit()`` opportunistically.
         try:
             await uow.commit()
         except IntegrityError:
-            # fix §248 — race window between the read check and the
+            # fix §248 -- race window between the read check and the
             # write: a concurrent re-entry inserted the same key
             # first. Roll back the failed insert (auto on session
             # exit) and look up the surviving row in a fresh UoW.

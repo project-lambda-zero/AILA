@@ -2,7 +2,7 @@
 
 Hypotheses live inside ``ReasoningCaseState.hypotheses`` on each
 branch's encoded ``case_state_json`` blob. They aren't a persistent
-table — they're a derived view computed by aggregating branches.
+table -- they're a derived view computed by aggregating branches.
 
 This contract exposes the aggregate shape served by
 ``GET /vr/investigations/{id}/hypotheses`` so the
@@ -26,7 +26,7 @@ class HypothesisState(StrEnum):
 
     LIVE = "live"          # still in case_state.hypotheses on >=1 branch
     REJECTED = "rejected"  # moved to case_state.rejected on >=1 branch
-    RESOLVED = "resolved"  # auto-bucketed on terminal — see canonical outcome
+    RESOLVED = "resolved"  # auto-bucketed on terminal -- see canonical outcome
     MIXED = "mixed"        # state differs across branches
 
 

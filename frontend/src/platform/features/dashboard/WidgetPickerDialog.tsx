@@ -25,7 +25,7 @@ export interface WidgetPickerDialogProps {
 }
 
 /**
- * WidgetPickerDialog — categorized widget card grid for adding widgets (D-03).
+ * WidgetPickerDialog -- categorized widget card grid for adding widgets (D-03).
  *
  * Opens as a Dialog, lists all registered widgets grouped by category.
  * Cards are disabled for widgets already on the dashboard.
@@ -90,7 +90,7 @@ export function WidgetPickerDialog({
                             }
                       }
                       aria-disabled={isActive}
-                      aria-label={isActive ? `${widget.name} — already added` : `Add ${widget.name}`} techBorder glow><div className="flex items-start justify-between gap-2">
+                      aria-label={isActive ? `${widget.name} -- already added` : `Add ${widget.name}`} techBorder glow><div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-foreground truncate">
                             {widget.name}

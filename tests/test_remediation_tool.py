@@ -1,4 +1,4 @@
-"""Tests for RemediationTool — rekeyed on (host, package_name, cve_id).
+"""Tests for RemediationTool -- rekeyed on (host, package_name, cve_id).
 
 Verifies upsert/list/get actions against the current forward() signature
 which no longer accepts run_id (removed during Phase 30 remediation rekeying).

@@ -25,7 +25,7 @@ const disclosureColor: Record<
   public: "low",
 };
 
-/** Finding Detail page — 10-section layout from 08_FRONTEND_UX.md §1.6 /
+/** Finding Detail page -- 10-section layout from 08_FRONTEND_UX.md §1.6 /
  *
  *  Sections:
  *    1. Root cause
@@ -87,7 +87,7 @@ export function FindingDetailPage() {
     );
   }
 
-  // Backend doesn't carry these yet — render section headers so the
+  // Backend doesn't carry these yet -- render section headers so the
   // shape is visible, with placeholder text matching spec vocabulary.
   type WithOptional = typeof finding & {
     cvss_score?: number | null;
@@ -149,7 +149,7 @@ export function FindingDetailPage() {
         </div>
       </div>
 
-      {/* Adjudication banner (§Topic 8) — synthesised from finding state.
+      {/* Adjudication banner (§Topic 8) -- synthesised from finding state.
           A real adjudication record (verdict + hedge phrases detected +
           unmet obligations) is backend pending. */}
       <AdjudicationBanner
@@ -164,12 +164,12 @@ export function FindingDetailPage() {
             f.poc?.crashes_vulnerable === 5 && f.poc?.crashes_patched === 0
               ? "PoC reliability 5/5 on vulnerable + clean on patched."
               : f.poc?.crashes_vulnerable === 0
-                ? "PoC fails to reproduce — submission blocked until reliability ≥ 3/5."
-                : "PoC reproduces but flaky — operator review required.",
+                ? "PoC fails to reproduce -- submission blocked until reliability ≥ 3/5."
+                : "PoC reproduces but flaky -- operator review required.",
         }}
       />
 
-      {/* 1 — Root cause */}
+      {/* 1 -- Root cause */}
       <AilaCard  techBorder glow><Section title="Root cause" />
       {f.root_cause ? (
         <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
@@ -179,17 +179,17 @@ export function FindingDetailPage() {
         <p className="text-xs text-text-muted">Not yet recorded.</p>
       )}</AilaCard>
 
-      {/* 2 — Vulnerable function */}
+      {/* 2 -- Vulnerable function */}
       <AilaCard  techBorder glow><Section title="Vulnerable function" />
       <p className="font-mono text-sm text-foreground">
-        {f.vulnerable_function || "—"}
+        {f.vulnerable_function || "--"}
       </p>
       <p className="text-3xs text-text-muted mt-1">
-        Decompiled source rendering pending — open the function in IDA on the
+        Decompiled source rendering pending -- open the function in IDA on the
         research workstation to view pseudocode.
       </p></AilaCard>
 
-      {/* 3 — CVSS breakdown */}
+      {/* 3 -- CVSS breakdown */}
       <AilaCard  techBorder glow><Section title="CVSS v3.1 breakdown" />
       {f.cvss_vector ? (
         <CVSSBreakdown
@@ -204,7 +204,7 @@ export function FindingDetailPage() {
         />
       )}</AilaCard>
 
-      {/* 4 — CWE */}
+      {/* 4 -- CWE */}
       <AilaCard  techBorder glow><Section title="CWE classification" />
       {f.cwe_id ? (
         <CWEBadge cweId={f.cwe_id} name={f.cwe_name} />
@@ -215,11 +215,11 @@ export function FindingDetailPage() {
         />
       )}</AilaCard>
 
-      {/* 5 — PoC */}
+      {/* 5 -- PoC */}
       <AilaCard  techBorder glow><Section
         title={
           f.poc
-            ? `PoC (${f.poc.language}) — vulnerable: ${f.poc.crashes_vulnerable}/5  patched: ${f.poc.crashes_patched}/1`
+            ? `PoC (${f.poc.language}) -- vulnerable: ${f.poc.crashes_vulnerable}/5  patched: ${f.poc.crashes_patched}/1`
             : "PoC"
         }
         actions={
@@ -261,7 +261,7 @@ export function FindingDetailPage() {
         <p className="text-xs text-text-muted">No PoC yet.</p>
       )}</AilaCard>
 
-      {/* 6 — ASAN report */}
+      {/* 6 -- ASAN report */}
       <AilaCard  techBorder glow><Section title="ASAN report" />
       {f.poc?.asan_report ? (
         <pre className="text-2xs font-mono p-3 rounded bg-surface border border-border-default overflow-x-auto whitespace-pre max-h-96 overflow-y-auto">
@@ -273,7 +273,7 @@ export function FindingDetailPage() {
         </p>
       )}</AilaCard>
 
-      {/* 7 — Crash signature */}
+      {/* 7 -- Crash signature */}
       <AilaCard  techBorder glow><Section title="Crash signature" />
       {f.crash_signature ? (
         <div className="text-xs font-mono space-y-2">
@@ -304,12 +304,12 @@ export function FindingDetailPage() {
         <p className="text-xs text-text-muted">No signature recorded.</p>
       )}</AilaCard>
 
-      {/* 8 — Exploitability */}
+      {/* 8 -- Exploitability */}
       <AilaCard  techBorder glow><Section title="Exploitability assessment" />
       {f.exploitability_verdict || f.exploitability_rationale ? (
         <div className="space-y-2">
           <AilaBadge severity="critical" size="sm">
-            verdict: {f.exploitability_verdict ?? "—"}
+            verdict: {f.exploitability_verdict ?? "--"}
           </AilaBadge>
           {f.exploitability_rationale && (
             <p className="text-sm text-foreground whitespace-pre-wrap">
@@ -320,11 +320,11 @@ export function FindingDetailPage() {
       ) : (
         <PendingBackend
           field="exploitability_verdict / exploitability_rationale on VRFinding"
-          hint="Spec calls for primitive type + preconditions + mitigation defeats. Backend wiring pending — currently only crash_type is exposed."
+          hint="Spec calls for primitive type + preconditions + mitigation defeats. Backend wiring pending -- currently only crash_type is exposed."
         />
       )}</AilaCard>
 
-      {/* 9 — Disclosure */}
+      {/* 9 -- Disclosure */}
       <AilaCard  techBorder glow><Section title="Disclosure" />
       <dl className="grid grid-cols-2 gap-3 text-xs font-mono">
         <div>
@@ -340,26 +340,26 @@ export function FindingDetailPage() {
         </div>
         <div>
           <dt className="text-text-muted">Vendor contact</dt>
-          <dd className="text-foreground">{f.vendor_contact ?? "—"}</dd>
+          <dd className="text-foreground">{f.vendor_contact ?? "--"}</dd>
         </div>
         <div>
           <dt className="text-text-muted">Assigned CVE</dt>
-          <dd className="text-foreground">{f.assigned_cve_id ?? "—"}</dd>
+          <dd className="text-foreground">{f.assigned_cve_id ?? "--"}</dd>
         </div>
         <div>
           <dt className="text-text-muted">Patch version</dt>
-          <dd className="text-foreground">{f.patch_version ?? "—"}</dd>
+          <dd className="text-foreground">{f.patch_version ?? "--"}</dd>
         </div>
         <div>
           <dt className="text-text-muted">Reported at</dt>
           <dd className="text-foreground">
-            {f.reported_at ? new Date(f.reported_at).toLocaleString() : "—"}
+            {f.reported_at ? new Date(f.reported_at).toLocaleString() : "--"}
           </dd>
         </div>
         <div>
           <dt className="text-text-muted">Embargo until</dt>
           <dd className="text-foreground">
-            {f.embargo_until ? new Date(f.embargo_until).toLocaleString() : "—"}
+            {f.embargo_until ? new Date(f.embargo_until).toLocaleString() : "--"}
           </dd>
         </div>
       </dl>
@@ -369,7 +369,7 @@ export function FindingDetailPage() {
         <code>/vr/projects/{projectId}/findings/{findingId}/disclosure</code>.
       </p></AilaCard>
 
-      {/* 10 — Advisory */}
+      {/* 10 -- Advisory */}
       <AilaCard  techBorder glow><Section title="Advisory" />
       {f.advisory_id ? (
         <Link
@@ -385,11 +385,11 @@ export function FindingDetailPage() {
         </p>
       )}</AilaCard>
 
-      {/* Obligations — fully gated on backend */}
+      {/* Obligations -- fully gated on backend */}
       <AilaCard  techBorder glow><Section title="Evidence obligations" />
       <ObligationChecklist
         obligations={[]}
-        emptyHint="No obligation API yet — see Tier 2 of docs/prior design notes."
+        emptyHint="No obligation API yet -- see Tier 2 of docs/prior design notes."
       /></AilaCard>
 
       <p className="text-3xs text-text-muted text-center">

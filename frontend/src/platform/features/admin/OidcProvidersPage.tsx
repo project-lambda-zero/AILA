@@ -1,5 +1,5 @@
 /**
- * OidcProvidersPage — admin-only multi-provider OIDC management (Phase 177).
+ * OidcProvidersPage -- admin-only multi-provider OIDC management (Phase 177).
  *
  * Supports Microsoft (tenant_id), Google (hardcoded issuer), and generic
  * OIDC (operator-supplied issuer_url). Backend enforces rbac; this page
@@ -91,7 +91,7 @@ function providerSeverity(pt: ProviderType): "info" | "medium" | "neutral" {
 }
 
 function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "--";
   return new Date(value).toLocaleString();
 }
 
@@ -693,13 +693,13 @@ export function OidcProvidersPage() {
           Total providers
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {providersQuery.isLoading ? "—" : totalProviders}
+          {providersQuery.isLoading ? "--" : totalProviders}
         </p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Enabled
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {providersQuery.isLoading ? "—" : enabledProviders}
+          {providersQuery.isLoading ? "--" : enabledProviders}
         </p></AilaCard>
       </div>
 

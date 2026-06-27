@@ -1,5 +1,5 @@
 /**
- * SSEProvider — global SSE connection for authenticated users.
+ * SSEProvider -- global SSE connection for authenticated users.
  *
  * Mounts one ``useSSE`` connection to ``/events/stream`` for the lifetime of
  * the authenticated session. All surfaces share this single connection rather
@@ -65,7 +65,7 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
     (event: SSEEvent) => {
       switch (event.type) {
         // ------------------------------------------------------------------ //
-        // notification — a new NotificationRecord was persisted for the user   //
+        // notification -- a new NotificationRecord was persisted for the user   //
         // ------------------------------------------------------------------ //
         case "notification": {
           void queryClient.invalidateQueries({ queryKey: ["notifications"] });
@@ -86,7 +86,7 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
         }
 
         // ------------------------------------------------------------------ //
-        // scan_complete — a task finished (done / failed / cancelled)          //
+        // scan_complete -- a task finished (done / failed / cancelled)          //
         // ------------------------------------------------------------------ //
         case "scan_complete": {
           void queryClient.invalidateQueries({ queryKey: ["dashboard", "stats"] });
@@ -115,7 +115,7 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
         }
 
         // ------------------------------------------------------------------ //
-        // finding_arrived — new finding upserted (critical only triggers toast) //
+        // finding_arrived -- new finding upserted (critical only triggers toast) //
         // ------------------------------------------------------------------ //
         case "finding_arrived": {
           // Matches ["platform", "findings-facets"] and ["platform", "system-findings", ...]
@@ -134,7 +134,7 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
         }
 
         // ------------------------------------------------------------------ //
-        // system_unreachable — managed host went offline                       //
+        // system_unreachable -- managed host went offline                       //
         // ------------------------------------------------------------------ //
         case "system_unreachable": {
           // Matches ["platform", "systems", ...] and ["platform", "topology"]
@@ -150,7 +150,7 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
         }
 
         // ------------------------------------------------------------------ //
-        // ping / unknown — ignore keepalives and unrecognised types            //
+        // ping / unknown -- ignore keepalives and unrecognised types            //
         // ------------------------------------------------------------------ //
         case "ping":
         default:

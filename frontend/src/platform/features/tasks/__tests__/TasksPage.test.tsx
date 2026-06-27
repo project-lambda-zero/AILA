@@ -69,7 +69,7 @@ describe("TasksPage", () => {
     const rows = await screen.findAllByTestId("task-row");
     // MemoryRouter.location isn't exposed directly; verify by checking the
     // active page re-mounts (same TasksPage component) without errors after
-    // click — and the clicked task_id becomes the selected row via ?task=.
+    // click -- and the clicked task_id becomes the selected row via ?task=.
     await userEvent.click(rows[0]);
     // After click, the selected row should get the bg-accent/5 class.
     // (Navigation assertion without router context inspection: ensure no

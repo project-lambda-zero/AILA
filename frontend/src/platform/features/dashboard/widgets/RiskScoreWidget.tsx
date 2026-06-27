@@ -31,7 +31,7 @@ function formatTimestamp(isoString: string): string {
 }
 
 /**
- * RiskScoreWidget — circular SVG gauge showing composite risk score (0-10).
+ * RiskScoreWidget -- circular SVG gauge showing composite risk score (0-10).
  *
  * Arc color:
  *   - score < 5 → amber (accent)
@@ -94,7 +94,7 @@ export function RiskScoreWidget() {
           stroke={colors.border}
           strokeWidth={STROKE_WIDTH}
         />
-        {/* Foreground arc — starts from top (rotate -90deg) */}
+        {/* Foreground arc -- starts from top (rotate -90deg) */}
         <circle
           cx={CX}
           cy={CY}

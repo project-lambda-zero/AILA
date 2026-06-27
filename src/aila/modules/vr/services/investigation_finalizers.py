@@ -1,4 +1,4 @@
-"""Generic investigation finalizers — implementation site.
+"""Generic investigation finalizers -- implementation site.
 
 Three helpers that handle generic investigation finalization
 (rejected-quorum close, orphan audit_memo synthesis, stale-branch
@@ -90,7 +90,7 @@ async def synthesize_no_finding_outcomes(
 
     Gap: variant_hunt / audit investigations that never produced any
     outcome at all (agents abandoned without submitting). Observed
-    live on ``a0b33905`` — 6 branches all ``status=abandoned`` via the
+    live on ``a0b33905`` -- 6 branches all ``status=abandoned`` via the
     stale-detector, ``primary_outcome_id=NULL``, investigation still
     ``running``. No closer existed for this shape until Phase C.
 
@@ -310,7 +310,7 @@ async def close_rejected_outcomes(
     ``services/outcome_review.py`` but for the rejection direction:
     once ``evaluate_quorum`` flips an outcome ``draft → rejected``
     (reject_count ≥ quorum_k), the investigation has no auto-close
-    path — it sits at ``status=running`` waiting for some other branch
+    path -- it sits at ``status=running`` waiting for some other branch
     to propose an alternative outcome. In practice the other branches
     are already deep in their own audits and rarely produce a competing
     outcome, so the investigation runs forever.
@@ -416,10 +416,10 @@ async def abandon_stale_branches_impl(uow: UnitOfWork) -> int:
     Two failure modes observed in production:
 
       1. ``turn_count=0`` since the dispatcher created the branch hours
-         ago — the first turn never queued (lost task, dead worker,
+         ago -- the first turn never queued (lost task, dead worker,
          dependency wait that never resolved). These are dead from
          birth.
-      2. ``turn_count>=1`` but ``updated_at`` is many hours old — the
+      2. ``turn_count>=1`` but ``updated_at`` is many hours old -- the
          agent made some progress, then the task chain broke (auto-
          steering operator message logged but no engine reply, ARQ
          orphan, OmniRoute crash). The branch sits ``status=active`` so
@@ -433,7 +433,7 @@ async def abandon_stale_branches_impl(uow: UnitOfWork) -> int:
         abandoned.
 
     LLM-outage gate (operator rule): branches sitting idle through
-    an LLM endpoint outage are NOT stalled — they are waiting for work.
+    an LLM endpoint outage are NOT stalled -- they are waiting for work.
     Abandoning them in that window destroys real progress because the
     workflow couldn't run their next turn. Skip the whole abandonment
     step when the LLM has had any error in the trailing 10 min without
@@ -444,7 +444,7 @@ async def abandon_stale_branches_impl(uow: UnitOfWork) -> int:
     if is_llm_recently_unhealthy(600.0):
         _log.info(
             "stale_branches: skipping abandonment (LLM unhealthy "
-            "within last 10 min — branches waiting for work, not "
+            "within last 10 min -- branches waiting for work, not "
             "stalled)",
         )
         return 0
@@ -527,7 +527,7 @@ async def synthesize_no_finding_for_investigation(investigation_id: str) -> int:
 async def abandon_stale_branches() -> int:
     """Per-id-less wrapper (sweep-shaped) for :func:`abandon_stale_branches_impl`.
 
-    Stale-branch detection is naturally a sweep — the LLM-outage gate
+    Stale-branch detection is naturally a sweep -- the LLM-outage gate
     and frozen/halted thresholds apply across all active branches.
     """
     async with UnitOfWork() as uow:

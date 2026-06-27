@@ -2,7 +2,7 @@
  * TanStack Query hook for workflow state transitions (Phase 181).
  *
  * Fetches GET /tasks/{task_id}/transitions.
- * Returns empty array for tasks with no workflow history — never throws 404.
+ * Returns empty array for tasks with no workflow history -- never throws 404.
  *
  * Polling: disabled by default. The SSE stream pushes live transition events;
  * this hook is the initial-load / catch-up path (D-17 late-connect).
@@ -18,7 +18,7 @@ export function useTransitions(taskId: string) {
     queryKey: ["platform", "transitions", taskId],
     enabled: taskId.trim().length > 0,
     queryFn: () => fetchTransitions(taskId),
-    // Stale after 10 s — the list only grows, refetch is cheap.
+    // Stale after 10 s -- the list only grows, refetch is cheap.
     staleTime: 10_000,
   });
 }

@@ -5,9 +5,9 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
  * Heuristic compatibility hint between a chosen workstation and a
  * target class (08_FRONTEND_UX.md §1.2). Renders a small badge:
  *
- *  - ok      — workstation looks compatible
- *  - warn    — likely but unconfirmed (e.g. wrong OS family)
- *  - error   — definitely incompatible (e.g. kernel target on
+ *  - ok      -- workstation looks compatible
+ *  - warn    -- likely but unconfirmed (e.g. wrong OS family)
+ *  - error   -- definitely incompatible (e.g. kernel target on
  *              non-Linux host)
  *
  * The badge is advisory only. The backend has the final say once the
@@ -59,7 +59,7 @@ export function WorkstationCompatibilityBadge({
 }) {
   const { verdict, reason } = judge(system, kind);
   // Map verdict to AilaBadge severity tokens (the design system has
-  // no "warning" — we use "medium" for caution, "high" for error,
+  // no "warning" -- we use "medium" for caution, "high" for error,
   // "low" for ok).
   const severity: BadgeSeverity =
     verdict === "ok" ? "low" : verdict === "warn" ? "medium" : "high";

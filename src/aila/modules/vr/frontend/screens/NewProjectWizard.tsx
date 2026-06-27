@@ -19,10 +19,10 @@ import { WorkstationCompatibilityBadge } from "../components/WorkstationCompatib
 /** 3-stage New Project Wizard (08_FRONTEND_UX.md §1.2).
  *
  *  Steps:
- *    1. Target intake — input source (upload / git_repo / http_url),
+ *    1. Target intake -- input source (upload / git_repo / http_url),
  *       target class, repo URL / refs.
- *    2. Workstation selection — pick a registered SSH host.
- *    3. Scope + authorisation — name, CVE, notes, authorisation toggle.
+ *    2. Workstation selection -- pick a registered SSH host.
+ *    3. Scope + authorisation -- name, CVE, notes, authorisation toggle.
  *
  *  The wizard never persists until the final step. Closing the tab
  *  discards everything per spec.
@@ -60,7 +60,7 @@ export function NewProjectWizard() {
 
   const [step, setStep] = useState<Step>(1);
 
-  // Step 1 — target intake
+  // Step 1 -- target intake
   const [workspaceId, setWorkspaceId] = useState("");
   const [inputSource, setInputSource] = useState<InputSource>("git_repo");
   const [targetClass, setTargetClass] = useState<TargetClass>("native");
@@ -71,10 +71,10 @@ export function NewProjectWizard() {
   const [downloadUrl, setDownloadUrl] = useState("");
   const [uploadFilename, setUploadFilename] = useState("");
 
-  // Step 2 — workstation
+  // Step 2 -- workstation
   const [systemId, setSystemId] = useState<number | null>(null);
 
-  // Step 3 — scope
+  // Step 3 -- scope
   const [name, setName] = useState("");
   const [cveId, setCveId] = useState("");
   const [contextNotes, setContextNotes] = useState("");
@@ -142,10 +142,10 @@ export function NewProjectWizard() {
       {/* Stepper */}
       <WizardStepper step={step} />
 
-      {/* Step 1 — Target intake */}
+      {/* Step 1 -- Target intake */}
       {step === 1 && (
         <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-          Step 1 — Target intake
+          Step 1 -- Target intake
         </h2>
         <div className="space-y-3 text-sm">
           <Field label="Workspace" htmlFor="npw-workspace">
@@ -155,7 +155,7 @@ export function NewProjectWizard() {
               onChange={(e) => setWorkspaceId(e.target.value)}
               className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border-default"
             >
-              <option value="">— Pick a workspace —</option>
+              <option value="">-- Pick a workspace --</option>
               {workspaces.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.name} ({w.theme})
@@ -290,10 +290,10 @@ export function NewProjectWizard() {
         </div></AilaCard>
       )}
 
-      {/* Step 2 — Workstation */}
+      {/* Step 2 -- Workstation */}
       {step === 2 && (
         <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-          Step 2 — Workstation selection
+          Step 2 -- Workstation selection
         </h2>
         <p className="text-xs text-text-muted mb-3">
           The research workstation runs the analysis pipeline (IDA / fuzzers
@@ -364,10 +364,10 @@ export function NewProjectWizard() {
         </div></AilaCard>
       )}
 
-      {/* Step 3 — Scope + authorisation */}
+      {/* Step 3 -- Scope + authorisation */}
       {step === 3 && (
         <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-          Step 3 — Scope + authorisation
+          Step 3 -- Scope + authorisation
         </h2>
         <div className="space-y-3 text-sm">
           <Field label="Project name" htmlFor="npw-name">
@@ -376,7 +376,7 @@ export function NewProjectWizard() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. 'CVE-2024-12345 — libpng analysis'"
+              placeholder="e.g. 'CVE-2024-12345 -- libpng analysis'"
               className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border-default"
             />
           </Field>

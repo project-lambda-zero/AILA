@@ -1,6 +1,6 @@
 """Phase 176a Task 3: ReportService.fetch_reports + fetch_report_detail tests.
 
-Real PostgreSQL via the test_db fixture — no mocks. Verifies:
+Real PostgreSQL via the test_db fixture -- no mocks. Verifies:
 - fetch_reports returns (list, int) tuple; total is team-scoped and
   independent of limit/offset.
 - Pagination, ordering (created_at DESC), and team-scoped isolation.
@@ -266,7 +266,7 @@ async def test_fetch_report_detail_not_found(seeded_team_reports):
 @pytest.mark.asyncio
 async def test_fetch_report_detail_cross_team_is_notfound(seeded_team_reports):
     """A report belonging to team-beta looked up with team-alpha scope raises
-    NotFoundError — no 403, no existence leak (T-176a-01-02)."""
+    NotFoundError -- no 403, no existence leak (T-176a-01-02)."""
     svc = ServiceFactory().reports
     beta_run = seeded_team_reports["beta_runs"][0]
     with pytest.raises(NotFoundError):

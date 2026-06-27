@@ -1,5 +1,5 @@
 /**
- * useDashboardTrend — daily-binned findings trend for the FindingsTrendChart.
+ * useDashboardTrend -- daily-binned findings trend for the FindingsTrendChart.
  *
  * The platform `/dashboard` endpoint exposes a `module_data` map for module
  * contributions, but no module currently registers a `vulnerability.trend`
@@ -38,7 +38,7 @@ interface FindingsListResponse {
 
 const TREND_WINDOW_DAYS = 30;
 const PAGE_SIZE = 250;
-const MAX_PAGES = 4; // 1000 findings cap — enough for daily trends without runaway fetches
+const MAX_PAGES = 4; // 1000 findings cap -- enough for daily trends without runaway fetches
 
 /** ISO date (YYYY-MM-DD) in the user's local timezone. */
 function isoDay(date: Date): string {

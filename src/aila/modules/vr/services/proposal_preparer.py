@@ -1,4 +1,4 @@
-"""ProposalPreparer — materialize a fuzz campaign proposal into a
+"""ProposalPreparer -- materialize a fuzz campaign proposal into a
 ready-to-run setup on the workstation.
 
 Called by ``POST /vr/fuzz/proposals/{id}/accept``. The preparer:
@@ -20,7 +20,7 @@ Called by ``POST /vr/fuzz/proposals/{id}/accept``. The preparer:
   5. Marks the proposal ``status='accepted'`` + records
      ``accepted_campaign_id`` + ``prepare_log`` (the SSH transcript).
 
-The preparer never raises into the route handler — every failure
+The preparer never raises into the route handler -- every failure
 maps to a ``ProposalPrepareError`` with an operator-readable message.
 """
 from __future__ import annotations
@@ -104,7 +104,7 @@ class ProposalPreparer:
         )
         if not engine_id_raw:
             raise ProposalPrepareError(
-                "No engine_id available — neither the proposal nor the "
+                "No engine_id available -- neither the proposal nor the "
                 "target's capability_profile.applicable_fuzzing_engines "
                 "yielded a default; pass engine_id in the accept body.",
             )
@@ -134,7 +134,7 @@ class ProposalPreparer:
         )
         if analysis_system_id is None:
             raise ProposalPrepareError(
-                "No workstation available — neither the accept body "
+                "No workstation available -- neither the accept body "
                 "nor the project carried analysis_system_id; register "
                 "a system and set it before accepting.",
             )
@@ -150,7 +150,7 @@ class ProposalPreparer:
         if body.engine_config:
             engine_config.update(body.engine_config)
         # When the harness was built by the preparer, point the engine
-        # at it — operator overrides win.
+        # at it -- operator overrides win.
         if harness_path and "target_binary" not in engine_config:
             engine_config["target_binary"] = harness_path
         if harness_path and engine_id == FuzzEngineId.LIBFUZZER:
@@ -212,7 +212,7 @@ class ProposalPreparer:
                 await FuzzCampaignService().launch_campaign(campaign_id)
                 auto_launched = True
             except FuzzServiceError as exc:
-                # Don't unwind the campaign — operator can retry Launch.
+                # Don't unwind the campaign -- operator can retry Launch.
                 build_log += f"\n[auto-launch failed: {exc}]"
 
         # Update the proposal row with the decision + transcript.

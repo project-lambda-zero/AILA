@@ -1,4 +1,4 @@
-"""Ghidra headless analyzer runner — executes decompilation/analysis over SSH.
+"""Ghidra headless analyzer runner -- executes decompilation/analysis over SSH.
 
 Requires Ghidra to be installed on the analyzer machine. The Java analysis
 scripts (``ExportDecompilation.java``, ``ListFunctions.java``,
@@ -55,7 +55,7 @@ class GhidraRunnerTool(Tool):
             function_name: For decompile_function, the target function.
             ghidra_project_dir: Project directory for Ghidra analysis.
             integration: SSH connection fields.
-            analyzer_os: Target OS — ``"linux"`` or ``"windows"``.
+            analyzer_os: Target OS -- ``"linux"`` or ``"windows"``.
 
         Returns:
             Analysis output as a string.
@@ -71,7 +71,7 @@ class GhidraRunnerTool(Tool):
         project_dir = ghidra_project_dir or default_proj
         project_name = "aila_forensics"
         # Use the stable install path from the readiness installer (C:\Tools\ghidra on
-        # Windows, /opt/ghidra on Linux) rather than trusting PATH — SSH sessions do not
+        # Windows, /opt/ghidra on Linux) rather than trusting PATH -- SSH sessions do not
         # refresh PATH after installs, and Ghidra's headless launcher is never on PATH
         # by default.
         if analyzer_os == "windows":

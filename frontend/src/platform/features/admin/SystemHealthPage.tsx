@@ -1,5 +1,5 @@
 /**
- * SystemHealthPage — live component health status dashboard.
+ * SystemHealthPage -- live component health status dashboard.
  *
  * ADM-04 + 176d:
  *   - Top banner renders the legacy GET /health aggregation (healthy /

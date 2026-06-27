@@ -1,4 +1,4 @@
-"""aila_fuzz_reporter — sidecar that ships fuzzer telemetry + crashes
+"""aila_fuzz_reporter -- sidecar that ships fuzzer telemetry + crashes
 to an AILA instance running elsewhere.
 
 Architecture (D-33): the AILA platform never runs the fuzzer

@@ -17,7 +17,7 @@ const familyColors: Record<string, "info" | "low" | "medium" | "high" | "critica
   filesystem: "low",
 };
 
-// Dissect record fields that carry no human signal — they're metadata for
+// Dissect record fields that carry no human signal -- they're metadata for
 // the record library itself. Hide them from the default table view.
 const HIDDEN_RECORD_KEYS = new Set([
   "_classification", "_generated", "_source", "_version",
@@ -35,7 +35,7 @@ function renderCell(v: unknown): string {
   }
 }
 
-/** Download helper — CSV for records, one row per record. */
+/** Download helper -- CSV for records, one row per record. */
 function downloadCsv(records: Array<Record<string, unknown>>, filename: string) {
   const cols = Array.from(
     records.reduce((acc, rec) => {
@@ -98,7 +98,7 @@ function RecordTable({
   const [openRow, setOpenRow] = useState<number | null>(null);
 
   if (cols.length === 0) {
-    return <p className="text-sm text-text-muted italic">records are all metadata — nothing human-readable.</p>;
+    return <p className="text-sm text-text-muted italic">records are all metadata -- nothing human-readable.</p>;
   }
 
   const filtered = filter

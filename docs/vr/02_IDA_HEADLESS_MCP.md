@@ -1,4 +1,4 @@
-# VR Module — IDA Headless MCP
+# VR Module -- IDA Headless MCP
 
 A purpose-built MCP server for batch binary analysis. Not the interactive IDA MCP. This document explores the design space; it is not a spec.
 
@@ -20,7 +20,7 @@ LLM action:    "Decompile every function that calls memcpy where one argument
                 is computed from a length field read by recv/read/fread"
 ```
 
-That is not an interactive question. It's a batch query against the entire binary, scoped by structural predicates the LLM constructs from its hypothesis. The LLM is **not pointing at a function** — it's asking "show me all functions that match this pattern, and rank them."
+That is not an interactive question. It's a batch query against the entire binary, scoped by structural predicates the LLM constructs from its hypothesis. The LLM is **not pointing at a function** -- it's asking "show me all functions that match this pattern, and rank them."
 
 The interaction model differs along five axes:
 
@@ -36,9 +36,9 @@ The MCP we need is closer to a **binary database query engine** than an editor a
 
 A second reason to build a new one: VR's evidence pack and obligation system want **deterministic, reproducible** outputs. The interactive MCP returns whatever IDA's UI happens to render at that moment, including IDA's session-local autoanalysis state. We need calls to be:
 
-- Idempotent — the same call on the same `.i64`/`.idb` returns the same answer.
-- Snapshot-friendly — the binary database can be serialized, archived, and reloaded.
-- Auditable — every call's inputs and outputs are recordable so the obligation system can verify "function X *was* shown to the LLM at turn N."
+- Idempotent -- the same call on the same `.i64`/`.idb` returns the same answer.
+- Snapshot-friendly -- the binary database can be serialized, archived, and reloaded.
+- Auditable -- every call's inputs and outputs are recordable so the obligation system can verify "function X *was* shown to the LLM at turn N."
 
 The interactive MCP is fine for an analyst exploring a binary. It is the wrong tool for an LLM running 200 batch decompilation calls during a research session.
 
@@ -75,7 +75,7 @@ The interactive MCP is fine for an analyst exploring a binary. It is the wrong t
 
 Two things to settle:
 
-1. **Where does the MCP live?** It is platform-shared (the malware module will also need it — see decision D-06). It belongs in `src/aila/platform/tools/ida_headless/` or as a separate process with the platform owning the client. Putting it inside the VR module would force the malware module to depend on `aila.modules.vulnerability_research`, which violates the ownership rule.
+1. **Where does the MCP live?** It is platform-shared (the malware module will also need it -- see decision D-06). It belongs in `src/aila/platform/tools/ida_headless/` or as a separate process with the platform owning the client. Putting it inside the VR module would force the malware module to depend on `aila.modules.vulnerability_research`, which violates the ownership rule.
 
 2. **One IDA process or many?** A long-lived IDA process per binary keeps the analysis database hot in RAM. A short-lived process per request is simpler but pays the autoanalysis cost (minutes for large binaries) every time. The realistic answer: one process per `(binary, project)` pair, kept warm for the project's lifetime, reaped on idle timeout.
 
@@ -89,10 +89,10 @@ The full API. Names and shapes are starting points, not final.
 
 Every command takes:
 
-- `binary_id: str` — opaque handle returned by `analyze_binary`. The MCP maps this to an IDA project on disk. The LLM never sees absolute paths.
-- `request_id: str` — UUID for tracing. The obligation system stores `(request_id, command, inputs, outputs)` so it can later prove that the LLM was actually shown a piece of evidence it cites.
+- `binary_id: str` -- opaque handle returned by `analyze_binary`. The MCP maps this to an IDA project on disk. The LLM never sees absolute paths.
+- `request_id: str` -- UUID for tracing. The obligation system stores `(request_id, command, inputs, outputs)` so it can later prove that the LLM was actually shown a piece of evidence it cites.
 
-Outputs are JSON. Large blobs (decompiled C, hex dumps) live as inline strings up to a configurable cap; beyond the cap they spill to `artifact://<id>` and the response carries a reference. The bounded-evidence-pack layer above this MCP is what enforces context limits — the MCP is happy to return 50,000 lines if asked, but the evidence pack builder is what trims and notifies the LLM that things were dropped.
+Outputs are JSON. Large blobs (decompiled C, hex dumps) live as inline strings up to a configurable cap; beyond the cap they spill to `artifact://<id>` and the response carries a reference. The bounded-evidence-pack layer above this MCP is what enforces context limits -- the MCP is happy to return 50,000 lines if asked, but the evidence pack builder is what trims and notifies the LLM that things were dropped.
 
 ### 1. Analysis commands
 
@@ -147,7 +147,7 @@ Returns:
 Notes:
 
 - The `mitigations` block is what the obligation system gates on. The LLM can never claim "no NX bypass needed" without a successful `analyze_binary` call returning `nx: false`.
-- `packed_indicators.verdict == "likely_packed"` short-circuits — per D-02 the module bails out with "target appears packed, not yet supported." The MCP doesn't try to unpack.
+- `packed_indicators.verdict == "likely_packed"` short-circuits -- per D-02 the module bails out with "target appears packed, not yet supported." The MCP doesn't try to unpack.
 - `compiler` is best-effort and the LLM is instructed to treat it as a hint, not a fact.
 
 #### `decompile(binary_id, address_or_name, options)`
@@ -183,8 +183,8 @@ Single-function decompilation. Address or symbol name; either resolves through t
 ```
 
 - `options.include_pseudocode: bool = true` lets the LLM cheaply ask for "metadata only" when listing.
-- `options.max_pseudocode_lines: int | None` — caller-side cap (still capped by MCP-side safety limit, e.g. 5000 lines).
-- `options.with_microcode: bool = false` — return IDA's microcode (mba) representation for the obligation system to cross-check claims about specific operations. Heavy; off by default.
+- `options.max_pseudocode_lines: int | None` -- caller-side cap (still capped by MCP-side safety limit, e.g. 5000 lines).
+- `options.with_microcode: bool = false` -- return IDA's microcode (mba) representation for the obligation system to cross-check claims about specific operations. Heavy; off by default.
 
 #### `batch_decompile(binary_id, filter, options)`
 
@@ -268,7 +268,7 @@ Lighter than `batch_decompile`. Returns metadata only (no pseudocode), paginates
 }
 ```
 
-The `blast_radius_*` fields are computed once at `analyze_binary` time and cached. They mirror the Trailmark pattern from the source-side analysis — same concept, computed on the IDA call graph instead of a Tree-sitter graph.
+The `blast_radius_*` fields are computed once at `analyze_binary` time and cached. They mirror the Trailmark pattern from the source-side analysis -- same concept, computed on the IDA call graph instead of a Tree-sitter graph.
 
 #### `xrefs_to(binary_id, address)` and `xrefs_from(binary_id, address)`
 
@@ -379,7 +379,7 @@ Same shape as `analyze_binary.sections` but more detailed (includes uninitialize
 }
 ```
 
-`source: "ooanalyzer"` triggers a Pharos OOAnalyzer pass (separate Docker invocation per the Pharos doc), which is expensive — only run on demand, cache aggressively.
+`source: "ooanalyzer"` triggers a Pharos OOAnalyzer pass (separate Docker invocation per the Pharos doc), which is expensive -- only run on demand, cache aggressively.
 
 ### 2. Pattern search
 
@@ -405,7 +405,7 @@ Built-in pattern types:
 Two layers, on purpose:
 
 - **Built-ins** are deterministic and the obligation system can cite them: "the LLM claims `parse_packet_header` has an unchecked length, and `search_pattern(unchecked_length)` confirmed it at instruction X." This is auditable.
-- **`custom_pattern`** is the LLM's escape hatch when its hypothesis doesn't fit a built-in. Less trustworthy as evidence (regex over pseudocode is brittle) — the obligation layer should mark these findings as "weak evidence" until corroborated.
+- **`custom_pattern`** is the LLM's escape hatch when its hypothesis doesn't fit a built-in. Less trustworthy as evidence (regex over pseudocode is brittle) -- the obligation layer should mark these findings as "weak evidence" until corroborated.
 
 `options` for pattern search:
 
@@ -458,7 +458,7 @@ Function similarity. Multiple backends, the MCP picks one based on `options.meth
 }
 ```
 
-`against: "vuln_db"` is the long-term play — a project-wide database of hashed known-vulnerable functions, populated as the team works on N-day cases. Out of scope for v0.1 of the MCP but the API shape should not preclude it.
+`against: "vuln_db"` is the long-term play -- a project-wide database of hashed known-vulnerable functions, populated as the team works on N-day cases. Out of scope for v0.1 of the MCP but the API shape should not preclude it.
 
 ### 3. Diff commands
 
@@ -573,7 +573,7 @@ This is the hard part.
 
 ### The 50K-function problem
 
-Real targets — Chromium, V8, the Linux kernel, large game engines — have tens of thousands of functions. "Decompile all" is hours of CPU and gigabytes of RAM.
+Real targets -- Chromium, V8, the Linux kernel, large game engines -- have tens of thousands of functions. "Decompile all" is hours of CPU and gigabytes of RAM.
 
 Strategies, each with its own tradeoffs:
 
@@ -594,7 +594,7 @@ def decompile(binary_id, addr):
 
 The cache invalidates on:
 - IDA version change (decompiler output differs across major versions)
-- IDB modification (annotation applied — but only if the annotation might affect this function's decomp output, which is most of them)
+- IDB modification (annotation applied -- but only if the annotation might affect this function's decomp output, which is most of them)
 - Manual flush
 
 **Cost:** Disk space (a 50K-function binary's full decompilation is ~500MB of text). Worth it.
@@ -619,7 +619,7 @@ This relies on building an in-memory function index at `analyze_binary` time: na
 For fully cold caches, parallelize. IDA Pro licenses are per-user; the workstation typically has one license. But:
 
 - `idat` headless can spawn multiple processes if licensing allows (floating license, named-user with concurrent permission).
-- Decompilation specifically uses Hex-Rays which has its own license — same concurrency story.
+- Decompilation specifically uses Hex-Rays which has its own license -- same concurrency story.
 
 A safer parallelism: separate IDA processes for **separate binaries**. One project may have v2.3, v2.4, v2.5 of the same binary. Three IDA processes, one per binary, run concurrently. Inside one binary, decompilation is serial.
 
@@ -631,12 +631,12 @@ IDA on a 200MB binary uses 4–8GB RAM for the database plus another 2–4GB dur
 
 The MCP needs:
 - An IDA process pool with a memory budget. If a new project would exceed the budget, evict the least-recently-used IDA process (saves the IDB, kills the process, can rehydrate later).
-- A per-process "max idle time" — kill processes that haven't seen a request in N minutes.
+- A per-process "max idle time" -- kill processes that haven't seen a request in N minutes.
 - Refuse to load binaries above a hard size limit (e.g. 1GB) without explicit operator override.
 
 **5. Chunked output.**
 
-A `batch_decompile` returning 200 functions × 200 lines of pseudocode is 40KB-200KB of text. The transport handles it. The LLM's evidence pack does not — but that's the evidence pack's problem, not the MCP's. The MCP returns what was asked; the layer above trims.
+A `batch_decompile` returning 200 functions × 200 lines of pseudocode is 40KB-200KB of text. The transport handles it. The LLM's evidence pack does not -- but that's the evidence pack's problem, not the MCP's. The MCP returns what was asked; the layer above trims.
 
 When pseudocode is large, prefer streaming over a single response. The MCP-over-stdio variant can stream JSON-lines; the HTTP variant uses chunked transfer. Either way, the client reads as available, the bounded-evidence-pack builder applies its caps as it goes.
 
@@ -645,7 +645,7 @@ When pseudocode is large, prefer streaming over a single response. The MCP-over-
 | Resource | Soft cap | Hard cap | Action on overflow |
 |---|---|---|---|
 | Concurrent IDA processes | 2 | 4 | Evict LRU |
-| Idle process timeout | 15 min | — | Save + reap |
+| Idle process timeout | 15 min | -- | Save + reap |
 | Binary size | 200 MB | 1 GB | Refuse (operator override required) |
 | Single decompile result lines | 2000 | 5000 | Truncate, mark `pseudocode_truncated: true` |
 | `batch_decompile` results | 100 | 500 | Drop, return `dropped` count |
@@ -702,10 +702,10 @@ This is exactly the obligation system's territory: the LLM cannot cite "this fun
 
 Beyond decompilation outcome, the response carries integrity hints:
 
-- `is_thunk: true` — wraps another function. Decompiled output is misleading. LLM should follow the thunk.
-- `is_library: true` — matched FLIRT/Lumina. Almost certainly not a target. Down-rank.
-- `is_runtime_glue: true` — compiler-generated (e.g. `_init`, `_fini`, ctor sections). Not a real attack surface.
-- `tail_calls: ["0x401400"]` — IDA detected tail calls. Pseudocode may be missing the destination's logic.
+- `is_thunk: true` -- wraps another function. Decompiled output is misleading. LLM should follow the thunk.
+- `is_library: true` -- matched FLIRT/Lumina. Almost certainly not a target. Down-rank.
+- `is_runtime_glue: true` -- compiler-generated (e.g. `_init`, `_fini`, ctor sections). Not a real attack surface.
+- `tail_calls: ["0x401400"]` -- IDA detected tail calls. Pseudocode may be missing the destination's logic.
 
 ### How big is "big" pseudocode?
 
@@ -753,7 +753,7 @@ What's the same:
 
 - Decompilation quality on x86_64 ELF/PE for typical compiler output is comparable. If the LLM can't tell which tool produced the pseudocode by reading it, the difference doesn't matter.
 - All metadata commands (xrefs, strings, imports, segments) are equivalent.
-- Annotation persistence — both tools have project files; the MCP saves both as `.i64` or `.gzf` respectively.
+- Annotation persistence -- both tools have project files; the MCP saves both as `.i64` or `.gzf` respectively.
 
 The MCP advertises its backend in `analyze_binary` response (`backend: "ida_9.0" | "ghidra_11.1"`) so the LLM knows what it's looking at, and the obligation system can suppress checks that depend on backend-specific features.
 
@@ -825,7 +825,7 @@ The `custom_pattern` command takes a **regex over decompiled output**, not a scr
 The binary being analyzed may be malicious (especially in malware module use). IDA's autoanalysis on a malicious binary runs IDA's parser, not the binary itself. But:
 
 - Malformed PE/ELF structures have caused parser bugs in IDA in the past. Disclosed CVEs in IDA are mostly parser issues.
-- Embedded scripts (`.idc`, IDAPython files inside the IDB if a previous analyst saved them) are NOT auto-executed by `idat -A` — but are by `idat` with default flags. Use `-A` (autonomous, no UI prompts, no script auto-run).
+- Embedded scripts (`.idc`, IDAPython files inside the IDB if a previous analyst saved them) are NOT auto-executed by `idat -A` -- but are by `idat` with default flags. Use `-A` (autonomous, no UI prompts, no script auto-run).
 
 The workstation should be a disposable VM. Snapshot before each project, restore on suspicious behavior. This is workstation-hardening, not MCP-hardening, but the MCP design assumes it.
 
@@ -877,6 +877,6 @@ The obligation system reads this log to verify "the LLM was actually shown evide
 
 10. **Ghidra Bridge stability.** Ghidra Bridge is a community RPC bridge (Python ↔ Ghidra Jython). It's not maintained at the same cadence as Ghidra itself. For a fallback we depend on, that's a concern. Alternative: pyhidra (loads Ghidra into a CPython process). Both have failure modes. Need to pick one and own the risk.
 
-11. **Binary upload flow.** "Operator drops a binary into the project" maps to filesystem path scoping. But how does it get there — operator SSHes the binary to the workstation, or the platform provides an upload endpoint that lands it in the right project root with the right ownership? Affects path scoping assumptions.
+11. **Binary upload flow.** "Operator drops a binary into the project" maps to filesystem path scoping. But how does it get there -- operator SSHes the binary to the workstation, or the platform provides an upload endpoint that lands it in the right project root with the right ownership? Affects path scoping assumptions.
 
 12. **Annotation export.** When a project finishes, we want the annotated IDB to be downloadable as an artifact (for sharing with the vendor, for the vulnerability advisory). What format? Raw `.i64` is IDA-licensed; `.gzf` is Ghidra. A neutral export (annotations as JSON + binary as blob) is portable but loses fidelity.

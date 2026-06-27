@@ -69,7 +69,7 @@ def build_platform_settings(
     user_agent = _cfg_from_resolved(resolved_config, "user_agent", schema_defaults.user_agent)
     routing_min_confidence = _cfg_from_resolved(resolved_config, "routing_min_confidence", schema_defaults.routing_min_confidence)
     routing_decision_cache_ttl_hours = _cfg_from_resolved(resolved_config, "routing_decision_cache_ttl_hours", schema_defaults.routing_decision_cache_ttl_hours)
-    # Pure factory — no side effects.  init_directories() in config.py is the sole
+    # Pure factory -- no side effects.  init_directories() in config.py is the sole
     # directory creation point (STD-09).  Callers must invoke init_directories() before
     # writing to report_dir or secret_keyring_path.
     return PlatformSettings(
@@ -85,18 +85,18 @@ def build_platform_settings(
 
 
 class PlatformConfigSchema(BaseModel):
-    """Runtime-editable platform settings — registered under 'platform' namespace."""
+    """Runtime-editable platform settings -- registered under 'platform' namespace."""
 
     request_timeout_seconds: float = 20.0
     user_agent: str = f"AILA/{_AILA_VERSION}"
     routing_min_confidence: float = 0.2
     routing_decision_cache_ttl_hours: int = 72
 
-    # HTTP proxy (HTTP-01) — empty string means no proxy
+    # HTTP proxy (HTTP-01) -- empty string means no proxy
     http_proxy: str = ""
     https_proxy: str = ""
 
-    # Redis connection URL for task queue (INFRA-02/D-23) — empty string means not configured.
+    # Redis connection URL for task queue (INFRA-02/D-23) -- empty string means not configured.
     # Set to redis://localhost:6379 or a Redis Cloud URL to enable async task execution.
     # When empty, TaskQueue falls back to synchronous in-process execution (TASK-11/D-19).
     redis_url: str = ""
@@ -105,7 +105,7 @@ class PlatformConfigSchema(BaseModel):
     jwt_access_expiry_s: int = 2_592_000   # 30 days
     jwt_refresh_expiry_s: int = 7_776_000  # 90 days
 
-    # Task queue tuning — configurable per deployment via PUT /config/platform/{key}
+    # Task queue tuning -- configurable per deployment via PUT /config/platform/{key}
     heartbeat_interval_s: int = 30
     reaper_zombie_threshold_s: int = 3300
     reaper_heartbeat_threshold_s: int = 86400
@@ -131,11 +131,11 @@ class PlatformConfigSchema(BaseModel):
     # Per-task-type overrides via PUT /config: llm_budget_max_total_tokens_{task_type}
     llm_budget_max_total_tokens_default: int = 0
 
-    # Data Posture Modes (Phase 173 — DPM-01)
+    # Data Posture Modes (Phase 173 -- DPM-01)
     data_posture_mode: str = "standard"  # transparent | standard | paranoid
     data_direction_default: str = "bidirectional"  # inbound | local_only | bidirectional
 
-    # LLM Verification (Phase 174 — LLM-SEC-01)
+    # LLM Verification (Phase 174 -- LLM-SEC-01)
     llm_pipeline_verify_default: bool = False
     llm_pipeline_verify_threshold_default: float = 0.7
     llm_pipeline_verify_model_default: str = ""

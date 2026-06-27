@@ -158,8 +158,8 @@ class TestEncodingValueCoercion:
     server only accepted ``"utf16"``. An agent reading ``count_only``
     output and passing the observed encoding label back as a filter
     got zero matches (false negative -- killed sibling-branch
-    second-stage hunts on masson). The bridge now rewrites the alias
-    forms to the canonical ``"utf16le"`` before dispatch.
+    second-stage hunts on a test sample). The bridge now rewrites the
+    alias forms to the canonical ``"utf16le"`` before dispatch.
     """
 
     def test_utf16_aliased_to_utf16le_on_list_strings(self) -> None:

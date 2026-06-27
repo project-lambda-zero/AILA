@@ -2,23 +2,23 @@
 
 Three handlers are registered via :func:`register_error_handlers`:
 
-* :func:`typed_error_handler` — catches every :class:`AILAError` subclass.
+* :func:`typed_error_handler` -- catches every :class:`AILAError` subclass.
   Reads ``code`` + ``http_status`` as :class:`~typing.ClassVar` attributes when
   present (new Phase 176a taxonomy) and falls back to a 500 status plus a
   class-name-derived code for pre-existing subclasses that predate the
   ClassVar convention (preflight BE-E).
-* :func:`validation_error_handler` — catches FastAPI's
+* :func:`validation_error_handler` -- catches FastAPI's
   :class:`RequestValidationError` and emits envelope with
   ``code="VALIDATION_ERROR"``, HTTP 422.
-* :func:`generic_error_handler` — catches any otherwise-unhandled
+* :func:`generic_error_handler` -- catches any otherwise-unhandled
   :class:`Exception`. Emits envelope with ``code="INTERNAL_ERROR"``, HTTP 500.
-  The ``message`` field is a static safe string — never ``str(exc)`` — so
+  The ``message`` field is a static safe string -- never ``str(exc)`` -- so
   stack traces and internal paths never reach the client.
 
 ``trace_id`` is read from structlog's ``correlation_id`` contextvar
-(preflight BE-F terminology bridge). If the contextvar is absent — e.g. an
+(preflight BE-F terminology bridge). If the contextvar is absent -- e.g. an
 exception fires before :class:`CorrelationIdMiddleware` has bound the
-request — ``trace_id`` is ``None`` and the frontend treats it per D-26.
+request -- ``trace_id`` is ``None`` and the frontend treats it per D-26.
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def _current_trace_id() -> str | None:
     """Return the current request's correlation_id, or None if unbound.
 
     Preflight BE-F: middleware binds ``correlation_id``; the envelope exposes
-    it as ``trace_id``. Safe under missing middleware — returns None rather
+    it as ``trace_id``. Safe under missing middleware -- returns None rather
     than raising when contextvars are empty.
     """
     ctx = structlog.contextvars.get_contextvars() or {}
@@ -112,7 +112,7 @@ async def typed_error_handler(request: Request, exc: Exception) -> JSONResponse:
 
     New Phase 176a subclasses expose ClassVar ``code`` + ``http_status``.
     Pre-existing subclasses (AuthenticationError, NotFoundError, …) lack the
-    ClassVar pair — this handler detects that, derives a code from the class
+    ClassVar pair -- this handler detects that, derives a code from the class
     name, and returns HTTP 500 as the safe fallback (preflight BE-E).
     """
     del request  # Unused; FastAPI passes it for signature compatibility.
@@ -126,7 +126,7 @@ async def typed_error_handler(request: Request, exc: Exception) -> JSONResponse:
     # hasattr respects inheritance so subclasses of the new typed taxonomy
     # inherit their code/http_status even without redefining them. AILAError
     # itself and the pre-existing subclasses do NOT declare these attributes
-    # anywhere in their MRO — hasattr returns False and the handler falls
+    # anywhere in their MRO -- hasattr returns False and the handler falls
     # back to derive-from-class-name + 500 (preflight BE-E).
     has_classvar_code = hasattr(cls, "code")
     has_classvar_status = hasattr(cls, "http_status")
@@ -143,7 +143,7 @@ async def typed_error_handler(request: Request, exc: Exception) -> JSONResponse:
     # message field is ALWAYS a safe static string. Typed D-20 errors define a
     # ClassVar ``user_message`` authored for external consumption; legacy
     # subclasses fall back to the generic internal-error string. ``str(exc)``
-    # is NEVER surfaced to clients — it is only logged server-side because it
+    # is NEVER surfaced to clients -- it is only logged server-side because it
     # can leak file paths, provider identifiers, or other caller-supplied
     # context (S1).
     if status == 500 or not has_classvar_code:
@@ -198,7 +198,7 @@ async def validation_error_handler(
 async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Envelope handler for any otherwise-unhandled :class:`Exception`.
 
-    ``message`` is a static safe string — never ``str(exc)`` — so stack traces
+    ``message`` is a static safe string -- never ``str(exc)`` -- so stack traces
     and internal paths cannot leak to clients.
     """
     del request  # Unused; FastAPI passes it for signature compatibility.

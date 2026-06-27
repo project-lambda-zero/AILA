@@ -15,7 +15,7 @@ class SecretsManageTool(Tool):
     """Platform tool for managing encrypted secrets stored in the platform database.
 
     Secrets are AES-256-GCM encrypted at rest via SecretStore. Plaintext is
-    never returned — only metadata (id, scope, secret_key, hint, algorithm)
+    never returned -- only metadata (id, scope, secret_key, hint, algorithm)
     is exposed through get and list actions. Secrets are referenced by ID or
     scope+key combination, not by their plaintext value, so agents can identify
     a secret without ever seeing its content.

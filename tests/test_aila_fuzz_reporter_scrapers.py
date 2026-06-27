@@ -166,7 +166,7 @@ def test_libfuzzer_poll_parses_tail_stats(tmp_path: Path) -> None:
     assert sample.total_execs == 9999
     assert sample.corpus_size == 64
     assert sample.execs_per_sec == 4096.0
-    # libFuzzer doesn't ship a percentage — left as None.
+    # libFuzzer doesn't ship a percentage -- left as None.
     assert sample.coverage_pct is None
     # No artifact files yet.
     assert sample.crashes_found == 0

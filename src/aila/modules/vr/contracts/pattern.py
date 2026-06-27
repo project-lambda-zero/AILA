@@ -95,7 +95,7 @@ class VRPatternCreate(BaseModel):
     applicability: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Applicability filter — keys include target_kinds (list[str]), "
+            "Applicability filter -- keys include target_kinds (list[str]), "
             "languages (list[str]), bug_classes (list[str])."
         ),
     )
@@ -108,7 +108,7 @@ class VRPatternCreate(BaseModel):
 
 
 class VRPatternPatch(BaseModel):
-    """Partial update — operator-driven review + promotion.
+    """Partial update -- operator-driven review + promotion.
 
     Promotion is one-way (scope can only widen). Demotion goes through
     status=archived instead.

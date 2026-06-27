@@ -4,13 +4,13 @@ AILA (AI Lab Assistant) is a modular AI security platform exposing a Typer CLI, 
 
 ## Project Structure & Module Organization
 
-- `src/aila/platform/` — shared infrastructure (`runtime/`, `routing/`, `services/`, `contracts/`, `tools/`, `tasks/`, `llm/`, `sse/`, `workflows/`, `automation/`, `events/`, `modules/`, `config.py`, `uow.py`, `rate_limiter.py`, `exceptions.py`). Never imports from `modules/`.
-- `src/aila/modules/<module_id>/` — feature modules. One module never imports from another. Each follows `docs/MODULE_STANDARD.md` (`module.py`, `runtime.py`, `capabilities.py`, `tool_keys.py`, `workflow.py` or `workflow/`, `contracts/`, `tools/`, `services/`, `reporting/`; optional `api_router.py`, `db_models/`, `frontend/`).
-- `src/aila/alembic/versions/` — append-only migrations; `alembic.ini` lives at `src/aila/alembic.ini`.
-- `src/aila/api/` — FastAPI app, routers, auth, middleware. CLI entry point is `aila = "aila.cli:app"`.
-- `tests/` — pytest suite mirroring source layout. `tests/test_e2e*.py` require live infrastructure (DB, Redis, LLM) and are gated.
-- `frontend/` — top-level Vite + React + TS shell. Module UIs live under `src/aila/modules/<id>/frontend/` and are mounted by the shell.
-- `docs/` — canonical specs: `ARCHITECTURE.md`, `PLATFORM_INTERNALS.md`, `MODULE_STANDARD.md`, `MODULE_TUTORIAL.md`, `MODULE_AGENT_GUIDE.md`, `FRONTEND_MODULE_STANDARD.md`, `GOLDEN_RULES.md`, `HONESTY_AUDIT.md`, `PITFALL_GUIDE.md`, `PRODUCTION_RUBRIC.md`, `LLM_INTEGRATION.md`, `SSE_GUIDE.md`, `TASK_QUEUE_OPS.md`, `WORKFLOW_GUIDE.md`, `CONFIG_REGISTRY.md`, `ENV_VARS.md`, `SECURITY_MODEL.md`, `DATA_PROTECTION.md`, `API_ERRORS.md`, `OPENAPI_NOTES.md`, `DB_SCHEMA.md`, `DATABASE_MIGRATIONS.md`, `DURABLE_STATEMACHINE_DESIGN.md`, `DEPLOYMENT.md`, `TEST_GUIDE.md`, `QUICKSTART.md`, `CONTRIBUTING.md`, `MASVS_AUDIT.md`, `VR_INSTALLATION_GUIDE.md`, `VR_MODULE_TOOLCHAIN.md`. Module-specific subtrees: `docs/vr/`, `docs/forensics/`.
+- `src/aila/platform/` -- shared infrastructure (`runtime/`, `routing/`, `services/`, `contracts/`, `tools/`, `tasks/`, `llm/`, `sse/`, `workflows/`, `automation/`, `events/`, `modules/`, `config.py`, `uow.py`, `rate_limiter.py`, `exceptions.py`). Never imports from `modules/`.
+- `src/aila/modules/<module_id>/` -- feature modules. One module never imports from another. Each follows `docs/MODULE_STANDARD.md` (`module.py`, `runtime.py`, `capabilities.py`, `tool_keys.py`, `workflow.py` or `workflow/`, `contracts/`, `tools/`, `services/`, `reporting/`; optional `api_router.py`, `db_models/`, `frontend/`).
+- `src/aila/alembic/versions/` -- append-only migrations; `alembic.ini` lives at `src/aila/alembic.ini`.
+- `src/aila/api/` -- FastAPI app, routers, auth, middleware. CLI entry point is `aila = "aila.cli:app"`.
+- `tests/` -- pytest suite mirroring source layout. `tests/test_e2e*.py` require live infrastructure (DB, Redis, LLM) and are gated.
+- `frontend/` -- top-level Vite + React + TS shell. Module UIs live under `src/aila/modules/<id>/frontend/` and are mounted by the shell.
+- `docs/` -- canonical specs: `ARCHITECTURE.md`, `PLATFORM_INTERNALS.md`, `MODULE_STANDARD.md`, `MODULE_TUTORIAL.md`, `MODULE_AGENT_GUIDE.md`, `FRONTEND_MODULE_STANDARD.md`, `GOLDEN_RULES.md`, `HONESTY_AUDIT.md`, `PITFALL_GUIDE.md`, `PRODUCTION_RUBRIC.md`, `LLM_INTEGRATION.md`, `SSE_GUIDE.md`, `TASK_QUEUE_OPS.md`, `WORKFLOW_GUIDE.md`, `CONFIG_REGISTRY.md`, `ENV_VARS.md`, `SECURITY_MODEL.md`, `DATA_PROTECTION.md`, `API_ERRORS.md`, `OPENAPI_NOTES.md`, `DB_SCHEMA.md`, `DATABASE_MIGRATIONS.md`, `DURABLE_STATEMACHINE_DESIGN.md`, `DEPLOYMENT.md`, `TEST_GUIDE.md`, `QUICKSTART.md`, `CONTRIBUTING.md`, `MASVS_AUDIT.md`, `VR_INSTALLATION_GUIDE.md`, `VR_MODULE_TOOLCHAIN.md`. Module-specific subtrees: `docs/vr/`, `docs/forensics/`.
 
 ## Build, Test, and Development Commands
 
@@ -57,6 +57,6 @@ For direct invocation when `make` is not available, the equivalent commands are 
 ## Agent-Specific Instructions
 
 - Platform owns infrastructure; modules own domain logic. Do not move module code into `platform/`, and never cross-import between modules.
-- Schema changes go through Alembic migrations only — never ad-hoc `CREATE TABLE` or implicit metadata create.
+- Schema changes go through Alembic migrations only -- never ad-hoc `CREATE TABLE` or implicit metadata create.
 - Module-scoped runtime values come from `ConfigRegistry` (see `docs/CONFIG_REGISTRY.md`), not direct `os.getenv` access.
 - Prefer deletion over compatibility shims. This repo rejects legacy preservation: cut over fully and let the type checker and tests guide the cleanup.

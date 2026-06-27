@@ -2,7 +2,7 @@
 Tests for INTEL-01: CVE arrival/departure detection via LatestFindingRecord.last_scanned_at.
 
 Covers:
-  - test_arrivals_departures_split: two findings — one recent (arrival), one stale (departure)
+  - test_arrivals_departures_split: two findings -- one recent (arrival), one stale (departure)
   - test_empty_table: empty table returns zero counts with correct keys
   - test_since_parse_iso_date: since="2025-01-01" parses as midnight UTC
   - test_arrivals_query_function: arrivals() returns only rows >= since_ts
@@ -23,7 +23,7 @@ from aila.modules.vulnerability.tools.cve_arrivals import (
     departures,
 )
 
-# Real PostgreSQL test database — same rule as the rest of the test suite.
+# Real PostgreSQL test database -- same rule as the rest of the test suite.
 _TEST_DB_URL: str = os.environ.get(
     "AILA_TEST_DATABASE_URL",
     "postgresql+psycopg://postgres:admin@localhost:5432/aila_test",
@@ -39,7 +39,7 @@ def engine():
     """Sync engine against the real test PostgreSQL database.
 
     Creates only LatestFindingRecord so we don't need to import every model
-    module — the table is dropped on teardown to leave the DB clean.
+    module -- the table is dropped on teardown to leave the DB clean.
     """
     eng = create_engine(_TEST_DB_URL)
     LatestFindingRecord.__table__.create(eng, checkfirst=True)

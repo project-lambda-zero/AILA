@@ -16,7 +16,7 @@ Task 2 tests (HTTP-level, Plan 02):
     test_export_unknown_format   -- GET /vulnerability/reports/{run_id}?format=xml -> 422
     test_export_missing_run_id   -- GET /vulnerability/reports/nonexistent?format=json -> 404
 
-Task 3 tests (HTTP-level, Plan 03 — EXPORT-03):
+Task 3 tests (HTTP-level, Plan 03 -- EXPORT-03):
     test_export_pdf          -- GET /vulnerability/reports/{run_id}?format=pdf -> 200 application/pdf with valid %PDF-
     test_export_pdf_404      -- GET /nonexistent?format=pdf -> 404
     test_export_pdf_content_disposition -- response includes attachment; filename=*.pdf
@@ -286,7 +286,7 @@ class TestExportPdfHttpEndpoint:
     @pytest.mark.asyncio
     @pytest.mark.skipif(
         not _weasyprint_available(),
-        reason="weasyprint not installed — install with: pip install aila[pdf]",
+        reason="weasyprint not installed -- install with: pip install aila[pdf]",
     )
     async def test_export_pdf(self, async_client, admin_token, seeded_run, seeded_findings):
         """Returns 200 with Content-Type: application/pdf and PDF magic bytes."""
@@ -305,7 +305,7 @@ class TestExportPdfHttpEndpoint:
     @pytest.mark.asyncio
     @pytest.mark.skipif(
         not _weasyprint_available(),
-        reason="weasyprint not installed — install with: pip install aila[pdf]",
+        reason="weasyprint not installed -- install with: pip install aila[pdf]",
     )
     async def test_export_pdf_content_disposition(self, async_client, admin_token, seeded_run, seeded_findings):
         """PDF response includes Content-Disposition: attachment; filename=*.pdf."""

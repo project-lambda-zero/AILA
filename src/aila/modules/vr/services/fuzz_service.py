@@ -1,4 +1,4 @@
-"""FuzzCampaignService — campaign + crash CRUD with dedup triage.
+"""FuzzCampaignService -- campaign + crash CRUD with dedup triage.
 
 v1 ships campaign metadata storage + crash ingestion with stack-hash
 deduplication. The actual fuzz worker processes (FUZZILLI / AFL++ /
@@ -68,7 +68,7 @@ _log = logging.getLogger(__name__)
 
 
 # Patterns in crash_type that the auto-triage flags as security-relevant.
-# Conservative — false positives are cheap (operator review); false
+# Conservative -- false positives are cheap (operator review); false
 # negatives hide bugs.
 _SECURITY_RELEVANT_CRASH_TYPES: frozenset[str] = frozenset({
     "heap-buffer-overflow",
@@ -143,7 +143,7 @@ def triage_crash(
     *,
     has_duplicate_in_campaign: bool,
 ) -> tuple[CrashTriageVerdict, str]:
-    """Pure triage classifier — returns (verdict, reason).
+    """Pure triage classifier -- returns (verdict, reason).
 
     Caller is responsible for the duplicate check; this function just
     interprets crash_type when has_duplicate_in_campaign is False.
@@ -246,7 +246,7 @@ def _crash_record_to_summary(record: VRFuzzCrashRecord) -> VRFuzzCrashSummary:
     )
 
 
-# §1.6 — keep the head bytes preview tight. 4 KB at 16 bytes/row =
+# §1.6 -- keep the head bytes preview tight. 4 KB at 16 bytes/row =
 # 256 rows in the HexView, which fills the panel without burning RAM.
 _REPRODUCER_HEAD_LIMIT = 4096
 
@@ -260,7 +260,7 @@ def _read_reproducer_head(
     unreadable, or empty, returns ``(None, None)``. Workers running
     on remote workstations write to local AILA storage via the same
     file-transfer flow that already places ``reproducer_path``; if
-    the file isn't reachable we surface that as missing — the operator
+    the file isn't reachable we surface that as missing -- the operator
     will see "no minimised input bytes available" on the UI.
     """
     if not path:
@@ -355,7 +355,7 @@ class FuzzCampaignService:
                     f"workspace {body.workspace_id} not found",
                 )
 
-            # Validate the analysis_system_id FK if supplied — the
+            # Validate the analysis_system_id FK if supplied -- the
             # operator-supplied id must resolve to a registered
             # ManagedSystemRecord, and (when the team is set) belong
             # to the same team. None is allowed for metadata-only
@@ -469,7 +469,7 @@ class FuzzCampaignService:
         """
         # ManagedSystemRecord, SSHService, build_platform_settings,
         # get_settings, fuzz_launcher helpers are imported at module
-        # top — see imports near the top of this file.
+        # top -- see imports near the top of this file.
 
         async with UnitOfWork() as uow:
             record = (await uow.session.exec(
@@ -481,7 +481,7 @@ class FuzzCampaignService:
                 raise FuzzServiceError(f"campaign {campaign_id} not found")
             if record.analysis_system_id is None:
                 raise FuzzServiceError(
-                    f"campaign {campaign_id} has no analysis_system_id — "
+                    f"campaign {campaign_id} has no analysis_system_id -- "
                     f"set one via campaign create before launch",
                 )
             if record.remote_pid and record.status == CampaignStatus.RUNNING.value:
@@ -670,7 +670,7 @@ class FuzzCampaignService:
                 uow.session.add(record)
                 # Take a telemetry snapshot whenever any scalar metric
                 # moved. Each PATCH that brings new numbers from the
-                # workstation becomes one time-series point — operator
+                # workstation becomes one time-series point -- operator
                 # gets a sparkline without a separate POST loop.
                 if telemetry_changed:
                     _record_telemetry_snapshot(uow, record, now)
@@ -711,7 +711,7 @@ class FuzzCampaignService:
             )
 
             if has_dup and existing is not None:
-                # Don't create a second row — return the existing one with
+                # Don't create a second row -- return the existing one with
                 # the triage verdict surfaced (the operator already saw it).
                 return _crash_record_to_summary(existing)
 

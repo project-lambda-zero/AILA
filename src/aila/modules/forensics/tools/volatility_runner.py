@@ -1,4 +1,4 @@
-"""Volatility 3 memory analysis runner — executes vol commands over SSH."""
+"""Volatility 3 memory analysis runner -- executes vol commands over SSH."""
 from __future__ import annotations
 
 from aila.config import Settings
@@ -41,7 +41,7 @@ class VolatilityRunnerTool(Tool):
             evidence_path: Path to the memory dump on the analyzer.
             extra_args: Additional command-line arguments for the plugin.
             integration: SSH connection fields.
-            analyzer_os: Target OS — ``"linux"`` or ``"windows"``.
+            analyzer_os: Target OS -- ``"linux"`` or ``"windows"``.
 
         Returns:
             Plugin stdout as a string.

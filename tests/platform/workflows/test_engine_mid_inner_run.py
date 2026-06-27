@@ -209,7 +209,7 @@ async def test_mid_inner_run_returns_existing_terminal_when_already_advanced(
     )
 
     dispatcher = _make_dispatcher_definition()
-    # The cursor is terminal under the dispatcher def — fourth branch guard
+    # The cursor is terminal under the dispatcher def -- fourth branch guard
     # requires row.current_state NOT in RESERVED_TERMINAL_STATES, so this
     # actually falls through to the catch-all branch and returns the terminal
     # state as-is. Either way, the result must be the terminal state.

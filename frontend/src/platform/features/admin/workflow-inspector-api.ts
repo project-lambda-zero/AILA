@@ -1,7 +1,7 @@
 /**
  * API layer for the Admin Workflow Inspector (/admin/workflows).
  *
- * Uses authorizedRequestJson<T> exclusively — no raw fetch, no hardcoded /api/ paths.
+ * Uses authorizedRequestJson<T> exclusively -- no raw fetch, no hardcoded /api/ paths.
  * Every call has an explicit type parameter (honesty rule 11).
  *
  * fetchWorkflowRunTransitions hits /admin/workflows/runs/{id}/transitions,
@@ -31,7 +31,7 @@ export async function fetchWorkflowRuns(params: {
  * Fetch transitions for a workflow run.
  *
  * Endpoint: GET /admin/workflows/runs/{run_id}/transitions
- * This is the admin endpoint — distinct from the task-scoped endpoint
+ * This is the admin endpoint -- distinct from the task-scoped endpoint
  * GET /tasks/{task_id}/transitions used in tasks/transitions.ts.
  */
 export async function fetchWorkflowRunTransitions(

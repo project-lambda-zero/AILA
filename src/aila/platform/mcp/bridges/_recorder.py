@@ -34,7 +34,7 @@ final write (typically inside the context manager's ``finally`` block).
 
 @asynccontextmanager
 async def noop_recorder(**_kwargs: Any) -> AsyncIterator[dict[str, Any]]:
-    """Default no-op recorder — yields an empty dict, ignores kwargs.
+    """Default no-op recorder -- yields an empty dict, ignores kwargs.
 
     Bridges fall back to this when no recorder was passed to the
     constructor. Useful for tests and any caller that doesn't want

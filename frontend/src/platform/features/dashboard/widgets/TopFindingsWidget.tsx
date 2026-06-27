@@ -8,7 +8,7 @@ import { authorizedRequestJson } from "@platform/api/http";
 type SeverityLevel = "critical" | "high" | "medium" | "low";
 
 /**
- * Subset of the vulnerability /findings response — only the fields the widget
+ * Subset of the vulnerability /findings response -- only the fields the widget
  * renders. Mirrors `FindingResponse` from src/aila/api/schemas/findings.py.
  */
 interface FindingRow {
@@ -54,10 +54,10 @@ function severitySortKey(raw: string | null | undefined): number {
 }
 
 /**
- * TopFindingsWidget — compact table showing top-5 most critical findings.
+ * TopFindingsWidget -- compact table showing top-5 most critical findings.
  *
  * Fetches directly from GET /vulnerability/findings (no `severity` filter so
- * we accept whatever criticality vocabulary the data carries — "Critical",
+ * we accept whatever criticality vocabulary the data carries -- "Critical",
  * "Immediate", "High", "Moderate", etc.) and re-sorts client-side using
  * `severitySortKey` so legacy values rank correctly. The dashboard
  * `module_data["vulnerability.top_findings"]` provider is not registered, so
@@ -133,7 +133,7 @@ export function TopFindingsWidget() {
             {findings.map((finding) => {
               const cveId = finding.cve_id ?? `Finding-${finding.id}`;
               const sev = normalizeSeverity(finding.severity);
-              const system = finding.host ?? "—";
+              const system = finding.host ?? "--";
               return (
                 <tr key={finding.id} className="border-b border-border/50 last:border-0">
                   <td className="py-1.5 pr-3 text-text truncate max-w-[120px]">{cveId}</td>

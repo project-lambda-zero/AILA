@@ -1,4 +1,4 @@
-"""vr_branch_persona_voice_not_null — close §180.
+"""vr_branch_persona_voice_not_null -- close §180.
 
 Backfills NULL ``vr_investigation_branches.persona_voice`` rows with the
 structural marker ``'unspecified'`` and adds a NOT NULL constraint.
@@ -10,7 +10,7 @@ real persona (halvar/maddie/yuki/renzo/noor/wei) or a structural marker
 Pairs with §177 + §178 (commit ``beb2d31``) which made the Python
 writers never emit NULL for new rows. This migration retrofits the
 constraint at the schema level so a future writer regression cannot
-silently insert NULL again — Postgres rejects it at INSERT time.
+silently insert NULL again -- Postgres rejects it at INSERT time.
 
 The default literal stays at the column level so any ORM caller that
 omits ``persona_voice`` ends up with ``'unspecified'`` rather than a
@@ -31,7 +31,7 @@ depends_on = None
 def upgrade() -> None:
     # 1. Backfill existing NULL rows. A branch that pre-dates §177/§178
     #    will have persona_voice=NULL. ``'unspecified'`` is the catch-all
-    #    marker — distinct from ``'fork_unnamed'`` (caller forgot to
+    #    marker -- distinct from ``'fork_unnamed'`` (caller forgot to
     #    pass one) and ``'merge_result'`` (structural merge child) so
     #    the operator can grep historical leakage.
     op.execute(
@@ -56,7 +56,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Drop the NOT NULL + server_default. Pre-existing 'unspecified'
-    # backfill rows are NOT reverted to NULL — that's lossy and the
+    # backfill rows are NOT reverted to NULL -- that's lossy and the
     # marker is semantically meaningful.
     op.alter_column(
         "vr_investigation_branches",

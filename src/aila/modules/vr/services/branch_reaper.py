@@ -1,7 +1,7 @@
 """Reaper for orphan VR investigation branches.
 
 Background: an investigation can transition to a terminal status
-(``completed`` / ``failed`` / ``abandoned``) via several paths today —
+(``completed`` / ``failed`` / ``abandoned``) via several paths today --
 cap_exceeded sweep in ``investigation_emit``, the dispatcher's halt-on-
 ship in ``outcome_dispatcher._update_outcome_status``, the operator-
 driven pause-then-complete path that ran before the status_locked fix
@@ -64,7 +64,7 @@ __all__ = ["sweep_orphan_active_branches"]
 _log = logging.getLogger(__name__)
 
 # Terminal statuses where active branches under them are orphans.
-# PAUSED is intentionally excluded — paused branches resume cleanly
+# PAUSED is intentionally excluded -- paused branches resume cleanly
 # when the operator un-pauses; reaping them would force the operator
 # to also resurrect every branch by hand.
 _TERMINAL_STATUSES = (

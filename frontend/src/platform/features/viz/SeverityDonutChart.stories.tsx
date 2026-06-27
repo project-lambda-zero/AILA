@@ -1,5 +1,5 @@
 /**
- * SeverityDonutChart.stories.tsx — Storybook stories for VIZ-01.
+ * SeverityDonutChart.stories.tsx -- Storybook stories for VIZ-01.
  *
  * Stories use a mock QueryClient to simulate loaded/empty states
  * without needing a live backend.

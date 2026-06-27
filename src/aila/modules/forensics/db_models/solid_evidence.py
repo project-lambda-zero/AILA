@@ -1,4 +1,4 @@
-"""Solid evidence — durable analyst-tagged findings.
+"""Solid evidence -- durable analyst-tagged findings.
 
 Analyst-owned rows produced by tagging a completed investigation's
 final answer (or a specific answer candidate) as TRUE (confirmed) or

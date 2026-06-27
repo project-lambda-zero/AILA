@@ -1,5 +1,5 @@
 /**
- * module-id.spec.ts — D-06, D-15.
+ * module-id.spec.ts -- D-06, D-15.
  *
  * - D-06: TaskQueue passes the real module_id, NOT the literal "__platform__".
  *   Backend constant `MODULE_ID_PLATFORM` is the source of truth (BE-G).

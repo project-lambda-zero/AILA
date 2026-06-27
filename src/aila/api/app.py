@@ -45,15 +45,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     rather than module import time.
 
     Startup sequence:
-    1. configure_logging() — must be first so all subsequent startup logs use structlog
-    2. AILAPlatform construction — may fail gracefully for LLM-less environments
-    3. AILA_BOOTSTRAP_KEY — legacy API key bootstrap (D-03: idempotent after first run)
-    4. Admin user bootstrap — if no UserRecord exists and AILA_ADMIN_PASSWORD is set,
+    1. configure_logging() -- must be first so all subsequent startup logs use structlog
+    2. AILAPlatform construction -- may fail gracefully for LLM-less environments
+    3. AILA_BOOTSTRAP_KEY -- legacy API key bootstrap (D-03: idempotent after first run)
+    4. Admin user bootstrap -- if no UserRecord exists and AILA_ADMIN_PASSWORD is set,
        creates the default admin user with argon2id-hashed password (D-21/D-43/D-44).
        If AILA_ADMIN_PASSWORD is NOT set AND no UserRecord exists, raises RuntimeError
        to fail startup with a clear error (D-21).
 
-    The platform is created once per process — never per-request (Pitfall 2
+    The platform is created once per process -- never per-request (Pitfall 2
     anti-pattern: per-request platform construction wastes 2-5s on module init).
     """
     import os as _os
@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "Set AILA_JWT_SECRET_KEY in environment for production use."
         )
 
-    # Step 3: D-03: AILA_BOOTSTRAP_KEY — create legacy admin key on first start if DB is empty
+    # Step 3: D-03: AILA_BOOTSTRAP_KEY -- create legacy admin key on first start if DB is empty
     bootstrap_key_value = _os.getenv("AILA_BOOTSTRAP_KEY", "").strip()
     if bootstrap_key_value:
         from sqlmodel import select as _select
@@ -172,7 +172,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await _check_session.execute(_sa_text("SELECT 1"))
         _log.info("Startup check: database OK")
     except (OSError, RuntimeError, _sa_exc.SQLAlchemyError) as exc:
-        raise RuntimeError(f"Startup check failed: database unreachable — {exc}") from exc
+        raise RuntimeError(f"Startup check failed: database unreachable -- {exc}") from exc
 
     # 2. Redis connectivity (non-fatal if pool not configured)
     from aila.platform.services.redis_pool import pool_available
@@ -189,7 +189,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         kp = _Path(keyring_path)
         if not kp.parent.exists():
-            raise RuntimeError(f"Startup check failed: keyring parent dir does not exist — {kp.parent}")
+            raise RuntimeError(f"Startup check failed: keyring parent dir does not exist -- {kp.parent}")
         _log.info("Startup check: keyring path OK")
 
     _log.info("Startup validation complete")
@@ -280,7 +280,7 @@ def _mount_module_routers(application: FastAPI) -> None:
     this does not cause re-registration or re-import overhead at app startup.
 
     If a module raises during route_specs() or router_factory(), that module's
-    routes are skipped with a warning — the platform continues starting.
+    routes are skipped with a warning -- the platform continues starting.
     This matches the pattern used for module health_checks().
     """
     from aila.platform.modules.builtin import builtin_module_factories
@@ -291,7 +291,7 @@ def _mount_module_routers(application: FastAPI) -> None:
             specs = module.route_specs()
         except Exception:
             _log.warning(
-                "Module factory %r raised during route_specs() — skipping module routes",
+                "Module factory %r raised during route_specs() -- skipping module routes",
                 factory,
             )
             continue
@@ -308,7 +308,7 @@ def _mount_module_routers(application: FastAPI) -> None:
                 )
             except Exception:
                 _log.warning(
-                    "Failed to mount router for module prefix %r — skipping",
+                    "Failed to mount router for module prefix %r -- skipping",
                     spec.prefix,
                 )
 
@@ -373,7 +373,7 @@ def create_app() -> FastAPI:
     """
     application = FastAPI(
         title="AILA REST API",
-        description="AI Lab Assistant — modular security platform REST API",
+        description="AI Lab Assistant -- modular security platform REST API",
         version=_importlib_metadata.version("aila"),
         lifespan=lifespan,
         docs_url="/docs",
@@ -413,7 +413,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Custom exception handlers — ensure all error responses match ErrorResponse shape.
+    # Custom exception handlers -- ensure all error responses match ErrorResponse shape.
     # Phase 80: every 4xx/5xx returns {"detail": str, "code": str|None, "errors": list|None}.
     application.add_exception_handler(RequestValidationError, _validation_error_handler)
     application.add_exception_handler(HTTPException, _http_exception_handler)
@@ -424,7 +424,7 @@ def create_app() -> FastAPI:
     # AILAError subclass, RequestValidationError, and unhandled Exception now
     # produces the ErrorEnvelope {code, message, hint, trace_id} body.
     # NOTE: this overrides the Phase 80 RequestValidationError handler above
-    # per D-10a — validation errors now use the envelope shape.
+    # per D-10a -- validation errors now use the envelope shape.
     from aila.api.errors import register_error_handlers
 
     register_error_handlers(application)
@@ -450,7 +450,7 @@ def create_app() -> FastAPI:
     # binary uploads, or LLM transcripts need a different ceiling.
     # Returns 413 with ErrorResponse envelope. Registered after
     # _catch_unhandled_exceptions so it runs before it (Starlette middleware
-    # stack is LIFO — last registered runs first).
+    # stack is LIFO -- last registered runs first).
     import os as _os
     _default_max_body = 200 * 1024 * 1024  # 200 MB
     try:
@@ -506,19 +506,19 @@ def create_app() -> FastAPI:
     from aila.api.routers.oidc import router as oidc_router
     application.include_router(oidc_router)
 
-    # Phase 177: Admin teams router (admin only — multi-team management)
+    # Phase 177: Admin teams router (admin only -- multi-team management)
     from aila.api.routers.admin_teams import router as admin_teams_router
     application.include_router(admin_teams_router)
 
-    # Phase 178: Admin dead-letter router (admin only — poison-pill inspection)
+    # Phase 178: Admin dead-letter router (admin only -- poison-pill inspection)
     from aila.api.routers.admin_dead_letter import router as admin_dead_letter_router
     application.include_router(admin_dead_letter_router)
 
-    # Phase 181: Admin workflow inspection router (admin only — run/transition audit)
+    # Phase 181: Admin workflow inspection router (admin only -- run/transition audit)
     from aila.api.routers.admin_workflows import router as admin_workflows_router
     application.include_router(admin_workflows_router)
 
-    # Health router: /health and /status — no auth required (public endpoints)
+    # Health router: /health and /status -- no auth required (public endpoints)
     from aila.api.routers.health import router as health_router
     application.include_router(health_router)
 
@@ -535,21 +535,21 @@ def create_app() -> FastAPI:
     from aila.api.routers.tools import router as tools_router
     application.include_router(tools_router)
 
-    # Platform tasks router: /tasks (Phase 54 plan 05 — task queue API surface)
+    # Platform tasks router: /tasks (Phase 54 plan 05 -- task queue API surface)
     from aila.api.routers.tasks import router as tasks_router
     application.include_router(tasks_router)
 
-    # Standalone POST /task — freeform task submission (TASK-01, D-09)
+    # Standalone POST /task -- freeform task submission (TASK-01, D-09)
     # Separate from /tasks/ prefix router to keep the route at /task (not /tasks/).
     from aila.api.routers.tasks import task_submit_router
     application.include_router(task_submit_router)
 
-    # Sessions router: /sessions (Phase 55 plan 04 — conversation session persistence)
+    # Sessions router: /sessions (Phase 55 plan 04 -- conversation session persistence)
     from aila.api.routers.sessions import router as sessions_router
     application.include_router(sessions_router)
 
     # Scan submission and status polling router: POST /analyze, GET /scans/{run_id}
-    # Phase 55 plan 03 — mutation surface for async scan submission (API-01, API-02)
+    # Phase 55 plan 03 -- mutation surface for async scan submission (API-01, API-02)
     from aila.api.routers.scans import router as scans_router
     application.include_router(scans_router)
 
@@ -592,7 +592,7 @@ def create_app() -> FastAPI:
     application.include_router(sse_events_router)
 
     # Plan 138-04: topology aggregation router (RADAR-05)
-    # Platform-owned network graph endpoint — D-01: topology is not module-specific.
+    # Platform-owned network graph endpoint -- D-01: topology is not module-specific.
     from aila.api.routers.topology import router as topology_router
     application.include_router(topology_router)
 

@@ -1,6 +1,6 @@
 """Unit tests for scoring policy pure functions.
 
-All tests are in-memory only — no DB, no network, no mocking of scoring functions.
+All tests are in-memory only -- no DB, no network, no mocking of scoring functions.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from aila.modules.vulnerability.agents.scoring.policy import (
 from aila.modules.vulnerability.contracts import SignalAssessment
 
 # ---------------------------------------------------------------------------
-# Inline default policy — mirrors scoring_policy.default.json exactly.
+# Inline default policy -- mirrors scoring_policy.default.json exactly.
 # No file I/O in tests.
 # ---------------------------------------------------------------------------
 
@@ -579,7 +579,7 @@ def test_apply_overrides_internal_downgrade_isolated():
 
 
 # ---------------------------------------------------------------------------
-# calculate_score_breakdown — integration tests
+# calculate_score_breakdown -- integration tests
 # ---------------------------------------------------------------------------
 
 

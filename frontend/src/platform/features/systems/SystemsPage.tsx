@@ -50,7 +50,7 @@ function matchesTagFilter(system: SystemSummaryEnriched, selectedTagKeys: string
 }
 
 /**
- * SystemsPage — systems list with AilaTable, metric cards, filtering (D-01, D-02, D-13-17).
+ * SystemsPage -- systems list with AilaTable, metric cards, filtering (D-01, D-02, D-13-17).
  *
  * Rebuilds the PatternFly-era page with:
  * - Three AilaCard metric cards (total, visible, unreachable)
@@ -172,7 +172,7 @@ export function SystemsPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">Registered Systems</p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {systemsQuery.data?.total ?? "—"}
+          {systemsQuery.data?.total ?? "--"}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">Total in fleet</p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">Visible Systems</p>
@@ -365,7 +365,7 @@ export function SystemsPage() {
         <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={8} /></AilaCard>
       )}
 
-      {/* Empty state — no systems at all (D-14) */}
+      {/* Empty state -- no systems at all (D-14) */}
       {!systemsQuery.isLoading && !systemsQuery.isError && allSystems.length === 0 && (
         <EmptyState
           icon={<Monitor className="h-10 w-10" />}
@@ -376,7 +376,7 @@ export function SystemsPage() {
         />
       )}
 
-      {/* Empty state — filter matches nothing (D-14) */}
+      {/* Empty state -- filter matches nothing (D-14) */}
       {!systemsQuery.isLoading && !systemsQuery.isError && allSystems.length > 0 && filteredSystems.length === 0 && (
         <EmptyState
           title="No systems match current filters"
@@ -414,7 +414,7 @@ export function SystemsPage() {
       {/* CSV import dialog (D-07) */}
       <SystemCSVImport open={showCSVImport} onOpenChange={setShowCSVImport} />
 
-      {/* Inline tag management drawer — opened from the per-row "+" button on
+      {/* Inline tag management drawer -- opened from the per-row "+" button on
           the Tags column. Reuses SystemTags so the assignment form stays in
           one place. */}
       <Sheet

@@ -1,4 +1,4 @@
-"""Per-control report-section writer — the agent that synthesizes a
+"""Per-control report-section writer -- the agent that synthesizes a
 single MASVS control's report subsection from the auditor's raw
 outcome, the control spec, and the APK context.
 
@@ -47,7 +47,7 @@ _log = logging.getLogger(__name__)
 
 class ReportEvidence(BaseModel):
     """One citation under the AUDIT FINDINGS section. The writer picks
-    2-4 of these per control — the most load-bearing pieces.
+    2-4 of these per control -- the most load-bearing pieces.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -60,7 +60,7 @@ class ReportEvidence(BaseModel):
             "``<jadx-path>.java::<method>``, ``AndroidManifest.xml::<element-xpath>``, "
             "``lib/<abi>/<file>.so::<function>``, or a literal string like "
             "``allowBackup=\"true\"`` when the evidence is a manifest attribute. "
-            "Be precise — operator will click this to open the file."
+            "Be precise -- operator will click this to open the file."
         ),
     )
     detail: str = Field(
@@ -91,7 +91,7 @@ class ReportSection(BaseModel):
             "Vulnerable / Partial / Outside scope), then the 5-12 word "
             "specific reason. Example: ``Vulnerable: session tokens persisted "
             "to plain SharedPreferences in 3 call sites``. NEVER restate the "
-            "control title. NEVER use 'we found' / 'the audit revealed' — "
+            "control title. NEVER use 'we found' / 'the audit revealed' -- "
             "just state the fact."
         ),
     )
@@ -128,7 +128,7 @@ class ReportSection(BaseModel):
             "EncryptedSharedPreferences.create() using a MasterKey backed by "
             "AndroidKeyStore'. Two-sentence max. For PASS, set to empty "
             "string. For REVIEW, list the specific blocker(s) (e.g., 'manual "
-            "review of <file> required — agent timed out on symbolic "
+            "review of <file> required -- agent timed out on symbolic "
             "execution after 8 turns')."
         ),
     )
@@ -139,7 +139,7 @@ class ReportSection(BaseModel):
             "voice (NOT the catalog's). Drop standards-jargon like 'the "
             "verification target is…'. Example: ``Backed-up data lands in "
             "the user's Google Drive and is restored onto any device the "
-            "user signs into — including a compromised one.``"
+            "user signs into -- including a compromised one.``"
         ),
     )
     confidence_note: str | None = Field(
@@ -157,7 +157,7 @@ class ReportSection(BaseModel):
 _VERDICT_VOCABULARY = {
     MasvsVerdict.FINDING: "Vulnerable / Fails",
     MasvsVerdict.NO_FINDING: "Compliant / Passes",
-    MasvsVerdict.INCONCLUSIVE: "Inconclusive — needs review",
+    MasvsVerdict.INCONCLUSIVE: "Inconclusive -- needs review",
     MasvsVerdict.NOT_APPLICABLE: "Not applicable to this app",
 }
 
@@ -211,19 +211,19 @@ def _build_user_prompt(
             for loc in verdict.evidence_locations
         )
         if verdict.evidence_locations
-        else "(none — auditor did not cite evidence locations)"
+        else "(none -- auditor did not cite evidence locations)"
     )
     apk_lines = "\n".join(
         f"  {k}: {v}" for k, v in apk_context.items() if v is not None
     ) or "(no APK context available)"
 
-    raw_block = (raw_answer or "(no raw answer — agent produced no payload['answer'])").strip()
+    raw_block = (raw_answer or "(no raw answer -- agent produced no payload['answer'])").strip()
     if len(raw_block) > 7000:
         raw_block = raw_block[:7000] + "\n…(truncated)…"
 
     return (
         f"=== CONTROL ===\n"
-        f"{control_id} — {catalog_title}\n\n"
+        f"{control_id} -- {catalog_title}\n\n"
         f"CATALOG DESCRIPTION:\n{catalog_description}\n\n"
         f"CATALOG VERIFICATION CHECKLIST:\n{catalog_steps}\n\n"
         f"=== APK ===\n{apk_lines}\n\n"
@@ -250,7 +250,7 @@ async def generate_section(
 
     Returns ``None`` when the LLM call fails (network, schema, budget).
     Caller falls back to rendering the raw ``agent_summary`` in that
-    case so the PDF still ships — partial fidelity beats 500 errors.
+    case so the PDF still ships -- partial fidelity beats 500 errors.
     """
     user_prompt = _build_user_prompt(verdict, control, raw_answer, apk_context)
     try:
@@ -265,7 +265,7 @@ async def generate_section(
             team_id=team_id,
         )
     except LLMError as exc:
-        # fix §350 — DEFENSIVE: section synthesis falls back to the raw
+        # fix §350 -- DEFENSIVE: section synthesis falls back to the raw
         # agent_summary so the PDF still ships; surface the traceback so
         # a recurring schema/auth break is grep-able in operator logs.
         _log.warning(

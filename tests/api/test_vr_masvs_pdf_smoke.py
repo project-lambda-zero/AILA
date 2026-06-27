@@ -1,4 +1,4 @@
-"""A-2 — End-to-end smoke test for the MASVS PDF generation pipeline.
+"""A-2 -- End-to-end smoke test for the MASVS PDF generation pipeline.
 
 The A-1 smoke test (``tests/api/test_vr_masvs_smoke.py``) covers the
 dispatch happy path: one parent + N children, every child carries
@@ -21,14 +21,14 @@ exercises the read side of the pipeline:
 6. Parse the bytes with :mod:`pypdf`, concatenate every page's text,
    and assert the rendered document mentions both the control id and
    the evidence file path. Those are the operator's primary navigation
-   handles in the rendered report — if either is missing, the PDF is
+   handles in the rendered report -- if either is missing, the PDF is
    uninterpretable as an audit artifact regardless of how the bytes
    structure.
 
 The renderer is verified structurally elsewhere
 (``tests/test_vr_masvs_pdf_report.py`` for the R-2a scaffolding,
 ``tests/test_vr_masvs_pdf_report_subsections.py`` for the R-2b
-per-control bodies). A-2's job is the integration confidence check —
+per-control bodies). A-2's job is the integration confidence check --
 the DB-loaded path through ``collect_findings`` produces a verdict the
 renderer can turn into operator-readable text.
 """
@@ -70,7 +70,7 @@ from aila.platform.uow import UnitOfWork
 # verification steps under the subsection header.
 _CONTROL_ID = "MSTG-STORAGE-1"
 
-# Jadx-shaped path the auditor "cited" — full enough to look like a
+# Jadx-shaped path the auditor "cited" -- full enough to look like a
 # real fixture entry, short enough (53 chars) that the 8pt Courier
 # AFFECTED COMPONENTS table cell renders it on one line. The
 # renderer's file column fits ~96 chars at 8pt mono without wrapping.
@@ -82,7 +82,7 @@ _EVIDENCE_FUNCTION = "writePlaintextToken"
 # to FINDING rather than INCONCLUSIVE.
 _VERIFIER_CONFIDENCE = 0.8
 
-# APK identity meta — mirrored from the operator-supplied ExampleCorp
+# APK identity meta -- mirrored from the operator-supplied ExampleCorp
 # SampleApp fixture so the cover page surfaces a realistic identifier.
 _APK_PACKAGE = "com.examplecorp.selfservis"
 _APK_VERSION = "19.4.0"
@@ -164,12 +164,12 @@ async def _seed_child_with_direct_finding(
     Payload mirrors the canonical shape ``vr/agents/prompts/system_audit.md``
     instructs the claim verifier to emit:
 
-    * ``verifier_report.verdict`` — ``"confirmed"`` (any value other
+    * ``verifier_report.verdict`` -- ``"confirmed"`` (any value other
       than ``"refuted"`` / ``"inconclusive"`` flows through the
       DIRECT_FINDING branch in :func:`child_outcome_to_verdict`).
-    * ``verifier_report.confidence`` — the numeric float the mapper
+    * ``verifier_report.confidence`` -- the numeric float the mapper
       compares against the 0.6 finding floor.
-    * ``affected_components`` — the ``{file, function}`` list the PDF
+    * ``affected_components`` -- the ``{file, function}`` list the PDF
       renderer surfaces under the AFFECTED COMPONENTS block in the
       per-control subsection.
 
@@ -272,7 +272,7 @@ def _extract_all_text(pdf_bytes: bytes) -> str:
     would break a literal substring match against a long jadx path.
     Folding runs of whitespace to single spaces lets the assertion
     check the path verbatim without embedding the renderer's wrap
-    points — matches the helper in
+    points -- matches the helper in
     ``tests/test_vr_masvs_pdf_report.py``.
     """
     reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
@@ -303,7 +303,7 @@ async def test_a2_smoke_collect_findings_then_build_pdf(
 
     aggregate = await collect_findings(parent_id)
 
-    # Aggregate side — confirm the mapper landed the stubbed outcome on
+    # Aggregate side -- confirm the mapper landed the stubbed outcome on
     # the FINDING branch with the verifier confidence the test seeded.
     assert len(aggregate.verdicts) == 1, (
         "expected one verdict from the stubbed child; "
@@ -320,7 +320,7 @@ async def test_a2_smoke_collect_findings_then_build_pdf(
     target = _build_target_summary(target_id)
     pdf_bytes = build_pdf(aggregate, target)
 
-    # Byte-level smoke check — a PDF document always opens with
+    # Byte-level smoke check -- a PDF document always opens with
     # ``%PDF-`` followed by the major/minor version. A truncated or
     # empty render would fail here before :mod:`pypdf` even tries to
     # parse the document.

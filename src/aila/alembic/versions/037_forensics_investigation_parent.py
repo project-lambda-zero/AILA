@@ -1,4 +1,4 @@
-"""037 — add parent_investigation_id to forensics_investigations.
+"""037 -- add parent_investigation_id to forensics_investigations.
 
 Lets the API expose a "Rerun (enriched)" path: a new investigation
 that carries the prior attempt's persisted observables forward and

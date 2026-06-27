@@ -8,7 +8,7 @@ module takes those rows and turns them into forensically useful signals:
   commodity-malware C2 and phishing infrastructure.
 - Cheap DGA shape heuristic (consonant runs, entropy proxy) so an
   analyst notices random-looking domains without running a full model.
-- Beacon detection from inter-arrival times — a flow is a beacon
+- Beacon detection from inter-arrival times -- a flow is a beacon
   candidate when it has >= ``MIN_BEACON_FLOWS`` packets, low inter-arrival
   stdev, and the payload sizes are constant or near-constant.
 - Suspicious User-Agent pattern matching (living-off-the-land + default
@@ -16,7 +16,7 @@ module takes those rows and turns them into forensically useful signals:
 - Aggregations used for both the top-N roll-ups shown in the UI and the
   compact factual summary handed to the LLM commentator.
 
-Everything here is deterministic and has zero network dependencies —
+Everything here is deterministic and has zero network dependencies --
 it only transforms data the collector already pulled.
 """
 from __future__ import annotations
@@ -73,7 +73,7 @@ def is_loopback_or_multicast(ip: str) -> bool:
 
 # Common-in-phishing / commodity-C2 TLDs as observed by the major threat
 # intel outfits (Spamhaus, Abuse.ch, Cisco Umbrella "badness"). Not a
-# blocklist — just enough signal to raise eyebrows in a report.
+# blocklist -- just enough signal to raise eyebrows in a report.
 _SUSPICIOUS_TLDS: frozenset[str] = frozenset({
     "tk", "ml", "ga", "cf", "gq", "top", "xyz", "icu", "work",
     "click", "fit", "loan", "men", "kim", "cam", "rest", "country",
@@ -351,7 +351,7 @@ def build_llm_summary(
 ) -> str:
     """Compact factual summary for the LLM commentator.
 
-    Keep under ~3k tokens — pick the top-N per category, leave the raw
+    Keep under ~3k tokens -- pick the top-N per category, leave the raw
     data for the UI. The LLM's job is to narrate *this*, not re-read the
     full dataset.
     """

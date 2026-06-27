@@ -211,7 +211,7 @@ async def list_systems(
     """Return a paginated list of all registered SSH systems with enrichment data.
 
     Each item includes connectivity_status, tags, last_scan_at, last_scan_status,
-    and top_severity. Enrichment uses aggregated queries — not N+1 per system (D-03/D-11/D-12/D-20).
+    and top_severity. Enrichment uses aggregated queries -- not N+1 per system (D-03/D-11/D-12/D-20).
     """
 
     async def _query() -> tuple[list[ManagedSystemRecord], int, dict, dict, dict, dict]:
@@ -385,7 +385,7 @@ async def get_system_heartbeat(
     system_id: int,
     request: Request,
 ) -> HeartbeatEnvelope:
-    """Live SSH heartbeat — opens a fresh paramiko connect with a 3 s
+    """Live SSH heartbeat -- opens a fresh paramiko connect with a 3 s
     timeout, runs ``echo ok``, measures latency, and returns the
     result. Cached for 30 s to avoid hammering the workstation when
     the frontend polls every 30 s anyway.
@@ -830,7 +830,7 @@ async def update_system(
             from aila.storage.secrets import SecretStore
             secret_store = SecretStore()
 
-            # Handle private key content — encrypt and store as secret
+            # Handle private key content -- encrypt and store as secret
             if "private_key" in update_data:
                 plaintext = update_data.pop("private_key")
                 secret_rec = await secret_store.store(
@@ -852,7 +852,7 @@ async def update_system(
                 )
                 record.password_secret_id = secret_rec.id
 
-            # Handle passphrase — not a direct DB field, pop to avoid setattr
+            # Handle passphrase -- not a direct DB field, pop to avoid setattr
             if "private_key_passphrase" in update_data:
                 update_data.pop("private_key_passphrase")
 

@@ -1,10 +1,10 @@
-"""TaskRepository — scoped DB queries for TaskRecord.
+"""TaskRepository -- scoped DB queries for TaskRecord.
 
 All list/get operations filter by user's group_id (auth.role) unless the
 user has admin role. This implements per-user-group task isolation
 (D-21/D-22/MOD-13).
 
-Ownership: Platform — not module-specific.
+Ownership: Platform -- not module-specific.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ class TaskRepository:
         if status:
             stmt = stmt.where(TaskRecord.status == status)
         # Newest-first so the dashboard surfaces active / recent work at the
-        # top — without this the running scan is buried behind hundreds of
+        # top -- without this the running scan is buried behind hundreds of
         # older terminal rows.
         stmt = stmt.order_by(TaskRecord.created_at.desc())  # type: ignore[attr-defined]
         result = await session.exec(stmt)

@@ -42,7 +42,7 @@ export function CVSSCalculator({
         <VersionTabs version={version} setVersion={setVersion} />
         <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
           <p className="text-xs text-text-muted">
-            <strong>CVSS v4.0 calculator — backend pending.</strong>
+            <strong>CVSS v4.0 calculator -- backend pending.</strong>
           </p>
           <p className="text-3xs text-text-muted mt-2">
             v4.0 introduces 11 base metrics + threat + environmental +

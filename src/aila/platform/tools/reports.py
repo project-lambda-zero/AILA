@@ -9,13 +9,13 @@ from ._common import Tool, normalize_limit, normalize_offset, optional_text, req
 class ReportsQueryTool(Tool):
     """Platform tool for querying persisted module report data.
 
-    Returns raw, unfiltered report data — module-specific filtering (e.g.
+    Returns raw, unfiltered report data -- module-specific filtering (e.g.
     vulnerability severity filters) happens in the module's workflow layer
     via filter_report_rows(). This separation ensures the same stored report
     can be filtered differently by different queries without re-scanning.
 
     The latest_target_rows action calls ReportRepository.latest_materialized_findings(),
-    which aggregates rows across all per-target reports for a module — this is
+    which aggregates rows across all per-target reports for a module -- this is
     the registered materialized query pattern (STD-08).
 
     Supports actions: latest_report, latest_rows, latest_target_rows, has_target_reports.

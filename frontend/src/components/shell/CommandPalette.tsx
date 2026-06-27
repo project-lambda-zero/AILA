@@ -115,7 +115,7 @@ export function CommandPalette() {
 
   // ---------------------------------------------------------------------------
   // Server-side search (search mode only, D-10)
-  // shouldFilter={false} — server handles filtering
+  // shouldFilter={false} -- server handles filtering
   // ---------------------------------------------------------------------------
   const searchResultsQuery = useQuery({
     queryKey: ["search", searchQuery],
@@ -290,7 +290,7 @@ export function CommandPalette() {
         <CommandList>
 
           {/* ----------------------------------------------------------------
-              EMPTY QUERY STATE — Recently Viewed + Search History
+              EMPTY QUERY STATE -- Recently Viewed + Search History
           ---------------------------------------------------------------- */}
           {!isCommandMode && isEmptyQuery && (
             <>
@@ -385,7 +385,7 @@ export function CommandPalette() {
           )}
 
           {/* ----------------------------------------------------------------
-              COMMAND MODE ('>' prefix) — VS Code style
+              COMMAND MODE ('>' prefix) -- VS Code style
           ---------------------------------------------------------------- */}
           {isCommandMode && (
             <>

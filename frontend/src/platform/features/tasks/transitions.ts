@@ -2,7 +2,7 @@
  * Transition API types and fetch function (Phase 181).
  *
  * Mirrors the backend TransitionView Pydantic schema.
- * input_hash / output_hash are intentionally omitted — backend does not expose them.
+ * input_hash / output_hash are intentionally omitted -- backend does not expose them.
  */
 import { authorizedRequestJson } from "@platform/api/http";
 

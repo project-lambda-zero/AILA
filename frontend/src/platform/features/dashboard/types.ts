@@ -1,7 +1,7 @@
 import type { ComponentType } from "react";
 
 /**
- * Widget category — used for grouping in the picker dialog.
+ * Widget category -- used for grouping in the picker dialog.
  */
 export type WidgetCategory = "platform" | "vulnerability" | "vr" | "malware";
 
@@ -37,7 +37,7 @@ export interface WidgetDefinition {
 }
 
 /**
- * Serialized per-widget position — mirrors react-grid-layout's Layout item.
+ * Serialized per-widget position -- mirrors react-grid-layout's Layout item.
  * Stored in the backend layout_json.
  */
 export interface DashboardLayoutItem {

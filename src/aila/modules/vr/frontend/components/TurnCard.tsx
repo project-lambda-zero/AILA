@@ -222,13 +222,13 @@ function humanToolName(raw: string): string {
 }
 
 /** First sentence (or first ~140 chars) collapsed-state preview.
- *  Strips LLM role prefixes like "RESEARCHER (Halvar):", "ROUND 1 —". */
+ *  Strips LLM role prefixes like "RESEARCHER (Halvar):", "ROUND 1 --". */
 function firstSentence(s: string, max = 140): string {
   let trimmed = s.trim().replace(/\s+/g, " ");
   if (trimmed.length === 0) return "";
   // Strip role prefixes
   trimmed = trimmed
-    .replace(/^ROUND\s+\d+\s*[-—]\s*/i, "")
+    .replace(/^ROUND\s+\d+\s*[---]\s*/i, "")
     .replace(/^(?:[\u{1F300}-\u{1FAD6}\u{2694}\u{1F52C}\u{2699}\u{1F6E0}]\s*)?(?:RESEARCHER|CRITIC|IMPLEMENTER)\s*\([^)]+\)\s*:\s*/gu, "")
     .replace(/^(?:DIRECT_FINDING|ASSESSMENT_REPORT)\s*:\s*/i, "");
   const m = trimmed.match(/^(.{10,180}?[.!?])\s/);
@@ -237,7 +237,7 @@ function firstSentence(s: string, max = 140): string {
 }
 
 function formatRelative(iso?: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "--";
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return iso;
   const delta = Math.max(0, (Date.now() - t) / 1000);
@@ -272,7 +272,7 @@ function jsonString(value: unknown): string {
 }
 
 function formatArgValue(v: unknown): string {
-  if (v === null || v === undefined) return v === null ? "null" : "—";
+  if (v === null || v === undefined) return v === null ? "null" : "--";
   if (typeof v === "string") return v;
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   try {
@@ -291,7 +291,7 @@ export function TurnCard({
 }: {
   message: VRMessageSummary;
   index: number;
-  /** Persona voice from the branch record — the message itself does NOT carry
+  /** Persona voice from the branch record -- the message itself does NOT carry
    *  the persona name (sender_id is always 'engine' or 'tool_executor'). */
   persona?: string | null;
 }) {
@@ -365,7 +365,7 @@ export function TurnCard({
             <CaretRight size={12} weight="bold" className="text-text-muted shrink-0" />
           )}
 
-          {/* prominent turn number — primary scroll anchor */}
+          {/* prominent turn number -- primary scroll anchor */}
           <span className="font-mono text-sm font-bold text-foreground tabular-nums shrink-0">
             #{turnNum}
           </span>
@@ -392,7 +392,7 @@ export function TurnCard({
             {senderLabel}
           </span>
 
-          {/* payload kind chip — only when non-default */}
+          {/* payload kind chip -- only when non-default */}
           {pStyle.label && (
             <span className="inline-flex items-center gap-1 text-3xs font-mono uppercase tracking-wider text-text-muted shrink-0">
               {PayloadIcon && (
@@ -402,7 +402,7 @@ export function TurnCard({
             </span>
           )}
 
-          {/* operator intent — only on operator turns */}
+          {/* operator intent -- only on operator turns */}
           {message.operator_intent && (
             <AilaBadge severity="info" size="sm">
               {message.operator_intent.replace(/_/g, " ")}
@@ -432,7 +432,7 @@ export function TurnCard({
             <ToolCallBody name={toolName!} args={toolArgs} reasoning={toolReasoning} />
           ) : null}
 
-          {/* Prose body — sans-serif, NOT monospace */}
+          {/* Prose body -- sans-serif, NOT monospace */}
           {showProseBody ? (
             <ProseBody
               text={prose!}
@@ -441,7 +441,7 @@ export function TurnCard({
             />
           ) : null}
 
-          {/* Source/decompiled function — structured code viewer */}
+          {/* Source/decompiled function -- structured code viewer */}
           {fellBackToJson && Boolean(payload.pseudocode) && (
             <CodeBlock
               code={String(payload.pseudocode)}
@@ -450,7 +450,7 @@ export function TurnCard({
             />
           )}
 
-          {/* Error message — styled error box */}
+          {/* Error message -- styled error box */}
           {fellBackToJson && !payload.pseudocode && Boolean(payload.is_error) && (
             <div className="flex items-start gap-2 px-3 py-2 rounded-md border border-red-500/30 bg-red-500/8">
               <XCircle size={14} weight="fill" className="text-red-400 shrink-0 mt-0.5" />
@@ -477,7 +477,7 @@ export function TurnCard({
             </div>
           )}
 
-          {/* Generic fallback — only for payloads that don't match any structured pattern */}
+          {/* Generic fallback -- only for payloads that don't match any structured pattern */}
           {fellBackToJson && !payload.pseudocode && !payload.is_error && !payload.chunks_text && payload.match_count == null && (
             <pre className="text-xs font-mono whitespace-pre-wrap text-foreground leading-relaxed break-words bg-surface/40 rounded p-2 border border-border-default/50">
               {expanded || rawJson.length <= COLLAPSE_THRESHOLD_CHARS
@@ -492,7 +492,7 @@ export function TurnCard({
             </button>
           )}
 
-          {/* Raw payload disclosure — only when prose/structured body was shown */}
+          {/* Raw payload disclosure -- only when prose/structured body was shown */}
           {(showStructuredToolCall || showProseBody) && (
             <details
               open={rawOpen}
@@ -604,7 +604,7 @@ function ToolCallBody({
   );
   return (
     <div className="space-y-2">
-      {/* Tool invocation — always visible */}
+      {/* Tool invocation -- always visible */}
       <div className="flex items-center gap-2 flex-wrap px-2 py-1.5 rounded bg-emerald-500/8 border border-emerald-500/20">
         <Terminal size={14} weight="fill" className="text-emerald-400 shrink-0" />
         <code className="font-mono text-sm text-foreground font-medium break-all">
@@ -624,7 +624,7 @@ function ToolCallBody({
         </dl>
       )}
 
-      {/* Reasoning — collapsible, with voice parsing */}
+      {/* Reasoning -- collapsible, with voice parsing */}
       {reasoning && reasoning.length > 20 && (
         <details
           open={reasoningOpen}
@@ -711,7 +711,7 @@ function ProseBody({
     );
   }
 
-  // Single-voice fallback — render as readable prose
+  // Single-voice fallback -- render as readable prose
   const shown = !long || expanded ? text : text.slice(0, COLLAPSE_THRESHOLD_CHARS);
   return (
     <div>

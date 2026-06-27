@@ -10,7 +10,7 @@ queue. The reaper must:
 * Remove the job id from the arq:queue:{track} zset so real workers can
   make progress.
 
-These tests require a live Redis — they skip cleanly otherwise.
+These tests require a live Redis -- they skip cleanly otherwise.
 """
 from __future__ import annotations
 

@@ -17,7 +17,7 @@ import {
 import { cn } from "@/lib/utils"
 
 /**
- * Selectors that mark a descendant as "handle its own interaction —
+ * Selectors that mark a descendant as "handle its own interaction --
  * do NOT trigger row click" (D-32). The `.no-row-click` class is the
  * documented escape hatch callers can apply to any wrapper.
  */
@@ -33,7 +33,7 @@ function isInlineInteractive(target: EventTarget | null, container: HTMLElement)
 }
 
 // ─────────────────────────────────────────────────────────
-// Context — shared table instance between compound components
+// Context -- shared table instance between compound components
 // ─────────────────────────────────────────────────────────
 
 interface AilaTableContextValue<TData extends RowData> {
@@ -88,7 +88,7 @@ export interface AilaTableProps<TData extends RowData> {
    */
   className?: string
   /**
-   * Children — typically AilaTable.Header, AilaTable.Body, AilaTable.Pagination.
+   * Children -- typically AilaTable.Header, AilaTable.Body, AilaTable.Pagination.
    * If omitted, all three sub-components are rendered in default order.
    */
   children?: React.ReactNode
@@ -103,13 +103,13 @@ export interface AilaTableProps<TData extends RowData> {
 }
 
 /**
- * AilaTable — headless TanStack Table with cyberpunk styling.
+ * AilaTable -- headless TanStack Table with cyberpunk styling.
  *
  * Implements compound component pattern (D-20). Uses useReactTable with:
- * - getCoreRowModel() — basic row rendering
- * - getSortedRowModel() — click column header to sort
- * - getFilteredRowModel() — global search filter
- * - getPaginationRowModel() — pagination (always on, T-139-06: prevents unbounded render)
+ * - getCoreRowModel() -- basic row rendering
+ * - getSortedRowModel() -- click column header to sort
+ * - getFilteredRowModel() -- global search filter
+ * - getPaginationRowModel() -- pagination (always on, T-139-06: prevents unbounded render)
  *
  * Data shape is enforced at compile time via TypeScript generics.
  * Runtime: empty arrays render empty state (T-139-05).
@@ -186,7 +186,7 @@ export interface AilaTableHeaderProps {
 }
 
 /**
- * AilaTable.Header — renders column headers with optional sort indicators.
+ * AilaTable.Header -- renders column headers with optional sort indicators.
  *
  * Click a sortable column header to cycle: ascending → descending → unsorted.
  * Active sorted column shows amber accent indicator.
@@ -263,7 +263,7 @@ export interface AilaTableBodyProps {
 }
 
 /**
- * AilaTable.Body — renders data rows with cyberpunk row styling.
+ * AilaTable.Body -- renders data rows with cyberpunk row styling.
  *
  * Rows: dark surface bg, amber bottom border, hover to elevated/50 bg.
  * Renders empty state when no data or no rows match active filter (T-139-05).
@@ -346,7 +346,7 @@ export interface AilaTablePaginationProps {
 }
 
 /**
- * AilaTable.Pagination — pagination bar with page info, size selector, and nav buttons.
+ * AilaTable.Pagination -- pagination bar with page info, size selector, and nav buttons.
  *
  * Styled with amber accent for active controls (D-02).
  * Page size selector limits rendered rows (T-139-06: unbounded data DoS mitigation).

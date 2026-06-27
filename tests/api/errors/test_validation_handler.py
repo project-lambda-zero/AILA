@@ -33,7 +33,7 @@ def test_validation_error_handler_returns_envelope() -> None:
     app = _build_validation_app()
     client = TestClient(app, raise_server_exceptions=False)
 
-    # Wrong type for age — triggers RequestValidationError.
+    # Wrong type for age -- triggers RequestValidationError.
     resp = client.post("/echo", json={"name": "x", "age": "not-an-int"})
 
     assert resp.status_code == 422

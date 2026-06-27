@@ -15,7 +15,7 @@ from aila.modules.vulnerability.adapters.inventory import (
 )
 
 # ---------------------------------------------------------------------------
-# strip_debian_arch_suffix — all 8 behavior cases from plan
+# strip_debian_arch_suffix -- all 8 behavior cases from plan
 # ---------------------------------------------------------------------------
 
 def test_strip_amd64_suffix() -> None:
@@ -81,5 +81,5 @@ def test_parse_tab_separated_line_no_arch_suffix_unchanged() -> None:
 def test_parse_space_separated_line_colon_unchanged() -> None:
     """parse_space_separated_line does not strip arch suffixes (used by Alpine/Arch, not Debian)."""
     result = parse_space_separated_line("libssl1.1:amd64 1.1.1-1")
-    # Space-separated parser should NOT strip arch suffix — unmodified
+    # Space-separated parser should NOT strip arch suffix -- unmodified
     assert result == ("libssl1.1:amd64", "1.1.1-1")

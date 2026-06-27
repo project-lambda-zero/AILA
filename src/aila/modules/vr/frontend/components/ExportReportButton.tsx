@@ -15,7 +15,7 @@ import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
  *  vulnerability module's report export) so token refresh + auth
  *  retry behaviour is identical to the rest of the app.
  *
- *  No React Query — reports are generated on demand and one-shot;
+ *  No React Query -- reports are generated on demand and one-shot;
  *  caching the binary would bloat the cache for no benefit.
  */
 export function ExportReportButton({
@@ -36,7 +36,7 @@ export function ExportReportButton({
       // Cache-buster query param so the browser never serves a
       // previously-cached PDF blob for the same URL. The backend
       // sets Cache-Control: no-store, but that only applies to
-      // future responses — entries already in the disk cache from
+      // future responses -- entries already in the disk cache from
       // earlier visits survive until the cache evicts them. ``ts``
       // changes per click so each request is a unique URL.
       const payload = await requestBlob(

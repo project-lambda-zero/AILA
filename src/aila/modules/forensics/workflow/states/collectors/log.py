@@ -1,4 +1,4 @@
-"""Log-file collector — basic preview + line count."""
+"""Log-file collector -- basic preview + line count."""
 from __future__ import annotations
 
 import logging

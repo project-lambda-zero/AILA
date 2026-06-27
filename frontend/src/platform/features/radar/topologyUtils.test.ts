@@ -1,5 +1,5 @@
 /**
- * topologyUtils.test.ts — unit tests for radar topology pure functions.
+ * topologyUtils.test.ts -- unit tests for radar topology pure functions.
  *
  * All functions under test are pure (no React, no DOM, no network).
  * Tests run in the jsdom environment but do not require it.
@@ -166,13 +166,13 @@ describe("filterNodes", () => {
     expect(result[0].name).toBe("db-server");
   });
 
-  it("filters by severity array — returns only critical nodes", () => {
+  it("filters by severity array -- returns only critical nodes", () => {
     const result = filterNodes(nodes, { search: "", severities: ["critical"] });
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe(1);
   });
 
-  it("filters by severity array — multiple severities act as OR", () => {
+  it("filters by severity array -- multiple severities act as OR", () => {
     const result = filterNodes(nodes, { search: "", severities: ["critical", "high"] });
     expect(result).toHaveLength(2);
   });
@@ -188,7 +188,7 @@ describe("filterNodes", () => {
   });
 
   it("applies both search and severity when both are set", () => {
-    // "web" matches web-server which is critical — should appear
+    // "web" matches web-server which is critical -- should appear
     const result = filterNodes(nodes, { search: "web", severities: ["critical"] });
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe("web-server");

@@ -1,4 +1,4 @@
-"""VR v0.1 benchmark — parametrized over 20 retired CVEs.
+"""VR v0.1 benchmark -- parametrized over 20 retired CVEs.
 
 These tests validate the benchmark data file itself (schema, coverage,
 consistency) without requiring live infrastructure. The actual end-to-end

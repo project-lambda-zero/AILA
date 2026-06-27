@@ -3,7 +3,7 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 
 /**
- * AilaProgress — cyber-tech progress bar with leading light sweep.
+ * AilaProgress -- cyber-tech progress bar with leading light sweep.
  *
  * Structural treatment lifted from the dashboard spec, AILA colour
  * tokens applied:
@@ -13,11 +13,11 @@ import { cn } from "@/lib/utils"
  *   - Light sweep: 16px-wide white-tinted glare with 2px blur at the
  *     leading edge of the fill, fades over the right 12% of the bar.
  *
- * Theme-adaptive automatically — synthwave shows pink fill, vaporwave
+ * Theme-adaptive automatically -- synthwave shows pink fill, vaporwave
  * navy, aero blue, ps2 cyan, cyberpunk yellow, etc.
  *
  * The base bar respects prefers-reduced-motion via the standard CSS
- * transition stack — the fill width animates, the sweep does not move.
+ * transition stack -- the fill width animates, the sweep does not move.
  *
  * @example
  * ```tsx
@@ -60,7 +60,7 @@ export function AilaProgress({
               "linear-gradient(to right, color-mix(in srgb, var(--color-accent) 60%, transparent), var(--color-accent))",
           }}
         >
-          {/* Leading-edge light sweep — 16px wide, blurred, sits at the
+          {/* Leading-edge light sweep -- 16px wide, blurred, sits at the
               right edge of the fill so it tracks the progress front. */}
           <span
             aria-hidden

@@ -3,14 +3,14 @@
 Watches every tool result. When the result matches a known dead-end
 pattern (agent reading past EOF, agent looping on broken indexer,
 agent re-fetching a hallucinated symbol), the system POSTS an
-operator message to the investigation with the corrective info —
+operator message to the investigation with the corrective info --
 the exact same DB write the human operator does through the UI's
 chat composer.
 
 The auto-posted message lands at the TOP of every branch's prompt
-on the next turn under ``*** OPERATOR STEERING — MANDATORY OVERRIDE ***``
+on the next turn under ``*** OPERATOR STEERING -- MANDATORY OVERRIDE ***``
 just like an operator-typed message. The agent has no way to tell
-human steering apart from auto steering — that's intentional. The
+human steering apart from auto steering -- that's intentional. The
 goal is to short-circuit predictable loops without waiting for the
 operator to notice.
 
@@ -28,7 +28,7 @@ Each rule has three parts:
   ``sender_id='auto_steering'``, ``operator_intent='steering'``.
 
 Each rule is keyed so duplicate corrections within the same
-investigation don't spam — a row already posted with the same
+investigation don't spam -- a row already posted with the same
 ``auto_steering_key`` is skipped.
 """
 from __future__ import annotations
@@ -56,13 +56,13 @@ __all__ = ["maybe_post_auto_steering"]
 
 _log = logging.getLogger(__name__)
 
-# fix §337 — auto-steering swallows every error so a tool result is
+# fix §337 -- auto-steering swallows every error so a tool result is
 # never derailed by a rule-evaluation bug. The swallow hides systemic
 # failures (bridge unreachable, schema drift in raw_result, …). Track
 # consecutive failures: after _FAILURE_ESCALATION_THRESHOLD in a row,
 # escalate to ERROR + reset the counter so the operator log surfaces
 # the systemic problem instead of one-off warnings drowning in noise.
-# Module-level int is safe — auto-steering runs serially per tool call
+# Module-level int is safe -- auto-steering runs serially per tool call
 # inside a single worker; the GIL makes the read-modify-write atomic
 # enough for a coarse threshold counter (no precision needed).
 _FAILURE_ESCALATION_THRESHOLD = 5
@@ -72,7 +72,7 @@ _consecutive_failures = 0
 def _normalize_acked_observable(raw: object) -> list[str]:
     """Canonicalise the ``_acked_operator_messages`` observable shape.
 
-    fix §333 — the agent prompt historically demonstrated a comma-separated
+    fix §333 -- the agent prompt historically demonstrated a comma-separated
     string, but the new canonical shape is a list-of-strings. Both shapes
     are accepted at read time so legacy case_state rows still resolve;
     new prompt guidance demonstrates the list shape exclusively.
@@ -99,7 +99,7 @@ def _detect_read_lines_past_eof(
 ) -> bool:
     """``read_lines`` returned in-bounds slice but requested range
     extended past file end. Bridge already sets ``total_lines_in_file``
-    in its response — we just compare against the requested ``end``."""
+    in its response -- we just compare against the requested ``end``."""
     if (server_id, tool_name) != ("audit_mcp", "read_lines"):
         return False
     total = raw.get("total_lines_in_file")
@@ -142,7 +142,7 @@ def _detect_read_lines_file_not_found(
 ) -> bool:
     """``read_lines`` returned ``status=error`` with a file-not-found
     message. Symptom of an agent chasing a path that doesn't exist in
-    the indexed tree — most commonly a function whose canonical path
+    the indexed tree -- most commonly a function whose canonical path
     sits in a sibling repo not indexed alongside the primary target
     (e.g. ``srclib/apr-util/...`` querying the httpd-only index).
 
@@ -170,7 +170,7 @@ def _detect_tool_kwarg_rejected(
     change, so a steering message naming the correct signature is the
     only thing that unblocks the loop.
 
-    Restricted to audit_mcp for now — the bridge validator at
+    Restricted to audit_mcp for now -- the bridge validator at
     ``audit_mcp_bridge._validate_kwargs`` is the source of these
     rejections. Other MCP servers may use different phrasings.
     """
@@ -237,7 +237,7 @@ async def _derive_eof_correction(
         return (
             f"AUTO-STEERING: you asked read_lines for lines past line "
             f"{total} of `{file_path}` but the file ends at {total}. "
-            f"A semantic_search for {query!r} returned zero hits — the "
+            f"A semantic_search for {query!r} returned zero hits -- the "
             f"symbol you're looking for may not exist in this codebase. "
             f"Stop re-requesting the same range; either pivot to a "
             f"different symbol or submit a no-finding."
@@ -258,7 +258,7 @@ async def _derive_eof_correction(
         f"A semantic_search for {query!r} found the real location:\n"
         + "\n".join(hits) + "\n"
         f"Call read_lines on one of those file:line ranges. STOP "
-        f"re-requesting lines past line {total} of `{file_path}` — "
+        f"re-requesting lines past line {total} of `{file_path}` -- "
         f"the content you expect there does not exist in this file."
     )
 
@@ -301,7 +301,7 @@ async def _derive_file_header_correction(
     if not real_hits:
         return (
             f"AUTO-STEERING: read_function({function_name!r}) returned the "
-            f"file header instead of the function body — audit_mcp's "
+            f"file header instead of the function body -- audit_mcp's "
             f"indexer has lost the symbol's true location. semantic_search "
             f"for {function_name!r} also did not surface a clear chunk. "
             f"Try semantic_search with a more specific query that "
@@ -329,7 +329,7 @@ async def _derive_file_not_found_correction(
     """For read_lines file-not-found: surface semantic_search hits for
     whatever the branch was last looking for, then explicitly warn that
     the requested path is not in the indexed tree. This is the most
-    common "chasing a phantom" failure mode — the agent assumes a
+    common "chasing a phantom" failure mode -- the agent assumes a
     canonical upstream layout (e.g. ``srclib/apr-util/...``) that the
     actual indexed repo doesn't carry.
     """
@@ -371,7 +371,7 @@ async def _derive_file_not_found_correction(
             f"AUTO-STEERING: read_lines({file_path!r}) returned "
             f"`file not found`. The path is not in the index "
             f"(index_id={index_id!r}). A semantic_search for "
-            f"{query!r} ALSO returned zero hits — the symbol is "
+            f"{query!r} ALSO returned zero hits -- the symbol is "
             f"almost certainly NOT in this indexed tree. The function "
             f"may live in a sibling repo (e.g. apr-util sits outside "
             f"httpd trunk, MozillaIPDL outside Firefox-core, etc.). "
@@ -388,7 +388,7 @@ async def _derive_file_not_found_correction(
         + "\n".join(hits) + "\n"
         "Call read_lines on one of those file:line ranges. If none "
         "matches the function you mean, the function likely lives in "
-        "a sibling repo not indexed here — terminal_submit with a "
+        "a sibling repo not indexed here -- terminal_submit with a "
         "no-finding outcome rather than retry the same dead path."
     )
 
@@ -399,19 +399,19 @@ async def _derive_kwarg_rejected_correction(
     """For bridge kwarg rejections: surface the bridge's error message
     verbatim (it already names the bad/missing kwarg) and explicitly
     instruct the agent that retrying with the same arg shape will keep
-    failing. The correction is synchronous — no remote calls needed
+    failing. The correction is synchronous -- no remote calls needed
     since the bridge already produced the actionable detail."""
     arg_names = sorted(attempted_args.keys())
     return (
         f"AUTO-STEERING: {tool_name} REJECTED your call signature. "
         f"Bridge error:\n\n  {raw_error}\n\n"
         f"You passed kwargs: {arg_names}. The error names the missing "
-        f"or unknown kwarg — VARYING THE VALUE will not help, the arg "
+        f"or unknown kwarg -- VARYING THE VALUE will not help, the arg "
         f"NAME or SHAPE is wrong. Re-read the tool signature from the "
         f"# Available tools section of your prompt. If the tool isn't "
         f"listed there, it is not available to you and you must use "
         f"a different one. Do NOT call {tool_name} again with the "
-        f"same kwarg shape — pivot or submit a finding noting the "
+        f"same kwarg shape -- pivot or submit a finding noting the "
         f"obstacle."
     )
 
@@ -457,7 +457,7 @@ async def _already_posted(
     """De-dupe: skip when an auto-steering with the same key already
     exists for this investigation AND has not yet been acknowledged.
 
-    fix §331 + §332 — query by the new indexed
+    fix §331 + §332 -- query by the new indexed
     ``auto_steering_key`` column (migration 063) instead of scanning
     a fixed LIMIT 40 of recent messages and parsing payload_json. The
     old LIMIT was too small for the 6-branch fan-out where each branch
@@ -481,7 +481,7 @@ async def _already_posted(
         if not rows:
             return False
         matching_ids: list[str] = [row.id for row in rows]
-        # fix §334 — bound the branch scan to the most recent 50 branches
+        # fix §334 -- bound the branch scan to the most recent 50 branches
         # by created_at. Investigations with hundreds of sibling branches
         # were paying O(N branches × case_state size) on every auto-steering
         # check; this caps it at 50 which still covers every live persona
@@ -504,7 +504,7 @@ async def _already_posted(
             all_acks.update(_normalize_acked_observable(acked_raw))
         # If any matching steering is still un-ack'd, block re-post
         # (agent hasn't yet acted on the existing one). When ALL
-        # matching steerings are ack'd, allow re-post — the agent
+        # matching steerings are ack'd, allow re-post -- the agent
         # has formally acknowledged the prior corrections and the
         # condition is recurring fresh.
         unacked = [m for m in matching_ids if m not in all_acks]
@@ -523,18 +523,18 @@ async def _post(
     every sibling (the message loader treats primary-addressed as
     broadcast).
 
-    fix §331/§332 — populate the new ``auto_steering_key`` column on
+    fix §331/§332 -- populate the new ``auto_steering_key`` column on
     the row itself so :func:`_already_posted` can dedup via an exact
     indexed lookup. The legacy ``payload_json.auto_steering_key`` is
     kept for one release so older message renderers still surface
     the metadata.
 
-    fix §338 — the partial-UNIQUE index on
+    fix §338 -- the partial-UNIQUE index on
     ``(investigation_id, auto_steering_key)`` (migration 063) collapses
     the fire-then-check race to a database-level no-op: a concurrent
     second writer that observed an empty ``_already_posted`` will hit
     ``IntegrityError`` on insert, which is the correct outcome. We
-    catch it and return ``None`` — the first writer wins, the second
+    catch it and return ``None`` -- the first writer wins, the second
     silently observes the row.
     """
     async with UnitOfWork() as uow:
@@ -565,7 +565,7 @@ async def _post(
         try:
             await uow.commit()
         except IntegrityError as exc:
-            # fix §338 — unique constraint on (inv, key) raced us. The
+            # fix §338 -- unique constraint on (inv, key) raced us. The
             # first writer wins; we return None so the caller sees
             # "already posted". Rollback is automatic on session exit.
             _log.info(
@@ -650,7 +650,7 @@ async def _evaluate_rules(
     # Rule 4: bridge rejected kwarg shape
     if _detect_tool_kwarg_rejected(server_id, tool_name, args, raw_result):
         raw_err = str(raw_result.get("error") or "")
-        # fix §339 — replace fragile ``raw_err.split(':', 1)[0]``
+        # fix §339 -- replace fragile ``raw_err.split(':', 1)[0]``
         # err_class extraction (drifts whenever the bridge changes
         # its error wording) with a structural key based on the
         # call shape itself. Same tool + same arg-name set always
@@ -686,7 +686,7 @@ async def maybe_post_auto_steering(
 
     Best-effort: any error is logged and swallowed so a failure in
     the auto-steering path can never derail the actual tool result.
-    fix §337 — consecutive failures are counted; the
+    fix §337 -- consecutive failures are counted; the
     :data:`_FAILURE_ESCALATION_THRESHOLD`-th failure in a row escalates
     the swallowed warning to ERROR so a systemic problem (bridge down,
     raw_result schema drift) surfaces instead of drowning in noise.
@@ -694,7 +694,7 @@ async def maybe_post_auto_steering(
     global _consecutive_failures
     if not raw_result:
         return None
-    # NOTE: do NOT early-return on status != "ready" — error responses
+    # NOTE: do NOT early-return on status != "ready" -- error responses
     # are the trigger for Rule 3 (file_not_found) and Rule 4 (kwarg
     # rejected). Each rule's detector decides whether it cares about
     # the response shape.
@@ -714,10 +714,10 @@ async def maybe_post_auto_steering(
     ) as exc:
         _consecutive_failures += 1
         if _consecutive_failures >= _FAILURE_ESCALATION_THRESHOLD:
-            # fix §350 — escalation includes traceback so operator can
+            # fix §350 -- escalation includes traceback so operator can
             # diagnose systemic root cause from a single log line.
             _log.error(
-                "auto_steering: %d consecutive rule-evaluation failures — "
+                "auto_steering: %d consecutive rule-evaluation failures -- "
                 "likely systemic (bridge down, raw_result schema drift, "
                 "ack-observable corruption). Latest inv=%s branch=%s "
                 "tool=%s err=%s",
@@ -727,7 +727,7 @@ async def maybe_post_auto_steering(
             )
             _consecutive_failures = 0
         else:
-            # fix §350 — traceback also on the per-occurrence warning;
+            # fix §350 -- traceback also on the per-occurrence warning;
             # first-failure debugging shouldn't have to wait for the
             # escalation threshold.
             _log.warning(
@@ -738,7 +738,7 @@ async def maybe_post_auto_steering(
                 exc_info=True,
             )
         return None
-    # Clean run — reset the counter so transient hiccups don't
+    # Clean run -- reset the counter so transient hiccups don't
     # accumulate forever.
     if _consecutive_failures:
         _consecutive_failures = 0

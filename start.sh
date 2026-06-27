@@ -64,7 +64,7 @@ RUN_DIR=".run"
 mkdir -p "$RUN_DIR" 2>/dev/null || true
 RUN_DIR_ABS="$PWD/$RUN_DIR"
 # On Git Bash, convert /c/... to C:/... so PowerShell + cmd accept it.
-# On WSL bash, do the same via wslpath — /mnt/c/... is not a path
+# On WSL bash, do the same via wslpath -- /mnt/c/... is not a path
 # Windows cmd.exe can open for stdout redirection, which silently kills
 # every spawned worker the moment cmd tries to apply "> path 2>&1".
 if command -v cygpath >/dev/null 2>&1; then
@@ -73,7 +73,7 @@ elif command -v wslpath >/dev/null 2>&1; then
   RUN_DIR_ABS=$(wslpath -m "$RUN_DIR_ABS" 2>/dev/null || echo "$RUN_DIR_ABS")
 fi
 # Last-ditch fallback: some WSL distros lack wslpath. Convert
-# /mnt/X/... to X:/... by hand. Idempotent — no-op when RUN_DIR_ABS
+# /mnt/X/... to X:/... by hand. Idempotent -- no-op when RUN_DIR_ABS
 # is already a Windows path.
 case "$RUN_DIR_ABS" in
   /mnt/?/*)
@@ -112,7 +112,7 @@ for candidate in \
     break
   fi
 done
-# taskkill is optional — we fall back to PowerShell Stop-Process when missing.
+# taskkill is optional -- we fall back to PowerShell Stop-Process when missing.
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -132,7 +132,7 @@ load_env() {
 # processes (android-mcp, vr workers) can find apksigner / aapt /
 # zipalign even though the SDK installer never adds build-tools to
 # PATH on any OS. Belt-and-suspenders with android-mcp's own resolver
-# at android_mcp/sdk_discovery.py — that resolver also probes the
+# at android_mcp/sdk_discovery.py -- that resolver also probes the
 # same per-OS defaults, but exporting the env var here makes the
 # choice visible (logs + tools see ANDROID_SDK_ROOT=...).
 #
@@ -150,10 +150,10 @@ detect_android_sdk() {
   # linux-gnu running against a Windows-side SDK via /mnt/c, Git
   # Bash on macOS, MSYS2 vs Cygwin vs WSL variants, etc.
   local candidates=()
-  # Env-derived (Windows-style) — empty / unset on POSIX, harmless.
+  # Env-derived (Windows-style) -- empty / unset on POSIX, harmless.
   [[ -n "${LOCALAPPDATA:-}" ]] && candidates+=("$LOCALAPPDATA/Android/Sdk")
   [[ -n "${ProgramFiles:-}" ]] && candidates+=("$ProgramFiles/Android/android-sdk")
-  # WSL/cygwin /mnt/c style Windows-on-Linux discovery — only meaningful
+  # WSL/cygwin /mnt/c style Windows-on-Linux discovery -- only meaningful
   # when bash is running inside WSL. Outside WSL these paths simply
   # don't exist and the loop skips them.
   if [[ -n "${USER:-}" ]]; then
@@ -210,7 +210,7 @@ tree_kill_pid() {
   " 2>/dev/null || true
 }
 
-# Write a tracked PID to .run/<slug>.pid. Append-only — multiple PIDs per
+# Write a tracked PID to .run/<slug>.pid. Append-only -- multiple PIDs per
 # label (rare) are space-separated on one line.
 record_pid() {
   local label="$1"
@@ -242,7 +242,7 @@ kill_tracked_pids() {
     while IFS= read -r pidv; do
       [[ -z "$pidv" ]] && continue
       # Is the PID still alive? PowerShell Get-Process returns non-zero exit
-      # when the process is gone. We tree-kill unconditionally — taskkill
+      # when the process is gone. We tree-kill unconditionally -- taskkill
       # silently no-ops on dead PIDs anyway.
       tree_kill_pid "$pidv"
       killed=$((killed + 1))
@@ -269,7 +269,7 @@ kill_matching() {
 }
 
 kill_by_cmdline_substring() {
-  # FALLBACK ONLY — used when tracked pidfiles are missing (orphans from
+  # FALLBACK ONLY -- used when tracked pidfiles are missing (orphans from
   # a hard reboot, manual taskmgr kill, etc). Kill every python.exe whose
   # cmdline contains the given substring.
   local needle="$1"
@@ -311,15 +311,15 @@ kill_aila_processes() {
 # Spawn detached python via PowerShell Start-Process -PassThru. Captures
 # the spawned PID and records it under .run/<slug>.pid so ``stop`` can
 # tree-kill it reliably without having to grep cmdlines. Inherits the
-# CALLER's cwd — caller must ``cd`` into the right repo before invoking.
+# CALLER's cwd -- caller must ``cd`` into the right repo before invoking.
 #
 # stdout + stderr are merged into ${RUN_DIR_ABS}/<slug>.log via a `cmd /c`
-# wrapper (Start-Process cannot redirect both streams to the SAME file —
+# wrapper (Start-Process cannot redirect both streams to the SAME file --
 # PowerShell rejects it as "duplicate path"). Previous session's log is
 # rotated to .prev so each restart starts clean while one history step
 # remains debuggable. The returned PID is cmd.exe; the python child is
 # the sole descendant so ``taskkill /PID <cmd_pid> /T /F`` in
-# kill_tracked_pids takes both down together — identical lifecycle to
+# kill_tracked_pids takes both down together -- identical lifecycle to
 # the prior direct-spawn path.
 spawn() {
   local label="$1"; shift
@@ -361,7 +361,7 @@ spawn() {
   log_path="${RUN_DIR_ABS}/${slug}.log"
   # Rotate one generation so a fresh restart doesn't lose the prior
   # session's tail (often where the crash that triggered the restart
-  # lives). Keep only one .prev — unbounded rotation accumulates trash.
+  # lives). Keep only one .prev -- unbounded rotation accumulates trash.
   [[ -f "$log_path" ]] && mv -f "$log_path" "${log_path}.prev" 2>/dev/null
   local pidv
   pidv=$("$PS" -NoProfile -Command \
@@ -421,9 +421,9 @@ show_status() {
         fi
       done < "$f"
     done
-    [[ "$any" == "0" ]] && echo "  (none — start first)"
+    [[ "$any" == "0" ]] && echo "  (none -- start first)"
   else
-    echo "  (no .run/ — start first)"
+    echo "  (no .run/ -- start first)"
   fi
   echo ""
   echo "[aila] All matching processes (scan):"
@@ -445,12 +445,12 @@ show_status() {
 
 # Per-service restart helper: stop just one named service, re-run start.sh.
 # Idempotent restart of a single tracked service. Two-phase kill:
-#   1. Tree-kill the recorded pidfile (if present) — owns the happy path.
-#   2. (optional) Sweep whoever currently holds $port — owns the case
+#   1. Tree-kill the recorded pidfile (if present) -- owns the happy path.
+#   2. (optional) Sweep whoever currently holds $port -- owns the case
 #      where the pidfile got lost (manual cleanup, partial stop, crash
 #      mid-spawn) but a previous process is still squatting the port.
 #      Without this, restart silently no-ops then spawns a new process
-#      that fails to bind and dies inside the cmd.exe wrapper —
+#      that fails to bind and dies inside the cmd.exe wrapper --
 #      Start-Process -PassThru only reports the wrapper's success.
 restart_one() {
   local svc="$1"
@@ -467,7 +467,7 @@ restart_one() {
     rm -f "$pidfile"
   fi
   if [[ -n "$port" ]]; then
-    # Sweep any process still listening on $port. Idempotent — no-op
+    # Sweep any process still listening on $port. Idempotent -- no-op
     # when the pidfile kill already cleared it.
     kill_port_owner "$port"
     sleep 1
@@ -497,11 +497,11 @@ worker_count_for() {
 #   2. Tree-kill every indexed pidfile (worker-<q>-1.pid ... -20.pid).
 #   3. Cmdline-sweep ANY surviving python.exe whose argv contains
 #      `aila worker -q <q>`. Workers have no port so kill_port_owner
-#      doesn't apply — kill_matching with a queue-anchored regex is
+#      doesn't apply -- kill_matching with a queue-anchored regex is
 #      the equivalent fallback for "pidfile vanished, real process
 #      still running stale code". Without this, restart_pool was
 #      pidfile-only: a missing pidfile silently no-op'd the kill loop,
-#      then spawn() layered fresh workers ON TOP of the orphans —
+#      then spawn() layered fresh workers ON TOP of the orphans --
 #      producing N×2 (or worse) workers, half on the new code half on
 #      the old, racing each ARQ job. Same symptom as restart_one's
 #      stale uvicorn bug (commit c562074); same shape of fix.
@@ -521,7 +521,7 @@ restart_pool() {
   for ((i=1; i<=20; i++)); do
     [[ -f "$RUN_DIR/worker-$q-$i.pid" ]] && restart_one "worker-$q-$i"
   done
-  # Cmdline-sweep fallback (see header). Idempotent — no-op when the
+  # Cmdline-sweep fallback (see header). Idempotent -- no-op when the
   # pidfile kills already cleared the process; fatal to orphans when
   # they didn't.
   kill_matching "python.exe" "aila worker -q ${q}(\$| )"
@@ -587,7 +587,7 @@ if [[ "$AILA_START_AUDIT_MCP" == "1" && -d "$AUDIT_MCP_DIR" ]]; then
   echo "[aila] Starting audit-mcp (workers=${AUDIT_MCP_WORKERS})..."
   # NOTE: PowerShell Start-Process does NOT inherit bash env vars on
   # Windows. AUDIT_MCP_WORKERS MUST be passed as a CLI flag here, not
-  # exported — the AUDIT_MCP_WORKERS= prefix in front of spawn won't
+  # exported -- the AUDIT_MCP_WORKERS= prefix in front of spawn won't
   # reach the spawned python process. The --workers flag wins over
   # the env-var path in audit_mcp's argparse.
   (
@@ -606,7 +606,7 @@ fi
 # ── ida-headless-mcp (in its own repo) ──────────────────────────────────────
 # Same launcher pattern as audit-mcp: detached background python via the
 # spawn helper. Uses `ida_headless_mcp.server:main_http` (mirrors every
-# MCP tool as a POST endpoint, no stdio plumbing — what the VR
+# MCP tool as a POST endpoint, no stdio plumbing -- what the VR
 # IDABridgeTool talks to). Without this MCP up, every `_rank_binary` /
 # `_gather_binary_signals` / `assess_exploitability` call from the VR
 # engine returns "Unreachable" and stalls binary-target investigations
@@ -629,7 +629,7 @@ if [[ "$AILA_START_IDA_HEADLESS" == "1" && -d "$IDA_HEADLESS_DIR" ]]; then
     record_pid "ida-headless" "$IDA_HEADLESS_PID"
     echo "[aila]   ida-headless started (PID $IDA_HEADLESS_PID)"
   else
-    echo "[aila]   WARNING: ida-headless launch failed — is ida-headless-http on PATH?"
+    echo "[aila]   WARNING: ida-headless launch failed -- is ida-headless-http on PATH?"
   fi
 elif [[ "$AILA_START_IDA_HEADLESS" == "1" ]]; then
   echo "[aila]   WARNING: IDA_HEADLESS_DIR not found: $IDA_HEADLESS_DIR (skipping ida-headless)"
@@ -651,7 +651,7 @@ spawn "backend" \
 # fails with WSAEADDRINUSE on a port nothing is actually serving.
 # Selector loop releases sockets cleanly on exit.
 # NO --reload on Windows: it spawns child workers that get orphaned on
-# kill, and orphans keep holding the TCP socket via the kernel — new
+# kill, and orphans keep holding the TCP socket via the kernel -- new
 # requests hit STALE code while you assume the latest edit is live.
 # Code changes require an explicit ``bash start.sh restart``.
 
@@ -683,7 +683,7 @@ fi
 
 # ── Health check ────────────────────────────────────────────────────────────
 echo ""
-echo "[aila] Spawned. Health may take a few seconds — re-run 'bash start.sh status' if any service is red."
+echo "[aila] Spawned. Health may take a few seconds -- re-run 'bash start.sh status' if any service is red."
 show_status
 echo ""
 echo "[aila] Restart: bash start.sh restart"

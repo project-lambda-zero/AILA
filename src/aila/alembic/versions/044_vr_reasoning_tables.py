@@ -1,12 +1,12 @@
-"""044 — VR reasoning subsystem foundation (M3.R-1).
+"""044 -- VR reasoning subsystem foundation (M3.R-1).
 
 Creates four new tables for the reasoning subsystem:
-  vr_investigations          — one operator-initiated reasoning session
-  vr_investigation_branches  — per-investigation hypothesis branches (D-41)
-  vr_investigation_messages  — conversational messages (D-43)
-  vr_investigation_outcomes  — typed outcomes (D-43, 11 kinds)
+  vr_investigations          -- one operator-initiated reasoning session
+  vr_investigation_branches  -- per-investigation hypothesis branches (D-41)
+  vr_investigation_messages  -- conversational messages (D-43)
+  vr_investigation_outcomes  -- typed outcomes (D-43, 11 kinds)
 
-Audit memos (D-38) do NOT get a dedicated table — they ride on the
+Audit memos (D-38) do NOT get a dedicated table -- they ride on the
 existing platform KnowledgeEntryRecord (pgvector 384-dim + HNSW +
 tsvector FTS) via namespace ``vr.audit_memo.<scope>``. No new vector
 store.

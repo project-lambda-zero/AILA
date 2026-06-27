@@ -2,18 +2,18 @@
 
 Two responsibilities:
 
-1. **ingest_cve(body)** — upsert a single CVE record (idempotent on
+1. **ingest_cve(body)** -- upsert a single CVE record (idempotent on
    cve_id). On insert, embed the description via KnowledgeService and
    search for similar audit memos. Each match above the similarity
    threshold gets an invalidation_event recorded on the memo's
    metadata.
 
-2. **list_invalidations_for_memo(entry_id)** — read all invalidation
+2. **list_invalidations_for_memo(entry_id)** -- read all invalidation
    events that have been recorded for one memo entry. Used by the
    operator UI to surface "this memo may be outdated".
 
 The actual NVD / GHSA poller is deferred to the operator-run cron task
-``poll_cve_feeds`` — out of scope for the service layer. v1 ships the
+``poll_cve_feeds`` -- out of scope for the service layer. v1 ships the
 ingest endpoint; operators can manually POST CVEs via API.
 """
 from __future__ import annotations

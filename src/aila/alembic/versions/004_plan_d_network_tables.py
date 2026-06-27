@@ -1,4 +1,4 @@
-"""Plan D network discovery tables — system ports, services, and connections.
+"""Plan D network discovery tables -- system ports, services, and connections.
 
 Revision ID: 004_plan_d_network_tables
 Revises: 003_plan_c_endpoint_tables

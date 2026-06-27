@@ -6,7 +6,7 @@ import { isErrorEnvelope, type ErrorEnvelope } from "./errorEnvelope";
  * Shared react-query error handler (D-10c, D-24).
  *
  * Wired into QueryClient via QueryCache/MutationCache constructor onError
- * (TanStack Query v5 — preflight FE-A) at the providers.tsx call site.
+ * (TanStack Query v5 -- preflight FE-A) at the providers.tsx call site.
  * The handler is defensive:
  *   - parses ErrorEnvelope shapes (direct or nested under `.response.data`)
  *   - treats network-layer TypeError as an offline-style toast
@@ -63,7 +63,7 @@ function handleAuthFailure(err: unknown): boolean {
       const { useAuthStore } = await import("@platform/auth/useAuthStore");
       useAuthStore.getState().logout();
     } catch {
-      /* swallow — fall through to hard redirect below */
+      /* swallow -- fall through to hard redirect below */
     }
     if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
       const next = encodeURIComponent(window.location.pathname + window.location.search);
@@ -87,7 +87,7 @@ export function apiErrorHandler(err: unknown): void {
 
     // Network-layer failures (fetch offline, CORS) surface as TypeError.
     if (err instanceof TypeError && /fetch|network/i.test(err.message)) {
-      toast.error("Network request failed — check your connection.");
+      toast.error("Network request failed -- check your connection.");
       return;
     }
 
@@ -103,7 +103,7 @@ export function apiErrorHandler(err: unknown): void {
 
     toast.error("An error occurred.");
   } catch (inner) {
-    // Never rethrow from the handler — it runs in framework critical paths.
+    // Never rethrow from the handler -- it runs in framework critical paths.
     console.error("apiErrorHandler failed", inner);
   }
 }

@@ -1,4 +1,4 @@
-"""049 — Branch strategy_family column (v0.4 GA-50).
+"""049 -- Branch strategy_family column (v0.4 GA-50).
 
 Multi-strategy parallel branches. A v0.4 investigation can run N
 strategy branches in parallel (discovery_research + variant_hunt +

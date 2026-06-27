@@ -1,5 +1,5 @@
 /**
- * radar-page.spec.ts — Smoke tests for /radar network topology page.
+ * radar-page.spec.ts -- Smoke tests for /radar network topology page.
  *
  * Coverage:
  *   - Page loads with correct title
@@ -7,7 +7,7 @@
  *   - ReactFlow canvas or empty state renders after API call
  *   - No critical JavaScript errors on load
  *
- * Uses real PostgreSQL backend — no mocks.
+ * Uses real PostgreSQL backend -- no mocks.
  * Admin token is used (admin role satisfies operator requirement).
  */
 import { test, expect } from "@playwright/test";
@@ -55,7 +55,7 @@ test.describe("Radar page", () => {
     const hasReactFlow = await reactFlowCanvas.isVisible().catch(() => false);
     const hasEmpty = await emptyStateText.isVisible().catch(() => false);
 
-    // At least one must render — the page must not be blank
+    // At least one must render -- the page must not be blank
     expect(hasReactFlow || hasEmpty).toBe(true);
   });
 

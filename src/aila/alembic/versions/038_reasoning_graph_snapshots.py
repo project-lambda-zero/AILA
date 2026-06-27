@@ -1,4 +1,4 @@
-"""038 — add reasoning_graph_snapshots platform table.
+"""038 -- add reasoning_graph_snapshots platform table.
 
 Durable storage for platform-owned reasoning/evidence graph snapshots emitted
 per turn by reasoning-engine consumers (starting with forensics freeflow).

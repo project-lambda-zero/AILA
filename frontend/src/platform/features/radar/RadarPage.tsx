@@ -1,5 +1,5 @@
 /**
- * RadarPage.tsx — Network Radar page at /radar (Phase 144).
+ * RadarPage.tsx -- Network Radar page at /radar (Phase 144).
  *
  * Assembles the ReactFlow topology graph with toolbar and inspect panel.
  * Operator+ role required (enforced in router.tsx and by the backend).

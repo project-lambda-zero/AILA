@@ -1,7 +1,7 @@
 """Typed Pydantic input models for every workflow state.
 
 Replaces the implicit `input.get("foo", default)` pattern where missing kwargs
-silently degraded to empty strings or wrong types — the bug class that caused
+silently degraded to empty strings or wrong types -- the bug class that caused
 the runaway `Get-ChildItem -Recurse -Path ''` wedge and the forever-pending
 investigations. Each state handler now parses its input into one of these
 models up-front, so a missing field raises ValidationError with a clear

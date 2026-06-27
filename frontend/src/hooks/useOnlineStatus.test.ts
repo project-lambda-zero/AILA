@@ -1,5 +1,5 @@
 /**
- * useOnlineStatus.test.ts — unit tests for the useOnlineStatus hook.
+ * useOnlineStatus.test.ts -- unit tests for the useOnlineStatus hook.
  *
  * Tests navigator.onLine tracking and localStorage lastSyncTime reading.
  * Uses jsdom environment (configured in vitest.config.ts).

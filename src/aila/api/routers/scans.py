@@ -1,11 +1,11 @@
 """Scan submission and status polling router for AILA REST API.
 
 Endpoints:
-  POST /analyze — submit vulnerability scan via task queue (API-01, ASYNC-01)
-  GET /scans/{run_id} — poll scan status for authenticated user (API-02, ASYNC-02, ASYNC-06)
-  GET /scans/{run_id}/events — SSE stream of scan progress (ASYNC-03, ASYNC-04)
+  POST /analyze -- submit vulnerability scan via task queue (API-01, ASYNC-01)
+  GET /scans/{run_id} -- poll scan status for authenticated user (API-02, ASYNC-02, ASYNC-06)
+  GET /scans/{run_id}/events -- SSE stream of scan progress (ASYNC-03, ASYNC-04)
 
-Per D-03: handle() NEVER runs in Starlette threadpool — always via ARQ background job.
+Per D-03: handle() NEVER runs in Starlette threadpool -- always via ARQ background job.
 Per HANG-03: TaskQueue.submit() is sync; always wrap in asyncio.to_thread().
 """
 from __future__ import annotations
@@ -198,7 +198,7 @@ async def stream_scan_events(
 
     if not pool_available():
         async def _no_redis_generator() -> AsyncGenerator[str, None]:
-            msg = json.dumps({"message": "Redis not configured — no progress stream available"})
+            msg = json.dumps({"message": "Redis not configured -- no progress stream available"})
             yield f"data: {msg}\n\n"
 
         return StreamingResponse(
@@ -239,7 +239,7 @@ async def stream_scan_events(
                 if stage:
                     latest_stage = stage
             # ProgressStream.catchup returns events without their stream ids
-            # today, so use "$" to mean "only new events from here" — avoids
+            # today, so use "$" to mean "only new events from here" -- avoids
             # the duplicate replay reported by operators.
             resume_from = "$"
         except Exception as exc:

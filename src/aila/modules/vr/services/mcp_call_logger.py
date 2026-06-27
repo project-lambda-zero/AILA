@@ -4,7 +4,7 @@ Both ``AuditMcpBridgeTool.forward`` and ``IDABridgeTool.forward`` wrap
 their HTTP call in :func:`record_call` so the operator-visible call log
 captures every delegated action regardless of outcome.
 
-This module is intentionally tiny — no batching, no buffering, no
+This module is intentionally tiny -- no batching, no buffering, no
 emission to events. Writes happen synchronously inline because the
 operator wants to see the call in /vr/mcp/calls within the same second
 it ran.
@@ -85,7 +85,7 @@ async def _write_record(
     target_id: str | None,
     team_id: str | None,
 ) -> None:
-    """Persist one log row. Swallowed errors only — never crash the caller."""
+    """Persist one log row. Swallowed errors only -- never crash the caller."""
     with contextlib.suppress(Exception):
         async with UnitOfWork() as uow:
             row = VRMcpCallLogRecord(

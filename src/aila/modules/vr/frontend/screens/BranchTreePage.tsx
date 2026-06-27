@@ -26,12 +26,12 @@ import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 // Colour-code branches by status. Aligns with the AilaBadge palette so
 // the tree + list views look consistent.
 const STATUS_COLORS: Record<BranchStatus, string> = {
-  active: "#10b981",        // emerald — running
-  paused: "#f59e0b",        // amber — paused
-  merged: "#6366f1",        // indigo — merged in
-  promoted: "#22c55e",      // green — promoted to outcome
-  completed: "#3b82f6",     // blue — completed
-  abandoned: "#ef4444",     // red — abandoned
+  active: "#10b981",        // emerald -- running
+  paused: "#f59e0b",        // amber -- paused
+  merged: "#6366f1",        // indigo -- merged in
+  promoted: "#22c55e",      // green -- promoted to outcome
+  completed: "#3b82f6",     // blue -- completed
+  abandoned: "#ef4444",     // red -- abandoned
 };
 
 const STATUS_BORDER: Record<BranchStatus, string> = {

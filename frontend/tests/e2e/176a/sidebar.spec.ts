@@ -1,5 +1,5 @@
 /**
- * sidebar.spec.ts — D-01, D-02, D-27.
+ * sidebar.spec.ts -- D-01, D-02, D-27.
  *
  * - D-01: sidebar renders the "Console" label (the rename from "Scans").
  * - D-02: sidebar DOM has zero nested <li> hydration violations.
@@ -23,7 +23,7 @@ test.describe("Sidebar (D-01, D-02, D-27)", () => {
     // (a) URL
     await expect(page).toHaveURL(/\/$|\/$/);
 
-    // (b) Render — sidebar present, "Console" label visible.
+    // (b) Render -- sidebar present, "Console" label visible.
     const consoleEntry = page.getByRole("link", { name: /console/i }).first();
     await expect(consoleEntry).toBeVisible({ timeout: 15_000 });
 

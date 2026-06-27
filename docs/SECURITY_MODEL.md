@@ -10,11 +10,11 @@ protections that wrap every endpoint.
 AILA accepts two credential types that resolve to the same JWT-Bearer auth
 context:
 
-1. **User accounts** — username + password (argon2id-hashed) → user JWT pair
+1. **User accounts** -- username + password (argon2id-hashed) → user JWT pair
    (`typ=user_access` + `typ=user_refresh`). Created by an admin via
    `POST /users` or auto-provisioned by OIDC. First-boot admin is created from
    `AILA_ADMIN_PASSWORD`.
-2. **API keys** — `aila_sk_<32 hex>` raw secrets (bcrypt-hashed) → API-key JWT
+2. **API keys** -- `aila_sk_<32 hex>` raw secrets (bcrypt-hashed) → API-key JWT
    pair (`typ=access` + `typ=refresh`). Issued via `POST /auth/keys` (admin),
    the CLI (`aila create-api-key`), or the optional `AILA_BOOTSTRAP_KEY`
    first-boot path.
@@ -64,7 +64,7 @@ UserRecord:
 On startup the lifespan hook checks `user_records`. If the table is empty:
 
 1. Read `AILA_ADMIN_PASSWORD` from the environment.
-2. If unset, **startup fails with `RuntimeError`** — no unprotected admin
+2. If unset, **startup fails with `RuntimeError`** -- no unprotected admin
    account is ever created automatically.
 3. If set, create user `admin` with that password (argon2id-hashed via
    `argon2-cffi`, OWASP defaults: time_cost=3, memory_cost=65536,
@@ -95,7 +95,7 @@ Body: `{"username": ..., "password": ...}`. The handler:
 
 1. Looks up `UserRecord` by `username`.
 2. Returns **401 "Invalid credentials"** on missing user, `is_active=false`,
-   OIDC-only account (no local password), or wrong password — the response
+   OIDC-only account (no local password), or wrong password -- the response
    string is identical for every failure mode (T-138-10: no username
    enumeration).
 3. On success: issues a user JWT pair, updates `last_login_at`, writes a
@@ -126,7 +126,7 @@ revoked server-side independent of JWT expiry.
 |----------|---------|
 | `POST /auth/refresh/user?refresh_token=...` | Verify the refresh token row is not revoked and the user is still active, then issue a new access token. Refresh token is NOT rotated. |
 | `POST /auth/logout?refresh_token=...` | Mark the `RefreshTokenRecord` row revoked. |
-| `GET /auth/sessions` | List the caller's own non-revoked, non-expired refresh sessions (id, ip, user agent, timestamps — never the token hash). |
+| `GET /auth/sessions` | List the caller's own non-revoked, non-expired refresh sessions (id, ip, user agent, timestamps -- never the token hash). |
 | `DELETE /auth/sessions/{session_id}` | Revoke one of the caller's own sessions by row id. |
 
 ---
@@ -229,10 +229,10 @@ Used to obtain new access tokens without re-presenting the original credential.
 | Path | Endpoint | `typ` claim | Server-side row | Default expiry |
 |------|----------|-------------|-----------------|----------------|
 | User account | `POST /auth/refresh/user?refresh_token=...` | `user_refresh` | `RefreshTokenRecord` keyed by SHA-256 of the token | 1 year |
-| API key | `POST /auth/refresh` (Bearer = refresh JWT) | `refresh` | None — revocation rides on `ApiKeyRecord.revoked_at` blacklist | 90 days, `platform.jwt_refresh_expiry_s` |
+| API key | `POST /auth/refresh` (Bearer = refresh JWT) | `refresh` | None -- revocation rides on `ApiKeyRecord.revoked_at` blacklist | 90 days, `platform.jwt_refresh_expiry_s` |
 
 The API-key refresh issues both a new access token AND a new refresh token. The
-old refresh token stays valid until its own `exp` — there is no single-use
+old refresh token stays valid until its own `exp` -- there is no single-use
 enforcement.
 
 The user refresh endpoint does NOT rotate the refresh token; revocation is
@@ -269,7 +269,7 @@ User refresh tokens add a second revocation surface: the SHA-256 hash row in
 `revoked_at` is set, even when the JWT signature itself is still valid.
 
 `safe_exc_message()` (`src/aila/platform/workflows/log.py`) governs how
-exception text is persisted in the audit log table — exceptions are redacted
+exception text is persisted in the audit log table -- exceptions are redacted
 to `type(exc).__name__` by default, so credential strings or stack traces
 cannot leak into `workflowauditrecord` rows. Handler crash text still lands
 in structlog server-side; only the durable audit row is sanitized.
@@ -358,7 +358,7 @@ First boot needs an admin credential of some kind. Two independent paths exist:
 - Set `AILA_ADMIN_PASSWORD=<strong-password>` before first start.
 - The lifespan hook creates user `admin` with that password (argon2id).
 - Startup raises `RuntimeError` if `user_records` is empty and the env var is
-  missing — there is no implicit default password.
+  missing -- there is no implicit default password.
 - Remove `AILA_ADMIN_PASSWORD` from the environment after first boot.
 - Subsequent boots skip the hook because `user_records` is no longer empty.
 
@@ -442,7 +442,7 @@ in `src/aila/api/app.py`):
 | `_reject_oversized_requests` | Rejects any request with `Content-Length > 10 MB` with HTTP 413 + `PAYLOAD_TOO_LARGE`. |
 | `_catch_unhandled_exceptions` | Last-resort 500 wrapper so unhandled exceptions never leak a stack trace to the client. |
 | `_prometheus_request_middleware` | Counts requests and latency per `(method, endpoint, status_code)`. |
-| slowapi `Limiter` | Per-authenticated-user rate-limit buckets derived from the JWT `user_id`/`key_id` claim (signature unverified — bucketing only) with IP fallback. Triggered limits return HTTP 429 via the slowapi exception handler. |
+| slowapi `Limiter` | Per-authenticated-user rate-limit buckets derived from the JWT `user_id`/`key_id` claim (signature unverified -- bucketing only) with IP fallback. Triggered limits return HTTP 429 via the slowapi exception handler. |
 
 ---
 
@@ -455,14 +455,14 @@ The `auth` stage covers both credential paths:
 | Action | Stage | Trigger |
 |--------|-------|---------|
 | `login_success` | `auth` | `POST /auth/login` accepts a credential |
-| `login_failed` | `auth` | `POST /auth/login` rejects a credential — reason recorded server-side in `details_json` |
+| `login_failed` | `auth` | `POST /auth/login` rejects a credential -- reason recorded server-side in `details_json` |
 | `token_issue` | `auth` | `POST /auth/token` issues an API-key JWT |
 | `token_refresh` | `auth` | `POST /auth/refresh` rotates an API-key JWT |
 | `create_api_key` | `auth` | `POST /auth/keys` |
 | `revoke_api_key` | `auth` | `DELETE /auth/keys/{key_id}` |
 
 Other stages (`config`, `scan`, `session`, `system`, `task`, `tool`,
-`finding`) carry the matching actions for their domain — see
+`finding`) carry the matching actions for their domain -- see
 `AUDIT_ACTION_*` constants in `src/aila/api/constants.py`. Seals for LLM
 calls live in `AuditSealRecord`, queryable via `GET /audit/seals` (admin).
 

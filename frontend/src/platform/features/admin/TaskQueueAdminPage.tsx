@@ -3,11 +3,11 @@
  *
  * Operator-facing task list lives at /tasks (TasksPage). This page exposes
  * admin-only queue operations:
- *   GET  /tasks/queue-depth                — task counts by status (OPS-04)
- *   POST /tasks/drain                      — pause new submissions (OPS-05)
- *   POST /tasks/requeue-failed             — requeue recent failures (OPS-05)
- *   GET  /admin/tasks/dead-letter          — list dead-lettered tasks (Phase 178)
- *   POST /admin/tasks/dead-letter/{id}/requeue — manual dead-letter recovery
+ *   GET  /tasks/queue-depth                -- task counts by status (OPS-04)
+ *   POST /tasks/drain                      -- pause new submissions (OPS-05)
+ *   POST /tasks/requeue-failed             -- requeue recent failures (OPS-05)
+ *   GET  /admin/tasks/dead-letter          -- list dead-lettered tasks (Phase 178)
+ *   POST /admin/tasks/dead-letter/{id}/requeue -- manual dead-letter recovery
  *
  * All endpoints require admin role; the route is gated via protectPage("admin").
  */
@@ -33,7 +33,7 @@ import {
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
-// Types — mirror src/aila/api/schemas/tasks.py and admin_dead_letter.py
+// Types -- mirror src/aila/api/schemas/tasks.py and admin_dead_letter.py
 // ---------------------------------------------------------------------------
 
 interface DataEnvelope<T> {

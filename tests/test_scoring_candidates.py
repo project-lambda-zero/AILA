@@ -1,6 +1,6 @@
 """Unit tests for scoring candidate assembly (candidates.py).
 
-Pure data-transformation tests — no DB, no network, no mocking of external
+Pure data-transformation tests -- no DB, no network, no mocking of external
 services.  Constructs realistic VulnerabilityMatch, CVEKnowledge, and
 NVDEvidence objects to verify build_scoring_candidates, clip_text,
 unique_values, select_candidate_fixed_versions, derive_nvd_fixed_version_fallback,
@@ -30,7 +30,7 @@ from aila.modules.vulnerability.contracts import (
 )
 
 # ---------------------------------------------------------------------------
-# Factories — keep test fixtures compact
+# Factories -- keep test fixtures compact
 # ---------------------------------------------------------------------------
 
 def _match(
@@ -250,7 +250,7 @@ class TestPackageTokensFromName:
 
     def test_multiple_separators(self):
         tokens = package_tokens_from_name("python3.11-dev_extra+test")
-        # Splits on '.', '-', '_', '+' — each token is individually normalized
+        # Splits on '.', '-', '_', '+' -- each token is individually normalized
         assert "python3" in tokens
         assert "11" in tokens
         assert "dev" in tokens
@@ -553,7 +553,7 @@ class TestDeriveNvdFixedVersionFallback:
 
 
 # ===================================================================
-# build_scoring_candidates — the main integration point
+# build_scoring_candidates -- the main integration point
 # ===================================================================
 
 class TestBuildScoringCandidates:

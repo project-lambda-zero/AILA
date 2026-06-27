@@ -1,4 +1,4 @@
-"""Phase 179 Task 1 — @platform_task + _REGISTRY + TaskContext contracts.
+"""Phase 179 Task 1 -- @platform_task + _REGISTRY + TaskContext contracts.
 
 Runs against real Postgres via the shared ``test_db`` fixture; no mocks for
 the engine or the DB. The engine invocation is exercised through the same
@@ -33,7 +33,7 @@ from aila.storage.db_models import WorkflowRunRecord
 
 def test_task_context_is_frozen_and_hashable() -> None:
     ctx = TaskContext(task_id="abc", job_try=2, user_id="u", team_id=None)
-    # Hashable — frozen dataclass with slots.
+    # Hashable -- frozen dataclass with slots.
     assert hash(ctx) == hash(ctx)
     with pytest.raises(FrozenInstanceError):
         ctx.job_try = 99  # type: ignore[misc]
@@ -121,7 +121,7 @@ def test_double_registration_raises_value_error() -> None:
     async def first(ctx: TaskContext, **kwargs: Any) -> dict[str, Any]:
         return {}
 
-    # Re-decorate the same function — re-execution of the decorator must
+    # Re-decorate the same function -- re-execution of the decorator must
     # refuse to silently shadow the existing entry.
     with pytest.raises(ValueError, match="already registered"):
         platform_task(track="vulnerability", module_id="vulnerability")(first)

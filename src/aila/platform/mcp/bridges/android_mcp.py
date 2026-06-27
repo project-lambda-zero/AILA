@@ -1,4 +1,4 @@
-"""android-mcp bridge — AILA Tool wrapping the android-mcp HTTP API.
+"""android-mcp bridge -- AILA Tool wrapping the android-mcp HTTP API.
 
 Sibling of :class:`AuditMcpBridgeTool` (for source-graph audits) and
 :class:`IDABridgeTool` (for binary disassembly). The android-mcp server
@@ -16,13 +16,13 @@ stage, INDEX_DECOMPILED, is driven through the audit-mcp bridge, not
 this one, since it calls audit-mcp's ``index_codebase`` on the jadx
 output rather than an android-mcp tool.)
 
-Timeout: ``ANDROID_MCP_TIMEOUT`` env var, default 1800 s (30 min — covers
+Timeout: ``ANDROID_MCP_TIMEOUT`` env var, default 1800 s (30 min -- covers
 MobSF static scan upper bound; per-stage StageTracker timeouts in
 ``services/stage_tracker.py`` apply a tighter bound where each individual
 tool runs faster). The bridge timeout is the absolute network ceiling;
 the stage tracker timeout is the per-stage budget.
 
-Deliberately slim compared to ``AuditMcpBridgeTool`` — no pre-warm
+Deliberately slim compared to ``AuditMcpBridgeTool`` -- no pre-warm
 fan-out (android-mcp runs single-worker by default), no kwarg alias
 map, no JSON-schema kwarg validation, no virtual tools. The C-20
 ingestion code uses a fixed, small set of actions with known
@@ -47,7 +47,7 @@ __all__ = ["AndroidMcpBridgeTool"]
 _log = logging.getLogger(__name__)
 
 
-# fix §216 — module-level shared AsyncClient with persistent connection
+# fix §216 -- module-level shared AsyncClient with persistent connection
 # pool. The previous shape constructed a fresh client per forward()
 # call; a 70-call investigation built + tore down 70 pools, each
 # paying TCP-handshake + TLS-not-applicable + DNS-cache miss costs
@@ -83,7 +83,7 @@ async def _get_shared_client() -> httpx.AsyncClient:
 def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
     """Project an MCP tool catalog entry into the shape the prompt
     builder + agent expect. Mirrors ``audit_mcp_bridge._compact_spec``
-    and ``ida_bridge._compact_spec`` — duplicated rather than imported
+    and ``ida_bridge._compact_spec`` -- duplicated rather than imported
     to keep ``tools/`` free of cross-bridge coupling (each bridge
     stays independently swappable).
     """
@@ -114,7 +114,7 @@ def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# Pipeline-only tools — the 5-stage target ingestion (APK_DECODE,
+# Pipeline-only tools -- the 5-stage target ingestion (APK_DECODE,
 # JADX_DECOMPILE, INDEX_DECOMPILED, STATIC_SUMMARY, MOBSF_SCAN) runs
 # these ONCE at target create time via TargetAnalysisService. By the
 # time an investigation turn fires, the results live in
@@ -126,14 +126,14 @@ def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
 #   - off-policy (mobsf output must never reach prompts per operator)
 #
 # Hidden from the agent-visible catalog. TargetAnalysisService still
-# calls them directly via bridge.forward(action=...) — the denylist is
+# calls them directly via bridge.forward(action=...) -- the denylist is
 # only applied in list_tool_specs() (what the prompt builder pulls).
 # Tools that take an ``apk_path`` argument that the agent reconstructs
 # loaded fresh on every call. The path is the 64-hex SHA256 of the APK
 # bytes plus ``.apk`` extension, dropped into the operator's shared
 # uploads directory (``~/.android-mcp/uploads/shared/`` by default,
 # overridable via ``ANDROID_MCP_UPLOADS_DIR``). The LLM consistently
-# typo-drifts these long identifiers — observed corruptions on the
+# typo-drifts these long identifiers -- observed corruptions on the
 # live PRIVACY-1 audit:
 #
 #   b810b2bbec0bb9217e090 fb82773d80fefdd12576b449b3d126f49dd9a159c39.apk
@@ -230,7 +230,7 @@ def _resolve_apk_path(raw_path: str) -> tuple[str, str | None]:
         p: p.name[:-4].lower() for p in candidates_all if p.name.lower().endswith(".apk")
     }
 
-    # Pass 1 — prefix match. Try progressively shorter prefixes of the
+    # Pass 1 -- prefix match. Try progressively shorter prefixes of the
     # agent's SHA. First unique hit wins. Catches typos where the
     # agent dropped trailing chars or stuck a stray space mid-SHA.
     for n in (min(32, len(sha_hex)), 24, 16, 12, 8):
@@ -247,15 +247,15 @@ def _resolve_apk_path(raw_path: str) -> tuple[str, str | None]:
         if len(matches) == 0:
             continue
         # >1 matches at this prefix length means real ambiguity at
-        # the head. Don't keep going wider — the next pass uses a
+        # the head. Don't keep going wider -- the next pass uses a
         # different match strategy entirely.
         break
 
-    # Pass 2 — substring match against the longer of (candidate SHA,
+    # Pass 2 -- substring match against the longer of (candidate SHA,
     # agent SHA). Catches the inverse typo: the agent dropped the
     # LEADING characters and only kept the middle/tail. Observed live
     # on PRIVACY-1 (5a358890): real SHA b810b2bbec0bb9217e090fb82...,
-    # agent passed ec0bb9217e090fb82... — no shared prefix at all,
+    # agent passed ec0bb9217e090fb82... -- no shared prefix at all,
     # but the agent's SHA IS a substring of the real one. Same
     # principle works either way (agent SHA in candidate, or
     # candidate SHA in agent SHA), but require a minimum overlap of
@@ -278,7 +278,7 @@ def _resolve_apk_path(raw_path: str) -> tuple[str, str | None]:
             # Multiple APKs contain (or are contained in) the agent's
             # SHA. Pick the LONGEST overlap as the most specific
             # match. Tie at longest = give up and let the LLM see the
-            # error — operator probably needs to rename test fixtures.
+            # error -- operator probably needs to rename test fixtures.
             sub_matches.sort(key=lambda pair: -pair[0])
             if len(sub_matches) >= 2 and sub_matches[0][0] > sub_matches[1][0]:
                 _, cand = sub_matches[0]
@@ -300,7 +300,7 @@ _PIPELINE_ONLY_TOOLS: frozenset[str] = frozenset((
 
 # Each tool here REQUIRES a host CLI on PATH. When the CLI is missing
 # the tool call fails inside android-mcp with `RuntimeError: <cli> not
-# on PATH`. Agents see a transient-looking error and retry — 94 wasted
+# on PATH`. Agents see a transient-looking error and retry -- 94 wasted
 # attempts in 48h on the live SampleApp audit, mostly verify_apk_signing
 # (apksigner) and drozer_scan_apk (drozer). Bridge-side: probe each
 # CLI at catalog-load time + DROP the tool from the catalog when its
@@ -309,7 +309,7 @@ _PIPELINE_ONLY_TOOLS: frozenset[str] = frozenset((
 #
 # The check uses shutil.which on the operator's PATH (in-process; the
 # bridge inherits the worker's environment). If the operator installs
-# the CLI later they restart workers — same lifecycle as other
+# the CLI later they restart workers -- same lifecycle as other
 # catalog-cache invalidations.
 _ENV_GATED_TOOLS: dict[str, str] = {
     "verify_apk_signing": "apksigner",
@@ -342,7 +342,7 @@ class AndroidMcpBridgeTool(Tool):
     can branch on a uniform shape without per-error-type try/except.
 
     Successful android-mcp responses do not always carry an explicit
-    ``status`` field — most tool handlers return their result dict
+    ``status`` field -- most tool handlers return their result dict
     directly (e.g. ``{"output_dir": "...", "apk_sha256": "..."}``).
     The bridge surfaces these payloads as-is and only injects a
     synthetic ``status="error"`` when the HTTP layer itself fails.
@@ -367,7 +367,7 @@ class AndroidMcpBridgeTool(Tool):
     skip_forward_signature_validation = True
 
     # Default network timeout (seconds). MobSF static scans dominate
-    # the upper end at ~30 min — anything longer is the stage-tracker's
+    # the upper end at ~30 min -- anything longer is the stage-tracker's
     # job to reap. Per-stage StageTracker timeouts (apktool 600 s, jadx
     # 900 s, static-summary 300 s, mobsf 1800 s) are tighter; this is
     # only the absolute network ceiling for one HTTP call.
@@ -388,7 +388,7 @@ class AndroidMcpBridgeTool(Tool):
         # ``base_url`` if explicitly supplied wins forever (tests, DI).
         # Otherwise resolve per-call via env → ConfigRegistry → default
         # so PATCH /vr/mcp/servers/android_mcp takes effect without a
-        # restart — same pattern AuditMcpBridgeTool uses.
+        # restart -- same pattern AuditMcpBridgeTool uses.
         self._fixed_base_url = base_url.rstrip("/") if base_url else None
         self._timeout = timeout or float(
             os.environ.get("ANDROID_MCP_TIMEOUT", str(self._DEFAULT_TIMEOUT_S)),
@@ -463,7 +463,7 @@ class AndroidMcpBridgeTool(Tool):
                 "matches": [],
                 "results": [],
                 "_bridge_note": (
-                    f"{action!r} is pipeline-only — the APK ingestion stage "
+                    f"{action!r} is pipeline-only -- the APK ingestion stage "
                     f"ran it once during target analysis. The output is on "
                     f"the target row's mcp_handles_json (apk_overview.* "
                     f"fields point at decompiled_dir / decoded_dir / "
@@ -472,7 +472,7 @@ class AndroidMcpBridgeTool(Tool):
                     f"search_constants against the index to inspect "
                     f"decompiled Java + smali. This call has been "
                     f"acknowledged as policy-blocked; retrying it produces "
-                    f"this same response and burns budget — pivot to an "
+                    f"this same response and burns budget -- pivot to an "
                     f"audit_mcp tool."
                 ),
                 "_bridge_policy": "pipeline_only_blocked",
@@ -481,7 +481,7 @@ class AndroidMcpBridgeTool(Tool):
         # fix: schema-validate kwargs against the live tool catalog
         # BEFORE the HTTP roundtrip. 56 wasted attempts in 48h with
         # 'TypeError: register.<locals>.<tool>() got an unexpected
-        # keyword argument' — each attempt pays the full 30-min
+        # keyword argument' -- each attempt pays the full 30-min
         # bridge timeout when classify_behavior is the target, OR
         # at minimum one HTTP roundtrip + an LLM turn to read the
         # error. The validator runs in <1 ms locally.
@@ -492,7 +492,7 @@ class AndroidMcpBridgeTool(Tool):
         # Auto-resolve any apk_path-like kwarg from typo'd input to
         # the canonical on-disk path BEFORE the HTTP roundtrip. See
         # the _APK_PATH_KWARGS comment block at module scope for the
-        # full rationale — TL;DR: agents typo-drift long SHA-derived
+        # full rationale -- TL;DR: agents typo-drift long SHA-derived
         # paths every retry, FileNotFoundError fires, breaker
         # eventually engages but burns turns first AND leaves the
         # agent with no working alternative because verify_capabilities
@@ -515,7 +515,7 @@ class AndroidMcpBridgeTool(Tool):
             server_id="android_mcp", base_url=base, action=action,
         ) as ctx:
             try:
-                # fix §216 — reuse the module-level pooled client
+                # fix §216 -- reuse the module-level pooled client
                 # instead of constructing one per call. Per-call
                 # timeout override preserves the prior semantics.
                 client = await _get_shared_client()
@@ -582,7 +582,7 @@ class AndroidMcpBridgeTool(Tool):
                     ),
                 }
 
-            # fix §215 — whitelist known statuses explicitly. Unknown
+            # fix §215 -- whitelist known statuses explicitly. Unknown
             # values used to fall through to "ready" silently, masking
             # partial-failure envelopes (e.g. {"status": "partial_failure",
             # "errors": [...]}). Most android-mcp tool handlers return
@@ -611,7 +611,7 @@ class AndroidMcpBridgeTool(Tool):
             else:
                 _log.warning(
                     "android_mcp_bridge %s: unknown payload status %r "
-                    "(HTTP %d) — coercing to error",
+                    "(HTTP %d) -- coercing to error",
                     action, payload_status, resp.status_code,
                 )
                 ctx["status"] = "error"
@@ -627,7 +627,7 @@ class AndroidMcpBridgeTool(Tool):
             # no envelope. android-mcp tool handlers usually return
             # their result dict directly (verify_capabilities,
             # analyze_native_libs, find_secrets, etc.) without an
-            # explicit status field — HTTP 2xx + no status IS the
+            # explicit status field -- HTTP 2xx + no status IS the
             # documented success shape per the upstream contract.
             # But the AILA-side tool_executor's positive whitelist
             # at investigation_emit reads payload.get("status") to
@@ -635,7 +635,7 @@ class AndroidMcpBridgeTool(Tool):
             # ("ready", "completed", "ok") and gets treated as an
             # error envelope with empty error message. The bridge's
             # ctx["status"] = "ready" set above doesn't reach the
-            # executor — only the payload does. Wrapping here means
+            # executor -- only the payload does. Wrapping here means
             # the executor sees a clean ready envelope.
             if isinstance(payload, dict):
                 if "status" not in payload:
@@ -658,7 +658,7 @@ class AndroidMcpBridgeTool(Tool):
 
         Cached per process at the class level so concurrent investigations
         share one HTTP round-trip. On fetch failure we return an empty
-        list and cache it — the agent then sees a name-only listing
+        list and cache it -- the agent then sees a name-only listing
         (from ``KNOWN_TOOLS``) without schemas instead of repeated
         connect-error stalls per turn.
         """
@@ -672,7 +672,7 @@ class AndroidMcpBridgeTool(Tool):
             raw = resp.json()
         except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
             _log.warning(
-                "android_mcp_bridge: catalog fetch failed (%s) — agent "
+                "android_mcp_bridge: catalog fetch failed (%s) -- agent "
                 "will see name-only listing without schemas", exc,
             )
             self.__class__._SPEC_CACHE = []
@@ -683,13 +683,13 @@ class AndroidMcpBridgeTool(Tool):
         # to the empty-catalog warning so the validator can't compare
         # against a None catalog.
         #
-        # Operator-observed before the fix: bridge silently downgraded
+        # Observed before the fix: bridge silently downgraded
         # to empty catalog -> validator passed every agent kwarg
         # through unchecked -> android-mcp raised TypeError on every
         # call (`androguard_summary() got an unexpected keyword
         # argument 'index_id'`, `find_secrets()` rejecting `apk_path`,
         # etc.) -> tool_executor HARD-BLOCK after 3 failures per tool
-        # per branch. Diagnosed on inv 78d4a594 turn 23+ at 01:36:44.
+        # per branch. Diagnosed on inv <inv-uuid> turn 23+ at 01:36:44.
         if isinstance(raw, dict):
             inner = raw.get("tools")
             if isinstance(inner, list):
@@ -697,7 +697,7 @@ class AndroidMcpBridgeTool(Tool):
             else:
                 _log.warning(
                     "android_mcp_bridge: /tools dict envelope missing "
-                    "'tools' key (got %s) — treating as empty catalog",
+                    "'tools' key (got %s) -- treating as empty catalog",
                     sorted(raw.keys())[:8],
                 )
                 self.__class__._SPEC_CACHE = []
@@ -705,7 +705,7 @@ class AndroidMcpBridgeTool(Tool):
         if not isinstance(raw, list):
             _log.warning(
                 "android_mcp_bridge: /tools returned non-list payload "
-                "(%s) — treating as empty catalog", type(raw).__name__,
+                "(%s) -- treating as empty catalog", type(raw).__name__,
             )
             self.__class__._SPEC_CACHE = []
             return []
@@ -717,7 +717,7 @@ class AndroidMcpBridgeTool(Tool):
         # produces a spec with required=[] / properties={} that the
         # validator cannot reject anything against.
         #
-        # Diagnosed 2026-06-14 on inv 78d4a594: agent was firing
+        # Diagnosed 2026-06-14 on inv <inv-uuid>: agent was firing
         # `androguard_summary()` without `apk_path` (75x), calling
         # `find_secrets(apk_path=...)` when the tool actually wants
         # `decompiled_dir` (9x), missing `device_serial`+`service` on
@@ -771,7 +771,7 @@ class AndroidMcpBridgeTool(Tool):
             1 for t in visible_raw if t.get("parameters", {}).get("properties")
         )
         _log.info(
-            "android_mcp_bridge: catalog loaded — %d tools "
+            "android_mcp_bridge: catalog loaded -- %d tools "
             "(%d with schemas, %d hidden as pipeline-only, %d dropped "
             "for missing CLI: %s)",
             len(self.__class__._SPEC_CACHE),
@@ -792,7 +792,7 @@ class AndroidMcpBridgeTool(Tool):
 
         Mirror of :meth:`AuditMcpBridgeTool._validate_kwargs`. Returns
         None when the call is valid (or when validation must be skipped
-        — empty catalog, unknown action). Returns a structured error
+        -- empty catalog, unknown action). Returns a structured error
         dict suitable for direct return from :meth:`forward` when the
         call would fail at android-mcp anyway. The error message names
         the offending kwarg + the closest valid kwarg via
@@ -812,7 +812,7 @@ class AndroidMcpBridgeTool(Tool):
         if match is None:
             _log.info(
                 "android_mcp_bridge: action %r not in /tools catalog "
-                "(%d known) — forwarding anyway",
+                "(%d known) -- forwarding anyway",
                 action, len(specs),
             )
             return None

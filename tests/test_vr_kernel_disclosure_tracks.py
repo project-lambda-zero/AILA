@@ -1,4 +1,4 @@
-"""Unit tests for v0.5 phase 3 — kernel disclosure tracks."""
+"""Unit tests for v0.5 phase 3 -- kernel disclosure tracks."""
 from __future__ import annotations
 
 import pytest
@@ -27,7 +27,7 @@ _SAMPLE_PAYLOAD = {
     "poc_code": "// syzkaller reproducer\nint main() { /* ... */ }",
     "summary": "UAF in nf_tables expression destruction path",
     "affected_component": "net/netfilter/nf_tables_api.c",
-    "affected_versions": "5.16 — 6.10",
+    "affected_versions": "5.16 -- 6.10",
     "fixed_version": "6.10.5",
     "patch_reference": "git.kernel.org/..../commit/abcdef0",
     "attribution": "researcher@example.com",
@@ -63,7 +63,7 @@ class TestLinuxDistros:
         )
         assert "distros@vs.openwall.org" in body
         assert "Subject:" in body
-        # Embargo prefix logic — 14 days → [next-day]; 7 days → [vs]
+        # Embargo prefix logic -- 14 days → [next-day]; 7 days → [vs]
         assert "[next-day]" in body
 
     def test_render_with_short_embargo_uses_vs_prefix(self) -> None:
@@ -89,7 +89,7 @@ class TestLinuxDistros:
 
 class TestOssSecurity:
     def test_embargo_default_is_zero(self) -> None:
-        # Public list — post AFTER prior-track embargo lifts
+        # Public list -- post AFTER prior-track embargo lifts
         track = get_track("oss_security")
         assert track is not None
         assert track.embargo_default_days == 0

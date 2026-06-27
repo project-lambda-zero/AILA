@@ -1,5 +1,5 @@
 /**
- * login.spec.ts — E2E tests for the login flow (TEST-01).
+ * login.spec.ts -- E2E tests for the login flow (TEST-01).
  *
  * Coverage:
  *   - Login page renders with username and password inputs
@@ -8,7 +8,7 @@
  *   - Logout from header clears session and redirects to /login
  *   - Protected route redirects unauthenticated user to /login
  *
- * Uses REAL PostgreSQL backend — no mocks, no MSW.
+ * Uses REAL PostgreSQL backend -- no mocks, no MSW.
  * Credentials from environment variables: E2E_USERNAME, E2E_PASSWORD (default: admin/admin).
  */
 import { test, expect } from "@playwright/test";
@@ -29,7 +29,7 @@ test.describe("Login page", () => {
   test("renders username and password inputs with submit button", async ({ page }) => {
     await page.goto("/login");
 
-    // Username field — could be labeled "Username" or "Email"
+    // Username field -- could be labeled "Username" or "Email"
     const usernameField = page
       .getByLabel(/username/i)
       .or(page.getByPlaceholder(/username/i))
@@ -107,7 +107,7 @@ test.describe("Authentication flow", () => {
       .or(page.locator('button[type="submit"]').first());
     await submitBtn.click();
 
-    // Error message should appear — could be toast, inline error, or alert
+    // Error message should appear -- could be toast, inline error, or alert
     const errorIndicator = page
       .getByText(/invalid|incorrect|unauthorized|wrong|failed/i)
       .or(page.locator('[role="alert"]').first());
@@ -118,7 +118,7 @@ test.describe("Authentication flow", () => {
   });
 
   test("unauthenticated user accessing /systems is redirected to /login", async ({ page }) => {
-    // No auth state injected — navigate directly to protected route
+    // No auth state injected -- navigate directly to protected route
     await page.goto("/systems");
 
     // Should redirect to /login
@@ -136,11 +136,11 @@ test.describe("Logout flow", () => {
     await injectAuthState(page, tokens);
     await page.goto("/");
 
-    // Wait for authenticated shell — header should be visible
+    // Wait for authenticated shell -- header should be visible
     await expect(page.locator("header")).toBeVisible({ timeout: 10_000 });
 
     // Find and click the user avatar / account menu trigger
-    // Avatar menu is in UserAvatarMenu component — look for button with user icon or username
+    // Avatar menu is in UserAvatarMenu component -- look for button with user icon or username
     const avatarBtn = page
       .getByRole("button", { name: new RegExp(TEST_USERNAME, "i") })
       .or(page.locator('[aria-label*="account" i], [aria-label*="user" i], [data-testid*="avatar"]').first())

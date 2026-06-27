@@ -122,7 +122,7 @@ class VRFuzzCampaignCreate(BaseModel):
         ge=1,
         description=(
             "ManagedSystemRecord.id of the workstation that runs this "
-            "campaign (D-33). None = the campaign is metadata-only — "
+            "campaign (D-33). None = the campaign is metadata-only -- "
             "no launcher will SSH into a rig."
         ),
     )
@@ -179,7 +179,7 @@ class VRFuzzCampaignSummary(BaseModel):
 
 
 class VRFuzzCrashCreate(BaseModel):
-    """Crash registration — engine worker or operator forwards a hit."""
+    """Crash registration -- engine worker or operator forwards a hit."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -240,7 +240,7 @@ class VRFuzzCrashSummary(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
-    # §1.6 — minimised input bytes preview, LLM-summarised crash,
+    # §1.6 -- minimised input bytes preview, LLM-summarised crash,
     # and chronological triage chain ([{ts, actor, verdict, reason}, …]).
     reproducer_head_hex: str | None = None
     reproducer_head_truncated_size: int | None = None

@@ -3,10 +3,10 @@
 Phase 179 rewrite: legacy per-row retry counter and in-row cursor column
 are REMOVED from TaskRecord. ``ctx['job_try']`` replaces the former; the
 workflow cursor table (migration 023) replaces the latter.
-``TaskExecutionContext.checkpoint()`` is removed — handlers that still
+``TaskExecutionContext.checkpoint()`` is removed -- handlers that still
 need a per-run cursor should use the Phase 178 engine.
 
-Ownership: Platform — not module-specific.
+Ownership: Platform -- not module-specific.
 """
 
 from __future__ import annotations

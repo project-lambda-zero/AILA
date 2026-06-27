@@ -1,7 +1,7 @@
 """Template module entrypoint.
 
 Implements ModuleProtocol. This file is the only file the platform imports
-directly — all wiring happens here.
+directly -- all wiring happens here.
 """
 from __future__ import annotations
 

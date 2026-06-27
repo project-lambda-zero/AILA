@@ -132,7 +132,7 @@ async def get_finding_workflow(
         history = (await session.exec(stmt)).all()
 
     if not history:
-        # Finding has no workflow record yet — return initial state
+        # Finding has no workflow record yet -- return initial state
         return DataEnvelope(
             data=FindingWorkflowStateResponse(
                 finding_id=finding_id,
@@ -216,7 +216,7 @@ async def transition_finding(
 
 
 # ---------------------------------------------------------------------------
-# Evidence chain — UX-05
+# Evidence chain -- UX-05
 # ---------------------------------------------------------------------------
 
 
@@ -290,7 +290,7 @@ async def get_evidence_chain(
     - FindingWorkflowRecord (triage decisions)
     - PrioritizedFindingRecord (scan run linkage)
 
-    Nodes with no stored data are marked metadata.available=false — no fabrication.
+    Nodes with no stored data are marked metadata.available=false -- no fabrication.
     """
     platform = getattr(request.app.state, "platform", None)
     if platform is None:

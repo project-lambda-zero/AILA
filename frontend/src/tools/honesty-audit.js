@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 /**
- * honesty-audit.js — AST-free structural honesty checker for TypeScript/TSX source.
+ * honesty-audit.js -- AST-free structural honesty checker for TypeScript/TSX source.
  *
  * Detects 12 categories of frontend honesty violations:
- *  1. as_any               — `as any` type assertion
- *  2. ts_suppress          — @ts-ignore / @ts-expect-error suppressions
- *  3. console_statement    — console.log/warn/error/debug in non-test files
- *  4. todo_comment         — TODO/FIXME/HACK/XXX comments
- *  5. empty_catch          — empty catch blocks
- *  6. double_cast          — as unknown as (double-cast escape hatch)
- *  7. raw_fetch            — bare fetch() not in the authorized API client
- *  8. hardcoded_api_url    — string literals containing /api/ or localhost
- *  9. inline_any_param     — function parameters typed as any
- * 10. theme_hardcode        — hex color literals in .tsx files
- * 11. missing_response_type — authorizedRequestJson( without <T> type param
- * 12. direct_env_access     — process.env / import.meta.env outside platform/config/
+ *  1. as_any               -- `as any` type assertion
+ *  2. ts_suppress          -- @ts-ignore / @ts-expect-error suppressions
+ *  3. console_statement    -- console.log/warn/error/debug in non-test files
+ *  4. todo_comment         -- TODO/FIXME/HACK/XXX comments
+ *  5. empty_catch          -- empty catch blocks
+ *  6. double_cast          -- as unknown as (double-cast escape hatch)
+ *  7. raw_fetch            -- bare fetch() not in the authorized API client
+ *  8. hardcoded_api_url    -- string literals containing /api/ or localhost
+ *  9. inline_any_param     -- function parameters typed as any
+ * 10. theme_hardcode        -- hex color literals in .tsx files
+ * 11. missing_response_type -- authorizedRequestJson( without <T> type param
+ * 12. direct_env_access     -- process.env / import.meta.env outside platform/config/
  *
  * Usage:
  *   node frontend/src/tools/honesty-audit.js [dir] [--whitelist path]
@@ -65,7 +65,7 @@ if (whitelistPath) {
         const _require = createRequire(import.meta.url);
         mod = _require(resolvedWhitelist);
       } catch {
-        // CJS require failed (whitelist might be pure ESM) — try dynamic import
+        // CJS require failed (whitelist might be pure ESM) -- try dynamic import
         mod = await import(pathToFileURL(resolvedWhitelist).href);
       }
       if (Array.isArray(mod.HONESTY_WHITELIST)) {
@@ -107,31 +107,31 @@ function isWhitelisted(filePath, ruleId) {
 
 /**
  * Each rule:
- *   id           — identifier used in output and whitelist lookup
- *   description  — human-readable label
- *   pattern      — RegExp to match on a line (tested against raw line text)
- *   exclude      — optional RegExp: if matches same line, skip this finding
- *   extensions   — optional string[]: only apply to these file extensions
- *   skipFile     — optional RegExp: skip entire file if path matches (forward-slash normalized)
+ *   id           -- identifier used in output and whitelist lookup
+ *   description  -- human-readable label
+ *   pattern      -- RegExp to match on a line (tested against raw line text)
+ *   exclude      -- optional RegExp: if matches same line, skip this finding
+ *   extensions   -- optional string[]: only apply to these file extensions
+ *   skipFile     -- optional RegExp: skip entire file if path matches (forward-slash normalized)
  */
 const RULES = [
-  // 1. as_any — `as any` type assertion bypasses the type checker
+  // 1. as_any -- `as any` type assertion bypasses the type checker
   {
     id: "as_any",
     description: "Type assertion to `any` bypasses type checker",
     pattern: /\bas\s+any\b/,
-    // Exclude double-cast lines — those are caught separately by rule 6
+    // Exclude double-cast lines -- those are caught separately by rule 6
     exclude: /as\s+unknown\s+as\b/,
   },
 
-  // 2. ts_suppress — suppression comments
+  // 2. ts_suppress -- suppression comments
   {
     id: "ts_suppress",
     description: "@ts-ignore / @ts-expect-error suppresses the type checker",
     pattern: /@ts-(ignore|expect-error)/,
   },
 
-  // 3. console_statement — debug output in production files
+  // 3. console_statement -- debug output in production files
   {
     id: "console_statement",
     description: "console statement left in production code",
@@ -139,28 +139,28 @@ const RULES = [
     skipFile: /\.(test|spec|stories)\.(ts|tsx|js|jsx)$|__tests__|\/testing\//,
   },
 
-  // 4. todo_comment — aspirational comments
+  // 4. todo_comment -- aspirational comments
   {
     id: "todo_comment",
     description: "TODO/FIXME/HACK/XXX aspirational comment",
     pattern: /\/\/\s*(TODO|FIXME|HACK|XXX)\b/i,
   },
 
-  // 5. empty_catch — silent exception swallowing (single-line empty body)
+  // 5. empty_catch -- silent exception swallowing (single-line empty body)
   {
     id: "empty_catch",
     description: "Empty catch block swallows exceptions silently",
     pattern: /catch\s*\([^)]*\)\s*\{\s*(?:\/\/[^\n]*)?\s*\}/,
   },
 
-  // 6. double_cast — `as unknown as X` double-cast escape hatch
+  // 6. double_cast -- `as unknown as X` double-cast escape hatch
   {
     id: "double_cast",
-    description: "`as unknown as` double-cast — find the root type mismatch",
+    description: "`as unknown as` double-cast -- find the root type mismatch",
     pattern: /as\s+unknown\s+as\b/,
   },
 
-  // 7. raw_fetch — bare fetch() outside the authorized HTTP client
+  // 7. raw_fetch -- bare fetch() outside the authorized HTTP client
   {
     id: "raw_fetch",
     description: "Raw fetch() bypasses auth headers and error normalization",
@@ -168,29 +168,29 @@ const RULES = [
     skipFile: /platform\/api\/http\.ts$|platform\/api\/sse\.ts$|lib\/sseClient\.ts$|hooks\/useSSE\.ts$/,
   },
 
-  // 8. hardcoded_api_url — /api/ path or localhost URL hardcoded in source
+  // 8. hardcoded_api_url -- /api/ path or localhost URL hardcoded in source
   {
     id: "hardcoded_api_url",
-    description: "Hardcoded /api/ path or localhost URL — use path constants",
+    description: "Hardcoded /api/ path or localhost URL -- use path constants",
     pattern: /["'`]\/api\/|["'`]https?:\/\/localhost/,
     extensions: [".ts", ".tsx"],
     skipFile: /platform\/api\/http\.ts$|platform\/config\//,
   },
 
-  // 9. inline_any_param — function parameter typed as `any`
+  // 9. inline_any_param -- function parameter typed as `any`
   {
     id: "inline_any_param",
-    description: "Function parameter typed as `any` — use a specific type",
+    description: "Function parameter typed as `any` -- use a specific type",
     // Matches: (foo: any  or , foo: any  (with optional whitespace)
     pattern: /(?:[(,])\s*\w+\s*:\s*any\b/,
     // Exclude lines that are just using `as any` (already caught by rule 1)
     exclude: /\bas\s+any\b/,
   },
 
-  // 10. theme_hardcode — hex color literals in .tsx files
+  // 10. theme_hardcode -- hex color literals in .tsx files
   {
     id: "theme_hardcode",
-    description: "Hex color literal in TSX — use CSS variables or Tailwind tokens",
+    description: "Hex color literal in TSX -- use CSS variables or Tailwind tokens",
     pattern: /#[0-9a-fA-F]{3,8}\b/,
     extensions: [".tsx"],
     // Skip story files (visual regression reference values allowed)
@@ -199,7 +199,7 @@ const RULES = [
     exclude: /^\s*\/\//,
   },
 
-  // 11. missing_response_type — authorizedRequestJson without <T>
+  // 11. missing_response_type -- authorizedRequestJson without <T>
   {
     id: "missing_response_type",
     description: "authorizedRequestJson() called without explicit response type <T>",
@@ -207,10 +207,10 @@ const RULES = [
     exclude: /authorizedRequestJson\s*<[^>]+>\s*\(/,
   },
 
-  // 12. direct_env_access — env access outside centralized config
+  // 12. direct_env_access -- env access outside centralized config
   {
     id: "direct_env_access",
-    description: "Direct env access — centralize in platform/config/env.ts",
+    description: "Direct env access -- centralize in platform/config/env.ts",
     pattern: /\b(process\.env|import\.meta\.env)\./,
     skipFile: /platform\/config\//,
     // Skip pure comment lines (JSDoc or // that mention env vars as documentation)
@@ -332,11 +332,11 @@ for (const filePath of fileOrder) {
 }
 
 if (findings.length === 0) {
-  process.stdout.write("honesty-audit: clean — no findings\n");
+  process.stdout.write("honesty-audit: clean -- no findings\n");
   process.exit(0);
 } else {
   process.stderr.write(
-    `\nhonesty-audit: ${findings.length} finding(s) — fix violations or add justified whitelist entries\n`
+    `\nhonesty-audit: ${findings.length} finding(s) -- fix violations or add justified whitelist entries\n`
   );
   process.exit(1);
 }

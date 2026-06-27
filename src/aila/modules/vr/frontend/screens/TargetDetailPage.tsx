@@ -86,7 +86,7 @@ function analysisLabel(state: AnalysisState, kind: TargetKind): string {
 }
 
 function formatDate(value?: string | null): string {
-  if (!value) return "—";
+  if (!value) return "--";
   try {
     return new Date(value).toLocaleString();
   } catch {
@@ -250,7 +250,7 @@ function HypothesesTab({ targetId }: { targetId: string }) {
         title="No hypotheses on this target yet"
         description={
           investigationCount === 0
-            ? "No investigation on this target has produced hypotheses yet. Start one — agents populate hypotheses as evidence lands."
+            ? "No investigation on this target has produced hypotheses yet. Start one -- agents populate hypotheses as evidence lands."
             : `Aggregated across ${investigationCount} investigation(s) that have run. Hypotheses are emitted by the reasoning engine as it processes evidence.`
         }
       /></AilaCard>
@@ -359,7 +359,7 @@ function HypothesesTab({ targetId }: { targetId: string }) {
                     {r.kill_criterion}
                   </div>
                 ) : (
-                  <span className="text-text-muted italic">—</span>
+                  <span className="text-text-muted italic">--</span>
                 )}
               </td>
             </tr>
@@ -455,7 +455,7 @@ function NotesTab({ targetId }: { targetId: string }) {
     />
     <p className="text-3xs text-text-muted mt-1">
       Saved locally in your browser ({savedAt ?? "not saved yet"}). Spec §1.4
-      wants project-scoped sync — backend pending.
+      wants project-scoped sync -- backend pending.
     </p></AilaCard>
   );
 }
@@ -523,41 +523,41 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
       <dl className="grid grid-cols-2 gap-3 text-sm mb-4">
         <div>
           <dt className="text-text-muted text-xs">Package</dt>
-          <dd className="font-mono text-xs">{pkg ?? "—"}</dd>
+          <dd className="font-mono text-xs">{pkg ?? "--"}</dd>
         </div>
         <div>
           <dt className="text-text-muted text-xs">Version</dt>
           <dd className="font-mono text-xs">
-            {versionName ?? "—"}
+            {versionName ?? "--"}
             {versionCode != null && ` (${versionCode})`}
           </dd>
         </div>
         <div>
           <dt className="text-text-muted text-xs">SDK range</dt>
           <dd className="font-mono text-xs">
-            {minSdk != null ? `min ${minSdk}` : "—"}
+            {minSdk != null ? `min ${minSdk}` : "--"}
             {targetSdk != null ? ` · target ${targetSdk}` : ""}
           </dd>
         </div>
         <div>
           <dt className="text-text-muted text-xs">Signing scheme</dt>
-          <dd className="font-mono text-xs">{signingScheme ?? "—"}</dd>
+          <dd className="font-mono text-xs">{signingScheme ?? "--"}</dd>
         </div>
         <div>
           <dt className="text-text-muted text-xs">SHA-256</dt>
           <dd className="font-mono text-[10px] break-all">
-            {overview.sha256 ?? "—"}
+            {overview.sha256 ?? "--"}
           </dd>
         </div>
         <div>
           <dt className="text-text-muted text-xs">Jadx classes</dt>
           <dd className="font-mono text-xs">
-            {overview.jadx_class_count?.toLocaleString() ?? "—"}
+            {overview.jadx_class_count?.toLocaleString() ?? "--"}
           </dd>
         </div>
       </dl>
 
-      {/* Native libraries — single most-asked APK question (".so files").
+      {/* Native libraries -- single most-asked APK question (".so files").
           Surfaced prominently because operator's complaint specifically
           named these. */}
       {nativeLibs.length > 0 && (
@@ -573,7 +573,7 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
         </div>
       )}
 
-      {/* Permissions — dangerous called out separately. */}
+      {/* Permissions -- dangerous called out separately. */}
       {permissions.length > 0 && (
         <div className="mb-4">
           <h3 className="text-xs font-semibold text-foreground mb-1">
@@ -604,7 +604,7 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
         </div>
       )}
 
-      {/* Exported components — attack surface, by definition. */}
+      {/* Exported components -- attack surface, by definition. */}
       {(activities.length + services.length + receivers.length + providers.length) > 0 && (
         <div className="mb-4">
           <h3 className="text-xs font-semibold text-foreground mb-1">
@@ -631,7 +631,7 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
         </div>
       )}
 
-      {/* Certificates — signing identity. SHA-1 / SHA-256 fingerprints +
+      {/* Certificates -- signing identity. SHA-1 / SHA-256 fingerprints +
           subject DN are the fields operators actually compare. */}
       {certificates.length > 0 && (
         <div className="mb-4">
@@ -645,7 +645,7 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
                 className="border-l-2 border-border-default pl-2"
               >
                 <div className="font-mono text-foreground">
-                  {(cert.subject as string) ?? (cert.issuer as string) ?? "—"}
+                  {(cert.subject as string) ?? (cert.issuer as string) ?? "--"}
                 </div>
                 {cert.sha256 != null && (
                   <div className="font-mono text-[10px] text-text-muted break-all">
@@ -663,7 +663,7 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
         </div>
       )}
 
-      {/* Backend handles — operator-facing path strings. Useful for
+      {/* Backend handles -- operator-facing path strings. Useful for
           spelunking via the audit-mcp index id or running ad-hoc
           jadx-tree queries from a shell. */}
       <div className="mb-3">
@@ -738,7 +738,7 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
  *
  * The button shows the estimated total spend (≈ N × per-child
  * budget) before confirming so the operator knows what they're
- * committing to. The dispatcher is idempotent — re-clicking with
+ * committing to. The dispatcher is idempotent -- re-clicking with
  * an active parent for the same catalog version returns the
  * existing ids verbatim. */
 function MasvsAuditCard({
@@ -760,7 +760,7 @@ function MasvsAuditCard({
         `~$${MASVS_DEFAULT_CHILD_BUDGET_USD} budget each ` +
         `(~$${estimatedTotal} total expected spend).\n\n` +
         "Each child runs the full vuln_researcher scout / critic / " +
-        "verifier chain. The dispatcher is idempotent — re-clicking " +
+        "verifier chain. The dispatcher is idempotent -- re-clicking " +
         "with an active audit for this catalog version returns the " +
         "existing parent without re-dispatching.",
     );
@@ -807,7 +807,7 @@ function MasvsAuditCard({
  * terminal siblings.
  *
  * Reuses the same `useInvestigationsForTarget` query the report card
- * polls — React Query dedupes the 8s refresh across cards so all
+ * polls -- React Query dedupes the 8s refresh across cards so all
  * three (dispatcher, progress, report) share one network round.
  *
  * ETA is intentionally serial-upper-bound: median × remaining. The
@@ -817,9 +817,9 @@ function MasvsAuditCard({
  * + the worst-case sum so the operator can scale mentally to their
  * own worker count rather than reading a fabricated point estimate.
  * If no terminal child has both timestamps yet, both numbers render
- * as "—" — partial signals beat fake confidence.
+ * as "--" -- partial signals beat fake confidence.
  *
- * Same `inv.kind as string` workaround as MasvsReportCard — the
+ * Same `inv.kind as string` workaround as MasvsReportCard -- the
  * InvestigationKind union doesn't yet include "masvs_audit" because
  * InvestigationsListPage.tsx has an exhaustive `Record<Kind, Icon>`
  * that would also need an icon assignment. Out of scope for U-1. */
@@ -856,7 +856,7 @@ function MasvsProgressCard({
 
   // Status buckets. Terminal = completed | failed | abandoned per
   // InvestigationStatus in types.ts. Anything else (created, running,
-  // paused) bucketizes as "running" for the operator's overview —
+  // paused) bucketizes as "running" for the operator's overview --
   // they don't need to distinguish the three at this card's level.
   let completedCount = 0;
   let runningCount = 0;
@@ -868,7 +868,7 @@ function MasvsProgressCard({
       failedCount++;
     else runningCount++;
 
-    // Median wall-time signal — include every terminal child with
+    // Median wall-time signal -- include every terminal child with
     // both timestamps, including failures (they consumed worker
     // time too). A failed child that timed out at the cost cap is
     // a legitimate data point for the per-control distribution.
@@ -898,10 +898,10 @@ function MasvsProgressCard({
   }
 
   const medianLabel =
-    medianSec != null ? formatDurationCompact(medianSec) : "—";
+    medianSec != null ? formatDurationCompact(medianSec) : "--";
   let etaLabel: string;
   if (remainingCount === 0) etaLabel = "0s (all terminal)";
-  else if (medianSec == null) etaLabel = "—";
+  else if (medianSec == null) etaLabel = "--";
   else etaLabel = formatDurationCompact(medianSec * remainingCount);
 
   const packageDisplay = packageLabel ?? "this APK";
@@ -923,7 +923,7 @@ function MasvsProgressCard({
           </AilaBadge>
         </div>
 
-        {/* Linear progress bar — terminalCount/total. */}
+        {/* Linear progress bar -- terminalCount/total. */}
         <div
           className="w-full h-2 bg-surface rounded overflow-hidden border border-border-default"
           role="progressbar"
@@ -966,7 +966,7 @@ function MasvsProgressCard({
           </div>
         </dl>
 
-        {/* Timing block — separated by a divider so the operator's
+        {/* Timing block -- separated by a divider so the operator's
             eye groups counts vs estimates. */}
         <dl className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs border-t border-border-default pt-3">
           <div>
@@ -991,10 +991,10 @@ function MasvsProgressCard({
 }
 
 /** Render seconds as `Ns` / `Nm Ss` / `Nh Nm`. Used by U-1's progress
- * card for the per-child median and ETA cells — kept compact so the
+ * card for the per-child median and ETA cells -- kept compact so the
  * AilaBadge-style tiles don't wrap on narrow viewports. */
 function formatDurationCompact(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (!Number.isFinite(seconds) || seconds < 0) return "--";
   if (seconds < 60) return `${Math.round(seconds)}s`;
   if (seconds < 3600) {
     const m = Math.floor(seconds / 60);
@@ -1013,7 +1013,7 @@ function formatDurationCompact(seconds: number): string {
  * pointing at it; the parent transitions to COMPLETED only once
  * every child reaches a terminal state (D-5 reconciler).
  *
- * The PDF endpoint (R-3) accepts partial aggregates — children
+ * The PDF endpoint (R-3) accepts partial aggregates -- children
  * still in flight render as INCONCLUSIVE rows so the operator can
  * hand the CISO a checkpoint copy without waiting for the full
  * ~60min batch. Following that, the button enables once at least
@@ -1021,13 +1021,13 @@ function formatDurationCompact(seconds: number): string {
  * rest of the audit lifetime. If no terminal children exist yet,
  * the button stays disabled with a tooltip explaining why.
  *
- * No new mutation hook — the download is a one-shot read-only side
+ * No new mutation hook -- the download is a one-shot read-only side
  * effect that bypasses React Query (matches ExportReportButton).
  *
  * Note: VRInvestigationSummary.kind is currently typed as the
  * pre-MASVS union (discovery | variant_hunt | triage | n_day |
  * audit) in `types.ts`. The runtime payload now also carries
- * "masvs_audit" for parent records — the `as string` cast below
+ * "masvs_audit" for parent records -- the `as string` cast below
  * acknowledges that drift without expanding the type system in
  * this iteration. Update `InvestigationKind` when U-1 / U-2 land,
  * which will need the narrowing anyway. */
@@ -1047,7 +1047,7 @@ function MasvsReportCard({
 
   // Pick the most recent MASVS_AUDIT parent for this target. The
   // dispatcher is idempotent on (target, catalog_version) for ACTIVE
-  // parents (D-3) — once that parent reaches a terminal state the
+  // parents (D-3) -- once that parent reaches a terminal state the
   // operator can fire a fresh batch, so we sort created_at desc and
   // pick the head. created_at is an ISO-8601 string from the wire so
   // localeCompare orders it chronologically without parsing dates.
@@ -1060,7 +1060,7 @@ function MasvsReportCard({
     .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
   const parent = masvsParents[0] ?? null;
 
-  // No parent means the operator hasn't dispatched yet — surface
+  // No parent means the operator hasn't dispatched yet -- surface
   // nothing here so the MasvsAuditCard above is the only CTA. The
   // download card appears the moment a parent row exists, even
   // before any child has finished, so the operator sees the
@@ -1071,7 +1071,7 @@ function MasvsReportCard({
     (inv) => inv.parent_investigation_id === parent.id,
   );
   // VRInvestigation terminal statuses per types.ts InvestigationStatus.
-  // R-3 docstring confirms the PDF tolerates non-terminal children —
+  // R-3 docstring confirms the PDF tolerates non-terminal children --
   // they render as INCONCLUSIVE rows in the per-control table.
   const terminalChildren = children.filter(
     (c) =>
@@ -1102,7 +1102,7 @@ function MasvsReportCard({
         `/vr/targets/${encodeURIComponent(targetId)}/masvs-report?${params.toString()}`,
         { method: "GET", token },
       );
-      // Filename fallback — the backend's Content-Disposition is
+      // Filename fallback -- the backend's Content-Disposition is
       // authoritative when present (masvs_<pkg>_<YYYYMMDD>.pdf per
       // R-3's _masvs_report_filename). The fallback covers the
       // unlikely case where the header is dropped by a proxy.
@@ -1127,7 +1127,7 @@ function MasvsReportCard({
   const buttonTitle = canDownload
     ? allTerminal
       ? "Download the full PDF aggregate"
-      : "Download a partial PDF — children still running render as INCONCLUSIVE"
+      : "Download a partial PDF -- children still running render as INCONCLUSIVE"
     : "Disabled until at least one child investigation reaches a terminal state";
 
   return (
@@ -1141,7 +1141,7 @@ function MasvsReportCard({
             ReportLab PDF aggregating every child investigation
             outcome through the S-4 verdict mapper, grouped by MASVS
             control group with per-control evidence excerpts. Children
-            still in flight render as INCONCLUSIVE rows — partial
+            still in flight render as INCONCLUSIVE rows -- partial
             reports are valid handoffs for an interim checkpoint.
           </p>
           <p className="text-xs text-text-muted mt-2 font-mono">
@@ -1225,7 +1225,7 @@ function MasvsControlTable({
   // Cross-reference per-child status from the investigations list so
   // the table can show a live status badge even when the aggregate
   // omits an entry (e.g. a child whose secondary_target_refs_json
-  // failed to encode a masvs_control_id — server-side this surfaces
+  // failed to encode a masvs_control_id -- server-side this surfaces
   // as a logged warning and a missing verdict row).
   const childById = new Map<string, (typeof investigations)[number]>();
   for (const inv of investigations) {
@@ -1265,7 +1265,7 @@ function MasvsControlTable({
           </p>
         ) : verdicts.length === 0 ? (
           <p className="text-xs text-text-muted">
-            No verdicts resolved yet — children still in CREATED /
+            No verdicts resolved yet -- children still in CREATED /
             RUNNING with no primary outcome. The table will populate
             as each child reaches a terminal state.
           </p>
@@ -1290,7 +1290,7 @@ function MasvsControlTable({
                 {verdicts.map((v) => {
                   const child = childById.get(v.child_investigation_id);
                   const childStatus = child?.status ?? "unknown";
-                  // Group prefix lives inside the control id —
+                  // Group prefix lives inside the control id --
                   // ``MSTG-STORAGE-1`` → ``STORAGE``,
                   // ``MASVS-PRIVACY-1`` → ``PRIVACY``. The aggregate's
                   // ``by_group`` map carries the canonical mapping but
@@ -1329,7 +1329,7 @@ function MasvsControlTable({
                       </td>
                       <td className="px-2 py-1 font-mono text-right text-foreground">
                         {v.verdict === "inconclusive" && v.confidence === 0
-                          ? "—"
+                          ? "--"
                           : v.confidence.toFixed(2)}
                       </td>
                       <td className="px-2 py-1 text-right">
@@ -1364,12 +1364,12 @@ function MasvsControlTable({
 /** Recover the MASVS group token from a control id. Both legacy
  * MASVS v1.4.2 ids (`MSTG-<GROUP>-N`) and v2.1.0 ids
  * (`MASVS-<GROUP>-N`) share the same `-<GROUP>-` middle segment, so a
- * single split rule handles both vintages. Returns "—" for ids the
- * pattern can't parse (defensive — the catalog enforces the format
+ * single split rule handles both vintages. Returns "--" for ids the
+ * pattern can't parse (defensive -- the catalog enforces the format
  * but a stray entry shouldn't crash the table). */
 function _extractGroupFromControlId(controlId: string): string {
   const parts = controlId.split("-");
-  return parts.length >= 2 ? parts[1] : "—";
+  return parts.length >= 2 ? parts[1] : "--";
 }
 
 /** Verdict → AilaBadge severity. FINDING is the audit signal worth
@@ -1456,7 +1456,7 @@ export function TargetDetailPage() {
 
   return (
     <div className="space-y-4">
-      {/* Header — humans, not IDs */}
+      {/* Header -- humans, not IDs */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <DeleteButton
           id={target.id}
@@ -1525,12 +1525,12 @@ export function TargetDetailPage() {
           Started{" "}
           {target.analysis_started_at
             ? new Date(target.analysis_started_at).toLocaleTimeString()
-            : "—"}
+            : "--"}
           . This usually takes 30s–10min depending on artifact size.
         </p>
       )}</AilaCard>
 
-      {/* Upload widget — only for upload-capable kinds. AILA streams the
+      {/* Upload widget -- only for upload-capable kinds. AILA streams the
           file through to the IDA MCP; nothing is stored on the platform. */}
       {isUploadableKind(target.kind) && (
         <AilaCard  techBorder glow><div className="space-y-3">
@@ -1591,13 +1591,13 @@ export function TargetDetailPage() {
           <div>
             <dt className="text-text-muted text-xs">Applicable MCP servers</dt>
             <dd className="font-mono text-xs">
-              {applicableMcp.length > 0 ? applicableMcp.join(", ") : "—"}
+              {applicableMcp.length > 0 ? applicableMcp.join(", ") : "--"}
             </dd>
           </div>
           <div>
             <dt className="text-text-muted text-xs">Applicable fuzzing engines</dt>
             <dd className="font-mono text-xs">
-              {applicableEngines.length > 0 ? applicableEngines.join(", ") : "—"}
+              {applicableEngines.length > 0 ? applicableEngines.join(", ") : "--"}
             </dd>
           </div>
           <div>
@@ -1605,31 +1605,31 @@ export function TargetDetailPage() {
             <dd className="font-mono text-xs">
               {applicableStrategies.length > 0
                 ? applicableStrategies.join(", ")
-                : "—"}
+                : "--"}
             </dd>
           </div>
           <div>
             <dt className="text-text-muted text-xs">Default disclosure tracks</dt>
             <dd className="font-mono text-xs">
-              {defaultDisclosure.length > 0 ? defaultDisclosure.join(", ") : "—"}
+              {defaultDisclosure.length > 0 ? defaultDisclosure.join(", ") : "--"}
             </dd>
           </div>
           <div>
             <dt className="text-text-muted text-xs">Default reasoning strategy</dt>
             <dd className="font-mono text-xs">
-              {(capability.default_reasoning_strategy as string) ?? "—"}
+              {(capability.default_reasoning_strategy as string) ?? "--"}
             </dd>
           </div>
           <div>
             <dt className="text-text-muted text-xs">Est. cost / investigation</dt>
             <dd className="font-mono text-xs">
-              ${(capability.estimated_cost_per_investigation_usd as number) ?? "—"}
+              ${(capability.estimated_cost_per_investigation_usd as number) ?? "--"}
             </dd>
           </div>
         </dl>
       )}</AilaCard>
 
-      {/* Android APK overview — only shown for android_apk targets that
+      {/* Android APK overview -- only shown for android_apk targets that
           have at least one stage handle. Each section inside the card
           gates on its own data, so the operator sees what's ready as
           the 5-stage pipeline progresses. */}
@@ -1656,7 +1656,7 @@ export function TargetDetailPage() {
       )}
 
       {/* U-1 progress card. Same gate as the dispatcher (above) and
-          the report card (below) — APK kinds with STATIC_SUMMARY.
+          the report card (below) -- APK kinds with STATIC_SUMMARY.
           The card self-hides until a parent masvs_audit row exists,
           so on a fresh APK only the dispatcher renders. Once a
           dispatch has fired, the card surfaces live counts +
@@ -1715,7 +1715,7 @@ export function TargetDetailPage() {
         />
       )}
 
-      {/* Mitigations — uses shared MitigationsRibbon (§1.4 promise) */}
+      {/* Mitigations -- uses shared MitigationsRibbon (§1.4 promise) */}
       {target.analysis_state === "ready" && (
         <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
           Mitigations
@@ -1801,7 +1801,7 @@ export function TargetDetailPage() {
                       )}
                     </td>
                     <td className="px-2 py-1 font-mono text-right text-foreground">
-                      {f.score?.toFixed(2) ?? "—"}
+                      {f.score?.toFixed(2) ?? "--"}
                     </td>
                     <td className="px-2 py-1 text-text-muted">
                       {(f.reasons ?? []).join("; ")}
@@ -1820,7 +1820,7 @@ export function TargetDetailPage() {
         )}</AilaCard>
       )}
 
-      {/* Descriptor — collapsed for debugging only */}
+      {/* Descriptor -- collapsed for debugging only */}
       <AilaCard  techBorder glow><details>
         <summary className="text-sm font-semibold text-foreground cursor-pointer">
           Operator-supplied descriptor

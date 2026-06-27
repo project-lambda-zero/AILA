@@ -66,7 +66,7 @@ describe("router structure", () => {
   it("redirects /scans/* to /console preserving sub-path (D-14, C-M7)", () => {
     const route = findRoute("scans/*");
     expect(route).toBeDefined();
-    // Element is <ScansRedirect /> — a wrapper that reads useParams()["*"]
+    // Element is <ScansRedirect /> -- a wrapper that reads useParams()["*"]
     // and renders <Navigate to={`/console/${rest}`}>. Inspect the element
     // type name directly since we cannot mount useParams here.
     const tree = renderToString(route!.element);

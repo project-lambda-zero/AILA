@@ -190,7 +190,7 @@ function normalizeModulePath(pathname: string): string {
 function buildModuleRouteObjects(specs: ModuleFrontendSpec[]): RouteObject[] {
   return specs.flatMap((spec) => {
     // Inherit the module's primary nav icon when an individual route
-    // didn't supply its own — keeps all `/vr/*` detail pages on the
+    // didn't supply its own -- keeps all `/vr/*` detail pages on the
     // Briefcase icon, all `/forensics/*` on Detective, etc.
     const fallbackIcon = spec.nav?.find((n) => n.icon)?.icon ?? undefined;
     return (spec.routes ?? []).map((route) => {
@@ -242,17 +242,17 @@ export const routeObjects: RouteObject[] = [
     element: <LoginPage />,
   },
   {
-    // OIDC callback — public, no ProtectedRoute (T-140-08)
+    // OIDC callback -- public, no ProtectedRoute (T-140-08)
     path: "/auth/callback",
     element: <OidcCallbackPage />,
   },
   {
-    // 403 page — public (redirected here from ProtectedRoute on role failure)
+    // 403 page -- public (redirected here from ProtectedRoute on role failure)
     path: "/403",
     element: <ForbiddenPage />,
   },
   {
-    // 500 page — public direct navigation
+    // 500 page -- public direct navigation
     path: "/500",
     element: <ServerErrorPage />,
   },

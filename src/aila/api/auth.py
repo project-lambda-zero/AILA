@@ -73,7 +73,7 @@ __all__ = [
     "verify_user_password",
 ]
 
-# Explicitly use bcrypt — do not rely on PasswordHash autodetection which
+# Explicitly use bcrypt -- do not rely on PasswordHash autodetection which
 # varies depending on installed extras. BcryptHasher guarantees bcrypt.
 _HASHER: PasswordHash = PasswordHash((BcryptHasher(),))
 _BEARER_SCHEME: HTTPBearer = HTTPBearer(auto_error=False)
@@ -88,7 +88,7 @@ class AuthContext:
 
     auth_type is "user" for user JWT tokens, "api_key" for API key JWTs.
     user_id is the UserRecord.id for user auth, or ApiKeyRecord.id for API key auth.
-    team_id is None for admin tokens (TEAM-06: god tier — sees all teams' data).
+    team_id is None for admin tokens (TEAM-06: god tier -- sees all teams' data).
     """
 
     user_id: str
@@ -281,7 +281,7 @@ async def decode_and_blacklist_check(token: str, expected_typ: str = JWT_TYP_ACC
 
     # Handle both token types: API key JWT has key_id, user JWT has user_id
     if actual_typ == JWT_TYP_USER_ACCESS:
-        # User JWT — look up user, return a synthetic ApiKeyRecord-compatible object
+        # User JWT -- look up user, return a synthetic ApiKeyRecord-compatible object
         from aila.storage.db_models import UserRecord
 
         user_id = payload.get("user_id")
@@ -368,7 +368,7 @@ async def require_api_key(
     check, avoiding event loop blocking.
 
     Applied at router level via APIRouter(dependencies=[Depends(require_api_key)]).
-    This guarantees every route under a protected router checks auth — no per-route
+    This guarantees every route under a protected router checks auth -- no per-route
     drift (RESEARCH Pitfall 5: auth missing from internal routes).
 
     Args:
@@ -426,7 +426,7 @@ def require_role(required_role: str) -> Callable[..., AuthContext]:
 
 
 # ---------------------------------------------------------------------------
-# User password hashing (argon2id) — separate from API key bcrypt hashing
+# User password hashing (argon2id) -- separate from API key bcrypt hashing
 # ---------------------------------------------------------------------------
 
 
@@ -608,7 +608,7 @@ async def require_user_or_api_key(
     typ = payload.get("typ")
 
     if typ == JWT_TYP_USER_ACCESS:
-        # User JWT — validate against UserRecord with cache (TEAM-09)
+        # User JWT -- validate against UserRecord with cache (TEAM-09)
         from aila.api.auth_cache import get_auth_cache
         from aila.storage.db_models import UserRecord
 
@@ -639,7 +639,7 @@ async def require_user_or_api_key(
         return AuthContext(user_id=user.id, role=user.role, auth_type="user", team_id=team_id)
 
     elif typ == JWT_TYP_ACCESS:
-        # API key JWT — delegate to existing blacklist check
+        # API key JWT -- delegate to existing blacklist check
         key_record = await decode_and_blacklist_check(token, expected_typ=JWT_TYP_ACCESS)
         return AuthContext(
             user_id=key_record.id,

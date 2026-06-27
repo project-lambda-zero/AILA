@@ -20,7 +20,7 @@ interface SystemTagsProps {
 }
 
 /**
- * SystemTags — tag assignment tab content for system detail page (D-10).
+ * SystemTags -- tag assignment tab content for system detail page (D-10).
  *
  * Shows current tags as removable AilaBadges (operator+ only for removal).
  * Add tag form: vocabulary-constrained Select + value Input + Add button.
@@ -120,7 +120,7 @@ export function SystemTags({ systemId }: SystemTagsProps) {
         </div>
       )}</AilaCard>
 
-      {/* Add tag form — operator+ only */}
+      {/* Add tag form -- operator+ only */}
       {canOperate && (
         <AilaCard variant="elevated" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">
           Add Tag

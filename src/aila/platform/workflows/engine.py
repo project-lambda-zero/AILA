@@ -200,7 +200,7 @@ class DurableStateMachine:
                         definition=definition,
                         initial_input=initial_input,
                     )
-                # Phase 183 Plan 01: fourth branch — dispatcher re-entry while
+                # Phase 183 Plan 01: fourth branch -- dispatcher re-entry while
                 # cursor is mid-inner-run (non-terminal, foreign definition_id).
                 # Guard uses getattr so this branch is dormant until Plan 02
                 # adds is_dispatcher to WorkflowDefinition.
@@ -247,7 +247,7 @@ class DurableStateMachine:
             if existing is None:  # pragma: no cover -- genuine DB error
                 raise RuntimeError(
                     f"workflow_state_cursor row for run_id={run_id!r} "
-                    "vanished after IntegrityError rollback — likely an FK "
+                    "vanished after IntegrityError rollback -- likely an FK "
                     "violation (workflowrunrecord row missing) rather than a "
                     "concurrent insert race. Ensure WorkflowRunRecord exists "
                     "before calling DurableStateMachine.execute()."
@@ -428,15 +428,15 @@ class DurableStateMachine:
         ``UnknownNextStateError``, the engine returns a synthetic terminal
         so the dispatch layer can resume the inner run.
 
-        Lock protocol (GA1 — lock timing is critical):
-            1. Open a FRESH ``async_session_scope()`` — the outer
+        Lock protocol (GA1 -- lock timing is critical):
+            1. Open a FRESH ``async_session_scope()`` -- the outer
                ``_load_or_init_cursor`` session was lock-free and must NOT be
                reused here.
             2. The FIRST statement inside this session is ``SELECT ... FOR UPDATE``
                on the cursor row. This serialises concurrent ARQ retries that
                both entered the fourth branch.
             3. All column reads use named mapping access (``locked_row.current_state``
-               etc.) — never positional index — so column-order changes cannot
+               etc.) -- never positional index -- so column-order changes cannot
                silently read wrong values.
 
         Vanished row (T-183-01-01):
@@ -448,7 +448,7 @@ class DurableStateMachine:
 
         Post-lock re-check:
             If the locked row has advanced to a terminal state under the
-            dispatcher definition, return it directly — another worker already
+            dispatcher definition, return it directly -- another worker already
             finished.
 
         Idempotency note:
@@ -475,7 +475,7 @@ class DurableStateMachine:
 
             if locked_row is None:
                 # Cursor vanished between outer get() and FOR UPDATE lock
-                # acquisition — workflow completed concurrently.
+                # acquisition -- workflow completed concurrently.
                 _log.warning(
                     "workflow.mid_inner_run_cursor_vanished",
                     run_id=run_id,
@@ -620,7 +620,7 @@ class DurableStateMachine:
             )
 
         # Step 4b (Phase 183 Plan 06): output validation.
-        # Layer 1 — non-terminal handlers must not return empty dict.
+        # Layer 1 -- non-terminal handlers must not return empty dict.
         if result.output == {} and state.current not in RESERVED_TERMINAL_STATES:
             _log.warning(
                 "workflow.empty_output",
@@ -637,7 +637,7 @@ class DurableStateMachine:
                 error_detail="Handler returned empty dict for non-terminal state",
             )
 
-        # Layer 2 — optional per-state Pydantic schema validation.
+        # Layer 2 -- optional per-state Pydantic schema validation.
         if spec.output_schema is not None:
             try:
                 spec.output_schema.model_validate(result.output)
@@ -976,7 +976,7 @@ class DurableStateMachine:
                 # cursor was still missing -> retry exhausted -> job
                 # expired without AUTO_CONTINUE. Investigation stalled.
                 #
-                # Diagnosed 2026-06-12 on inv bc194403 / 659018db: the
+                # Diagnosed 2026-06-12 on inv <inv-uuid-a> / <inv-uuid-b>: the
                 # parent_reconciler step-3 sweep deletes cursors whose
                 # TaskRecord is terminal regardless of cursor state.
                 # When ARQ marks a TaskRecord 'failed' between retry
@@ -1076,7 +1076,7 @@ class DurableStateMachine:
             # template.py: DurableStateMachine.execute(task_context.task_id)).
             # We do this inside the same transaction so it commits atomically
             # with the cursor advance. A missing TaskRecord (e.g. during
-            # tests) produces 0 rows updated — that is fine.
+            # tests) produces 0 rows updated -- that is fine.
             await session.execute(
                 sa.update(TaskRecord)
                 .where(TaskRecord.id == run_id)  # type: ignore[arg-type]

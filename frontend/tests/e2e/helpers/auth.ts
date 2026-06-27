@@ -1,8 +1,8 @@
 /**
- * auth.ts — shared E2E auth helpers
+ * auth.ts -- shared E2E auth helpers
  *
  * Provides getTokens() and injectAuthState() used across all E2E test suites.
- * Uses real PostgreSQL backend — no mocks.
+ * Uses real PostgreSQL backend -- no mocks.
  */
 import type { APIRequestContext, Page } from "@playwright/test";
 

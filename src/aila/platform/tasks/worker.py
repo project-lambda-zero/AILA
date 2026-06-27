@@ -36,7 +36,7 @@ from aila.storage.database import async_session_scope
 
 __all__ = ["WorkerSettings", "reaper"]
 
-# fix §62 — every datetime comparison in this module routes through
+# fix §62 -- every datetime comparison in this module routes through
 # ``utc_now()`` (timezone-aware) instead of ``datetime.now(tz=UTC)`` /
 # ``datetime.utcnow()``. The pattern is enforced by importing ONLY
 # ``timedelta`` and the platform's tz-aware ``utc_now`` from
@@ -44,7 +44,7 @@ __all__ = ["WorkerSettings", "reaper"]
 # at module scope, so any future re-introduction of tz-naive comparisons
 # triggers an immediate import-time failure.
 
-# fix §44 — grace seconds for the cron reaper are env-driven. The
+# fix §44 -- grace seconds for the cron reaper are env-driven. The
 # historical cron value (600s) is the default; boot path still
 # hard-codes 30s for legitimate reasons (see `_on_startup`). Operators
 # can override via PLATFORM_WORKER_HEARTBEAT_GRACE_S for the cron
@@ -119,7 +119,7 @@ async def _sweep_orphan_queued_tasks() -> None:
     Strategy: for each non-cron QUEUED row in the DB, check if its
     job_id is present in any arq:queue:<track> zset. If absent across
     all tracks, flip to FAILED with reason orphan_not_in_arq_queue.
-    Tasks queued within the last 60s are skipped — they may have been
+    Tasks queued within the last 60s are skipped -- they may have been
     enqueued in DB but not yet pushed to Redis by an in-flight submit().
     """
     redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
@@ -127,7 +127,7 @@ async def _sweep_orphan_queued_tasks() -> None:
         return
     client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
     try:
-        # fix §61 — collect job_ids per ARQ queue track instead of one
+        # fix §61 -- collect job_ids per ARQ queue track instead of one
         # global set. UUID collisions are vanishingly rare, but the
         # legacy second-colon-filter (skips arq:queue:foo:dlq style
         # keys) is too permissive for any future ARQ extension that
@@ -154,7 +154,7 @@ async def _sweep_orphan_queued_tasks() -> None:
         present_in_arq: set[str] = set().union(*present_by_track.values()) if present_by_track else set()
 
         # Find candidate DB rows: QUEUED rows that are past the boot-time
-        # grace window. fix §45 — at boot the api_router may have INSERTed
+        # grace window. fix §45 -- at boot the api_router may have INSERTed
         # the row but not yet pushed to ARQ Redis (ZADD races the INSERT
         # commit). Skipping rows younger than 10s prevents the boot sweep
         # against reaping legitimate in-flight submissions.
@@ -170,7 +170,7 @@ async def _sweep_orphan_queued_tasks() -> None:
             )).all()
             reaped = 0
             now = utc_now()
-            # fix §70 — per-row UoW so a constraint failure on one
+            # fix §70 -- per-row UoW so a constraint failure on one
             # task doesn't roll back the others' commits. We still
             # bulk-commit by accumulating into the session, but if a
             # row violates a constraint we flush per-row and skip the
@@ -178,7 +178,7 @@ async def _sweep_orphan_queued_tasks() -> None:
             for rec in rows:
                 if rec.id.startswith("cron:"):
                     continue
-                # fix §61 — primary check: per-track membership. Only
+                # fix §61 -- primary check: per-track membership. Only
                 # fall back to the cross-track union when the row's
                 # track isn't represented in the scan (renamed track,
                 # new track ARQ hasn't bound a zset for yet).
@@ -194,12 +194,12 @@ async def _sweep_orphan_queued_tasks() -> None:
                 team_marker = (
                     f" team_id={rec.team_id}" if getattr(rec, "team_id", None) else ""
                 )
-                # fix §68 — team_id surfaced in the audit message so
+                # fix §68 -- team_id surfaced in the audit message so
                 # multi-tenant deployments can grep reaped rows by
                 # owning team. The filter itself stays cross-team
                 # (operator confirmed acceptable per cutover spec).
                 rec.error = (
-                    "Reaped by orphan-queued sweep — DB row marked queued "
+                    "Reaped by orphan-queued sweep -- DB row marked queued "
                     "but absent from arq:queue:* zsets. ARQ has no record "
                     "of this job; operator can resume via the owning "
                     f"domain's resume endpoint.{team_marker}"
@@ -232,7 +232,7 @@ async def _sweep_orphan_queued_tasks() -> None:
 
 
 async def reaper(ctx: dict[str, object]) -> None:
-    """ARQ cron — every minute. Reconciles orphan locks AND orphan TaskRecord rows.
+    """ARQ cron -- every minute. Reconciles orphan locks AND orphan TaskRecord rows.
 
     Two complementary sweeps:
       - ``_reconcile_orphan_arq_locks`` walks ``arq:in-progress:*`` keys and
@@ -245,11 +245,11 @@ async def reaper(ctx: dict[str, object]) -> None:
         only got reaped at the next worker restart, blocking max_jobs
         until then.
 
-    Step ordering — fix §57 — orphan_queued runs BEFORE cursor_reaper so a
+    Step ordering -- fix §57 -- orphan_queued runs BEFORE cursor_reaper so a
     cursor whose TaskRecord just flipped to FAILED in this tick is cleared
     the SAME tick instead of lingering for ~60s.
 
-    Exception filter — fix §56 — every sub-sweep catches the broad
+    Exception filter -- fix §56 -- every sub-sweep catches the broad
     ``Exception`` instead of a tuple that misses SQLAlchemy errors. The
     cron's whole point is best-effort: a DB hiccup in one sub-sweep
     must NOT crash the remaining sub-sweeps in the chain.
@@ -260,10 +260,10 @@ async def reaper(ctx: dict[str, object]) -> None:
         _log.warning("reaper: arq lock reconciliation failed: %s", exc, exc_info=True)
     try:
         # Cron context: env-driven grace (default 600s, override with
-        # PLATFORM_WORKER_HEARTBEAT_GRACE_S — fix §44) AND skip
+        # PLATFORM_WORKER_HEARTBEAT_GRACE_S -- fix §44) AND skip
         # heartbeat=None tasks. ARQ doesn't auto-extend the in-progress
         # lock for tasks that don't call ctx.heartbeat() during a long await
-        # — single-shot tool calls like run_function_ranking (one
+        # -- single-shot tool calls like run_function_ranking (one
         # ~5-min audit_mcp HTTP request) end up with lock_missing +
         # heartbeat=None mid-flight even though the worker is still
         # healthily awaiting the response. Killing them there destroyed
@@ -277,7 +277,7 @@ async def reaper(ctx: dict[str, object]) -> None:
         )
     except Exception as exc:
         _log.warning("reaper: orphan running-task sweep failed: %s", exc, exc_info=True)
-    # fix §X-platform-layering — iterate the generic sweep registry instead
+    # fix §X-platform-layering -- iterate the generic sweep registry instead
     # of hardcoding module-specific imports. Modules register their sweeps
     # at import time via aila.platform.tasks.sweeps.register_periodic_sweep.
     # The platform worker has zero awareness of which modules own which
@@ -297,7 +297,7 @@ async def reaper(ctx: dict[str, object]) -> None:
                 "reaper.%s: failed: %s", sweep_name, exc, exc_info=True,
             )
 
-    # fix §57 — orphan_queued runs BEFORE cursor_reaper. A QUEUED row
+    # fix §57 -- orphan_queued runs BEFORE cursor_reaper. A QUEUED row
     # absent from ARQ gets flipped to FAILED first; the cursor cleanup
     # in the next step then sees the terminal status and clears the
     # cursor immediately rather than the next minute's tick.
@@ -306,14 +306,14 @@ async def reaper(ctx: dict[str, object]) -> None:
     except Exception as exc:
         _log.warning("reaper: orphan-queued sweep failed: %s", exc, exc_info=True)
     try:
-        # fix §58 — sweep covers ALL FOUR reserved terminal cursor states,
+        # fix §58 -- sweep covers ALL FOUR reserved terminal cursor states,
         # not just __crashed__.
         cleared = await sweep_orphan_crashed_cursors()
         if cleared:
             _log.info("reaper: cleared %d orphan terminal cursors", cleared)
     except Exception as exc:
         _log.warning("reaper: cursor cleanup failed: %s", exc, exc_info=True)
-    # fix §123 — idempotency-cache expired-row purge wired into the same
+    # fix §123 -- idempotency-cache expired-row purge wired into the same
     # cron loop so the table doesn't accumulate stale rows forever. The
     # purge is best-effort and never crashes the cron tick.
     try:
@@ -392,7 +392,7 @@ async def _reconcile_orphan_arq_locks() -> None:
             TASK_ZOMBIES_REAPED_TOTAL.labels(reason="orphaned_arq_lock").inc()
 
         # Without this step the TaskRecord stays at ``running`` forever even
-        # though Redis agrees the job is dead — the UI then shows investigations
+        # though Redis agrees the job is dead -- the UI then shows investigations
         # / scans as "pending" or "running" indefinitely. Flip every reaped
         # task to FAILED in one commit so domain-layer reconcilers
         # (e.g. forensics_investigations pending → failed when task is failed)
@@ -410,7 +410,7 @@ async def _reconcile_orphan_arq_locks() -> None:
                     rec.status = TaskStatus.FAILED
                     rec.completed_at = now
                     rec.error = (
-                        "Reaped by platform zombie-sweep — worker died mid-task "
+                        "Reaped by platform zombie-sweep -- worker died mid-task "
                         f"(reason={reason_by_id.get(rec.id, 'unknown')})."
                     )
                     session.add(rec)
@@ -467,7 +467,7 @@ async def _persist_dead_letter(
 
 # Registry bootstrap: scan all feature module packages and import their
 # workflow/task.py so @platform_task decorators fire before WorkerSettings
-# reads _REGISTRY.all_functions(). No module names are hard-coded here —
+# reads _REGISTRY.all_functions(). No module names are hard-coded here --
 # the same pkgutil scan used by _discover_feature_module_factories() drives
 # discovery so adding a new module never requires touching this file.
 def _bootstrap_platform_tasks() -> None:
@@ -487,7 +487,7 @@ def _bootstrap_platform_tasks() -> None:
         try:
             __import__(task_module)
         except ModuleNotFoundError:
-            pass  # module has no workflow/task.py — fine
+            pass  # module has no workflow/task.py -- fine
         except Exception:
             _log.warning("platform-task bootstrap: %s import failed", task_module, exc_info=True)
 
@@ -541,7 +541,7 @@ async def _on_startup(ctx: dict[str, Any]) -> None:
         try:
             await eng.dispose()
         except Exception as exc:
-            # Connection may already be dead (ProactorEventLoop closed) — ignore.
+            # Connection may already be dead (ProactorEventLoop closed) -- ignore.
             _log.debug("on_startup: stale engine dispose failed: %s", exc)
     _db_module._ASYNC_ENGINES.clear()
     _log.debug("ARQ on_startup: cleared %d stale async engine(s) (Windows loop migration)", len(engines))
@@ -559,7 +559,7 @@ async def _on_startup(ctx: dict[str, Any]) -> None:
     # hours because vr.stall_recovery never fired in any worker. Cron
     # reaper was iterating an EMPTY list of VR sweeps. Manual call to
     # the sweep function showed examined=15 / enqueued=90 would have
-    # been ready — sweep was correct, just never triggered.
+    # been ready -- sweep was correct, just never triggered.
     try:
         load_builtin_modules()
         _log.info("ARQ on_startup: registered builtin module sweeps")
@@ -579,7 +579,7 @@ async def _workflow_cursor_is_resumable(session: Any, task_id: str) -> bool:
     Workflow tasks store their resumable position in workflow_state_cursor
     keyed by run_id == task_id. If the cursor exists and the state is
     non-terminal, the next worker pickup can resume the workflow from
-    that state — reaping the TaskRecord would defeat the durability
+    that state -- reaping the TaskRecord would defeat the durability
     contract (D-86). Terminal states (__succeeded__/__failed__/
     __cancelled__/__crashed__) mean the workflow already completed
     one way or another; the TaskRecord SHOULD be reaped in that case.
@@ -608,7 +608,7 @@ async def _sweep_orphan_running_tasks(
     evicted (the lock-iterator sweep misses those because there's no lock
     key left to see).
 
-    Safety: this does **not** blanket-fail every RUNNING task — it only
+    Safety: this does **not** blanket-fail every RUNNING task -- it only
     flips rows whose ARQ in-progress lock is missing. If a peer worker is
     genuinely running the job, its lock is alive and we leave it alone.
     """
@@ -644,7 +644,7 @@ async def _sweep_orphan_running_tasks(
             # considered orphan-evidence. ``grace_seconds`` is 30s at boot
             # (no live worker can have touched anything older than itself,
             # narrow window OK) and longer (300s) when called periodically
-            # by the cron — a freshly-claimed task may sit at
+            # by the cron -- a freshly-claimed task may sit at
             # status=RUNNING with heartbeat=NULL for several seconds before
             # the worker's first heartbeat lands, and a 30s window risks
             # killing it before it gets a chance to write one.
@@ -662,7 +662,7 @@ async def _sweep_orphan_running_tasks(
                 #   (3) no heartbeat AND started_at older than the same cutoff
                 lock_exists = await client.exists(f"{ARQ_IN_PROGRESS_PREFIX}{rec.id}")
                 if lock_exists and hb is not None and hb > stale_cutoff:
-                    # Lock present AND heartbeat is fresh — legit, peer owns it.
+                    # Lock present AND heartbeat is fresh -- legit, peer owns it.
                     continue
                 if hb is not None and hb > stale_cutoff:
                     # Lock missing but heartbeat is brand-new: very unlikely
@@ -670,22 +670,22 @@ async def _sweep_orphan_running_tasks(
                     continue
                 # D-86: DurableStateMachine workflows persist via
                 # workflow_state_cursor. Reaping such a task on stale
-                # heartbeat is wrong — the cursor still carries the live
+                # heartbeat is wrong -- the cursor still carries the live
                 # state and the next worker run can resume from it. Only
                 # reap workflow tasks if the cursor itself reached a
                 # terminal reserved state.
                 if await _workflow_cursor_is_resumable(session, rec.id):
                     # Three-state reconciliation:
-                    #   (a) arq:in-progress:<id>  — delete to free the
+                    #   (a) arq:in-progress:<id>  -- delete to free the
                     #       worker slot (3-source-of-truth drift root
                     #       cause; throttles max_jobs by N for 1hr)
-                    #   (b) TaskRecord.status      — transition to
+                    #   (b) TaskRecord.status      -- transition to
                     #       CANCELLED so consumers asking 'is this
                     #       task active?' get a consistent NO. The
                     #       cursor (current_state) is the live source
                     #       of truth for resumption; TaskRecord is
                     #       just the audit log.
-                    #   (c) workflow_state_cursor — untouched, owns
+                    #   (c) workflow_state_cursor -- untouched, owns
                     #       the next-resume position.
                     try:
                         await client.delete(f"{ARQ_IN_PROGRESS_PREFIX}{rec.id}")
@@ -698,7 +698,7 @@ async def _sweep_orphan_running_tasks(
                     rec.completed_at = utc_now()
                     session.add(rec)
                     _log.info(
-                        "worker.reverse_sweep: task_id=%s SKIPPED — workflow "
+                        "worker.reverse_sweep: task_id=%s SKIPPED -- workflow "
                         "cursor is resumable (D-86); status -> CANCELLED, "
                         "in-progress lock cleared",
                         rec.id,
@@ -829,7 +829,7 @@ async def _sweep_orphan_running_tasks(
                 rec.status = TaskStatus.FAILED
                 rec.completed_at = now
                 rec.error = (
-                    f"Reaped by sweep ({reason}) at {now.isoformat()} — "
+                    f"Reaped by sweep ({reason}) at {now.isoformat()} -- "
                     f"task heartbeat ({hb.isoformat() if hb else 'never'}) "
                     f"and started_at ({started.isoformat() if started else 'never'}) "
                     f"both predate stale_cutoff ({stale_cutoff.isoformat()}, "
@@ -838,10 +838,10 @@ async def _sweep_orphan_running_tasks(
                 session.add(rec)
                 reaped += 1
                 _log.warning(
-                    "worker.reverse_sweep: task_id=%s reason=%s — marking failed",
+                    "worker.reverse_sweep: task_id=%s reason=%s -- marking failed",
                     rec.id, reason,
                 )
-            # Always commit — the D-86 resumable-workflow path also
+            # Always commit -- the D-86 resumable-workflow path also
             # mutates rec.status (-> CANCELLED) and re-enqueues, but
             # never increments `reaped`. Without an unconditional
             # commit those cancellations got rolled back at session

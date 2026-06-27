@@ -51,8 +51,8 @@ cd src/aila && alembic upgrade head
 
 Or the Make wrappers:
 
-- `make db-init` — fresh database only. Creates every SQLModel-registered table via `metadata.create_all()`, then stamps `alembic_version` at the current head. Run once on a brand-new database.
-- `make migrate` — every subsequent run. Plain `alembic upgrade head`.
+- `make db-init` -- fresh database only. Creates every SQLModel-registered table via `metadata.create_all()`, then stamps `alembic_version` at the current head. Run once on a brand-new database.
+- `make migrate` -- every subsequent run. Plain `alembic upgrade head`.
 
 The split exists because the early module tables (vulnerability, forensics) predate the Alembic baseline (`001_baseline_stamp` is intentionally empty) and are still created via `metadata.create_all()` on first boot. `make db-init` covers the bootstrap; `make migrate` covers every column/index/table added after the baseline.
 
@@ -74,7 +74,7 @@ class ForensicsAnalystDirective(SQLModel, table=True):
 
 ### Step 2: Create the migration file
 
-**Do not use `alembic revision --autogenerate`.** Autogenerate is unreliable with SQLModel — it misses column type changes, index modifications, and cross-schema references. Write migrations by hand.
+**Do not use `alembic revision --autogenerate`.** Autogenerate is unreliable with SQLModel -- it misses column type changes, index modifications, and cross-schema references. Write migrations by hand.
 
 Create a new file in `src/aila/alembic/versions/`:
 
@@ -94,7 +94,7 @@ ls src/aila/alembic/versions/*.py | tail -1
 Use this template:
 
 ```python
-"""063 — add priority column to task records.
+"""063 -- add priority column to task records.
 
 Adds a nullable priority field so operators can influence queue ordering.
 

@@ -24,7 +24,7 @@ Minimal reference implementation of the AILA module contract. Copy this module (
 | `services/` | Service stub (empty `__init__.py`) |
 | `reporting/` | Reporting stub (empty `__init__.py`) |
 | `api_router.py` | FastAPI router factory (`create_hello_world_router`) |
-| `frontend/` | `@aila/hello-world-frontend` workspace package — sidebar nav + `HelloWorldPage` |
+| `frontend/` | `@aila/hello-world-frontend` workspace package -- sidebar nav + `HelloWorldPage` |
 
 ## API
 

@@ -4,7 +4,7 @@ The CVE feed poller normalizes records from NVD JSON 2.0 + GitHub
 Security Advisory feed into ``vr_cve_records``. Each new CVE
 triggers a similarity scan over the workspace's audit memos: matches
 get an `invalidation_event` so the operator sees "this memo may be
-outdated — CVE-2026-XXXXX landed in the same area".
+outdated -- CVE-2026-XXXXX landed in the same area".
 """
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ class MemoInvalidationEvent(BaseModel):
     """One memo flagged as potentially invalidated by a new CVE.
 
     The event is appended to the KnowledgeEntryRecord's metadata so the
-    operator UI can show "this memo may be outdated — CVE-XXXX-YYYY
+    operator UI can show "this memo may be outdated -- CVE-XXXX-YYYY
     landed in same area".
     """
 

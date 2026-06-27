@@ -16,7 +16,7 @@ class FetchRawRequest(BaseModel):
     Used by projects of kind ``raw_directory``. The ``evidence_id``
     selects one of the ProjectEvidenceRecord rows written by intake;
     the service reads that file (or zips it when it's a directory)
-    directly from the analyzer — no dissect, no disk image.
+    directly from the analyzer -- no dissect, no disk image.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -31,7 +31,7 @@ class RetrieveFileRequest(BaseModel):
     pre-analysis artefact. Both POSIX- and Windows-style separators are
     accepted; the server normalises.
 
-    ``evidence_id`` is optional — when omitted, the project's sole disk
+    ``evidence_id`` is optional -- when omitted, the project's sole disk
     image is used. If multiple disk images exist the request is rejected
     with 400 and the caller must pick one.
     """

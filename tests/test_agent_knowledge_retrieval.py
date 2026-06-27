@@ -241,7 +241,7 @@ class TestAnalyzeCandidateWithPriorContext:
 
         agent.run_structured = mock_run_structured
 
-        # Should not raise — retrieval failure is silently swallowed
+        # Should not raise -- retrieval failure is silently swallowed
         result = await agent._analyze_candidate(candidate)
         assert result is not None
 

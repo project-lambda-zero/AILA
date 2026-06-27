@@ -2,8 +2,8 @@
  * Build-time identity for the SPA. Both values are injected by Vite's
  * `define` hook at config time (see `frontend/vite.config.ts`):
  *
- *   __APP_VERSION__   — `version` field of `frontend/package.json`
- *   __APP_BUILD_SHA__ — `git rev-parse --short=8 HEAD`, or `"dev"` when
+ *   __APP_VERSION__   -- `version` field of `frontend/package.json`
+ *   __APP_BUILD_SHA__ -- `git rev-parse --short=8 HEAD`, or `"dev"` when
  *                       git is unavailable (sandboxed CI, tarball build)
  *
  * Read these here, not from `import.meta.env` directly, so the honesty

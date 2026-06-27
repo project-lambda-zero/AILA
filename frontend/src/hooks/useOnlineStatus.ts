@@ -10,7 +10,7 @@ interface UseOnlineStatusReturn {
 }
 
 /**
- * useOnlineStatus — tracks browser online/offline state.
+ * useOnlineStatus -- tracks browser online/offline state.
  *
  * Uses navigator.onLine for initial value, then listens to the
  * browser's online/offline events for real-time updates.

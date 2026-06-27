@@ -40,15 +40,15 @@ ARQ_DEAD_LETTER_KEY_TEMPLATE: str = "arq:dead-letter:{track}"
 TASK_PROGRESS_KEY_TEMPLATE: str = "task:{task_id}:progress"
 SCAN_PROGRESS_KEY_TEMPLATE: str = "scan:{run_id}:progress"
 
-# --- Numeric tuning (DEFAULTS — runtime values come from ConfigRegistry) ---
+# --- Numeric tuning (DEFAULTS -- runtime values come from ConfigRegistry) ---
 # These are fallbacks when ConfigRegistry is unavailable (e.g. during tests).
 # Production reads from PUT /config/platform/{key}.
 HEARTBEAT_INTERVAL_S: int = 30
 # Reaper thresholds:
-# REAPER_ZOMBIE_THRESHOLD_S — how long a job may run without ANY heartbeat
+# REAPER_ZOMBIE_THRESHOLD_S -- how long a job may run without ANY heartbeat
 # before the reaper considers it a zombie. Set to 3300s (55 min) so the
 # reaper never kills a job whose ARQ timeout (3600s) has not yet expired.
-# REAPER_HEARTBEAT_THRESHOLD_S — once heartbeat_at is being updated (see
+# REAPER_HEARTBEAT_THRESHOLD_S -- once heartbeat_at is being updated (see
 # engine._commit_transition), a job is stale if no heartbeat for this many
 # seconds. 86400s = 24 hours gives a wide window over the per-state typical
 # advisory batch time. The reaper prefers heartbeat_at when present.
@@ -65,7 +65,7 @@ POISON_PILL_THRESHOLD: int = 3
 # heartbeat is older than this threshold, because the frozen worker is
 # actively blocking the queue.
 WORKER_HEARTBEAT_UNHEALTHY_S: int = 60
-XREAD_BLOCK_MS: int = 30000        # 30 seconds — derived from heartbeat_interval_s * 1000
+XREAD_BLOCK_MS: int = 30000        # 30 seconds -- derived from heartbeat_interval_s * 1000
 PROGRESS_STREAM_MAXLEN: int = 1000  # Max events per stream (XADD MAXLEN)
 
 # --- Config registry keys --------------------------------------------------

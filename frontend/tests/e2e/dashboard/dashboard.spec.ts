@@ -1,5 +1,5 @@
 /**
- * dashboard.spec.ts — E2E tests for the dashboard page (TEST-01).
+ * dashboard.spec.ts -- E2E tests for the dashboard page (TEST-01).
  *
  * Coverage:
  *   - Dashboard page renders widget grid after auth
@@ -8,8 +8,8 @@
  *   - Drag handles are present on widgets (DND-enabled per Phase 141)
  *   - Page title identifies as AILA
  *
- * Uses REAL PostgreSQL backend — no mocks, no MSW.
- * Gracefully handles empty data — widgets showing loading skeleton or empty
+ * Uses REAL PostgreSQL backend -- no mocks, no MSW.
+ * Gracefully handles empty data -- widgets showing loading skeleton or empty
  * state are acceptable, they must not crash the page.
  */
 import { test, expect } from "@playwright/test";
@@ -30,7 +30,7 @@ test.describe("Dashboard", () => {
     // Wait for the dashboard to load beyond the loading state
     await page.waitForLoadState("networkidle", { timeout: 15_000 });
 
-    // The root dashboard element — grid container (react-grid-layout uses class "react-grid-layout")
+    // The root dashboard element -- grid container (react-grid-layout uses class "react-grid-layout")
     const grid = page
       .locator(".react-grid-layout")
       .or(page.locator('[data-testid="dashboard-grid"]'))
@@ -44,7 +44,7 @@ test.describe("Dashboard", () => {
 
     await page.waitForLoadState("networkidle", { timeout: 15_000 });
 
-    // Widget cards are AilaCard components — they have data-slot="card" or similar role
+    // Widget cards are AilaCard components -- they have data-slot="card" or similar role
     const cards = page
       .locator('[data-slot="card"]')
       .or(page.locator(".react-grid-item"))

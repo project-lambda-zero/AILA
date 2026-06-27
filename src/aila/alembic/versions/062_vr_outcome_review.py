@@ -1,8 +1,8 @@
-"""vr_outcome_review — sibling-corroborated draft outcome workflow.
+"""vr_outcome_review -- sibling-corroborated draft outcome workflow.
 
 Two schema changes for the draft-outcome lifecycle:
 
-(1) ``vr_investigation_outcomes.state`` — new column.
+(1) ``vr_investigation_outcomes.state`` -- new column.
     Values: 'draft' | 'approved' | 'rejected' | 'dispatched'.
     New rows default to 'draft'. Pre-migration rows are backfilled to
     'dispatched' (legacy semantics: once a row existed in the old world
@@ -10,17 +10,17 @@ Two schema changes for the draft-outcome lifecycle:
     block it). The column is nullable purely so the backfill UPDATE can
     run before the NOT NULL constraint is set.
 
-(2) ``vr_outcome_reviews`` — new table.
+(2) ``vr_outcome_reviews`` -- new table.
     One row per sibling review of a draft outcome.
     Vote enum: 'approve' | 'reject' | 'request_edit' | 'abstain'.
     UNIQUE(outcome_id, reviewer_branch_id) prevents a single branch
-    from voting twice on the same outcome — the latest vote replaces
+    from voting twice on the same outcome -- the latest vote replaces
     the prior one via UPSERT in the application layer.
 
     suggested_edits_json carries free-form proposed changes to the
     outcome payload (e.g. ``{"confidence": "weak"}``,
     ``{"claims[0].file_path": "actual/path.c"}``). Operator visibility
-    only in v1 — application of edits is operator-initiated, not
+    only in v1 -- application of edits is operator-initiated, not
     automatic.
 
 The dispatch gate (OutcomeDispatcher) refuses any outcome whose

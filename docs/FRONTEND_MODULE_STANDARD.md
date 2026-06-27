@@ -85,8 +85,8 @@ Current module frontend packages: `@aila/hello-world-frontend`, `@aila/vulnerabi
 
 Every module's frontend directory MUST contain:
 
-- `package.json` — name `@aila/<module>-frontend` (kebab-case), private, `main: "./spec.ts"`
-- `tsconfig.json` — extends `@aila/typescript-config/react-module`
+- `package.json` -- name `@aila/<module>-frontend` (kebab-case), private, `main: "./spec.ts"`
+- `tsconfig.json` -- extends `@aila/typescript-config/react-module`
 
 Reference template: `src/aila/modules/hello_world/frontend/`. The shell registers each module by package-name import in `frontend/src/platform/extension-registry/loadModuleSpecs.ts`.
 
@@ -94,7 +94,7 @@ Reference template: `src/aila/modules/hello_world/frontend/`. The shell register
 
 Every module that contributes frontend UI must provide:
 
-- `frontend/spec.ts` — exports `frontendSpec: ModuleFrontendSpec`
+- `frontend/spec.ts` -- exports `frontendSpec: ModuleFrontendSpec`
 - `frontend/routes.tsx`
 - `frontend/nav.ts`
 
@@ -415,15 +415,15 @@ Any missing endpoint or unusable contract becomes a separate backend follow-up.
 
 ## UI Component Standard
 
-**Platform owns the design system. Modules consume it — they do not extend or replace it.**
+**Platform owns the design system. Modules consume it -- they do not extend or replace it.**
 
 ### Required: Use the AILA design system
 
 Module screens MUST build their UI from:
 
-1. **AILA shared components** at `frontend/src/components/aila/` — re-exported by the shell. The canonical surface is `AilaCard`, `AilaBadge` (severity prop: `critical | high | medium | low | informational | unknown`), `AilaTable`, `EmptyState`, `KpiTile`, and `AilaChart`. Modules consume these as React components, NOT as CSS utility classes.
-2. **shadcn/ui primitives** — re-exported under `@platform/ui/*` when a module needs a primitive AILA components do not yet wrap (Dialog, Popover, DropdownMenu, ...).
-3. **AILA design tokens** — CSS variables under the `--color-*` namespace declared in `frontend/src/styles/globals.css`. Module styles MUST reference tokens (`color: var(--color-mint)`), never literal hex colours.
+1. **AILA shared components** at `frontend/src/components/aila/` -- re-exported by the shell. The canonical surface is `AilaCard`, `AilaBadge` (severity prop: `critical | high | medium | low | informational | unknown`), `AilaTable`, `EmptyState`, `KpiTile`, and `AilaChart`. Modules consume these as React components, NOT as CSS utility classes.
+2. **shadcn/ui primitives** -- re-exported under `@platform/ui/*` when a module needs a primitive AILA components do not yet wrap (Dialog, Popover, DropdownMenu, ...).
+3. **AILA design tokens** -- CSS variables under the `--color-*` namespace declared in `frontend/src/styles/globals.css`. Module styles MUST reference tokens (`color: var(--color-mint)`), never literal hex colours.
 
 No legacy CSS framework is installed. The Tailwind layer is v4; module classes must be reachable from the shell's `@source` directives (see "Tailwind v4 source discovery" below).
 
@@ -439,7 +439,7 @@ Module developers must **not**:
 
 ### Allowed Exception: Complex Data Visualizations
 
-If a module requires a genuinely complex, custom data display that cannot be composed from AILA components + shadcn primitives — such as:
+If a module requires a genuinely complex, custom data display that cannot be composed from AILA components + shadcn primitives -- such as:
 - An interactive graph renderer (D3, Cytoscape, WebGL)
 - A custom timeline or Gantt chart
 - A domain-specific canvas visualization
@@ -452,7 +452,7 @@ If a module requires a genuinely complex, custom data display that cannot be com
 ### Correct Pattern
 
 ```tsx
-// ✓ Good — uses AILA components + design tokens
+// ✓ Good -- uses AILA components + design tokens
 import { AilaCard, AilaBadge } from "@/components/aila";
 
 export function FindingCard({ finding }: { finding: VulnerabilityFinding }) {
@@ -468,7 +468,7 @@ export function FindingCard({ finding }: { finding: VulnerabilityFinding }) {
 ```
 
 ```tsx
-// ✗ Bad — custom CSS, hardcoded colors, invented layout
+// ✗ Bad -- custom CSS, hardcoded colors, invented layout
 import "./custom-findings.css"; // ← forbidden
 export function FindingCard({ finding }) {
   return (
@@ -498,7 +498,7 @@ Key components available to all modules:
 
 Tailwind v4 generates CSS rules ONLY for classes it finds during its content scan. The scan starts at the directory containing the entry CSS file (`frontend/src/styles/globals.css` → scans `frontend/src/` and below) and ignores `node_modules/` by default.
 
-**Module frontends live OUTSIDE `frontend/src/`** — they're at `src/aila/modules/<name>/frontend/` and reached via pnpm workspace symlinks in `node_modules/@aila/<name>-frontend/`. Tailwind does NOT scan them by default.
+**Module frontends live OUTSIDE `frontend/src/`** -- they're at `src/aila/modules/<name>/frontend/` and reached via pnpm workspace symlinks in `node_modules/@aila/<name>-frontend/`. Tailwind does NOT scan them by default.
 
 If you forget the `@source` directive: any class you add in a module-side file that isn't ALSO used somewhere inside `frontend/src/` will have NO CSS rule generated. The element gets `class="bottom-6 right-6"` but no `bottom: 1.5rem` rule exists, so it falls back to flow position. Common symptom: `position: fixed` elements anchor to the wrong place.
 
@@ -512,7 +512,7 @@ Add one line per module to `frontend/src/styles/globals.css` (right after the `@
 
 Already wired for: `vr`, `vulnerability`, `forensics`, `hello_world`. If you copy `_template/` to start a new module, add the line at the same time.
 
-Verify by curl on the running dev server: `curl http://localhost:3000/src/styles/globals.css | grep "\.your-new-class"` — if the rule exists, Tailwind is scanning correctly.
+Verify by curl on the running dev server: `curl http://localhost:3000/src/styles/globals.css | grep "\.your-new-class"` -- if the rule exists, Tailwind is scanning correctly.
 
 ## Implementation Gotchas
 
@@ -528,7 +528,7 @@ resolves from `react-router`:
 // CORRECT
 import { Link, useNavigate } from "react-router";
 
-// WRONG — package is not installed; tsc and pnpm both fail
+// WRONG -- package is not installed; tsc and pnpm both fail
 import { Link, useNavigate } from "react-router-dom";
 ```
 
@@ -538,7 +538,7 @@ The catalog entry is `catalog:router`. Modules that route declare
 ### Tailwind v4 arbitrary values do not generate CSS
 
 `class="h-[720px] bg-[#131313]"` produces no CSS rules under Tailwind v4
-— the scanner cannot see the values. The element renders at the default
+-- the scanner cannot see the values. The element renders at the default
 height with the default background and silently loses the intent.
 
 Use an inline `style` for one-off literal values, or add a token:
@@ -547,7 +547,7 @@ Use an inline `style` for one-off literal values, or add a token:
 // CORRECT
 <div className="bg-surface" style={{ height: 720 }} />
 
-// WRONG — both classes are dropped
+// WRONG -- both classes are dropped
 <div className="h-[720px] bg-[#131313]" />
 ```
 
@@ -557,7 +557,7 @@ not inline.
 ### Recharts `fill` / `stroke` do not resolve CSS `var(--…)`
 
 An SVG `fill="var(--color-accent)"` does not resolve through CSS
-variables — the chart renders empty (or with the SVG default colour).
+variables -- the chart renders empty (or with the SVG default colour).
 Theme switches do not propagate either.
 
 Resolve the variable in JS via `getComputedStyle` (the

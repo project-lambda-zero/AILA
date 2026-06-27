@@ -1,4 +1,4 @@
-"""McpRegistryService — operator-facing MCP servers health + config surface.
+"""McpRegistryService -- operator-facing MCP servers health + config surface.
 
 AILA is orchestration only (D-33). Every analytical action is delegated
 to an MCP server running on a workstation. This service surfaces:
@@ -10,7 +10,7 @@ to an MCP server running on a workstation. This service surfaces:
 * a write path so the operator can retarget a server at a different
   workstation without touching env vars
 
-The result projection deliberately uses operator vocabulary — no
+The result projection deliberately uses operator vocabulary -- no
 ``mcp_handles_json``, no internal task ids. Just `id`, `name`,
 `description`, `base_url`, `status`, `latency_ms`, `tool_count`,
 `tools`, `last_probed_at`, and `error` when unreachable.
@@ -90,7 +90,7 @@ class McpRegistryService:
 
         Returns the fresh projection, or None if ``server_id`` is unknown.
         Persists via the platform ConfigRegistry which is env→DB→default
-        layered, so this overrides DB only — env still wins on next read.
+        layered, so this overrides DB only -- env still wins on next read.
         """
         spec = self._spec(server_id)
         if spec is None:

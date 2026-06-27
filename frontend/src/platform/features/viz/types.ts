@@ -1,5 +1,5 @@
 /**
- * types.ts — Local types for the Viz feature (Phase 144, Plan 02).
+ * types.ts -- Local types for the Viz feature (Phase 144, Plan 02).
  */
 
 export interface SeverityFacets {

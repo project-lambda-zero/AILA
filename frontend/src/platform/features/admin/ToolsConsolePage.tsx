@@ -1,5 +1,5 @@
 /**
- * ToolsConsolePage — live tool invocation console at /admin/tools.
+ * ToolsConsolePage -- live tool invocation console at /admin/tools.
  *
  * Requires operator+ role at the frontend route level (defense-in-depth, GA5).
  * Backend POST /tools/{key} independently enforces ROLE_OPERATOR.
@@ -232,7 +232,7 @@ function ToolDetailPanel({ toolKey, canInvoke }: ToolDetailPanelProps) {
       setInvokeResult(data);
     },
     onError: (err) => {
-      // Network/HTTP error (non-tool error) — surface as a synthetic invoke response
+      // Network/HTTP error (non-tool error) -- surface as a synthetic invoke response
       setInvokeResult({
         tool_key: toolKey,
         result: null,
@@ -244,7 +244,7 @@ function ToolDetailPanel({ toolKey, canInvoke }: ToolDetailPanelProps) {
   function handleSubmit(e: React.FormEvent): void {
     e.preventDefault();
     // Defense-in-depth: backend POST /tools/{key} enforces ROLE_OPERATOR.
-    // This `disabled` check is UX only — bypassing it yields a 403, not unauthorized access.
+    // This `disabled` check is UX only -- bypassing it yields a 403, not unauthorized access.
     if (!canInvoke) return;
     invokeMutation.mutate(formValues);
   }

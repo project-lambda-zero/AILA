@@ -1,4 +1,4 @@
-"""Phase 179 Task 2 — probe_arq_worker rewrite (ARQ-native health-check key).
+"""Phase 179 Task 2 -- probe_arq_worker rewrite (ARQ-native health-check key).
 
 Asserts the probe reports ``running`` when ``arq:<queue>:health-check`` has
 a positive TTL, ``offline`` when the key is missing, and that the legacy
@@ -52,7 +52,7 @@ async def test_probe_reports_running_when_health_key_fresh(clean_redis: str) -> 
 
     client = aioredis.Redis.from_url(clean_redis, socket_connect_timeout=2.0)
     try:
-        # Seed with 65s TTL — probe should compute age < 60s.
+        # Seed with 65s TTL -- probe should compute age < 60s.
         await client.set("arq:queue:vulnerability:health-check", "1", ex=65)
     finally:
         await client.aclose()
@@ -66,7 +66,7 @@ async def test_probe_reports_running_when_health_key_fresh(clean_redis: str) -> 
 
 @pytest.mark.asyncio
 async def test_probe_reports_offline_when_health_key_missing(clean_redis: str) -> None:
-    # Fresh db — no health-check key seeded.
+    # Fresh db -- no health-check key seeded.
     result = await probe_arq_worker(redis_url=clean_redis)
     assert result.status == "offline"
     assert result.details is not None
@@ -82,7 +82,7 @@ async def test_probe_ignores_legacy_aila_worker_alive_key(clean_redis: str) -> N
 
     client = aioredis.Redis.from_url(clean_redis, socket_connect_timeout=2.0)
     try:
-        # Seed only the legacy key — health-check key absent.
+        # Seed only the legacy key -- health-check key absent.
         await client.set("aila:worker:alive:vulnerability", "2026-04-12T00:00:00Z", ex=300)
     finally:
         await client.aclose()

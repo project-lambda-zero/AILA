@@ -23,7 +23,7 @@ const SOURCE_COLORS: Record<string, string> = {
 function timestampOriginLabel(origin?: string): { text: string; tone: string } | null {
   if (!origin) return null;
   if (origin.startsWith("observable:")) {
-    // Mined from a nested observable key — surface the key name so the
+    // Mined from a nested observable key -- surface the key name so the
     // analyst knows which time-field this entry represents
     // (e.g. `obs:lnk_modified` vs `obs:first_seen`).
     return {
@@ -31,7 +31,7 @@ function timestampOriginLabel(origin?: string): { text: string; tone: string } |
       tone: "bg-blue-500/20 text-blue-300",
     };
   }
-  // data:timestamp / data:time / data:created — canonical, no badge
+  // data:timestamp / data:time / data:created -- canonical, no badge
   return null;
 }
 
@@ -83,7 +83,7 @@ function flattenScalars(
     return out;
   }
   if (Array.isArray(obj)) {
-    // Summarise arrays — the timeline row already knows the row count,
+    // Summarise arrays -- the timeline row already knows the row count,
     // so we don't dump array contents into the key table.
     out.push({ key: prefix || "items", value: `[${obj.length} item(s)]` });
     return out;
@@ -227,13 +227,13 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
         </div>
       </div>
 
-      {/* Section 1 — Timeline (event-time correlation) */}
+      {/* Section 1 -- Timeline (event-time correlation) */}
       <div className="space-y-1">
         <div className="flex items-baseline justify-between">
           <h3 className="text-sm font-semibold text-foreground">
             Timeline
             <span className="ml-2 text-xs font-normal text-text-muted">
-              when it happened — {filteredEntries.length} event
+              when it happened -- {filteredEntries.length} event
               {filteredEntries.length === 1 ? "" : "s"}
             </span>
           </h3>
@@ -342,13 +342,13 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
         )}
       </div>
 
-      {/* Section 2 — Occurrences (no event-time) */}
+      {/* Section 2 -- Occurrences (no event-time) */}
       <div className="space-y-1">
         <div className="flex items-baseline justify-between">
           <h3 className="text-sm font-semibold text-foreground">
             Occurrences
             <span className="ml-2 text-xs font-normal text-text-muted">
-              what we found, no event-time — {filteredOcc.length} finding
+              what we found, no event-time -- {filteredOcc.length} finding
               {filteredOcc.length === 1 ? "" : "s"}
             </span>
           </h3>

@@ -25,7 +25,7 @@ type SubTab =
   | "anomalies";
 
 // D24 exception: `render` is a cell-formatter slot tied to the column's
-// placement constraints (header, alignment, width, mono-font) — not a
+// placement constraints (header, alignment, width, mono-font) -- not a
 // public render-prop API. ColumnDef is module-internal; the only
 // exported surface here is <NetworkAnalysisPanel projectId>.
 interface ColumnDef<T = Record<string, unknown>> {
@@ -415,7 +415,7 @@ function StatsBar({ stats }: { stats: NetworkAnalysis["stats"] }) {
   const items = [
     { label: "Packets", value: fmtInt(stats.packet_count ?? 0) },
     { label: "Bytes", value: fmtBytes(stats.byte_count ?? 0) },
-    { label: "Duration", value: stats.duration_s ? fmtSec(stats.duration_s) : "—" },
+    { label: "Duration", value: stats.duration_s ? fmtSec(stats.duration_s) : "--" },
   ];
   return (
     <div className="flex gap-6 border border-border rounded-md px-4 py-3 bg-surface-secondary/40 mb-3">
@@ -569,7 +569,7 @@ function DataTable({
                       key={c.key}
                       className={`px-3 py-1.5 text-foreground whitespace-nowrap ${c.mono ? "font-mono" : ""} ${c.align === "right" ? "text-right" : ""}`}
                     >
-                      {isEmpty ? <span className="text-text-muted">—</span> : rendered}
+                      {isEmpty ? <span className="text-text-muted">--</span> : rendered}
                     </td>
                   );
                 })}

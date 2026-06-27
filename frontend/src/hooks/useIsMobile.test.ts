@@ -1,5 +1,5 @@
 /**
- * useIsMobile.test.ts — unit tests for the useIsMobile hook.
+ * useIsMobile.test.ts -- unit tests for the useIsMobile hook.
  *
  * Tests the 768px breakpoint logic using jsdom's window.innerWidth
  * and a stubbed window.matchMedia (jsdom does not implement matchMedia natively).
@@ -11,7 +11,7 @@ import { useIsMobile } from "./use-mobile";
 
 // ---------------------------------------------------------------------------
 // matchMedia mock factory
-// jsdom does not implement window.matchMedia — we stub it globally per test.
+// jsdom does not implement window.matchMedia -- we stub it globally per test.
 // ---------------------------------------------------------------------------
 
 function mockMatchMedia(innerWidth: number) {

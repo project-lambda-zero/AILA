@@ -10,7 +10,7 @@ import { useMcpCalls } from "../queries";
  * One row per delegated forward() through audit_mcp_bridge or
  * ida_bridge. Auto-refreshes every 3 seconds so an operator running
  * an analyze, rank, or fuzz session sees the calls land in near-real
- * time. Drives the answer to "where are the MCP logs anyway?" — they
+ * time. Drives the answer to "where are the MCP logs anyway?" -- they
  * are *here*, not buried in worker stdout. */
 export function McpCallLogPage() {
   const [serverFilter, setServerFilter] = useState<string>("");
@@ -108,10 +108,10 @@ export function McpCallLogPage() {
                     </AilaBadge>
                   </td>
                   <td className="px-2 py-1 font-mono text-right text-foreground">
-                    {r.http_status ?? "—"}
+                    {r.http_status ?? "--"}
                   </td>
                   <td className="px-2 py-1 font-mono text-right text-text-muted">
-                    {r.latency_ms != null ? `${r.latency_ms}ms` : "—"}
+                    {r.latency_ms != null ? `${r.latency_ms}ms` : "--"}
                   </td>
                   <td className="px-2 py-1 font-mono text-text-danger truncate" style={{ maxWidth: "28ch" }} title={r.error_excerpt ?? ""}>
                     {r.error_excerpt ?? ""}

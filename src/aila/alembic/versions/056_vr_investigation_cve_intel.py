@@ -1,4 +1,4 @@
-"""056 — persist CVE intel on the investigation row.
+"""056 -- persist CVE intel on the investigation row.
 
 The reasoning loop extracts every CVE id from the operator's question
 and resolves it via the vulnerability module's IntelService at
@@ -8,7 +8,7 @@ every re-run hit NVD again.
 
 This migration adds ``vr_investigations.cve_intel_json`` (jsonb-as-
 text). Setup writes the resolved list to it on first run and reads
-back on subsequent runs — no second NVD call needed.
+back on subsequent runs -- no second NVD call needed.
 """
 from __future__ import annotations
 

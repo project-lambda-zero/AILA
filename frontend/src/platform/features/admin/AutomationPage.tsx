@@ -1,5 +1,5 @@
 /**
- * AutomationPage — manage cron-driven automation schedules.
+ * AutomationPage -- manage cron-driven automation schedules.
  *
  * AUTO-04 / AUTO-05: team-scoped CRUD over the platform AutomationRegistry.
  * Operators pick a registered action, give it a target system + cron, and the
@@ -35,7 +35,7 @@ import {
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
-// Types — mirror src/aila/api/schemas/automation.py
+// Types -- mirror src/aila/api/schemas/automation.py
 // ---------------------------------------------------------------------------
 
 interface AutomationSchedule {
@@ -84,7 +84,7 @@ interface DataEnvelope<T> {
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "--";
   return new Date(value).toLocaleString();
 }
 
@@ -168,7 +168,7 @@ function CreateScheduleDialog({
                 onChange={(e) => setForm((f) => ({ ...f, action_id: e.target.value }))}
                 className="rounded-[2px] border border-border bg-base font-mono text-sm text-text px-2.5 py-1.5 outline-none focus:border-border-hover transition-colors duration-100"
               >
-                <option value="">— select an action —</option>
+                <option value="">-- select an action --</option>
                 {actions.map((a) => (
                   <option key={a.action_id} value={a.action_id}>
                     {a.action_id} ({a.module_id})
@@ -242,7 +242,7 @@ function CreateScheduleDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Row actions — toggle enabled + delete
+// Row actions -- toggle enabled + delete
 // ---------------------------------------------------------------------------
 
 function RowActions({
@@ -370,7 +370,7 @@ function buildColumns(
       enableSorting: false,
       cell: ({ getValue }) => {
         const v = getValue() as string | null;
-        if (!v) return <span className="font-mono text-xs text-text-muted">—</span>;
+        if (!v) return <span className="font-mono text-xs text-text-muted">--</span>;
         return (
           <span
             className="font-mono text-xs text-text-muted line-clamp-1 max-w-[180px]"
@@ -496,7 +496,7 @@ export function AutomationPage() {
           Total Schedules
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {schedulesQuery.isLoading ? "—" : schedules.length}
+          {schedulesQuery.isLoading ? "--" : schedules.length}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Across your team
@@ -505,7 +505,7 @@ export function AutomationPage() {
           Enabled
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {schedulesQuery.isLoading ? "—" : enabledCount}
+          {schedulesQuery.isLoading ? "--" : enabledCount}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Currently firing on cron
@@ -514,7 +514,7 @@ export function AutomationPage() {
           Available Actions
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {actionsQuery.isLoading ? "—" : actions.length}
+          {actionsQuery.isLoading ? "--" : actions.length}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Registered by modules

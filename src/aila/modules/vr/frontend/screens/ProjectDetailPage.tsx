@@ -52,7 +52,7 @@ const disclosureStatusColor: Record<DisclosureStatus, "info" | "low" | "medium" 
 };
 
 function formatDateTime(value?: string | null): string {
-  if (!value) return "—";
+  if (!value) return "--";
   try {
     return new Date(value).toLocaleString();
   } catch {
@@ -121,7 +121,7 @@ function FindingRow({
           <div>
             <p className="text-xs uppercase tracking-wide text-text-muted">Root Cause</p>
             <p className="text-sm text-foreground whitespace-pre-wrap">
-              {finding.root_cause || "—"}
+              {finding.root_cause || "--"}
             </p>
           </div>
           {finding.assigned_cve_id && (
@@ -140,7 +140,7 @@ function FindingRow({
           {finding.poc && (
             <div>
               <p className="text-xs uppercase tracking-wide text-text-muted">
-                PoC ({finding.poc.language}) — vulnerable crashes:{" "}
+                PoC ({finding.poc.language}) -- vulnerable crashes:{" "}
                 {finding.poc.crashes_vulnerable}/5, patched crashes:{" "}
                 {finding.poc.crashes_patched}/1
               </p>
@@ -207,7 +207,7 @@ function OverviewTab({
         failedAt={project.status === "failed" ? "research" : null}
       /></AilaCard>
 
-      {/* Hub panels — matches 08_FRONTEND_UX.md §1.3 */}
+      {/* Hub panels -- matches 08_FRONTEND_UX.md §1.3 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Targets panel */}
         <AilaCard className="lg:col-span-1" techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
@@ -322,18 +322,18 @@ function OverviewTab({
         )}</AilaCard>
       </div>
 
-      {/* Workstation heartbeat (§1.3) — live SSH reachability
+      {/* Workstation heartbeat (§1.3) -- live SSH reachability
           driven by /systems/:id/heartbeat (cached 30 s). */}
       <WorkstationHeartbeatCard systemId={project.analysis_system_id} />
 
-      {/* Recent reasoning rollup (§1.3) — last 10 turns across the
+      {/* Recent reasoning rollup (§1.3) -- last 10 turns across the
           project's investigations. Pulls from the existing investigation
           messages query. */}
       {projInvs.length > 0 && (
         <RecentReasoningRollup investigationId={projInvs[0]!.id} />
       )}
 
-      {/* Project event timeline strip (§1.3) — major events derived
+      {/* Project event timeline strip (§1.3) -- major events derived
           from existing data. Real event log is backend pending. */}
       <AilaCard  techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
         Project events
@@ -364,7 +364,7 @@ function OverviewTab({
         <div>
           <dt className="text-text-muted text-xs">Workspace</dt>
           <dd className="font-mono text-foreground truncate">
-            {project.workspace_id ?? "—"}
+            {project.workspace_id ?? "--"}
           </dd>
         </div>
         <div>
@@ -376,7 +376,7 @@ function OverviewTab({
         <div>
           <dt className="text-text-muted text-xs">CVE</dt>
           <dd className="font-mono text-foreground">
-            {project.cve_id ?? "—"}
+            {project.cve_id ?? "--"}
           </dd>
         </div>
         <div>
@@ -427,7 +427,7 @@ function AgentLogTab({
   project: NonNullable<ReturnType<typeof useVRProject>["data"]>;
 }) {
   // The "agent log" for an n-day VR project lives across its
-  // investigations. Link out to each — every investigation has its own
+  // investigations. Link out to each -- every investigation has its own
   // dedicated TurnCard stream (the Investigation Timeline page).
   const { data: invsResult, isLoading } = useInvestigations();
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
@@ -633,7 +633,7 @@ function RecentReasoningRollup({
       <p className="text-xs text-text-muted">Loading…</p>
     ) : recent.length === 0 ? (
       <p className="text-xs text-text-muted">
-        No turns yet — engine hasn't reasoned about this target.
+        No turns yet -- engine hasn't reasoned about this target.
       </p>
     ) : (
       <ol className="space-y-1 text-xs">
@@ -679,7 +679,7 @@ function EventRow({
       <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
         <span className="font-mono text-foreground truncate">{label}</span>
         <span className="text-text-muted text-3xs whitespace-nowrap">
-          {time ? new Date(time).toLocaleString() : "—"}
+          {time ? new Date(time).toLocaleString() : "--"}
         </span>
       </div>
     </li>

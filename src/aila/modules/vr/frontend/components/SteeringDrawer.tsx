@@ -17,12 +17,12 @@ import type { InvestigationStatus, OperatorIntent } from "../types";
  *  detail / target detail / project dashboard).
  *
  *  Six sections are spec'd:
- *    1. Pause / resume the loop        — WIRED
- *    2. Inject context                  — WIRED (POST send_operator_message)
- *    3. Pin / unpin strategy            — backend pending
- *    4. Confirm / disprove hypothesis   — backend pending (no hypothesis API)
- *    5. Close obligation manually       — backend pending (no obligation API)
- *    6. Steer the next action           — backend pending
+ *    1. Pause / resume the loop        -- WIRED
+ *    2. Inject context                  -- WIRED (POST send_operator_message)
+ *    3. Pin / unpin strategy            -- backend pending
+ *    4. Confirm / disprove hypothesis   -- backend pending (no hypothesis API)
+ *    5. Close obligation manually       -- backend pending (no obligation API)
+ *    6. Steer the next action           -- backend pending
  *
  *  Sections without a backend yet are rendered as "coming next" cards
  *  so the operator sees the full design but doesn't get confused by a
@@ -122,7 +122,7 @@ export function SteeringDrawer({
               <button
                 type="button"
                 onClick={() => resumeMut.mutate()}
-                // fix §54 — `isResuming` includes a 2s post-success hold
+                // fix §54 -- `isResuming` includes a 2s post-success hold
                 // so the button stays in the "Resuming…" state until the
                 // worker has plausibly picked the task up. Status is
                 // checked against 'paused' OR the in-flight hold, since
@@ -156,7 +156,7 @@ export function SteeringDrawer({
             <textarea
               value={contextText}
               onChange={(e) => setContextText(e.target.value)}
-              placeholder="e.g. 'try the JSPI base address path' or 'H4 is wrong — the leak is not reliable.'"
+              placeholder="e.g. 'try the JSPI base address path' or 'H4 is wrong -- the leak is not reliable.'"
               rows={4}
               aria-label="Steering context"
               className="w-full px-2 py-1.5 text-xs font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
@@ -217,7 +217,7 @@ export function SteeringDrawer({
           <ComingSection
             id="steer"
             label="6. Steer the next action"
-            description="Force the next turn to be a specific action with parameters. Most invasive — only use when the LLM is stuck. Logged with reasoning."
+            description="Force the next turn to be a specific action with parameters. Most invasive -- only use when the LLM is stuck. Logged with reasoning."
           />
         </div>
       </aside>

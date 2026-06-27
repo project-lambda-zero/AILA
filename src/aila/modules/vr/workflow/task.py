@@ -4,7 +4,7 @@ The function is a pure seed stub decorated with ``@platform_task``.
 All platform orchestration (WorkflowRunRecord creation, plan_json writes,
 DurableStateMachine execution, state transitions) is owned by
 ``@platform_task`` via the workflow-engine dispatch path when a
-``definition`` is supplied — the same pattern used by the forensics and
+``definition`` is supplied -- the same pattern used by the forensics and
 vulnerability modules.
 
 This satisfies the v5.0 core principle: modules write pure state handlers
@@ -48,7 +48,7 @@ from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 from aila.platform.uow import UnitOfWork
 
-# fix §141 + §142 — explicit transient-error tuple for @platform_task
+# fix §141 + §142 -- explicit transient-error tuple for @platform_task
 # retries on this module's seeds. Without retriable_on, the @platform_task
 # wrapper defaults to "retry on any exception", which retries
 # non-transient failures (LLM-disabled-by-operator, KeyError-from-
@@ -89,8 +89,8 @@ __all__ = [
     track="vr",
     module_id="vr",
     max_tries=2,
-    timeout_s=10800.0,  # 3 hours — covers full setup -> research -> PoC -> advisory
-    # fix §141 — explicit retriable_on so the ARQ-level retry only
+    timeout_s=10800.0,  # 3 hours -- covers full setup -> research -> PoC -> advisory
+    # fix §141 -- explicit retriable_on so the ARQ-level retry only
     # fires on transports that legitimately flap (the same shape as
     # VR_NDAY_V1's _TRANSPORT_TRANSIENT, mirrored here at task level).
     retriable_on=_TASK_TRANSIENT,
@@ -100,7 +100,7 @@ async def run_vr_nday(
     ctx: TaskContext,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Seed — platform dispatch handles workflow execution via VR_NDAY_V1."""
+    """Seed -- platform dispatch handles workflow execution via VR_NDAY_V1."""
     ...
 
 
@@ -108,8 +108,8 @@ async def run_vr_nday(
     track="vr",
     module_id="vr",
     max_tries=1,
-    timeout_s=7800.0,  # 2h+ — covers a full investigation_loop run
-    # fix §142 — explicit retriable_on so the single retry budget is
+    timeout_s=7800.0,  # 2h+ -- covers a full investigation_loop run
+    # fix §142 -- explicit retriable_on so the single retry budget is
     # only spent on transport-class transients. VR_INVESTIGATE_V1's
     # investigation_setup state opens a DB session + does CVE-intel
     # network calls; a transient DB / network blip is worth the
@@ -124,13 +124,13 @@ async def run_vr_investigate(
 ) -> dict[str, Any]:
     """Seed function for the ``VR_INVESTIGATE_V1`` workflow definition.
 
-    fix §83 — this body deliberately contains a single ``...`` Ellipsis.
+    fix §83 -- this body deliberately contains a single ``...`` Ellipsis.
     The ``@platform_task`` decorator wraps the function so the platform
     layer dispatches the workflow engine via the bound ``definition``
     kwarg above instead of executing this body. The body would only
     run if the platform decorator were removed; the docstring is the
     visible contract for readers. Do NOT add logic inside this function
-    — phase-handoff / state transitions live on ``VR_INVESTIGATE_V1``.
+    -- phase-handoff / state transitions live on ``VR_INVESTIGATE_V1``.
 
     Required kwarg: ``investigation_id``. The setup state resolves the
     primary branch from the DB; operator does not provide branch_id.
@@ -142,7 +142,7 @@ async def run_vr_investigate(
     track="vr",
     module_id="vr",
     max_tries=2,
-    timeout_s=15600.0,  # 4h 20m — covers clone (10m) + 4h index poll + slack
+    timeout_s=15600.0,  # 4h 20m -- covers clone (10m) + 4h index poll + slack
 )
 async def run_target_analysis(
     ctx: TaskContext,
@@ -157,7 +157,7 @@ async def run_target_analysis(
     (or → FAILED with operator-visible message).
 
     Auto-chains the post-ingestion enrichment stages
-    (capability_profile + function_ranking) when ingestion completes —
+    (capability_profile + function_ranking) when ingestion completes --
     previously the operator had to re-hit ``/resume-analysis`` for
     each downstream stage to start. See ``_task_queue.enqueue_downstream_target_stages``.
     """
@@ -165,7 +165,7 @@ async def run_target_analysis(
     await svc.analyze(target_id)
 
     # Fan out enrichment stages now that ingestion is DONE (or was
-    # already DONE — the helper is idempotent and a no-op if ingestion
+    # already DONE -- the helper is idempotent and a no-op if ingestion
     # is somehow still pending).
     enqueued = await enqueue_downstream_target_stages(
         target_id,
@@ -191,7 +191,7 @@ async def run_fuzz_campaign_launch(
     the fuzzer per its engine_id, capture remote PID + corpus/crashes
     paths back onto the campaign row.
 
-    Per D-33 the workstation is dedicated — AILA never runs the
+    Per D-33 the workstation is dedicated -- AILA never runs the
     fuzzer in-process. This task only kicks off the remote process;
     the sidecar at ``tools/aila_fuzz_reporter/`` reports its progress
     back via PATCH /fuzz/campaigns/{id} + POST /fuzz/crashes.
@@ -323,7 +323,7 @@ async def run_vr_draft_poc(
         finding.poc_code = draft.code
         finding.poc_language = draft.language[:32]
         # Stash the structured draft (build/run commands, caveats) on
-        # evidence_refs_json as a single entry the UI can render —
+        # evidence_refs_json as a single entry the UI can render --
         # poc_code is just the source, the rest of PocDraft is
         # metadata that doesn't have its own column.
         existing_refs = _json.loads(finding.evidence_refs_json or "[]")
@@ -360,8 +360,8 @@ async def run_vr_draft_poc(
     track="vr",
     module_id="vr",
     max_tries=2,
-    timeout_s=900.0,  # 15 min — one synthesis LLM call + DB writes
-    # fix §141 / §142 — explicit retriable_on so retries only fire on
+    timeout_s=900.0,  # 15 min -- one synthesis LLM call + DB writes
+    # fix §141 / §142 -- explicit retriable_on so retries only fire on
     # transport-class transients. Synthesis is an LLM round-trip + DB
     # writes: an LLM 5xx / connection blip is worth one retry, an
     # LLM-disabled-by-operator / structured-parse failure / state-
@@ -378,7 +378,7 @@ async def run_vr_synthesis(
 
     Triggered by ``investigation_emit._maybe_trigger_synthesis`` once
     every branch in the panel has submitted a terminal outcome.
-    Idempotent — exits early if ``inv.primary_outcome_id`` is already
+    Idempotent -- exits early if ``inv.primary_outcome_id`` is already
     set (synthesis already ran).
     """
     del ctx
@@ -390,7 +390,7 @@ async def run_vr_synthesis(
     track="vr",
     module_id="vr",
     max_tries=2,
-    timeout_s=600.0,  # 10 min — two LLM calls + N audit-mcp probes
+    timeout_s=600.0,  # 10 min -- two LLM calls + N audit-mcp probes
 )
 async def run_vr_claim_verifier(
     ctx: TaskContext,
@@ -403,10 +403,10 @@ async def run_vr_claim_verifier(
     classify verdict) that writes ``verifier_report`` into the
     canonical outcome's payload. Triggered post-synthesis so the
     operator sees an independent confirmed/refuted verdict next to
-    the panel's narrative — catches the false-positive classes the
+    the panel's narrative -- catches the false-positive classes the
     deliberation panel keeps missing on shape-pattern-matching alone.
 
-    Idempotent — exits early when ``verifier_report`` is already in
+    Idempotent -- exits early when ``verifier_report`` is already in
     the canonical payload.
     """
     del ctx
@@ -418,7 +418,7 @@ async def run_vr_claim_verifier(
     track="vr",
     module_id="vr",
     max_tries=2,
-    timeout_s=600.0,  # 10 min — dispatcher writes outcome + halts siblings + flips inv
+    timeout_s=600.0,  # 10 min -- dispatcher writes outcome + halts siblings + flips inv
 )
 async def run_vr_outcome_dispatch(
     ctx: TaskContext,
@@ -427,11 +427,11 @@ async def run_vr_outcome_dispatch(
 ) -> dict[str, Any]:
     """Dispatch one approved outcome via OutcomeDispatcher.dispatch.
 
-    fix §90 — was an inline ``dispatcher.dispatch(...)`` call from
+    fix §90 -- was an inline ``dispatcher.dispatch(...)`` call from
     ``HonestVulnResearcher.run_turn`` on quorum APPROVED. Dispatch
     cascades cross-branch (halts sibling branches, flips inv to
     COMPLETED, purges ARQ jobs) and must not run inside one branch's
-    turn-execution context — other branches' workers would observe
+    turn-execution context -- other branches' workers would observe
     the cascade mid-flight outside their own atomic-commit boundary.
 
     This task lets the agent enqueue dispatch and continue its own

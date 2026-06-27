@@ -4,7 +4,7 @@ import { motion, type Transition, type Variants } from "motion/react"
 import { useReducedMotion } from "@/hooks/useReducedMotion"
 
 /**
- * Orchestrated list entrance — single staggered cascade on mount.
+ * Orchestrated list entrance -- single staggered cascade on mount.
  *
  * Pattern:
  * ```tsx
@@ -74,7 +74,7 @@ function useStaggerSpec(): StaggerSpec {
 
 // HTMLAttributes' onAnimation*/onDrag* handlers collide with the
 // motion-library signatures of the same names. Strip them from the
-// public surface — call sites can reach for the underlying motion
+// public surface -- call sites can reach for the underlying motion
 // component if they truly need the framer hooks.
 type SafeHtmlAttrs<E extends HTMLElement> = Omit<
   React.HTMLAttributes<E>,
@@ -87,7 +87,7 @@ type SafeHtmlAttrs<E extends HTMLElement> = Omit<
 >
 
 // ─────────────────────────────────────────────────────────
-// StaggeredList — orchestrating parent.
+// StaggeredList -- orchestrating parent.
 // ─────────────────────────────────────────────────────────
 
 type ContainerTag = "ul" | "ol" | "div" | "section"
@@ -151,7 +151,7 @@ export function StaggeredList({
 }
 
 // ─────────────────────────────────────────────────────────
-// StaggeredItem — child of StaggeredList.
+// StaggeredItem -- child of StaggeredList.
 //   Inherits the parent's variant cascade; no `initial` / `animate`
 //   props needed at this layer.
 // ─────────────────────────────────────────────────────────

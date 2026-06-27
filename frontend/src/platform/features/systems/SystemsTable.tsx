@@ -37,7 +37,7 @@ export const SystemsTableColumnVisibilityMobile = {
 };
 
 /**
- * useSystemColumns — stable TanStack ColumnDef array for SystemSummaryEnriched (D-01).
+ * useSystemColumns -- stable TanStack ColumnDef array for SystemSummaryEnriched (D-01).
  *
  * Columns:
  * - Checkbox (row selection stub for D-19)
@@ -140,7 +140,7 @@ export function useSystemColumns(
           return (
             <div className="flex flex-wrap items-center gap-1">
               {tags.length === 0 && (
-                <span className="text-text-muted text-xs font-mono">—</span>
+                <span className="text-text-muted text-xs font-mono">--</span>
               )}
               {visible.map((tag) => (
                 <AilaBadge key={`${tag.tag_key}:${tag.tag_value}`} severity="info" size="sm">

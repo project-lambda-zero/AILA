@@ -2,7 +2,7 @@
  * finding-detail.spec.ts
  *
  * E2E tests for the FindingDetailPanel slide-over.
- * Uses REAL PostgreSQL backend — no mocks.
+ * Uses REAL PostgreSQL backend -- no mocks.
  *
  * Coverage:
  *   - Detail panel is initially hidden
@@ -82,7 +82,7 @@ test.describe("Finding Detail Panel", () => {
     await injectAuthState(page, tokens);
     await page.goto("/vulnerability/findings");
 
-    // If no findings exist in the table, skip — can't test panel without rows
+    // If no findings exist in the table, skip -- can't test panel without rows
     const tableContainer = page.locator('[data-testid="findings-table"]');
     const tableVisible = await tableContainer.isVisible({ timeout: 10_000 }).catch(() => false);
     if (!tableVisible) {

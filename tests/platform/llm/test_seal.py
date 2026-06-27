@@ -119,7 +119,7 @@ def in_memory_engine():
     share the same underlying database connection. Import db_models first to
     ensure AuditSealRecord is registered in SQLModel.metadata before create_all.
     """
-    import aila.storage.db_models  # noqa: F401 — registers all table classes
+    import aila.storage.db_models  # noqa: F401 -- registers all table classes
     engine = create_engine(
         "sqlite://",
         echo=False,

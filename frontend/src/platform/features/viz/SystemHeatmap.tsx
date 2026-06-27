@@ -1,12 +1,12 @@
 /**
- * SystemHeatmap — VIZ-03.
+ * SystemHeatmap -- VIZ-03.
  *
  * CSS grid heatmap showing severity density per system.
  * Rows = registered systems, Columns = severity levels (Critical/High/Medium/Low).
  * Cell background opacity scales with count (0=transparent, 10+=full color).
  *
- * Data source: useTopology() — severity_counts per node.
- * No additional API call needed — topology nodes already carry severity_counts.
+ * Data source: useTopology() -- severity_counts per node.
+ * No additional API call needed -- topology nodes already carry severity_counts.
  */
 import * as React from "react";
 
@@ -33,7 +33,7 @@ function intensityStyle(count: number, hexColor: string): CellStyle {
   return { backgroundColor: hexColor, opacity };
 }
 
-// Severity column definitions — using inline hex to avoid CSS var in backgroundColor
+// Severity column definitions -- using inline hex to avoid CSS var in backgroundColor
 const SEVERITY_COLS = [
   { key: "critical" as const, label: "C", color: "#ef4444" }, // --color-critical dark
   { key: "high" as const, label: "H", color: "#f97316" },     // --color-high dark

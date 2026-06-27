@@ -25,11 +25,11 @@ def configure_logging() -> None:
     or when AILA_ENV is unset (developer default).
 
     Processors chain:
-    1. merge_contextvars — pull bound context (correlation_id, path, method)
-    2. add_log_level — add level name to event dict
-    3. add_logger_name — add logger name for traceability
-    4. TimeStamper(fmt="iso") — ISO 8601 timestamp
-    5. renderer — JSON or ConsoleRenderer based on environment
+    1. merge_contextvars -- pull bound context (correlation_id, path, method)
+    2. add_log_level -- add level name to event dict
+    3. add_logger_name -- add logger name for traceability
+    4. TimeStamper(fmt="iso") -- ISO 8601 timestamp
+    5. renderer -- JSON or ConsoleRenderer based on environment
     """
     env = os.getenv("AILA_ENV", "development").lower()
     is_production = env not in ("dev", "development", "local", "test")

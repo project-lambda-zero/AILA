@@ -1,4 +1,4 @@
-"""Memory-dump collector — profile detection + Volatility 3 plugin sweep.
+"""Memory-dump collector -- profile detection + Volatility 3 plugin sweep.
 
 Three tiers of pre-analysis, all computed ``-r json`` so every plugin
 result is a typed row array the UI can filter, sort, and the timeline
@@ -39,7 +39,7 @@ __all__ = ["collect_memory_artifacts"]
 _log = logging.getLogger(__name__)
 
 # --- plugin sets --------------------------------------------------------------
-# (plugin_name, family) — ``family`` is what ends up on the persisted
+# (plugin_name, family) -- ``family`` is what ends up on the persisted
 # artifact row; the UI groups by it.
 
 _WINDOWS_MEMORY_PLUGINS: list[tuple[str, str]] = [
@@ -150,7 +150,7 @@ _PLUGINS_BY_OS: dict[str, list[tuple[str, str]]] = {
     "macos":   _MACOS_MEMORY_PLUGINS,
 }
 
-# Tier 3 — credential extraction. Only runs when an active directive on
+# Tier 3 -- credential extraction. Only runs when an active directive on
 # the project explicitly authorises it (see ``_credential_directive_allows``).
 _WINDOWS_CREDENTIAL_PLUGINS: list[tuple[str, str]] = [
     ("windows.hashdump",            "credentials"),
@@ -179,7 +179,7 @@ _MAX_IOC_HITS = 500
 
 
 # --- profile detection --------------------------------------------------------
-# unchanged from prior tuning — the verifier + analyzer_os bias stays
+# unchanged from prior tuning -- the verifier + analyzer_os bias stays
 
 async def _tier1_banners(
     ssh: Any, integration: dict, path: str, analyzer_os: str, esink: str,
@@ -208,7 +208,7 @@ async def _tier1_banners(
 
 
 async def _tier2_strings(ssh: Any, integration: dict, path: str, analyzer_os: str, esink: str) -> str | None:
-    """strings grep for kernel signatures — catches compressed dumps (AVML/LiME).
+    """strings grep for kernel signatures -- catches compressed dumps (AVML/LiME).
 
     Windows: cap the scan to the first 200 MB so a 4 GB+ dump doesn't
     hang for tens of minutes. Kernel banners live in early-allocated
@@ -360,7 +360,7 @@ async def _detect_memory_profile(
             hints[detected] = tier_name
 
     if not hints:
-        _log.warning("All memory profile probes failed for %s — defaulting to %s", path, analyzer_os)
+        _log.warning("All memory profile probes failed for %s -- defaulting to %s", path, analyzer_os)
         await safe_emit(
             emitter, "memory_profile_default",
             f"memory: no probe matched for {path}, defaulting to {analyzer_os}",
@@ -485,7 +485,7 @@ async def _dump_malfind_regions(
         return []
     plugin, short_name = plugin_entry
 
-    # Temp directory — analyzer-local, cleaned up after readback.
+    # Temp directory -- analyzer-local, cleaned up after readback.
     if analyzer_os == "windows":
         tmpdir = f"C:\\Windows\\Temp\\vol3_{short_name}_{int(_time.time())}"
         mkdir_cmd = f'powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path \'{tmpdir}\' | Out-Null"'
@@ -518,7 +518,7 @@ async def _dump_malfind_regions(
         _log.debug("%s --dump failed: %s", plugin, exc)
         await safe_emit(
             emitter, "memory_region_dump_failed",
-            f"memory: {plugin} --dump failed — {exc}",
+            f"memory: {plugin} --dump failed -- {exc}",
             {"plugin": plugin, "error": str(exc)[:300]},
         )
         await _run_quiet(ssh, integration, cleanup_cmd)
@@ -631,7 +631,7 @@ async def _run_ioc_strings_pass(
     Rather than running ``windows.strings.Strings`` (which needs a
     pre-generated strings file) we run a simple byte-scan on the
     analyzer that grabs the first N occurrences of each wordlist term.
-    That gives us PID-less but fast IOC presence rows — enough to drive
+    That gives us PID-less but fast IOC presence rows -- enough to drive
     a "this dump contains PowerShell Empire strings" triage signal.
     """
     if dump_os != "windows":
@@ -645,7 +645,7 @@ async def _run_ioc_strings_pass(
         )
         return []
 
-    # Build an alternation regex. Escape each literal, cap total length —
+    # Build an alternation regex. Escape each literal, cap total length --
     # overlong patterns choke PowerShell's -match engine.
     escaped = [re.escape(w) for w in wordlist[:120]]
     pattern = "|".join(escaped)
@@ -673,7 +673,7 @@ async def _run_ioc_strings_pass(
         _log.debug("IOC scan failed: %s", exc)
         await safe_emit(
             emitter, "memory_ioc_scan_failed",
-            f"memory: IOC scan failed — {exc}",
+            f"memory: IOC scan failed -- {exc}",
             {"error": str(exc)[:300]},
         )
         return []
@@ -762,23 +762,23 @@ async def collect_memory_artifacts(
     if dump_os == "windows":
         await warmup_windows_pdb_cache(ssh, integration, path, analyzer_os, emitter=emitter)
 
-    # Tier 3 — credential plugins, directive-gated.
+    # Tier 3 -- credential plugins, directive-gated.
     creds_allowed, creds_reason = await _credential_directive_allows(project_id)
     if creds_allowed and dump_os == "windows":
         plugins.extend(_WINDOWS_CREDENTIAL_PLUGINS)
         await safe_emit(
             emitter, "memory_credentials_allowed",
-            f"memory: credential plugins enabled — {creds_reason}",
+            f"memory: credential plugins enabled -- {creds_reason}",
             {"reason": creds_reason, "added": len(_WINDOWS_CREDENTIAL_PLUGINS)},
         )
     else:
         await safe_emit(
             emitter, "memory_credentials_skipped",
-            f"memory: credential plugins disabled — {creds_reason}",
+            f"memory: credential plugins disabled -- {creds_reason}",
             {"reason": creds_reason},
         )
 
-    _log.info("Memory dump %s detected as %s — running %d plugins", path, dump_os, len(plugins))
+    _log.info("Memory dump %s detected as %s -- running %d plugins", path, dump_os, len(plugins))
     await safe_emit(
         emitter, "memory_plugins_begin",
         f"memory: {len(plugins)} vol plugins on {path}",
@@ -792,7 +792,7 @@ async def collect_memory_artifacts(
     for plugin, family in plugins:
         # Leave stderr on the channel (no ``esink`` suffix) so that when a
         # plugin exits non-zero paramiko hands us the real Volatility
-        # traceback in ``error_output`` — without it the user sees a bare
+        # traceback in ``error_output`` -- without it the user sees a bare
         # ``exit code 1:`` with no cause, which happens on known upstream
         # hive-layout failures (volatility3 issues #590, #1472, #1944).
         cmd = f"{vol_cmd(analyzer_os)} -f {qpath} -r json {plugin}"
@@ -847,7 +847,7 @@ async def collect_memory_artifacts(
             await on_artifact(art)
         await safe_emit(
             emitter, "artifact_added",
-            f"memory[{plugin}]: ok in {elapsed:.1f}s — {len(records)} row(s), {len(output):,} bytes",
+            f"memory[{plugin}]: ok in {elapsed:.1f}s -- {len(records)} row(s), {len(output):,} bytes",
             {
                 "path": path, "plugin": plugin, "type": family,
                 "elapsed_s":   round(elapsed, 1),
@@ -857,7 +857,7 @@ async def collect_memory_artifacts(
             },
         )
 
-    # Tier 2a — region dump (malfind --dump → binary bytes as artifacts).
+    # Tier 2a -- region dump (malfind --dump → binary bytes as artifacts).
     if dump_os in _DUMP_PLUGINS:
         region_arts = await _dump_malfind_regions(
             ssh, integration, path, analyzer_os, dump_os, esink, emitter,
@@ -867,7 +867,7 @@ async def collect_memory_artifacts(
             if on_artifact:
                 await on_artifact(art)
 
-    # Tier 2b — IOC string triage.
+    # Tier 2b -- IOC string triage.
     ioc_arts = await _run_ioc_strings_pass(
         ssh, integration, path, dump_os, emitter,
     )
@@ -876,7 +876,7 @@ async def collect_memory_artifacts(
         if on_artifact:
             await on_artifact(art)
 
-    # Tier 1 — cross-plugin derivations. Pure-Python over the rows we
+    # Tier 1 -- cross-plugin derivations. Pure-Python over the rows we
     # just collected; no extra SSH.
     await derive_all(artifacts, on_artifact, emitter=emitter)
 

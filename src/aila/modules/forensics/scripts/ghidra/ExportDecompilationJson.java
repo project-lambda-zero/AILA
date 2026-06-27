@@ -1,4 +1,4 @@
-// ExportDecompilationJson.java — Ghidra headless post-analysis script.
+// ExportDecompilationJson.java -- Ghidra headless post-analysis script.
 // Emits a machine-parseable JSON array of decompiled functions so the
 // collector can store them as records[] without regex-splitting a text blob.
 //
@@ -86,7 +86,7 @@ public class ExportDecompilationJson extends GhidraScript {
         }
         int total = all.size();
 
-        // Rank by body size descending — bigger functions usually carry
+        // Rank by body size descending -- bigger functions usually carry
         // the interesting logic; thunks / stubs are tiny and skippable.
         Collections.sort(all, new Comparator<Function>() {
             @Override

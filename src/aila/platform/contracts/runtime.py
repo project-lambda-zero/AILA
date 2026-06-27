@@ -123,7 +123,7 @@ class RunState(BaseModel):
     """Mutable per-request runtime state shared across platform components.
 
     Created at the start of each handle() call and passed through routing,
-    module dispatch, and event emission. Not persisted directly — its contents
+    module dispatch, and event emission. Not persisted directly -- its contents
     are serialized into WorkflowRunRecord at finalization.
     """
 
@@ -145,7 +145,7 @@ class PlatformResponse(BaseModel):
 
     Carries the selected action, human-readable message, optional module-specific
     payload, and artifact IDs produced during the run. state_history is populated
-    only in debug mode (debug=True) — stripped at the orchestrator level before
+    only in debug mode (debug=True) -- stripped at the orchestrator level before
     returning in production to avoid leaking internal execution traces.
     """
 

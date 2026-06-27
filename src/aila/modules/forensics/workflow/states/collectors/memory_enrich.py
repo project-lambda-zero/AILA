@@ -1,16 +1,16 @@
-"""Cross-plugin memory enrichment — no SSH, pure data crunching.
+"""Cross-plugin memory enrichment -- no SSH, pure data crunching.
 
 The Volatility 3 sweep in ``memory.py`` produces one artifact per plugin
 with ``data.records`` populated from ``vol -r json``. This module joins
 those rows across plugins and emits higher-level artifacts that are
 impossible to get from any single plugin:
 
-- ``process_tree`` — pslist × cmdline × getsids × privileges, PPID linkage
-- ``injection_candidates`` — malfind ∪ ldrmodules (RWX + no-file + MZ)
-- ``network_by_process`` — netscan × pslist, per-connection with owner image
-- ``handle_anomalies`` — handles × pslist, Section-to-remote-PID + physical memory
-- ``rootkit_candidates`` — psscan \\ pslist, psxview mismatches
-- ``registry_exec_history`` — userassist ∪ shimcachemem ∪ amcache, normalized
+- ``process_tree`` -- pslist × cmdline × getsids × privileges, PPID linkage
+- ``injection_candidates`` -- malfind ∪ ldrmodules (RWX + no-file + MZ)
+- ``network_by_process`` -- netscan × pslist, per-connection with owner image
+- ``handle_anomalies`` -- handles × pslist, Section-to-remote-PID + physical memory
+- ``rootkit_candidates`` -- psscan \\ pslist, psxview mismatches
+- ``registry_exec_history`` -- userassist ∪ shimcachemem ∪ amcache, normalized
 
 Every deriver is a pure function over the row arrays gathered during
 the sweep. Timestamps are emitted in ISO-8601 so the timeline miner
@@ -268,7 +268,7 @@ def _derive_injection_candidates(artifacts: list[dict[str, Any]]) -> dict[str, A
         in_init = bool(r.get("InInit"))
         in_mem = bool(r.get("InMem"))
         mapped = _to_str(r.get("MappedPath") or "")
-        # classic unlink — present in VAD but delinked from one or more PEB lists
+        # classic unlink -- present in VAD but delinked from one or more PEB lists
         if not (in_load and in_init and in_mem):
             reasons = ["unlinked_module"]
             if not in_load:
@@ -388,7 +388,7 @@ def _derive_handle_anomalies(artifacts: list[dict[str, Any]]) -> dict[str, Any] 
         if htype == "Section" and name and "\\Device\\PhysicalMemory" in name:
             reasons.append("section_to_physical_memory")
         if htype == "Process" and name:
-            # handle to another process — potential injection plumbing
+            # handle to another process -- potential injection plumbing
             reasons.append("process_handle")
         if not reasons:
             continue
@@ -553,7 +553,7 @@ async def derive_all(
             _log.debug("memory deriver %s failed: %s", name, exc, exc_info=True)
             await safe_emit(
                 emitter, "memory_derive_failed",
-                f"memory: deriver {name} failed — {exc}",
+                f"memory: deriver {name} failed -- {exc}",
                 {"deriver": name, "error": str(exc)[:300]},
             )
             continue
@@ -576,7 +576,7 @@ async def derive_all(
 
     await safe_emit(
         emitter, "memory_derive_complete",
-        f"memory: derivation complete — {len(derived)} derived artifact(s)",
+        f"memory: derivation complete -- {len(derived)} derived artifact(s)",
         {"derived_count": len(derived)},
     )
     return derived

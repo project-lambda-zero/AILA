@@ -61,7 +61,7 @@ async def get_dashboard(
         all_systems = systems_result.all()
         total_systems = len(all_systems)
 
-        # Finding severity counts — vulnerability module contribution if registered
+        # Finding severity counts -- vulnerability module contribution if registered
         critical = high = medium = low = total_findings = 0
         platform = getattr(request.app.state, "platform", None)
         if platform is not None:
@@ -99,7 +99,7 @@ async def get_dashboard(
 
     fleet_stats = FleetStats(
         total_systems=total_systems,
-        online_systems=total_systems,  # no live ping — treat all registered as online
+        online_systems=total_systems,  # no live ping -- treat all registered as online
         total_findings=total_findings,
         critical_findings=critical,
         high_findings=high,

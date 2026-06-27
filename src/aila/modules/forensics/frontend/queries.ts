@@ -382,7 +382,7 @@ export interface InvestigationEvent {
   message?: string | null;
   percent?: number | null;
   timestamp?: string | null;
-  /** JSON-encoded structured payload (lane, path, error, etc.) — see ForensicsWorkflowEmitter. */
+  /** JSON-encoded structured payload (lane, path, error, etc.) -- see ForensicsWorkflowEmitter. */
   data_json?: string | null;
 }
 

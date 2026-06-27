@@ -2,7 +2,7 @@
  * Types for the Admin Workflow Inspector (/admin/workflows).
  *
  * WorkflowRunView mirrors the backend WorkflowRunView Pydantic model.
- * TransitionView is reused from tasks/ — not redefined.
+ * TransitionView is reused from tasks/ -- not redefined.
  * DataEnvelope mirrors the backend DataEnvelope schema.
  */
 

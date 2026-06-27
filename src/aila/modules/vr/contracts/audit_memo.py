@@ -8,14 +8,14 @@ Persistence per the platform rule: audit memos ride on the existing
 ``KnowledgeEntryRecord`` (pgvector 384-dim + HNSW + tsvector FTS,
 ``src/aila/storage/db_models.py:520``) via namespace
 ``vr.audit_memo.<scope>``. We do NOT create a separate
-``vr_audit_memos`` table — the platform already provides the vector
+``vr_audit_memos`` table -- the platform already provides the vector
 store and FTS index.
 
 Scope conventions:
-  - ``vr.audit_memo.local.<investigation_id>``       — investigation-only
-  - ``vr.audit_memo.workspace.<workspace_id>``       — workspace-scoped
-  - ``vr.audit_memo.team.<team_id>``                 — team-scoped
-  - ``vr.audit_memo.global``                         — promoted globally
+  - ``vr.audit_memo.local.<investigation_id>``       -- investigation-only
+  - ``vr.audit_memo.workspace.<workspace_id>``       -- workspace-scoped
+  - ``vr.audit_memo.team.<team_id>``                 -- team-scoped
+  - ``vr.audit_memo.global``                         -- promoted globally
                                                        (platform_admin only)
 
 The 90-day expiry from D-38 is enforced by an eviction worker
@@ -70,7 +70,7 @@ class AuditMemoCreate(BaseModel):
     )
     claim: str = Field(
         min_length=1,
-        description="The audit claim — 'audited for X, no bug exists because Y'.",
+        description="The audit claim -- 'audited for X, no bug exists because Y'.",
     )
     evidence_refs: list[str] = Field(default_factory=list)
     confidence: OutcomeConfidence = OutcomeConfidence.MEDIUM

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 /**
  * CVA variant definition for LoadingSkeleton.
  * Uses the `skeleton-aila` class from globals.css which provides
- * the amber scan line animation (D-22) — a thin amber line sweeping
+ * the amber scan line animation (D-22) -- a thin amber line sweeping
  * horizontally across a dark surface. Cyberpunk terminal aesthetic.
  */
 const loadingSkeletonVariants = cva("skeleton-aila", {
@@ -45,12 +45,12 @@ export interface LoadingSkeletonProps
     LoadingSkeletonVariants {}
 
 /**
- * LoadingSkeleton — amber scan line skeleton placeholder (D-22).
+ * LoadingSkeleton -- amber scan line skeleton placeholder (D-22).
  *
  * Renders a dark surface element with an amber scan line sweeping across it,
  * giving a cyberpunk terminal loading aesthetic. The animation is pure CSS
  * (defined in globals.css as `.skeleton-aila`), no JS required.
- * Respects prefers-reduced-motion — animation stops, static amber tint shown.
+ * Respects prefers-reduced-motion -- animation stops, static amber tint shown.
  *
  * @example
  * ```tsx
@@ -85,7 +85,7 @@ export interface LoadingSkeletonGroupProps extends React.HTMLAttributes<HTMLDivE
 }
 
 /**
- * LoadingSkeletonGroup — paragraph-like skeleton placeholder.
+ * LoadingSkeletonGroup -- paragraph-like skeleton placeholder.
  *
  * Renders multiple skeleton lines with naturally varying widths
  * to simulate a paragraph of text loading.

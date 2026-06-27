@@ -1,4 +1,4 @@
-"""Tests for OSV helper functions — pure data-transformation functions that parse
+"""Tests for OSV helper functions -- pure data-transformation functions that parse
 OSV advisory payloads, extract fixed versions, vendor semantics, ecosystem
 priorities, and batch response validation.
 

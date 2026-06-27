@@ -175,11 +175,11 @@ The same pattern applies to temperature, max tokens, and tool steps:
 | Parameter | Task-specific key | Default key | In-process fallback | Shipped `.env.example` |
 |-----------|-------------------|-------------|--------------------|------------------------|
 | Model | `llm_model_{task_type}` | `llm_default_model` (env: `AILA_PLATFORM_LLM_DEFAULT_MODEL`) | `antigravity/claude-opus-4-6-thinking` | `gpt-4o` |
-| Base URL | — | `llm_base_url` (env: `AILA_PLATFORM_LLM_BASE_URL`) | `https://openrouter.ai/api/v1` | `https://api.openai.com/v1` |
+| Base URL | -- | `llm_base_url` (env: `AILA_PLATFORM_LLM_BASE_URL`) | `https://openrouter.ai/api/v1` | `https://api.openai.com/v1` |
 | Max tokens | `llm_max_tokens_{task_type}` | `llm_default_max_tokens` (env: `AILA_PLATFORM_LLM_DEFAULT_MAX_TOKENS`) | `4096` | `32000` |
-| Temperature | `llm_temperature_{task_type}` | `llm_default_temperature` | `0.0` | — |
-| Max tool steps | `llm_max_tool_steps_{task_type}` | — | `0` (disabled) | — |
-| Per-call timeout | — | `AILA_LLM_TIMEOUT_SECONDS` env var | `180` | `300` |
+| Temperature | `llm_temperature_{task_type}` | `llm_default_temperature` | `0.0` | -- |
+| Max tool steps | `llm_max_tool_steps_{task_type}` | -- | `0` (disabled) | -- |
+| Per-call timeout | -- | `AILA_LLM_TIMEOUT_SECONDS` env var | `180` | `300` |
 
 Models that reject the `temperature` parameter (the o1/o3/o4/gpt-5 family,
 Claude Opus 4.6/4.7, Claude Sonnet 4.7, high-thinking models, `hadi`) are
@@ -524,7 +524,7 @@ Cost flows through three layers, all driven by the same `run_id` and
 `run_id` in `RunMemory` (a process-local thread-safe store). It is wired at
 platform startup so module authors never instantiate it. After every
 successful API call the client records usage on the tracker. The tracker is
-also the budget gate — see below.
+also the budget gate -- see below.
 
 ```python
 response = await client.chat("scoring", messages, run_id="run-abc-123")
@@ -593,7 +593,7 @@ async def score_all_findings(client, findings, run_id):
 ```
 
 Calls without a `run_id` (or with `run_id=None`) accumulate under the
-`_no_run` sentinel and **bypass budget enforcement entirely** — the budget
+`_no_run` sentinel and **bypass budget enforcement entirely** -- the budget
 check requires a real run id.
 
 ### Budget configuration
@@ -604,7 +604,7 @@ check requires a real run id.
 
 ### Known gap: VR investigation cost aggregation
 
-`VRInvestigationRecord.cost_actual_usd` has **no writer** — it stays `0.0`
+`VRInvestigationRecord.cost_actual_usd` has **no writer** -- it stays `0.0`
 forever. The investigation summary instead reads a live value computed by
 `_compute_live_investigation_cost()`
 (`src/aila/modules/vr/api_router.py`), which sums
@@ -646,7 +646,7 @@ report cost saved. On MISS, the response is persisted via
 7-day TTL. DB write failures are best-effort: the call still returned a
 real response to the caller.
 
-The cache is opt-in per caller — the general `client.chat*()` API does not
+The cache is opt-in per caller -- the general `client.chat*()` API does not
 invoke it. Only the VR researcher turn pipeline currently uses it.
 
 ---
@@ -867,9 +867,9 @@ retry loop. The OpenAI SDK's built-in retry is disabled
 (`max_retries=0`) so every retry passes through this layer for
 observability.
 
-Non-retryable errors — `ClassificationBlockedError`,
+Non-retryable errors -- `ClassificationBlockedError`,
 `ConfidenceRejectedError`, `BudgetExceededError`, and any `LLMError`
-constructed with `retryable=False` — surface immediately on first
+constructed with `retryable=False` -- surface immediately on first
 attempt, regardless of the retry cap.
 
 ---
@@ -882,12 +882,12 @@ prompt_hash)` for VR; other callers supply equivalent keys. On a retry
 the cache replays the cached response instead of paying for another
 provider round-trip.
 
-- **Insert path** — gateway writes the response after successful
+- **Insert path** -- gateway writes the response after successful
   validation + verification + seal.
-- **Replay path** — gateway returns the cached row when the request
+- **Replay path** -- gateway returns the cached row when the request
   key matches.
-- **Cleanup** — the worker imports `run_purge_expired_cron` from
+- **Cleanup** -- the worker imports `run_purge_expired_cron` from
   `aila.platform.llm.idempotency_cache` and runs it on the cron
   schedule; expired entries drop so cache size stays bounded.
-- **Source of truth** — `src/aila/platform/llm/idempotency_cache.py`,
+- **Source of truth** -- `src/aila/platform/llm/idempotency_cache.py`,
   migration `061_llm_idempotency_cache.py`.

@@ -1,4 +1,4 @@
-"""Baseline stamp — marks existing schema as Alembic-managed.
+"""Baseline stamp -- marks existing schema as Alembic-managed.
 
 This migration has empty upgrade() and downgrade() bodies.  It exists solely
 to establish a head revision that `alembic stamp head` can point to.

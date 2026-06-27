@@ -162,7 +162,7 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* Grid — or empty state when no widgets */}
+      {/* Grid -- or empty state when no widgets */}
       {!isLoading && currentLayout.items.length === 0 && (
         <EmptyState
           icon={<SquaresFour size={40} />}

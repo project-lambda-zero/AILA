@@ -1,7 +1,7 @@
 """Cancellation primitives for the LLM retry loop and tool bridges.
 
 Phase B.5 of the cutover (operator-elective). The hard problem is
-cancelling a single in-flight HTTP call mid-stream — that requires
+cancelling a single in-flight HTTP call mid-stream -- that requires
 plumbing ``httpx.AsyncClient`` aclose() through every retry loop +
 every tool bridge. The PARTIAL solution shipped here covers the 80%
 case: cancellation at the retry boundary.
@@ -19,7 +19,7 @@ Mechanism:
   treats as a clean exit (no retry, no FAILED transition).
 
 Mid-call cancellation is deferred to Phase B.6 (separate engineering
-pass — requires aclose() threading + tool bridge cancel_scope hooks).
+pass -- requires aclose() threading + tool bridge cancel_scope hooks).
 Today's behavior: in-flight LLM calls finish their current HTTP
 request, but the NEXT retry attempt or NEXT tool dispatch aborts
 immediately. Practical impact: pause → 30-60s for the current call
@@ -142,7 +142,7 @@ def cancel_for_investigation(investigation_id: str) -> bool:
     """Flip the token for ``investigation_id`` to cancelled.
 
     Returns True if a token existed and was flipped (or was already
-    cancelled). Returns False if no token existed for that id — the
+    cancelled). Returns False if no token existed for that id -- the
     pause path doesn't need to fabricate one because the cursor SSOT
     is already in ``__paused__`` and the next ``get_cancellation_token``
     call will read the cursor first.

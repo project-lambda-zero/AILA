@@ -365,7 +365,7 @@ class PlatformModule(ModuleProtocol):
 
     Handles four actions: list, add, delete, and execute_remote_command for
     registered SSH systems. This module's actions are dispatched outside the
-    vulnerability workflow DAG — the platform routes them directly here so
+    vulnerability workflow DAG -- the platform routes them directly here so
     registry management always works regardless of which feature modules are
     installed.
     """

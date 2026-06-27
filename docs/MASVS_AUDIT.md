@@ -1,4 +1,4 @@
-# MASVS Audit — Operator Guide
+# MASVS Audit -- Operator Guide
 
 How to run an OWASP MASVS audit against an Android APK in AILA, what
 the platform produces at each step, and how to read the final report.
@@ -7,7 +7,7 @@ The MASVS audit is a thin batch-orchestration layer on top of the
 existing `vuln_researcher` workflow. Each MASVS control becomes one
 independent investigation that runs the full scout / critic / verifier
 persona chain against the jadx-decompiled tree. The MASVS layer adds
-nothing to investigation depth — it adds breadth (one per control) and
+nothing to investigation depth -- it adds breadth (one per control) and
 aggregation (per-control verdicts plus a single PDF report).
 
 ---
@@ -18,7 +18,7 @@ aggregation (per-control verdicts plus a single PDF report).
 |---|---|
 | Target kind | `android_apk` |
 | Ingestion stages | `APK_DECODE` → `JADX_DECOMPILE` → `REACT_NATIVE_EXTRACT` → `INDEX_DECOMPILED` → `STATIC_SUMMARY` must all be `done`. `MOBSF_SCAN` is optional. |
-| `apk_overview.static_summary` | Non-empty. The dispatcher refuses with HTTP 409 when this cell is missing — the per-control prompt builder needs the package name, version, and decompiled-index id. |
+| `apk_overview.static_summary` | Non-empty. The dispatcher refuses with HTTP 409 when this cell is missing -- the per-control prompt builder needs the package name, version, and decompiled-index id. |
 | LLM budget | Default per-child budget is **$50** (`MASVS_DEFAULT_CHILD_BUDGET_USD`). With 53 L1 controls in catalog version `1.4.2-aila`, the parent records a total expected spend of **~$2,650**. The button confirms this number before dispatch. |
 | audit-mcp index | Must be live and the APK's decompiled tree must be indexed (handled automatically by `INDEX_DECOMPILED`). |
 
@@ -38,7 +38,7 @@ pipeline (`APK_DECODE` → `JADX_DECOMPILE` → `REACT_NATIVE_EXTRACT` →
 `INDEX_DECOMPILED` → `STATIC_SUMMARY` → `MOBSF_SCAN`). The TargetDetailPage shows live
 stage progress.
 
-The MASVS dispatcher gates on `STATIC_SUMMARY` being `done` — once
+The MASVS dispatcher gates on `STATIC_SUMMARY` being `done` -- once
 that stage finishes the rest of the page unlocks. `MOBSF_SCAN` is
 allowed to skip (`{skipped: true, reason: ...}` is a valid row).
 
@@ -78,7 +78,7 @@ the jadx-decompiled index).
 
 Per-child submit failures surface in `MasvsAuditDispatchResponse.enqueue_errors`
 as `{child_id: error_message}`. A transient queue outage on one child
-does NOT roll back the parent or sibling rows — re-enqueue the affected
+does NOT roll back the parent or sibling rows -- re-enqueue the affected
 children via `POST /vr/investigations/{id}/re-enqueue`.
 
 #### Idempotency
@@ -91,7 +91,7 @@ the dispatcher returns that parent's ids verbatim with
 children are materialized; the ARQ queue is not re-touched.
 
 Terminal parents (`COMPLETED` / `FAILED` / `ABANDONED`) do NOT block a
-fresh dispatch — an operator deliberately re-running an audit after
+fresh dispatch -- an operator deliberately re-running an audit after
 the previous batch finished expects a new batch against the latest
 target state. The frontend mutation distinguishes the three success
 branches via sonner toast variants: idempotent reuse → `info`, partial
@@ -109,7 +109,7 @@ a parent row exists. It shows:
   intentionally included since they consumed worker time).
 - ETA labelled "serial upper bound" (`median × remaining`). Real
   wall-clock is shorter because the ARQ queue runs children in
-  parallel — the upper bound is honest about the slowest case.
+  parallel -- the upper bound is honest about the slowest case.
 
 The per-control table (`MasvsControlTable`) lists every control with
 its child investigation status, verdict, and confidence once complete.
@@ -124,14 +124,14 @@ once every child reaches a terminal state. This is handled by
 `aila.modules.vr.masvs.parent_reconciler.sweep_masvs_audit_parents`,
 wired into the existing ARQ reaper cron (`platform.tasks.worker`) at
 the standard 1-minute cadence. The reconciler does NOT edit the
-investigation state machine — it reads child statuses and writes the
+investigation state machine -- it reads child statuses and writes the
 parent row directly.
 
 ### 4. Download the MASVS report
 
 Once the parent reaches a terminal state OR at least one child has a
 terminal outcome, the "Download MASVS report" button enables. Partial
-reports are valid — children still in flight render as `INCONCLUSIVE`
+reports are valid -- children still in flight render as `INCONCLUSIVE`
 rows so an operator can hand the CISO a checkpoint copy without
 waiting for the full batch.
 
@@ -183,13 +183,13 @@ verdict:
 Confidence extraction prefers a real float in
 `payload['verifier_report']['confidence']`. When only a categorical
 label is available, `OutcomeConfidence.HIGH/MEDIUM/LOW` maps to 0.85
-/ 0.6 / 0.3 — the same gate the auto-promotion path uses elsewhere.
+/ 0.6 / 0.3 -- the same gate the auto-promotion path uses elsewhere.
 
 Inconclusive verdicts are NOT silent failures. They surface in the
 executive summary count and as their own subsection so an operator
 can see exactly which controls did not converge and why
 (`reason="timeout"`, `reason="cost_cap"`, `reason="no_primary_outcome"`,
-etc.). The MASVS layer never fabricates a verdict — if the child did
+etc.). The MASVS layer never fabricates a verdict -- if the child did
 not return a conclusive outcome, the PDF says so.
 
 ### Evidence honesty
@@ -198,7 +198,7 @@ Every `verdict=finding` cites a real evidence excerpt from the
 underlying child investigation's verifier report. Each entry includes
 the file path (relative to the decompiled tree), function name, and
 the snippet that justified the finding. The dispatcher does NOT
-post-process or alter these excerpts — they are the exact strings the
+post-process or alter these excerpts -- they are the exact strings the
 verifier persona wrote.
 
 ---
@@ -234,7 +234,7 @@ Rate limits:
 - **MOBSF_SCAN may be skipped.** When MobSF is unreachable or
   `MOBSF_API_KEY` is unset, the ingestion pipeline writes
   `{skipped: true, reason: ...}` and proceeds. The MASVS dispatcher
-  does NOT block on this — it only gates on `STATIC_SUMMARY`.
+  does NOT block on this -- it only gates on `STATIC_SUMMARY`.
 - **The MASVS layer never touches `vuln_researcher`, personas,
   dispatch routing, or the tool surface.** Hard rule from the spec.
   Per-control investigations run with the full standard tool budget
@@ -255,7 +255,7 @@ Rate limits:
 | HTTP 409 on dispatch, "kind is ... ; MASVS audit applies to android_apk targets only" | Target is not an `android_apk` row. | MASVS is APK-specific. Recreate the target with the APK file. |
 | HTTP 200 with `idempotent_reuse=true` | Active parent exists for the same catalog version. | Use the returned parent id directly; the existing batch is the live one. To force a fresh batch, wait for the active parent to reach a terminal state first. |
 | Per-child `enqueue_errors` populated | Transient ARQ queue outage on one or more children. | Children stay in `CREATED`. Call `POST /vr/investigations/{id}/re-enqueue` per affected child. |
-| All children land in `INCONCLUSIVE` | Verifier persona did not converge on conclusive outcomes (typical for an under-resourced budget or a heavily-obfuscated APK). | Inspect the verifier transcripts on individual child detail pages. Raising the per-child budget cap is a configuration question — speak with the operator before changing `MASVS_DEFAULT_CHILD_BUDGET_USD`. |
+| All children land in `INCONCLUSIVE` | Verifier persona did not converge on conclusive outcomes (typical for an under-resourced budget or a heavily-obfuscated APK). | Inspect the verifier transcripts on individual child detail pages. Raising the per-child budget cap is a configuration question -- speak with the operator before changing `MASVS_DEFAULT_CHILD_BUDGET_USD`. |
 | `verdict=finding` row has no evidence excerpts | The verifier report contained `affected_components` entries that failed schema validation (skipped non-list / non-dict / half-populated entries; trimmed surrounding whitespace; capped at the per-finding limit). | Open the child investigation detail page to inspect the raw verifier output; the table view is honest about what it could parse. |
 | Parent stays in `RUNNING` after every child reached a terminal state | The parent reconciler cron has not yet ticked, OR the worker is down. | The reconciler runs every minute via the ARQ reaper. Check `worker.status` and the reaper logs. |
 

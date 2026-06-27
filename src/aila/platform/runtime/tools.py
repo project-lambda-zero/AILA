@@ -78,7 +78,7 @@ class ToolRegistry:
     """The global registry of all platform and module tools for a runtime instance.
 
     Tools are registered once at startup via register(). Modules never access
-    the registry directly — they receive a ToolScope built from their declared
+    the registry directly -- they receive a ToolScope built from their declared
     required_tools() via scope(). This enforces tool access isolation: a module
     cannot call a tool it has not declared.
     """

@@ -1,4 +1,4 @@
-"""042 — VR v0.3 foundation: workspaces, targets, target tag index.
+"""042 -- VR v0.3 foundation: workspaces, targets, target tag index.
 
 Per D-49: Workspace = thematic project (e.g. "Browser engines").
 Per D-50: Investigation has a primary target; targets are first-class.
@@ -6,7 +6,7 @@ Per D-51: capability_profile_json populated by M3.T-2 through M3.T-4
           enrichment pipeline.
 Per D-52: Multi-dimensional tag filtering via vr_target_tag_index.
 
-Additive — does not touch vr_projects or vr_findings yet. The follow-up
+Additive -- does not touch vr_projects or vr_findings yet. The follow-up
 migration (043) will refactor vr_projects to reference vr_targets.target_id
 and drop the redundant target columns from vr_projects (target_class,
 target_path, binary_id, patched_path, patched_binary_id, input_source,

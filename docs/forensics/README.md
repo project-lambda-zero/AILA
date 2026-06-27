@@ -12,11 +12,11 @@ Frontend ──── React (PatternFly + AILA design system, TanStack Query v5)
 Reasoning ─── strategy-neutral LLM investigator with closed-loop protocol
               (no hardcoded playbooks; the LLM is the strategist end-to-end)
 Pipeline ──── four workflow definitions (one dispatcher + three modes):
-              • FORENSICS_DISPATCHER_V1   — routing → mode_selection (selects below)
-              • FORENSICS_FULL_ANALYSIS_V1 — intake → collection → deep_analysis
+              • FORENSICS_DISPATCHER_V1   -- routing → mode_selection (selects below)
+              • FORENSICS_FULL_ANALYSIS_V1 -- intake → collection → deep_analysis
                   → promotion → resolution → writeup → response_emit
-              • FORENSICS_FREEFLOW_V1     — freeflow → writeup → response_emit
-              • FORENSICS_RAW_DIRECTORY_V1 — intake → __succeeded__ (raw directory intake-only)
+              • FORENSICS_FREEFLOW_V1     -- freeflow → writeup → response_emit
+              • FORENSICS_RAW_DIRECTORY_V1 -- intake → __succeeded__ (raw directory intake-only)
 ```
 
 ### Package Map
@@ -81,13 +81,13 @@ Every tool runs on the remote Analyzer Machine via SSH and is OS-aware (Linux / 
 | --- | --------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | **Evidence Intake**   | scan, classify, hash                                                         | Discover and fingerprint all evidence files                                                                                                                     |
 | 2   | **Artifact Query**    | list, get, search                                                            | Query the normalized artifact database                                                                                                                          |
-| 3   | **Dissect Runner**    | target_info, target_query, target_fs, dissect_timeline                       | Disk image analysis — OS-aware queries: Windows (registry, prefetch, shellbags), Linux (docker, systemd), macOS (LaunchAgents, plist, Spotlight, unified logs) |
-| 4   | **Volatility Runner** | Any vol3 plugin                                                              | Memory forensics — pslist, netscan, malfind, dlllist, hashdump, filescan, cmdline, handles, svcscan, modscan, etc. Auto-detects Windows vs Linux vs macOS dumps |
+| 3   | **Dissect Runner**    | target_info, target_query, target_fs, dissect_timeline                       | Disk image analysis -- OS-aware queries: Windows (registry, prefetch, shellbags), Linux (docker, systemd), macOS (LaunchAgents, plist, Spotlight, unified logs) |
+| 4   | **Volatility Runner** | Any vol3 plugin                                                              | Memory forensics -- pslist, netscan, malfind, dlllist, hashdump, filescan, cmdline, handles, svcscan, modscan, etc. Auto-detects Windows vs Linux vs macOS dumps |
 | 5   | **tshark Runner**     | 16 actions                                                                   | Full PCAP analysis (see Network section below)                                                                                                                  |
-| 6   | **Zeek Runner**       | 16 actions                                                                   | Deep PCAP behavioral analysis — structured logs, JA3 fingerprinting, file extraction, anomaly detection (see Zeek section below)                                |
+| 6   | **Zeek Runner**       | 16 actions                                                                   | Deep PCAP behavioral analysis -- structured logs, JA3 fingerprinting, file extraction, anomaly detection (see Zeek section below)                                |
 | 7   | **Strings Runner**    | strings, floss, capa                                                         | String extraction, deobfuscation (FLOSS), and MITRE ATT&CK capability mapping (capa)                                                                            |
-| 8   | **Script Tool**       | execute                                                                      | Upload and run agent-generated Python scripts — the investigator's most flexible tool                                                                           |
-| 9   | **Ghidra Runner**     | analyze, decompile_function, list_functions                                  | Headless binary reverse engineering — decompilation, function listing, import analysis                                                                          |
+| 8   | **Script Tool**       | execute                                                                      | Upload and run agent-generated Python scripts -- the investigator's most flexible tool                                                                           |
+| 9   | **Ghidra Runner**     | analyze, decompile_function, list_functions                                  | Headless binary reverse engineering -- decompilation, function listing, import analysis                                                                          |
 | 10  | **YARA Runner**       | scan, compile, match_tags                                                    | Signature-based malware detection against `.yar` rule files                                                                                                     |
 | 11  | **Registry Viewer**   | 15 actions                                                                   | Windows Registry browser + forensic artifact extraction (see Registry section below)                                                                            |
 | 12  | **Carving Runner**    | binwalk_scan, binwalk_extract, foremost, bulk_extractor                      | Embedded file extraction, raw image carving, bulk PII / IOC extraction                                                                                          |
@@ -107,7 +107,7 @@ The module detects the source OS of disk images before running queries, so it on
 | `ext4`, `ext3`, `xfs`, `btrfs`, `debian`, `ubuntu` | Linux |
 | `.dmg`, `.sparseimage`, `.sparsebundle` extension | macOS (fallback) |
 
-**Query routing** — after detection, runs 13 common queries + OS-specific queries:
+**Query routing** -- after detection, runs 13 common queries + OS-specific queries:
 
 | Query Set | Queries | Examples |
 |---|---|---|
@@ -116,7 +116,7 @@ The module detects the source OS of disk images before running queries, so it on
 | **+ Linux** | +6 | domain, services, tasks, startup, docker containers/images |
 | **+ macOS** | +7 | installed apps, LaunchAgents, LaunchDaemons, login items, Spotlight, known WiFi networks, unified logs |
 
-**Suspicious file hotspot scan** also adapts — macOS adds `.app`, `.dylib`, `.pkg`, `.command`, `.workflow`, `.scpt`, `.kext` alongside the standard `.exe`, `.dll`, `.sh`, `.elf`, `.ko`, `.so`.
+**Suspicious file hotspot scan** also adapts -- macOS adds `.app`, `.dylib`, `.pkg`, `.command`, `.workflow`, `.scpt`, `.kext` alongside the standard `.exe`, `.dll`, `.sh`, `.elf`, `.ko`, `.so`.
 
 
 ### Supported Evidence File Formats
@@ -131,7 +131,7 @@ The module detects the source OS of disk images before running queries, so it on
 | **Archives** | `.zip`, `.tar.gz` | Auto-detected for recursive scanning |
 
 
-### tshark — 16 PCAP Analysis Actions
+### tshark -- 16 PCAP Analysis Actions
 
 
 | Action               | Extracts                                                                 |
@@ -154,54 +154,54 @@ The module detects the source OS of disk images before running queries, so it on
 | `custom`             | Arbitrary Wireshark display filter                                       |
 
 
-### Zeek — 16 Deep PCAP Analysis Actions
+### Zeek -- 16 Deep PCAP Analysis Actions
 
 Zeek (formerly Bro) generates structured log files from PCAPs with protocol analysis capabilities that go far beyond tshark. It is the industry standard for network security monitoring.
 
 **What Zeek can do that tshark cannot:**
 
-- **JA3/JA3S TLS Fingerprinting** — identify malware families by their TLS handshake pattern, even if IPs/domains change
-- **Automatic File Extraction** — pulls every file transferred over HTTP, SMB, FTP, etc., and computes MD5/SHA1/SHA256 hashes
-- **Connection State Tracking** — classifies every connection (S0=attempt, SF=normal, REJ=rejected, RSTO=reset-by-originator, etc.) for behavioral profiling
-- **Built-in Anomaly Detection** — the `notice.log` framework fires on scan detection, SSL certificate issues, known-bad patterns, and custom rules
-- **Protocol-Independent PE Analysis** — identifies Windows executables in any stream and logs PE metadata
-- **Scriptable Intel Matching** — load threat intelligence feeds and match against all observed traffic
-- **Community ID Flow Hashing** — cross-correlate flows between Zeek, Suricata, and other tools using standard hashes
+- **JA3/JA3S TLS Fingerprinting** -- identify malware families by their TLS handshake pattern, even if IPs/domains change
+- **Automatic File Extraction** -- pulls every file transferred over HTTP, SMB, FTP, etc., and computes MD5/SHA1/SHA256 hashes
+- **Connection State Tracking** -- classifies every connection (S0=attempt, SF=normal, REJ=rejected, RSTO=reset-by-originator, etc.) for behavioral profiling
+- **Built-in Anomaly Detection** -- the `notice.log` framework fires on scan detection, SSL certificate issues, known-bad patterns, and custom rules
+- **Protocol-Independent PE Analysis** -- identifies Windows executables in any stream and logs PE metadata
+- **Scriptable Intel Matching** -- load threat intelligence feeds and match against all observed traffic
+- **Community ID Flow Hashing** -- cross-correlate flows between Zeek, Suricata, and other tools using standard hashes
 
 
 | Action          | Generates / Extracts                                                                                 |
 | --------------- | ---------------------------------------------------------------------------------------------------- |
-| `analyze`       | Run Zeek on a PCAP — generates all log files (conn, dns, http, ssl, files, notice, weird, etc.)      |
+| `analyze`       | Run Zeek on a PCAP -- generates all log files (conn, dns, http, ssl, files, notice, weird, etc.)      |
 | `read_log`      | Read any specific Zeek log file by name                                                              |
-| `connections`   | `conn.log` — every connection with duration, bytes, packets, state, service, history                 |
-| `dns`           | `dns.log` — full DNS transactions: query, response, TTL, query type, authoritative answers           |
-| `http`          | `http.log` — requests with host, URI, method, user-agent, MIME type, status code, response body size |
-| `ssl`           | `ssl.log` — TLS handshakes with SNI, issuer, subject, JA3, JA3S, certificate chain, validation       |
-| `files`         | `files.log` — every file over any protocol with MIME, size, MD5, SHA1, SHA256                        |
-| `notices`       | `notice.log` — Zeek's built-in anomaly and threat detections                                         |
-| `weird`         | `weird.log` — protocol violations, malformed packets, unusual behavior                               |
-| `smtp`          | `smtp.log` — email metadata (from, to, subject, paths, DKIM)                                         |
-| `ssh`           | `ssh.log` — SSH connections with version strings, auth success/failure                               |
-| `kerberos`      | `kerberos.log` — Kerberos authentication events (TGT requests, service tickets)                      |
-| `smb`           | `smb_files.log` — SMB file transfers with paths and actions                                          |
+| `connections`   | `conn.log` -- every connection with duration, bytes, packets, state, service, history                 |
+| `dns`           | `dns.log` -- full DNS transactions: query, response, TTL, query type, authoritative answers           |
+| `http`          | `http.log` -- requests with host, URI, method, user-agent, MIME type, status code, response body size |
+| `ssl`           | `ssl.log` -- TLS handshakes with SNI, issuer, subject, JA3, JA3S, certificate chain, validation       |
+| `files`         | `files.log` -- every file over any protocol with MIME, size, MD5, SHA1, SHA256                        |
+| `notices`       | `notice.log` -- Zeek's built-in anomaly and threat detections                                         |
+| `weird`         | `weird.log` -- protocol violations, malformed packets, unusual behavior                               |
+| `smtp`          | `smtp.log` -- email metadata (from, to, subject, paths, DKIM)                                         |
+| `ssh`           | `ssh.log` -- SSH connections with version strings, auth success/failure                               |
+| `kerberos`      | `kerberos.log` -- Kerberos authentication events (TGT requests, service tickets)                      |
+| `smb`           | `smb_files.log` -- SMB file transfers with paths and actions                                          |
 | `extract_files` | Pull every transferred file out of the PCAP into a directory with hash computation                   |
-| `ja3`           | JA3/JA3S fingerprints with server name, issuer, and subject — match against known malware databases  |
+| `ja3`           | JA3/JA3S fingerprints with server name, issuer, and subject -- match against known malware databases  |
 | `custom_script` | Execute a custom Zeek script (intelligence matching, custom protocol parsing, etc.)                  |
 
 
 **Example Zeek logs generated from a single PCAP:**
 
 ```
-conn.log       — 12,547 connections mapped
-dns.log        — 892 unique queries, 15 suspicious NXDOMAINs
-http.log       — 234 requests, 3 to known C2 domains
-ssl.log        — 156 TLS sessions, 2 with self-signed certs, JA3 matches Cobalt Strike
-files.log      — 47 files transferred, 2 PE executables, 1 encrypted ZIP
-notice.log     — 4 anomalies: port scan, SSL validation failure, known-bad JA3
-weird.log      — 8 protocol violations: truncated headers, unexpected RST
+conn.log       -- 12,547 connections mapped
+dns.log        -- 892 unique queries, 15 suspicious NXDOMAINs
+http.log       -- 234 requests, 3 to known C2 domains
+ssl.log        -- 156 TLS sessions, 2 with self-signed certs, JA3 matches Cobalt Strike
+files.log      -- 47 files transferred, 2 PE executables, 1 encrypted ZIP
+notice.log     -- 4 anomalies: port scan, SSL validation failure, known-bad JA3
+weird.log      -- 8 protocol violations: truncated headers, unexpected RST
 ```
 
-### dd Runner — 8 Disk Imaging Actions
+### dd Runner -- 8 Disk Imaging Actions
 
 Raw disk and partition imaging tool for evidence acquisition and byte-level extraction. On Windows, uses PowerShell equivalents.
 
@@ -220,14 +220,14 @@ Raw disk and partition imaging tool for evidence acquisition and byte-level extr
 
 **Use cases in forensic investigations:**
 
-- **Evidence Acquisition** — Create bit-for-bit forensic images of suspect drives before analysis
-- **MBR/VBR Analysis** — Extract boot records to detect bootkits and MBR malware
-- **Shellcode Extraction** — Slice specific byte ranges from memory dumps or binaries
-- **Anti-Forensics Detection** — Check if disk regions have been intentionally wiped
-- **Partition Recovery** — Image individual partitions for targeted analysis
-- **Firmware Extraction** — Pull raw data from device firmware for reverse engineering
+- **Evidence Acquisition** -- Create bit-for-bit forensic images of suspect drives before analysis
+- **MBR/VBR Analysis** -- Extract boot records to detect bootkits and MBR malware
+- **Shellcode Extraction** -- Slice specific byte ranges from memory dumps or binaries
+- **Anti-Forensics Detection** -- Check if disk regions have been intentionally wiped
+- **Partition Recovery** -- Image individual partitions for targeted analysis
+- **Firmware Extraction** -- Pull raw data from device firmware for reverse engineering
 
-### Memory Dump OS Detection — 5-Tier Cascade
+### Memory Dump OS Detection -- 5-Tier Cascade
 
 The module automatically detects whether a memory dump came from Windows, Linux, or macOS using a multi-tier cascade. Each tier is more expensive than the last; the cascade stops as soon as a confident match is found.
 
@@ -237,7 +237,7 @@ Tier 1: banners.Banners          (~10s, reads raw bytes)
    │    ├── "ntkrnl" / "Windows" → windows
    │    └── "Darwin" / "XNU"     → macos
    │
-   │ (fails on compressed dumps — AVML/LiME with zstd/lz4)
+   │ (fails on compressed dumps -- AVML/LiME with zstd/lz4)
    ▼
 Tier 2: strings + grep probe     (~20s, reads first 100 MB)
    │    Uses dd | strings | grep to find kernel signatures
@@ -258,7 +258,7 @@ Tier 4: mac.pslist probe         (~30s)
    │
    ▼
 Tier 5: linux.pslist probe       (~30s)
-   │    Empirical confirmation — if Linux plugins produce
+   │    Empirical confirmation -- if Linux plugins produce
    │    actual process data, it's confirmed Linux.
    │
    ▼
@@ -267,11 +267,11 @@ Fallback: defaults to "linux"
 
 **Why Tier 2 matters:** AVML (used by Azure, common in CTF) captures Linux memory with zstd compression. The raw dump contains compressed pages, so `banners.Banners` cannot find plaintext "Linux version" strings. Tier 2 uses `dd | strings | grep` on the first 100 MB to catch kernel version strings that survive partial compression or exist in uncompressed metadata regions.
 
-**Why Tiers 4-5 matter:** Instead of blindly defaulting to Linux, the cascade *empirically confirms* by running `mac.pslist` then `linux.pslist`. If `mac.pslist` returns a process table, it's definitively macOS — no guessing.
+**Why Tiers 4-5 matter:** Instead of blindly defaulting to Linux, the cascade *empirically confirms* by running `mac.pslist` then `linux.pslist`. If `mac.pslist` returns a process table, it's definitively macOS -- no guessing.
 
 ### Volatility Plugin Sets by OS
 
-**Windows — 10 plugins:**
+**Windows -- 10 plugins:**
 
 
 | Plugin                      | Artifact Family | What It Extracts                                   |
@@ -288,7 +288,7 @@ Fallback: defaults to "linux"
 | `windows.registry.hivelist` | filesystem      | Loaded registry hives                              |
 
 
-**Linux — 10 plugins:**
+**Linux -- 10 plugins:**
 
 
 | Plugin                | Artifact Family | What It Extracts                        |
@@ -305,7 +305,7 @@ Fallback: defaults to "linux"
 | `linux.check_idt`     | malware         | Hooked interrupt descriptors (rootkits) |
 
 
-**macOS — 10 plugins:**
+**macOS -- 10 plugins:**
 
 
 | Plugin                | Artifact Family | What It Extracts                                  |
@@ -322,12 +322,12 @@ Fallback: defaults to "linux"
 | `mac.ifconfig`        | network         | Network interface configuration and MAC addresses |
 
 
-### Registry Viewer — 15 Actions
+### Registry Viewer -- 15 Actions
 
 
 | Action               | Extracts                                                 |
 | -------------------- | -------------------------------------------------------- |
-| `list_keys`          | Browse any registry key — subkeys and values             |
+| `list_keys`          | Browse any registry key -- subkeys and values             |
 | `read_value`         | Read all values under a specific key                     |
 | `search`             | Regex search across registry hives                       |
 | `autoruns`           | Run, RunOnce, Winlogon, Services auto-start entries      |
@@ -341,7 +341,7 @@ Fallback: defaults to "linux"
 | `amcache`            | Application execution history                            |
 | `shimcache`          | Application compatibility cache                          |
 | `bam`                | Background Activity Moderator (execution timestamps)     |
-| `mru_lists`          | Most Recently Used — RunMRU, TypedPaths, OpenSavePidlMRU |
+| `mru_lists`          | Most Recently Used -- RunMRU, TypedPaths, OpenSavePidlMRU |
 
 
 ---
@@ -407,7 +407,7 @@ freeflow → writeup → response_emit
 
 | Stage         | What Happens                                                                                                                                                                                                                                                                                                                                                                                  |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Free-Flow** | Bounded LLM investigation loop driven by `agents/investigator.py`. The investigator is strategy-NEUTRAL — no hardcoded playbooks, no keyword routers, no pre-written profile bodies. It receives the artifact graph + Valuable Items + OS-dispatched system prompts, sets goals each turn, writes Python or shell commands, runs them via the script tool, learns from output, iterates ≤10× |
+| **Free-Flow** | Bounded LLM investigation loop driven by `agents/investigator.py`. The investigator is strategy-NEUTRAL -- no hardcoded playbooks, no keyword routers, no pre-written profile bodies. It receives the artifact graph + Valuable Items + OS-dispatched system prompts, sets goals each turn, writes Python or shell commands, runs them via the script tool, learns from output, iterates ≤10× |
 | **Write-Up**  | Same writer as the full analysis variant, narrated against the freeflow trajectory                                                                                                                                                                                                                                                                                                            |
 
 `FORENSICS_RAW_DIRECTORY_V1` is a side variant for projects rooted at a raw filesystem directory rather than a single evidence artefact; it runs the same stages with adjusted intake.
@@ -416,7 +416,7 @@ freeflow → writeup → response_emit
 
 ## How the Investigator Reasons
 
-The freeflow investigator is strategy-neutral by design. Replaces the prior strategy-catalogue agent that shipped a 93-entry playbook + classifier — the playbook biased the model toward CTF-shaped questions and away from real engagements. The current contract:
+The freeflow investigator is strategy-neutral by design. Replaces the prior strategy-catalogue agent that shipped a 93-entry playbook + classifier -- the playbook biased the model toward CTF-shaped questions and away from real engagements. The current contract:
 
 - One OS-dispatched system prompt (Windows / Linux / macOS variants) names the closed-loop protocol explicitly: every step is `hypothesis → action → observation → refinement`.
 - The agent sees the full normalized artifact graph (not a curated subset), the Valuable Items rollup, and the running history of prior steps.
@@ -425,7 +425,7 @@ The freeflow investigator is strategy-neutral by design. Replaces the prior stra
 
 ---
 
-## Frontend — 5 Screens, 18 Components
+## Frontend -- 5 Screens, 18 Components
 
 ### Screens
 
@@ -437,7 +437,7 @@ The freeflow investigator is strategy-neutral by design. Replaces the prior stra
 | **Project Details**   | `/forensics/projects/:id/details` | Multi-tab analysis viewer (see below)                                                        |
 | **Investigation Detail** | `/forensics/projects/:id/investigations/:iid` | Per-investigation transcript, agent steps, write-up                                |
 
-### Details Page — multi-tab analysis viewer
+### Details Page -- multi-tab analysis viewer
 
 | Tab                     | Component              | Content                                                                                                                                                                                                |
 | ----------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -448,7 +448,7 @@ The freeflow investigator is strategy-neutral by design. Replaces the prior stra
 | **Solid Evidence**      | `SolidEvidencePanel`   | Analyst-tagged "this is the answer" rows that survive across reruns                                                                                                                                    |
 | **Carved Files**        | `CarvedFilesPanel`     | Files extracted from PCAPs by Zeek; downloadable by SHA-256                                                                                                                                            |
 | **Directives**          | `AnalystDirectivesPanel` | Operator-attached steering hints visible to the freeflow agent                                                                                                                                        |
-| **V.I.A.**              | `VIATable`             | Very Important Artifacts — top scored artifacts with suspicion reasoning                                                                                                                               |
+| **V.I.A.**              | `VIATable`             | Very Important Artifacts -- top scored artifacts with suspicion reasoning                                                                                                                               |
 | **Questions & Answers** | `QuestionsTable`       | Questions asked + answers + confidence levels                                                                                                                                                          |
 | **Write-Ups**           | `WriteUpViewer`        | DFIR / malware-analysis write-ups (markdown)                                                                                                                                                           |
 
@@ -539,12 +539,12 @@ All endpoints use `DataEnvelope[T]`, platform auth, and rate limiting.
 
 ## Key Design Decisions
 
-- **OS-Aware Everything** — Every tool, command, and path adapts based on `AnalyzerOS` (linux / windows).
-- **Memory Dump Auto-Detection** — Volatility automatically selects Windows / Linux / macOS plugins based on a 5-tier cascade.
-- **Pre-Analysis Before Free-Flow** — The full-analysis pipeline extracts artifacts before the investigator ever sees a question; freeflow runs against the same artifact graph the operator can browse.
-- **Strategy-Neutral Investigator** — No hardcoded playbooks or keyword routers. The LLM is the strategist; the module provides the artifact graph + Valuable Items + closed-loop protocol.
-- **Dynamic Script Execution** — The investigator writes and runs Python on the analyzer when pre-built tools aren't enough (`ScriptTool`).
-- **Operator Steering Lives in `AnalystDirective` Rows** — Operator-attached hints are first-class data; the freeflow agent reads them every turn, and the audit log records when each fired.
-- **Solid Evidence Survives Reruns** — Analyst-tagged "this is the answer" rows are persisted independent of the investigation that produced them, so a rerun starts with the known facts.
-- **Valuable Items Summary** — 8-category structured IOC rollup feeds the agent pre-digested context.
+- **OS-Aware Everything** -- Every tool, command, and path adapts based on `AnalyzerOS` (linux / windows).
+- **Memory Dump Auto-Detection** -- Volatility automatically selects Windows / Linux / macOS plugins based on a 5-tier cascade.
+- **Pre-Analysis Before Free-Flow** -- The full-analysis pipeline extracts artifacts before the investigator ever sees a question; freeflow runs against the same artifact graph the operator can browse.
+- **Strategy-Neutral Investigator** -- No hardcoded playbooks or keyword routers. The LLM is the strategist; the module provides the artifact graph + Valuable Items + closed-loop protocol.
+- **Dynamic Script Execution** -- The investigator writes and runs Python on the analyzer when pre-built tools aren't enough (`ScriptTool`).
+- **Operator Steering Lives in `AnalystDirective` Rows** -- Operator-attached hints are first-class data; the freeflow agent reads them every turn, and the audit log records when each fired.
+- **Solid Evidence Survives Reruns** -- Analyst-tagged "this is the answer" rows are persisted independent of the investigation that produced them, so a rerun starts with the known facts.
+- **Valuable Items Summary** -- 8-category structured IOC rollup feeds the agent pre-digested context.
 

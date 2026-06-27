@@ -32,7 +32,7 @@ def _check_ssrf(url: str) -> None:
     try:
         addr = ipaddress.ip_address(hostname)
     except ValueError:
-        # hostname is a domain name — resolve and check all addresses
+        # hostname is a domain name -- resolve and check all addresses
         try:
             resolved = socket.getaddrinfo(hostname, None)
         except socket.gaierror:
@@ -57,7 +57,7 @@ class HTTPFetchTool(Tool):
     """Platform tool for making outbound HTTP requests from module agents.
 
     TLS verification is operator-controlled via platform settings (per-provider
-    <provider>_verify_tls config field) — not agent-controlled. This design was
+    <provider>_verify_tls config field) -- not agent-controlled. This design was
     intentional (Phase 15): removing verify_tls from the tool's input schema
     prevents agents from bypassing TLS verification regardless of what the model
     requests. Proxy resolution is handled at the PlatformSettings level before

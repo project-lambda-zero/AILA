@@ -3,17 +3,17 @@
 ReportRepository decouples the platform's report-query tools from module-specific
 DB models.  The vulnerability module (and any future module that owns
 LatestFindingRecord) injects a materialized query callable via
-register_materialized_query() during register_tools() — the platform never
+register_materialized_query() during register_tools() -- the platform never
 imports module-specific models directly (Phase 41 DECOUPLE-01 fix).
 
 Two query surfaces are provided:
 
-latest_report() / latest_report_rows() — artifact-file-backed queries.
+latest_report() / latest_report_rows() -- artifact-file-backed queries.
     Walk completed WorkflowRunRecords in reverse chronological order and load
     report artifacts from the filesystem via ReportArtifactStore.  A single
     load_run_bundle() call per run reduces I/O (single-load optimization).
 
-latest_materialized_findings() — DB-backed materialized query.
+latest_materialized_findings() -- DB-backed materialized query.
     Calls the registered module callable to fetch LatestFindingRecord rows
     directly from the DB.  Returns a LatestReportRowsResult with the same
     shape as the artifact-backed surface for uniform downstream handling.
@@ -56,7 +56,7 @@ class MaterializedFindingsQuery(Protocol):
 class RunFindingsQuery(Protocol):
     """Callable that accepts (session, run_id) and returns a list of row dicts.
 
-    Queries PrioritizedFindingRecord by run_id — returns exactly the findings
+    Queries PrioritizedFindingRecord by run_id -- returns exactly the findings
     from a specific scan run, not the latest-state materialized view.
     """
 
@@ -104,7 +104,7 @@ class ReportRepository:
     def register_run_findings_query(self, query: RunFindingsQuery) -> None:
         """Register a callable that fetches per-run findings by run_id.
 
-        Returns PrioritizedFindingRecord rows for a specific scan run — honest
+        Returns PrioritizedFindingRecord rows for a specific scan run -- honest
         per-run data, not the latest-state materialized view which may include
         findings from concurrent or later scans.
         """
@@ -163,7 +163,7 @@ class ReportRepository:
 
         Walks WorkflowRunRecords in reverse chronological order (most recent first).
         For each completed run, calls load_run_bundle() once to load all artifact
-        references in a single query (single-load optimization — avoids N+1 artifact
+        references in a single query (single-load optimization -- avoids N+1 artifact
         lookups).
 
         Args:

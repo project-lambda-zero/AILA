@@ -1,4 +1,4 @@
-"""Topology schemas for the AILA REST API — network discovery aggregation.
+"""Topology schemas for the AILA REST API -- network discovery aggregation.
 
 Used by GET /topology and GET /topology/subnets (RADAR-05 / D-12).
 
@@ -9,7 +9,7 @@ TopologyResponse is the full aggregated network graph.
 
 Severity overlay (D-02): SeverityCounts is populated from the vulnerability
 module's LatestFindingRecord when vulnerability data exists. When no scan has
-run, severity_counts is None — the endpoint still returns the network graph.
+run, severity_counts is None -- the endpoint still returns the network graph.
 """
 from __future__ import annotations
 

@@ -10,7 +10,7 @@ import type { McpServerSummary } from "../types";
 
 /** Operator-facing MCP server registry.
  *
- * AILA does no analysis itself — it orchestrates external MCP servers
+ * AILA does no analysis itself -- it orchestrates external MCP servers
  * (one per workstation). This page surfaces:
  *
  *  - which servers are registered (audit-mcp, ida-headless-mcp)

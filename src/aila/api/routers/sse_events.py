@@ -1,4 +1,4 @@
-"""SSE events router — GET /events/stream.
+"""SSE events router -- GET /events/stream.
 
 Streams platform events to authenticated users via Server-Sent Events.
 
@@ -71,7 +71,7 @@ async def stream_events(
 
     Connection lifecycle:
     - Pings every PING_INTERVAL_S seconds to prevent proxy timeout.
-    - Closes after MAX_CONNECTION_S (5 min) — client reconnects automatically.
+    - Closes after MAX_CONNECTION_S (5 min) -- client reconnects automatically.
     - On client disconnect, cleans up the in-process queue.
 
     Event frame format::
@@ -120,7 +120,7 @@ async def stream_events(
                     next_ping += PING_INTERVAL_S
 
         except asyncio.CancelledError:
-            # Client disconnected mid-stream — clean exit
+            # Client disconnected mid-stream -- clean exit
             pass
         finally:
             await release_user_queue(auth.user_id)

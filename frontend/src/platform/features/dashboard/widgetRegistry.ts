@@ -8,7 +8,7 @@ let initialized = false;
 
 export function registerWidget(def: WidgetDefinition): void {
   if (registry.has(def.id)) {
-    console.warn(`[widgetRegistry] Duplicate widget id "${def.id}" — skipping.`);
+    console.warn(`[widgetRegistry] Duplicate widget id "${def.id}" -- skipping.`);
     return;
   }
   registry.set(def.id, def);
@@ -29,7 +29,7 @@ export function getAllWidgets(): WidgetDefinition[] {
 /**
  * Reads all module frontend specs loaded via import.meta.glob and registers
  * any widget contributions into the central registry.
- * Idempotent — safe to call multiple times (guarded by `initialized` flag).
+ * Idempotent -- safe to call multiple times (guarded by `initialized` flag).
  */
 export function initModuleWidgets(): void {
   if (initialized) return;

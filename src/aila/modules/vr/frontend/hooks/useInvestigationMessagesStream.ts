@@ -14,7 +14,7 @@ import type { Envelope, VRMessageSummary } from "../types";
  * /vr/investigations/{id}/messages/stream and merges new VRMessageSummary
  * payloads into the existing ["vr", "investigation-messages", ...] query
  * cache so any consumer of `useInvestigationMessages` sees new turns
- * land as they happen — no polling latency.
+ * land as they happen -- no polling latency.
  *
  * Connection lifecycle:
  *   - opens on mount when ``investigationId`` is non-empty
@@ -45,7 +45,7 @@ export function useInvestigationMessagesStream(
       try {
         token = await getAuthTokenStandalone();
       } catch {
-        // unauthenticated — server will reject
+        // unauthenticated -- server will reject
       }
 
       const params = new URLSearchParams();
@@ -83,7 +83,7 @@ export function useInvestigationMessagesStream(
 
       const mergeMessage = (msg: VRMessageSummary) => {
         // Key matches useInvestigationMessages exactly so the same query
-        // cache is updated. Default offset/limit are 0/100 — the list
+        // cache is updated. Default offset/limit are 0/100 -- the list
         // page uses defaults so we mirror.
         const key = [
           "vr",
@@ -144,7 +144,7 @@ export function useInvestigationMessagesStream(
             mergeMessage(parsed as VRMessageSummary);
           }
         } catch {
-          // malformed event — skip
+          // malformed event -- skip
         }
       };
 

@@ -1,11 +1,11 @@
-"""MASVS audit aggregate contracts (Phase 2 — S-3).
+"""MASVS audit aggregate contracts (Phase 2 -- S-3).
 
 A MASVS audit dispatches one child VR investigation per OWASP MASVS L1
 control. After every child reaches a terminal outcome, the aggregator
 (:mod:`aila.modules.vr.reporting.masvs_report`) maps each child's primary
 outcome to one :class:`MasvsControlVerdict` via the pure rule in
 :mod:`aila.modules.vr.masvs.verdict_mapper` (S-4). The collected verdicts
-plus group/summary projections become a :class:`MasvsAuditAggregate` —
+plus group/summary projections become a :class:`MasvsAuditAggregate` --
 the input to the ReportLab PDF generator (R-2) and the
 ``GET /vr/targets/{id}/masvs-report`` payload (R-3).
 
@@ -16,7 +16,7 @@ This module is schema-only:
 - The aggregator lives in
   :mod:`aila.modules.vr.reporting.masvs_report`.
 
-Verdicts are never produced from a dedicated persona — they are read
+Verdicts are never produced from a dedicated persona -- they are read
 from the child investigations' primary outcomes and transformed by the
 pure mapping rule. Inconclusive is a first-class value: when a child
 timed out, exhausted its cost cap, or refuted hypotheses without
@@ -48,15 +48,15 @@ class MasvsVerdict(StrEnum):
 
     The four values mirror the S-4 mapping rule outputs:
 
-    - :attr:`FINDING` — child investigation primary outcome is a
+    - :attr:`FINDING` -- child investigation primary outcome is a
       ``direct_finding`` with verifier confidence ≥ 0.6.
-    - :attr:`NOT_APPLICABLE` — the control does not apply to this APK
+    - :attr:`NOT_APPLICABLE` -- the control does not apply to this APK
       (e.g. ``MSTG-CODE-3`` native-binary symbol strip on an APK that
       ships no ``.so`` files). The child explicitly tagged
       ``not_applicable``.
-    - :attr:`NO_FINDING` — the child refuted the hypothesis; no
+    - :attr:`NO_FINDING` -- the child refuted the hypothesis; no
       compliance gap detected.
-    - :attr:`INCONCLUSIVE` — the child reached a terminal state without
+    - :attr:`INCONCLUSIVE` -- the child reached a terminal state without
       a conclusive outcome (timeout, cost cap exhausted, refuted with
       no primary finding). :attr:`MasvsControlVerdict.reason` carries
       the underlying status.
@@ -72,7 +72,7 @@ class MasvsEvidenceLocation(BaseModel):
     """One ``{file, function}`` reference cited by a child investigation.
 
     Sourced verbatim from the child outcome's
-    ``payload['affected_components']`` list — the canonical evidence
+    ``payload['affected_components']`` list -- the canonical evidence
     shape every DIRECT_FINDING submit carries per ``system_audit.md``.
     The PDF renderer (R-2b) prints these as the "Affected components"
     block under the per-control subsection: file path + function name,
@@ -114,7 +114,7 @@ class MasvsControlVerdict(BaseModel):
     (the only writer); consumed by
     :func:`aila.modules.vr.reporting.masvs_report.collect_findings`
     (which groups them) and ``masvs_report.build_pdf`` (which renders
-    them). No other path may fabricate a verdict — operator-visible
+    them). No other path may fabricate a verdict -- operator-visible
     verdicts must trace back to a real child investigation outcome.
     """
 
@@ -179,7 +179,7 @@ class MasvsControlVerdict(BaseModel):
         default=0,
         ge=0,
         description=(
-            # fix §217 — surface true count so renderer can show 'N of M shown'.
+            # fix §217 -- surface true count so renderer can show 'N of M shown'.
             "Total count of validly-formed entries in the child outcome's "
             "``payload['affected_components']`` BEFORE the per-verdict cap "
             "is applied to :attr:`evidence_locations`. The PDF renderer "
@@ -192,7 +192,7 @@ class MasvsControlVerdict(BaseModel):
         max_length=4000,
         description=(
             "First paragraph(s) of the child investigation's primary "
-            "outcome ``payload['answer']`` — the agent's natural-"
+            "outcome ``payload['answer']`` -- the agent's natural-"
             "language conclusion for this control on THIS APK. "
             "Truncated to keep the PDF per-control subsection bounded. "
             "PDF renderer prints this verbatim under the per-control "
@@ -208,7 +208,7 @@ class MasvsControlVerdict(BaseModel):
             "Structured per-control report subsection produced by the "
             "section-writer agent (reporting/section_writer.py). When "
             "present, the PDF renderer uses this in place of the raw "
-            "agent_summary — fields are sized for direct rendering "
+            "agent_summary -- fields are sized for direct rendering "
             "(headline / evidence list / risk / remediation / "
             "why_it_matters / confidence_note). Populated lazily by the "
             "PDF endpoint and cached on outcome.payload_json so the "
@@ -223,7 +223,7 @@ class MasvsAuditAggregate(BaseModel):
 
     Built by :func:`aila.modules.vr.reporting.masvs_report.collect_findings`
     once one or more child VR investigations reach a terminal state.
-    Partial aggregates (children still in flight) are valid — the
+    Partial aggregates (children still in flight) are valid -- the
     aggregator emits whatever verdicts are resolvable at call time and
     the PDF renderer (R-2) reports the remaining controls as
     ``inconclusive (in_progress)``.
@@ -315,7 +315,7 @@ class MasvsAuditDispatchResponse(BaseModel):
         description=(
             "One id per dispatched child investigation, in MASVS catalog "
             "order. ``len(child_investigation_ids) == total_controls`` "
-            "always — a partial dispatch raises 500 instead of silently "
+            "always -- a partial dispatch raises 500 instead of silently "
             "returning fewer ids."
         ),
     )
@@ -355,7 +355,7 @@ class MasvsAuditDispatchResponse(BaseModel):
             "Per-child submit failures keyed by child investigation id "
             "(D-2). An empty dict means every child landed in the ``vr`` "
             "ARQ queue. A populated entry means the row was created but "
-            "no task was enqueued — the operator can call "
+            "no task was enqueued -- the operator can call "
             "``POST /vr/investigations/{id}/re-enqueue`` to retry that "
             "child without re-dispatching the whole audit. Failures are "
             "captured (not raised) so a transient queue outage on one "
@@ -363,7 +363,7 @@ class MasvsAuditDispatchResponse(BaseModel):
             "Always empty on an idempotent reuse "
             "(``idempotent_reuse=True``): the dispatcher does not "
             "re-submit children whose ARQ task was already queued by "
-            "the original call — operators retry individual children "
+            "the original call -- operators retry individual children "
             "via ``/re-enqueue`` instead."
         ),
     )

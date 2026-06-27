@@ -5,7 +5,7 @@ Module-specific models live under their respective modules/ subdirectory and
 are registered via SchemaRegistry during register_tools().
 
 Each model is written at a defined lifecycle stage and consumed by specific
-query surfaces — these are documented per class.
+query surfaces -- these are documented per class.
 """
 
 from __future__ import annotations
@@ -367,7 +367,7 @@ class AuditEventRecord(TeamScopedMixin, SQLModel, table=True):
     Each record captures a (run_id, stage, action, target, status) tuple.
     details_json holds additional structured context.  user_id defaults to
     "system" for automated actions; operator-initiated actions set it explicitly.
-    Records are immutable once written — no UPDATE operations are performed.
+    Records are immutable once written -- no UPDATE operations are performed.
     """
 
     id: int | None = Field(default=None, primary_key=True)
@@ -585,7 +585,7 @@ class SeedVersionRecord(SQLModel, table=True):
     seeded_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
-# Task queue — platform-owned task lifecycle record
+# Task queue -- platform-owned task lifecycle record
 # Imported here so SQLModel.metadata registers TaskRecord when db_models is
 # imported (which happens during init_db). The `as TaskRecord` + noqa F401
 # idiom is the established re-export pattern in this codebase.
@@ -602,7 +602,7 @@ class UserRecord(TeamScopedMixin, SQLModel, table=True):
     Consumed by: POST /auth/login (verify), user management endpoints.
 
     Per D-13: argon2id via argon2-cffi.
-    Per D-17: admin-invite only — no self-registration.
+    Per D-17: admin-invite only -- no self-registration.
     Per D-18: RBAC with admin/operator/reader roles.
     Per D-20: soft-delete via is_active=false.
     """
@@ -1081,7 +1081,7 @@ class SystemMetadataRecord(SQLModel, table=True):
 from aila.platform.llm.cost_record import LLMCostRecord
 
 # ---------------------------------------------------------------------------
-# Phase 177: multi-team admin — first-class team and member records.
+# Phase 177: multi-team admin -- first-class team and member records.
 # Existing team_id strings on team-scoped tables remain authoritative for
 # isolation; TeamRecord exists so the admin UI can name, describe, and
 # enumerate teams without scanning every table.

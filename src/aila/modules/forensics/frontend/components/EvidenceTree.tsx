@@ -19,7 +19,7 @@ const TYPE_TONE: Record<string, string> = {
 };
 
 function formatBytes(bytes: number | null): string {
-  if (bytes === null || bytes === undefined || bytes === 0) return "—";
+  if (bytes === null || bytes === undefined || bytes === 0) return "--";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`;
@@ -296,7 +296,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
                         {sha ? (
                           <span className="select-all">{sha.slice(0, 12)}…</span>
                         ) : (
-                          <span className="text-text-muted/50">—</span>
+                          <span className="text-text-muted/50">--</span>
                         )}
                       </td>
                     </tr>

@@ -70,7 +70,7 @@ import type {
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 // (status / branch palette were inlined into STATUS_META / BRANCH_STATUS_META
-// below — kept here only to document the per-status severity hue we use for
+// below -- kept here only to document the per-status severity hue we use for
 // any consumer that still needs an AilaBadge severity instead of a hex swatch.)
 
 const dispatchColor: Record<
@@ -114,17 +114,17 @@ const BRANCH_STATUS_META: Record<
   abandoned: { color: "#9aa0a6", label: "Abandoned" },
 };
 
-// Persona visual identity — each researcher persona gets a stable
+// Persona visual identity -- each researcher persona gets a stable
 // colored initial circle so operators can scan a branch list and read
 // "who" before they read "what." Mirror this scheme in TurnCard later
 // for full visual consistency across the page.
-// Persona visual identity — each researcher persona gets a stable
+// Persona visual identity -- each researcher persona gets a stable
 // colored initial circle so operators can scan a branch list and read
 // "who" before they read "what." Mirror this scheme in TurnCard later
 // for full visual consistency across the page.
 //
 // The Record is `Partial` so synthetic persona voices added by
-// branch_manager (`unspecified` / `merge_result` / `fork_unnamed` —
+// branch_manager (`unspecified` / `merge_result` / `fork_unnamed` --
 // Phase E §177/§178/§180) don't require explicit entries; the
 // `personaMeta()` lookup falls back to PERSONA_META.default for any
 // voice without a dedicated swatch.
@@ -194,7 +194,7 @@ function fmtUsd(n: number): string {
 
 /** Render a payload's prose field (answer/text/summary/description) with
  *  optional collapse. Falls back to a compact JSON preview if no prose
- *  field is present. `defaultExpanded` controls initial state — true for
+ *  field is present. `defaultExpanded` controls initial state -- true for
  *  the hero/primary outcome, false for the compact list. */
 function PayloadPreview({
   payload,
@@ -254,7 +254,7 @@ function PayloadPreview({
   );
 }
 
-/** Cost progress bar — green/yellow/red based on actual-vs-budget %.
+/** Cost progress bar -- green/yellow/red based on actual-vs-budget %.
  *  Inline-styled width because Tailwind v4 strips arbitrary numeric
  *  width classes when the percent isn't statically detectable. */
 function CostProgressBar({ actual, budget }: { actual: number; budget: number }) {
@@ -323,7 +323,7 @@ function StatusIndicator({ status, pauseReason }: {
   );
 }
 
-/** Colored persona avatar — initial circle. */
+/** Colored persona avatar -- initial circle. */
 function PersonaAvatar({
   voice,
   size = 32,
@@ -400,7 +400,7 @@ function ToolbarLink({
   );
 }
 
-/** Investigation Timeline — designed per 08_FRONTEND_UX.md §1.10.
+/** Investigation Timeline -- designed per 08_FRONTEND_UX.md §1.10.
  *
  *  Single-column TurnCard stream with sticky filter bar. Live-tails via
  *  the existing useInvestigationMessagesStream SSE hook; the LiveDot
@@ -458,7 +458,7 @@ export function InvestigationDetailPage() {
   // Implementation note: we deliberately scroll the WINDOW to
   // document.scrollHeight instead of doing scrollIntoView on the
   // last turn element, because at mount time the turn elements may
-  // not be in the DOM yet (React hasn't committed) — element lookup
+  // not be in the DOM yet (React hasn't committed) -- element lookup
   // races and silently fails. Window-scroll has no such race.
   //
   // Retried 8 times over ~800ms via rAF so it tolerates: late
@@ -483,7 +483,7 @@ export function InvestigationDetailPage() {
         window.scrollY -
         window.innerHeight;
       if (distFromBottom > 32 && attempts < maxAttempts) {
-        // Page grew or didn't render yet — try again on next frame.
+        // Page grew or didn't render yet -- try again on next frame.
         requestAnimationFrame(tick);
       }
     };
@@ -506,7 +506,7 @@ export function InvestigationDetailPage() {
         const el = document.getElementById(id);
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "end" });
-          // Amber border flash — applied via a temporary class. Honours
+          // Amber border flash -- applied via a temporary class. Honours
           // prefers-reduced-motion (CSS keyframe respects the media query;
           // we just toggle the class).
           el.classList.add("animate-amber-flash");
@@ -517,7 +517,7 @@ export function InvestigationDetailPage() {
     lastSeenCount.current = list.length;
   }, [liveTail, messagesResult?.data]);
 
-  // ── Scroll-to-end UX —————————————————————————————————————————————
+  // ── Scroll-to-end UX ------------------------------------------------------------------------------------------
   //
   // Long investigations (50+ turns) make it painful to scroll to the
   // newest turn manually. We add:
@@ -526,7 +526,7 @@ export function InvestigationDetailPage() {
   //   - A floating "Turn N / M" position indicator (top-right) that
   //     reflects the most-recently-visible turn under the viewport.
   //   - Keyboard shortcuts handled in useVRKeyboardShortcuts (G+G top,
-  //     Shift+G bottom — already wired).
+  //     Shift+G bottom -- already wired).
   //
   // Operator-reported friction (75af3d8e-...): "I can't roll down to
   // the end smoothly because of the call history". Auto-scroll
@@ -538,7 +538,7 @@ export function InvestigationDetailPage() {
   // skip setState calls when nothing actually changed. Without these,
   // every scroll event (or every refetch tick from
   // useInvestigationMessagesStream) re-fired setState on equal
-  // values — React 18's Object.is short-circuit catches that on most
+  // values -- React 18's Object.is short-circuit catches that on most
   // primitives, but the combination with an effect that re-runs on
   // messages-length changes hit "Maximum update depth exceeded" once
   // the page had 1000+ turns and streaming was active.
@@ -584,7 +584,7 @@ export function InvestigationDetailPage() {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
     };
-  }, []);  // empty deps — handler reads live DOM state, no stale-closure risk
+  }, []);  // empty deps -- handler reads live DOM state, no stale-closure risk
 
   const jumpToLatest = () => {
     const cards = document.querySelectorAll<HTMLElement>('[id^="turn-"]');
@@ -595,7 +595,7 @@ export function InvestigationDetailPage() {
       window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
     }
   };
-  // All hooks before any early return — keep React's hook ordering stable.
+  // All hooks before any early return -- keep React's hook ordering stable.
   const branches = branchesResult?.data ?? [];
   const messages = messagesResult?.data ?? [];
   const outcomes = outcomesResult?.data ?? [];
@@ -648,7 +648,7 @@ export function InvestigationDetailPage() {
   // LiveDot now reflects the real SSE fetch lifecycle reported by
   // useInvestigationMessagesStream (reconnecting → connected on first
   // bytes; disconnected when the stream ends or errors). No more
-  // inferring from inv.status — that was misleading for `created` /
+  // inferring from inv.status -- that was misleading for `created` /
   // `completed` investigations where no stream is active.
 
   const operatorComposerOpen =
@@ -692,7 +692,7 @@ export function InvestigationDetailPage() {
           />
           <ExportReportButton invId={invId} title={inv.title} />
           <span className="w-px h-5 bg-border-default mx-1" aria-hidden />
-          {/* §47 — Reset button. Deferred to Phase B (Cursor SSOT
+          {/* §47 -- Reset button. Deferred to Phase B (Cursor SSOT
               pause/resume rewrite, prior design notes). The button
               currently calls the v1 reset endpoint; when Phase B
               rebuilds reset as part of the cursor-driven dispatcher
@@ -705,7 +705,7 @@ export function InvestigationDetailPage() {
             label={resetMut.isPending ? "Resetting…" : "Reset"}
             variant="danger"
             onClick={() => {
-              // fix §47 — modal lists the cursor archive bullet so the
+              // fix §47 -- modal lists the cursor archive bullet so the
               // operator is told the workflow_state_cursor row is wiped
               // in the same transaction (not just messages/outcomes).
               const confirmed = window.confirm(
@@ -721,7 +721,7 @@ export function InvestigationDetailPage() {
               if (!confirmed) return;
               resetMut.mutate();
             }}
-            // fix §25 / §82 — Reset is ALSO disabled while inv.status === 'paused'.
+            // fix §25 / §82 -- Reset is ALSO disabled while inv.status === 'paused'.
             // A pause-then-reset would race the cursor archive: reset deletes the
             // workflow_state_cursor row inside its own transaction, but the archived
             // paused-state row that 'resume' relies on lives next to it and the
@@ -737,7 +737,7 @@ export function InvestigationDetailPage() {
               inv.status === "running"
                 ? "Pause the investigation first, then reset."
                 : inv.status === "paused"
-                  ? "Resume first, then reset — pause-then-reset would lose the cursor archive."
+                  ? "Resume first, then reset -- pause-then-reset would lose the cursor archive."
                   : "Wipe history + reset to start. Re-enqueue afterwards to run again."
             }
           />
@@ -751,7 +751,7 @@ export function InvestigationDetailPage() {
       </div>
 
       {/* Workflow stepper */}
-      {/* §9 / §25 / §82 — WorkflowStepper currentState. The real source
+      {/* §9 / §25 / §82 -- WorkflowStepper currentState. The real source
           of truth is workflow_state_cursor.current_state, which is not
           yet exposed via the API.
 
@@ -772,7 +772,7 @@ export function InvestigationDetailPage() {
       <AilaCard techBorder glow><WorkflowStepper
         flow="investigate"
         currentState={
-          // fix §9 — explicit paused mapping: pass null so the stepper
+          // fix §9 -- explicit paused mapping: pass null so the stepper
           // dims every stage. The StatusIndicator owns the 'Paused'
           // label; the stepper just stops claiming a wrong stage.
           inv.status === "paused"
@@ -809,7 +809,7 @@ export function InvestigationDetailPage() {
             {(inv.status === "paused" || resumeMut.isResuming) && (
               <ToolbarButton
                 icon={<Play weight="fill" />}
-                // fix §54 — `isResuming` covers the API call AND a 2s
+                // fix §54 -- `isResuming` covers the API call AND a 2s
                 // post-success hold so the button shows "Resuming…" until
                 // the worker has plausibly picked up the task. Without
                 // this the label flipped back to "Resume" before the
@@ -836,7 +836,7 @@ export function InvestigationDetailPage() {
                 mutation={reenqueueMut}
               />
             )}
-            {/* §9 — Reopen button. Consumer of the reopen endpoint
+            {/* §9 -- Reopen button. Consumer of the reopen endpoint
                 that Phase B rebuilds as a phase-handoff dispatcher.
                 The URL stays the same; the
                 server-side rewrite swaps the imperative spawn for a
@@ -852,7 +852,7 @@ export function InvestigationDetailPage() {
                 title={
                   "Push this terminal investigation back into the " +
                   "workflow. Spawns a fresh primary branch on top of " +
-                  "the existing history (non-destructive — old branches " +
+                  "the existing history (non-destructive -- old branches " +
                   "+ outcomes preserved as audit trail). Use when an " +
                   "audit closed prematurely and you want another pass."
                 }
@@ -861,7 +861,7 @@ export function InvestigationDetailPage() {
           </div>
         </div>
 
-        {/* Compact stats row — no giant KPI boxes, no duplication */}
+        {/* Compact stats row -- no giant KPI boxes, no duplication */}
         <div className="mt-3 flex items-center gap-4 flex-wrap text-xs font-mono text-text-muted">
           <span className="inline-flex items-center gap-1.5">
             <TreeStructure weight="fill" size={13} className="text-accent" />
@@ -885,7 +885,7 @@ export function InvestigationDetailPage() {
         </div>
       </AilaCard>
 
-      {/* ── Outcomes (hero position — first content after status) ─── */}
+      {/* ── Outcomes (hero position -- first content after status) ─── */}
       {outcomes.length > 0 && (
         <AilaCard techBorder glow>
           <div className="flex items-center gap-2 mb-3">
@@ -928,9 +928,9 @@ export function InvestigationDetailPage() {
         </AilaCard>
       )}
 
-      {/* Main layout — aside (order-1 = above) + timeline (order-2 = below) */}
+      {/* Main layout -- aside (order-1 = above) + timeline (order-2 = below) */}
       <div className="grid grid-cols-1 gap-4">
-        {/* Timeline column — order-2 so it renders BELOW the aside.
+        {/* Timeline column -- order-2 so it renders BELOW the aside.
             Default scroll-to-bottom lands operator at the latest turn
             (page bottom = last turn in timeline). To see hypotheses /
             branches / outcomes / fuzz proposals, operator scrolls up
@@ -979,7 +979,7 @@ export function InvestigationDetailPage() {
                   <option value="">all branches</option>
                   {branches.map((b) => (
                     <option key={b.id} value={b.id}>
-                      {/* fix §176 — formatBranchDisplayName handles
+                      {/* fix §176 -- formatBranchDisplayName handles
                           the merge_result / fork_unnamed / unspecified
                           markers consistently with BranchTreePage,
                           EvidenceGraphPage, and queries.useBranchLabel. */}
@@ -1003,7 +1003,7 @@ export function InvestigationDetailPage() {
                     ? "bg-accent/15 border-accent/50 text-foreground"
                     : "bg-elevated/60 border-border-default/60 text-text-muted hover:border-accent/40"
                 }`}
-                title={liveTail ? "Auto-scroll new turns into view" : "Frozen — won't auto-scroll"}
+                title={liveTail ? "Auto-scroll new turns into view" : "Frozen -- won't auto-scroll"}
               >
                 <input
                   type="checkbox"
@@ -1052,7 +1052,7 @@ export function InvestigationDetailPage() {
             <AilaCard techBorder glow>
               <p className="text-sm text-text-muted text-center py-6">
                 {messages.length === 0
-                  ? "No turns yet — engine hasn't started reasoning."
+                  ? "No turns yet -- engine hasn't started reasoning."
                   : "Filters hide every turn. Clear filters above to see them."}
               </p>
             </AilaCard>
@@ -1155,7 +1155,7 @@ export function InvestigationDetailPage() {
           )}
         </div>
 
-        {/* Side rail — order-1 so it renders ABOVE the timeline.
+        {/* Side rail -- order-1 so it renders ABOVE the timeline.
             Operator default-scrolls to page bottom (latest turn in
             timeline below); to see hypotheses / branches / outcomes,
             scroll up past the timeline to here. */}
@@ -1199,7 +1199,7 @@ export function InvestigationDetailPage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-sm font-medium text-foreground">
-                                {/* fix §176 — single helper for the
+                                {/* fix §176 -- single helper for the
                                     persona / marker label. `pm` still
                                     owns color + avatar styling. */}
                                 {formatBranchDisplayName(b)}
@@ -1256,7 +1256,7 @@ export function InvestigationDetailPage() {
             })()}
           </AilaCard>
 
-          {/* Outcomes moved to hero position above — see line ~818 */}
+          {/* Outcomes moved to hero position above -- see line ~818 */}
         </aside>
       </div>
       <SteeringDrawer
@@ -1472,10 +1472,10 @@ function PrimaryOutcomeCard({
                   : "?";
               const note =
                 verdict === "confirmed"
-                  ? `operator promote — verifier confirmed conf=${conf}`
+                  ? `operator promote -- verifier confirmed conf=${conf}`
                   : verdict
-                    ? `operator promote — verifier ${verdict} conf=${conf}`
-                    : "operator promote — no verifier verdict";
+                    ? `operator promote -- verifier ${verdict} conf=${conf}`
+                    : "operator promote -- no verifier verdict";
               promoteMut.mutate({ outcomeId: o.id, reason: note });
             }}
             className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-2xs rounded-md border transition-colors disabled:opacity-50 ${
@@ -1485,9 +1485,9 @@ function PrimaryOutcomeCard({
             }`}
             title={
               vr?.verdict === "confirmed"
-                ? `Verifier CONFIRMED this assessment — promote to direct_finding to create a vr_finding row and (on variant-child investigations) auto-enqueue the PoC writer.`
+                ? `Verifier CONFIRMED this assessment -- promote to direct_finding to create a vr_finding row and (on variant-child investigations) auto-enqueue the PoC writer.`
                 : vr?.verdict === "refuted"
-                  ? `Verifier REFUTED — promoting will still create a finding row, but the PoC writer will skip itself per the verifier-gate.`
+                  ? `Verifier REFUTED -- promoting will still create a finding row, but the PoC writer will skip itself per the verifier-gate.`
                   : "Promote this assessment_report to direct_finding (creates vr_finding row + dispatches downstream)."
             }
           >
@@ -1586,10 +1586,10 @@ function CompactOutcomeRow({
                       : "?";
                   const note =
                     verdict === "confirmed"
-                      ? `operator promote — verifier confirmed conf=${conf}`
+                      ? `operator promote -- verifier confirmed conf=${conf}`
                       : verdict
-                        ? `operator promote — verifier ${verdict} conf=${conf}`
-                        : "operator promote — no verifier verdict";
+                        ? `operator promote -- verifier ${verdict} conf=${conf}`
+                        : "operator promote -- no verifier verdict";
                   promoteMut.mutate({ outcomeId: o.id, reason: note });
                 }}
                 className={`px-2 py-0.5 text-3xs rounded border transition-colors disabled:opacity-50 ${

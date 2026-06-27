@@ -32,7 +32,7 @@ class ForensicsWorkflowEmitter:
       1. Appends to an in-memory history (used by in-process inspectors).
       2. Logs at INFO so /tmp/aila_worker_forensics.log reflects every step.
       3. Writes to the Redis stream so the SSE endpoint can fan it out to
-         the frontend's live feed. Failure here is non-fatal — instrumentation
+         the frontend's live feed. Failure here is non-fatal -- instrumentation
          must never break the workflow.
     """
 
@@ -64,7 +64,7 @@ class ForensicsWorkflowEmitter:
         _log.info("forensics[%s] stage=%s: %s", self.run_id[:8], stage, message)
 
         if not pool_available():
-            # Redis not configured — SSE feed will stay empty by design.
+            # Redis not configured -- SSE feed will stay empty by design.
             return
 
         try:

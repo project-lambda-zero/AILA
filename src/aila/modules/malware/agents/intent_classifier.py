@@ -13,7 +13,7 @@ way:
 
 v0.3 v2 ships a deterministic keyword-based heuristic classifier. It is
 cheap (no LLM call), deterministic (so tests are stable), and covers the
-common cases. Ambiguous inputs fall back to ``UNCLASSIFIED`` — the
+common cases. Ambiguous inputs fall back to ``UNCLASSIFIED`` -- the
 engine still sees the raw text and can interpret freely.
 
 A future commit can layer a Haiku-based fallback for genuinely ambiguous
@@ -38,11 +38,11 @@ _RULES: list[tuple[re.Pattern[str], OperatorIntent]] = [
         re.I),
      OperatorIntent.QUESTION),
 
-    # Branch commands — operator wants flow control on branches
+    # Branch commands -- operator wants flow control on branches
     (re.compile(r"\b(stop|halt|abort|kill|pause|resume|fork|merge|abandon|promote\s+branch)\b", re.I),
      OperatorIntent.BRANCH_COMMAND),
 
-    # Outcome selection — operator promotes / picks a specific hypothesis or
+    # Outcome selection -- operator promotes / picks a specific hypothesis or
     # outcome. Allow up to 3 filler words between verb and noun so phrases
     # like "publish the audit memo" or "accept that hypothesis" match.
     (re.compile(
@@ -51,15 +51,15 @@ _RULES: list[tuple[re.Pattern[str], OperatorIntent]] = [
         re.I),
      OperatorIntent.OUTCOME_SELECTION),
 
-    # Dismissal — drop / discard hypotheses or directions
+    # Dismissal -- drop / discard hypotheses or directions
     (re.compile(r"\b(ignore|skip|drop|discard|reject|forget|never\s*mind)\b", re.I),
      OperatorIntent.DISMISSAL),
 
-    # Correction — operator says the engine is wrong about something
+    # Correction -- operator says the engine is wrong about something
     (re.compile(r"\b(you('re|\s+are)?\s+wrong|incorrect|that('s|\s+is)\s+wrong|you\s+missed|actually(\s+no)?|no,\s)\b", re.I),
      OperatorIntent.CORRECTION),
 
-    # Steering — operator points the engine at a new direction
+    # Steering -- operator points the engine at a new direction
     (re.compile(r"\b(look\s+at|focus\s+on|try|instead|check\s+out|consider|investigate|explore|pivot)\b", re.I),
      OperatorIntent.STEERING),
 ]
@@ -72,7 +72,7 @@ def classify_intent(text: str) -> OperatorIntent:
     the message contains a literal '?' but doesn't start with a wh-word
     (treated as a question regardless).
 
-    The order of the rule table matters — earlier patterns take precedence
+    The order of the rule table matters -- earlier patterns take precedence
     so 'stop and look at X' is BRANCH_COMMAND, not STEERING.
     """
     if not text:
@@ -86,7 +86,7 @@ def classify_intent(text: str) -> OperatorIntent:
         if pattern.search(stripped):
             return intent
 
-    # Trailing '?' heuristic — covers question forms our wh-rule misses
+    # Trailing '?' heuristic -- covers question forms our wh-rule misses
     # (e.g. "the parser is utf8?", "that flag set?").
     if stripped.endswith("?"):
         return OperatorIntent.QUESTION

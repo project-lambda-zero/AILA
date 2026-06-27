@@ -108,7 +108,7 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset(
 class PauseReason:
     """Canonical values this reconciler writes to ``pause_reason``.
 
-    fix §19 — the ``pause_reason`` column is ``varchar(32)`` and the
+    fix §19 -- the ``pause_reason`` column is ``varchar(32)`` and the
     API deserialiser (``api_router._investigation_summary``) calls
     ``InvestigationPauseReason(record.pause_reason)`` on read. Any
     value outside the contract enum 500's the next investigation
@@ -125,7 +125,7 @@ class PauseReason:
     first and add the migration).
 
     TURN_CAP / WALL_CLOCK / STUCK_DRAFT are all forced completions
-    rather than literal pauses — the closest valid enum value is
+    rather than literal pauses -- the closest valid enum value is
     ``COST_BUDGET`` (every cap is structurally a budget cap: turn,
     wall-clock, dollar). Detail (actual turn count, wall-clock
     elapsed) goes in the log line, NOT the bounded column.
@@ -138,13 +138,13 @@ class PauseReason:
 
 
 
-# fix §26 — bounded broad-except in sweep wrappers.
+# fix §26 -- bounded broad-except in sweep wrappers.
 #
 # Each ``except Exception`` wrapper (with a ``noqa BLE001``) around a sweep
 # step trades crash-loud-on-first-error for keep-the-cron-alive. That
-# trade is necessary at this layer — a transient DB blip in one step
+# trade is necessary at this layer -- a transient DB blip in one step
 # (refill) should NOT stop the next step (zombie reaper) from running
-# this tick — but the original wrappers logged a single warning and
+# this tick -- but the original wrappers logged a single warning and
 # then forgot the failure. A step that fails on EVERY tick for hours
 # is operationally indistinguishable from a step that has never
 # failed: same warning per tick, no escalation. The counter below
@@ -177,7 +177,7 @@ def _record_sweep_step_failure(step: str, exc: BaseException) -> None:
         )
     else:
         _log.error(
-            "masvs reconciler: %s has failed %d consecutive ticks — "
+            "masvs reconciler: %s has failed %d consecutive ticks -- "
             "operator action required: %s",
             step, n, exc, exc_info=True,
         )
@@ -199,7 +199,7 @@ async def _run_sweep_step(
 ) -> object:
     """Run one sweep step with structured logging and failure tracking.
 
-    fix §4 — consolidates the per-step try/except wrappers in
+    fix §4 -- consolidates the per-step try/except wrappers in
     ``sweep_masvs_audit_parents``. Each wrapper used to be 4 hand-
     written lines (try / await / except / _log.warning) repeated for
     every step, and the wrapper hand-coded its own log format. The
@@ -212,7 +212,7 @@ async def _run_sweep_step(
       - a stable return value when the step fails (``default``) so
         downstream code doesn't have to None-check.
 
-    ``fn`` is the async sweep helper itself, NOT a thunk — the wrapper
+    ``fn`` is the async sweep helper itself, NOT a thunk -- the wrapper
     awaits ``fn(uow)`` directly. Returns the helper's return value on
     success, ``default`` on failure.
     """
@@ -231,7 +231,7 @@ async def _run_sweep_step(
 def _batch_size() -> int:
     """Read MASVS_AUDIT_BATCH_SIZE env var with safe default.
 
-    Keeps tunable read inline (cheap) instead of cached at import — an
+    Keeps tunable read inline (cheap) instead of cached at import -- an
     operator can flip the env between dispatches and the next reconciler
     tick picks up the new value.
     """
@@ -255,7 +255,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
 
     Why APK-only: source_repo / cve / patch_diff MASVS audits don't strain
     the local LLM proxy (no jadx tree, no 64K-token contexts). APK audits
-    OOM'd OmniRoute when 30 streams hit simultaneously — this throttle
+    OOM'd OmniRoute when 30 streams hit simultaneously -- this throttle
     keeps that pressure bounded.
 
     Why not a column for "enqueued?": adding one needs a migration. The
@@ -322,7 +322,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
         ).first()
         in_flight = _scalar(in_flight_row)
 
-        # Add CREATED children that ALREADY have a TaskRecord — they're
+        # Add CREATED children that ALREADY have a TaskRecord -- they're
         # enqueued, just sitting in the queue waiting for a worker. They
         # count toward in_flight so we don't double-enqueue.
         created_with_task_row = (
@@ -333,7 +333,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 .where(
                     select(tsk.id)
                     .where(
-                        # fix §41 — JSONB extract on `investigation_id`
+                        # fix §41 -- JSONB extract on `investigation_id`
                         # replaces substring ilike(%uuid%) which matched
                         # any task whose kwargs_json contained the UUID
                         # in any field (parent_investigation_id, etc.).
@@ -361,7 +361,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 .where(
                     ~select(tsk.id)
                     .where(
-                        # fix §41 — JSONB extract on `investigation_id`
+                        # fix §41 -- JSONB extract on `investigation_id`
                         # (see _refill_apk_batches in_flight count above).
                         cast(tsk.kwargs_json, JSONB)["investigation_id"]
                         .astext == inv.id,
@@ -392,7 +392,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 )
                 enqueued_total += 1
             except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:
-                # fix §350 — traceback surfaces ARQ/Redis transport vs
+                # fix §350 -- traceback surfaces ARQ/Redis transport vs
                 # dedup-table regression vs idempotency-key collision
                 # without forcing a second tick to compare.
                 _log.warning(
@@ -420,7 +420,7 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
     forever when no terminal_submit lands. Cost cap is broken
     (``cost_actual_usd`` stays 0). Without a cumulative ceiling the audit
     pipeline burns LLM tokens indefinitely on children that won't
-    naturally converge — operator's 4-of-5 stuck investigations on
+    naturally converge -- operator's 4-of-5 stuck investigations on
     MASVS audit 5d627a39 had 6 branches each pushing toward 70 turns
     with zero terminal outcomes and re-enqueue waiting.
 
@@ -429,7 +429,7 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
     its branches. If sum > cap:
       - abandon every active branch with
         ``closed_reason='exhausted_total_turn_cap'``;
-      - if the investigation has a draft primary outcome, leave it —
+      - if the investigation has a draft primary outcome, leave it --
         the inline ``evaluate_quorum`` call below hits
         ``auto_approved_no_active_voters``
         (``services/outcome_review.py:290-301``) and ships it;
@@ -449,7 +449,7 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
 
     # Count turns SINCE the most recent operator_reopen branch was created.
     # An ``operator_reopen:<userid>`` branch is the operator explicitly
-    # resetting the investigation budget — without this filter the cap
+    # resetting the investigation budget -- without this filter the cap
     # fires immediately on the next sweep tick because old abandoned
     # branches still carry their pre-reopen turn count, undoing the
     # operator's intent. When no operator_reopen branch exists the
@@ -534,7 +534,7 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
         if not has_draft and target_inv:
             now = utc_now()
             target_inv.status = InvestigationStatus.COMPLETED.value
-            # fix §19 — bounded enum value (<=32 chars, validates
+            # fix §19 -- bounded enum value (<=32 chars, validates
             # against InvestigationPauseReason); detail moves to the
             # log line below so the API serializer doesn't 500.
             target_inv.pause_reason = PauseReason.TURN_CAP
@@ -587,10 +587,10 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
       2. choose to interrupt their own audit, and
       3. emit ``submit_outcome_review`` with vote=approve/reject.
 
-    Critic-persona branches (yuki / maddie) often skip step 2 — they
+    Critic-persona branches (yuki / maddie) often skip step 2 -- they
     keep chasing their own hypothesis tree past 30+ turns, and the
     draft sits without enough approves to reach quorum. Observed live
-    on ``0887ffe7`` / ``0afb0643`` / ``1ee0c949`` — 5 sibling branches
+    on ``0887ffe7`` / ``0afb0643`` / ``1ee0c949`` -- 5 sibling branches
     per investigation, ZERO votes cast on their respective drafts.
 
     This escalator fires every reconciler tick (~once/minute). For
@@ -623,7 +623,7 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
             .where(out.state.in_(("draft", "rejected", "refuted"))),
         )
     ).all()
-    # Don't early-return when candidates is empty — the wake-enqueue
+    # Don't early-return when candidates is empty -- the wake-enqueue
     # below scans ALL active branches regardless of outcome state.
     # Variant_hunt + audit investigations with NO outcome at all need
     # the wake too. The directive-write loop just skips itself when
@@ -653,7 +653,7 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
                 .where(review.outcome_id == outcome_id),
             )
         ).all()
-        # rows may be Row(reviewer_branch_id=...) or plain scalar — handle both
+        # rows may be Row(reviewer_branch_id=...) or plain scalar -- handle both
         voted: set[str] = set()
         for r in voter_branch_rows:
             if r is None:
@@ -672,7 +672,7 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
         ).all()
 
         for raw_b in stuck_branches:
-            # Row tuple unwrap — same pattern as virgin children
+            # Row tuple unwrap -- same pattern as virgin children
             b = raw_b[0] if hasattr(raw_b, "__getitem__") and not isinstance(raw_b, str) else raw_b
             if str(b.id) in voted:
                 continue
@@ -683,7 +683,7 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
             obs = state_obj.setdefault("observables", {})
             already_set = obs.get("_directive.mandatory_vote_now")
             is_rejected = False  # decided per-loop below
-            # outcome_state captured from the join row — recompute via lookup
+            # outcome_state captured from the join row -- recompute via lookup
             # to keep the directive text accurate (draft vs rejected).
             # Cheap: 1 row hit per stuck branch, only when the directive
             # actually needs to change.
@@ -702,11 +702,11 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
             is_rejected = outcome_state in ("rejected", "refuted")
             if is_rejected:
                 directive = (
-                    f"*** MANDATORY VOTE — PRIMARY OUTCOME REJECTED ***\n\n"
+                    f"*** MANDATORY VOTE -- PRIMARY OUTCOME REJECTED ***\n\n"
                     f"Outcome {outcome_id} has been REJECTED by a sibling "
                     f"vote. Investigation cannot close until every active "
                     f"branch records a vote (any of approve/reject/abstain "
-                    f"is valid — silence is not). You have been silent for "
+                    f"is valid -- silence is not). You have been silent for "
                     f"{max_turn} turns of the investigation lifetime.\n\n"
                     f"YOUR NEXT TURN MUST be action='submit_outcome_review' "
                     f"with one of:\n"
@@ -716,14 +716,14 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
                     f"  - vote='abstain' if you cannot evaluate the finding.\n\n"
                     f"If you have a DIFFERENT vulnerability to propose, "
                     f"emit action='submit' with your own finding INSTEAD "
-                    f"of voting — that creates a competing outcome the "
+                    f"of voting -- that creates a competing outcome the "
                     f"siblings will then vote on. Otherwise, vote and "
-                    f"close out — your audit branch is blocking the parent "
+                    f"close out -- your audit branch is blocking the parent "
                     f"batch."
                 )
             else:
                 directive = (
-                    f"*** MANDATORY VOTE — DRAFT REVIEW BLOCKED YOUR AUDIT ***\n\n"
+                    f"*** MANDATORY VOTE -- DRAFT REVIEW BLOCKED YOUR AUDIT ***\n\n"
                     f"Outcome {outcome_id} has been awaiting your vote for "
                     f"{max_turn} turns. Your investigation pool now requires "
                     f"a quorum decision before any branch (including yours) "
@@ -734,7 +734,7 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
                     f"  - vote='reject' if you have refuting evidence.\n"
                     f"  - vote='abstain' if you cannot resolve either way.\n\n"
                     f"Voting an abstain is valid and counts toward quorum "
-                    f"closure — silence does not. Once 3 distinct siblings "
+                    f"closure -- silence does not. Once 3 distinct siblings "
                     f"cast any combination of approve/reject/abstain, the "
                     f"outcome closes and all branches dispatch. Continuing "
                     f"your audit on a separate hypothesis is no longer "
@@ -758,7 +758,7 @@ async def _escalate_stuck_drafts(uow: UnitOfWork) -> int:
 async def _wake_stale_branches(uow: UnitOfWork) -> int:
     """Side-channel wake for active branches with no live ARQ task.
 
-    fix §12 — Extracted from ``_escalate_stuck_drafts`` so the wake
+    fix §12 -- Extracted from ``_escalate_stuck_drafts`` so the wake
     can run LAST in the sweep tick (fix §43). Mixing the wake into the
     directive-write helper let it race with the close-rejected and
     abandon-stale steps that ran after it: the wake re-armed a worker
@@ -767,7 +767,7 @@ async def _wake_stale_branches(uow: UnitOfWork) -> int:
     transition.
 
     Architectural note (§12): emitting ARQ tasks from a reconciler is
-    a layering violation — the engine should re-enqueue the next task
+    a layering violation -- the engine should re-enqueue the next task
     on every cursor advance. The auto-continue chain in
     ``investigation_emit`` only re-enqueues on ``(max_turns,
     researcher_error*)`` exit reasons; every other exit
@@ -821,7 +821,7 @@ async def _wake_stale_branches(uow: UnitOfWork) -> int:
             enqueued += 1
         except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:
             # dedup misses and Redis blips are tolerable, the next tick retries.
-            # fix §350 — traceback surfaces so a structural break (auth
+            # fix §350 -- traceback surfaces so a structural break (auth
             # bind, dedup table drift) isn't silenced behind a transient
             # Redis blip's WARNING line.
             _log.warning(
@@ -846,7 +846,7 @@ async def _wake_stale_branches(uow: UnitOfWork) -> int:
 # / ``_close_rejected_outcomes`` / ``_abandon_stale_branches`` out of this
 # MASVS-specific module into the canonical
 # :mod:`aila.modules.vr.services.investigation_finalizers` location. They
-# were never MASVS-specific — they handle generic investigation
+# were never MASVS-specific -- they handle generic investigation
 # finalization that ALSO applies to MASVS audits.
 #
 # Aliases are bound at the top of the file (search for the
@@ -868,7 +868,7 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
        stays at ``running`` indefinitely, and dedup at
        queue.py:132-140 then refuses to re-enqueue the same
        investigation+branch payload because there's still an
-       "in-flight" task — but no worker is actually working it.
+       "in-flight" task -- but no worker is actually working it.
 
     2. Stale workflow_state_cursor: rows persist after the owning
        task terminates abnormally. When a fresh task for the same
@@ -894,7 +894,7 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
 
     Returns ``{zombies_cancelled, cursors_purged}``.
 
-    fix §42 — Single-session-scope assumption.
+    fix §42 -- Single-session-scope assumption.
     --------------------------------------------------
     The function issues four UPDATE/DELETE statements:
       (1) UPDATE taskrecord SET status='cancelled' WHERE stale heartbeat
@@ -906,7 +906,7 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
     just marked ``cancelled`` (the cancelled rows then become eligible
     for cursor deletion in the same tick). This is correct ONLY when
     all four statements run inside the SAME session/transaction, so
-    step 3's ``JOIN taskrecord`` sees step 1's uncommitted update —
+    step 3's ``JOIN taskrecord`` sees step 1's uncommitted update --
     Postgres' default READ COMMITTED visibility for statements within a
     single transaction makes this work. If the caller ever split this
     helper across two sessions, step 3 would miss the just-cancelled
@@ -914,11 +914,11 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
 
     The assertion below enforces the assumption at function entry: the
     caller MUST hand us a session that is already in a transaction.
-    Documentation-only change otherwise — no statement reordering, no
+    Documentation-only change otherwise -- no statement reordering, no
     new commits.
     """
 
-    # fix §42 — single-session-scope invariant. The caller's UnitOfWork
+    # fix §42 -- single-session-scope invariant. The caller's UnitOfWork
     # implicitly begins a transaction on first session use; a stand-
     # alone session that has not yet executed any statement raises
     # here and surfaces the misuse loudly rather than silently
@@ -935,7 +935,7 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
 
     # 1. Cancel zombie tasks: vr-track, status=running, heartbeat
     #    older than threshold (also catches the case where
-    #    heartbeat is NULL but started_at is old — both indicate
+    #    heartbeat is NULL but started_at is old -- both indicate
     #    a worker that never reported life).
     zombie_sql = text(
         """
@@ -989,7 +989,7 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
     #    reserved workflow terminals. Cursors mid-state stay, ARQ
     #    retry sees them, the workflow recovers.
     #
-    #    Diagnosed on inv bc194403 / 659018db, 2026-06-12.
+    #    Diagnosed on inv <inv-uuid-a> / <inv-uuid-b>, 2026-06-12.
     terminal_sql = text(
         """
         DELETE FROM workflow_state_cursor
@@ -1008,7 +1008,7 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
     terminal_result = await uow.session.exec(terminal_sql, params={"cap": batch_cap})
     terminal_purged = getattr(terminal_result, "rowcount", 0) or 0
 
-    # 4. Purge __succeeded__ cursors — terminal in the workflow engine,
+    # 4. Purge __succeeded__ cursors -- terminal in the workflow engine,
     #    never re-read, just accumulate.
     succeeded_sql = text(
         """
@@ -1048,17 +1048,17 @@ async def _cascade_terminal_to_deferred_children(
 ) -> int:
     """Cascade parent terminal status to deferred CREATED children.
 
-    fix §52 — when a MASVS audit parent reaches a terminal status
+    fix §52 -- when a MASVS audit parent reaches a terminal status
     (``COMPLETED`` / ``FAILED`` / ``ABANDONED``) the deferred child
-    pool — children that never got an ARQ task because the APK refill
-    cap was already full — used to sit at ``CREATED`` forever. The
+    pool -- children that never got an ARQ task because the APK refill
+    cap was already full -- used to sit at ``CREATED`` forever. The
     refill helper only operates on parents in ``CREATED``/``RUNNING``,
     so once the parent crossed into a terminal state the deferred
     children were orphaned: no operator UI flipped them, no reaper
     swept them, and the parent's completion percentage was reported
     against a child count that no longer made sense.
 
-    ``PAUSED`` parents are NOT included — the operator may resume them
+    ``PAUSED`` parents are NOT included -- the operator may resume them
     and expect the deferred children to pick back up. Only the three
     irrevocable terminal states cascade.
 
@@ -1071,7 +1071,7 @@ async def _cascade_terminal_to_deferred_children(
     inv = VRInvestigationRecord
     now = utc_now()
 
-    # One UPDATE covers every cascade — joining on the parent's terminal
+    # One UPDATE covers every cascade -- joining on the parent's terminal
     # status keeps the scan cheap and atomic. We don't need a separate
     # SELECT-then-UPDATE because the WHERE clause already excludes
     # children whose parent is still in CREATED/RUNNING/PAUSED.
@@ -1117,26 +1117,26 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
     this sweep. All counters are post-rowcount so a lost race against
     a concurrent operator action does not inflate them.
 
-    Sweep step order (fix §43 — wake moved LAST):
-      1. ``_refill_apk_batches``    — top up APK in-flight slots.
-      2. ``_enforce_total_turn_cap`` — close runs over the cumulative
+    Sweep step order (fix §43 -- wake moved LAST):
+      1. ``_refill_apk_batches``    -- top up APK in-flight slots.
+      2. ``_enforce_total_turn_cap`` -- close runs over the cumulative
          turn cap before any later step inspects branch state.
-      3. ``_escalate_stuck_drafts`` — inject the mandatory-vote
+      3. ``_escalate_stuck_drafts`` -- inject the mandatory-vote
          directive (no wake-enqueue any more; that moved to step 9).
-      4. ``_close_rejected_outcomes`` — close investigations whose
+      4. ``_close_rejected_outcomes`` -- close investigations whose
          primary outcome was rejected by quorum.
-      5. ``_abandon_stale_branches`` — abandon branches that stopped
+      5. ``_abandon_stale_branches`` -- abandon branches that stopped
          making progress.
-      6. ``_synthesize_no_finding_outcomes`` — fill in audit_memo
+      6. ``_synthesize_no_finding_outcomes`` -- fill in audit_memo
          outcomes for any investigation that orphaned at step 5.
-      7. ``_reap_zombie_tasks_and_cursors`` — cancel stale ``running``
+      7. ``_reap_zombie_tasks_and_cursors`` -- cancel stale ``running``
          taskrecords and purge dead workflow_state_cursors.
       8. Parent ``CREATED/RUNNING → COMPLETED`` rollup (inline below).
-      8.5. ``_cascade_terminal_to_deferred_children`` — flip deferred
+      8.5. ``_cascade_terminal_to_deferred_children`` -- flip deferred
          ``CREATED`` children whose parent is already terminal
          (``COMPLETED`` / ``FAILED`` / ``ABANDONED``) to
          ``ABANDONED`` so they don't sit orphaned (fix §52).
-      9. ``_wake_stale_branches`` — side-channel ARQ wake LAST so
+      9. ``_wake_stale_branches`` -- side-channel ARQ wake LAST so
          a freshly-enqueued task cannot race steps 4/5/8's snapshot
          reads (a worker advancing a branch mid-evaluation produced
          torn transitions in the pre-fix layout).
@@ -1161,7 +1161,7 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
             "enforce_total_turn_cap", _enforce_total_turn_cap, uow, default=0,
         )
         # 3. Escalate stuck drafts (mandatory-vote directive only;
-        #    wake-enqueue moved to step 9 — fix §43).
+        #    wake-enqueue moved to step 9 -- fix §43).
         await _run_sweep_step(
             "escalate_stuck_drafts", _escalate_stuck_drafts, uow, default=0,
         )
@@ -1320,7 +1320,7 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         # (fix §52). Runs AFTER the parent rollup so the
         # just-COMPLETED parents from step 8 are included alongside
         # parents the operator put into FAILED/ABANDONED earlier.
-        # PAUSED parents are intentionally excluded — operator may
+        # PAUSED parents are intentionally excluded -- operator may
         # resume and expect deferred children to pick back up.
         await _run_sweep_step(
             "cascade_terminal_to_deferred_children",

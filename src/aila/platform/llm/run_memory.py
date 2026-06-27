@@ -104,7 +104,7 @@ class RunMemory:
         """Remove all entries for a run_id (fix §130).
 
         Called from terminal-state handlers so the process-local cache
-        doesn't grow without bound. Idempotent — no-op if the run_id was
+        doesn't grow without bound. Idempotent -- no-op if the run_id was
         never touched.
         """
         with self._lock:
@@ -128,7 +128,7 @@ class RunMemory:
 
         Idempotent: a per-run sentinel flag prevents repeat queries; if
         the lookup fails the in-memory total stays at whatever it was
-        (operators still get a working — if optimistic — budget check).
+        (operators still get a working -- if optimistic -- budget check).
         """
         if not run_id or run_id == "_no_run":
             return
@@ -163,7 +163,7 @@ class RunMemory:
         with self._lock:
             bucket = self._store.setdefault(run_id, {})
             # Take the MAX of the seeded value and any value already in
-            # memory — a record() between the seed query and this commit
+            # memory -- a record() between the seed query and this commit
             # would otherwise be lost.
             bucket[_KEY_PROMPT] = max(
                 int(bucket.get(_KEY_PROMPT, 0)), prompt_total,

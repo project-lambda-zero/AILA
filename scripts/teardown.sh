@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# AILA dev teardown — destroys local Postgres + Redis data with double confirmation.
+# AILA dev teardown -- destroys local Postgres + Redis data with double confirmation.
 #
 # Usage:
 #   make teardown               # interactive double-confirm prompt
@@ -39,7 +39,7 @@ fi
 
 echo ""
 red "================================================================"
-red "  AILA — DEV INFRASTRUCTURE TEARDOWN"
+red "  AILA -- DEV INFRASTRUCTURE TEARDOWN"
 red "================================================================"
 echo ""
 yellow "This will PERMANENTLY DELETE:"
@@ -99,7 +99,7 @@ yellow "Stopping compose stack and removing volumes..."
 if [[ -f "$COMPOSE_FILE" ]]; then
   $COMPOSE down -v
 else
-  red "Compose file not found at $COMPOSE_FILE — falling back to direct volume rm."
+  red "Compose file not found at $COMPOSE_FILE -- falling back to direct volume rm."
   docker rm -f aila-postgres aila-redis 2>/dev/null || true
   docker volume rm "$POSTGRES_VOLUME" "$REDIS_VOLUME" 2>/dev/null || true
 fi

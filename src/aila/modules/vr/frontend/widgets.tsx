@@ -44,7 +44,7 @@ function ActiveProjectsWidget() {
       </Link>
     </div>
     <p className="text-3xl font-bold font-mono text-foreground">
-      {isLoading ? "—" : active.length}
+      {isLoading ? "--" : active.length}
     </p>
     <p className="text-xs text-text-muted mt-1">
       {projects.length} total · {failed.length} failed
@@ -69,7 +69,7 @@ function CrashesFoundWidget() {
       </h3>
     </div>
     <p className="text-3xl font-bold font-mono text-foreground">
-      {isLoading ? "—" : total.toLocaleString()}
+      {isLoading ? "--" : total.toLocaleString()}
     </p>
     <p className="text-xs text-text-muted mt-1">
       +{last24h} in the last 24h
@@ -129,7 +129,7 @@ function ExploitableWidget() {
       </Link>
     </div>
     <p className="text-3xl font-bold font-mono text-foreground">
-      {isLoading ? "—" : security.length}
+      {isLoading ? "--" : security.length}
     </p>
     <div className="text-xs text-text-muted mt-1 flex flex-wrap gap-1">
       {critical > 0 && (
@@ -182,7 +182,7 @@ function FuzzingCoverageWidget() {
       </Link>
     </div>
     <p className="text-3xl font-bold font-mono text-foreground">
-      {isLoading ? "—" : `${avgCoverage.toFixed(1)}%`}
+      {isLoading ? "--" : `${avgCoverage.toFixed(1)}%`}
     </p>
     <p className="text-xs text-text-muted mt-1">
       avg across {running.length} running
@@ -237,7 +237,7 @@ function bucketByDay<T extends { discovered_at?: string | null; created_at?: str
   return Array.from(out.entries()).map(([day, count]) => ({ day, count }));
 }
 
-// Unused import suppression — also lets useInvestigations stay imported
+// Unused import suppression -- also lets useInvestigations stay imported
 // in case widgets need it later.
 const _unused = useInvestigations;
 void _unused;
@@ -258,7 +258,7 @@ function PendingFuzzProposalsWidget() {
       </Link>
     </div>
     <p className="text-3xl font-bold font-mono text-foreground">
-      {isLoading ? "—" : proposals.length}
+      {isLoading ? "--" : proposals.length}
     </p>
     <p className="text-xs text-text-muted mt-1">
       agent-authored, awaiting operator decision
@@ -339,7 +339,7 @@ export const widgets: WidgetContribution[] = [
     order: 74,
     name: "Pending Fuzz Proposals",
     description:
-      "Operator-decision queue of agent-authored fuzz campaign proposals — full harness + seeds prepared.",
+      "Operator-decision queue of agent-authored fuzz campaign proposals -- full harness + seeds prepared.",
     category: "vr",
     render: PendingFuzzProposalsWidget,
     defaultSize: { w: 2, h: 1 },

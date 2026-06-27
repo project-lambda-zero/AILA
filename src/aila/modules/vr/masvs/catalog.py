@@ -1,11 +1,11 @@
-"""OWASP MASVS catalog — flat tuple of every catalogued control.
+"""OWASP MASVS catalog -- flat tuple of every catalogued control.
 
 The catalog is populated group by group following the project's
 ``IMPLEMENTATION_PLAN.md`` (C-1b through C-1i). Each group lives in
 its own private tuple (``_STORAGE_CONTROLS``, ``_CRYPTO_CONTROLS``,
 …) so future iterations append a group by adding one block and
 splicing it into :data:`MASVS_CONTROLS`. Downstream code never sees
-the group tuples — it iterates :data:`MASVS_CONTROLS` and filters by
+the group tuples -- it iterates :data:`MASVS_CONTROLS` and filters by
 ``control.group`` / ``control.level`` itself.
 
 The first batch (this commit) covers the eight L1 MSTG-STORAGE
@@ -43,7 +43,7 @@ __all__ = [
 # Bumped together with any catalog-content change (new control, edited
 # evidence_hints, retired control). Historical audits keep their
 # original version on the parent's secondary_target_refs_json so the
-# PDF report can label which catalog produced each verdict — later
+# PDF report can label which catalog produced each verdict -- later
 # edits to this file never silently invalidate a shipped report.
 #
 # Current value pairs the v1.4.2 MSTG ids that populate STORAGE / CRYPTO
@@ -68,7 +68,7 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "attack surface: unused Activities may be exported, unused permissions "
             "leak data, unused SDKs ship CVEs the team is not tracking. The "
             "verification target is that the team can point at every component in "
-            "the shipped APK and justify its presence — anything reachable via "
+            "the shipped APK and justify its presence -- anything reachable via "
             "PackageManager.getInstalledPackages or unzip -l on the APK that the "
             "team cannot explain is a finding. ARCH controls are process / "
             "documentation requirements: the audit verdict here is whether the team "
@@ -77,14 +77,14 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
         verification_steps=(
             "Run apkanalyzer on the APK and list every declared <activity>, "
             "<service>, <receiver>, <provider>, and exported attribute. Cross-"
-            "reference against the team's component inventory document — if no "
+            "reference against the team's component inventory document -- if no "
             "inventory exists, that's the finding.",
             "List every bundled jar / aar / so under the APK lib/ and bundled "
-            "classes*.dex via dexdump — confirm the team can name the source "
+            "classes*.dex via dexdump -- confirm the team can name the source "
             "module / SDK / library for each, including transitive Gradle deps. "
             "Mystery .so files are an immediate finding.",
             "Search for <activity android:exported=\"true\"> and <receiver "
-            "android:exported=\"true\"> entries — confirm each is intentionally "
+            "android:exported=\"true\"> entries -- confirm each is intentionally "
             "external-facing (deeplink target, push receiver) and protected by a "
             "signature-level permission where appropriate.",
         ),
@@ -112,9 +112,9 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "the respective remote endpoints."
         ),
         description=(
-            "Every check the client performs alone — input validation, role / "
+            "Every check the client performs alone -- input validation, role / "
             "permission filtering, rate limiting, business-rule enforcement, fraud "
-            "scoring — runs in an environment the user controls and can bypass "
+            "scoring -- runs in an environment the user controls and can bypass "
             "with a repackaged APK or a Frida hook. The verification target is "
             "that for every security-relevant decision, the SAME check exists at "
             "the server endpoint and the client check is purely cosmetic / UX "
@@ -127,7 +127,7 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "Enumerate client-side validation paths: TextInputLayout error "
             "messages, isFormValid() booleans, Retrofit @Body Pojo with @NotNull "
             "annotations. For each, confirm the same validation exists in the "
-            "server-side schema / handler (out-of-scope for APK alone — verdict "
+            "server-side schema / handler (out-of-scope for APK alone -- verdict "
             "becomes 'requires server-side verification').",
             "Find balance / limit / quota checks in the client (if (amount > "
             "userLimit) return errror) and confirm these are advisory UX checks "
@@ -171,7 +171,7 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "placement deliberately rather than reactively. Without it, every "
             "later security review starts from scratch by reverse-engineering the "
             "shipped APK. The verification target is presence of such a document "
-            "(NOT something the APK itself can prove — this control's verdict on "
+            "(NOT something the APK itself can prove -- this control's verdict on "
             "an APK-only audit is 'requires architecture document review'). "
             "Documents must enumerate: app components, server endpoints, third-"
             "party SDKs, data flow paths between them, trust boundaries, and "
@@ -181,12 +181,12 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "Request the architecture document from the team. Verify it lists "
             "every component visible in the APK (Activities, Services, SDKs) "
             "plus the server endpoints they call.",
-            "Verify trust boundaries are explicitly drawn — at minimum: device "
+            "Verify trust boundaries are explicitly drawn -- at minimum: device "
             "boundary (untrusted), TLS termination boundary (semi-trusted), "
-            "server-side service mesh boundary (trusted) — with the controls at "
+            "server-side service mesh boundary (trusted) -- with the controls at "
             "each labeled.",
             "Verify the document is current (revised within the last 6 months "
-            "OR matched against the latest release version) — stale architecture "
+            "OR matched against the latest release version) -- stale architecture "
             "documents are equivalent to no document.",
         ),
         relevant_apis=(),
@@ -230,7 +230,7 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "matches the documented tier (e.g. confidential field marked "
             "'EncryptedSharedPreferences only' should NOT be in plain "
             "SharedPreferences).",
-            "Look for data classes in the APK that are NOT in the matrix — any "
+            "Look for data classes in the APK that are NOT in the matrix -- any "
             "such gap is a finding (the team is handling data they have not "
             "classified).",
         ),
@@ -269,7 +269,7 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "the code (a Service tagged 'session refresh' should actually do "
             "OAuth refresh work, not crypto-currency mining).",
             "Flag any component with no function tag OR a function tag that "
-            "doesn't match the code — both are findings.",
+            "doesn't match the code -- both are findings.",
         ),
         relevant_apis=(),
         evidence_hints=(
@@ -299,10 +299,10 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         verification_steps=(
             "Request the threat model document. Verify it uses a structured "
-            "methodology (STRIDE per component, PASTA, attack tree) — narrative "
+            "methodology (STRIDE per component, PASTA, attack tree) -- narrative "
             "prose without a structured list is a finding.",
             "Verify each MASVS-L1/L2 control the team claims to implement traces "
-            "back to a specific threat in the model — implementing controls "
+            "back to a specific threat in the model -- implementing controls "
             "without a documented threat is gold-plating; documented threats "
             "without controls is a coverage gap.",
             "Verify the threat model is current (re-reviewed within 12 months OR "
@@ -329,16 +329,16 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "different Keystore wrappers) guarantee inconsistent behavior, "
             "missed patches, and review fatigue. The verification target is that "
             "each security control has ONE canonical implementation that every "
-            "caller routes through — a single SecurityModule / "
+            "caller routes through -- a single SecurityModule / "
             "CredentialManager / NetworkSecurityFactory whose change history is "
             "the single source of truth for that control."
         ),
         verification_steps=(
             "List every TrustManager / HostnameVerifier / Cipher / KeyStore "
             "wrapper class in the APK. Confirm only 1-2 implementations per "
-            "category — N+ copies indicate fragmented implementations and a "
+            "category -- N+ copies indicate fragmented implementations and a "
             "finding.",
-            "Confirm callers actually use the canonical class — search for "
+            "Confirm callers actually use the canonical class -- search for "
             "OkHttpClient.Builder() constructions and verify each routes "
             "through the same security configuration function rather than "
             "constructing per-caller.",
@@ -383,7 +383,7 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "each key class (master key, data encryption key, session key, "
             "signing key).",
             "Cross-reference the policy against the APK's actual KeyGen"
-            "ParameterSpec configurations — keys generated outside the policy "
+            "ParameterSpec configurations -- keys generated outside the policy "
             "(different algorithm, shorter key length, no rotation) are "
             "findings.",
             "Verify the policy includes a key compromise response (rotate, "
@@ -412,13 +412,13 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
         title="A mechanism for enforcing updates of the mobile app exists.",
         description=(
             "When a vulnerability ships in version N, the team needs the user "
-            "to be on version N+1 — fast. Two enforcement paths: server-side "
+            "to be on version N+1 -- fast. Two enforcement paths: server-side "
             "(API responses include a 'minimum_supported_version' field; the "
             "client compares and blocks if BuildConfig.VERSION_NAME is below it) "
             "and Play-side (in-app update API forcing immediate / flexible "
             "update via Play Core). The verification target is presence of at "
             "least one such mechanism, exercised on a non-trivial set of "
-            "endpoints (not just at app launch — version checks at app launch "
+            "endpoints (not just at app launch -- version checks at app launch "
             "alone allow a user to use a stale app indefinitely if they never "
             "background it)."
         ),
@@ -430,7 +430,7 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "compare BuildConfig.VERSION_NAME / BuildConfig.VERSION_CODE "
             "against a server-supplied minimum and either show a blocking "
             "modal or redirect to Play Store.",
-            "Verify the block path is actually blocking — confirm the modal "
+            "Verify the block path is actually blocking -- confirm the modal "
             "uses setCancelable(false) and that no other code path can dismiss "
             "it (DialogFragment.dismiss / Activity.finish bypasses).",
         ),
@@ -471,7 +471,7 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "Check CI/CD pipeline for security gates: SAST tool (Semgrep, "
             "MobSF, Snyk Code), dependency scanner (Dependabot, Snyk, OWASP "
             "Dependency-Check), signed release config. Absence is a finding.",
-            "Check release / hotfix history for security patch SLA — verify "
+            "Check release / hotfix history for security patch SLA -- verify "
             "the team has shipped a security patch within 30 days of a known "
             "high-severity CVE in a dependency. Absence indicates either no "
             "monitoring or no urgency.",
@@ -506,7 +506,7 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "Check the app's documented company / product site for "
             "/.well-known/security.txt or /security or /responsible-disclosure "
             "pages. Absence is a finding even on a security-mature team.",
-            "Verify the contact email / form is monitored — send a low-impact "
+            "Verify the contact email / form is monitored -- send a low-impact "
             "test report and confirm a human response within the policy SLA.",
             "Verify the team has a track record of public acknowledgements / "
             "CVE assignments to external researchers (HackerOne / Bugcrowd "
@@ -545,9 +545,9 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "supported languages, country picker). Determine the applicable "
             "privacy regimes (GDPR, CCPA, LGPD, HIPAA).",
             "For each regime, verify the APK includes its required surfaces: "
-            "GDPR — consent UI, privacy policy URL, DSAR / delete-account "
-            "flow, withdrawal-of-consent toggle. CCPA — 'Do Not Sell My "
-            "Information' link. HIPAA — encryption attestation, audit log "
+            "GDPR -- consent UI, privacy policy URL, DSAR / delete-account "
+            "flow, withdrawal-of-consent toggle. CCPA -- 'Do Not Sell My "
+            "Information' link. HIPAA -- encryption attestation, audit log "
             "access.",
             "Verify the privacy policy URL is reachable and current, and that "
             "the DSAR / delete-account flow actually completes (does not fall "
@@ -584,8 +584,8 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "user credentials, and cryptographic keys."
         ),
         description=(
-            "Sensitive runtime data — authentication tokens, session identifiers, payment "
-            "credentials, encryption keys, and personally identifiable information — must rest on "
+            "Sensitive runtime data -- authentication tokens, session identifiers, payment "
+            "credentials, encryption keys, and personally identifiable information -- must rest on "
             "the Android Keystore or a Keystore-backed wrapper (EncryptedSharedPreferences, "
             "EncryptedFile, Jetpack Security Crypto). Direct writes to SharedPreferences, plain "
             "SQLite, or app-container files without a Keystore-derived encryption key fail this "
@@ -684,8 +684,8 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "Android log buffers are accessible to every process on the device that holds the "
             "READ_LOGS permission (debug builds, OEM diagnostic tooling, USB-connected "
             "developers, on-device crash collectors). Any token, credential, request body, or "
-            "PII written to ``android.util.Log`` — directly or via wrappers like Timber, "
-            "OkHttp's HttpLoggingInterceptor, or Throwable.printStackTrace — is therefore "
+            "PII written to ``android.util.Log`` -- directly or via wrappers like Timber, "
+            "OkHttp's HttpLoggingInterceptor, or Throwable.printStackTrace -- is therefore "
             "exfiltratable. The verification target is that release builds either strip "
             "logging entirely (via R8 / ProGuard rules) or that every log site provably emits "
             "non-sensitive content."
@@ -748,7 +748,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "For each SDK, locate every call site emitting events / user properties / breadcrumbs "
             "/ custom keys / exceptions and capture the argument expressions feeding those "
             "calls.",
-            "Cross-reference the captured payloads against the app's data classification — "
+            "Cross-reference the captured payloads against the app's data classification -- "
             "verify no PII, auth tokens, payment data, or account secrets are emitted, and "
             "verify the data flow appears in the published privacy policy when any quasi-"
             "identifier (device id, advertising id, email hash) is shared.",
@@ -836,7 +836,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "Exported Activities, Services, BroadcastReceivers, and ContentProviders form the "
             "app's inter-process surface. Any co-installed app on the device can invoke them "
             "unless explicit signature-level permissions guard the call. A finding here means "
-            "an external caller can read sensitive data out of the app — either via an "
+            "an external caller can read sensitive data out of the app -- either via an "
             "intentionally-exported component returning data without permission checks, or via "
             "an implicit pending intent that leaks the receiving app's grant to a malicious "
             "redirect target. The verification target is that every exported surface either "
@@ -938,7 +938,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "default Room database path travels with that backup unless the app opts out. "
             "An attacker who compromises the user's Google account, or who restores the "
             "backup onto a controlled device, recovers everything that was in app-private "
-            "storage — including any plaintext credentials, tokens, or PII the app cached. "
+            "storage -- including any plaintext credentials, tokens, or PII the app cached. "
             "The verification target is that the manifest either disables backup entirely "
             "(android:allowBackup=\"false\"), enumerates an explicit include/exclude rule "
             "set via fullBackupContent / dataExtractionRules, or proves all backed-up "
@@ -949,14 +949,14 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "android:allowBackup=\"false\", android:fullBackupContent pointing at a "
             "@xml/backup_rules resource that excludes sensitive paths, or "
             "android:dataExtractionRules pointing at @xml/data_extraction_rules (Android "
-            "12+) — silent default of true on a credential-bearing app is a finding.",
+            "12+) -- silent default of true on a credential-bearing app is a finding.",
             "If backup is enabled, open the referenced backup_rules / data_extraction_rules "
             "XML and verify every path containing credentials, tokens, OAuth refresh "
             "tokens, payment data, or PII is in an <exclude> rule and not in any <include> "
             "rule that would override it.",
             "Cross-reference the storage layout: any SharedPreferences file, Room database, "
             "or Files API path NOT excluded above must be encrypted with EncryptedShared"
-            "Preferences / EncryptedFile / SQLCipher backed by a Keystore key — otherwise "
+            "Preferences / EncryptedFile / SQLCipher backed by a Keystore key -- otherwise "
             "the backup ships plaintext credentials to the cloud.",
         ),
         relevant_apis=(
@@ -996,18 +996,18 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "WindowManager.LayoutParams.FLAG_SECURE for their entire lifetime, or clear / "
             "blank those fields in onPause / onStop so the snapshot captures an empty view. "
             "FLAG_SECURE alone covers the recent-apps screenshot AND blocks adb screencap / "
-            "MediaProjection capture — clear-on-pause covers only the snapshot."
+            "MediaProjection capture -- clear-on-pause covers only the snapshot."
         ),
         verification_steps=(
             "List every Activity, Fragment, or Composable that renders password / PIN / "
             "OTP / payment-card / SSN-style fields and trace its onPause / onStop / "
             "onSaveInstanceState path.",
             "Confirm each such Activity either sets FLAG_SECURE in onCreate (via "
-            "getWindow().setFlags(FLAG_SECURE, FLAG_SECURE) or addFlags) — preferred — OR "
+            "getWindow().setFlags(FLAG_SECURE, FLAG_SECURE) or addFlags) -- preferred -- OR "
             "explicitly clears the bound text in onPause (editText.setText(\"\"), "
             "editText.getText().clear()) so the snapshot does not capture the value.",
             "Verify onSaveInstanceState does NOT bundle the sensitive value into the saved "
-            "state — Bundle data persists across process death and is restored by the OS, "
+            "state -- Bundle data persists across process death and is restored by the OS, "
             "so saving a password / token there leaks across activity recreation.",
         ),
         relevant_apis=(
@@ -1039,7 +1039,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "memory is cleared explicitly after use."
         ),
         description=(
-            "Sensitive material held in a Java String is unreachable to overwrite — String "
+            "Sensitive material held in a Java String is unreachable to overwrite -- String "
             "is immutable, and even after dereference the JVM may keep the byte buffer alive "
             "in the heap until garbage collection runs. A heap dump captured via adb dumpsys "
             "meminfo, a JDWP attach, or a memory-scraping debugger (Frida memory.read) "
@@ -1047,7 +1047,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "PINs / cryptographic keys / decrypted PII live in char[] or byte[] buffers, "
             "are passed to the crypto / network call as soon as they are constructed, and "
             "are explicitly zero-filled (Arrays.fill(buf, '\\0')) and dereferenced immediately "
-            "after use — never copied into a String, never logged, never stored in a Kotlin "
+            "after use -- never copied into a String, never logged, never stored in a Kotlin "
             "val that outlives the operation."
         ),
         verification_steps=(
@@ -1057,11 +1057,11 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "which interns to an immutable String.",
             "Find every cryptographic key, IV, salt, and decrypted plaintext buffer; "
             "confirm Arrays.fill(buf, (byte) 0) or Arrays.fill(charBuf, '\\0') is called "
-            "in a finally block before the reference goes out of scope — fields stored in "
+            "in a finally block before the reference goes out of scope -- fields stored in "
             "an object that outlives the operation (e.g. a SessionManager class field) are "
             "findings unless backed by a Keystore-only handle.",
             "Search for sensitive material flowing into String.format / Log.d / Log.v / "
-            "println / Toast.makeText / Crashlytics.log — each is a finding because the "
+            "println / Toast.makeText / Crashlytics.log -- each is a finding because the "
             "resulting String becomes a heap-resident copy outside the caller's control.",
         ),
         relevant_apis=(
@@ -1095,7 +1095,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         description=(
             "EncryptedSharedPreferences and Keystore-bound keys derive their protection from "
-            "the device's lock screen — on a phone with no PIN / pattern / password / "
+            "the device's lock screen -- on a phone with no PIN / pattern / password / "
             "biometric, the OS unwraps the master key during boot without challenge, and a "
             "forensic acquisition (or a curious roommate with USB debugging enabled) reads "
             "the credential store in clear. Apps that handle sensitive data must check the "
@@ -1103,18 +1103,18 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "operate, or warn the user prominently, when the device has no lock at all. "
             "The verification target is presence of that check on the launch path and a "
             "user-visible response (modal block, banner, in-app guidance to system settings) "
-            "when the check fails — not silent acceptance of a no-lock device."
+            "when the check fails -- not silent acceptance of a no-lock device."
         ),
         verification_steps=(
             "Search the launcher Activity / first-run / login flow for a call to "
             "KeyguardManager.isDeviceSecure (preferred) or .isKeyguardSecure (older API); "
             "absence on a credential-bearing app is a finding.",
-            "When the check is present, trace the false branch — confirm the app shows a "
+            "When the check is present, trace the false branch -- confirm the app shows a "
             "user-visible response (AlertDialog, banner, BlockingActivity, intent to "
             "Settings.ACTION_SECURITY_SETTINGS) rather than silently proceeding.",
             "For Keystore-bound keys (KeyGenParameterSpec.setUserAuthenticationRequired"
             "(true)), verify setInvalidatedByBiometricEnrollment(true) is set so a freshly "
-            "enrolled biometric or removed lock invalidates the key — otherwise an attacker "
+            "enrolled biometric or removed lock invalidates the key -- otherwise an attacker "
             "with physical access can enrol their own biometric and read the protected "
             "store.",
         ),
@@ -1160,7 +1160,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "HTML) for a privacy policy URL, terms of service URL, or onboarding consent text "
             "that names the PII categories the app collects.",
             "Trace the navigation graph from the launcher Activity and identify the screen "
-            "(or web view) that surfaces the privacy policy to the user — confirm it is "
+            "(or web view) that surfaces the privacy policy to the user -- confirm it is "
             "reachable from a top-level menu, the settings screen, or the first-run flow.",
             "For each runtime-dangerous permission requested (Manifest.permission.CAMERA, "
             "ACCESS_FINE_LOCATION, READ_CONTACTS, READ_PHONE_STATE, USE_BIOMETRIC, …), confirm "
@@ -1198,7 +1198,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         description=(
             "Even with Keystore-backed encryption, locally stored sensitive data is "
-            "discoverable to a forensic adversary with physical device access — "
+            "discoverable to a forensic adversary with physical device access -- "
             "encrypted Room databases survive on disk, key material is unwrappable on "
             "a rooted device, and a backup snapshot lifts everything that ever lived "
             "in app-private storage. The strongest defense is not to store the data "
@@ -1206,7 +1206,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "it in memory only for the duration of the user's session, and let it "
             "evaporate when the process dies. The verification target is that for "
             "every L2 sensitive-data class (full payment card PAN, plaintext PIN, "
-            "decrypted PII, full account history), the app holds NO persistent copy — "
+            "decrypted PII, full account history), the app holds NO persistent copy -- "
             "no Room entity, no SharedPreferences entry, no file under getFilesDir, no "
             "cache directory. Only ephemeral in-memory state derived from the latest "
             "server response. Caches of the same data must either be encrypted with "
@@ -1216,7 +1216,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
         verification_steps=(
             "Enumerate every persistence layer in the app (Room @Entity, "
             "SharedPreferences keys, DataStore protobuf, raw File / FileOutputStream, "
-            "MediaStore writes) and classify by data sensitivity — for any L2 class "
+            "MediaStore writes) and classify by data sensitivity -- for any L2 class "
             "found persisted, the control fails unless step 3 holds.",
             "Trace each server response containing L2 data through its caller and "
             "verify the response object lives only in a ViewModel / StateFlow / "
@@ -1225,7 +1225,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "If on-device storage of L2 data is unavoidable (offline mode), confirm "
             "the local copy is encrypted with a Keystore key bound to "
             "setUserAuthenticationRequired(true) + setInvalidatedByBiometricEnrollment"
-            "(true) — and that the local copy is wiped on logout via a deterministic "
+            "(true) -- and that the local copy is wiped on logout via a deterministic "
             "delete path (db.clearAllTables, SharedPreferences.edit().clear()).",
         ),
         relevant_apis=(
@@ -1283,11 +1283,11 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
             "Find every persisted-store construction (EncryptedSharedPreferences."
             "create, EncryptedFile.Builder, SQLCipher SQLiteDatabase.openOrCreate"
             "Database) and trace the key argument back to a Keystore alias produced "
-            "by step 1 — keys derived from PBKDF2 of a user PIN, or read from "
+            "by step 1 -- keys derived from PBKDF2 of a user PIN, or read from "
             "BuildConfig / strings.xml, are findings.",
             "Inspect the master-key bootstrap path: androidx.security.crypto."
             "MasterKey.Builder().setKeyScheme(MasterKey.KeyScheme.AES256_GCM)."
-            "setUserAuthenticationRequired(true, validityDurationSeconds=…) — "
+            "setUserAuthenticationRequired(true, validityDurationSeconds=…) -- "
             "validityDurationSeconds of -1 (one-time auth) is strongest; long "
             "validity windows (3600+) weaken protection.",
         ),
@@ -1323,7 +1323,7 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         description=(
             "An attacker with physical access can attempt the local PIN / biometric / "
-            "passphrase repeatedly — without rate-limiting and a hard wipe on a "
+            "passphrase repeatedly -- without rate-limiting and a hard wipe on a "
             "threshold, every retry is a free guess against a small keyspace (4-digit "
             "PIN = 10,000 tries). Sensitive apps must either count failed authentications "
             "client-side and wipe the protected store at a low threshold (typically 5-10) "
@@ -1338,13 +1338,13 @@ _STORAGE_CONTROLS: tuple[MasvsControl, ...] = (
         verification_steps=(
             "Identify the local-auth verification path (PIN check, BiometricPrompt "
             "negative, passphrase compare) and confirm the failure branch increments "
-            "a persistent counter — counters held in plain SharedPreferences are "
+            "a persistent counter -- counters held in plain SharedPreferences are "
             "rollback-attackable, prefer EncryptedSharedPreferences or a Keystore-"
             "signed Long.",
             "Confirm a threshold (typically 5-10) triggers a wipe routine that calls "
             "EncryptedSharedPreferences.edit().clear(), File.delete on every "
             "EncryptedFile, db.clearAllTables on every Room store, AND deletes the "
-            "underlying Keystore alias via KeyStore.deleteEntry(alias) — without "
+            "underlying Keystore alias via KeyStore.deleteEntry(alias) -- without "
             "the last step the encrypted blobs remain on disk and a re-installed app "
             "could decrypt them.",
             "Verify the user-visible response to wipe (sign-out screen with "
@@ -1383,15 +1383,15 @@ _CRYPTO_CONTROLS: tuple[MasvsControl, ...] = (
             "method of encryption."
         ),
         description=(
-            "A symmetric key embedded in the APK — as a string literal in dex, a byte array "
-            "constant in a native library, a resource file, or a BuildConfig field — is "
+            "A symmetric key embedded in the APK -- as a string literal in dex, a byte array "
+            "constant in a native library, a resource file, or a BuildConfig field -- is "
             "recoverable by anyone who can read the file off the device or pull it from any "
             "app store mirror. Once recovered, the key decrypts every payload the app has "
             "ever produced under it, including data exfiltrated from backups or transit "
             "captures. Symmetric keys protecting sensitive data must therefore derive from a "
             "Keystore-resident master key, from a user-supplied passphrase passed through "
             "PBKDF2 / Argon2 with a per-install random salt, or from a server-issued "
-            "per-session key — never from a constant baked into the binary."
+            "per-session key -- never from a constant baked into the binary."
         ),
         verification_steps=(
             "Enumerate every javax.crypto.spec.SecretKeySpec / IvParameterSpec / PBEKeySpec "
@@ -1434,8 +1434,8 @@ _CRYPTO_CONTROLS: tuple[MasvsControl, ...] = (
         level=MasvsLevel.L1,
         title="The app uses proven implementations of cryptographic primitives.",
         description=(
-            "Hand-rolled cryptography — XOR loops, bespoke S-box substitutions, custom "
-            "stream-cipher constructions, reimplemented hash functions — historically "
+            "Hand-rolled cryptography -- XOR loops, bespoke S-box substitutions, custom "
+            "stream-cipher constructions, reimplemented hash functions -- historically "
             "introduces side-channel and bias defects that the audited primitives in the "
             "JCA, Conscrypt, Tink, and Bouncy Castle do not have. The verification target "
             "is that every cryptographic operation routes through a reviewed provider "
@@ -1452,7 +1452,7 @@ _CRYPTO_CONTROLS: tuple[MasvsControl, ...] = (
             "their bodies for bitwise loops (XOR, ROT, S-box lookups) that indicate an "
             "in-tree cryptographic implementation.",
             "For every Security.addProvider / Security.insertProviderAt call, verify the "
-            "added Provider is a reviewed third-party package — raise a finding against "
+            "added Provider is a reviewed third-party package -- raise a finding against "
             "any locally-defined Provider that injects custom Cipher / MessageDigest / Mac "
             "SPIs.",
         ),
@@ -1487,7 +1487,7 @@ _CRYPTO_CONTROLS: tuple[MasvsControl, ...] = (
             "use-case, configured with parameters that adhere to industry best practices."
         ),
         description=(
-            "Selecting AES is necessary but not sufficient — the mode of operation, IV "
+            "Selecting AES is necessary but not sufficient -- the mode of operation, IV "
             "discipline, padding, key length, and authenticated-encryption choice "
             "determine whether the construction is sound. AES/ECB leaks plaintext "
             "structure. AES/CBC without an accompanying MAC accepts ciphertext "
@@ -1501,12 +1501,12 @@ _CRYPTO_CONTROLS: tuple[MasvsControl, ...] = (
             "For every Cipher.getInstance(…) call, capture the transformation string and "
             "flag any mode of ECB, CBC without an accompanying MAC, or stream cipher reused "
             "across messages.",
-            "For every AES/GCM call site, trace the IV / nonce source — confirm it is drawn "
+            "For every AES/GCM call site, trace the IV / nonce source -- confirm it is drawn "
             "from SecureRandom per encryption (or is a monotonically-incrementing counter "
             "under a single-writer guarantee) rather than zeroed, constant, or reused across "
             "messages.",
             "For every PBEKeySpec / SecretKeyFactory.PBKDF2WithHmacSHA* call, capture "
-            "iterationCount and salt source — flag iterationCount below 10000 (legacy "
+            "iterationCount and salt source -- flag iterationCount below 10000 (legacy "
             "minimum) and any salt that is a constant, the username, or shared across "
             "users.",
         ),
@@ -1547,14 +1547,14 @@ _CRYPTO_CONTROLS: tuple[MasvsControl, ...] = (
             "integrity checks, password storage). DES, 3DES, RC4, and RC2 fall below the "
             "112-bit security floor most regulators require. SSLv3 / TLSv1.0 / TLSv1.1 are "
             "decommissioned. Findings here apply when a deprecated primitive is reachable "
-            "from a security-relevant code path — non-security uses (content-addressable "
+            "from a security-relevant code path -- non-security uses (content-addressable "
             "caches keyed by MD5, file deduplication) are out of scope and should be "
             "tagged not_applicable."
         ),
         verification_steps=(
             "Search every MessageDigest.getInstance / Mac.getInstance / Cipher.getInstance "
-            "call site for the deprecated set — MD5, MD2, SHA-1, SHA1, DES, DESede, 3DES, "
-            "RC4, RC2, Blowfish — and capture each match's surrounding context.",
+            "call site for the deprecated set -- MD5, MD2, SHA-1, SHA1, DES, DESede, 3DES, "
+            "RC4, RC2, Blowfish -- and capture each match's surrounding context.",
             "For every match, classify the use as security-relevant (token derivation, "
             "signature verification, password hash, integrity check, TLS pinning hash) or "
             "non-security (cache key, file dedupe, content hash for analytics) and raise a "
@@ -1594,7 +1594,7 @@ _CRYPTO_CONTROLS: tuple[MasvsControl, ...] = (
         description=(
             "Reusing a single symmetric key for encryption and authentication, for two "
             "independent encryption channels, or for both data-at-rest and data-in-transit "
-            "couples the security of those purposes together — a flaw in one operation "
+            "couples the security of those purposes together -- a flaw in one operation "
             "lowers the security of every other operation under the same key. The "
             "verification target is that every distinct cryptographic purpose binds to a "
             "distinct key, ideally derived from a single root key via HKDF with a "
@@ -1644,7 +1644,7 @@ _CRYPTO_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         description=(
             "java.util.Random and Math.random are linear congruential generators whose "
-            "next output is predictable from a small handful of prior outputs — they must "
+            "next output is predictable from a small handful of prior outputs -- they must "
             "not produce security-relevant values (session ids, nonces, OTPs, salts, IVs, "
             "key material, CSRF tokens). java.security.SecureRandom routed through the "
             "AndroidOpenSSL / Conscrypt provider draws from /dev/urandom and is the "
@@ -1659,7 +1659,7 @@ _CRYPTO_CONTROLS: tuple[MasvsControl, ...] = (
             "Flag any security-relevant value (nonce, salt, IV, session id, OTP, CSRF "
             "token, key bytes) produced by a non-SecureRandom source as a finding.",
             "For every SecureRandom usage, verify no SecureRandom.setSeed(…) call feeds a "
-            "constant, a low-entropy clock value, or a device identifier — any such call "
+            "constant, a low-entropy clock value, or a device identifier -- any such call "
             "neutralises the generator and must be removed.",
         ),
         relevant_apis=(
@@ -1696,8 +1696,8 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "such as username/password authentication is performed at the remote endpoint."
         ),
         description=(
-            "Every protected operation an app exposes — reading user records, writing user "
-            "records, triggering account actions, viewing financial data — must verify the "
+            "Every protected operation an app exposes -- reading user records, writing user "
+            "records, triggering account actions, viewing financial data -- must verify the "
             "requesting user's identity at the server before responding. Client-only checks "
             "(UI flags, hidden screens, role booleans the client trusts) are flippable by a "
             "repackaged APK, by a rooted device, or by anyone running a Frida script against "
@@ -1768,7 +1768,7 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "returned by the server, then trace where it is persisted (SharedPreferences, "
             "EncryptedSharedPreferences, AccountManager, in-memory only) and how it travels "
             "with later requests.",
-            "Verify the session identifier is treated as opaque on the client — no Base64 "
+            "Verify the session identifier is treated as opaque on the client -- no Base64 "
             "decode-then-mutate, no client-side issuance, no concatenation with locally "
             "derived data that the server then trusts.",
         ),
@@ -1821,7 +1821,7 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "and any code that accepts an unsigned token (JwtParserBuilder without "
             ".verifyWith / .setSigningKey) as a finding.",
             "Inspect alg-handling code for explicit acceptance of 'none' or for derivation "
-            "of the verification algorithm from the token's own header.alg field — both are "
+            "of the verification algorithm from the token's own header.alg field -- both are "
             "the canonical JWT confusion patterns.",
         ),
         relevant_apis=(
@@ -1904,8 +1904,8 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
         level=MasvsLevel.L1,
         title="A password policy exists and is enforced at the remote endpoint.",
         description=(
-            "The server must reject weak passwords on registration and on password change — "
-            "too short, common-list, leaked-corpus matches — because client-side checks are "
+            "The server must reject weak passwords on registration and on password change -- "
+            "too short, common-list, leaked-corpus matches -- because client-side checks are "
             "skippable by anyone interacting with the API directly. From the APK side the "
             "verification target is that the client at minimum mirrors the documented "
             "server policy (so a user is not led to submit a password the server will "
@@ -1973,7 +1973,7 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "either status as a generic failure.",
             "Search for credential-bypass code paths: build-flavor checks that skip the "
             "auth call, debug-only login shortcuts, hardcoded fallback credentials in "
-            "BuildConfig — any of which give a repackaged APK an unrate-limited path.",
+            "BuildConfig -- any of which give a repackaged APK an unrate-limited path.",
         ),
         relevant_apis=(
             "okhttp3.Authenticator",
@@ -2020,7 +2020,7 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "client checks expiry before sending a protected request and triggers a refresh "
             "or re-login path rather than sending an expired token.",
             "Verify the refresh token (if any) is stored in EncryptedSharedPreferences, "
-            "AccountManager, or a Keystore-backed wrapper — not plain SharedPreferences and "
+            "AccountManager, or a Keystore-backed wrapper -- not plain SharedPreferences and "
             "not a flat file under getFilesDir.",
             "Find the 401 handler in the OkHttp Authenticator or Interceptor chain and "
             "confirm it triggers exactly one refresh attempt followed by a forced logout "
@@ -2058,14 +2058,14 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "the keychain/keystore."
         ),
         description=(
-            "Event-bound biometric authentication — calling BiometricPrompt.authenticate "
-            "with no CryptoObject — returns a Java boolean indicating only that the OS "
+            "Event-bound biometric authentication -- calling BiometricPrompt.authenticate "
+            "with no CryptoObject -- returns a Java boolean indicating only that the OS "
             "saw a fingerprint touch. The app's authorization decision then rests on a "
             "branch over that boolean, which a repackaged APK, a Frida hook on "
             "AuthenticationCallback.onAuthenticationSucceeded, or even an xposed module "
             "can flip without ever touching the sensor. Key-bound biometric auth attaches "
             "the user's identity to a Keystore key whose KeyGenParameterSpec sets "
-            "setUserAuthenticationRequired(true) — the key is unwrappable only after a "
+            "setUserAuthenticationRequired(true) -- the key is unwrappable only after a "
             "real biometric / device-credential unlock, and the cryptographic operation "
             "either succeeds or fails atomically. No boolean to flip. The verification "
             "target is that every BiometricPrompt.authenticate call passes a "
@@ -2075,13 +2075,13 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         verification_steps=(
             "Find every BiometricPrompt.authenticate call site. Confirm the call passes "
-            "a CryptoObject argument — calls with no CryptoObject are event-bound and a "
+            "a CryptoObject argument -- calls with no CryptoObject are event-bound and a "
             "finding.",
             "Trace the Cipher / Mac / Signature inside each CryptoObject back to its "
             "Keystore key. Confirm KeyGenParameterSpec.Builder.setUserAuthentication"
             "Required(true) is set and (recommended) setInvalidatedByBiometricEnrollment"
             "(true) so a re-enrolled biometric breaks the key.",
-            "Inspect the AuthenticationCallback.onAuthenticationSucceeded body — confirm "
+            "Inspect the AuthenticationCallback.onAuthenticationSucceeded body -- confirm "
             "the success path performs the protected cryptographic operation against "
             "result.cryptoObject.cipher (or .mac / .signature) instead of just setting a "
             "boolean flag like isAuthenticated = true.",
@@ -2127,7 +2127,7 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "on the server. The verification target is that every code path producing a "
             "session token (login, biometric quick-login, OAuth refresh, social SSO "
             "linkage, account recovery) routes through a server endpoint that enforces "
-            "the second factor — and that the client surfaces the 2FA challenge UI for "
+            "the second factor -- and that the client surfaces the 2FA challenge UI for "
             "each one rather than treating biometric / Keystore-cached credentials as "
             "the second factor by themselves."
         ),
@@ -2138,11 +2138,11 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "link. Each must hit a server endpoint that returns a 'second-factor-required' "
             "response under the 2FA configuration.",
             "Search for client-side branches that skip the 2FA challenge UI based on a "
-            "local flag (biometricEnrolled, rememberDevice, trustedDevice, isQuickLogin) — "
+            "local flag (biometricEnrolled, rememberDevice, trustedDevice, isQuickLogin) -- "
             "each such skip is a finding because the client cannot know if the server "
             "would have demanded a second factor.",
             "Confirm the OAuth refresh-token flow (Authenticator / TokenInterceptor) does "
-            "not silently mint new access tokens with a single factor — server endpoints "
+            "not silently mint new access tokens with a single factor -- server endpoints "
             "that issue refresh-derived tokens must re-evaluate 2FA enforcement, and the "
             "client must surface the challenge when the server returns the 2FA-required "
             "response.",
@@ -2186,21 +2186,21 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "consumes once. The verification target is that the client identifies "
             "sensitive endpoints, surfaces the step-up challenge UI before posting to "
             "them, and either obtains an elevated token (extra Authorization header, "
-            "X-Auth-Step-Up: …, or per-action signed nonce) or refuses to post — never "
+            "X-Auth-Step-Up: …, or per-action signed nonce) or refuses to post -- never "
             "relies on the standard session token alone for sensitive transactions."
         ),
         verification_steps=(
             "Enumerate sensitive endpoints by URL keyword (transfer, payment, beneficiary, "
             "change-password, change-email, enable-biometric, export-data, delete-account) "
-            "and trace their client-side callers — confirm each caller routes through a "
+            "and trace their client-side callers -- confirm each caller routes through a "
             "step-up challenge surface before posting.",
             "Verify the step-up challenge actually invokes BiometricPrompt.authenticate "
-            "with CryptoObject, prompts for an OTP, or re-prompts for password — not "
+            "with CryptoObject, prompts for an OTP, or re-prompts for password -- not "
             "merely shows a confirm dialog that the user clicks through without any new "
             "credential.",
             "Confirm the elevated-action request includes an extra header / token "
             "distinct from the session bearer (e.g. X-Step-Up-Token, an action-scoped "
-            "JWT, a per-action signed nonce) — the server must be able to verify the "
+            "JWT, a per-action signed nonce) -- the server must be able to verify the "
             "step-up happened recently and applies to THIS action, not just that the "
             "user is logged in.",
         ),
@@ -2236,7 +2236,7 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "address, location, etc.), and to block specific devices."
         ),
         description=(
-            "Account-visibility surfaces let the user notice and respond to compromise — "
+            "Account-visibility surfaces let the user notice and respond to compromise -- "
             "a foreign IP signing in at 3am, an unknown device staying logged in, a "
             "password change they did not initiate. The verification target is presence "
             "of three surfaces in the app: (a) an account-activity / login-history screen "
@@ -2245,19 +2245,19 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "per-row revoke / sign-out action, (c) a push-notification / in-app banner "
             "channel that fires on security-relevant events (new sign-in, password "
             "change, 2FA disable, payment beneficiary added). Findings here are about "
-            "absent surfaces — static analysis cannot judge narrative quality, only "
+            "absent surfaces -- static analysis cannot judge narrative quality, only "
             "whether the user has any path to notice and react."
         ),
         verification_steps=(
             "Search the navigation graph and string resources for an account-activity / "
-            "login-history / recent-sessions screen — confirm it is reachable from the "
+            "login-history / recent-sessions screen -- confirm it is reachable from the "
             "user's profile / settings flow.",
             "Search for a trusted-devices / active-sessions screen with a per-row revoke "
             "action calling an /api/sessions/{id}/revoke or /api/devices/{id}/sign-out "
-            "endpoint — absence is a finding for accounts that maintain server-side "
+            "endpoint -- absence is a finding for accounts that maintain server-side "
             "session state.",
             "Search for FCM / push-notification registration and identify the channel "
-            "IDs / message types — confirm a SECURITY / ACCOUNT_ACTIVITY channel exists "
+            "IDs / message types -- confirm a SECURITY / ACCOUNT_ACTIVITY channel exists "
             "and is used for new-sign-in, password-change, 2FA-state-change, and "
             "high-value-transaction notifications. A silent push channel for these "
             "events with no in-app inbox is a finding.",
@@ -2308,11 +2308,11 @@ _AUTH_CONTROLS: tuple[MasvsControl, ...] = (
             "of the client-supplied id.",
             "Search request bodies for client-derived role / permission / capability "
             "claims (is_admin, role, capabilities, scopes, is_premium) the server might "
-            "trust; flag each one — the server must derive these from the authenticated "
+            "trust; flag each one -- the server must derive these from the authenticated "
             "identity, never accept them from the client.",
             "Confirm the OkHttp interceptor / Retrofit @Header chain does not skip the "
             "Authorization header based on a flag like trustedDevice, BuildConfig.DEBUG, "
-            "BuildConfig.INTERNAL, or a SharedPreferences entry — any such flag is "
+            "BuildConfig.INTERNAL, or a SharedPreferences entry -- any such flag is "
             "flippable by a repackaged APK and can short-circuit auth.",
         ),
         relevant_apis=(
@@ -2351,9 +2351,9 @@ _NETWORK_CONTROLS: tuple[MasvsControl, ...] = (
             "consistently throughout the app."
         ),
         description=(
-            "Every request the app issues over the network — REST calls, WebView page "
+            "Every request the app issues over the network -- REST calls, WebView page "
             "loads, WebSocket connections, gRPC channels, file downloads, analytics "
-            "beacons — must travel over TLS. Cleartext requests expose payloads to "
+            "beacons -- must travel over TLS. Cleartext requests expose payloads to "
             "anyone on the same network segment (a coffee-shop wifi, a captive "
             "portal, a compromised corporate proxy) and to anyone with administrative "
             "access to a TLS-terminating intermediate. The verification target is "
@@ -2375,7 +2375,7 @@ _NETWORK_CONTROLS: tuple[MasvsControl, ...] = (
             "each.",
             "Search for code that downgrades the channel by overriding the "
             "HostnameVerifier to return true unconditionally or by installing an "
-            "X509TrustManager whose checkServerTrusted body is empty — both convert "
+            "X509TrustManager whose checkServerTrusted body is empty -- both convert "
             "an https:// URL into an authenticated-in-name-only channel.",
         ),
         relevant_apis=(
@@ -2476,7 +2476,7 @@ _NETWORK_CONTROLS: tuple[MasvsControl, ...] = (
             "check disabled means the encrypted channel terminates at whoever is "
             "closest on the network path with a self-signed cert (a corporate "
             "TLS-terminating proxy, a developer running mitmproxy or Burp Suite for "
-            "testing, a network operator with an inspection appliance) — "
+            "testing, a network operator with an inspection appliance) -- "
             "confidentiality and integrity flow to that intermediary, not the "
             "intended server. The verification target is that every X509TrustManager "
             "implementation rejects unknown CAs (no empty checkServerTrusted, no "
@@ -2544,29 +2544,29 @@ _NETWORK_CONTROLS: tuple[MasvsControl, ...] = (
             "or an enterprise SSL-inspection appliance all produce a 'valid' chain that "
             "ordinary TrustManager logic accepts. Pinning narrows trust to a specific "
             "leaf certificate's public-key SPKI hash, an intermediate, or a small set "
-            "of issuer keys the app actually expects — anything else fails the handshake "
+            "of issuer keys the app actually expects -- anything else fails the handshake "
             "regardless of CA validity. The verification target is that the app declares "
-            "a pin set via Network Security Config (preferred — declarative, "
+            "a pin set via Network Security Config (preferred -- declarative, "
             "manifest-level, survives library swaps) OR via OkHttp's CertificatePinner / "
             "an X509TrustManager that compares SPKI hashes, AND that the pin set is "
             "actually wired into every OkHttpClient / HttpsURLConnection / WebView "
-            "instance the app constructs — a pin set declared but not attached is the "
+            "instance the app constructs -- a pin set declared but not attached is the "
             "common false-comfort finding."
         ),
         verification_steps=(
             "Read res/xml/network_security_config.xml referenced from "
-            "AndroidManifest.xml application@android:networkSecurityConfig — confirm a "
+            "AndroidManifest.xml application@android:networkSecurityConfig -- confirm a "
             "<pin-set> block with at least 2 <pin digest=\"SHA-256\"> entries (primary "
             "+ backup) and an expiration ≥ 3 months in the future. Domain-scoped pins "
             "(<domain includeSubdomains=\"true\">) are stronger than a global pin.",
             "Search for OkHttp CertificatePinner usage: okhttp3.CertificatePinner."
             "Builder().add(\"host\", \"sha256/…\") followed by OkHttpClient.Builder()."
             "certificatePinner(...). Confirm the same client instance is used by every "
-            "Retrofit / Apollo / custom transport layer — a pinned client constructed "
+            "Retrofit / Apollo / custom transport layer -- a pinned client constructed "
             "but never injected is a finding.",
             "Search for X509TrustManager / HostnameVerifier custom implementations and "
             "verify the checkServerTrusted / verify body actually compares an SPKI hash "
-            "or a known certificate — implementations that return without throwing or "
+            "or a known certificate -- implementations that return without throwing or "
             "that return true unconditionally disable pinning.",
         ),
         relevant_apis=(
@@ -2599,15 +2599,15 @@ _NETWORK_CONTROLS: tuple[MasvsControl, ...] = (
             "SMS) for critical operations, such as enrollments and account recovery."
         ),
         description=(
-            "SMS and email are best-effort transports — SMS is delivered in clear over "
+            "SMS and email are best-effort transports -- SMS is delivered in clear over "
             "SS7, email is rarely TLS end-to-end, and SIM-swap fraud rerouted both "
             "channels for thousands of US bank accounts in the 2019-2022 window. An app "
             "that hands account recovery, OAuth enrollment, or payment authorization to "
             "a single SMS code or a single email-link click lets any attacker who "
             "compromised either channel hijack the account. The verification target is "
-            "that critical operations require corroboration across distinct channels — "
+            "that critical operations require corroboration across distinct channels -- "
             "an SMS OTP combined with biometric, a push notification with key-bound "
-            "approval, or step-up via a separate TOTP app — and that an SMS-only or "
+            "approval, or step-up via a separate TOTP app -- and that an SMS-only or "
             "email-only path is either absent or marked legacy/rate-limited."
         ),
         verification_steps=(
@@ -2616,12 +2616,12 @@ _NETWORK_CONTROLS: tuple[MasvsControl, ...] = (
             "each requires confirmation across at least two distinct channels (SMS+push, "
             "SMS+biometric, email+TOTP) rather than one.",
             "Search for SmsRetriever / SmsManager.sendTextMessage / Intent.ACTION_SENDTO "
-            "(mailto) on the account-recovery path — if these are the SOLE confirmation "
+            "(mailto) on the account-recovery path -- if these are the SOLE confirmation "
             "mechanism, that's a finding. Acceptable when combined with a second factor "
             "(BiometricPrompt, FCM push approval, hardware key).",
             "Verify the FCM push-notification handler for account-sensitive operations "
             "requires an in-app approval gesture (BiometricPrompt or PIN re-entry) and "
-            "does not auto-approve on a deeplink click — silent confirmation via push "
+            "does not auto-approve on a deeplink click -- silent confirmation via push "
             "is functionally equivalent to a single-channel flow.",
         ),
         relevant_apis=(
@@ -2668,11 +2668,11 @@ _NETWORK_CONTROLS: tuple[MasvsControl, ...] = (
             "io.netty.*, com.android.volley.*. Extract the version from each (manifest "
             "metadata for jars, native library symbols, BuildConfig.VERSION_NAME).",
             "Cross-reference each version against the OSV / GitHub Security Advisories "
-            "database for known CVEs in the discovered version range — flag any "
+            "database for known CVEs in the discovered version range -- flag any "
             "unpatched CVE with CVSS ≥ 7.0 affecting the bundled version.",
             "Inspect BoringSSL / Conscrypt provider registration: Security.insertProvider"
             "At(Conscrypt.newProvider(), 1) brings a known-current TLS stack at runtime "
-            "even on old Android versions — absence on an app targeting < API 29 is a "
+            "even on old Android versions -- absence on an app targeting < API 29 is a "
             "finding because the OS-bundled TLS stack will not receive patches.",
         ),
         relevant_apis=(
@@ -2720,7 +2720,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         verification_steps=(
             "Parse AndroidManifest.xml for every <uses-permission> entry and "
-            "cross-reference each against actual call sites — Manifest.permission.X "
+            "cross-reference each against actual call sites -- Manifest.permission.X "
             "constant references, ContextCompat.checkSelfPermission, "
             "ActivityCompat.requestPermissions, and any API the permission gates; flag "
             "any permission with no consuming code path as either dead or covertly used "
@@ -2769,11 +2769,11 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "mechanisms such as intents, custom URLs, and network sources."
         ),
         description=(
-            "Every value the app reads from an untrusted boundary — Intent extras "
+            "Every value the app reads from an untrusted boundary -- Intent extras "
             "delivered by another app, deep-link parameters parsed from a Uri, "
             "ContentProvider selection clauses passed by an external querier, JSON "
             "fields pulled from a network response, free-form text entered by the "
-            "user — must be type-checked, length-checked, and (where the destination "
+            "user -- must be type-checked, length-checked, and (where the destination "
             "is a structured sink such as SQL, a shell, an HTML render, or a file "
             "path) sanitized for that sink before use. Skipped validation allows "
             "injection (SQLi via rawQuery, command injection via Runtime.exec, "
@@ -2841,7 +2841,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "A custom URL scheme registered via <intent-filter><data "
             "android:scheme=\"foo\"/> can be invoked by any other app on the device, "
             "by a web page the user visits in any browser, and by a QR code the user "
-            "scans — the calling identity is not authenticated by the system unless "
+            "scans -- the calling identity is not authenticated by the system unless "
             "the app re-checks. If the scheme handler performs sensitive operations "
             "(account changes, money transfers, settings writes, file deletes, "
             "credential resets) without a per-invocation identity / consent check, "
@@ -2866,9 +2866,9 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "calling package via Binder.getCallingUid + PackageManager.checkSignatures) "
             "runs before the action; flag any handler that performs a sensitive "
             "action from getIntent extras without such a gate.",
-            "Confirm http / https <intent-filter> entries use App Links semantics — "
+            "Confirm http / https <intent-filter> entries use App Links semantics -- "
             "android:autoVerify=\"true\" plus a published "
-            "/.well-known/assetlinks.json on the named host — so unrelated apps "
+            "/.well-known/assetlinks.json on the named host -- so unrelated apps "
             "cannot register the same domain and intercept the user's clicks; flag "
             "any web-link handler without autoVerify as a phishing surface.",
         ),
@@ -2920,7 +2920,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "Enumerate every Activity / Service / Receiver / Provider in "
             "AndroidManifest.xml with android:exported=\"true\" (and on API < 31, "
             "every component with an <intent-filter> child but no explicit "
-            "android:exported attribute — these are implicitly exported); record "
+            "android:exported attribute -- these are implicitly exported); record "
             "each entry point's intended caller class (system_only, the app's own "
             "UI, any signed-by-same-key app, any installed app).",
             "For each exported component handling sensitive operations (account, "
@@ -2971,7 +2971,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "Intent-supplied URL the app forwards into loadUrl without a domain "
             "allowlist. If JavaScript is on by default and the loaded origin can "
             "be influenced by external untrusted callers, hostile script runs in "
-            "the WebView's process — reading WebView cookies, exfiltrating "
+            "the WebView's process -- reading WebView cookies, exfiltrating "
             "localStorage, calling any @JavascriptInterface bridge the app "
             "exposes (see MSTG-PLATFORM-7). The verification target is that every "
             "WebSettings.setJavaScriptEnabled(true) call site has a documented "
@@ -2979,7 +2979,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "domain) AND the URL loaded into that WebView is restricted to a "
             "trusted origin: a bundled asset under file:///android_asset, a "
             "hard-coded https:// allowlist, or a domain validated against a "
-            "compile-time constant — never a Uri pulled from getIntent or a "
+            "compile-time constant -- never a Uri pulled from getIntent or a "
             "network response without validation."
         ),
         verification_steps=(
@@ -2995,7 +2995,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "straight to WebView.loadUrl with JS enabled.",
             "Confirm setJavaScriptEnabled(true) is not flipped on globally by a "
             "base WebViewClient or a shared WebView factory that downstream code "
-            "reuses for every WebView instance — a single factory enabling JS "
+            "reuses for every WebView instance -- a single factory enabling JS "
             "affects every consumer including ones that load untrusted HTML.",
         ),
         relevant_apis=(
@@ -3028,8 +3028,8 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "dangerous handlers, such as file, tel and app-id, are disabled."
         ),
         description=(
-            "A WebView accepts more URI schemes than http and https by default — "
-            "file://, content://, javascript:, intent://, tel:, sms:, mailto: — "
+            "A WebView accepts more URI schemes than http and https by default -- "
+            "file://, content://, javascript:, intent://, tel:, sms:, mailto: -- "
             "and each one carries distinct trust semantics. file:// reads can "
             "expose private app storage when setAllowFileAccessFromFileURLs is "
             "true; javascript: URIs trigger script execution in whatever origin "
@@ -3048,7 +3048,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "trusted file:///android_asset bundle."
         ),
         verification_steps=(
-            "For every WebView instance inspect WebSettings configuration — "
+            "For every WebView instance inspect WebSettings configuration -- "
             "setAllowFileAccess / setAllowFileAccessFromFileURLs / "
             "setAllowUniversalAccessFromFileURLs / setAllowContentAccess; flag "
             "every true value on a WebView loading remote HTML, and call out the "
@@ -3099,7 +3099,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "into every page the WebView loads. Any method on the bridge class "
             "annotated with @JavascriptInterface (or every public method on API "
             "< 17, where the annotation is not required) becomes invokable from "
-            "page-loaded script — including script that the page itself imported "
+            "page-loaded script -- including script that the page itself imported "
             "from a different origin, that a redirect chain led to, or that a "
             "third-party ad SDK injected. If the bridge methods do anything "
             "privileged (file reads, settings writes, Intent dispatches, account "
@@ -3160,7 +3160,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
         description=(
             "Java's java.io.ObjectInputStream materializes object graphs from a "
             "byte stream by walking class names, invoking readObject hooks, and "
-            "wiring up references — a process the byte stream itself controls. "
+            "wiring up references -- a process the byte stream itself controls. "
             "If the bytes come from an untrusted source (a file the app did not "
             "write, a network response, an Intent extra, a clipboard read), a "
             "gadget chain through readObject hooks in classpath libraries can "
@@ -3235,8 +3235,8 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "the underlying app sees only an authorised click. The verification target "
             "is that sensitive Views set FilterTouchesWhenObscured (xml attribute "
             "android:filterTouchesWhenObscured=\"true\" or "
-            "View.setFilterTouchesWhenObscured(true)) — the system then drops any "
-            "touch event delivered to a View partly or fully covered by an overlay — "
+            "View.setFilterTouchesWhenObscured(true)) -- the system then drops any "
+            "touch event delivered to a View partly or fully covered by an overlay -- "
             "and that the host Activity additionally calls onFilterTouchEventForSecurity"
             "(MotionEvent) checks for FLAG_WINDOW_IS_OBSCURED / FLAG_WINDOW_IS_PARTIALLY"
             "_OBSCURED to drop the event explicitly with a user-visible warning."
@@ -3247,12 +3247,12 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "confirm each carries android:filterTouchesWhenObscured=\"true\" in its "
             "layout XML OR setFilterTouchesWhenObscured(true) at construction.",
             "Inspect onTouchEvent / onFilterTouchEventForSecurity overrides in "
-            "sensitive Activities — confirm they check (event.flags & "
+            "sensitive Activities -- confirm they check (event.flags & "
             "MotionEvent.FLAG_WINDOW_IS_OBSCURED) != 0 and reject the event (return "
             "false / consume without action) rather than passing it through to the "
             "default handler.",
             "Search for SYSTEM_ALERT_WINDOW / canDrawOverlays in the app's own manifest "
-            "/ runtime checks — if the app itself uses overlays, verify it cannot be "
+            "/ runtime checks -- if the app itself uses overlays, verify it cannot be "
             "tricked into drawing on top of its OWN sensitive screens by a sibling "
             "process with the same permission (Settings.canDrawOverlays check, view "
             "of foreground app).",
@@ -3290,7 +3290,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "in CookieManager. Any sensitive content rendered (session tokens in URL "
             "fragments, decrypted PII fetched via fetch()) lands in one or more of "
             "these stores. If the WebView is destroyed without clearing, the data "
-            "survives until the user explicitly clears app data — and a forensic "
+            "survives until the user explicitly clears app data -- and a forensic "
             "acquisition (or a subsequent compromise of any other code path with "
             "private-file read access) recovers it. The verification target is that "
             "every Activity / Fragment hosting a WebView with sensitive content calls "
@@ -3308,7 +3308,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
             "clearFormData(), clearSslPreferences(), CookieManager.removeAllCookies, "
             "WebStorage.deleteAllData. Calling only a subset leaves the rest "
             "persistent.",
-            "Inspect WebSettings on the same WebView — confirm setDomStorageEnabled "
+            "Inspect WebSettings on the same WebView -- confirm setDomStorageEnabled "
             "and setDatabaseEnabled are FALSE for WebViews rendering sensitive content "
             "unless explicitly required, and that setCacheMode(LOAD_NO_CACHE) is set "
             "for sensitive responses so the cache layer never holds them.",
@@ -3344,7 +3344,7 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         description=(
             "This control is iOS-specific (UITextField.textContentType / "
-            "UIApplicationDelegate.shouldAllowExtensionPointIdentifier) — Android "
+            "UIApplicationDelegate.shouldAllowExtensionPointIdentifier) -- Android "
             "does not allow apps to filter the system IME. For an Android-only audit "
             "this control is N/A. On cross-platform apps (Flutter, React Native, "
             "KMP) the iOS half ships custom-keyboard rejection via shouldAllow"
@@ -3356,15 +3356,15 @@ _PLATFORM_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         verification_steps=(
             "Confirm the app is Android-only (no iOS counterpart, no Flutter / React "
-            "Native / KMP iOS source bundled in the APK assets) — if Android-only, "
+            "Native / KMP iOS source bundled in the APK assets) -- if Android-only, "
             "mark this control N/A in the report with rationale.",
             "For cross-platform apps, locate the iOS half of the codebase and search "
             "AppDelegate.swift / SceneDelegate.swift for shouldAllowExtension"
-            "PointIdentifier(.keyboard) returning false — absence on a sensitive iOS "
+            "PointIdentifier(.keyboard) returning false -- absence on a sensitive iOS "
             "screen is a finding (verified separately against the IPA, not the APK).",
             "For Flutter apps, search the Dart codebase for TextField "
             "keyboardType: TextInputType.visiblePassword (which hints at iOS "
-            "secureTextEntry mapping) — Flutter does not directly expose the iOS "
+            "secureTextEntry mapping) -- Flutter does not directly expose the iOS "
             "extension-point block, so the iOS host AppDelegate must still enforce "
             "the policy.",
         ),
@@ -3425,7 +3425,7 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
             "Search the code for PackageInfo.signatures / SigningInfo "
             "consumers and flag any path that calls them only to log the "
             "result instead of comparing the byte sequence to a known signer "
-            "constant — signature checks that never assert are noise the "
+            "constant -- signature checks that never assert are noise the "
             "build can still ship without enforcement.",
         ),
         relevant_apis=(
@@ -3466,8 +3466,8 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
             "FLAG_DEBUGGABLE manifest bit clear, Crashlytics / Logcat verbose "
             "channels muted, and Gradle's minify / shrink / proguard passes "
             "active on the release variant. A debuggable release lets any "
-            "process with android.permission.SET_DEBUG_APP — or any local "
-            "user with adb — attach jdwp, dump heap state, set breakpoints, "
+            "process with android.permission.SET_DEBUG_APP -- or any local "
+            "user with adb -- attach jdwp, dump heap state, set breakpoints, "
             "and walk the stack of the production app, which trivially "
             "exposes keys, tokens, and user data the app handles in memory. "
             "The verification target is that the shipped variant has "
@@ -3478,7 +3478,7 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         verification_steps=(
             "Inspect AndroidManifest.xml for android:debuggable on the "
-            "<application> tag — explicit `true` is a fail; `false` or "
+            "<application> tag -- explicit `true` is a fail; `false` or "
             "absent is the documented default. Cross-check ApplicationInfo "
             "FLAG_DEBUGGABLE reads at runtime: any code that branches on "
             "the flag being set indicates the build expects to be "
@@ -3525,7 +3525,7 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
             "DWARF debug sections from the NDK build. A symbolicated .so "
             "lets a security researcher (or anyone with a hex editor and "
             "an objdump) walk every function name, line-number mapping, "
-            "and local-variable layout the developer wrote — turning the "
+            "and local-variable layout the developer wrote -- turning the "
             "lib's protections (custom obfuscation, root checks, integrity "
             "checks) into a glossary. The verification target is that "
             "every shipped .so is stripped of .symtab, .debug_*, and "
@@ -3541,7 +3541,7 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
             "non-empty section; the only kept symbol table should be "
             ".dynsym (required for JNI exports and dlopen).",
             "If the APK ships no native code (no lib/ directory in the "
-            "APK), the control is not applicable — record N/A with the "
+            "APK), the control is not applicable -- record N/A with the "
             "absence as the evidence.",
             "If kept symbols are required (e.g. JNI_OnLoad, "
             "Java_<pkg>_<class>_<method>), confirm only those symbols are "
@@ -3586,7 +3586,7 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
             "key, Log.d / Log.v calls that print API responses and bearer "
             "tokens, Crashlytics breadcrumbs containing PII, and StrictMode "
             "developer-only checks. Any of these paths is a feature the "
-            "release ships, not a debug aid — a research team or anyone with "
+            "release ships, not a debug aid -- a research team or anyone with "
             "access to the binary will find the hidden activity name in the "
             "manifest and the secret PIN string in the code, and the verbose "
             "log lines surface in logcat or in crash-reporter consoles where "
@@ -3605,7 +3605,7 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
             "<intent-filter> for actions like ACTION_VIEW with a debug "
             "scheme (e.g. `appdebug://`).",
             "Search the decompiled tree for Log.v / Log.d / Log.i / "
-            "Log.println calls and for System.out.println — note every "
+            "Log.println calls and for System.out.println -- note every "
             "call that prints a Throwable, a network response body, an "
             "auth header, a token, a session id, a user id, or any field "
             "annotated @SensitiveData. Confirm the release build's "
@@ -3683,7 +3683,7 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
             "(cyclonedx-gradle-plugin, dependency-check-gradle, "
             "`./gradlew dependencyUpdates`) and a vulnerability gate in "
             "CI. Absence of a documented SBOM-on-release process is "
-            "itself a control failure — even if today's snapshot is "
+            "itself a control failure -- even if today's snapshot is "
             "clean, the team has no mechanism to notice tomorrow's CVE.",
         ),
         relevant_apis=(
@@ -3718,7 +3718,7 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
             "Crashlytics or an equivalent is configured) an outbound "
             "report containing local-variable values, request bodies, "
             "and database row contents at the failure site. A crash is "
-            "also a denial-of-service vector — any external untrusted "
+            "also a denial-of-service vector -- any external untrusted "
             "caller that can drive the app into a crash path (a "
             "malformed deep link, an oversized Intent extra, a "
             "NumberFormatException from a manipulated query parameter) "
@@ -3742,7 +3742,7 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
             "point that reads Intent extras, confirm extras are parsed "
             "with typed accessors (getStringExtra / getIntExtra) inside "
             "a try / catch that converts the failure into a "
-            "user-visible error or a safe default — not a process "
+            "user-visible error or a safe default -- not a process "
             "crash that surfaces a stack trace to the caller of "
             "startActivity.",
             "Inspect the Application's uncaught-exception handler (if "
@@ -3777,8 +3777,8 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
         level=MasvsLevel.L1,
         title="Error handling logic in security controls denies access by default.",
         description=(
-            "Security controls — authentication checks, authorization "
-            "gates, signature verifications, certificate validators — "
+            "Security controls -- authentication checks, authorization "
+            "gates, signature verifications, certificate validators -- "
             "must fail closed: when the check cannot reach a definitive "
             "positive result, the path denies the operation. A control "
             "that returns `true` from its catch block (\"the network "
@@ -3934,7 +3934,7 @@ _CODE_CONTROLS: tuple[MasvsControl, ...] = (
             "indicate R8 ran; clear method names indicate it did not.",
             "Inspect AndroidManifest.xml for "
             "android:allowBackup, android:extractNativeLibs, "
-            "android:usesCleartextTraffic, android:networkSecurityConfig — "
+            "android:usesCleartextTraffic, android:networkSecurityConfig -- "
             "the release should set allowBackup=\"false\", "
             "extractNativeLibs=\"false\", usesCleartextTraffic=\"false\", "
             "and reference a network_security_config.xml that denies "
@@ -3992,7 +3992,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "(Play Integrity / SafetyNet Attestation) signal. The verification "
             "target is that the release build references at least one root "
             "signal AND a real response path that activates when the signal "
-            "trips — a logout, a refused transaction, an exit — rather than a "
+            "trips -- a logout, a refused transaction, an exit -- rather than a "
             "Log.d and a swallow."
         ),
         verification_steps=(
@@ -4014,7 +4014,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "and confirm a non-trivial response: app exit (System.exit / "
             "finishAffinity), refusal of login or transaction, server-side "
             "alert. A signal that only writes Log.d / Timber.w and lets the "
-            "code continue is a finding — detection without response gives "
+            "code continue is a finding -- detection without response gives "
             "the operator nothing.",
         ),
         relevant_apis=(
@@ -4058,7 +4058,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "layer (any process with the same UID can attach unless "
             "PTRACE_TRACEME blocks it), and JNI / inferior-process inspection "
             "through /proc/<pid>/mem. A release build that closes JDWP via the "
-            "manifest still leaves native ptrace open, and vice versa — every "
+            "manifest still leaves native ptrace open, and vice versa -- every "
             "channel must be covered. The verification target is that "
             "android:debuggable is false in the release manifest, that the "
             "Java code checks Debug.isDebuggerConnected before sensitive "
@@ -4069,7 +4069,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         verification_steps=(
             "Inspect AndroidManifest.xml for android:debuggable on the "
-            "<application> tag — a release build with debuggable=\"true\" is "
+            "<application> tag -- a release build with debuggable=\"true\" is "
             "a finding regardless of detection logic, because it grants JDWP "
             "to any host running `adb`. Cross-check ApplicationInfo flags at "
             "runtime if the manifest is ambiguous.",
@@ -4118,7 +4118,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         description=(
             "An installed APK can be unpacked, patched, re-signed with a "
-            "different developer certificate, and reinstalled — the OS will "
+            "different developer certificate, and reinstalled -- the OS will "
             "accept the resigned build as a fresh first-install. A privileged "
             "caller (root, a custom recovery, an OEM service running as system) "
             "can rewrite files inside /data/data/<package> while the app is "
@@ -4129,7 +4129,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "The verification target is that the release build performs at "
             "least one signature self-check at startup, that the check compares "
             "against a baked-in constant (not a remote value), and that a "
-            "tamper signal triggers a non-trivial response — refuse to "
+            "tamper signal triggers a non-trivial response -- refuse to "
             "launch, switch to a read-only mode, post a server alert."
         ),
         verification_steps=(
@@ -4139,7 +4139,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "SigningInfo.getApkContentsSigners on API ≥ 28, followed by a "
             "SHA-256 of the resulting byte[] compared to a constant. Flag if "
             "the compared constant is read from a remote source or a writable "
-            "config — that defeats the purpose.",
+            "config -- that defeats the purpose.",
             "Inspect every shipped lib/<abi>/*.so for self-checksum routines "
             "or a build-time hash recorded in the APK (e.g. an asset bundle) "
             "that the JNI bridge verifies at System.loadLibrary time. Absence "
@@ -4147,7 +4147,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "Confirm a non-trivial response on tamper signal: System.exit, "
             "refused login, downgrade to limited operation, server-side alert "
             "via the analytics or telemetry pipeline. A tamper-signal path "
-            "that calls Log.d and returns is detection without response — "
+            "that calls Log.d and returns is detection without response -- "
             "flag as a finding.",
         ),
         relevant_apis=(
@@ -4246,7 +4246,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
         description=(
             "Emulators (Android Studio AVD, Genymotion, BlueStacks) give an analyst "
             "instrumentation root, full memory inspection, network MITM, snapshot / "
-            "rollback, and arbitrary system properties — all without the rooted-device "
+            "rollback, and arbitrary system properties -- all without the rooted-device "
             "fingerprint that RESILIENCE-1 catches. The verification target is that "
             "the app inspects multiple emulator-only signals and responds (alert, "
             "feature degradation, exit) rather than running normally. Signals: "
@@ -4261,11 +4261,11 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "generic / sdk / sdk_gphone / google_sdk / Emulator / Android SDK substrings.",
             "Search for SystemProperties.get(\"ro.kernel.qemu\") or "
             "Runtime.exec(\"getprop ro.kernel.qemu\") and confirm the value is "
-            "compared against \"1\" — the canonical AVD marker. Also check for "
+            "compared against \"1\" -- the canonical AVD marker. Also check for "
             "ro.hardware containing goldfish / ranchu.",
             "Search for file probes of emulator-only paths: /dev/qemu_pipe, "
             "/dev/socket/qemud, /system/lib/libc_malloc_debug_qemu.so, "
-            "/system/bin/qemu-props, /sys/qemu_trace — any File.exists / new File path "
+            "/system/bin/qemu-props, /sys/qemu_trace -- any File.exists / new File path "
             "checking these is a positive signal. Bonus: SensorManager.getDefaultSensor"
             "(TYPE_ACCELEROMETER) returning null is a strong emulator signal on real "
             "device targets.",
@@ -4304,7 +4304,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
         description=(
             "Runtime in-memory tampering (Frida method hooks, Substrate inline patches, "
             "Cydia Substrate, Xposed) replaces method implementations without touching "
-            "on-disk artifacts — so RESILIENCE-3's static signature check sees a clean "
+            "on-disk artifacts -- so RESILIENCE-3's static signature check sees a clean "
             "APK while the running process answers to the attacker. Defense requires "
             "the app to compute checksums / signatures of its own loaded classes and "
             ".so segments at runtime and compare against expected values. The "
@@ -4322,10 +4322,10 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "Search Java/Kotlin for dex integrity checks: loaders walking "
             "Class.forName / ClassLoader.loadClass and computing SHA-256 of returned "
             "byte[] via reflection, comparing against an embedded baseline. Frameworks "
-            "like DexGuard, Appdome, Promon SHIELD wrap this — recognize their "
+            "like DexGuard, Appdome, Promon SHIELD wrap this -- recognize their "
             "marker classes.",
-            "Verify the response on detection — silent counter increment (preferred), "
-            "delayed exit, feature flag flip — rather than immediate kill which is "
+            "Verify the response on detection -- silent counter increment (preferred), "
+            "delayed exit, feature flag flip -- rather than immediate kill which is "
             "the obvious failure mode an attacker can trace and patch.",
         ),
         relevant_apis=(
@@ -4370,7 +4370,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "The verification target is that for each of RESILIENCE-1 through "
             "RESILIENCE-6 categories, the app implements at least 3 mechanisms drawn "
             "from distinct signal sources (file system, runtime properties, native "
-            "syscalls, network) — never relying on a single check the attacker can "
+            "syscalls, network) -- never relying on a single check the attacker can "
             "patch out with a Frida one-liner."
         ),
         verification_steps=(
@@ -4379,10 +4379,10 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "every call site / check in the app and count distinct mechanisms.",
             "Confirm each category has ≥ 3 distinct mechanisms drawn from DIFFERENT "
             "signal classes (file probe + system property + native syscall + Java API "
-            "+ network round-trip) — five copies of File.exists are one mechanism, "
+            "+ network round-trip) -- five copies of File.exists are one mechanism, "
             "not five.",
             "Verify the mechanisms are wired into INDEPENDENT branches (no single "
-            "boolean OR'd as the final verdict that a Frida hook can flip — each "
+            "boolean OR'd as the final verdict that a Frida hook can flip -- each "
             "mechanism should update an independent counter and the decision should "
             "consume the counter sum).",
         ),
@@ -4420,7 +4420,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "Stealth + delayed responses force the attacker into a binary-search bug "
             "hunt: a counter incremented on detection, sampled at a random later "
             "interval, that subtly degrades the experience (wrong network endpoint, "
-            "slightly-wrong cryptographic output, gradual session expiration) — these "
+            "slightly-wrong cryptographic output, gradual session expiration) -- these "
             "look like flaky behaviour, not a security check. The verification target "
             "is that the app's response inventory includes at least 3 distinct "
             "response types: silent counter, delayed exit (timer-based, hours later), "
@@ -4435,7 +4435,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "is the obvious failure mode; presence of ONLY immediate exit is a "
             "finding.",
             "Verify the delayed/stealth responses have randomization (not exactly N "
-            "minutes after detection — drawn from a distribution) so an attacker "
+            "minutes after detection -- drawn from a distribution) so an attacker "
             "doing repeated runs cannot correlate the response timing back to the "
             "trigger.",
         ),
@@ -4482,17 +4482,17 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "method does not bypass the entire chain."
         ),
         verification_steps=(
-            "Decompile classes.dex and grep for obvious defense names — "
+            "Decompile classes.dex and grep for obvious defense names -- "
             "checkRoot / isJailbroken / antiDebug / antiTamper / isEmulator. Hits "
             "with these names in plaintext are a finding (defenses are findable in "
             "seconds).",
             "Search for plaintext strings that point at defenses: 'su', 'Magisk', "
             "'frida-server', 'xposed', '/system/xbin'. These should be encrypted "
             "(string-encryption library marker), Base64-encoded, or computed at "
-            "runtime from XOR / per-string keys — never the bare literal.",
+            "runtime from XOR / per-string keys -- never the bare literal.",
             "Confirm minification flags in the build configuration: minifyEnabled "
             "true + R8 fullMode true + proguard-rules including -repackageclasses + "
-            "-allowaccessmodification — absence (or minifyEnabled false on a release "
+            "-allowaccessmodification -- absence (or minifyEnabled false on a release "
             "build) is itself a finding.",
         ),
         relevant_apis=(
@@ -4524,14 +4524,14 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "A stolen session token, a copied EncryptedSharedPreferences blob, or a "
             "backup restored onto a different device should be unusable on the new "
             "device. Device binding wraps sensitive credentials with material derived "
-            "from properties unique to THIS device — Settings.Secure.ANDROID_ID, "
+            "from properties unique to THIS device -- Settings.Secure.ANDROID_ID, "
             "Build.SERIAL, a Keystore-generated key (which is by definition "
             "device-bound), DRM Widevine ID, hardware-attested SafetyNet / Play "
             "Integrity nonce. The verification target is that sensitive credentials "
             "(session token, OAuth refresh token, payment tokenisation key) are "
             "encrypted with a key derived from at least 2 device-unique sources, "
             "and that the unwrap path fails (forcing re-authentication) when any "
-            "source value changes — proving the credential cannot be reused on a "
+            "source value changes -- proving the credential cannot be reused on a "
             "different device."
         ),
         verification_steps=(
@@ -4540,7 +4540,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "Settings.Secure.ANDROID_ID + Keystore key (most common), or "
             "ANDROID_ID + DRM ID, or Keystore + Play Integrity attestation token.",
             "Verify the unwrap path re-reads the binding source on every credential "
-            "load and fails fast if values changed — a copied credential blob on a "
+            "load and fails fast if values changed -- a copied credential blob on a "
             "different device will see a different ANDROID_ID and trip the fail "
             "branch.",
             "Inspect for SafetyNet / Play Integrity calls: SafetyNet.attest, "
@@ -4583,7 +4583,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "them to run the app under a debugger (which RESILIENCE-2 should "
             "frustrate) just to recover the decrypted dex from memory. The "
             "verification target is that the on-disk APK does NOT contain readable "
-            "dex for sensitive classes — dex either lives encrypted in assets/ and "
+            "dex for sensitive classes -- dex either lives encrypted in assets/ and "
             "decrypted by a native loader at startup, OR sensitive logic is moved "
             "into a .so and the .so itself is packed (UPX, custom UPX-derivatives, "
             "Themida) so static disasm yields gibberish until unpacked. Bonus: "
@@ -4597,11 +4597,11 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "runtime).",
             "Inspect assets/ and lib/<abi>/ for files with high entropy (≥ 7.5 bits/"
             "byte = encrypted/packed). Cross-reference with native code that "
-            "reads + decrypts these assets at startup — if present, the protected "
+            "reads + decrypts these assets at startup -- if present, the protected "
             "code lives in those blobs, not in dex.",
             "Run `strings` against every libapp.so / native binary. If sensitive "
             "URLs, hardcoded secrets, API endpoints, or method names appear as "
-            "plaintext, the native code is not protected — note that legitimate "
+            "plaintext, the native code is not protected -- note that legitimate "
             "OpenSSL / Boost strings will appear regardless, so focus on "
             "app-specific identifiers.",
         ),
@@ -4644,7 +4644,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "symbolic execution against MBA expressions). The verification target is "
             "that sensitive computations either (a) execute inside a hardware-isolated "
             "Trusted Execution Environment (Keystore StrongBox, Trusty TA, Knox TEE) "
-            "where the host process cannot read the intermediate state — preferred — "
+            "where the host process cannot read the intermediate state -- preferred -- "
             "or (b) use modern obfuscation appropriate to the threat model: control-"
             "flow flattening (OLLVM, Tigress), opaque predicates, virtualisation, "
             "mixed-boolean-arithmetic transforms. Plain R8 alone is a finding for "
@@ -4660,7 +4660,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "KeyGenParameterSpec, Knox SDK imports, Trusty TA proxy calls, Widevine "
             "L1 attestation.",
             "Decompile native sensitive routines and assess CFG complexity vs the "
-            "size of the function — a 50-byte function with 100 basic blocks and "
+            "size of the function -- a 50-byte function with 100 basic blocks and "
             "MBA arithmetic is obfuscated; a 50-byte function with 3 blocks is not.",
         ),
         relevant_apis=(
@@ -4693,7 +4693,7 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         description=(
             "TLS terminates at the server's outermost reverse proxy / load balancer "
-            "— after that point the request body travels in cleartext across the "
+            "-- after that point the request body travels in cleartext across the "
             "datacenter network, into application logs, into observability pipelines "
             "(Datadog APM, Sentry breadcrumbs, Splunk syslog), and into backup tapes. "
             "An attacker who compromises any internal hop, or who exfiltrates a log "
@@ -4702,13 +4702,13 @@ _RESILIENCE_CONTROLS: tuple[MasvsControl, ...] = (
             "JOSE JWE, custom AES-GCM with per-session keys negotiated via ECDH) "
             "wraps the sensitive content in a second envelope only the destination "
             "service can open. The verification target is presence of such an "
-            "envelope for sensitive endpoints — sensitive request bodies encrypted "
+            "envelope for sensitive endpoints -- sensitive request bodies encrypted "
             "with a session key whose private half lives only on the application "
             "server, not on the TLS-terminating proxy."
         ),
         verification_steps=(
             "Enumerate sensitive request endpoints (payment, account-update, "
-            "high-value-transfer) and inspect the request body shape — confirm the "
+            "high-value-transfer) and inspect the request body shape -- confirm the "
             "body is a JOSE compact serialisation (header.encrypted_key.iv."
             "ciphertext.tag) or a custom AES-GCM envelope, not plain JSON.",
             "Trace the key-negotiation path: ECDH against a server-published public "
@@ -4754,9 +4754,9 @@ _PRIVACY_CONTROLS: tuple[MasvsControl, ...] = (
         ),
         description=(
             "Permissions and the platform APIs they gate are the boundary that "
-            "decides what a compromised module — a third-party SDK, a "
+            "decides what a compromised module -- a third-party SDK, a "
             "WebView-loaded marketing page, a deep-link handler that took a "
-            "crafted intent — can reach. Every permission the manifest "
+            "crafted intent -- can reach. Every permission the manifest "
             "declares but the app never exercises is residual blast radius "
             "for free; every dangerous permission requested without a runtime "
             "prompt at the moment of need trains the user to accept future "
@@ -4778,7 +4778,7 @@ _PRIVACY_CONTROLS: tuple[MasvsControl, ...] = (
             "decompiled tree (Manifest.permission.<NAME> string literal, "
             "checkSelfPermission(<NAME>) call site, requestPermissions "
             "array containing it). Flag any permission declared in the "
-            "manifest with zero non-test caller references — that is "
+            "manifest with zero non-test caller references -- that is "
             "residual blast radius left over from a removed feature.",
             "For every dangerous permission (READ_CONTACTS, "
             "ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, READ_PHONE_STATE, "
@@ -4839,8 +4839,8 @@ _PRIVACY_CONTROLS: tuple[MasvsControl, ...] = (
             "persistent device identifiers."
         ),
         description=(
-            "Persistent device identifiers — IMEI, IMSI, ICCID, hardware "
-            "MAC, Build.SERIAL, ANDROID_ID — survive app uninstall and "
+            "Persistent device identifiers -- IMEI, IMSI, ICCID, hardware "
+            "MAC, Build.SERIAL, ANDROID_ID -- survive app uninstall and "
             "reinstall, span apps signed by different keys, and on older "
             "Android versions are readable by any process holding "
             "READ_PHONE_STATE. An app that collects one or more of them, "
@@ -4858,7 +4858,7 @@ _PRIVACY_CONTROLS: tuple[MasvsControl, ...] = (
             "advertising-id consumer respects the limit-ad-tracking signal."
         ),
         verification_steps=(
-            "Search for retrievals of persistent telephony identifiers — "
+            "Search for retrievals of persistent telephony identifiers -- "
             "TelephonyManager.getDeviceId, getImei, getMeid, "
             "getSubscriberId, getSimSerialNumber. Each is a finding "
             "unless the surrounding code documents a carrier-auth or "
@@ -4875,7 +4875,7 @@ _PRIVACY_CONTROLS: tuple[MasvsControl, ...] = (
             "Search for hardware MAC reads via WifiInfo.getMacAddress, "
             "BluetoothAdapter.getAddress, or NetworkInterface enumeration "
             "looking for wlan0 / eth0. Modern Android randomizes these "
-            "but legacy code paths still find them — flag any value that "
+            "but legacy code paths still find them -- flag any value that "
             "reaches a network call or a SharedPreferences write.",
             "Search for AdvertisingIdClient.getAdvertisingIdInfo usage "
             "and confirm the consumer checks "
@@ -4943,14 +4943,14 @@ _PRIVACY_CONTROLS: tuple[MasvsControl, ...] = (
         verification_steps=(
             "Search the resource bundle (strings.xml, asset HTML) and "
             "the AndroidManifest <meta-data> tags for a reachable "
-            "privacy-policy URL — common patterns: a string resource "
+            "privacy-policy URL -- common patterns: a string resource "
             "named privacy_policy / privacyPolicy / privacy_url, a "
             "TextView setText reference, an Intent.ACTION_VIEW with a "
             "Uri pointing at /privacy / /legal / /privacy-policy. "
             "Absence of any reachable URL is a finding for any app "
             "shipping to Play (Play policy requires it).",
             "Enumerate every statically-linked third-party SDK by "
-            "scanning the package list for known prefixes — "
+            "scanning the package list for known prefixes -- "
             "com.google.firebase.analytics, com.google.firebase."
             "crashlytics, com.mixpanel, com.amplitude, com.appsflyer, "
             "io.branch.referral, io.sentry, com.bugsnag, "
@@ -5005,7 +5005,7 @@ _PRIVACY_CONTROLS: tuple[MasvsControl, ...] = (
         group=MasvsGroup.PRIVACY,
         level=MasvsLevel.L1,
         title=(
-            "The app gives the user control over their personal data — "
+            "The app gives the user control over their personal data -- "
             "access, deletion, and withdrawal of consent."
         ),
         description=(
@@ -5038,7 +5038,7 @@ _PRIVACY_CONTROLS: tuple[MasvsControl, ...] = (
             "path on an app that supports account creation is a finding "
             "under Play policy.",
             "Search for analytics / crash-reporting opt-out toggles "
-            "wired to real SDK calls — "
+            "wired to real SDK calls -- "
             "FirebaseAnalytics.setAnalyticsCollectionEnabled(false), "
             "FirebaseCrashlytics.setCrashlyticsCollectionEnabled(false), "
             "AppsFlyerLib.stop(true), Mixpanel.optOutTracking. A "
@@ -5046,7 +5046,7 @@ _PRIVACY_CONTROLS: tuple[MasvsControl, ...] = (
             "boolean without reaching the SDK is a finding because the "
             "SDK continues collecting until the next app launch.",
             "Search for a consent-management gate that runs before any "
-            "non-essential SDK initialization — Google UMP "
+            "non-essential SDK initialization -- Google UMP "
             "ConsentInformation.requestConsentInfoUpdate + ConsentForm, "
             "a custom GDPR / CCPA banner that stores the choice and a "
             "conditional branch in Application.onCreate / "

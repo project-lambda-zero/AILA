@@ -2,7 +2,7 @@
  * system-csv-import.spec.ts
  *
  * E2E tests for the CSV import dialog on /systems.
- * Uses REAL PostgreSQL backend — no mocks, no MSW, no route intercepts.
+ * Uses REAL PostgreSQL backend -- no mocks, no MSW, no route intercepts.
  *
  * Auth: POST /auth/login with local dev credentials, token injected via localStorage.
  * Data: CSV content uploaded via Playwright's setInputFiles API.

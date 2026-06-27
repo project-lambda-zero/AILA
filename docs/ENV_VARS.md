@@ -15,7 +15,7 @@ have. Required keys block boot when missing.
 | `AILA_DATABASE_URL` | `postgresql+asyncpg://postgres:changeme@localhost:5432/aila` | SQLAlchemy URL | `config.py` |
 | `AILA_PLATFORM_REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis URL | ConfigRegistry override (`platform.redis_url`) |
 | `AILA_JWT_SECRET_KEY` | random 32-byte hex (regenerated per process if unset) | hex string | `config.py` |
-| `AILA_ADMIN_PASSWORD` | *(unset — required on first boot)* | string | `api/app.py` |
+| `AILA_ADMIN_PASSWORD` | *(unset -- required on first boot)* | string | `api/app.py` |
 | `AILA_CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173` | comma-separated URLs | `api/app.py` |
 | `OPENAI_API_KEY` | *(unset)* | string | LLM client |
 | `AILA_PLATFORM_LLM_DEFAULT_MODEL` | `openai/gpt-4o-mini` (fallback) | string | ConfigRegistry override (`platform.llm_default_model`) |
@@ -47,8 +47,8 @@ have. Required keys block boot when missing.
 - `AUDIT_MCP_DIR`, `IDA_HEADLESS_DIR`, `AUDIT_MCP_WORKERS`
 
 **VR-specific runtime knobs:**
-- `VR_INVESTIGATION_WALL_CLOCK_HOURS` (default `6`) — investigation lifetime; the emit-side cap and the reaper both consult this.
-- `VR_INVESTIGATION_MESSAGE_CAP` (default `1000`) — message ceiling per investigation, reaper-enforced.
+- `VR_INVESTIGATION_WALL_CLOCK_HOURS` (default `6`) -- investigation lifetime; the emit-side cap and the reaper both consult this.
+- `VR_INVESTIGATION_MESSAGE_CAP` (default `1000`) -- message ceiling per investigation, reaper-enforced.
 
 **audit-mcp dev knobs (separate repo, dev only):**
 - `AUDIT_MCP_THREAD_POOL_LIMIT` (default `64`), `AUDIT_MCP_TOOL_CAP_<TOOLNAME>`, `AUDIT_MCP_TIMEOUT_<TOOLNAME>`, `AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S` (default `7200`).
@@ -56,7 +56,7 @@ have. Required keys block boot when missing.
 On Windows, `start.sh` spawns workers via PowerShell `Start-Process`, which strips
 the bash environment. The `spawn()` helper reads `.env` line-by-line and prepends
 each `KEY=VAL` as `set KEY=VAL && ` in the cmd block so detached workers inherit
-the configured environment. `AUDIT_MCP_WORKERS` is the exception — it MUST stay on
+the configured environment. `AUDIT_MCP_WORKERS` is the exception -- it MUST stay on
 the CLI line passed to `audit_mcp` because the env-prefix path does not reach
 through PowerShell.
 
@@ -123,7 +123,7 @@ through PowerShell.
 ### AILA_ADMIN_PASSWORD
 
 - **Default:** *(unset)*
-- **Type:** String (plaintext password — argon2id-hashed before storage)
+- **Type:** String (plaintext password -- argon2id-hashed before storage)
 - **Used in:** `src/aila/api/app.py` (lifespan startup, admin-user bootstrap)
 - **Production guidance:** Required on first boot when no `UserRecord` row exists; startup raises `RuntimeError` otherwise so an unprotected admin user is never created automatically. Creates the `admin` user with this password (argon2id-hashed), then logs a notice. **Remove this variable after the first boot succeeds.** Never commit a real value.
 
@@ -145,7 +145,7 @@ through PowerShell.
 
 ### AILA_PLATFORM_REDIS_URL
 
-- **Default:** *(empty)* — `.env.example` sets `redis://127.0.0.1:6379/0`
+- **Default:** *(empty)* -- `.env.example` sets `redis://127.0.0.1:6379/0`
 - **Type:** Redis connection URL
 - **Used in:** ConfigRegistry override for `platform.redis_url`
 - **Production guidance:** Required for the ARQ task queue and the SSE event bus. Empty falls back to in-process synchronous execution (development only). Point at a real Redis 6+ / Memurai instance for any deployment with workers.
@@ -153,7 +153,7 @@ through PowerShell.
 ### AILA_PLATFORM_LLM_DEFAULT_MODEL / _BASE_URL / _DEFAULT_MAX_TOKENS
 
 - **Used in:** `src/aila/platform/llm/config.py` (`LLMConfigResolver`)
-- **Resolution:** ConfigRegistry env-var override path. These keys live under the `platform` namespace but are NOT in `PlatformConfigSchema` — the env var sets the value, the DB row carries persistent overrides, and the resolver bakes in its own fallbacks (`openai/gpt-4o-mini`, `https://openrouter.ai/api/v1`, `4096`) when nothing matches.
+- **Resolution:** ConfigRegistry env-var override path. These keys live under the `platform` namespace but are NOT in `PlatformConfigSchema` -- the env var sets the value, the DB row carries persistent overrides, and the resolver bakes in its own fallbacks (`openai/gpt-4o-mini`, `https://openrouter.ai/api/v1`, `4096`) when nothing matches.
 - **Production guidance:** Set per deployment to pin the default model/provider for every task type. Per-task-type overrides land under `AILA_PLATFORM_LLM_MODEL_<TASK_TYPE>` and `AILA_PLATFORM_LLM_MAX_TOKENS_<TASK_TYPE>`.
 
 ### AILA_LLM_TIMEOUT_SECONDS
@@ -328,15 +328,15 @@ These standard environment variables are also read by AILA:
 
 Before deploying to production, verify these are set:
 
-- [ ] `AILA_JWT_SECRET_KEY` — **required**; prevents token invalidation on restart.
-- [ ] `AILA_DATABASE_URL` — points at the production PostgreSQL with pgvector.
-- [ ] `AILA_PLATFORM_REDIS_URL` — points at the production Redis / Memurai.
-- [ ] `AILA_ADMIN_PASSWORD` — set on first boot, then removed once the admin user exists.
-- [ ] `AILA_CORS_ORIGINS` — exact frontend origin(s); never `*`.
-- [ ] `AILA_API_HOST=0.0.0.0` — when exposing beyond localhost behind a reverse proxy.
-- [ ] `AILA_SECRET_KEYRING_PATH` — secure, backed-up location for the AES keyring.
-- [ ] `AILA_PLATFORM_LLM_DEFAULT_MODEL`, `AILA_PLATFORM_LLM_BASE_URL`, and `OPENAI_API_KEY` (or equivalent provider key) — LLM provider wired before first request.
-- [ ] `AILA_BOOTSTRAP_KEY` — only when bootstrapping the first API key; remove after the key has been recorded.
+- [ ] `AILA_JWT_SECRET_KEY` -- **required**; prevents token invalidation on restart.
+- [ ] `AILA_DATABASE_URL` -- points at the production PostgreSQL with pgvector.
+- [ ] `AILA_PLATFORM_REDIS_URL` -- points at the production Redis / Memurai.
+- [ ] `AILA_ADMIN_PASSWORD` -- set on first boot, then removed once the admin user exists.
+- [ ] `AILA_CORS_ORIGINS` -- exact frontend origin(s); never `*`.
+- [ ] `AILA_API_HOST=0.0.0.0` -- when exposing beyond localhost behind a reverse proxy.
+- [ ] `AILA_SECRET_KEYRING_PATH` -- secure, backed-up location for the AES keyring.
+- [ ] `AILA_PLATFORM_LLM_DEFAULT_MODEL`, `AILA_PLATFORM_LLM_BASE_URL`, and `OPENAI_API_KEY` (or equivalent provider key) -- LLM provider wired before first request.
+- [ ] `AILA_BOOTSTRAP_KEY` -- only when bootstrapping the first API key; remove after the key has been recorded.
 
 ---
 

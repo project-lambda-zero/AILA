@@ -1,4 +1,4 @@
-"""MCP call log table — operator audit trail of every delegated call.
+"""MCP call log table -- operator audit trail of every delegated call.
 
 One row is written per ``AuditMcpBridgeTool.forward()`` /
 ``IDABridgeTool.forward()`` invocation, capturing the action, latency,

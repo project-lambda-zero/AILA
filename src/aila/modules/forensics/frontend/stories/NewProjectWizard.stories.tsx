@@ -59,7 +59,7 @@ function makeQC(systems?: RegisteredSystem[]): QueryClient {
 }
 
 // ---------------------------------------------------------------------------
-// Meta — wizard form screen
+// Meta -- wizard form screen
 // ---------------------------------------------------------------------------
 
 const meta = {
@@ -84,7 +84,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const BlankForm: Story = {
-  name: "Blank Form — systems loaded",
+  name: "Blank Form -- systems loaded",
   parameters: { queryClient: makeQC(SYSTEMS) },
 };
 
@@ -94,11 +94,11 @@ export const SystemsLoading: Story = {
 };
 
 // ---------------------------------------------------------------------------
-// Readiness check states — use MachineReadinessCheck directly
+// Readiness check states -- use MachineReadinessCheck directly
 // ---------------------------------------------------------------------------
 
 export const ReadinessChecking: Story = {
-  name: "Readiness — checking (loading)",
+  name: "Readiness -- checking (loading)",
   render: () => (
     <MachineReadinessCheck
       readinessResult={null}
@@ -110,7 +110,7 @@ export const ReadinessChecking: Story = {
 };
 
 export const ReadinessAllPass: Story = {
-  name: "Readiness — all tools installed",
+  name: "Readiness -- all tools installed",
   render: () => (
     <MachineReadinessCheck
       readinessResult={READINESS_ALL_PASS}
@@ -122,7 +122,7 @@ export const ReadinessAllPass: Story = {
 };
 
 export const ReadinessPartialFail: Story = {
-  name: "Readiness — some tools missing",
+  name: "Readiness -- some tools missing",
   render: () => (
     <MachineReadinessCheck
       readinessResult={READINESS_PARTIAL_FAIL}
@@ -134,7 +134,7 @@ export const ReadinessPartialFail: Story = {
 };
 
 export const ReadinessSSHUnreachable: Story = {
-  name: "Readiness — SSH unreachable",
+  name: "Readiness -- SSH unreachable",
   render: () => (
     <MachineReadinessCheck
       readinessResult={READINESS_SSH_FAIL}

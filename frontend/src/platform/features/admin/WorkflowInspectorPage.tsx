@@ -1,5 +1,5 @@
 /**
- * WorkflowInspectorPage — Admin Workflow Inspector at /admin/workflows.
+ * WorkflowInspectorPage -- Admin Workflow Inspector at /admin/workflows.
  *
  * Requires admin role at the route level (defense-in-depth).
  * Backend endpoints also independently enforce admin role.
@@ -72,7 +72,7 @@ function truncateRunId(runId: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// CopyButton — copies text to clipboard, shows brief checkmark
+// CopyButton -- copies text to clipboard, shows brief checkmark
 // ---------------------------------------------------------------------------
 
 function CopyButton({ text }: { text: string }) {
@@ -281,7 +281,7 @@ function RunDetailPanel({ run }: RunDetailPanelProps) {
       </div>
     </div>
     
-    {/* Transition timeline — reused from tasks/ (not duplicated) */}
+    {/* Transition timeline -- reused from tasks/ (not duplicated) */}
     <TransitionTimeline
       rows={transitions ?? []}
       isLoading={isLoading}
@@ -375,7 +375,7 @@ function FilterBar({
             ? "border-accent/60 bg-accent/10 text-accent"
             : "border-border text-muted-foreground hover:border-border hover:text-foreground",
         ].join(" ")}
-        title={autoRefresh ? "Auto-refresh on (30s) — click to disable" : "Enable auto-refresh (30s)"}
+        title={autoRefresh ? "Auto-refresh on (30s) -- click to disable" : "Enable auto-refresh (30s)"}
       >
         <ArrowClockwise className={`h-3 w-3 ${autoRefresh ? "animate-spin" : ""}`} style={autoRefresh ? { animationDuration: "3s" } : undefined} />
         Auto-refresh
@@ -409,7 +409,7 @@ export function WorkflowInspectorPage() {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
-  // API params — only pass non-empty strings
+  // API params -- only pass non-empty strings
   const apiParams = useMemo(
     () => ({
       definition_id: filters.definition_id || undefined,

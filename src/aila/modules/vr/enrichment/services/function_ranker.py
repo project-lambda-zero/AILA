@@ -1,7 +1,7 @@
 """Function ranking dispatcher.
 
 Routes by target kind to the appropriate MCP server and normalizes the
-response into ``FunctionRanking``. No heuristics in Python — the MCPs
+response into ``FunctionRanking``. No heuristics in Python -- the MCPs
 already implement graph-aware ranking:
 
   source target  → audit-mcp ``fuzzing_targets`` (graph-aware ranked list,
@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math  # fix §232 — log-scale normalization in _rank_binary
+import math  # fix §232 -- log-scale normalization in _rank_binary
 from typing import Any, Protocol
 
 from sqlmodel import select as _select
@@ -53,7 +53,7 @@ _log = logging.getLogger(__name__)
 
 
 # Parser-sink API list used to bucket IDA find_api_call_sites results
-# per function. Limited to the unambiguous high-signal APIs — the
+# per function. Limited to the unambiguous high-signal APIs -- the
 # audit-mcp source path uses a richer taint analysis and doesn't need
 # this list.
 _PARSER_SINK_APIS: tuple[str, ...] = (
@@ -63,7 +63,7 @@ _PARSER_SINK_APIS: tuple[str, ...] = (
     "lstrcpyA", "lstrcpyW", "lstrcatA", "lstrcatW",
 )
 
-# fix §231 — per-sink "tainted argument index" lookup. The previous
+# fix §231 -- per-sink "tainted argument index" lookup. The previous
 # inline `sink_argument_index=2 if sink in {'memcpy','memmove'} else 0`
 # was wrong for ~70% of the unambiguous parser-sink APIs above (e.g.
 # strcpy/strcat/sprintf all have their tainted source at a non-zero
@@ -74,7 +74,7 @@ _PARSER_SINK_APIS: tuple[str, ...] = (
 # / lstr family. ``None`` means "no specific tainted-source argument"
 # (gets() pulls from stdin, scanf() from stdin) and the deep-assess
 # call is skipped entirely for that sink. Anything not in the table
-# falls back to 0 via ``.get(sink, 0)`` — a deliberately conservative
+# falls back to 0 via ``.get(sink, 0)`` -- a deliberately conservative
 # default that still lets the IDA bridge produce a verdict.
 _SINK_TAINT_ARG: dict[str, int | None] = {
     "strcpy":   1,
@@ -88,7 +88,7 @@ _SINK_TAINT_ARG: dict[str, int | None] = {
     "execve":   0,
     "popen":    0,
     "fopen":    0,
-    "gets":     None,   # reads from stdin — no tainted argument
+    "gets":     None,   # reads from stdin -- no tainted argument
     "recv":     1,
     "recvfrom": 1,
     "read":     1,
@@ -102,11 +102,11 @@ _SINK_TAINT_ARG: dict[str, int | None] = {
     "lstrcpyW":  1,
     "lstrcatA":  1,
     "lstrcatW":  1,
-    # scanf family — vsprintf/sscanf/scanf/fscanf write into varargs.
+    # scanf family -- vsprintf/sscanf/scanf/fscanf write into varargs.
     "vsprintf": 2,
     "sscanf":   0,      # input string at arg 0
-    "scanf":    None,   # reads from stdin — no tainted argument
-    "fscanf":   None,   # reads from FILE* stream — no tainted argument
+    "scanf":    None,   # reads from stdin -- no tainted argument
+    "fscanf":   None,   # reads from FILE* stream -- no tainted argument
 }
 
 
@@ -116,7 +116,7 @@ class McpCallable(Protocol):
 
     Both ``IDABridgeTool`` and ``AuditMcpBridgeTool`` satisfy this
     protocol. The dispatcher takes the two callables as constructor
-    arguments so it's unit-testable against fakes — no live MCP server
+    arguments so it's unit-testable against fakes -- no live MCP server
     required for tests.
     """
 
@@ -180,7 +180,7 @@ class FunctionRankingDispatcher:
                     ranking = await self._rank_source(target_id, handles, tracker)
                 elif target_row.kind in {
                     TargetKind.NATIVE_BINARY.value,
-                    TargetKind.ANDROID_APK.value,  # fix §228 — canonical name (TargetKind.APK never existed)
+                    TargetKind.ANDROID_APK.value,  # fix §228 -- canonical name (TargetKind.APK never existed)
                     TargetKind.IPA.value,
                     TargetKind.JAR.value,
                     TargetKind.DOTNET_ASSEMBLY.value,
@@ -195,7 +195,7 @@ class FunctionRankingDispatcher:
                         "is not rankable (only SOURCE_REPO + binary kinds supported)",
                     )
 
-                # Persist into capability_profile.function_ranking — same
+                # Persist into capability_profile.function_ranking -- same
                 # commit as the stage's DONE transition (no crash window
                 # between persisting work + recording state).
                 existing = json.loads(target_row.capability_profile_json or "{}")
@@ -209,10 +209,10 @@ class FunctionRankingDispatcher:
                 )
                 return ranking
         except StageAlreadyDoneError:
-            _log.info("function_ranker: target %s already ranked — skip", target_id)
+            _log.info("function_ranker: target %s already ranked -- skip", target_id)
             return None
         except StageInFlightError:
-            _log.info("function_ranker: target %s ranking in flight — skip", target_id)
+            _log.info("function_ranker: target %s ranking in flight -- skip", target_id)
             return None
 
     async def _rank_source(
@@ -224,7 +224,7 @@ class FunctionRankingDispatcher:
         index_id = handles.get("audit_mcp_index_id")
         if not index_id:
             raise FunctionRankerError(
-                f"target {target_id} not analyzed yet — POST "
+                f"target {target_id} not analyzed yet -- POST "
                 "/vr/targets/{id}/analyze or wait for auto-ingestion",
             )
 
@@ -232,11 +232,11 @@ class FunctionRankingDispatcher:
             action="fuzzing_targets", index_id=index_id, limit=self._top_k,
         )
 
-        # Async pattern — audit-mcp returns 'pending' + task_id for heavy
+        # Async pattern -- audit-mcp returns 'pending' + task_id for heavy
         # work (firefox-scale GPU CSR build + ranking). Poll until ready
         # or until we're inside the safety margin before the stage's
         # hard deadline.
-        # fix §229 — was hardcoded at 180 polls × 5 s = 15 min, half the
+        # fix §229 -- was hardcoded at 180 polls × 5 s = 15 min, half the
         # FUNCTION_RANKING stage's 30 min budget. Now poll up to 30 s
         # before the tracker's stage_timeout_s elapses, so audit-mcp
         # gets the full window the stage tracker advertises.
@@ -249,7 +249,7 @@ class FunctionRankingDispatcher:
             task_id = resp.get("task_id") or resp.get("id")
             if not task_id:
                 # 'pending' without a task_id is a contract violation
-                # we can't recover from — fail loud rather than spin.
+                # we can't recover from -- fail loud rather than spin.
                 raise FunctionRankerError(
                     f"audit-mcp fuzzing_targets returned pending with no task_id: {resp!r}",
                 )
@@ -284,11 +284,11 @@ class FunctionRankingDispatcher:
         binary_id = handles.get("binary_id")
         if not binary_id:
             raise FunctionRankerError(
-                f"target {target_id} not analyzed yet — POST "
+                f"target {target_id} not analyzed yet -- POST "
                 "/vr/targets/{id}/analyze or wait for auto-ingestion",
             )
 
-        # fix §230 — parser-sink fan-out in parallel. Each
+        # fix §230 -- parser-sink fan-out in parallel. Each
         # find_api_call_sites takes ~30 s and we issue 5+ of them; the
         # sequential loop blocked the binary path for 2.5+ min before
         # the deep-assess loop even started. Bridge concurrency is
@@ -337,7 +337,7 @@ class FunctionRankingDispatcher:
         ordered = sorted(bucket.items(), key=lambda kv: kv[1]["hits"], reverse=True)
         max_hits = ordered[0][1]["hits"] if ordered else 1
 
-        # fix §230 — deep assess_exploitability fan-out in parallel.
+        # fix §230 -- deep assess_exploitability fan-out in parallel.
         # Up to _deep_assess_top_n calls × ~30 s each was a serial
         # 5 min tail on the binary path; concurrent dispatch collapses
         # it to the worst-case single call (~30 s).
@@ -349,7 +349,7 @@ class FunctionRankingDispatcher:
             sink = next(iter(row["apis"]), None)
             if not sink:
                 continue
-            # fix §231 — table-driven taint argument; ``None`` skips the
+            # fix §231 -- table-driven taint argument; ``None`` skips the
             # deep-assess call for sinks with no tainted-source argument
             # (gets/scanf/fscanf read from stdin / a FILE* stream).
             arg_index = _SINK_TAINT_ARG.get(sink, 0)
@@ -385,7 +385,7 @@ class FunctionRankingDispatcher:
 
         top_k: list[RankedFunction] = []
         for rank_pos, (addr, row) in enumerate(ordered[: self._top_k], start=1):
-            # fix §232 — log1p compression keeps high-hit functions
+            # fix §232 -- log1p compression keeps high-hit functions
             # distinguishable from low-hit ones (linear ratio collapsed
             # 100 vs 50 to the same band as 2 vs 1, blurring the top-K
             # signal). log1p(0) == 0 so the zero-hit branch is still 0.
@@ -419,7 +419,7 @@ def _normalize_audit_mcp_entries(
 ) -> list[RankedFunction]:
     """Map audit-mcp fuzzing_targets entries into RankedFunction[].
 
-    Real composite score (08_FRONTEND_UX.md feedback — the prior
+    Real composite score (08_FRONTEND_UX.md feedback -- the prior
     implementation returned 1.0 for every entry when audit-mcp
     didn't ship a single dominant score field, making the rank
     useless for filtering or sorting).

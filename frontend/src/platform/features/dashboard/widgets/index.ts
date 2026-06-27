@@ -25,7 +25,7 @@ let registered = false;
 
 /**
  * Register all 9 built-in platform widgets into the widget registry.
- * Idempotent — safe to call multiple times (guarded by `registered` flag).
+ * Idempotent -- safe to call multiple times (guarded by `registered` flag).
  * Call this on DashboardPage mount before initModuleWidgets().
  */
 export function registerAllPlatformWidgets(): void {

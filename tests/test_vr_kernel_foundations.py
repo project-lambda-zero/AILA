@@ -1,4 +1,4 @@
-"""Unit tests for v0.5 phase 1 — kernel + hypervisor foundations."""
+"""Unit tests for v0.5 phase 1 -- kernel + hypervisor foundations."""
 from __future__ import annotations
 
 import pytest
@@ -78,7 +78,7 @@ class TestProfileRules:
         ) == "vulnerability_research.hypervisor_audit"
 
     def test_kernel_default_disclosure(self) -> None:
-        # v0.5 phase 3 — kernel disclosures now point at real tracks.
+        # v0.5 phase 3 -- kernel disclosures now point at real tracks.
         for kind in (TargetKind.KERNEL_IMAGE, TargetKind.KERNEL_MODULE):
             tracks = _DEFAULT_DISCLOSURE_TRACKS[kind.value]
             assert "kernel_org_security" in tracks

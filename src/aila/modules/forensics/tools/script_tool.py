@@ -1,4 +1,4 @@
-"""Agent-generated script executor — uploads and runs Python scripts over SSH."""
+"""Agent-generated script executor -- uploads and runs Python scripts over SSH."""
 from __future__ import annotations
 
 import hashlib
@@ -50,7 +50,7 @@ class ScriptExecutorTool(Tool):
             working_directory: Optional cwd for execution.
             timeout_seconds: Optional execution timeout.
             integration: SSH connection fields.
-            analyzer_os: Target OS — ``"linux"`` or ``"windows"``.
+            analyzer_os: Target OS -- ``"linux"`` or ``"windows"``.
 
         Returns:
             Dict with 'stdout', 'stderr', 'exit_code', 'script_hash'.
@@ -90,7 +90,7 @@ class ScriptExecutorTool(Tool):
         effective_timeout = timeout_seconds or 600.0
 
         # Upload the script via SFTP. This avoids the cmd.exe 8191-char
-        # command-line limit on Windows — previously we base64-encoded
+        # command-line limit on Windows -- previously we base64-encoded
         # the script into a single ``powershell -Command "..."`` string
         # which blew past the limit for scripts > ~5 KB and failed with
         # "The command line is too long."

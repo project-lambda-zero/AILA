@@ -382,7 +382,7 @@ class TestNormalizeReportSummaryPayload:
 
 
 # ---------------------------------------------------------------------------
-# ReportRepository.latest_report — fleet scope
+# ReportRepository.latest_report -- fleet scope
 # ---------------------------------------------------------------------------
 
 
@@ -551,7 +551,7 @@ class TestLatestReportFleet:
 
 
 # ---------------------------------------------------------------------------
-# ReportRepository.latest_report — target scope
+# ReportRepository.latest_report -- target scope
 # ---------------------------------------------------------------------------
 
 
@@ -1014,7 +1014,7 @@ class TestRegisterMaterializedQuery:
 
 
 # ---------------------------------------------------------------------------
-# latest_report — multiple runs iteration
+# latest_report -- multiple runs iteration
 # ---------------------------------------------------------------------------
 
 

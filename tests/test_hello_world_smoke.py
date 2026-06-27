@@ -184,5 +184,5 @@ class TestHelloWorldModuleSmoke:
                 content = py_file.read_text(encoding="utf-8")
                 assert "hello_world" not in content, (
                     f"Platform/API file {py_file.relative_to(_SRC_ROOT)} "
-                    f"contains 'hello_world' — module should register without platform edits"
+                    f"contains 'hello_world' -- module should register without platform edits"
                 )

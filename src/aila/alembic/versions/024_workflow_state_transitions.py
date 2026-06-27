@@ -1,4 +1,4 @@
-"""024 — workflow_state_transitions (Phase 178).
+"""024 -- workflow_state_transitions (Phase 178).
 
 Append-only audit/replay log for the durable workflows engine. Every
 ``entered`` / ``exited:*`` event writes one row. Composite primary key

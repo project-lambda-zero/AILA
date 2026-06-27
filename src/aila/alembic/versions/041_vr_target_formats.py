@@ -1,4 +1,4 @@
-"""041 — vulnerability research target ingestion formats and multi-machine layout.
+"""041 -- vulnerability research target ingestion formats and multi-machine layout.
 
 Adds columns to ``vr_projects`` to support the redesigned target ingestion flow:
 
@@ -8,10 +8,10 @@ Adds columns to ``vr_projects`` to support the redesigned target ingestion flow:
   * Upload provenance (filename + SHA-256) used by the setup state handler when
     transferring the bytes to the analysis workstation.
   * Split of the single ``system_id`` into ``analysis_system_id`` (runs IDA) and
-    ``poc_system_id`` (runs PoCs — may be a different machine, e.g. the host
+    ``poc_system_id`` (runs PoCs -- may be a different machine, e.g. the host
     where the vulnerable build is installed).
 
-Strictly additive — no columns are dropped or renamed. The pre-existing
+Strictly additive -- no columns are dropped or renamed. The pre-existing
 ``target_path`` column is retained but its meaning shifts: the setup handler
 now writes the workstation-side path there after transferring the artefact,
 instead of the user supplying a path directly.

@@ -4,7 +4,7 @@ Covers: register() with defaults, get/set individual values, all_entries(),
 type coercion (int/float/bool/str), env-var override precedence, missing
 namespace handling, re-registration idempotency, SchemaRegistry push/create_all.
 
-All tests use an in-memory SQLite engine with real SQLModel sessions —
+All tests use an in-memory SQLite engine with real SQLModel sessions --
 no sqlite-vec extension required.
 """
 from __future__ import annotations

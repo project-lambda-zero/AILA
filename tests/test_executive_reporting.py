@@ -8,7 +8,7 @@ Tests:
   - generate_scheduled_report_job returns 'completed_no_smtp' when SMTP not configured
   - _sanitise_filename_component strips unsafe characters
 
-All tests are synchronous unit tests using stdlib only — no DB connections required.
+All tests are synchronous unit tests using stdlib only -- no DB connections required.
 """
 from __future__ import annotations
 
@@ -27,11 +27,11 @@ def test_build_severity_breakdown_counts():
 
     findings = [
         {"criticality": "Immediate"},
-        {"criticality": "Immediate"},  # two Immediate entries — both counted
+        {"criticality": "Immediate"},  # two Immediate entries -- both counted
         {"criticality": "High"},
         {"criticality": "Moderate"},
         {"criticality": "Planned"},
-        {"criticality": "Unknown"},    # unmapped — should not increment any key
+        {"criticality": "Unknown"},    # unmapped -- should not increment any key
         {},                             # missing criticality
     ]
     result = _build_severity_breakdown(findings)
@@ -141,14 +141,14 @@ def test_sha256_hex_digest_is_deterministic():
     data = b"AILA test PDF bytes"
     expected = hashlib.sha256(data).hexdigest()
 
-    # Run twice — must be identical
+    # Run twice -- must be identical
     assert hashlib.sha256(data).hexdigest() == expected
     assert len(expected) == 64  # SHA-256 produces 64 hex chars
     assert all(c in "0123456789abcdef" for c in expected)
 
 
 def test_sha256_different_inputs_produce_different_hashes():
-    """Different PDF content yields different hashes — collision resistance sanity."""
+    """Different PDF content yields different hashes -- collision resistance sanity."""
     data1 = b"session-abc-report-v1"
     data2 = b"session-abc-report-v2"
     assert hashlib.sha256(data1).hexdigest() != hashlib.sha256(data2).hexdigest()

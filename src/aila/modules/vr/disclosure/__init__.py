@@ -1,4 +1,4 @@
-"""Disclosure subsystem — track plugins + registry + service.
+"""Disclosure subsystem -- track plugins + registry + service.
 
 v1 ships 4 built-in tracks (chrome_vrp / blog_post / vendor_direct /
 cna_github_gsa). Additional tracks register at import time per GA-31

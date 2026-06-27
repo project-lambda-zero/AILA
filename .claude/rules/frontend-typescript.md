@@ -10,7 +10,7 @@ Group imports as:
 3. Path-aliased internal (`@/`, `@app/`, `@platform/`)
 4. Relative (`./`, `../`)
 
-Use `import type` for type-only imports — they're erased at build time and prevent cycles.
+Use `import type` for type-only imports -- they're erased at build time and prevent cycles.
 
 ## Strict mode is non-negotiable
 
@@ -29,7 +29,7 @@ Prefer `unknown` over `any` for genuinely unknown types and narrow with type gua
 | `@app/*`     | `frontend/src/app/*`              | Shell app shell, routing, error boundaries    |
 | `@platform/*`| `frontend/src/platform/*`         | Design system, extension registry, layout      |
 
-Modules use the same aliases — they resolve into the shell (their consumer) at build time. Module-local imports use relative paths (`./components/Foo`).
+Modules use the same aliases -- they resolve into the shell (their consumer) at build time. Module-local imports use relative paths (`./components/Foo`).
 
 ## Module spec exports
 
@@ -43,7 +43,7 @@ export const frontendSpec: ModuleFrontendSpec = {
 };
 ```
 
-Default exports are forbidden — the shell's registry imports `{ frontendSpec }` by name.
+Default exports are forbidden -- the shell's registry imports `{ frontendSpec }` by name.
 
 ## React patterns
 
@@ -67,9 +67,9 @@ Default exports are forbidden — the shell's registry imports `{ frontendSpec }
 
 ## Forbidden imports
 
-- `react-router-dom` — use `react-router` (v7 unified them)
-- Direct paths into `node_modules/...` — let the resolver handle it
-- Relative paths that climb out of a module (`../../../../../frontend/src/...`) — use `@/`, `@app/`, or `@platform/` aliases instead
+- `react-router-dom` -- use `react-router` (v7 unified them)
+- Direct paths into `node_modules/...` -- let the resolver handle it
+- Relative paths that climb out of a module (`../../../../../frontend/src/...`) -- use `@/`, `@app/`, or `@platform/` aliases instead
 
 ## Honesty audit (frontend side)
 

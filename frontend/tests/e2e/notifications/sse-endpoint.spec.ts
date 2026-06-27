@@ -3,7 +3,7 @@
  *
  * E2E tests verifying the /events/stream SSE endpoint (RT-01).
  * Tests: authentication gate, correct Content-Type header.
- * Uses real backend — no mocks.
+ * Uses real backend -- no mocks.
  *
  * Note: These tests make direct HTTP requests to the backend API,
  * not to the frontend dev server. They verify the SSE contract.
@@ -24,13 +24,13 @@ test.describe("SSE /events/stream endpoint", () => {
     const resp = await request
       .get(`${API_BASE}/events/stream`, {
         headers: { Accept: "text/event-stream" },
-        // Short timeout — we just need the response headers, not the stream body
+        // Short timeout -- we just need the response headers, not the stream body
         timeout: 5_000,
       })
       .catch(() => null);
 
     if (resp === null) {
-      // Server not running — skip gracefully
+      // Server not running -- skip gracefully
       test.skip();
       return;
     }
@@ -50,7 +50,7 @@ test.describe("SSE /events/stream endpoint", () => {
       .catch(() => null);
 
     if (resp === null) {
-      // Server not running — skip gracefully
+      // Server not running -- skip gracefully
       test.skip();
       return;
     }

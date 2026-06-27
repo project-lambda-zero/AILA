@@ -87,7 +87,7 @@ def _agent_step_from_record(s: Any) -> AgentStep:
     hypotheses, rejected, observables, provenance, expected_observation,
     submitted) as a JSON blob inside the ``reasoning`` column. We parse
     it here so the frontend can render structured panels. If parsing
-    fails we fall back to treating ``reasoning`` as free text — older
+    fails we fall back to treating ``reasoning`` as free text -- older
     rows written by earlier agents remain readable.
     """
     contract = None
@@ -137,8 +137,8 @@ _INV_TERMINAL_STATUSES = frozenset({"completed", "failed", "exhausted", "cancell
 # ``response_emit`` state (and we're reading a stale session), or is
 # about to in the next commit. Reaping on ``done`` turns benign races
 # into user-visible failures like
-# "Investigation auto-reaped — worker task settled as done." which is
-# a lie — the worker succeeded.
+# "Investigation auto-reaped -- worker task settled as done." which is
+# a lie -- the worker succeeded.
 _TASK_DEAD_STATUSES = frozenset({"failed", "dead", "cancelled"})
 
 
@@ -147,7 +147,7 @@ async def _zombie_reap_reason(session: Any, inv: Any) -> str | None:
 
     Read-only. Inspects the worker ``TaskRecord`` and decides whether
     the investigation row is stuck behind a worker that can no longer
-    finish it. Does NOT mutate ``inv`` or write to the session — see
+    finish it. Does NOT mutate ``inv`` or write to the session -- see
     :func:`_apply_zombie_reap` for the mutation.
 
     Reaping is conservative:
@@ -185,14 +185,14 @@ async def _zombie_reap_reason(session: Any, inv: Any) -> str | None:
 def _apply_zombie_reap(session: Any, inv: Any, reason: str) -> None:
     """Mutate ``inv`` into the auto-reaped state. Caller commits.
 
-    Fix §49 — split out of the old ``_reconcile_investigation_if_zombie``
+    Fix §49 -- split out of the old ``_reconcile_investigation_if_zombie``
     so HTTP GET handlers can advertise ``needs_reap`` without mutating
     the row inside a safe method. The mutation now happens only on the
     POST endpoint (``/reap``) the operator UI calls explicitly.
     """
     inv.status = "failed"
     if not inv.final_answer:
-        inv.final_answer = f"Investigation auto-reaped — {reason}."
+        inv.final_answer = f"Investigation auto-reaped -- {reason}."
     session.add(inv)
     _log.warning(
         "investigation auto-reaped inv_id=%s reason=%s", inv.id, reason,
@@ -214,7 +214,7 @@ class InvestigationSummary(BaseModel):
     confidence: str | None = None
     task_id: str | None = None
     parent_investigation_id: str | None = None
-    # fix §49 — GET handlers no longer mutate. When the row's worker
+    # fix §49 -- GET handlers no longer mutate. When the row's worker
     # task has settled as failed/dead/cancelled (or vanished), the
     # GET surfaces ``needs_reap=True`` so the UI can show the stuck
     # state and offer a 'Reap' action that POSTs to ``/reap``. The
@@ -247,14 +247,14 @@ class InvestigationDetail(BaseModel):
     confidence: str | None = None
     parent_investigation_id: str | None = None
     steps: list[AgentStep] = Field(default_factory=list)
-    # fix §49 — see InvestigationSummary above. Detail handler is a
+    # fix §49 -- see InvestigationSummary above. Detail handler is a
     # safe GET; reap mutation lives on POST ``/reap``.
     needs_reap: bool = False
     needs_reap_reason: str | None = None
 
 
 class NetworkAnalysis(BaseModel):
-    """Structured PCAP analysis — parsed rows + optional LLM commentary.
+    """Structured PCAP analysis -- parsed rows + optional LLM commentary.
 
     Every field is a concrete list of typed dicts that the frontend renders
     directly. ``commentary`` is a list of ``{subject, narrative, severity}``
@@ -371,7 +371,7 @@ _TS_LIKE = __import__("re").compile(
     r"([T\s]\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?"
     r"(Z|[+-]\d{2}:?\d{2})?)?\s*$"
 )
-# Accept bare UNIX epoch seconds (int or float) — tshark's
+# Accept bare UNIX epoch seconds (int or float) -- tshark's
 # frame.time_epoch, dissect's raw windows FILETIME ticks after division,
 # any "seconds since 1970" field. Range guard: 2001-01-01 to 2099-12-31
 # so we don't mistake an arbitrary integer for a timestamp.
@@ -470,7 +470,7 @@ def _scan_scope(
             if ts:
                 out.append((ts, f"{prefix}{k}"))
             continue
-        # List case — e.g. prefetch's `previous_runs: [ts, ts, ts, ...]`
+        # List case -- e.g. prefetch's `previous_runs: [ts, ts, ts, ...]`
         if isinstance(v, list):
             for item in v:
                 ts = _coerce_event_time(item)
@@ -485,7 +485,7 @@ def _mine_all_timestamps(payload: dict[str, Any]) -> list[tuple[str, str]]:
     ``{"records": [{ts, mtime, last_run, ...}, ...]}``: all the real
     event times live **inside** ``records[]``, not at the top level.
     This walker yields one (timestamp, origin) tuple per time-bearing
-    field it finds — across ``payload`` itself, ``payload.observables``,
+    field it finds -- across ``payload`` itself, ``payload.observables``,
     and **every item in ``payload.records``**. Bare UNIX epoch ints/
     floats (e.g. ``frame.time_epoch``, dissect FILETIME→epoch) are
     normalised to ISO UTC so the timeline can sort them against
@@ -510,7 +510,7 @@ def _mine_all_timestamps(payload: dict[str, Any]) -> list[tuple[str, str]]:
     if isinstance(inner, dict):
         _scan_scope(inner, "observable:observables.", out)
 
-    # 4. `records[]` — the big one. Every collector (prefetch, shellbags,
+    # 4. `records[]` -- the big one. Every collector (prefetch, shellbags,
     #    evtx, mft, usnjrnl, runkeys, tasks, services, dns, http, ...)
     #    stores its evidence-native rows here. Each row contributes its
     #    own event-time entry (or several, when it carries created /
@@ -537,7 +537,7 @@ def _passes_bar(row: Any, payload: dict[str, Any], bar: int) -> bool:
 
     ``bar`` is an index into [low, medium, high].
 
-    - ``low`` (0): everything goes — the analyst wants the full
+    - ``low`` (0): everything goes -- the analyst wants the full
       evidence-time story (prefetch runs, shellbag opens, evtx events,
       MFT touches). Only pure dumps (``observables_snapshot``) stay
       excluded.
@@ -643,33 +643,33 @@ def _desc_network_capture_stats(data: dict[str, Any]) -> str:
     pkts = s.get("packet_count") or s.get("packets")
     dur = s.get("duration_s") or s.get("duration")
     byt = s.get("total_bytes") or s.get("bytes")
-    return f"capture — pkts={pkts or '?'} bytes={byt or '?'} duration={dur or '?'}s"
+    return f"capture -- pkts={pkts or '?'} bytes={byt or '?'} duration={dur or '?'}s"
 
 
 def _desc_network_hosts(data: dict[str, Any]) -> str:
     rows = data.get("rows") or []
-    return f"network hosts — {len(rows)} unique endpoint(s)"
+    return f"network hosts -- {len(rows)} unique endpoint(s)"
 
 
 def _desc_network_dns(data: dict[str, Any]) -> str:
     rows = data.get("rows") or []
-    return f"DNS — {len(rows)} unique name(s)"
+    return f"DNS -- {len(rows)} unique name(s)"
 
 
 def _desc_network_http_requests(data: dict[str, Any]) -> str:
     rows = data.get("rows") or []
-    return f"HTTP requests — {len(rows)} record(s)"
+    return f"HTTP requests -- {len(rows)} record(s)"
 
 
 def _desc_network_commentary(data: dict[str, Any]) -> str:
     rows = data.get("rows") or []
-    return f"network commentary — {len(rows)} bullet(s)"
+    return f"network commentary -- {len(rows)} bullet(s)"
 
 
 def _desc_memory_table(data: dict[str, Any]) -> str:
     plugin = data.get("plugin") or data.get("type") or "memory"
     n = data.get("record_count") or len(data.get("records") or [])
-    return f"{plugin} — {n} row(s)"
+    return f"{plugin} -- {n} row(s)"
 
 
 def _desc_investigation_summary(data: dict[str, Any]) -> str:
@@ -685,19 +685,19 @@ def _desc_investigation_summary(data: dict[str, Any]) -> str:
 _ROW_DESC_HUMANISERS: dict[str, Any] = {
     "capture_stats":         _desc_network_capture_stats,
     "hosts":                 _desc_network_hosts,
-    "sessions":              lambda d: f"network sessions — {len(d.get('rows') or [])} flow(s)",
+    "sessions":              lambda d: f"network sessions -- {len(d.get('rows') or [])} flow(s)",
     "dns":                   _desc_network_dns,
-    "suspicious_dns":        lambda d: f"suspicious DNS — {len(d.get('rows') or [])} name(s)",
+    "suspicious_dns":        lambda d: f"suspicious DNS -- {len(d.get('rows') or [])} name(s)",
     "http_requests":         _desc_network_http_requests,
-    "http_responses":        lambda d: f"HTTP responses — {len(d.get('rows') or [])} record(s)",
-    "tls_client_hellos":     lambda d: f"TLS Client Hellos — {len(d.get('rows') or [])} record(s)",
-    "unusual_ports":         lambda d: f"unusual ports — {len(d.get('rows') or [])} hit(s)",
-    "user_agents":           lambda d: f"user agents — {len(d.get('rows') or [])} unique",
-    "credentials":           lambda d: f"credential frames — {len(d.get('rows') or [])} hit(s)",
-    "beacons":               lambda d: f"beacon candidates — {len(d.get('rows') or [])} flow(s)",
-    "anomalies":             lambda d: f"network anomalies — {len(d.get('rows') or [])} kind(s)",
+    "http_responses":        lambda d: f"HTTP responses -- {len(d.get('rows') or [])} record(s)",
+    "tls_client_hellos":     lambda d: f"TLS Client Hellos -- {len(d.get('rows') or [])} record(s)",
+    "unusual_ports":         lambda d: f"unusual ports -- {len(d.get('rows') or [])} hit(s)",
+    "user_agents":           lambda d: f"user agents -- {len(d.get('rows') or [])} unique",
+    "credentials":           lambda d: f"credential frames -- {len(d.get('rows') or [])} hit(s)",
+    "beacons":               lambda d: f"beacon candidates -- {len(d.get('rows') or [])} flow(s)",
+    "anomalies":             lambda d: f"network anomalies -- {len(d.get('rows') or [])} kind(s)",
     "commentary":            _desc_network_commentary,
-    "protocol_hierarchy":    lambda d: f"protocol hierarchy — {len(d.get('rows') or [])} protocol(s)",
+    "protocol_hierarchy":    lambda d: f"protocol hierarchy -- {len(d.get('rows') or [])} protocol(s)",
     "investigation_summary": _desc_investigation_summary,
 }
 
@@ -709,7 +709,7 @@ def _row_description(data: dict[str, Any]) -> str:
       1. A type-specific humaniser (see ``_ROW_DESC_HUMANISERS``).
       2. The canonical fields used by collectors (``description``,
          ``answer``, ``value``, ``path``).
-      3. Falls back to a compact scalar-only key=value join — never the
+      3. Falls back to a compact scalar-only key=value join -- never the
          raw ``dict.__repr__`` that the old implementation leaked into
          the UI.
     """
@@ -867,7 +867,7 @@ def create_forensics_router() -> APIRouter:
             project_ids = [r.id for r in rows]
             system_ids = [r.system_id for r in rows if r.system_id is not None]
 
-            # One aggregated GROUP BY query per related table — avoids the
+            # One aggregated GROUP BY query per related table -- avoids the
             # N+1 trap that left the list page showing zeros for every
             # count. Each result is a dict {project_id: count} and is
             # empty when the page itself is empty.
@@ -1166,7 +1166,7 @@ def create_forensics_router() -> APIRouter:
         }
 
         async def _log_progress(event: dict[str, Any]) -> None:
-            _log.debug("Readiness check progress: %s — %s", event.get("tool", "system"), event.get("message"))
+            _log.debug("Readiness check progress: %s -- %s", event.get("tool", "system"), event.get("message"))
 
         result = await service.check_readiness(
             integration=integration,
@@ -1458,7 +1458,7 @@ def create_forensics_router() -> APIRouter:
 
         # Dedup: collapse identical findings that come from running the same
         # collector against multiple disks (or the same disk's re-runs). The
-        # identity key is the artifact type + the concrete evidence fields —
+        # identity key is the artifact type + the concrete evidence fields --
         # two runkey rows pointing at the same cmd.exe with the same user are
         # the same finding, not two findings.
         seen: dict[str, dict[str, Any]] = {}
@@ -1924,7 +1924,7 @@ def create_forensics_router() -> APIRouter:
                 .order_by(InvestigationRunRecord.created_at.desc())
             )).all())
 
-            # fix §49 — GET no longer mutates. Build per-row needs_reap
+            # fix §49 -- GET no longer mutates. Build per-row needs_reap
             # flags read-only; the operator UI calls POST /reap to
             # trigger the actual status flip.
             reap_reasons: dict[str, str] = {}
@@ -1980,7 +1980,7 @@ def create_forensics_router() -> APIRouter:
             if inv is None or inv.project_id != project_id:
                 raise HTTPException(status_code=404, detail="Investigation not found.")
 
-            # fix §49 — read-only zombie check; mutation now lives on
+            # fix §49 -- read-only zombie check; mutation now lives on
             # POST /reap so this GET stays a safe method.
             reap_reason = await _zombie_reap_reason(uow.session, inv)
 
@@ -2046,7 +2046,7 @@ def create_forensics_router() -> APIRouter:
 
             reason = await _zombie_reap_reason(uow.session, inv)
             if reason is None:
-                # Not a zombie. Return 409 — the client's view was
+                # Not a zombie. Return 409 -- the client's view was
                 # stale, the row is fine.
                 raise HTTPException(
                     status_code=409,
@@ -2219,7 +2219,7 @@ def create_forensics_router() -> APIRouter:
         if not pool_available() or not task_id:
             async def _no_stream() -> AsyncGenerator[str, None]:
                 msg = json.dumps(
-                    {"message": "No progress stream available — Redis not configured or task not yet queued"}
+                    {"message": "No progress stream available -- Redis not configured or task not yet queued"}
                 )
                 yield f"data: {msg}\n\n"
 
@@ -2507,7 +2507,7 @@ def create_forensics_router() -> APIRouter:
                 questions = {i.id: i.question for i in inv_rows}
 
         chunks: list[str] = [
-            f"# {project.name} — Forensics Write-ups",
+            f"# {project.name} -- Forensics Write-ups",
             "",
             f"**Project ID:** `{project.id}`  ",
             f"**Write-up count:** {len(rows)}  ",
@@ -2767,7 +2767,7 @@ def create_forensics_router() -> APIRouter:
             return f"- [{stamp}]{status_flag}{verdict}{strategy}{artifact}{author}\n  {body}"
 
         lines: list[str] = [
-            f"# {project.name} — Analyst Directives",
+            f"# {project.name} -- Analyst Directives",
             "",
             f"**Project ID:** `{project.id}`  ",
             f"**Total directives:** {len(directives)}  ",
@@ -3005,7 +3005,7 @@ def create_forensics_router() -> APIRouter:
              present (e.g. an LNK with created/modified/accessed all
              becomes three timeline rows).
 
-        Rows that have no event-time are dropped — record-time fallback
+        Rows that have no event-time are dropped -- record-time fallback
         produces useless "all 73 events happened in the last hour"
         clusters that hide real chronology.
 
@@ -3097,7 +3097,7 @@ def create_forensics_router() -> APIRouter:
                     )
 
                 # The per-entry ``data`` payload used to be the full
-                # artifact dict — fine for small rows, heavy (and
+                # artifact dict -- fine for small rows, heavy (and
                 # misleading) when the artifact carries 500 records of
                 # which only one relates to this timestamp. Narrow to
                 # the specific record when we have one.
@@ -3152,7 +3152,7 @@ def create_forensics_router() -> APIRouter:
         Same gating as ``/timeline`` (suspicious/confident only,
         observable_snapshot excluded), but returns rows whose payload
         carried no parseable timestamp. Sorted by AILA's record-time as
-        a stable secondary order — that's metadata about the report,
+        a stable secondary order -- that's metadata about the report,
         not a claim about when the event happened.
         """
         del request
@@ -3427,7 +3427,7 @@ def create_forensics_router() -> APIRouter:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=(
-                        "This project is a raw directory — there is no disk image "
+                        "This project is a raw directory -- there is no disk image "
                         "to extract from. Use /projects/{id}/fetch-raw instead."
                     ),
                 )
@@ -3543,7 +3543,7 @@ def create_forensics_router() -> APIRouter:
     ) -> StreamingResponse:
         """Ship a single evidence row off the analyzer filesystem.
 
-        Unlike ``retrieve-file`` this never touches dissect — the evidence
+        Unlike ``retrieve-file`` this never touches dissect -- the evidence
         path is a real filesystem location (the raw_directory project
         kind stores loose files and subdirectories as-is). Directories
         are zipped on the analyzer; single files are streamed verbatim.
@@ -3842,7 +3842,7 @@ def create_forensics_router() -> APIRouter:
                 )
             else:
                 directive_text = (
-                    f"DISPROVED HYPOTHESIS (analyst-rejected — do not re-pursue). "
+                    f"DISPROVED HYPOTHESIS (analyst-rejected -- do not re-pursue). "
                     f"Q: {question_text.strip()} -> A: {answer_text.strip()}"
                 )
             if body.notes.strip():
@@ -4102,7 +4102,7 @@ def create_forensics_router() -> APIRouter:
             subject = " ".join(subject_parts) or f"fingerprint={body.fingerprint[:16]}"
             reason_hint = ", ".join(body.reasons[:6]) if body.reasons else "(no reasons recorded)"
             directive_text = (
-                f"FALSE POSITIVE (analyst-cleared auto-finding — treat as benign). "
+                f"FALSE POSITIVE (analyst-cleared auto-finding -- treat as benign). "
                 f"{subject}. Heuristic reasons: {reason_hint}."
             )
             if body.notes.strip():

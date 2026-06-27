@@ -3,7 +3,7 @@
 Verifies that the SSE event stream can carry type=transition payloads emitted
 by emit_transition_event() without breaking the existing SSE consumer shape.
 
-These tests are static/unit — they do not open a live SSE stream (that would
+These tests are static/unit -- they do not open a live SSE stream (that would
 require a running Redis). Instead they assert:
 - The emit_transition_event function pushes type=transition fields
 - The TransitionView schema serializes to the expected JSON shape

@@ -6,7 +6,7 @@ status code. Both are documented here.
 
 ## Envelope shapes
 
-### `ErrorResponse` — raised by `HTTPException` and the catch-all
+### `ErrorResponse` -- raised by `HTTPException` and the catch-all
 
 Returned by the Phase 80 handlers in `src/aila/api/app.py` and the
 `_catch_unhandled_exceptions` middleware:
@@ -20,10 +20,10 @@ Returned by the Phase 80 handlers in `src/aila/api/app.py` and the
 ```
 
 `code` may be `null` for status codes where the API has no machine code
-(401, 403, 404, 409 — see the catalog below). `errors` is `null` except for
+(401, 403, 404, 409 -- see the catalog below). `errors` is `null` except for
 validation errors that flow through the Phase 80 handler.
 
-### `ErrorEnvelope` — raised by typed `AILAError` and validation errors
+### `ErrorEnvelope` -- raised by typed `AILAError` and validation errors
 
 Returned by `register_error_handlers()`
 (`src/aila/api/errors/handlers.py`) for every `AILAError` subclass, every
@@ -43,7 +43,7 @@ Returned by `register_error_handlers()`
   that fall back to HTTP 500.
 - `message` is **always a safe static string** sourced from the exception's
   `ClassVar user_message` (typed taxonomy) or `"An internal error occurred."`
-  for any 500-class path. `str(exc)` is **never** placed in `message` — it
+  for any 500-class path. `str(exc)` is **never** placed in `message` -- it
   could leak file paths, provider identifiers, or other caller-supplied
   context (Phase 178 S1).
 - `hint` resolves through `ERROR_HINTS` in

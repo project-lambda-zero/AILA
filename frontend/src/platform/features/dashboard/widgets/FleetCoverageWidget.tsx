@@ -4,7 +4,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { useDashboardData } from "../hooks/useDashboardData";
 
 /**
- * FleetCoverageWidget — shows online/total system count with coverage percentage.
+ * FleetCoverageWidget -- shows online/total system count with coverage percentage.
  *
  * Data from GET /dashboard via useDashboardData().
  */

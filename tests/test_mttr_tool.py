@@ -261,7 +261,7 @@ def test_unresolved_findings_excluded(tmp_path):
         criticality="High",
         created_at=now - timedelta(days=3),
     )
-    # status="open" — should be excluded
+    # status="open" -- should be excluded
     _insert_remediation(
         settings,
         host="host-open",

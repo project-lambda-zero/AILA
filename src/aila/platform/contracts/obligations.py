@@ -163,7 +163,7 @@ class ObligationSet(BaseModel):
 
 
 class AdjudicationResult(BaseModel):
-    """Outcome of `adjudicate()`. The function never raises — it returns this."""
+    """Outcome of `adjudicate()`. The function never raises -- it returns this."""
 
     verdict: str
     original_claim: str

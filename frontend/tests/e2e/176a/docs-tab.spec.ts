@@ -1,5 +1,5 @@
 /**
- * docs-tab.spec.ts — D-03, D-33.
+ * docs-tab.spec.ts -- D-03, D-33.
  *
  * - D-03: sidebar Docs entry navigates to /docs and the page renders.
  * - D-33: /docs renders the FIVE locked H2 sections (gap-fix-03 #7).
@@ -57,7 +57,7 @@ test.describe("Docs tab (D-03, D-33)", () => {
       ).toBeVisible({ timeout: 10_000 });
     }
 
-    // README marker — operator docs MUST NOT be a verbatim README dump.
+    // README marker -- operator docs MUST NOT be a verbatim README dump.
     const bodyText = (await page.locator("body").innerText()).toLowerCase();
     expect(bodyText.includes("# aila")).toBe(false);
     // "readme" appearing inside arbitrary running prose is OK; the harsher

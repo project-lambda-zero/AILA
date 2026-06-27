@@ -1,7 +1,7 @@
 # Keep the build context small + deterministic. Anything that
 # would re-bust the deps layer on every code edit is excluded.
 
-# Frontend — served separately, not bundled in the API image.
+# Frontend -- served separately, not bundled in the API image.
 frontend/
 src/aila/modules/*/frontend/
 
@@ -65,7 +65,7 @@ src/reports/
 coverage.xml
 htmlcov/
 
-# Node — the API image doesn't need any of it
+# Node -- the API image doesn't need any of it
 node_modules/
 **/node_modules/
 pnpm-lock.yaml

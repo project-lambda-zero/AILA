@@ -1,7 +1,7 @@
 """Unit tests for ``aila.modules.vr.services.fuzz_launcher``.
 
 Covers the per-engine command builders. The launcher itself is pure
-shell-string construction — no SSH, no subprocess, no DB — so tests
+shell-string construction -- no SSH, no subprocess, no DB -- so tests
 just assert the strings it produces are well-formed and reject bad
 config explicitly.
 """

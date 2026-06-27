@@ -268,7 +268,7 @@ async def estimate_scan_cost(
             entry["total_cost"] += rec.cost_usd
             entry["count"] += 1
     elif task_types and auth.team_id is None:
-        # No team context — require admin role for cross-tenant queries
+        # No team context -- require admin role for cross-tenant queries
         if not getattr(auth, "is_admin", False):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -289,7 +289,7 @@ async def estimate_scan_cost(
             entry["total_cost"] += rec.cost_usd
             entry["count"] += 1
 
-    # Fetch fallback config values from ConfigRegistry (not hardcoded — T-175-13)
+    # Fetch fallback config values from ConfigRegistry (not hardcoded -- T-175-13)
     fallback_max_tokens_raw = await registry.get(
         "platform", "llm_cost_estimate_fallback_max_tokens"
     )

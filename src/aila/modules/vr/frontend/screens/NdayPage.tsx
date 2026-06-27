@@ -61,12 +61,12 @@ export function NdayPage() {
       evidence: (
         <dl className="text-xs grid grid-cols-2 gap-1 font-mono">
           <dt className="text-text-muted">CVE</dt>
-          <dd className="text-foreground">{project.cve_id ?? "—"}</dd>
+          <dd className="text-foreground">{project.cve_id ?? "--"}</dd>
           <dt className="text-text-muted">Vulnerable target</dt>
           <dd className="text-foreground truncate">{targetName}</dd>
           <dt className="text-text-muted">Patched target</dt>
           <dd className="text-foreground truncate">
-            {project.patched_target_id ? patchedName : "—"}
+            {project.patched_target_id ? patchedName : "--"}
           </dd>
         </dl>
       ),

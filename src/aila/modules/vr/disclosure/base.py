@@ -1,4 +1,4 @@
-"""DisclosureTrack base class — what every track plugin implements.
+"""DisclosureTrack base class -- what every track plugin implements.
 
 Each track produces a rendered submission body (Markdown) from a
 VRFinding plus the operator's choices (poc_tier, severity_rating,
@@ -91,7 +91,7 @@ class DisclosureTrack:
 
         Returns Markdown by default. Subclasses targeting non-Markdown
         APIs (form fields, JSON payloads) should still emit a
-        human-readable Markdown rendering — the operator pastes/uploads
+        human-readable Markdown rendering -- the operator pastes/uploads
         the actual format separately when needed.
         """
         del finding_payload, poc_tier, severity_rating, embargo_days

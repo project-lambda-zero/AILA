@@ -43,7 +43,7 @@ class UserCreateRequest(BaseModel):
     """Request body for POST /users (admin only).
 
     Per D-19: minimum 8-character password. No complexity rules (NIST 800-63B).
-    Per D-17: admin-invite only — admin calls this endpoint to create accounts.
+    Per D-17: admin-invite only -- admin calls this endpoint to create accounts.
     Per D-08: team_id is data isolation; group_id is access control.
     """
 

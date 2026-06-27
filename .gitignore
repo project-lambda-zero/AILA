@@ -6,14 +6,14 @@ __pycache__/
 
 # These two patterns are anchored to the repo root only. Without the
 # leading slash, they used to match every `data/` and `reports/`
-# directory anywhere in the tree — including legitimate module-side
+# directory anywhere in the tree -- including legitimate module-side
 # config (cvss_templates.json, cwe_mappings.json, tool_requirements.json,
 # seed_*.json, etc.) which silently dropped from git. Issue #7
 # surfaced this for the VR module.
 /data/
 /reports/
 
-# Forensics offline-bundle binary distributions — multi-100 MB
+# Forensics offline-bundle binary distributions -- multi-100 MB
 # vendor tools (jadx-win.zip ~116 MB, python installers, hashcat,
 # etc.) shipped via release artifacts / external download, NEVER
 # git. Module's prepare_offline_bundles.py expects users to
@@ -22,7 +22,7 @@ src/aila/modules/forensics/data/offline_bundles/
 
 # Defensive: any of these binary-blob extensions anywhere under
 # src/aila/modules/*/data/. Module data should be JSON / YAML /
-# small text fixtures — never installers, archives, wheels, or
+# small text fixtures -- never installers, archives, wheels, or
 # spreadsheets shipped through git.
 src/aila/modules/*/data/**/*.zip
 src/aila/modules/*/data/**/*.7z
@@ -66,7 +66,7 @@ packages/*/node_modules/
 # Storybook static output
 storybook-static/
 
-# Local dev artifacts — UI tour scripts, screenshot dumps,
+# Local dev artifacts -- UI tour scripts, screenshot dumps,
 # service logs/pids spawned by start.sh. None of this belongs in
 # version control; keeping it tracked once made every commit drag
 # stale binaries + logs into review.
@@ -128,10 +128,10 @@ swiftly-*.tar.gz
 .codex/
 tmpollama-installer.exe
 
-# Local IDA / build caches — never commit
+# Local IDA / build caches -- never commit
 cache/
 
-# Session-local dev scratch — memory palette artifacts, Redis
+# Session-local dev scratch -- memory palette artifacts, Redis
 # (Memurai) log, ad-hoc one-off scripts that shouldn't follow the
 # repo around. The .txt extension dodges the `*.log` rule above,
 # so memurai-log.txt is named explicitly.

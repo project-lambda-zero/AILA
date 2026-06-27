@@ -3,7 +3,7 @@
 Builds structured, publication-quality DFIR / CTF malware-analysis
 reports from investigation steps, artefacts, Ghidra pre-analysis,
 memory-enrichment derivers, and network summaries. The prompt is
-deliberately opinionated — the LLM is handed a 15-section contract
+deliberately opinionated -- the LLM is handed a 15-section contract
 with hard rules and a tool-stack reference so that output quality is
 bounded by the evidence, not by the model's default verbosity style.
 """
@@ -35,7 +35,7 @@ _WRITEUP_SYSTEM_PROMPT = """You are a senior DFIR / malware-analysis engineer wr
 
 # OUTPUT CONTRACT
 
-Write a single Markdown document using EXACTLY the section numbering and headings below. Every section is mandatory. If a section has no findings, write `*No findings in this layer — see <evidence reference> for why.*` instead of omitting it. Do not add sections the contract does not list. Do not collapse sections into each other.
+Write a single Markdown document using EXACTLY the section numbering and headings below. Every section is mandatory. If a section has no findings, write `*No findings in this layer -- see <evidence reference> for why.*` instead of omitting it. Do not add sections the contract does not list. Do not collapse sections into each other.
 
 ## 1. Executive Summary
 Three sentences maximum. Who, what, when, where, impact. Cite the primary artefact.
@@ -66,7 +66,7 @@ Filtered, never dumped. Use Markdown tables titled:
 - Crypto references (`AES`, `RC4`, `XOR`, `SHA256`, key literals)
 - Shell / LOLBIN fragments
 
-Each row MUST cite the tool (`strings`, `FLOSS`, `Ghidra`) and either the offset or the function address (`<name>@<0xADDR>`). Cap at 60 rows per table — include only the most evidence-bearing ones.
+Each row MUST cite the tool (`strings`, `FLOSS`, `Ghidra`) and either the offset or the function address (`<name>@<0xADDR>`). Cap at 60 rows per table -- include only the most evidence-bearing ones.
 
 ## 6. Binary Structure
 - **PE**: machine, sections with entropy flags, top imports grouped by intent, exports, TLS callbacks, overlay presence.
@@ -77,7 +77,7 @@ Each row MUST cite the tool (`strings`, `FLOSS`, `Ghidra`) and either the offset
 - Packer (`UPX`, `MPRESS`, `Themida`, `Enigma`, `VMProtect`, `garble`, or `none`).
 - String obfuscation (`XOR`, `base64`, `RC4`, `custom`).
 - Control-flow flattening evidence.
-- Anti-debug / anti-VM primitives — reference Ghidra's `intent_map.anti_debug` function addresses when the bundle has them.
+- Anti-debug / anti-VM primitives -- reference Ghidra's `intent_map.anti_debug` function addresses when the bundle has them.
 
 ## 8. Disassembly & Decompilation Highlights
 Work from the pre-collected `ghidra_functions` and `ghidra_decompilation` artefacts in the bundle. List every call-graph root that touches network / crypto / filesystem / process-creation as `<name>@<0xADDR>` with a one-sentence intent. Include 3–8 short pseudocode snippets that directly implement the malicious behaviour; NEVER paste more than 40 lines per snippet.
@@ -86,7 +86,7 @@ Work from the pre-collected `ghidra_functions` and `ghidra_decompilation` artefa
 Algorithms identified, keys / IVs / salts extracted, ciphertext path + entropy, plaintext when decoded. Cite the Ghidra function + address for every primitive.
 
 ## 10. C2 / Network
-Markdown table: `URL | IP | port | proto | user-agent | JA3 | beacon interval | source_step_or_artifact`. Include encoded C2 keys, XOR campaign obfuscation, and protocol format (HTTP / gRPC / protobuf / custom). Source rows from pcap artefacts AND/OR extracted strings — cite which.
+Markdown table: `URL | IP | port | proto | user-agent | JA3 | beacon interval | source_step_or_artifact`. Include encoded C2 keys, XOR campaign obfuscation, and protocol format (HTTP / gRPC / protobuf / custom). Source rows from pcap artefacts AND/OR extracted strings -- cite which.
 
 ## 11. MITRE ATT&CK Mapping
 Markdown table: `Tactic | Technique | ID | Evidence`. Include ONLY entries you can cite. Do not pad with speculative techniques.
@@ -127,7 +127,7 @@ Final verdict, residual unknowns, recommended follow-ups (static-only, offline).
 
 # HARD RULES
 
-- Every claim MUST cite a piece of evidence from the bundle below — artifact_id, absolute file path, `<function>@<0xADDR>`, or `step #N`. No citation, no claim.
+- Every claim MUST cite a piece of evidence from the bundle below -- artifact_id, absolute file path, `<function>@<0xADDR>`, or `step #N`. No citation, no claim.
 - Do NOT reference any tool, capability, or workflow that is not listed under TOOL STACK. If something is absent from the bundle, say so plainly under Gaps; do NOT fill the gap with speculation.
 - Do NOT write hedging filler: "typical malware might...", "this is commonly observed", "it is worth noting", "interestingly", "notably". Either cite or omit.
 - Do NOT paste more than 40 lines of code, 60 table rows, or 80 raw strings per section.
@@ -200,7 +200,7 @@ async def build_writeup(
     artifacts_referenced = [s.get("primary_artifact_id") for s in steps if s.get("primary_artifact_id")]
 
     timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    title = f"Investigation: {question[:80]}" if question else f"Analysis Report — {timestamp}"
+    title = f"Investigation: {question[:80]}" if question else f"Analysis Report -- {timestamp}"
 
     return {
         "title": title,
@@ -273,7 +273,7 @@ async def _generate_writeup_content(
     """Generate write-up content via LLM; fall back to template on failure."""
     # Assemble the case bundle the model will reason over. Everything
     # downstream of here is deterministic summarisation of what the
-    # investigator actually produced — no prose, no guesswork.
+    # investigator actually produced -- no prose, no guesswork.
     bundle_parts: list[str] = []
 
     bundle_parts.append(_section_case_header(
@@ -416,7 +416,7 @@ def _section_artefact_families(artefacts_by_family: dict[str, list[dict[str, Any
         for r in rows:
             types[r.get("type", "unknown")] += 1
         parts = ", ".join(f"{t}:{n}" for t, n in sorted(types.items(), key=lambda kv: -kv[1]))
-        lines.append(f"- {family} ({len(rows)} total) — {parts}")
+        lines.append(f"- {family} ({len(rows)} total) -- {parts}")
     if len(lines) == 1:
         lines.append("(empty snapshot)")
     return "\n".join(lines)
@@ -433,7 +433,7 @@ def _section_ghidra_summary(artefacts_by_family: dict[str, list[dict[str, Any]]]
             found = True
             data = a.get("data") or {}
             summary = data.get("summary") or {}
-            lines.append(f"## artifact {a.get('id','?')[:8]} — {data.get('basename','?')}")
+            lines.append(f"## artifact {a.get('id','?')[:8]} -- {data.get('basename','?')}")
             lines.append(f"sha256: {data.get('sha256','?')}")
             lines.append(f"total_functions: {summary.get('total_functions','?')}")
             lines.append(f"functions_with_c_source: {summary.get('functions_with_c_source','?')}")
@@ -454,7 +454,7 @@ def _section_ghidra_summary(artefacts_by_family: dict[str, list[dict[str, Any]]]
             if counts:
                 lines.append(f"intent_bucket_counts: {counts}")
     if not found:
-        lines.append("(no ghidra_decompilation artefacts — binaries were skipped, oversize, signed, or not PE/ELF)")
+        lines.append("(no ghidra_decompilation artefacts -- binaries were skipped, oversize, signed, or not PE/ELF)")
     return _cap_section("\n".join(lines))
 
 
@@ -475,7 +475,7 @@ def _section_memory_enrich_summary(artefacts_by_family: dict[str, list[dict[str,
         if a.get("type") in derivers:
             by_type[a["type"]].append(a)
     if not by_type:
-        lines.append("(no memory enrichment artefacts — project has no memory image or collection failed)")
+        lines.append("(no memory enrichment artefacts -- project has no memory image or collection failed)")
         return _cap_section("\n".join(lines))
     for t, rows in sorted(by_type.items()):
         lines.append(f"## {t} ({len(rows)} artefact(s))")
@@ -526,7 +526,7 @@ def _section_network_summary(artefacts_by_family: dict[str, list[dict[str, Any]]
 
 
 def _section_observables(observables: dict[str, Any]) -> str:
-    """Dump the final observables dict — the audit trail the investigator left."""
+    """Dump the final observables dict -- the audit trail the investigator left."""
     lines = ["# OBSERVABLES (investigator audit trail)"]
     if not observables:
         lines.append("(empty)")
@@ -546,11 +546,11 @@ def _section_hypotheses(
     if hypotheses:
         lines.append("## open")
         for h in hypotheses:
-            lines.append(f"- {h.get('id','?')}: {h.get('claim','?')} — kill: {h.get('kill_criterion','?')}")
+            lines.append(f"- {h.get('id','?')}: {h.get('claim','?')} -- kill: {h.get('kill_criterion','?')}")
     if rejected:
         lines.append("## rejected")
         for h in rejected:
-            lines.append(f"- {h.get('id','?')}: {h.get('claim','?')} — reason: {h.get('reason','?')}")
+            lines.append(f"- {h.get('id','?')}: {h.get('claim','?')} -- reason: {h.get('reason','?')}")
     if len(lines) == 1:
         lines.append("(none)")
     return "\n".join(lines)
@@ -565,7 +565,7 @@ def _section_step_log(steps: list[dict[str, Any]]) -> str:
         reasoning = (s.get("reasoning") or "")[:_STEP_REASONING_CAP]
         stdout = (s.get("stdout") or "")[:_STEP_STDOUT_CAP]
         stderr = (s.get("stderr") or "")[:200]
-        lines.append(f"## step {n} — {action}")
+        lines.append(f"## step {n} -- {action}")
         if cmd:
             lines.append(f"command: {cmd}")
         if reasoning:
@@ -613,7 +613,7 @@ def _build_template_writeup(
     timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     out: list[str] = []
     out.append("# Forensic Investigation Report")
-    out.append(f"*Generated {timestamp} — LLM unavailable, template fallback.*")
+    out.append(f"*Generated {timestamp} -- LLM unavailable, template fallback.*")
     out.append("")
     out.append("## 1. Executive Summary")
     out.append(
@@ -658,7 +658,7 @@ def _build_template_writeup(
         "13. CTF Hypothesis Q&A",
     ):
         out.append(f"## {heading}")
-        out.append("*No findings in this layer — LLM fallback, template only. See §14 for raw step evidence.*")
+        out.append("*No findings in this layer -- LLM fallback, template only. See §14 for raw step evidence.*")
         out.append("")
 
     out.append("## 14. Timeline of Investigator Actions")

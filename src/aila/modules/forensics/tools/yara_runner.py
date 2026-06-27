@@ -1,4 +1,4 @@
-"""YARA rule scanner — executes yara scans over SSH."""
+"""YARA rule scanner -- executes yara scans over SSH."""
 from __future__ import annotations
 
 from aila.config import Settings

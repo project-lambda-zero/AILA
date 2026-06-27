@@ -15,7 +15,7 @@ function makeWriteup(overrides: Partial<WriteUpItem> = {}): WriteUpItem {
     id: crypto.randomUUID(),
     project_id: PROJECT_ID,
     investigation_id: "inv-001",
-    title: "Case 001 — Logon Persistence Analysis",
+    title: "Case 001 -- Logon Persistence Analysis",
     content_markdown: `## Executive Summary
 
 Analysis of the Case 001 memory image revealed a **persistence mechanism** installed via the Windows registry.
@@ -88,7 +88,7 @@ type Story = StoryObj<typeof meta>;
 // ---------------------------------------------------------------------------
 
 export const NoWriteups: Story = {
-  name: "No Writeups — empty state",
+  name: "No Writeups -- empty state",
   parameters: { queryClient: makeQC([]) },
 };
 
@@ -102,7 +102,7 @@ export const LongWriteupWithSections: Story = {
   parameters: {
     queryClient: makeQC([
       makeWriteup({
-        title: "Case 001 — Comprehensive Incident Report",
+        title: "Case 001 -- Comprehensive Incident Report",
         content_markdown: `# Case 001 Comprehensive Incident Report
 
 ## 1. Incident Overview
@@ -117,7 +117,7 @@ This report documents the findings from forensic analysis of the Case 001 case i
 
 | Timestamp | Event |
 |-----------|-------|
-| 07:12:04 | Initial logon — user john |
+| 07:12:04 | Initial logon -- user john |
 | 07:14:22 | cmd.exe spawned from winlogon.exe |
 | 07:15:01 | svchost32.exe dropped to Public folder |
 | 07:15:03 | Registry autorun key created |
@@ -139,7 +139,7 @@ No additional scheduled tasks were found.
 ## 4. Network Indicators
 
 Observed C2 traffic:
-- **185.220.101.42:443** — TLS 1.3, SNI: update.microsoft-cdn.com (spoofed)
+- **185.220.101.42:443** -- TLS 1.3, SNI: update.microsoft-cdn.com (spoofed)
 - **Total bytes sent:** 48.2 KB over 3 sessions
 
 ## 5. Recommendations
@@ -148,11 +148,11 @@ Observed C2 traffic:
 2. **Short-term:** Full reimaging of affected system
 3. **Long-term:** Deploy endpoint detection and response (EDR) solution
 
-## 6. Appendix — Artifact IDs
+## 6. Appendix -- Artifact IDs
 
-- \`art-pslist-001\` — Process list snapshot
-- \`art-autoruns-002\` — Registry autorun export
-- \`art-netscan-003\` — Network connection table`,
+- \`art-pslist-001\` -- Process list snapshot
+- \`art-autoruns-002\` -- Registry autorun export
+- \`art-netscan-003\` -- Network connection table`,
         methodology: "Full-disk and memory forensics. Volatility3 for memory analysis, RegRipper for registry, Wireshark/tshark for network.",
         artifacts_referenced: ["art-pslist-001", "art-autoruns-002", "art-netscan-003", "art-mft-004", "art-prefetch-005"],
       }),

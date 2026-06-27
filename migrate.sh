@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run Alembic migrations against the AILA database.
-# Usage:  ./migrate.sh               — upgrade to head
-#         ./migrate.sh downgrade -1  — pass any alembic sub-commands after migrate.sh
+# Usage:  ./migrate.sh               -- upgrade to head
+#         ./migrate.sh downgrade -1  -- pass any alembic sub-commands after migrate.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,7 +12,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-# Load .env — strip Windows CR and skip blank/comment lines.
+# Load .env -- strip Windows CR and skip blank/comment lines.
 while IFS='=' read -r key val; do
   [[ -z "$key" || "$key" == \#* ]] && continue
   val="${val%$'\r'}"

@@ -1,4 +1,4 @@
-"""067 — workflow_state_cursor archived_state column for Phase B pause SSOT.
+"""067 -- workflow_state_cursor archived_state column for Phase B pause SSOT.
 
 Phase B promotes
 ``workflow_state_cursor`` to the single source of truth for "is this

@@ -1,4 +1,4 @@
-"""M3.T-3 — Function ranking dispatcher tests.
+"""M3.T-3 -- Function ranking dispatcher tests.
 
 Covers the pure mapping function `_normalize_audit_mcp_entries` and the
 contract surface. Persistence-heavy paths on the dispatcher itself are
@@ -93,7 +93,7 @@ class TestParserSinkApiList:
 
 
 class TestAuditMcpEntryNormalization:
-    """Composite-signal ranker (commit 34c1ab4 — fix flat-1.00 scoring).
+    """Composite-signal ranker (commit 34c1ab4 -- fix flat-1.00 scoring).
 
     The audit-mcp normalizer composes a real score from five signals,
     each normalized per-page so sparse responses still differentiate:
@@ -110,7 +110,7 @@ class TestAuditMcpEntryNormalization:
         # the position fallback, so its composite saturates the 1.0
         # ceiling. validate_token has middling blast/complexity/distance
         # but no tainted_from, so it slots in second. log_request has
-        # nothing — it falls to the per-position floor.
+        # nothing -- it falls to the per-position floor.
         raw = [
             {"function_name": "parse_pdu",
              "blast_radius": 80, "complexity": 22, "tainted_from": ["recv"],
@@ -146,7 +146,7 @@ class TestAuditMcpEntryNormalization:
         assert [r.rank for r in out] == [1, 2, 3]
 
     def test_fallback_reason_when_no_signals(self) -> None:
-        # No blast/complexity/taint/distance — the reasons collector
+        # No blast/complexity/taint/distance -- the reasons collector
         # falls back to a position label so the operator can still see
         # WHY a row is ranked where it is. Score floored above zero.
         out = _normalize_audit_mcp_entries([{"function_name": "f1"}], top_k=10)
@@ -220,7 +220,7 @@ class TestDispatcherErrorPaths:
     async def test_target_not_found_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # StageTracker.__aenter__ reaches the DB through
         # `load_target_stages` BEFORE the dispatcher's _load method
-        # ever runs (commit 179a9d9 — durable per-stage analysis).
+        # ever runs (commit 179a9d9 -- durable per-stage analysis).
         # That earlier check fires first on a missing row, so the
         # surfaced exception is StageTrackerError, not FunctionRankerError.
         # Monkeypatch keeps the test DB-independent.

@@ -12,7 +12,7 @@ export interface SeverityPulseProps extends React.HTMLAttributes<HTMLSpanElement
 }
 
 /**
- * SeverityPulse — wrapper that conditionally applies the severity-pulse animation.
+ * SeverityPulse -- wrapper that conditionally applies the severity-pulse animation.
  *
  * Pure CSS animation wrapper (D-18). When `active` is true, adds the
  * `animate-severity-pulse` class which triggers the CSS keyframe defined in globals.css.

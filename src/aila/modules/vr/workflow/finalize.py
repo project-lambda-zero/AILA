@@ -20,25 +20,25 @@ silently slipped between paths could stay RUNNING for hours.
 This module consolidates the trigger detection into ONE function with
 a deterministic picker. The existing primitives (synthesis_agent,
 outcome_dispatcher, arq_purge, the audit_memo writer) are reused via
-delegation — finalize does NOT reimplement domain logic. It is the
+delegation -- finalize does NOT reimplement domain logic. It is the
 chokepoint that decides which existing primitive fires.
 
 Trigger priority (first match wins):
 
-    1. all_outcomes              — fire synthesis
-    2. rejected_quorum           — fire close-rejected
-    3. wall_clock_idle_grace     — fire cap-exceeded
-    4. all_terminal_no_outcome   — fire synthesize-no-finding (orphan)
+    1. all_outcomes              -- fire synthesis
+    2. rejected_quorum           -- fire close-rejected
+    3. wall_clock_idle_grace     -- fire cap-exceeded
+    4. all_terminal_no_outcome   -- fire synthesize-no-finding (orphan)
 
 A fifth ``no_trigger`` outcome means "investigation is healthy and
 still running"; the caller takes no action.
 
 Two entry points expose the same primitive:
 
-* :func:`finalize_investigation` — called per-investigation, returns
+* :func:`finalize_investigation` -- called per-investigation, returns
   a structured :class:`FinalizeResult`. Used by ``investigation_emit``
   at cap-boundary and by the cron sweep below.
-* :func:`sweep_finalizable_investigations` — cron entry point. Walks
+* :func:`sweep_finalizable_investigations` -- cron entry point. Walks
   RUNNING investigations and calls :func:`finalize_investigation` on
   each. Registered via the generic
   :mod:`aila.platform.tasks.sweeps` registry.
@@ -104,7 +104,7 @@ def _int_env(name: str, default: int) -> int:
 # ----------------------------------------------------------------------
 
 
-# Trigger names ARE operator-facing — they appear in log lines and on the
+# Trigger names ARE operator-facing -- they appear in log lines and on the
 # investigation's ``audit_memo`` outcome. Treat them as a stable enum
 # rather than free-form strings.
 class FinalizeTrigger:
@@ -193,7 +193,7 @@ async def _detect_trigger(investigation_id: str) -> tuple[str, dict[str, Any]]:
         active = [b for b in branch_rows if b.status == BranchStatus.ACTIVE.value]
         terminal = [b for b in branch_rows if b.status != BranchStatus.ACTIVE.value]
 
-        # Outcomes per active branch — needed to detect 'all_outcomes'
+        # Outcomes per active branch -- needed to detect 'all_outcomes'
         # and 'rejected_quorum'.
         outcome_rows = (await uow.session.exec(
             select(
@@ -209,7 +209,7 @@ async def _detect_trigger(investigation_id: str) -> tuple[str, dict[str, Any]]:
         for o in outcome_rows:
             outcomes_by_branch.setdefault(str(o.branch_id), []).append(o)
 
-        # Trigger 1: all_outcomes — every active branch has at least one
+        # Trigger 1: all_outcomes -- every active branch has at least one
         # terminal outcome AND inv has no primary_outcome_id yet (synthesis
         # hasn't already run).
         if (
@@ -224,7 +224,7 @@ async def _detect_trigger(investigation_id: str) -> tuple[str, dict[str, Any]]:
                 {"active_branches": len(active), "outcomes": len(outcome_rows)},
             )
 
-        # Trigger 2: rejected_quorum — primary outcome is REJECTED and
+        # Trigger 2: rejected_quorum -- primary outcome is REJECTED and
         # the majority of sibling votes also REJECTED.
         primary_id = inv.primary_outcome_id
         if primary_id:
@@ -250,7 +250,7 @@ async def _detect_trigger(investigation_id: str) -> tuple[str, dict[str, Any]]:
                         },
                     )
 
-        # Trigger 3: wall_clock_idle_grace — wall clock exceeded AND no
+        # Trigger 3: wall_clock_idle_grace -- wall clock exceeded AND no
         # branch activity inside the idle grace window. Uses inv.started_at
         # as the anchor (matches Phase B cap-check convention).
         anchor = inv.started_at or inv.created_at
@@ -258,7 +258,7 @@ async def _detect_trigger(investigation_id: str) -> tuple[str, dict[str, Any]]:
             elapsed_hours = (now - anchor).total_seconds() / 3600.0
             if elapsed_hours >= wallclock_hours:
                 # Find the most recent branch updated_at across all
-                # branches (active and terminal — paused branches still
+                # branches (active and terminal -- paused branches still
                 # count as 'recent activity').
                 latest_act = max(
                     (b.updated_at for b in branch_rows if b.updated_at is not None),
@@ -301,7 +301,7 @@ async def _detect_trigger(investigation_id: str) -> tuple[str, dict[str, Any]]:
         # the cap value is still respected here so the trigger fires.
         del message_cap  # acknowledged unused for the moment
 
-        # Trigger 4: all_terminal_no_outcome — every branch is terminal
+        # Trigger 4: all_terminal_no_outcome -- every branch is terminal
         # AND inv has no primary_outcome_id. This is the orphan close.
         if (
             inv.primary_outcome_id is None
@@ -424,7 +424,7 @@ async def finalize_investigation(investigation_id: str) -> FinalizeResult:
     healthy running investigation), returns ``trigger=no_trigger`` and
     takes no action.
 
-    Errors during handler invocation propagate to the caller — the
+    Errors during handler invocation propagate to the caller -- the
     cron sweep wrapper logs and continues, but per-investigation
     callers (``investigation_emit``) may want to react.
     """
@@ -481,7 +481,7 @@ async def sweep_finalizable_investigations() -> dict[str, int]:
         try:
             result = await finalize_investigation(inv_id)
         except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError, httpx.HTTPError) as exc:
-            # fix §350 — surface traceback so a recurring per-inv
+            # fix §350 -- surface traceback so a recurring per-inv
             # finalize failure (handler crash, DB unreachable) is
             # debuggable from the cron log alone.
             _log.warning(

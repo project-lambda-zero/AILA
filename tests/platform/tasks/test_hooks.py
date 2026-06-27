@@ -1,4 +1,4 @@
-"""Phase 179 Task 2 — ARQ hook matrix (_on_job_start / _on_job_end).
+"""Phase 179 Task 2 -- ARQ hook matrix (_on_job_start / _on_job_end).
 
 Exercises each of the six D-14 branches in :func:`_on_job_end` against
 real Postgres + real Memurai. Also proves :func:`_on_job_start` sets

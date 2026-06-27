@@ -102,7 +102,7 @@ def _insert_inventory(
 
 
 def test_identical_hosts_no_diff(tmp_path):
-    """Both hosts have same packages and same CVE findings — no diffs."""
+    """Both hosts have same packages and same CVE findings -- no diffs."""
     from aila.modules.vulnerability.tools.peer_compare import peer_compare
 
     settings = _make_settings(tmp_path)
@@ -194,7 +194,7 @@ def test_finding_only_in_a(tmp_path):
 
 
 def test_no_inventory_for_host_a(tmp_path):
-    """host-a has no InventoryArtifactRecord — result includes 'warning' for host_a; finding diff still works."""
+    """host-a has no InventoryArtifactRecord -- result includes 'warning' for host_a; finding diff still works."""
     from aila.modules.vulnerability.tools.peer_compare import peer_compare
 
     settings = _make_settings(tmp_path)
@@ -214,7 +214,7 @@ def test_no_inventory_for_host_a(tmp_path):
 
 
 def test_both_hosts_unknown(tmp_path):
-    """Neither host has any data — result is valid with all empty lists and zero counts."""
+    """Neither host has any data -- result is valid with all empty lists and zero counts."""
     from aila.modules.vulnerability.tools.peer_compare import peer_compare
 
     settings = _make_settings(tmp_path)

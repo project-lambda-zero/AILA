@@ -1,4 +1,4 @@
-"""vr_targets.analysis_stages_json — per-stage durable analysis state.
+"""vr_targets.analysis_stages_json -- per-stage durable analysis state.
 
 Adds:
   - `analysis_stages_json` TEXT NOT NULL DEFAULT '{}' on `vr_targets`

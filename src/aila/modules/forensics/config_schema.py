@@ -6,7 +6,7 @@ Operators can tune these values via PUT /config without code changes.
 NOTE: These defaults are used as fallbacks. The API-layer ``max_attempts``
 parameter on InvestigationRequest takes priority when explicitly set.
 The timeout values here define the upper bounds for SSH and collection
-operations — the workflow states in definitions.py reference these same
+operations -- the workflow states in definitions.py reference these same
 defaults. Changing config at runtime does NOT hot-reload into running
 workflows, only new workflow runs pick up updated values.
 """

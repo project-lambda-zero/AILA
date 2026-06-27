@@ -546,7 +546,7 @@ class TestCompareDebianPart:
         assert compare_debian_part("1.0a", "1.0b") == -1
 
     def test_numeric_difference_in_run(self) -> None:
-        """'1.10' > '1.9' — numeric comparison, not lexicographic."""
+        """'1.10' > '1.9' -- numeric comparison, not lexicographic."""
         assert compare_debian_part("1.10", "1.9") == 1
 
     def test_only_non_digit(self) -> None:

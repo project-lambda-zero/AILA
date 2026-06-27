@@ -2,7 +2,7 @@
  * notification-bell.spec.ts
  *
  * E2E tests for the NotificationBell component (RT-02).
- * Uses real backend — no mocks for auth or notification data.
+ * Uses real backend -- no mocks for auth or notification data.
  *
  * Coverage:
  *   - Bell icon is visible in the authenticated header
@@ -28,7 +28,7 @@ test.describe("NotificationBell", () => {
     // Wait for the authenticated shell to render
     await expect(page.locator("header")).toBeVisible({ timeout: 10_000 });
 
-    // Bell button — aria-label contains "notification" (case-insensitive)
+    // Bell button -- aria-label contains "notification" (case-insensitive)
     const bell = page.getByRole("button", { name: /notification/i });
     await expect(bell).toBeVisible({ timeout: 5_000 });
   });

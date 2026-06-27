@@ -31,7 +31,7 @@ export function ProjectDetailsPage() {
   const { data: project, isLoading, isError } = useForensicsProject(projectId ?? "");
 
   useUpdatePageHeader({
-    title: project ? `${project.name} — Details` : undefined,
+    title: project ? `${project.name} -- Details` : undefined,
     subtitle: undefined,
     status: null,
   });

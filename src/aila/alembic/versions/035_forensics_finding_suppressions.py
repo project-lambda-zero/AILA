@@ -1,10 +1,10 @@
-"""035 — forensics_finding_suppressions table.
+"""035 -- forensics_finding_suppressions table.
 
 Auto-findings are derived at read-time from ``normalized_artifacts`` so
 they have no stable ID. To let analysts permanently hide a row as
 false-positive we store a suppression record keyed on the row's
 fingerprint (same tuple the dedup path already uses: artifact_type +
-executable + path + name + user — hashed to a stable 64-char string).
+executable + path + name + user -- hashed to a stable 64-char string).
 
 Suppressions are per-project. Each suppression also drops a
 verdict="false" AnalystDirective so every future investigation's system

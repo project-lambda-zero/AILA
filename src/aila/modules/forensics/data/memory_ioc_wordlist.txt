@@ -1,4 +1,4 @@
-# Memory-strings IOC wordlist — consumed by windows.strings.Strings
+# Memory-strings IOC wordlist -- consumed by windows.strings.Strings
 # One literal per line. Lines starting with '#' are ignored.
 # Keep this short; every entry costs a scan pass across the dump.
 

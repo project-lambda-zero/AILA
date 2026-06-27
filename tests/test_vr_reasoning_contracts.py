@@ -1,4 +1,4 @@
-"""M3.R-1 — Reasoning subsystem contract round-trip tests.
+"""M3.R-1 -- Reasoning subsystem contract round-trip tests.
 
 Schema-only milestone: tests verify Pydantic model construction,
 enum cardinalities, ``extra='forbid'`` behavior, and round-tripping

@@ -10,7 +10,7 @@ def _make_settings(tmp_path):
 
 
 def _make_tool(tmp_path):
-    """Create RiskPostureTool — its __init__ calls init_db which sets up all tables."""
+    """Create RiskPostureTool -- its __init__ calls init_db which sets up all tables."""
     from aila.modules.vulnerability.tools.risk_posture import RiskPostureTool
     settings = _make_settings(tmp_path)
     return RiskPostureTool(settings=settings)
@@ -98,7 +98,7 @@ def test_mixed_findings_produce_correct_weighted_average(tmp_path):
 
 
 def test_all_findings_returned_regardless_of_host(tmp_path):
-    """RiskPostureTool queries all LatestFindingRecord rows — not scoped by run_id.
+    """RiskPostureTool queries all LatestFindingRecord rows -- not scoped by run_id.
 
     Insert two rows with different host+cve_id combos and verify both are counted.
     """
@@ -111,7 +111,7 @@ def test_all_findings_returned_regardless_of_host(tmp_path):
     ]
     _insert_findings(tool, findings)
     result = tool.forward(action="score")
-    # Both rows from LatestFindingRecord — not scoped by run_id
+    # Both rows from LatestFindingRecord -- not scoped by run_id
     assert result["finding_count"] == 2
     assert result["criticality_counts"]["Immediate"] == 1
     assert result["criticality_counts"]["Planned"] == 1

@@ -1,4 +1,4 @@
-"""task_records_input_hash_unique — close §72.
+"""task_records_input_hash_unique -- close §72.
 
 Adds a partial UNIQUE index on ``taskrecord.input_hash`` so the SHA-256
 dedup at ``platform/tasks/queue.py:submit`` is enforced by Postgres, not
@@ -10,7 +10,7 @@ dedup session, and both inserted. Result: two duplicate ARQ jobs for
 the same workflow; the operator paid for the loser before the engine's
 optimistic-lock filtered it at cursor-advance time.
 
-The index is PARTIAL — it only enforces uniqueness for rows in active
+The index is PARTIAL -- it only enforces uniqueness for rows in active
 states (``queued``, ``running``, ``waiting``). Terminal tasks may carry
 the same hash legitimately because the operator re-submitted the same
 work after the prior task completed.
@@ -33,7 +33,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Partial unique index — Postgres-only syntax via raw SQL. The
+    # Partial unique index -- Postgres-only syntax via raw SQL. The
     # SQLAlchemy ORM doesn't model partial uniqueness portably, so we
     # drive it with op.execute and a stable index name the cursor
     # reaper / orphan-queued sweep can reason about.

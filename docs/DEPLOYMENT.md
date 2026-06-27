@@ -33,20 +33,20 @@ How to deploy AILA in production with FastAPI, ARQ worker, and Redis.
 ```
 
 Three process classes:
-1. **FastAPI server** — serves REST API, submits tasks to Redis. One or more replicas.
-2. **ARQ workers** — execute background tasks (`platform.handle`, scans, VR investigations). One worker per queue; concurrency scales by spawning N workers per queue (see `WORKER_COUNT_<QUEUE>`).
-3. **Redis / Memurai** — ARQ broker, idempotency cache, SSE progress streams. Redis 6+ on Linux; Memurai 3+ on Windows.
+1. **FastAPI server** -- serves REST API, submits tasks to Redis. One or more replicas.
+2. **ARQ workers** -- execute background tasks (`platform.handle`, scans, VR investigations). One worker per queue; concurrency scales by spawning N workers per queue (see `WORKER_COUNT_<QUEUE>`).
+3. **Redis / Memurai** -- ARQ broker, idempotency cache, SSE progress streams. Redis 6+ on Linux; Memurai 3+ on Windows.
 
 The two compose files in `infra/utilities/` cover the deployment shapes:
-- `docker-compose.yml` — dev infra only: PostgreSQL (with pgvector) + Redis. Used by `make dev-up` for local development where the operator runs the API, workers, and frontend on the host.
-- `docker-compose.full.yml` — full stack: PostgreSQL + Redis + API + one worker container per queue + frontend (Vite dev server). The production-like shape used by `docker compose -f infra/utilities/docker-compose.full.yml up --build`. Credentials and tuning come from the repo-root `.env`.
+- `docker-compose.yml` -- dev infra only: PostgreSQL (with pgvector) + Redis. Used by `make dev-up` for local development where the operator runs the API, workers, and frontend on the host.
+- `docker-compose.full.yml` -- full stack: PostgreSQL + Redis + API + one worker container per queue + frontend (Vite dev server). The production-like shape used by `docker compose -f infra/utilities/docker-compose.full.yml up --build`. Credentials and tuning come from the repo-root `.env`.
 
 Note: the `x-aila-env` block in `docker-compose.full.yml` defines
 `AILA_PLATFORM_DATABASE_URL`, `AILA_PLATFORM_BIND_HOST`, and
 `AILA_PLATFORM_BIND_PORT`. The Python `Settings` class does NOT read these
 names; it reads `AILA_DATABASE_URL`, `AILA_API_HOST`, `AILA_API_PORT`. Actual
 DB and bind config comes from the `env_file: ../../.env` directive on each
-service. The `x-aila-env` overrides are dead — leave them for now (they
+service. The `x-aila-env` overrides are dead -- leave them for now (they
 document intent) but do not rely on them taking effect.
 
 ---
@@ -132,7 +132,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
 Then point `AILA_DATABASE_URL` at the production database (`postgresql+asyncpg://`
-scheme — the asyncpg driver is required at runtime; Alembic uses psycopg via the
+scheme -- the asyncpg driver is required at runtime; Alembic uses psycopg via the
 transparent driver swap in `src/aila/alembic/env.py`).
 
 Bootstrap a brand-new database (creates every table, stamps Alembic head):
@@ -169,7 +169,7 @@ export AILA_PLATFORM_REDIS_URL=redis://redis.internal:6379/0
 export AILA_REPORT_DIR=/data/aila/reports
 export AILA_SECRET_KEYRING_PATH=/data/aila/secrets/keyring.json
 
-# CORS origins (your frontend URL — exact match, never `*`)
+# CORS origins (your frontend URL -- exact match, never `*`)
 export AILA_CORS_ORIGINS=https://aila.example.com
 
 # First-boot admin user (remove from env after the admin user exists)
@@ -188,7 +188,7 @@ export AILA_PLATFORM_LLM_DEFAULT_MODEL=gpt-4o
 export AILA_API_HOST=0.0.0.0
 export AILA_API_PORT=8000
 
-# Per-queue worker concurrency (start.sh / non-docker only — docker-compose.full.yml
+# Per-queue worker concurrency (start.sh / non-docker only -- docker-compose.full.yml
 # scales by replicating the worker-<queue> service)
 export WORKER_COUNT_VR=5
 export WORKER_COUNT_VULNERABILITY=1
@@ -198,8 +198,8 @@ export WORKER_COUNT_FORENSICS=1
 export AILA_JSON_LOGS=1
 ```
 
-The full env reference — including the platform `ConfigRegistry` namespace and the
-VR / audit-mcp dev knobs — lives in [`docs/ENV_VARS.md`](ENV_VARS.md).
+The full env reference -- including the platform `ConfigRegistry` namespace and the
+VR / audit-mcp dev knobs -- lives in [`docs/ENV_VARS.md`](ENV_VARS.md).
 
 ---
 
@@ -267,7 +267,7 @@ Worker behavior:
 - Heartbeat every 30s (`AILA_PLATFORM_HEARTBEAT_INTERVAL_S`)
 - Worker-side zombie reaper at 3300s (`AILA_PLATFORM_REAPER_ZOMBIE_THRESHOLD_S`); DB-side stale-heartbeat reaper at 86400s (`AILA_PLATFORM_REAPER_HEARTBEAT_THRESHOLD_S`)
 - Checkpoint / resume for long-running tasks
-- Per-call LLM idempotency cache (`llm_idempotency_cache` table) — retries replay the cached response instead of paying for Claude again
+- Per-call LLM idempotency cache (`llm_idempotency_cache` table) -- retries replay the cached response instead of paying for Claude again
 
 ### Scaling
 
@@ -294,7 +294,7 @@ defeated retries and checkpoints, and created orphan DB records.
 
 ## 7. Authenticate
 
-Two paths to a JWT — pick whichever fits your environment.
+Two paths to a JWT -- pick whichever fits your environment.
 
 ### Username + password
 
@@ -314,7 +314,7 @@ deployment to the network.
 
 ### API key (machine clients, CI)
 
-Mint an API key — once via the CLI for the first admin key, then via the API
+Mint an API key -- once via the CLI for the first admin key, then via the API
 for everything else:
 
 ```bash

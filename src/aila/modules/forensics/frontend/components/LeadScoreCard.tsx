@@ -109,7 +109,7 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
           )}
         </div>
 
-        {/* Full multi-line headline — NOT truncated. */}
+        {/* Full multi-line headline -- NOT truncated. */}
         <div className="text-foreground leading-relaxed whitespace-pre-wrap">
           {parsed.headline}
         </div>
@@ -255,7 +255,7 @@ export function LeadScoreCard({ projectId }: { projectId: string }) {
       {items.length === 0 ? (
         <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-4">
           No leads promoted yet. Leads are the investigator&apos;s own
-          conclusions — run an investigation turn to populate this panel.
+          conclusions -- run an investigation turn to populate this panel.
         </p></AilaCard>
       ) : (
         <>

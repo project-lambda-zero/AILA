@@ -24,7 +24,7 @@ Note: `pytest-asyncio` is required (config sets `asyncio_mode = "auto"` in `pypr
 
 ```text
 tests/
-  conftest.py                           # Root — minimal (just imports)
+  conftest.py                           # Root -- minimal (just imports)
   api/
     conftest.py                         # API fixtures: session PG engine, test_db,
                                         # tokens, async_client, seeded data
@@ -53,7 +53,7 @@ The foundation fixture. Every test that touches the database depends on `test_db
 
 **Scope:** `function`. The engine is session-scoped (one connection pool for the whole pytest run); per-test isolation is via `TRUNCATE`, not by reconnecting.
 
-**Prerequisite:** a running PostgreSQL with pgvector. `make dev-up` brings up `aila-postgres` on `127.0.0.1:5432` with the right extensions. Storage tests create the `aila_test` database on first run via `psql` (see `tests/storage/conftest.py` for the connection defaults — `AILA_TEST_PG_HOST/PORT/USER/PASSWORD/DB` override them).
+**Prerequisite:** a running PostgreSQL with pgvector. `make dev-up` brings up `aila-postgres` on `127.0.0.1:5432` with the right extensions. Storage tests create the `aila_test` database on first run via `psql` (see `tests/storage/conftest.py` for the connection defaults -- `AILA_TEST_PG_HOST/PORT/USER/PASSWORD/DB` override them).
 
 ```python
 @pytest_asyncio.fixture(scope="function")
@@ -355,10 +355,10 @@ Focus coverage on:
 
 ## Common Testing Mistakes
 
-1. **Using TestClient instead of AsyncClient** — TestClient deadlocks on SSE and async routes.
-2. **Sharing engines across tests** — registering an engine that points at a different URL than `_session_async_engine` desyncs the per-test TRUNCATE list.
-3. **Forgetting `test_db` dependency** — database operations fail with "no such table" because `AILA_DATABASE_URL` still points at the dev DB.
-4. **Patching at definition site** — patches must target the import site in the module under test.
-5. **Missing `pytest.mark.asyncio`** — the project sets `asyncio_mode = "auto"`, but bare `def` tests that need an event loop still silently pass; mark them async or use `pytest_asyncio.fixture`.
-6. **Asserting response body before status code** — status-code assertion gives a clearer failure message.
-7. **Skipping `make dev-up`** — every backend test depends on the PostgreSQL container; without it the session fixture fails on first connect.
+1. **Using TestClient instead of AsyncClient** -- TestClient deadlocks on SSE and async routes.
+2. **Sharing engines across tests** -- registering an engine that points at a different URL than `_session_async_engine` desyncs the per-test TRUNCATE list.
+3. **Forgetting `test_db` dependency** -- database operations fail with "no such table" because `AILA_DATABASE_URL` still points at the dev DB.
+4. **Patching at definition site** -- patches must target the import site in the module under test.
+5. **Missing `pytest.mark.asyncio`** -- the project sets `asyncio_mode = "auto"`, but bare `def` tests that need an event loop still silently pass; mark them async or use `pytest_asyncio.fixture`.
+6. **Asserting response body before status code** -- status-code assertion gives a clearer failure message.
+7. **Skipping `make dev-up`** -- every backend test depends on the PostgreSQL container; without it the session fixture fails on first connect.

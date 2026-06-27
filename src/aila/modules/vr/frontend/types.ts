@@ -79,7 +79,7 @@ export type DisclosureStatus =
   | "public";
 
 /**
- * Ingestion request shape — describes HOW a binary reaches AILA. The
+ * Ingestion request shape -- describes HOW a binary reaches AILA. The
  * api_router materializes this into a persistent vr_targets row before
  * creating the project. Renamed from VRTarget in the M3.T-1 Stage 2
  * refactor (D-53) to disambiguate from the persistent VRTargetSummary.
@@ -169,7 +169,7 @@ export interface VRTargetCreate {
 }
 
 /** APK-specific projection from mcp_handles_json. Each field is
- * optional because the pipeline writes them in stages — the operator
+ * optional because the pipeline writes them in stages -- the operator
  * sees what's ready as it appears. `static_summary` and `mobsf_scan`
  * are passed through as opaque records because both vary by
  * androguard/MobSF version and the renderer reads only the keys it
@@ -342,7 +342,7 @@ export type BranchStatus =
 
 export type PersonaVoice =
   | "halvar" | "maddie" | "yuki" | "renzo" | "noor" | "wei"
-  // Phase E §177/§178/§180 — synthetic voices written by branch_manager
+  // Phase E §177/§178/§180 -- synthetic voices written by branch_manager
   // when no agent persona is meaningful. Backend's PersonaVoice enum
   // gained these values + alembic 064 sets the column DEFAULT to
   // 'unspecified' and NOT NULL. The frontend MUST accept them so
@@ -671,7 +671,7 @@ export interface VRFuzzCrashSummary {
   discovered_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
-  // Migration 053 fields — backend ships them, frontend now exposes:
+  // Migration 053 fields -- backend ships them, frontend now exposes:
   reproducer_head_hex?: string | null;            // first N bytes of reproducer as hex
   reproducer_head_truncated_size?: number | null; // total reproducer size when head is truncated
   llm_summary?: string | null;                    // one-line LLM-written crash summary
@@ -721,7 +721,7 @@ export interface McpCallLogEntry {
   called_at: string;          // ISO 8601
 }
 
-// ─── MASVS audit aggregate (U-2 — per-control table) ───────────────────
+// ─── MASVS audit aggregate (U-2 -- per-control table) ───────────────────
 //
 // Wire schema matching `aila.modules.vr.contracts.masvs`. The JSON
 // endpoint at `GET /vr/targets/{id}/masvs-audit-aggregate` returns

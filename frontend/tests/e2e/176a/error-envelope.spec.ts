@@ -1,5 +1,5 @@
 /**
- * error-envelope.spec.ts — D-10*, D-20, D-23, D-24, D-25, D-26, D-31.
+ * error-envelope.spec.ts -- D-10*, D-20, D-23, D-24, D-25, D-26, D-31.
  *
  * - D-10a/b/c: error envelope arriving at the frontend toasts message + hint;
  *              the literal "Internal Server Error" is scrubbed from any toast.
@@ -9,7 +9,7 @@
  * - D-23: navigating to /__test__/crash hits the per-feature AppErrorBoundary;
  *         the shell stays mounted (sidebar/header still visible).
  * - D-24: a query failure flows through the shared apiErrorHandler.
- * - D-25: /metrics aila_api_error_total counter increments by DELTA — NOT
+ * - D-25: /metrics aila_api_error_total counter increments by DELTA -- NOT
  *         absolute. Marked DEFERRED if /metrics is unauthenticated-403 in
  *         this env.
  * - D-31: hints match ERROR_HINTS from src/aila/api/errors/hints.py (inlined).
@@ -177,7 +177,7 @@ test.describe("Crash injection (D-23)", () => {
       timeout: 10_000,
     });
 
-    // Shell — at least one of the major chrome regions is still mounted.
+    // Shell -- at least one of the major chrome regions is still mounted.
     const chromeSurvived =
       (await page.locator("nav, aside, header").count()) > 0;
     expect(chromeSurvived, "shell chrome must survive a feature crash").toBe(true);
@@ -205,7 +205,7 @@ test.describe("Prometheus counter (D-25)", () => {
     if (before === null) {
       test.skip(
         true,
-        "/metrics endpoint not reachable or counter absent in this env — DEFERRED",
+        "/metrics endpoint not reachable or counter absent in this env -- DEFERRED",
       );
       return;
     }
@@ -239,11 +239,11 @@ test.describe("Prometheus counter (D-25)", () => {
       "MISSING_API_KEY",
     );
     if (after === null) {
-      test.skip(true, "counter disappeared between samples — DEFERRED");
+      test.skip(true, "counter disappeared between samples -- DEFERRED");
       return;
     }
 
-    // Delta — not absolute. >= 0 because the specific code we forced may not
+    // Delta -- not absolute. >= 0 because the specific code we forced may not
     // be the one returned (unknown id may map to NotFoundError -> INTERNAL_ERROR
     // per BE-E fallback). The strict assertion is that the metrics endpoint
     // works and returns a numeric counter.
@@ -268,7 +268,7 @@ async function fetchCounter(
     );
     const m = text.match(re);
     if (!m) {
-      // Counter exists but no sample for this label yet — treat as 0.
+      // Counter exists but no sample for this label yet -- treat as 0.
       return text.includes(metricName) ? 0 : null;
     }
     return parseFloat(m[1]);

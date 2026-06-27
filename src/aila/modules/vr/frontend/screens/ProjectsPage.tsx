@@ -32,9 +32,9 @@ const statusColor: Record<VRProjectStatus, "info" | "low" | "medium" | "high" | 
 };
 
 function relativeTime(value?: string | null): string {
-  if (!value) return "—";
+  if (!value) return "--";
   const t = new Date(value).getTime();
-  if (Number.isNaN(t)) return "—";
+  if (Number.isNaN(t)) return "--";
   const delta = Date.now() - t;
   const s = Math.floor(delta / 1000);
   if (s < 60) return `${s}s ago`;
@@ -47,15 +47,15 @@ function relativeTime(value?: string | null): string {
 }
 
 function formatDate(value?: string | null): string {
-  if (!value) return "—";
+  if (!value) return "--";
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "--";
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 
 // ─────────────────────────────────────────────────────────────────────
-// Project card — replaces the table row. Visual hierarchy emphasises
+// Project card -- replaces the table row. Visual hierarchy emphasises
 // project name + status + severity, with a metric row underneath and a
 // hover-revealed delete affordance.
 // ─────────────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ function ProjectCard({
           "inset 0 1px 0 0 color-mix(in srgb, var(--color-text) 5%, transparent)",
       }}
     >
-      {/* Top edge — 2px severity-tinted bar */}
+      {/* Top edge -- 2px severity-tinted bar */}
       <span
         aria-hidden
         className="absolute inset-x-0 top-0"
@@ -112,7 +112,7 @@ function ProjectCard({
         }}
       />
 
-      {/* Header — status pulse + cve chip + operator avatar */}
+      {/* Header -- status pulse + cve chip + operator avatar */}
       <div className="relative flex items-start justify-between gap-2 px-5 pt-4 pb-2">
         <div className="flex items-center gap-2 min-w-0">
           <SeverityPulse active={isLive || isFailed}>
@@ -189,7 +189,7 @@ function ProjectCard({
         </div>
       </div>
 
-      {/* Footer — disclosure status pill + open arrow + delete (hover) */}
+      {/* Footer -- disclosure status pill + open arrow + delete (hover) */}
       <div className="relative flex items-center justify-between gap-2 px-5 py-2.5 border-t border-border bg-base/40">
         <div className="min-w-0 flex-1">
           {project.latest_disclosure_status ? (
@@ -233,7 +233,7 @@ function ProjectCard({
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// ProjectsPage — Vuln Research Projects landing.
+// ProjectsPage -- Vuln Research Projects landing.
 //
 // Layout (new design):
 //   ┌─ KPI hero strip (4 tiles)
@@ -467,7 +467,7 @@ export function ProjectsPage() {
               targetName={
                 project.target_id
                   ? targetMap.get(project.target_id)?.display_name ?? "loading…"
-                  : "—"
+                  : "--"
               }
               onOpen={() => navigate(`/vr/projects/${project.id}`)}
               deleteMut={deleteMut}

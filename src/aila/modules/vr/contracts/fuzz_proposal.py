@@ -36,7 +36,7 @@ class SeedCorpusEntry(BaseModel):
 
 
 class VRFuzzCampaignProposalSummary(BaseModel):
-    """Read projection of one proposal — what the UI renders."""
+    """Read projection of one proposal -- what the UI renders."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -79,13 +79,13 @@ class FuzzProposalDecideAccept(BaseModel):
     writes the harness + seeds, runs the build, creates a campaign,
     and optionally launches.
 
-    Every field is optional — the resolved defaults come from:
+    Every field is optional -- the resolved defaults come from:
       - the proposal's `suggested_*` columns
       - the target's `capability_profile` (engine + strategy)
       - the project's `analysis_system_id` (workstation)
 
     Operator overrides any of them only when they want to deviate.
-    `auto_launch` (default true — the whole point is one-click prep)
+    `auto_launch` (default true -- the whole point is one-click prep)
     enqueues `run_fuzz_campaign_launch` after the campaign row exists.
     """
 
@@ -102,7 +102,7 @@ class FuzzProposalDecideAccept(BaseModel):
     skip_prepare: bool = Field(
         default=False,
         description=(
-            "When true, skip the SCP/build step — operator already "
+            "When true, skip the SCP/build step -- operator already "
             "has the harness on the workstation. Useful for re-accepts "
             "after a transient SSH failure."
         ),
@@ -111,7 +111,7 @@ class FuzzProposalDecideAccept(BaseModel):
 
 
 class FuzzProposalDecideReject(BaseModel):
-    """Reject a proposal — reason captured for the audit trail."""
+    """Reject a proposal -- reason captured for the audit trail."""
 
     model_config = ConfigDict(extra="forbid")
 

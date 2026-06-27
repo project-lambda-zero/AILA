@@ -4,7 +4,7 @@ Both functions are pure seed stubs decorated with ``@platform_task``.
 All platform orchestration (WorkflowRunRecord creation, plan_json writes,
 DurableStateMachine execution, inner definition resolution) is owned by
 ``@platform_task`` via ``_run_two_phase_dispatch`` when
-``definition.is_dispatcher=True`` — the same pattern used by the
+``definition.is_dispatcher=True`` -- the same pattern used by the
 vulnerability module (Phase 183).
 
 This satisfies the v5.0 core principle: modules write pure state handlers
@@ -32,7 +32,7 @@ async def run_forensics_analysis(
     ctx: TaskContext,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Seed — platform dispatch handles two-phase execution via FORENSICS_DISPATCHER_V1."""
+    """Seed -- platform dispatch handles two-phase execution via FORENSICS_DISPATCHER_V1."""
     ...
 
 
@@ -47,5 +47,5 @@ async def run_forensics_investigation(
     ctx: TaskContext,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Seed — platform dispatch handles two-phase execution via FORENSICS_DISPATCHER_V1."""
+    """Seed -- platform dispatch handles two-phase execution via FORENSICS_DISPATCHER_V1."""
     ...

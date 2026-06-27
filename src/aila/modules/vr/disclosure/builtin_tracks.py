@@ -3,14 +3,14 @@
 Adding a new track:
   1. Subclass DisclosureTrack
   2. Override class attributes (track_id, kind, display_name, ...)
-  3. Override render() — return Markdown the operator pastes / submits
+  3. Override render() -- return Markdown the operator pastes / submits
   4. Add to BUILTIN_TRACKS at the bottom
 
 The 4 tracks below cover the practical operator workflow today:
-  chrome_vrp       — Chrome's bounty program
-  blog_post        — public writeup (operator's own platform)
-  vendor_direct    — generic security@ email template
-  cna_github_gsa   — GitHub Security Advisory (own-repo or via CNA)
+  chrome_vrp       -- Chrome's bounty program
+  blog_post        -- public writeup (operator's own platform)
+  vendor_direct    -- generic security@ email template
+  cna_github_gsa   -- GitHub Security Advisory (own-repo or via CNA)
 
 The plan calls for ~10 tracks (msrc / mozilla_bb / apple_security /
 github_bb / zdi / cert_cc / conference_cfp); those land per-need.
@@ -70,7 +70,7 @@ class ChromeVRPTrack(DisclosureTrack):
     embargo_default_days = 90
     severity_schema = "chrome_vrp_custom"
     notes = (
-        "Submit via the Chrome Issue Tracker. Working PoC is required — "
+        "Submit via the Chrome Issue Tracker. Working PoC is required -- "
         "no-PoC submissions are rejected by triage. Operator self-rates "
         "severity per the Chrome VRP severity guidelines."
     )
@@ -160,7 +160,7 @@ class BlogPostTrack(DisclosureTrack):
             _section(
                 "Exploitation outline",
                 str(finding_payload.get("exploitation_outline") or
-                    "DESCRIPTIVE only — no working primitives. "
+                    "DESCRIPTIVE only -- no working primitives. "
                     f"PoC tier on this writeup: `{poc_tier.value}`."),
             ),
             _section(
@@ -211,7 +211,7 @@ class VendorDirectTrack(DisclosureTrack):
         embargo_days: int | None,
     ) -> str:
         parts: list[str] = [
-            f"Subject: Vulnerability report — {finding_payload.get('title') or 'security finding'}",
+            f"Subject: Vulnerability report -- {finding_payload.get('title') or 'security finding'}",
             "",
             "Hello,",
             "",
@@ -275,7 +275,7 @@ class CnaGithubGsaTrack(DisclosureTrack):
         del poc_tier  # base-class kwarg; CnaGithubGsaTrack omits it from output
         affected = finding_payload.get("affected_component") or "(unspecified)"
         fixed = finding_payload.get("fixed_version") or "(unreleased)"
-        cvss = severity_rating or "7.5 (placeholder — operator to compute)"
+        cvss = severity_rating or "7.5 (placeholder -- operator to compute)"
         parts: list[str] = [
             f"# Security advisory: {finding_payload.get('title') or 'untitled'}",
             "",

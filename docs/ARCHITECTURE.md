@@ -238,9 +238,9 @@ per-system, not global.
 
 ### INFRA-06: Task results stay in the database
 
-Task results are surfaced through the module's own result tables —
+Task results are surfaced through the module's own result tables --
 `vr_findings`, `vr_investigation_outcomes`, `scan_findings`,
-`forensics_*`, and so on — not as file-system artifacts referenced by
+`forensics_*`, and so on -- not as file-system artifacts referenced by
 a path column. The historical `TaskRecord.result_path` column survives
 for wire-shape compatibility (the column is nullable and currently
 populated by no task in `src/aila/`); every consumer reads the result

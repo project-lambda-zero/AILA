@@ -1,4 +1,4 @@
-"""MCP adapter unit tests — registry, family adapters, generic fallback.
+"""MCP adapter unit tests -- registry, family adapters, generic fallback.
 
 Adapters are pure functions. Tests stub the raw MCP response and verify
 the (payload_kind, payload, observables_delta) output shape.
@@ -195,15 +195,15 @@ class TestAndroidMcpDispatch:
     These tests are intentionally DB-free. They cover the three failure
     modes the old code-path produced silently:
 
-      1. ``get_adapter("android_mcp", "<known>")`` returned ``None`` —
+      1. ``get_adapter("android_mcp", "<known>")`` returned ``None`` --
          the executor would emit "no tool 'android_mcp.<x>'" before
          dispatch.
       2. ``ToolExecutor.__init__`` did not accept an ``android_mcp``
-         parameter and ``self._bridges`` had no ``"android_mcp"`` key —
+         parameter and ``self._bridges`` had no ``"android_mcp"`` key --
          the executor would emit "No bridge configured for MCP server
          'android_mcp'" at the bridge lookup step.
       3. The ``_parse_command`` JSON parser rejected the dotted tool id
-         — same failure mode as (1) one step earlier.
+         -- same failure mode as (1) one step earlier.
     """
 
     def test_android_mcp_known_tools_resolve_to_generic_adapter(self) -> None:
@@ -218,7 +218,7 @@ class TestAndroidMcpDispatch:
             assert adapter is adapt_generic
 
     def test_android_mcp_unknown_tool_returns_none(self) -> None:
-        # Loud failure for hallucinated tool names — the executor uses
+        # Loud failure for hallucinated tool names -- the executor uses
         # this to surface "no such tool" instead of a silent 404.
         assert get_adapter("android_mcp", "bogus_handler") is None
 
@@ -264,7 +264,7 @@ class TestAndroidMcpDispatch:
         # The composite layer (verify_capabilities / classify_behavior /
         # compute_risk_score / find_secrets) is what VR personas mostly
         # call. They must be present even though the same names also
-        # appear on the ida_headless surface — KNOWN_TOOLS is keyed by
+        # appear on the ida_headless surface -- KNOWN_TOOLS is keyed by
         # server_id so collisions resolve by server.
         for composite in (
             "verify_capabilities",
@@ -292,7 +292,7 @@ class TestAdaptGeneric:
 
     def test_observable_includes_full_preview(self) -> None:
         # The generic adapter no longer truncates per-call (commit
-        # 7ee32a7 — MAX_OBS_DUMP_CHARS bumped to 100MB). Inputs well
+        # 7ee32a7 -- MAX_OBS_DUMP_CHARS bumped to 100MB). Inputs well
         # below the cap surface verbatim in the observable so the
         # agent never has to issue a follow-up read to see the tail.
         raw = {"results": ["X" * 100 for _ in range(100)]}
@@ -350,8 +350,8 @@ class TestAdaptDecompile:
         # Per the 2026-05-24 "remove per-tool-call observable truncation"
         # decision (commit 7ee32a7), per-value caps were bumped to 100MB
         # so the agent never sees a truncated load-bearing branch. The
-        # observable carries the full body verbatim — no truncation
-        # marker, no banner — up to that hard floor.
+        # observable carries the full body verbatim -- no truncation
+        # marker, no banner -- up to that hard floor.
         raw = {"function_name": "huge", "pseudocode": "X" * 5000}
         out = adapt_decompile(raw, _ctx())
         obs = out.observables_delta["ida_headless.decompile.decompiled.huge"]

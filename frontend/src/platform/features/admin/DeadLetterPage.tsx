@@ -1,5 +1,5 @@
 /**
- * DeadLetterPage — admin dead-letter queue inspection and manual requeue.
+ * DeadLetterPage -- admin dead-letter queue inspection and manual requeue.
  *
  * Phase 178: lists tasks that exhausted poison_attempts and were moved to the
  * `arq:dead-letter:{track}` sorted set. Operators inspect the failure, fix
@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button";
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
-// Types — mirror src/aila/api/routers/admin_dead_letter.py:DeadLetterEntry
+// Types -- mirror src/aila/api/routers/admin_dead_letter.py:DeadLetterEntry
 // ---------------------------------------------------------------------------
 
 interface DeadLetterEntry {
@@ -55,12 +55,12 @@ interface RequeueResponse {
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "--";
   return new Date(value).toLocaleString();
 }
 
 // ---------------------------------------------------------------------------
-// Requeue button — per-row action
+// Requeue button -- per-row action
 // ---------------------------------------------------------------------------
 
 function RequeueButton({
@@ -143,7 +143,7 @@ function buildColumns(
       accessorKey: "fn_path",
       cell: ({ getValue }) => (
         <span className="font-mono text-xs text-text break-all">
-          {String(getValue()) || "—"}
+          {String(getValue()) || "--"}
         </span>
       ),
     },
@@ -167,7 +167,7 @@ function buildColumns(
           className="font-mono text-xs text-text-muted line-clamp-2 max-w-[320px] break-all"
           title={String(getValue())}
         >
-          {String(getValue()) || "—"}
+          {String(getValue()) || "--"}
         </span>
       ),
     },
@@ -267,7 +267,7 @@ export function DeadLetterPage() {
           Dead-Lettered Tasks
         </p>
         <p className="font-mono text-2xl font-semibold text-critical mt-1">
-          {entriesQuery.isLoading ? "—" : entries.length}
+          {entriesQuery.isLoading ? "--" : entries.length}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           {trackFilter ? `Track: ${trackFilter}` : "All tracks"}
@@ -276,7 +276,7 @@ export function DeadLetterPage() {
           Distinct Tracks
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {entriesQuery.isLoading ? "—" : tracks.length}
+          {entriesQuery.isLoading ? "--" : tracks.length}
         </p>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           With at least one dead-lettered task

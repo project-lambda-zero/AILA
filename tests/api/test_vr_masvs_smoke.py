@@ -1,4 +1,4 @@
-"""A-1 — End-to-end smoke test for the MASVS audit dispatcher.
+"""A-1 -- End-to-end smoke test for the MASVS audit dispatcher.
 
 Phase 6 acceptance gate from ``.run/ralph/apk-masvs/IMPLEMENTATION_PLAN.md``
 task A-1. A single happy-path test that proves the operator's
@@ -10,21 +10,21 @@ vuln_researcher dispatch handles them unchanged.
 
 The four A-1 invariants enforced here:
 
-1. **Per-control fanout** — exactly one child investigation per L1
+1. **Per-control fanout** -- exactly one child investigation per L1
    control entry in :data:`MASVS_CONTROLS`. The PRD's headline
    guarantee ("one independent VR investigation per OWASP MASVS L1
    control") collapses if this count is off by even one entry.
-2. **Catalog version pinned on the parent** — the parent's
+2. **Catalog version pinned on the parent** -- the parent's
    ``secondary_target_refs_json`` carries
    ``[{"masvs_spec_version": CATALOG_VERSION}]``. R-2's PDF report
    and D-3's idempotency handshake both read this back; missing it
    would invalidate both surfaces.
-3. **Children keep the existing ``audit`` kind** — every child
+3. **Children keep the existing ``audit`` kind** -- every child
    carries ``kind=audit`` so the standard vuln_researcher dispatch
    routes them unchanged. The new ``masvs_audit`` kind is a
    parent-only batch tag; if it leaked onto a child, the standard
    dispatch would drop it.
-4. **Dispatch response envelope is complete** —
+4. **Dispatch response envelope is complete** --
    ``parent_investigation_id``, ``masvs_spec_version``, and
    ``total_controls`` all populate so the frontend can render the
    new parent row from the dispatch response alone, without a
@@ -35,7 +35,7 @@ unit test. Per-branch coverage (idempotency, refusal cases,
 queue-submit semantics, primary branch row creation, per-child
 budget plumbing) lives in ``tests/api/test_vr_masvs_dispatch.py``.
 Duplicating one or two assertions across the two files is
-intentional — the smoke test is the headline checkbox that proves
+intentional -- the smoke test is the headline checkbox that proves
 the feature works end to end; the unit test catches per-branch
 regressions.
 """
@@ -68,7 +68,7 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-# Hand-crafted ``apk_overview`` snapshot — mirrors the post-STATIC_SUMMARY
+# Hand-crafted ``apk_overview`` snapshot -- mirrors the post-STATIC_SUMMARY
 # shape the dispatcher reads. Package + version match the operator's
 # ExampleCorp SampleApp fixture so the parent investigation title surfaces a
 # realistic identifier in the response envelope.
@@ -95,7 +95,7 @@ _APK_HANDLES: dict[str, Any] = {
 async def _insert_android_apk_target() -> str:
     """Insert a workspace + ``android_apk`` target row pair via UnitOfWork.
 
-    Bypasses the full POST /vr/workspaces + POST /vr/targets dance —
+    Bypasses the full POST /vr/workspaces + POST /vr/targets dance --
     the dispatcher cares about ``kind``, ``team_id``, and
     ``mcp_handles_json`` only, and the C-19 ingestion pipeline is out
     of scope for this acceptance smoke test.
@@ -140,7 +140,7 @@ async def test_a1_smoke_masvs_audit_fans_one_child_per_l1_control(
     admin_token: str,
     test_db: None,
 ) -> None:
-    """A-1 acceptance smoke test — happy path of the MASVS dispatcher.
+    """A-1 acceptance smoke test -- happy path of the MASVS dispatcher.
 
     Sets up one ``android_apk`` target with a hand-crafted
     ``apk_overview``, fires ``POST /vr/targets/{id}/masvs-audit``,
@@ -151,7 +151,7 @@ async def test_a1_smoke_masvs_audit_fans_one_child_per_l1_control(
     2. Parent record (``kind=masvs_audit``) has the catalog version
        pinned on ``secondary_target_refs_json``.
     3. Every child record sits under the parent with the existing
-       ``audit`` kind — never the new ``masvs_audit`` tag, which is
+       ``audit`` kind -- never the new ``masvs_audit`` tag, which is
        parent-only.
     4. Every L1 control id appears exactly once across the child
        set (no duplicates, no omissions).
@@ -169,7 +169,7 @@ async def test_a1_smoke_masvs_audit_fans_one_child_per_l1_control(
     assert resp.status_code == 201, resp.text
     payload = resp.json()["data"]
 
-    # --- Invariant 4 — response envelope shape ---
+    # --- Invariant 4 -- response envelope shape ---
     parent_id: str = payload["parent_investigation_id"]
     child_ids: list[str] = payload["child_investigation_ids"]
     assert parent_id, "A-1: dispatcher returned an empty parent_investigation_id."
@@ -183,18 +183,18 @@ async def test_a1_smoke_masvs_audit_fans_one_child_per_l1_control(
         f"({expected_total}); got {payload['total_controls']}."
     )
 
-    # --- Invariant 1 — per-control fanout ---
+    # --- Invariant 1 -- per-control fanout ---
     assert len(child_ids) == expected_total, (
         f"A-1: dispatcher must return exactly one child id per L1 "
         f"control ({expected_total} expected); got {len(child_ids)}."
     )
     assert len(set(child_ids)) == expected_total, (
-        "A-1: child_investigation_ids contained duplicates — the "
+        "A-1: child_investigation_ids contained duplicates -- the "
         "dispatcher must mint one fresh investigation per L1 control."
     )
 
     async with UnitOfWork() as uow:
-        # --- Invariant 2 — catalog version pinned on parent ---
+        # --- Invariant 2 -- catalog version pinned on parent ---
         parent = (await uow.session.exec(
             select(VRInvestigationRecord)
             .where(VRInvestigationRecord.id == parent_id),
@@ -202,11 +202,11 @@ async def test_a1_smoke_masvs_audit_fans_one_child_per_l1_control(
         assert parent.kind == InvestigationKind.MASVS_AUDIT.value, (
             "A-1: parent investigation must carry "
             f"kind=masvs_audit; got {parent.kind!r}. This is the only "
-            "place the new kind is allowed — children stay on the "
+            "place the new kind is allowed -- children stay on the "
             "existing audit kind."
         )
         assert parent.parent_investigation_id is None, (
-            "A-1: a MASVS audit parent is itself a root — it must not "
+            "A-1: a MASVS audit parent is itself a root -- it must not "
             "have its own parent_investigation_id set."
         )
         parent_refs = json.loads(parent.secondary_target_refs_json)
@@ -216,7 +216,7 @@ async def test_a1_smoke_masvs_audit_fans_one_child_per_l1_control(
             f"report rendering can read it back; got {parent_refs!r}."
         )
 
-        # --- Invariants 1 + 3 — children all on the existing audit kind ---
+        # --- Invariants 1 + 3 -- children all on the existing audit kind ---
         children = (await uow.session.exec(
             select(VRInvestigationRecord)
             .where(VRInvestigationRecord.parent_investigation_id == parent_id),
@@ -233,7 +233,7 @@ async def test_a1_smoke_masvs_audit_fans_one_child_per_l1_control(
                 "every child MUST use the existing audit kind so the "
                 "standard vuln_researcher dispatch handles it "
                 "unchanged. The masvs_audit kind is a parent-only "
-                "batch tag — leaking it onto a child would break the "
+                "batch tag -- leaking it onto a child would break the "
                 "standard dispatch routing."
             )
             child_refs = json.loads(child.secondary_target_refs_json)
@@ -244,7 +244,7 @@ async def test_a1_smoke_masvs_audit_fans_one_child_per_l1_control(
             control_id = child_refs[0]["masvs_control_id"]
             assert control_id not in seen_control_ids, (
                 f"A-1: control id {control_id!r} appears on more than "
-                "one child — the dispatcher must mint exactly one "
+                "one child -- the dispatcher must mint exactly one "
                 "investigation per L1 control."
             )
             seen_control_ids.add(control_id)

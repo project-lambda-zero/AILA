@@ -36,7 +36,7 @@ class ServiceFactory:
 
     Services are still cheap, but the LLM client + ConfigRegistry +
     SecretStore triple is no longer rebuilt on every property access
-    (fix §125 / §126 — each access used to trigger a fresh DB lookup
+    (fix §125 / §126 -- each access used to trigger a fresh DB lookup
     table init via ConfigRegistry, costing latency for any function
     that touched ``factory.llm_client`` twice).
 
@@ -55,13 +55,13 @@ class ServiceFactory:
         secret_store: SecretStore | None = None,
     ) -> None:
         self._team_context = team_context
-        # fix §127 — explicit injection points. Tests pass fakes; production
+        # fix §127 -- explicit injection points. Tests pass fakes; production
         # leaves these as None and the lazy getters build the real services.
         self._llm_client_override = llm_client
         self._reasoning_engine_override = reasoning_engine
         self._config_registry_override = config_registry
         self._secret_store_override = secret_store
-        # fix §125 / §126 — memoized singletons. None until first access.
+        # fix §125 / §126 -- memoized singletons. None until first access.
         self._llm_client_cache: AilaLLMClient | None = None
         self._reasoning_engine_cache: CyberReasoningEngine | None = None
         self._config_registry_cache: ConfigRegistry | None = None
@@ -112,7 +112,7 @@ class ServiceFactory:
     def llm_client(self) -> AilaLLMClient:
         """AilaLLMClient wired through the platform registry and secret store.
 
-        Memoized — repeated access returns the same instance. Wraps
+        Memoized -- repeated access returns the same instance. Wraps
         ConfigRegistry + SecretStore, which themselves do I/O on
         construction; per-access creation was a latency tax (§125).
         """

@@ -153,7 +153,7 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
         <p className="text-xs text-text-muted">
           No files were carved. This typically means the pcap carried no
           reconstructible file transfers, or Zeek is not installed on the
-          analyzer — check the worker log for a <code>zeek_skipped</code> event.
+          analyzer -- check the worker log for a <code>zeek_skipped</code> event.
         </p>
       </AilaCard>
     );

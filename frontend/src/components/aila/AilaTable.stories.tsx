@@ -6,7 +6,7 @@ import { AilaTable } from "./AilaTable"
 import { AilaBadge } from "./AilaBadge"
 
 // ─────────────────────────────────────────────────────────
-// Mock data — vulnerability-like objects
+// Mock data -- vulnerability-like objects
 // ─────────────────────────────────────────────────────────
 
 type Severity = "critical" | "high" | "medium" | "low"

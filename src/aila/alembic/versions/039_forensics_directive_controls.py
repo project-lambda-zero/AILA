@@ -1,4 +1,4 @@
-"""039 — add structured steering fields to forensics analyst directives.
+"""039 -- add structured steering fields to forensics analyst directives.
 
 Adds explicit strategy-family and required-artifact fields so operator steering
 is no longer encoded only in free-text notes.

@@ -1,5 +1,5 @@
 /**
- * useSearchHistory.test.ts — unit tests for the useSearchHistory hook.
+ * useSearchHistory.test.ts -- unit tests for the useSearchHistory hook.
  *
  * Tests localStorage persistence, deduplication, MAX_ITEMS cap, and clearing.
  * Uses jsdom localStorage (cleared in afterEach via test/setup.ts).

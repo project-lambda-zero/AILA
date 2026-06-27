@@ -29,7 +29,7 @@ def _write(tmp_path: Path, name: str, source: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Test 1: unused_parameter — non-self/cls param that never appears in body
+# Test 1: unused_parameter -- non-self/cls param that never appears in body
 # ---------------------------------------------------------------------------
 
 class TestUnusedParameter:
@@ -109,7 +109,7 @@ def greet(name):
 
 
 # ---------------------------------------------------------------------------
-# Test 2: misleading_name — wrapper disguised as intelligent logic
+# Test 2: misleading_name -- wrapper disguised as intelligent logic
 # ---------------------------------------------------------------------------
 
 class TestMisleadingName:
@@ -160,12 +160,12 @@ class Router:
         return None
 """)
         findings = HonestyAuditor().audit_file(src)
-        # 3 statements — should not be flagged
+        # 3 statements -- should not be flagged
         assert not any(f.rule == "misleading_name" for f in findings)
 
 
 # ---------------------------------------------------------------------------
-# Test 3: docstring_mismatch — caching claims without caching code
+# Test 3: docstring_mismatch -- caching claims without caching code
 # ---------------------------------------------------------------------------
 
 class TestDocstringMismatch:
@@ -266,7 +266,7 @@ HONESTY_WHITELIST = []
 
 
 # ---------------------------------------------------------------------------
-# Test 5: clean file — empty findings and exit 0
+# Test 5: clean file -- empty findings and exit 0
 # ---------------------------------------------------------------------------
 
 class TestCleanFile:
@@ -337,7 +337,7 @@ def broken(used, totally_ignored):
 
 
 # ---------------------------------------------------------------------------
-# Test 7: sync_in_async — session_scope() inside async def
+# Test 7: sync_in_async -- session_scope() inside async def
 # ---------------------------------------------------------------------------
 
 class TestSyncInAsync:
@@ -399,7 +399,7 @@ async def handler():
 
 
 # ---------------------------------------------------------------------------
-# Test 8: api_imports_module_internals — api/ importing modules/ internals
+# Test 8: api_imports_module_internals -- api/ importing modules/ internals
 # ---------------------------------------------------------------------------
 
 class TestApiImportsModuleInternals:

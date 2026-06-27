@@ -1,4 +1,4 @@
-"""Phase 179 Task 1 — migration 026 drops legacy task columns.
+"""Phase 179 Task 1 -- migration 026 drops legacy task columns.
 
 Applies the upgrade against a Postgres database that's been pre-populated
 with TaskRecord rows across every status bucket, then asserts:
@@ -26,7 +26,7 @@ from sqlalchemy import inspect as sa_inspect
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.storage.database import async_session_scope
 
-MIGRATION_ERROR = "v5.0 migration — resubmit"
+MIGRATION_ERROR = "v5.0 migration -- resubmit"
 
 
 async def _seed_task(
@@ -38,7 +38,7 @@ async def _seed_task(
     """Insert a TaskRecord with the requested status and legacy column values.
 
     Uses a raw UPDATE for the legacy columns because the ORM model at
-    this point in Wave 1 still carries them — Wave 2 strips them.
+    this point in Wave 1 still carries them -- Wave 2 strips them.
     """
     tid = str(uuid.uuid4())
     async with async_session_scope() as session:

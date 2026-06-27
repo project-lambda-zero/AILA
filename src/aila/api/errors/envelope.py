@@ -1,4 +1,4 @@
-"""ErrorEnvelope — uniform error response body for the AILA REST API (Phase 176a).
+"""ErrorEnvelope -- uniform error response body for the AILA REST API (Phase 176a).
 
 Every non-2xx response emitted by :func:`register_error_handlers` uses this
 shape (D-10a). The ``trace_id`` field is populated from structlog's
@@ -17,7 +17,7 @@ class ErrorEnvelope(APIModel):
 
     Fields:
         code: Stable machine-readable error code (e.g. ``"MISSING_API_KEY"``).
-        message: Human-readable error description — safe for display. Never
+        message: Human-readable error description -- safe for display. Never
             contains a stack trace or raw ``str(exc)``.
         hint: Operator-facing prescriptive next step sourced from
             :mod:`aila.api.errors.hints`. ``None`` only if no hint is mapped.

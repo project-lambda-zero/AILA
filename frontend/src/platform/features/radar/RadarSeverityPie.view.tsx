@@ -1,5 +1,5 @@
 /**
- * RadarSeverityPie.view — recharts-using pie chart for the radar inspect panel.
+ * RadarSeverityPie.view -- recharts-using pie chart for the radar inspect panel.
  *
  * Loaded lazily from RadarInspectPanel so the recharts vendor chunk stays
  * out of the root entry. The panel is itself lazily shown (only when a node

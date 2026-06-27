@@ -13,7 +13,7 @@ const LoginFaultyTerminal = lazy(() =>
 );
 
 /**
- * Login page — theme-adaptive.
+ * Login page -- theme-adaptive.
  *
  * Left panel: full-height dark panel with particle background and AILA branding.
  *   Hidden on mobile (<768px).
@@ -70,7 +70,7 @@ export function LoginPage() {
 
   return (
     <div className="login-root">
-      {/* Left panel — branding + particles */}
+      {/* Left panel -- branding + particles */}
       <div className="login-left" aria-hidden="true">
         <div className="login-dot-grid" />
 
@@ -86,7 +86,7 @@ export function LoginPage() {
         </div>
       </div>
 
-      {/* Right panel — form */}
+      {/* Right panel -- form */}
       <main className="login-right">
         <p className="login-mobile-logo" aria-hidden="true">AILA</p>
 
@@ -209,7 +209,7 @@ export function LoginPage() {
           font-family: var(--font-sans);
         }
 
-        /* Right panel — adapted from Aceternity's "premium-auth-split"
+        /* Right panel -- adapted from Aceternity's "premium-auth-split"
            block. Aceternity uses raw Tailwind utility classes; we map
            every visual token (h-11 inputs, ring-1 elevation, soft
            shadows, lg-radius, gradient primary button, gap-y-8 form

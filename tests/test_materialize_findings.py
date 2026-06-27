@@ -157,7 +157,7 @@ def test_unique_constraint_enforced(engine) -> None:
 
 
 # ---------------------------------------------------------------------------
-# DATA-07 guard tests (Plan 03) — PrioritizedFindingRecord schema enforcement
+# DATA-07 guard tests (Plan 03) -- PrioritizedFindingRecord schema enforcement
 # ---------------------------------------------------------------------------
 
 def test_prioritized_finding_record_has_no_details_json() -> None:
@@ -174,13 +174,13 @@ def test_latest_finding_record_still_has_details_json() -> None:
 
 def test_prioritized_finding_no_details_json_kwarg() -> None:
     """Even if details_json= is passed to the constructor (SQLModel ignores unknown kwargs),
-    the field must NOT be stored on the instance — the column does not exist (DATA-07)."""
+    the field must NOT be stored on the instance -- the column does not exist (DATA-07)."""
     from aila.modules.vulnerability.db_models import PrioritizedFindingRecord
     record = PrioritizedFindingRecord(
         run_id="r1", system_id=1, host="h", package_name="pkg",
         installed_version="1.0", cve_id="CVE-1", criticality="High",
         score=70.0, rationale="test", nvd_url="https://nvd.nist.gov",
-        details_json="{}",   # SQLModel ignores unknown kwargs — must not be stored
+        details_json="{}",   # SQLModel ignores unknown kwargs -- must not be stored
     )
     assert not hasattr(record, "details_json"), (
         "details_json must not exist as an attribute on PrioritizedFindingRecord instances"
@@ -189,7 +189,7 @@ def test_prioritized_finding_no_details_json_kwarg() -> None:
 
 def test_no_details_json_deserialization(session: Session) -> None:
     """Materialized columns (criticality, score, nvd_url, rationale) are directly readable
-    without calling json.loads() — DATA-07 guard."""
+    without calling json.loads() -- DATA-07 guard."""
     _upsert_finding(
         session,
         host="10.0.0.4",
@@ -205,7 +205,7 @@ def test_no_details_json_deserialization(session: Session) -> None:
         select(LatestFindingRecord).where(LatestFindingRecord.cve_id == "CVE-2024-5678")
     ).one()
 
-    # All risk-signal fields must be accessible as plain Python values — no json.loads required
+    # All risk-signal fields must be accessible as plain Python values -- no json.loads required
     assert isinstance(row.criticality, str)
     assert row.criticality == "CRITICAL"
     assert isinstance(row.score, float)

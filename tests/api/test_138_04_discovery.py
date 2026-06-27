@@ -1,11 +1,11 @@
 """Comprehensive tests for Plan 138-04: Network Discovery and Topology.
 
 Tests:
-1. Parser unit tests (no DB) — ss -tlnp, ss -tnp, systemctl output parsing
-2. Edge detection unit tests — inter-system connection mapping
-3. Subnet detection unit tests — /24 grouping
-4. DB integration tests — persist, overwrite (D-09), stale marking (D-10)
-5. Topology endpoint tests — GET /topology, GET /topology/subnets
+1. Parser unit tests (no DB) -- ss -tlnp, ss -tnp, systemctl output parsing
+2. Edge detection unit tests -- inter-system connection mapping
+3. Subnet detection unit tests -- /24 grouping
+4. DB integration tests -- persist, overwrite (D-09), stale marking (D-10)
+5. Topology endpoint tests -- GET /topology, GET /topology/subnets
 
 All DB tests run against PostgreSQL via AILA_TEST_DATABASE_URL.
 """
@@ -49,7 +49,7 @@ ESTAB    0       0       192.168.1.100:9090  10.0.0.1:443
 
 
 # ===========================================================================
-# 1. Parser Unit Tests — no DB required
+# 1. Parser Unit Tests -- no DB required
 # ===========================================================================
 
 
@@ -238,7 +238,7 @@ class TestDetectEdges:
         from aila.platform.tasks.discovery import detect_edges, parse_ss_connections
 
         connections = parse_ss_connections(SAMPLE_SS_CONNECTIONS)
-        # Only register 192.168.1.100 as itself — 192.168.1.200 and 10.0.0.50 unknown
+        # Only register 192.168.1.100 as itself -- 192.168.1.200 and 10.0.0.50 unknown
         system_ip_map = {"192.168.1.100": 1}
 
         edges = detect_edges(connections, system_id=1, system_ip_map=system_ip_map)
@@ -323,7 +323,7 @@ class TestDetectSubnets:
 
 
 # ===========================================================================
-# 4. DB Integration Tests — require PostgreSQL
+# 4. DB Integration Tests -- require PostgreSQL
 # ===========================================================================
 
 
@@ -587,7 +587,7 @@ async def test_topology_returns_nodes_and_edges(seeded_network, async_client, ad
 
 @pytest.mark.asyncio
 async def test_topology_without_vulnerability_data(seeded_network, async_client, admin_token):
-    """Topology works when no vulnerability scans have run — severity_counts=None (D-12)."""
+    """Topology works when no vulnerability scans have run -- severity_counts=None (D-12)."""
     response = await async_client.get(
         "/topology",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -665,7 +665,7 @@ async def test_topology_with_severity_overlay(seeded_network, async_client, admi
     assert node1["severity_counts"]["high"] == 1
     assert node1["severity_counts"]["medium"] == 0
 
-    # system2 has no findings — severity_counts should be None
+    # system2 has no findings -- severity_counts should be None
     assert node2["severity_counts"] is None
 
 

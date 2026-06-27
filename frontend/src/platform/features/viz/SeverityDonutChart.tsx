@@ -1,5 +1,5 @@
 /**
- * SeverityDonutChart — VIZ-01.
+ * SeverityDonutChart -- VIZ-01.
  *
  * Donut chart showing severity distribution from real findings facet data.
  * The recharts-using JSX lives in ./SeverityDonutChart.view and is

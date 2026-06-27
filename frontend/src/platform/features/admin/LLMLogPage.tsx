@@ -115,7 +115,7 @@ function formatCost(value: number): string {
 }
 
 function formatDuration(ms: number | null): string {
-  if (ms === null || ms === undefined) return "—";
+  if (ms === null || ms === undefined) return "--";
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
 }
@@ -163,7 +163,7 @@ function buildColumns(
       accessorKey: "task_type",
       cell: ({ getValue }) => (
         <span className="font-mono text-xs text-text-muted">
-          {String(getValue()) || "—"}
+          {String(getValue()) || "--"}
         </span>
       ),
     },
@@ -269,7 +269,7 @@ function DetailPanel({ entry, onClose }: DetailPanelProps) {
       <div>
         <h3 className="font-mono text-sm font-semibold text-text">
           {entry.model}
-          <span className="text-text-muted"> · {entry.task_type || "—"}</span>
+          <span className="text-text-muted"> · {entry.task_type || "--"}</span>
         </h3>
         <p className="font-mono text-[10px] text-text-muted mt-1">
           {formatTimestamp(entry.timestamp)} · {formatCost(entry.cost_usd)} ·{" "}

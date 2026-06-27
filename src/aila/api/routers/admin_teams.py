@@ -1,4 +1,4 @@
-"""Admin teams router (Phase 177) — multi-team management.
+"""Admin teams router (Phase 177) -- multi-team management.
 
 All endpoints require admin role (team_id=None in the caller's JWT).
 
@@ -388,7 +388,7 @@ async def delete_team(request: Request, team_id: str) -> DataEnvelope[dict]:
         if team is None or team.deleted_at is not None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
-        # Reject deletion when the team still owns systems — operators must
+        # Reject deletion when the team still owns systems -- operators must
         # migrate data first to avoid orphaning team-scoped rows.
         sys_count = (
             await session.exec(

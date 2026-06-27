@@ -159,7 +159,7 @@ _SYSTEM_PROMPT = """You are an autonomous N-day vulnerability researcher.
 
 Goal: explain the named CVE on the named binary by identifying the patch,
 understanding the root cause, and classifying the bug primitive. You are
-NOT exploiting it — you are explaining it with primary evidence.
+NOT exploiting it -- you are explaining it with primary evidence.
 
 Each turn you receive: CVE id, vulnerable + patched binary ids, target
 mitigations report, the obligation ledger, the budget status, the
@@ -181,13 +181,13 @@ You MUST return ONE JSON object with this shape (no prose outside it):
 
 Action parameter keys (anything else is ignored):
 - decompile      : address_or_name
-- diff_versions  : <none — uses the binary ids from context>
+- diff_versions  : <none -- uses the binary ids from context>
 - call_chain     : target_function, direction ("callers" or "callees")
 - trace_dataflow : address_or_name, sink_function, sink_argument_index
 - xrefs_to       : address_or_name
 - search_pattern : pattern_type
 - binary_survey  : <none>
-- reasoning      : <none — internal step, no tool call>
+- reasoning      : <none -- internal step, no tool call>
 - submit         : provide "submission"; obligations must be met
 
 Hard rules:
@@ -254,13 +254,13 @@ class NdayResearcher:
             if self.budget.should_waive_recommended:
                 self._auto_waive_recommended()
             await self._emit(
-                emitter, f"Turn {turn}/{self.budget.config.max_turns} — planning",
+                emitter, f"Turn {turn}/{self.budget.config.max_turns} -- planning",
                 stage="turn_start", turn=turn,
             )
             try:
                 turn_result = await self._run_turn(turn, steps)
             except (RuntimeError, ValueError, KeyError, TypeError) as exc:
-                _log.exception("nday turn %d raised — recording as failure", turn)
+                _log.exception("nday turn %d raised -- recording as failure", turn)
                 turn_result = {
                     "turn": turn, "action": "reasoning",
                     "reasoning": f"[turn_exception] {type(exc).__name__}: {exc}",
@@ -278,7 +278,7 @@ class NdayResearcher:
         if submission is None:
             submission = self._partial_submission(steps)
             await self._emit(
-                emitter, "Budget exhausted — auto-submitting partial result.",
+                emitter, "Budget exhausted -- auto-submitting partial result.",
                 stage="auto_submit",
             )
         evidence_refs = sorted({s.source for s in self._sections if s.source})
@@ -329,7 +329,7 @@ class NdayResearcher:
         reasoning = str(parsed.get("reasoning") or "").strip()
         params = parsed.get("params") if isinstance(parsed.get("params"), dict) else {}
         if action not in _VALID_ACTIONS:
-            _log.warning("nday turn %d invalid action %r — coerced to reasoning", turn, action)
+            _log.warning("nday turn %d invalid action %r -- coerced to reasoning", turn, action)
             action = "reasoning"
         record: dict[str, Any] = {
             "turn": turn, "action": action, "reasoning": reasoning,
@@ -344,7 +344,7 @@ class NdayResearcher:
             record["submission"] = sub
             record["adjudication"] = adj
             if adj.verdict == "blocked":
-                # Convert to reasoning — agent will see unmet obligations next turn.
+                # Convert to reasoning -- agent will see unmet obligations next turn.
                 record["action"] = "reasoning"
                 hedge = (
                     f" hedge={adj.contradiction_signals}"
@@ -417,7 +417,7 @@ class NdayResearcher:
                 binary_id_new=self.patched_binary_id,
             )
         shaper = _ACTION_SHAPERS.get(action)
-        if shaper is None:  # pragma: no cover — guarded by _VALID_ACTIONS
+        if shaper is None:  # pragma: no cover -- guarded by _VALID_ACTIONS
             return {"status": "error", "error": f"unhandled action: {action}"}
         return await self.ida.forward(
             action=action, binary_id=self.binary_id, **shaper(params),
@@ -496,7 +496,7 @@ class NdayResearcher:
     @staticmethod
     def _render_history(steps: list[dict[str, Any]]) -> str:
         if not steps:
-            return "(none — this is your first turn)"
+            return "(none -- this is your first turn)"
         lines: list[str] = []
         for step in steps:
             status = "submitted" if step.get("submitted") else step.get("action")

@@ -1,7 +1,7 @@
 """Operator-facing hint registry for the error envelope (Phase 176a, D-31).
 
 One source of truth for every hint string so UI-path changes require a single
-grep. Hints are operator-facing prescriptive next steps — never HTTP numbers,
+grep. Hints are operator-facing prescriptive next steps -- never HTTP numbers,
 stack traces, or raw exception text.
 """
 from __future__ import annotations

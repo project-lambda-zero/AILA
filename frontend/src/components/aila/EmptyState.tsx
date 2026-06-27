@@ -22,7 +22,7 @@ export interface EmptyStateProps {
 }
 
 // ---------------------------------------------------------------------------
-// Action button — handles both onClick and href navigation
+// Action button -- handles both onClick and href navigation
 // ---------------------------------------------------------------------------
 
 function ActionButton({
@@ -59,7 +59,7 @@ function ActionButton({
 // ---------------------------------------------------------------------------
 
 /**
- * EmptyState — standardized empty state component for all AILA pages.
+ * EmptyState -- standardized empty state component for all AILA pages.
  *
  * Shows an optional icon, title, description, and up to two action buttons.
  * Use whenever a list, table, or data area has no items to display.

@@ -48,7 +48,7 @@ function markOnboardingDone(): void {
   try {
     localStorage.setItem(STORAGE_KEY, "true");
   } catch {
-    // localStorage unavailable — ignore
+    // localStorage unavailable -- ignore
   }
 }
 
@@ -93,7 +93,7 @@ function StepWelcome({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
           Welcome to AILA
         </h2>
         <p className="font-mono text-sm text-text-muted max-w-sm">
-          AI Lab Assistant — your modular security platform for vulnerability
+          AI Lab Assistant -- your modular security platform for vulnerability
           scanning and fleet management. Let&apos;s get you set up in 4 quick steps.
         </p>
       </div>
@@ -382,7 +382,7 @@ function StepDone({
 // ---------------------------------------------------------------------------
 
 /**
- * OnboardingWizard — guided first-run setup modal (UX-01).
+ * OnboardingWizard -- guided first-run setup modal (UX-01).
  *
  * Shown to new users on first visit (localStorage "aila-onboarding-done" absent).
  * Steps: Welcome → Register System → Launch Scan → Done.

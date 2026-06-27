@@ -2,7 +2,7 @@
 
 Provides per-user notification persistence with read/unread tracking.
 
-Per RT-05 / D-32: user-scoped — never returns other users' notifications (T-138-18).
+Per RT-05 / D-32: user-scoped -- never returns other users' notifications (T-138-18).
 Per D-27: DataEnvelope response.
 Per D-26: offset/limit pagination.
 Per D-31: slowapi rate limiting.

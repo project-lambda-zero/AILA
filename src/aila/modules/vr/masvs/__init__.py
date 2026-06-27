@@ -1,4 +1,4 @@
-"""MASVS catalog package — controls plus level/group enums.
+"""MASVS catalog package -- controls plus level/group enums.
 
 The catalog itself lives in ``catalog.py`` (populated incrementally
 per the project IMPLEMENTATION_PLAN, group by group). Public surface

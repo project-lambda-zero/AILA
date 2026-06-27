@@ -17,7 +17,7 @@ mechanism (halt branches + complete investigation + arq-purge):
   VR_INVESTIGATION_MESSAGE_CAP         (default 1000, total messages)
   VR_INVESTIGATION_WALL_CLOCK_HOURS    (default 6, investigation lifetime)
 
-The emit-side check stays in place as belt+suspenders — it catches
+The emit-side check stays in place as belt+suspenders -- it catches
 the cap faster (immediately on the turn that breached it) and lets
 the emit path log the breach next to the turn that caused it. The
 reaper is the catch-net for the stuck-worker case.
@@ -129,7 +129,7 @@ def _breach_reason_for_row(
         if latest_act is not None:
             idle_s = (now - latest_act).total_seconds()
             if idle_s < idle_grace_s:
-                return None  # alive — calendar age doesn't kill
+                return None  # alive -- calendar age doesn't kill
         age_hours = (now - clock_start).total_seconds() / 3600.0
         return (
             f"investigation_wall_clock:{age_hours:.1f}h/"
@@ -236,7 +236,7 @@ async def evaluate_cap_for_investigation(investigation_id: str) -> str | None:
         await _flip_branches_and_inv_to_completed(uow, investigation_id, reason, now)
         await uow.commit()
         _log.warning(
-            "investigation_reaper: cap exceeded — %s reason=%s",
+            "investigation_reaper: cap exceeded -- %s reason=%s",
             investigation_id, reason,
         )
     await _purge_arq_for_completed([investigation_id])
@@ -265,7 +265,7 @@ async def sweep_cap_exceeded_investigations() -> int:
         try:
             reason = await evaluate_cap_for_investigation(str(inv_id))
         except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
-            # fix §350 — surface traceback so a per-id eval failure
+            # fix §350 -- surface traceback so a per-id eval failure
             # (cap evaluation crash, FK regression) is debuggable from
             # the cron log instead of only the class name.
             _log.warning(

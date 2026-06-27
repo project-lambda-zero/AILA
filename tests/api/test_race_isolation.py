@@ -1,8 +1,8 @@
 """Data isolation and bulk atomicity tests for AILA API.
 
-RACE-03: Session isolation — users cannot see each other's session messages.
-RACE-04: Task group isolation — reader gets 404 (not 403) on admin's task.
-RACE-08: Bulk findings atomicity — invalid ID in batch causes full rollback.
+RACE-03: Session isolation -- users cannot see each other's session messages.
+RACE-04: Task group isolation -- reader gets 404 (not 403) on admin's task.
+RACE-08: Bulk findings atomicity -- invalid ID in batch causes full rollback.
 
 Seeds test data directly into DB via session_scope (platform=None in test env).
 """
@@ -153,7 +153,7 @@ async def test_race_bulk_findings_atomicity(
 
     nonexistent_id = 99999
 
-    # 1. Mixed batch (2 valid + 1 invalid) — must fail atomically (422)
+    # 1. Mixed batch (2 valid + 1 invalid) -- must fail atomically (422)
     resp = await async_client.patch(
         "/vulnerability/findings/bulk",
         json={"finding_ids": [valid_ids[0], valid_ids[1], nonexistent_id], "status": "remediated"},

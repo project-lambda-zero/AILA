@@ -52,7 +52,7 @@ class ModuleStatusTool(Tool):
 
     Registered as 'module_status' in PLATFORM_TOOL_KEYS. Satisfies D-04: every
     module inherits at least this tool so required_tools() is never empty.
-    Returns a lightweight status dict — no sensitive data, no state mutation.
+    Returns a lightweight status dict -- no sensitive data, no state mutation.
     """
 
     name = "module_status"
@@ -89,7 +89,7 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     run_memory = RunMemory()
     cost_tracker = CostTracker(run_memory=run_memory, registry=config_registry)
     runtime_model.cost_tracker = cost_tracker
-    # fix §130 — publish the RunMemory so the hook layer's _on_job_end can
+    # fix §130 -- publish the RunMemory so the hook layer's _on_job_end can
     # call clear(run_id) on terminal task transitions without importing
     # PlatformRuntime (which lives in a different scope than the ARQ hook).
     from .shared import set_shared_run_memory
@@ -102,7 +102,7 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     _classify_step = make_classify_step(registry=config_registry, emitter=None)
     runtime_model.pipeline.register("classify", _classify_step)
 
-    # Validate pipeline step (Phase 118 — Evidence Validation). Modules
+    # Validate pipeline step (Phase 118 -- Evidence Validation). Modules
     # contribute validators via ModuleProtocol.evidence_validators() so
     # the platform stays module-agnostic; the step itself is registered
     # below after the module registry is built.
@@ -110,7 +110,7 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     # Register gate pipeline step (Phase 119: Confidence Gating).
     # §101: inner_call routes through AilaLLMClient._inner_call so the
     # consensus retries' tokens land in the same cost ledger as the
-    # primary call. Pipeline bypass is structural — _inner_call does not
+    # primary call. Pipeline bypass is structural -- _inner_call does not
     # invoke PipelineRunner.run, so no gate recursion.
     _gate_step = make_gate_step(
         config_provider=runtime_model._config,
@@ -120,7 +120,7 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     runtime_model.pipeline.register("gate", _gate_step)
 
     # Register verify pipeline step (Phase 174: Second-Model Verification).
-    # §100: same _inner_call wiring as gate — the second-model call now
+    # §100: same _inner_call wiring as gate -- the second-model call now
     # accumulates against the per-run budget.
     _verify_step = make_verify_step(
         config_provider=runtime_model._config,
@@ -150,7 +150,7 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
         ("audit.log", AuditLogTool(platform_settings)),
         ("http.fetch", HTTPFetchTool(platform_settings)),
         ("cache.decision", DecisionCacheTool(platform_settings)),
-        # Knowledge tools — platform-level registration uses namespace="platform".
+        # Knowledge tools -- platform-level registration uses namespace="platform".
         # Agents that need isolated knowledge stores must construct their own instances:
         #   store_tool = KnowledgeStoreTool(namespace=self.__class__.__name__, settings=settings)
         # Namespace isolation is enforced at SQL level (WHERE namespace = ?) per D-06 and D-10.
@@ -168,7 +168,7 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
 
     # Now the registry is built, collect each module's evidence_validators()
     # and register the validate pipeline step (Phase 118). Modules that
-    # ship no validator return [] from the default — the resulting step
+    # ship no validator return [] from the default -- the resulting step
     # is a no-op for them.
     _validators: list = []
     for _module in module_registry.modules:
@@ -179,7 +179,7 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     from ...storage.database import async_session_scope, init_db
     await init_db(app_settings, schema_registry)
 
-    # Call seed_data() for each registered module — idempotent, skips if already seeded.
+    # Call seed_data() for each registered module -- idempotent, skips if already seeded.
     async with async_session_scope(app_settings) as _seed_session:
         for _module in module_registry.modules:
             await _module.seed_data(_seed_session)

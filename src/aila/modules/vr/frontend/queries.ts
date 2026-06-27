@@ -30,13 +30,13 @@ import { formatBranchDisplayName } from "./branchDisplay";
  *  messages, branches, outcomes, or fuzz proposals. Polling the per-
  *  investigation REST endpoints is only useful for these. Everything
  *  else (paused, completed, failed, abandoned) is terminal-or-paused
- *  from the worker's perspective — no new rows will appear without
+ *  from the worker's perspective -- no new rows will appear without
  *  an operator action (resume / reopen / re-enqueue), and that
  *  action's mutation already invalidates the affected query keys.
  *
  *  Treating `paused` as non-live is deliberate: when the operator
  *  pauses, they want the UI to settle, not keep hammering the
- *  backend at 3-5s cadence (D-310 — operator reported "it cant
+ *  backend at 3-5s cadence (D-310 -- operator reported "it cant
  *  stop calling" on a paused investigation; backend access log
  *  showed 99 GETs to /vr/investigations/{id} in the recent
  *  window). The Resume mutation invalidates the investigation
@@ -51,7 +51,7 @@ export function isInvestigationLive(
   status: InvestigationStatus | string | null | undefined,
 ): boolean {
   // Default to LIVE when status is unknown: the page just mounted and
-  // hasn't fetched the investigation yet — better one wasted poll
+  // hasn't fetched the investigation yet -- better one wasted poll
   // than a missed first paint of an actually-running investigation.
   if (status == null) return true;
   return _LIVE_INVESTIGATION_STATUSES.has(status as InvestigationStatus);
@@ -122,7 +122,7 @@ export function useAllFindings(filters: AllFindingsFilters = {}) {
   });
 }
 
-/** Project-agnostic single-finding fetch — used by the project-less
+/** Project-agnostic single-finding fetch -- used by the project-less
  *  FindingDetailPage route so findings with no linked project still
  *  open from the global explorer. */
 export function useVRFindingById(findingId: string) {
@@ -246,7 +246,7 @@ export function useInvestigations(filters: InvestigationListFilters = {}) {
 }
 
 /**
- * Convenience hook — returns all investigations across the workspace
+ * Convenience hook -- returns all investigations across the workspace
  * filtered to those rooted on a given target_id. The backend list
  * endpoint doesn't yet accept a target_id filter, so we filter
  * client-side; the data set is small enough (per-workspace) that
@@ -382,7 +382,7 @@ export function useInvestigationMessages(
 /** Per-investigation branch list polling.
  *
  *  Polls at 5s while the investigation is `live` (running / created).
- *  Stops polling on paused / completed / failed / abandoned — the
+ *  Stops polling on paused / completed / failed / abandoned -- the
  *  parent screen passes `live: isInvestigationLive(inv?.status)` so
  *  paused-and-completed views settle instead of hammering. */
 export function useInvestigationBranches(
@@ -403,7 +403,7 @@ export function useInvestigationBranches(
 
 /** Per-investigation outcome list polling.
  *
- *  See `useInvestigationBranches` — same `{ live }` contract. */
+ *  See `useInvestigationBranches` -- same `{ live }` contract. */
 export function useInvestigationOutcomes(
   investigationId: string,
   opts: { live?: boolean } = {},
@@ -435,7 +435,7 @@ export interface HypothesisProjection {
 
 /** Per-investigation hypothesis projection polling.
  *
- *  See `useInvestigationBranches` — same `{ live }` contract. */
+ *  See `useInvestigationBranches` -- same `{ live }` contract. */
 export function useInvestigationHypotheses(
   investigationId: string,
   opts: { live?: boolean } = {},
@@ -455,7 +455,7 @@ export function useInvestigationHypotheses(
 /**
  * Hypothesis aggregation across every investigation rooted on one target.
  *
- * Server has no `/targets/:id/hypotheses` endpoint yet — this hook fans
+ * Server has no `/targets/:id/hypotheses` endpoint yet -- this hook fans
  * out to `/investigations/:id/hypotheses` per investigation that has
  * actually run (status != 'created') and flattens the results with
  * investigation-context attached. UI uses this to render a single
@@ -472,7 +472,7 @@ export function useTargetHypotheses(targetId: string) {
   const invsQuery = useInvestigationsForTarget(targetId);
   const investigations = invsQuery.data?.data ?? [];
   // Only fetch hypotheses for investigations that have actually run.
-  // `created` status means agents never started — endpoint returns []
+  // `created` status means agents never started -- endpoint returns []
   // and 24 empty subqueries just add latency + noise.
   const ran = investigations.filter((inv) => inv.status !== "created");
 
@@ -836,7 +836,7 @@ export function useTargetMap(): Map<string, VRTargetSummary> {
 
 export function useTargetName(targetId: string | null | undefined): string {
   const map = useTargetMap();
-  if (!targetId) return "—";
+  if (!targetId) return "--";
   return map.get(targetId)?.display_name ?? "loading…";
 }
 
@@ -847,7 +847,7 @@ export function useWorkspaceMap(): Map<string, VRWorkspaceSummary> {
 
 export function useWorkspaceName(workspaceId: string | null | undefined): string {
   const map = useWorkspaceMap();
-  if (!workspaceId) return "—";
+  if (!workspaceId) return "--";
   return map.get(workspaceId)?.name ?? "loading…";
 }
 
@@ -855,10 +855,10 @@ export function useBranchLabel(
   branches: VRBranchSummary[] | undefined,
   branchId: string | null | undefined,
 ): string {
-  if (!branchId || !branches) return "—";
+  if (!branchId || !branches) return "--";
   const hit = branches.find((b) => b.id === branchId);
   if (!hit) return "Unnamed branch";
-  // §181 — defense-in-depth fallback consolidated via formatBranchDisplayName.
+  // §181 -- defense-in-depth fallback consolidated via formatBranchDisplayName.
   // fork_at_turn disambiguates siblings spawned by the same persona.
   const persona = formatBranchDisplayName(hit);
   return hit.fork_at_turn != null ? `${persona} @t${hit.fork_at_turn}` : persona;
@@ -941,14 +941,14 @@ export function useFuzzProposals(opts?: {
   });
 }
 
-/** U-2 — MASVS audit aggregate (per-control verdicts + summary counts).
+/** U-2 -- MASVS audit aggregate (per-control verdicts + summary counts).
  *
  *  Fetches `GET /vr/targets/{targetId}/masvs-audit-aggregate?audit_id=<auditId>`
  *  and returns the unwrapped :class:`MasvsAuditAggregate`. Poll cadence
  *  matches `useInvestigationsForTarget` (8s) so the per-control table
  *  surfaces new verdicts as children finish without the operator
  *  refreshing the page. The hook stays disabled until BOTH ids are
- *  truthy strings — `MasvsControlTable` only mounts once it has
+ *  truthy strings -- `MasvsControlTable` only mounts once it has
  *  resolved the active parent from the investigations list.
  */
 export function useMasvsAuditAggregate(targetId: string, auditId: string | null) {

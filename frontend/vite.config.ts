@@ -44,7 +44,7 @@ const appVersion = readPackageVersion();
 const buildSha = readBuildSha();
 
 /**
- * C14 — partition vendor code into deterministic chunks. Without this,
+ * C14 -- partition vendor code into deterministic chunks. Without this,
  * Rollup packs every eager import into a single 1.7 MB+ index chunk.
  * The partitions chosen below match the PRD §C 14 acceptance criteria:
  * react/react-router/@tanstack/recharts/@phosphor-icons each get their
@@ -53,7 +53,7 @@ const buildSha = readBuildSha();
  *
  * Regex tolerates both POSIX `/` and Windows `\` separators because
  * Vite reports module ids with the host platform's path style.
- * Order matters — first match wins, so more specific patterns first.
+ * Order matters -- first match wins, so more specific patterns first.
  */
 function manualChunks(id: string): string | undefined {
   if (!id.includes("node_modules")) {
@@ -62,7 +62,7 @@ function manualChunks(id: string): string | undefined {
   // clsx/cva/tailwind-merge are tiny (~25 KB combined) and pulled in by
   // every component via the `cn()` helper. Putting them in vendor-react
   // (eager-loaded) prevents the root entry from statically importing
-  // them from vendor-recharts — which would force the 430 KB recharts
+  // them from vendor-recharts -- which would force the 430 KB recharts
   // chunk on every route, defeating C17's lazy boundaries.
   if (/[\\/]node_modules[\\/](react|react-dom|scheduler|react-is|clsx|class-variance-authority|tailwind-merge)[\\/]/.test(id)) {
     return "vendor-react";

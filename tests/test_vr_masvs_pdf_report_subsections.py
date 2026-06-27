@@ -1,4 +1,4 @@
-"""R-2b — per-control subsection bodies under each MASVS group section.
+"""R-2b -- per-control subsection bodies under each MASVS group section.
 
 The R-2a tests in :file:`tests/test_vr_masvs_pdf_report.py` exercise the
 scaffolding (cover, executive summary, group sections with TOC entries
@@ -23,7 +23,7 @@ A subsection MUST surface, per control:
 
 When a verdict's ``control_id`` is not in the active catalog (the
 catalog moved on after dispatch), the subsection falls back to a
-minimal "(not in current catalog)" title bar + footer — partial
+minimal "(not in current catalog)" title bar + footer -- partial
 fidelity beats refusing to render.
 """
 from __future__ import annotations
@@ -67,7 +67,7 @@ def _catalog_control(control_id: str) -> MasvsControl:
         if control.id == control_id:
             return control
     raise AssertionError(
-        f"catalog has no control with id {control_id!r} — "
+        f"catalog has no control with id {control_id!r} -- "
         "the catalog moved on; update the test fixture.",
     )
 
@@ -221,7 +221,7 @@ def test_subsection_renders_verbatim_evidence_locations() -> None:
 
 def test_subsection_omits_evidence_block_when_no_locations() -> None:
     """A verdict with empty ``evidence_locations`` must not emit the
-    "AFFECTED COMPONENTS" header — an empty block is visual noise
+    "AFFECTED COMPONENTS" header -- an empty block is visual noise
     that suggests missing data rather than the absence of citations.
     """
     control = _catalog_control("MSTG-STORAGE-1")

@@ -1,4 +1,4 @@
-// ListFunctions.java — Ghidra headless post-analysis script.
+// ListFunctions.java -- Ghidra headless post-analysis script.
 // Lists all functions in the current program with address + name + size.
 // Usage: analyzeHeadless <project> <name> -process <binary> -postScript ListFunctions.java
 //

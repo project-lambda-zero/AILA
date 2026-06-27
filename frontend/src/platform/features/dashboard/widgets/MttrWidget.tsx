@@ -5,7 +5,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { useDashboardData } from "../hooks/useDashboardData";
 
 /**
- * MttrWidget — findings closed in the last 30 days.
+ * MttrWidget -- findings closed in the last 30 days.
  *
  * Reads meta.closed_last_30d from the dashboard envelope.
  * Displays count as primary metric with a clock icon.

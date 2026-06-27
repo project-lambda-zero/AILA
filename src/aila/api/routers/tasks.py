@@ -1,15 +1,15 @@
 """Tasks router for AILA REST API.
 
 Exposes the task queue lifecycle surface:
-- GET  /tasks                    — list tasks (scoped to user's group_id)
-- GET  /tasks/{task_id}          — get single task (scoped)
-- POST /tasks/{task_id}/cancel   — cancel a non-terminal task
-- POST /tasks/{task_id}/resume   — resume a PAUSED task (MOD-09/D-11)
-- GET  /tasks/{task_id}/events   — SSE stream from Redis Streams (TASK-08/09)
-- GET  /tasks/queue-depth        — admin: task counts by status (OPS-04)
-- POST /tasks/drain              — admin: pause new submissions (OPS-05)
-- POST /tasks/requeue-failed     — admin: requeue recent failures (OPS-05)
-- POST /task                     — submit freeform task (TASK-01, D-09)
+- GET  /tasks                    -- list tasks (scoped to user's group_id)
+- GET  /tasks/{task_id}          -- get single task (scoped)
+- POST /tasks/{task_id}/cancel   -- cancel a non-terminal task
+- POST /tasks/{task_id}/resume   -- resume a PAUSED task (MOD-09/D-11)
+- GET  /tasks/{task_id}/events   -- SSE stream from Redis Streams (TASK-08/09)
+- GET  /tasks/queue-depth        -- admin: task counts by status (OPS-04)
+- POST /tasks/drain              -- admin: pause new submissions (OPS-05)
+- POST /tasks/requeue-failed     -- admin: requeue recent failures (OPS-05)
+- POST /task                     -- submit freeform task (TASK-01, D-09)
 
 All endpoints require authentication (Bearer JWT).
 List/get queries are scoped by group_id unless the caller is admin (D-22/MOD-13).
@@ -25,7 +25,7 @@ POST /task:
 - Wraps TaskQueue.submit() in asyncio.to_thread() per HANG-03 (sync call from async def)
 - Returns 503 if platform is not initialized
 
-Ownership: Platform API layer — not module-specific.
+Ownership: Platform API layer -- not module-specific.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ from aila.storage.db_models import WorkflowStateTransition
 __all__ = ["router", "task_submit_router"]
 
 _log = logging.getLogger(__name__)
-_TRANSITIONS_LIMIT = 500  # safety cap — prevents unbounded reads on high-retry runs
+_TRANSITIONS_LIMIT = 500  # safety cap -- prevents unbounded reads on high-retry runs
 
 router = APIRouter(
     prefix="/tasks",
@@ -362,7 +362,7 @@ async def list_task_transitions(
     """Return all workflow state transition audit rows for a task.
 
     Verifies the caller has access to the task (same scoping as GET /tasks/{id}).
-    Returns an empty list for non-workflow tasks — never a 404.
+    Returns an empty list for non-workflow tasks -- never a 404.
     Results are ordered by seq ascending (oldest first).
     """
     del request  # required by rate-limiter signature
@@ -440,7 +440,7 @@ async def stream_task_events(
 
     if not pool_available():
         async def _no_redis_generator() -> AsyncGenerator[str, None]:
-            msg = json.dumps({"message": "Redis not configured — no progress stream available"})
+            msg = json.dumps({"message": "Redis not configured -- no progress stream available"})
             yield f"data: {msg}\n\n"
 
         return StreamingResponse(

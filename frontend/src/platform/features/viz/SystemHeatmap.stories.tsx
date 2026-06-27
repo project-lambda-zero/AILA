@@ -1,5 +1,5 @@
 /**
- * SystemHeatmap.stories.tsx — Storybook stories for VIZ-03.
+ * SystemHeatmap.stories.tsx -- Storybook stories for VIZ-03.
  *
  * Uses a mock QueryClient to simulate loaded/empty states
  * without needing a live backend.

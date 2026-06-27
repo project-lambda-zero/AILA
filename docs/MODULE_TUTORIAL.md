@@ -344,7 +344,7 @@ name, so it must declare a `package.json` and `tsconfig.json` before any
 
 Use `src/aila/modules/hello_world/frontend/` as the canonical reference.
 
-**`frontend/package.json`** — workspace package metadata. Name follows the
+**`frontend/package.json`** -- workspace package metadata. Name follows the
 `@aila/<module>-frontend` (kebab-case) convention:
 
 ```json
@@ -377,7 +377,7 @@ references where a catalog entry exists). Add shell-owned framework / data
 / design-system packages under `peerDependencies`. See
 `docs/FRONTEND_MODULE_STANDARD.md` for the full dep-ownership matrix.
 
-**`frontend/tsconfig.json`** — extends the shared module config and points
+**`frontend/tsconfig.json`** -- extends the shared module config and points
 `@/`, `@app/`, `@platform/` aliases back at the shell:
 
 ```json
@@ -395,7 +395,7 @@ references where a catalog entry exists). Add shell-owned framework / data
 }
 ```
 
-**`frontend/spec.ts`** — module UI contribution. The shell imports this
+**`frontend/spec.ts`** -- module UI contribution. The shell imports this
 file via the package's `main` field:
 
 ```typescript
@@ -425,7 +425,7 @@ export const frontendSpec = {
 } satisfies ModuleFrontendSpec;
 ```
 
-**`frontend/MyModulePage.tsx`** — page component using platform design
+**`frontend/MyModulePage.tsx`** -- page component using platform design
 tokens:
 
 ```tsx
@@ -446,7 +446,7 @@ export default function MyModulePage() {
 Use platform tokens: `bg-base`, `bg-surface`, `text-text`, `text-text-muted`,
 `border-border`. No custom CSS files. No hardcoded hex colors.
 
-**Register the package with the shell** — add the new workspace dependency
+**Register the package with the shell** -- add the new workspace dependency
 to `frontend/package.json` so the shell can import it by name:
 
 ```json
@@ -464,7 +464,7 @@ to `frontend/package.json` so the shell can import it by name:
 import { frontendSpec as myModuleSpec } from "@aila/my-module-frontend";
 ```
 
-**Wire Tailwind v4 scanning** — Tailwind's content scan starts from the
+**Wire Tailwind v4 scanning** -- Tailwind's content scan starts from the
 directory containing `frontend/src/styles/globals.css` and ignores
 `node_modules/`, so classes used only inside a module file get no CSS
 generated unless you add an explicit `@source` directive. Add one line per
@@ -476,7 +476,7 @@ module right after the `@import "tailwindcss";` block:
 
 Already wired for `vr`, `vulnerability`, `forensics`, and `hello_world`.
 
-**Run `pnpm install`** — relinks the workspace so the shell can resolve the
+**Run `pnpm install`** -- relinks the workspace so the shell can resolve the
 new package and pnpm strict mode validates every bare import:
 
 ```bash

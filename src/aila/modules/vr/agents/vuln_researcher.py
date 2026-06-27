@@ -1,4 +1,4 @@
-"""HonestVulnResearcher — single-turn reasoning agent (M3.R-2).
+"""HonestVulnResearcher -- single-turn reasoning agent (M3.R-2).
 
 Per the M3.R-1 schema lesson and the no-overengineering rule: this
 agent runs ONE turn against the platform's existing
@@ -7,7 +7,7 @@ the loop; the agent itself owns no loop, no tool execution, no
 branching. Each of those is a separate later milestone.
 
 What this commit ships:
-  1. ``HonestVulnResearcher.run_turn()`` — load branch state, build
+  1. ``HonestVulnResearcher.run_turn()`` -- load branch state, build
      prompt context, call engine.decide_next_turn, absorb decision,
      persist message + updated branch state.
   2. ``run_turn`` returns a ``VulnResearcherTurnResult`` describing
@@ -127,7 +127,7 @@ _VARIANT_HUNT_REJECT_CAP = int(__import__("os").environ.get(
 ))
 # Hypothesis-settlement gate on terminal submit. Every live hypothesis
 # must be either explicitly rejected (in decision.rejected[]) or folded
-# into the submitted answer/provenance as supported evidence — no live
+# into the submitted answer/provenance as supported evidence -- no live
 # hypotheses are permitted to survive a submit. Without this gate, agents
 # accumulate live hypotheses across deep-search turns and submit while
 # the case still has 5+ unresolved claims, leaving the operator to
@@ -148,7 +148,7 @@ _PROMPT_DIR = Path(__file__).parent / "prompts"
 class VulnResearcherTurnResult:
     """What one ``run_turn`` produced.
 
-    ``terminal`` is True when the engine chose ``submit`` — caller
+    ``terminal`` is True when the engine chose ``submit`` -- caller
     (workflow state) should stop calling run_turn for this branch.
     """
 
@@ -165,7 +165,7 @@ class VulnResearcherError(Exception):
     """Raised on fatal agent failures (branch not found, prompt missing, etc.).
 
     ``retryable`` is True when the underlying cause was a transient LLM
-    failure (rate limit, provider overload, network) — the workflow
+    failure (rate limit, provider overload, network) -- the workflow
     finalizer reads this to choose between auto-re-enqueue and
     marking the investigation FAILED.
     """
@@ -217,7 +217,7 @@ class HonestVulnResearcher:
         # re-enqueued a completed investigation), the agent has zero
         # awareness it already submitted DIRECT_FINDINGs in prior
         # passes. Without this, it re-investigates from scratch every
-        # time and lands on the same root cause — 6 outcomes, 0 new
+        # time and lands on the same root cause -- 6 outcomes, 0 new
         # variants. Loading prior outcomes into the prompt forces it
         # to acknowledge prior work and EXTEND instead of REPEAT.
         prior_outcomes = await self._load_prior_outcomes()
@@ -230,7 +230,7 @@ class HonestVulnResearcher:
         # Without this, the dialectic produces local rejection but
         # never converges across branches: halvar keeps h1 alive
         # forever even after maddie + renzo reject it with verbatim
-        # source proof (observed live on investigation 8cf6144f).
+        # source proof (observed live on investigation <inv-uuid>).
         my_live_ids = {h.id for h in case_state.hypotheses if h.id}
         if my_live_ids and sibling_context:
             sibling_rejection_count: dict[str, int] = {}
@@ -268,7 +268,7 @@ class HonestVulnResearcher:
                     "Passive 'keep alive without comment' is a deliberation "
                     "integrity failure."
                 )
-                # fix §103 — directive lives ONLY in the in-memory
+                # fix §103 -- directive lives ONLY in the in-memory
                 # case_state.observables; the absorb()→branch_row write
                 # at the end of this turn persists it as part of the
                 # ONE consolidated case_state write per turn (was three
@@ -278,7 +278,7 @@ class HonestVulnResearcher:
                 # this turn already sees the directive; absorb()
                 # preserves observables into new_case_state, which
                 # encodes to branch_row.case_state_json at end-of-turn.
-                # fix §89 — eliminates the pre-LLM directive UoW
+                # fix §89 -- eliminates the pre-LLM directive UoW
                 # (one of the three commits this method used to run
                 # per turn). On a crash before the end-of-turn UoW
                 # the directive recomputes deterministically from
@@ -302,7 +302,7 @@ class HonestVulnResearcher:
             sibling_context=sibling_context,
             applicable_patterns=self._applicable_patterns,
         )
-        # fix §88 — per-component prompt-size logging stays as
+        # fix §88 -- per-component prompt-size logging stays as
         # diagnostic visibility, demoted from WARNING to DEBUG. At
         # WARNING level this fired ~22k times per MASVS audit (53
         # children × 70 turns × 6 personas), flooding the worker log
@@ -349,7 +349,7 @@ class HonestVulnResearcher:
         # cache HIT, or from the upstream LLM call. Any failure to
         # validate the cache row falls through to the API path.
         decision: ReasoningTurnDecision | None = None
-        # fix §89 — `cache_hit` flag lets the post-LLM UoW skip the
+        # fix §89 -- `cache_hit` flag lets the post-LLM UoW skip the
         # cache store when we already had the response. The previous
         # separate `store_uow` here is folded into the message-write
         # UoW further down so one UoW covers all post-LLM writes.
@@ -368,11 +368,11 @@ class HonestVulnResearcher:
                 # other cache-shape mismatch. We fall through to the
                 # API path; the bad cache row stays in DB but will be
                 # overwritten by store_response on the next success.
-                # fix §350 — surface traceback so a malformed cache row's
+                # fix §350 -- surface traceback so a malformed cache row's
                 # actual shape failure is debuggable on first occurrence
                 # instead of waiting for a second hit.
                 _log.warning(
-                    "vuln_researcher: cache validate failed (%s: %s) — calling LLM",
+                    "vuln_researcher: cache validate failed (%s: %s) -- calling LLM",
                     type(exc).__name__, exc,
                     exc_info=True,
                 )
@@ -397,14 +397,14 @@ class HonestVulnResearcher:
                     f"{type(exc).__name__}: {exc}",
                     retryable=bool(getattr(exc, "retryable", False)),
                 ) from exc
-            # fix §89 — store_response moved into the post-LLM UoW at
+            # fix §89 -- store_response moved into the post-LLM UoW at
             # the end of run_turn. Cache row + message write + branch
             # update + outcome upsert now share ONE transaction instead
             # of three. Failure to commit means the cache row is also
-            # not persisted, so a retry hits the API again — correct
+            # not persisted, so a retry hits the API again -- correct
             # behavior for transient failures.
 
-        # fix §87 — was a production `assert`; stripped under `-O` and
+        # fix §87 -- was a production `assert`; stripped under `-O` and
         # then a NoneType-has-no-attribute crashes later on the next
         # decision use. Raise explicitly so the workflow finalizer
         # marks the investigation FAILED instead of partial-completing.
@@ -415,7 +415,7 @@ class HonestVulnResearcher:
             raise VulnResearcherError(
                 f"decision unbound after cache + LLM paths "
                 f"(inv={self.investigation_id} branch={self.branch_id} "
-                f"turn={turn_number}) — logic bug",
+                f"turn={turn_number}) -- logic bug",
             )
 
         # ── variant_hunt submit gate ────────────────────────────────────
@@ -425,7 +425,7 @@ class HonestVulnResearcher:
         # turn-budget bump (c912d5b: 25→60→70) + branch-aware auto-
         # continue (fba2a08) landed, agents started investigating
         # candidates inline for the whole 60+ turn budget and submitting
-        # carrying `variant_hunt_orders=[]` AND no exhaustion declaration —
+        # carrying `variant_hunt_orders=[]` AND no exhaustion declaration --
         # collapsing the variant-hunt fan-out from ~120 children/day to
         # ~2/day overnight (5-21 → 5-22). The submit was technically
         # valid but it produced ZERO downstream investigations on
@@ -438,7 +438,7 @@ class HonestVulnResearcher:
         #       extend, not duplicate work), or
         #   (b) explicitly declare exhaustion via a recognised phrase
         #       (matches outcome_dispatcher._VARIANT_EXHAUSTION_PATTERN
-        #       — NO FURTHER VARIANTS, VARIANT DEAD, etc.)
+        #       -- NO FURTHER VARIANTS, VARIANT DEAD, etc.)
         #
         # On rejection we DON'T persist the outcome and DON'T mark the
         # branch terminal. Instead we inject a loud
@@ -477,8 +477,8 @@ class HonestVulnResearcher:
         # submit_outcome_review for an outcome this branch ALREADY voted
         # on, reject and steer back to investigation work. Without this
         # gate the agent re-emits the same vote every turn (idempotent at
-        # the DB level via UNIQUE (outcome_id, branch_id) — so harmless
-        # — but burns the entire 70-turn budget on re-voting instead of
+        # the DB level via UNIQUE (outcome_id, branch_id) -- so harmless
+        # -- but burns the entire 70-turn budget on re-voting instead of
         # adding to quorum or doing useful audit work). Observed live on
         # investigation 30b4437c branch cee88f86 (yuki): turns 29-40 all
         # re-voted approve on the same outcome 3acc6764.
@@ -509,7 +509,7 @@ class HonestVulnResearcher:
                 turn_number=turn_number,
             )
 
-        # FINAL GATE — empty tool_run coerce. Runs AFTER every other
+        # FINAL GATE -- empty tool_run coerce. Runs AFTER every other
         # gate (re-vote, submit-with-unresolved-hyp, variant-hunt-submit)
         # because those gates THEMSELVES produce action=tool_run +
         # empty command as a "rejection no-op" output. Only checks
@@ -534,7 +534,7 @@ class HonestVulnResearcher:
                 "a no-op.) Engine treated it as action='reasoning'.\n\n"
                 "Valid actions: tool_run / reasoning / submit / "
                 "submit_outcome_review / script_execute. There is no "
-                "'observe' action. Empty tool_run wastes a turn — pick "
+                "'observe' action. Empty tool_run wastes a turn -- pick "
                 "'reasoning' to think, or check the directives in this "
                 "prompt for what you actually need to do next."
             )
@@ -550,14 +550,14 @@ class HonestVulnResearcher:
         terminal = decision.action == "submit"
         outcome_id: str | None = None
 
-        # fix §89 — ONE post-LLM UoW: cache store (if we made the LLM
+        # fix §89 -- ONE post-LLM UoW: cache store (if we made the LLM
         # call) + message write + branch state update + outcome upsert.
         # Was three separate UoWs (sibling-directive pre-LLM, cache
         # store post-LLM, message-write post-LLM). The sibling-directive
         # UoW was eliminated entirely by §103 (directive lives in
         # in-memory case_state.observables and persists with the
         # end-of-turn case_state_json write).
-        # fix §103 — ONE branch_row.case_state_json write per turn (was
+        # fix §103 -- ONE branch_row.case_state_json write per turn (was
         # three). The final write happens AFTER terminal auto-resolve
         # mutates new_case_state, so the durable scratchpad reflects
         # the post-auto-resolve state in a single observable transition.
@@ -565,7 +565,7 @@ class HonestVulnResearcher:
         # the pre- and post-turn states, not three intermediate flips.
         async with UnitOfWork() as uow:
             if not cache_hit:
-                # Store on success only — failed LLM calls leave no
+                # Store on success only -- failed LLM calls leave no
                 # cache entry so retry hits the API again (correct for
                 # transient failures).
                 await store_response(
@@ -626,7 +626,7 @@ class HonestVulnResearcher:
                     new_confidence=new_confidence,
                     new_payload=new_payload,
                     at_turn=turn_number,
-                    # fix §173 — explicit terminal-submit contract marker.
+                    # fix §173 -- explicit terminal-submit contract marker.
                     # _upsert_canonical_outcome is the ONE canonical-outcome
                     # write path and asserts this value at function entry;
                     # any non-terminal write path would have to call this
@@ -634,8 +634,8 @@ class HonestVulnResearcher:
                     # submit_canonical_addition action exists by design).
                     action="terminal_submit",
                 )
-                # Close the branch — BranchStatus.COMPLETED + closed_reason
-                # + closed_at — so _maybe_trigger_synthesis can count it
+                # Close the branch -- BranchStatus.COMPLETED + closed_reason
+                # + closed_at -- so _maybe_trigger_synthesis can count it
                 # against the "expected to submit" set and the UI shows
                 # the branch as done rather than perpetually active.
                 branch_row.status = BranchStatus.COMPLETED.value
@@ -644,7 +644,7 @@ class HonestVulnResearcher:
                 )
                 branch_row.closed_at = utc_now()
 
-            # fix §103 — single case_state_json write, performed after
+            # fix §103 -- single case_state_json write, performed after
             # the optional terminal auto-resolve so the persisted
             # scratchpad reflects post-resolution state.
             branch_row.case_state_json = _encode_case_state(new_case_state)
@@ -680,7 +680,7 @@ class HonestVulnResearcher:
                     quorum.reject_count, quorum.quorum_k,
                 )
                 if quorum.new_state == OUTCOME_STATE_APPROVED:
-                    # fix §90 — enqueue the dispatcher as a separate
+                    # fix §90 -- enqueue the dispatcher as a separate
                     # platform task rather than calling
                     # ``dispatcher.dispatch`` inline from this branch's
                     # turn. The dispatcher cascades cross-branch (halts
@@ -936,14 +936,14 @@ class HonestVulnResearcher:
             if isinstance(apk_path, str) and apk_path:
                 handles["android_mcp_apk_path"] = apk_path
         # Hard rule: MobSF output NEVER enters LLM prompts.
-        # Even the digest form is forbidden — agents should query
+        # Even the digest form is forbidden -- agents should query
         # android_mcp.mobsf_scan as a tool when they need it, not have
         # it preloaded into context. Strip the key entirely.
         if kind_str == "android_apk":
             handles.pop("android_mcp_mobsf_scan", None)
             static_full = handles.get("android_mcp_static_summary")
             if isinstance(static_full, dict) and static_full:
-                # fix §268 — ``android_mcp_static_summary`` now stores a
+                # fix §268 -- ``android_mcp_static_summary`` now stores a
                 # pointer + pre-computed digest under ``mcp_handles_json``
                 # rather than the full 1-2MB androguard payload. The
                 # pre-computed digest already carries every field this
@@ -1008,7 +1008,7 @@ class HonestVulnResearcher:
         applicable MCP servers, ranked candidates), the current case
         state model, turn counter, any pending operator messages
         (M3.R-6), an External-CVE-intel block, and a target-kind-
-        filtered tool catalog. Render order is deliberate — target
+        filtered tool catalog. Render order is deliberate -- target
         first so the agent grounds on what's actually being audited
         before it picks tools.
         """
@@ -1062,7 +1062,7 @@ class HonestVulnResearcher:
         )
 
     # Wall-clock TTL for operator messages. Previously computed as
-    # _OPERATOR_MESSAGE_TTL_TURNS * 240s assuming each turn ≈ 4min —
+    # _OPERATOR_MESSAGE_TTL_TURNS * 240s assuming each turn ≈ 4min --
     # wrong for variant_hunt runs that span hours of slow Claude
     # calls. A steering message posted at hour 1 would silently drop
     # by hour 1.5 even though the agent was only on turn 4. 24h
@@ -1097,7 +1097,7 @@ class HonestVulnResearcher:
                 _select(VRInvestigationMessageRecord)
                 .where(
                     VRInvestigationMessageRecord.investigation_id == self.investigation_id,
-                    # fix §250 — broaden to SYSTEM so outcome_review
+                    # fix §250 -- broaden to SYSTEM so outcome_review
                     # draft-request broadcasts (formerly tagged OPERATOR)
                     # still reach every sibling's prompt. The SYSTEM
                     # enum landed with the outcome_review tag change in
@@ -1131,7 +1131,7 @@ class HonestVulnResearcher:
             # mark steering as understood; without it, every operator
             # message re-fires on every turn within the wall-clock TTL
             # even after the agent has already acted on it.
-            # fix §333 — funnel both legacy comma-separated string and
+            # fix §333 -- funnel both legacy comma-separated string and
             # canonical list shapes through the shared normalizer.
             acked_ids: set[str] = set()
             try:
@@ -1160,7 +1160,7 @@ class HonestVulnResearcher:
                 text = str(payload.get("text", "")).strip()
                 if not text:
                     continue
-                # ACK filter — drop message entirely if agent has marked it
+                # ACK filter -- drop message entirely if agent has marked it
                 # via _acked_operator_messages.
                 if row.id in acked_ids:
                     continue
@@ -1179,7 +1179,7 @@ class HonestVulnResearcher:
                     row.at_turn = turn_number
                     uow.session.add(row)
                     stamped = True
-                # Wall-clock age — branch-independent.
+                # Wall-clock age -- branch-independent.
                 age_seconds = (now - row.created_at).total_seconds()
                 if age_seconds > ttl_seconds:
                     continue
@@ -1260,7 +1260,7 @@ class HonestVulnResearcher:
             # operator can find these in the outcomes table.
             _log.warning(
                 "variant_hunt submit FORCED THROUGH after %d rejections "
-                "inv=%s branch=%s turn=%d — payload had zero "
+                "inv=%s branch=%s turn=%d -- payload had zero "
                 "variant_hunt_orders AND no exhaustion declaration",
                 prior_rejects, self.investigation_id, self.branch_id,
                 turn_number,
@@ -1279,7 +1279,7 @@ class HonestVulnResearcher:
 
         _log.info(
             "variant_hunt submit REJECTED inv=%s branch=%s turn=%d "
-            "rejects=%d/%d — orders=0, no exhaustion phrase",
+            "rejects=%d/%d -- orders=0, no exhaustion phrase",
             self.investigation_id, self.branch_id, turn_number,
             new_reject_count, _VARIANT_HUNT_REJECT_CAP,
         )
@@ -1299,7 +1299,7 @@ class HonestVulnResearcher:
             "\n"
             "  (a) Re-submit with variant_hunt_orders populated. Each entry MUST\n"
             "      cite a SPECIFIC (file, function) you read during this audit.\n"
-            "      Re-list candidates you investigated inline too — child\n"
+            "      Re-list candidates you investigated inline too -- child\n"
             "      investigations confirm-and-extend, they do not duplicate\n"
             "      already-done work. The schema is:\n"
             "          {\"title\": \"...\", \"hypothesis\": \"...\",\n"
@@ -1322,7 +1322,7 @@ class HonestVulnResearcher:
             f"After {_VARIANT_HUNT_REJECT_CAP} rejections on this branch the\n"
             "submit is FORCED THROUGH with variant_hunt_advisory:\n"
             f"forced_through_after_{_VARIANT_HUNT_REJECT_CAP}_rejects stamped on\n"
-            "the payload. Don't burn through your safety budget — pick (a)\n"
+            "the payload. Don't burn through your safety budget -- pick (a)\n"
             "or (b) cleanly."
         )
 
@@ -1332,7 +1332,7 @@ class HonestVulnResearcher:
         # treats this turn as non-terminal: branch stays ACTIVE,
         # turn_count still increments, loop continues to next turn.
         rejected_command_text = (
-            "[VARIANT_HUNT GATE: submit rejected — see "
+            "[VARIANT_HUNT GATE: submit rejected -- see "
             "_directive.variant_hunt_submit_rejected]\n"
             "Original submit attempt:\n"
             + (payload.get("answer") or "(no answer)")[:1000]
@@ -1363,7 +1363,7 @@ class HonestVulnResearcher:
         ``case_state.hypotheses`` whose id isn't in that set is an
         unresolved live hypothesis. Submitting with unresolved
         hypotheses leaves the operator (or a downstream reviewer) to
-        guess which claims the finding actually addresses — that's the
+        guess which claims the finding actually addresses -- that's the
         same trap the closure-discipline section of system_audit.md
         warns against, made into a hard structural gate.
 
@@ -1410,7 +1410,7 @@ class HonestVulnResearcher:
         if new_reject_count > _UNRESOLVED_HYP_REJECT_CAP:
             _log.warning(
                 "unresolved_hyp submit FORCED THROUGH after %d rejections "
-                "inv=%s branch=%s turn=%d — payload retained %d unresolved "
+                "inv=%s branch=%s turn=%d -- payload retained %d unresolved "
                 "hypothesis ids: %s",
                 prior_rejects, self.investigation_id, self.branch_id,
                 turn_number, len(unresolved), ",".join(unresolved[:20]),
@@ -1432,7 +1432,7 @@ class HonestVulnResearcher:
 
         _log.info(
             "unresolved_hyp submit REJECTED inv=%s branch=%s turn=%d "
-            "rejects=%d/%d — %d live hypotheses unresolved",
+            "rejects=%d/%d -- %d live hypotheses unresolved",
             self.investigation_id, self.branch_id, turn_number,
             new_reject_count, _UNRESOLVED_HYP_REJECT_CAP, len(unresolved),
         )
@@ -1507,7 +1507,7 @@ class HonestVulnResearcher:
 
         Without this gate, multiple siblings race each other to
         terminal_submit, each one closes itself out, and the first
-        draft's quorum never assembles — every potential voter has
+        draft's quorum never assembles -- every potential voter has
         already submitted its own and gone to status=completed (which
         cannot vote, see ``vr_investigation_branches.status``).
         """
@@ -1526,7 +1526,7 @@ class HonestVulnResearcher:
             if not drafts:
                 return decision
 
-            # Exclude drafts proposed by this branch — the proposer
+            # Exclude drafts proposed by this branch -- the proposer
             # doesn't vote on its own outcome.
             other_drafts = [
                 d for d in drafts if d.branch_id != self.branch_id
@@ -1556,7 +1556,7 @@ class HonestVulnResearcher:
                 return decision
 
         _log.info(
-            "draft_pending submit REJECTED inv=%s branch=%s turn=%d — "
+            "draft_pending submit REJECTED inv=%s branch=%s turn=%d -- "
             "%d unvoted draft outcomes: %s",
             self.investigation_id, self.branch_id, turn_number,
             len(pending), [d.id[:8] for d in pending],
@@ -1626,7 +1626,7 @@ class HonestVulnResearcher:
         Quorum is computed by counting DISTINCT branches that voted approve
         on an outcome (vr_outcome_reviews has UNIQUE(outcome_id, branch_id)).
         A branch's 2nd, 3rd, 4th vote on the same outcome is upserted into
-        the same row — they do NOT add to the approve count. Yet the agent
+        the same row -- they do NOT add to the approve count. Yet the agent
         keeps emitting submit_outcome_review every turn it sees the draft
         directive, burning the whole 70-turn budget on idempotent
         re-votes. Observed on inv=30b4437c branch=cee88f86 (yuki): turns
@@ -1654,7 +1654,7 @@ class HonestVulnResearcher:
             )).first()
 
         if existing is None:
-            # First vote — let it through.
+            # First vote -- let it through.
             return decision
 
         _log.info(
@@ -1665,10 +1665,10 @@ class HonestVulnResearcher:
         )
 
         directive = (
-            "*** ALREADY VOTED — STOP RE-EMITTING THE SAME REVIEW ***\n\n"
+            "*** ALREADY VOTED -- STOP RE-EMITTING THE SAME REVIEW ***\n\n"
             f"You already voted '{existing.vote}' on outcome {outcome_id} "
             "on a prior turn. Re-emitting submit_outcome_review is a no-op "
-            "(unique constraint on outcome_id, branch_id — your vote is "
+            "(unique constraint on outcome_id, branch_id -- your vote is "
             "already counted toward quorum).\n\n"
             "Your next turn MUST be one of:\n"
             "  - tool_run: continue investigating the MASVS control with "
@@ -1763,7 +1763,7 @@ def _render_target_snapshot_section(snapshot: dict[str, Any]) -> str:
             lines.append("mcp_handles: " + " · ".join(handle_pairs))
 
     # Hard rule on which MCP family to use. This is the most
-    # important line in the section — without it the LLM defaults
+    # important line in the section -- without it the LLM defaults
     # to whichever tool name catches its eye.
     rule = _mcp_family_rule_for_kind(kind, handles)
     if rule:
@@ -1791,7 +1791,7 @@ def _render_target_snapshot_section(snapshot: dict[str, Any]) -> str:
             lines.append(
                 f"  - {entry_name}"
                 + (f" ({score_str})" if score_str else "")
-                + (f" — {reason_str}" if reason_str else "")
+                + (f" -- {reason_str}" if reason_str else "")
             )
 
     if attack_surface:
@@ -1824,7 +1824,7 @@ def _mcp_family_rule_for_kind(
     Picks the right family based on target kind + the handles that
     actually exist. This is what stops the agent from drifting to the
     wrong tool family. By construction we ONLY mention the applicable
-    server — never name the one we want the agent to avoid, because
+    server -- never name the one we want the agent to avoid, because
     LLMs latch on to negated mentions ("Do NOT call ida_headless"
     keeps ida_headless in their attention budget).
     """
@@ -1837,7 +1837,7 @@ def _mcp_family_rule_for_kind(
                 f"RULE: source repo. EVERY audit_mcp tool call MUST pass "
                 f"`index_id=\"{idx}\"`. Do NOT pass the branch name "
                 f"(\"main\", \"master\", \"HEAD\", \"trunk\", \"current\", "
-                f"\"latest\", \"default\") — those are placeholders the "
+                f"\"latest\", \"default\") -- those are placeholders the "
                 f"agent commonly hallucinates and they all bounce back as "
                 f"`Unknown index`, costing a 30s LLM retry. Copy the "
                 f"index_id verbatim from the line above, every call, no "
@@ -1867,22 +1867,22 @@ def _mcp_family_rule_for_kind(
             )
         if apk_path:
             parts.append(
-                "For APK-specific facts — manifest, permissions, "
+                "For APK-specific facts -- manifest, permissions, "
                 "signing certificates, behaviour classification, "
-                "MobSF / drozer / LIEF / YARA — "
+                "MobSF / drozer / LIEF / YARA -- "
                 f"use **android_mcp** with `apk_path=\"{apk_path}\"`."
             )
         else:
             parts.append(
-                "For APK-specific facts — manifest, permissions, "
+                "For APK-specific facts -- manifest, permissions, "
                 "signing certificates, behaviour classification, "
-                "MobSF / drozer / LIEF / YARA — "
+                "MobSF / drozer / LIEF / YARA -- "
                 "use **android_mcp**. The bridge resolves the APK "
                 "path from the target descriptor automatically."
             )
         parts.append(
             "For NATIVE LIBRARY analysis (lib/arm64-v8a/*.so, "
-            "lib/armeabi-v7a/*.so — e.g. libucs-credential.so, "
+            "lib/armeabi-v7a/*.so -- e.g. libucs-credential.so, "
             "anti-tamper .so, JNI crypto .so) use **ida_headless** "
             "tools. Start with `ida_headless.open_binary(path=\"<absolute "
             "path to .so>\")` to register the library, then "
@@ -1893,7 +1893,7 @@ def _mcp_family_rule_for_kind(
             "indexer is Java/Kotlin only) or via android_mcp "
             "(APK-level facets only, no instruction-level "
             "decompilation). .so files in lib/<abi>/ are ELF "
-            "binaries — ida_headless is the only correct tool."
+            "binaries -- ida_headless is the only correct tool."
         )
         return "RULE: " + " ".join(parts)
     if k in {
@@ -1919,7 +1919,7 @@ def _render_prior_submissions_section(
 
     Tells the agent what it already concluded on prior runs so it
     doesn't re-derive the same root cause on every re-enqueue.
-    Returns "" when no prior outcomes — caller concatenates
+    Returns "" when no prior outcomes -- caller concatenates
     unconditionally.
     """
     if not outcomes:
@@ -2005,7 +2005,7 @@ def _render_sibling_context_section(
     Otherwise produces a '# Sibling deliberations (other personas)'
     block listing each sibling's persona, turn count, top hypotheses,
     rejected hypotheses, key observables, and latest terminal outcome.
-    The agent is then told explicitly: REACT to these — challenge,
+    The agent is then told explicitly: REACT to these -- challenge,
     refine, or build on them.
     """
     if not siblings:
@@ -2024,7 +2024,7 @@ def _render_sibling_context_section(
         f"**IMPORTANT: speak ONLY as {this_persona or 'yourself'}. "
         f"Do NOT write text as other personas. Do NOT prefix your output "
         f"with role headers like 'RESEARCHER (name):' or 'CRITIC (name):'. "
-        f"Your output is YOUR voice alone — reference siblings by name "
+        f"Your output is YOUR voice alone -- reference siblings by name "
         f"('Maddie argues...', 'Halvar claims...') but do not simulate them.**",
         "",
     ]
@@ -2054,7 +2054,7 @@ def _render_sibling_context_section(
         if tool_obs:
             lines.append(
                 "Tool readings sibling has CACHED (you can SKIP re-fetching "
-                "these — reference the sibling's data instead):"
+                "these -- reference the sibling's data instead):"
             )
             # Cap to 5 entries x 500 chars per value. Each tool reading was
             # already truncated to 5000 chars upstream; with 6 branches x
@@ -2073,7 +2073,7 @@ def _render_sibling_context_section(
             if ans:
                 lines.append(f"Their answer (excerpt): {ans[:600]}")
         else:
-            lines.append("(no terminal outcome yet — still reasoning)")
+            lines.append("(no terminal outcome yet -- still reasoning)")
         lines.append("")
     lines.append("# Your reaction is mandatory")
     lines.append("")
@@ -2084,7 +2084,7 @@ def _render_sibling_context_section(
         "the disagreement explicitly and either (a) emit a tool call "
         "that produces evidence to settle it, or (b) refine your own "
         "hypothesis to incorporate their finding. If you agree with a "
-        "sibling's verdict, say so explicitly — but only after the "
+        "sibling's verdict, say so explicitly -- but only after the "
         "critic-voice in your reasoning has tried to falsify it.",
     )
     lines.append("")
@@ -2116,7 +2116,7 @@ def _render_pattern_section(patterns: list[dict[str, Any]]) -> str:
         "# Applicable patterns from prior investigations\n\n"
         "These patterns were extracted from successful prior investigations on\n"
         "similar targets. Use them to guide your hypothesis formation and tool\n"
-        "selection — they represent proven techniques.\n\n"
+        "selection -- they represent proven techniques.\n\n"
     )
     lines: list[str] = []
     used = len(header)
@@ -2148,12 +2148,12 @@ def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
     its resolved intel status (08_FRONTEND_UX.md §2.4).
 
     The reasoning agent uses this to distinguish:
-      - ``status=found``     → real NVD/EPSS/KEV data — consume it
-      - ``status=not_found`` → no aggregator has the CVE — do NOT
+      - ``status=found``     → real NVD/EPSS/KEV data -- consume it
+      - ``status=not_found`` → no aggregator has the CVE -- do NOT
                                 invent details; surface and ask
-      - ``status=error``     → transport failure — treat as unknown
+      - ``status=error``     → transport failure -- treat as unknown
 
-    Returns "" when no entries — caller concatenates unconditionally.
+    Returns "" when no entries -- caller concatenates unconditionally.
     """
     if not entries:
         return ""
@@ -2161,7 +2161,7 @@ def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
     for entry in entries:
         cve_id = entry.get("cve_id", "?")
         status = entry.get("status", "unknown")
-        lines.append(f"## {cve_id} — status: {status}")
+        lines.append(f"## {cve_id} -- status: {status}")
         if status == "found":
             desc = (entry.get("description") or "").strip()
             if desc:
@@ -2183,7 +2183,7 @@ def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
             if entry.get("kev_listed"):
                 kev_date = entry.get("kev_date_added") or ""
                 lines.append(
-                    "**kev_listed: yes** — CISA flagged as actively "
+                    "**kev_listed: yes** -- CISA flagged as actively "
                     "exploited in the wild"
                     + (f" (added {kev_date})" if kev_date else "")
                 )
@@ -2220,7 +2220,7 @@ def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
 def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:
     """Render pending operator messages as a markdown block for the prompt.
 
-    Empty when no messages — caller concatenates unconditionally.
+    Empty when no messages -- caller concatenates unconditionally.
     Framing is intentionally LOUD because this block ends up at the TOP
     of the user prompt and overrides everything below it. Operator
     steering is a hard override, not advisory; the agent treating it as
@@ -2229,7 +2229,7 @@ def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:
     if not messages:
         return ""
     lines: list[str] = [
-        "# *** OPERATOR STEERING — MANDATORY OVERRIDE ***",
+        "# *** OPERATOR STEERING -- MANDATORY OVERRIDE ***",
         "",
         "The human operator sent these messages. They override the",
         "default strategy, override your current hypothesis, and override",
@@ -2241,8 +2241,8 @@ def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:
         "include its id in your decision's observables under the",
         "reserved key `_acked_operator_messages` as a JSON list of",
         "strings (one id per element). Acknowledged messages stop",
-        "appearing on subsequent turns. ONLY ACK after acting —",
-        "premature ACK loses the steering forever. fix §333 —",
+        "appearing on subsequent turns. ONLY ACK after acting --",
+        "premature ACK loses the steering forever. fix §333 --",
         "canonical shape is a list; the comma-separated string shape",
         "is still accepted at read time for legacy case_state rows but",
         "MUST NOT be emitted by new decisions.",
@@ -2266,7 +2266,7 @@ def _render_active_directives_section(case_state: ReasoningCaseState) -> str:
     section. Surfaces at PROMPT POSITION 2 (right under operator
     steering, above # Investigation). Lifting these OUT of case_model
     means the agent doesn't have to wade through target snapshot + CVE
-    intel + observables to find them — they're attention-anchored at
+    intel + observables to find them -- they're attention-anchored at
     the top.
 
     Source of truth: ``case_state.observables`` keys starting with
@@ -2282,7 +2282,7 @@ def _render_active_directives_section(case_state: ReasoningCaseState) -> str:
     if not directives:
         return ""
     lines: list[str] = [
-        "# *** ACTIVE DIRECTIVES (MANDATORY — act on these THIS TURN) ***",
+        "# *** ACTIVE DIRECTIVES (MANDATORY -- act on these THIS TURN) ***",
         "",
     ]
     for key, value in directives.items():
@@ -2300,7 +2300,7 @@ _BINARY_KINDS = frozenset({
     "native_binary", "ipa", "jar", "dotnet_assembly",
     "kernel_image", "kernel_module", "hypervisor_image",
 })
-# F-2: android_apk targets need BOTH bridges — android_mcp for the
+# F-2: android_apk targets need BOTH bridges -- android_mcp for the
 # APK-specific surface (manifest, permissions, signing, behaviour
 # classification, MobSF, drozer, etc.) AND audit_mcp for source-graph
 # queries against the jadx-decompiled Java tree (the index_id lands in
@@ -2351,10 +2351,10 @@ async def _fetch_tool_specs(
 
     When ``primary_language`` indicates a language with known
     static-call-graph blind spots (cpp, java, kotlin, csharp, swift,
-    objc, scala — see ``LANGUAGE_UNRELIABLE_TOOLS``), the
+    objc, scala -- see ``LANGUAGE_UNRELIABLE_TOOLS``), the
     corresponding tools (e.g. ``dead_code``, ``unreachable_from_
     entrypoints``) are dropped from the returned spec list. They lie
-    systematically on those languages — every virtual override,
+    systematically on those languages -- every virtual override,
     template instantiation, and callback registration looks "dead" in
     the trailmark graph even though the runtime calls them via
     vtable / monomorphization / dynamic dispatch.
@@ -2411,7 +2411,7 @@ def _render_available_tools_section(
     name-only listing from ``KNOWN_TOOLS`` so the prompt still works.
 
     Servers irrelevant to the target's kind are SUPPRESSED with a
-    short note instead of listed — the agent kept choosing
+    short note instead of listed -- the agent kept choosing
     ida_headless.list_binaries for a source_repo target because the
     catalog showed every server unconditionally. Filtering at render
     time prevents the wrong tool family from ever being the obvious
@@ -2423,14 +2423,14 @@ def _render_available_tools_section(
     parts: list[str] = ["# Available tools\n"]
     if target_kind:
         parts.append(
-            f"\nTarget kind: `{target_kind}` — only servers applicable "
+            f"\nTarget kind: `{target_kind}` -- only servers applicable "
             f"to this kind are listed below. Use the **exact** "
             f"parameter names shown in each signature; the bridge "
             f"rejects unknown kwargs.\n",
         )
     for server in sorted(KNOWN_TOOLS):
         if server not in applicable:
-            # Silently skip — listing "NOT APPLICABLE: ida_headless"
+            # Silently skip -- listing "NOT APPLICABLE: ida_headless"
             # against a source_repo target just gives the agent a hook
             # to think about IDA tools it shouldn't be considering at
             # all. Surfacing ida_headless on source-repo prompts was
@@ -2440,7 +2440,7 @@ def _render_available_tools_section(
         live_specs = specs_by_server.get(server) or []
         if live_specs:
             parts.append(
-                f"\n## {server} ({len(live_specs)} tools — live schema)\n\n",
+                f"\n## {server} ({len(live_specs)} tools -- live schema)\n\n",
             )
             for spec in sorted(live_specs, key=lambda s: s.get("name", "")):
                 tool_name = spec.get("name", "?")
@@ -2451,14 +2451,14 @@ def _render_available_tools_section(
                 parts.append(f"- `{full}({signature})`{marker}\n")
             parts.append("\n")
         else:
-            # Catalog fetch failed — fall back to a name-only listing
+            # Catalog fetch failed -- fall back to a name-only listing
             # using the static KNOWN_TOOLS registry filtered by
             # primary_language (drops tools known-broken on this
             # target's language, e.g. dead_code on C++). Agent will
             # know which tools exist; it just won't see signatures.
             tool_names = sorted(tools_for_language(server, primary_language))
             parts.append(
-                f"\n## {server} ({len(tool_names)} tools — "
+                f"\n## {server} ({len(tool_names)} tools -- "
                 f"schema unavailable)\n\n",
             )
             for name in tool_names:
@@ -2505,7 +2505,7 @@ def _auto_resolve_live_on_terminal(
 
     Without auto-bucketing, these hypotheses stay "live" in the rail
     forever even though the investigation has concluded. The previous
-    implementation moved them to ``state.rejected`` — but that's
+    implementation moved them to ``state.rejected`` -- but that's
     actively misleading for confirmed claims (e.g. the agent's
     'predicate symmetry holds' claim that grounds a 'VARIANT DEAD'
     finding shouldn't be labeled 'rejected' in red).
@@ -2513,14 +2513,14 @@ def _auto_resolve_live_on_terminal(
     New behavior: move to ``state.resolved`` with a neutral note that
     points the reader at the terminal outcome for the actual
     classification. The frontend renders ``resolved`` with a yellow
-    badge — neither red (rejected) nor green (confirmed) — so readers
+    badge -- neither red (rejected) nor green (confirmed) -- so readers
     know to consult the canonical outcome.
     """
     if not state.hypotheses:
         return
     note = (
         f"auto-resolved at turn {turn}: branch submitted terminal "
-        f"{outcome_kind} — see canonical outcome for whether this "
+        f"{outcome_kind} -- see canonical outcome for whether this "
         f"claim was confirmed (basis of finding) or refuted "
         f"(unaddressed alternative)"
     )
@@ -2672,17 +2672,17 @@ async def _upsert_canonical_outcome(
         specific outcome_kind
       - panel_contributions: append every submission as
         {persona, branch_id, at_turn, submitted_at, outcome_kind,
-         confidence, answer_brief} — full audit trail
+         confidence, answer_brief} -- full audit trail
 
     inv.primary_outcome_id always points at the canonical row.
 
-    fix §173 — ONE canonical-outcome write path
+    fix §173 -- ONE canonical-outcome write path
     -------------------------------------------
     This function is the ONLY supported write path for the canonical
     outcome row. Branches that want to update the canonical (add
     affected_components, contribute a PoC, refine variant_hunt_orders,
     etc.) BEFORE terminating themselves do NOT get a non-terminal
-    ``submit_canonical_addition`` action — the violations log
+    ``submit_canonical_addition`` action -- the violations log
     deliberately rejected that shape because it would split the
     canonical-write contract across two agent actions and double the
     state-machine surface.
@@ -2690,7 +2690,7 @@ async def _upsert_canonical_outcome(
     Instead: any branch that wants to extend the canonical must do so
     from inside its own ``terminal_submit`` (decision.action ==
     "submit") path. The branch terminates with the contribution it
-    has — that single termination is the only moment a branch can
+    has -- that single termination is the only moment a branch can
     write to the canonical. The merge logic above is what makes that
     OK: the branch's contribution lands additively, so terminating
     early to record the contribution still preserves it in the audit
@@ -2700,11 +2700,11 @@ async def _upsert_canonical_outcome(
     "terminal_submit" is the only value the function accepts. Any
     future caller passing a different action (e.g. a hypothetical
     "submit_canonical_addition" or a misuse from a non-terminal
-    handler) gets a ValueError at function entry — a clear
+    handler) gets a ValueError at function entry -- a clear
     failure mode rather than a silent canonical write from the
     wrong code path.
     """
-    # fix §173 — guard: refuse any non-terminal canonical write path.
+    # fix §173 -- guard: refuse any non-terminal canonical write path.
     # Hard-fail with a precise message so future contributors who try
     # to call this from a non-terminal action see EXACTLY which
     # contract they broke. See the docstring above for the rationale.
@@ -2714,10 +2714,10 @@ async def _upsert_canonical_outcome(
             f"path and only accepts action='terminal_submit'; got "
             f"action={action!r}. To extend a canonical outcome before "
             f"terminating, do it from inside the branch's terminal_submit "
-            f"path (decision.action == 'submit') — see fix §173 in "
+            f"path (decision.action == 'submit') -- see fix §173 in "
             f"agents/vuln_researcher._upsert_canonical_outcome docstring.",
         )
-    # fix §168 — race-fix: serialize canonical-outcome writes per
+    # fix §168 -- race-fix: serialize canonical-outcome writes per
     # investigation by taking a row lock on the parent investigation
     # row BEFORE the existence check. Concurrent terminal_submits
     # queue at this lock; the second arrival sees the row created by
@@ -2735,7 +2735,7 @@ async def _upsert_canonical_outcome(
     existing = (await uow.session.exec(
         _select(VRInvestigationOutcomeRecord)
         .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
-        # fix §169 — read NEWEST canonical (was OLDEST). After §168 the
+        # fix §169 -- read NEWEST canonical (was OLDEST). After §168 the
         # race that could create two canonicals is gone, but if any
         # legacy duplicate pair exists in older data, merging into the
         # newer row keeps fresh contributions visible to downstream
@@ -2753,15 +2753,15 @@ async def _upsert_canonical_outcome(
         "submitted_at": now.isoformat(),
         "outcome_kind": new_outcome_kind,
         "confidence": new_confidence,
-        # fix §171 — keep the full answer text (was [:4000]). The
+        # fix §171 -- keep the full answer text (was [:4000]). The
         # per-contribution snapshot is the load-bearing audit record
         # covering per-persona analyses; truncating dropped the tail of
         # any answer >4000 chars, which was recoverable only if the
-        # canonical payload['answer'] still carried the full text —
+        # canonical payload['answer'] still carried the full text --
         # and §166 explicitly stops overwriting that field on merge,
         # so a per-persona answer truncated here used to be lost.
         "answer_brief": new_payload.get("answer") or "",
-        # fix §175 — preserve per-persona evidence at contribution time.
+        # fix §175 -- preserve per-persona evidence at contribution time.
         # Previously these fields were merged into the canonical payload
         # only (affected_components/variant_hunt_orders union-dedupe,
         # poc_code first-write-wins), so readers could no longer tell
@@ -2836,7 +2836,7 @@ async def _upsert_canonical_outcome(
             changed = True
     old_payload["variant_hunt_orders"] = old_orders
 
-    # fix §167 — capture every poc_code submission. Previously the new
+    # fix §167 -- capture every poc_code submission. Previously the new
     # poc was taken ONLY when the old slot was empty, so a second
     # branch's more complete or correct PoC was silently dropped (not
     # even in panel_contributions before §175). Each submission is now
@@ -2879,7 +2879,7 @@ async def _upsert_canonical_outcome(
         existing.confidence = new_confidence
         changed = True
 
-    # fix §166 — stop overwriting payload['answer'] on merge. Every
+    # fix §166 -- stop overwriting payload['answer'] on merge. Every
     # submission's full answer goes into payload['merge_log'] as a
     # versioned, persona-attributed entry. The canonical
     # payload['answer'] is seeded on first submission and never
@@ -2907,7 +2907,7 @@ async def _upsert_canonical_outcome(
             old_payload["answer"] = new_answer
         changed = True
 
-    # fix §172 — dedupe panel_contributions by (branch_id, at_turn).
+    # fix §172 -- dedupe panel_contributions by (branch_id, at_turn).
     # Re-enqueues of the same terminal_submit (operator re-runs an
     # investigation, worker retry, etc.) used to append a duplicate
     # entry every time, inflating len(panel_contributions) and
@@ -2961,7 +2961,7 @@ def _load_prompt(strategy_family: str, persona_voice: str | None = None) -> str:
     prepended to the base audit prompt as a role-specific opening
     section. The persona file should focus on ROLE BEHAVIOUR (what
     this voice's job is in the deliberation), not repeat the common
-    audit rules — those come from the base prompt below.
+    audit rules -- those come from the base prompt below.
 
     Falls through to base ``system_<strategy>.md`` (or
     ``system_audit.md``) when no persona is set or no persona file

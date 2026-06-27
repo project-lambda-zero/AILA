@@ -28,7 +28,7 @@ export function FuzzProposalsPanel({
   live = true,
 }: {
   investigationId: string;
-  /** Forwarded to `useFuzzProposals` — false stops the 8s polling
+  /** Forwarded to `useFuzzProposals` -- false stops the 8s polling
    *  on paused / completed / failed investigations. The parent
    *  page derives this from `isInvestigationLive(inv?.status)`. */
   live?: boolean;
@@ -47,7 +47,7 @@ export function FuzzProposalsPanel({
           Fuzz proposals
         </h2>
         <p className="text-3xs text-text-muted mt-0.5">
-          Agent-authored — operator decides. Accept ships the harness,
+          Agent-authored -- operator decides. Accept ships the harness,
           builds it on the workstation, and launches the fuzzer.
         </p>
       </div>
@@ -93,7 +93,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
     (proposal.target_descriptor?.["harness"] as string | undefined)
     ?? (proposal.target_descriptor?.["function"] as string | undefined)
     ?? (proposal.target_descriptor?.["function_name"] as string | undefined)
-    ?? "—";
+    ?? "--";
   const confidenceSeverity =
     proposal.confidence === "exact"
       ? "low"
@@ -138,7 +138,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
             title={
               ready
                 ? "Run the prepared harness build + create campaign + auto-launch"
-                : "Proposal is missing harness_source or harness_build_command — agent must complete the prep"
+                : "Proposal is missing harness_source or harness_build_command -- agent must complete the prep"
             }
             className="px-3 py-1.5 text-xs font-medium rounded bg-green-600 text-white hover:bg-green-500 disabled:opacity-40"
           >
@@ -172,18 +172,18 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-3xs font-mono text-text-muted">
         <div>
           <div className="text-text-muted">engine</div>
-          <div className="text-foreground">{proposal.suggested_engine_id ?? "—"}</div>
+          <div className="text-foreground">{proposal.suggested_engine_id ?? "--"}</div>
         </div>
         <div>
           <div className="text-text-muted">strategy</div>
-          <div className="text-foreground">{proposal.suggested_strategy_id ?? "—"}</div>
+          <div className="text-foreground">{proposal.suggested_strategy_id ?? "--"}</div>
         </div>
         <div>
           <div className="text-text-muted">duration</div>
           <div className="text-foreground">
             {proposal.suggested_duration_hours
               ? `${proposal.suggested_duration_hours}h`
-              : "—"}
+              : "--"}
           </div>
         </div>
         <div>
@@ -263,7 +263,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                 </div>
               ) : (
                 <p className="text-3xs text-amber-500 font-mono">
-                  Agent did not author a harness — proposal cannot be
+                  Agent did not author a harness -- proposal cannot be
                   accepted until harness_source is filled.
                 </p>
               )}
@@ -293,7 +293,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                           ({Math.round((s.content_base64.length * 3) / 4)} B)
                         </span>
                         {s.notes && (
-                          <span className="text-text-muted">— {s.notes}</span>
+                          <span className="text-text-muted">-- {s.notes}</span>
                         )}
                       </li>
                     ))}

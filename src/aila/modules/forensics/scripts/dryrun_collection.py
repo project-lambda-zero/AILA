@@ -3,7 +3,7 @@
 Runs every dissect query in the module's query list, pipes output through the
 same JSONL parse + aggregation + enrichment logic that the SSH-based collector
 uses, and reports per-query health: record count, truncation, suspicious hits,
-parse errors, wall time. No SSH, no task queue, no UI — just the local
+parse errors, wall time. No SSH, no task queue, no UI -- just the local
 dissect CLI + our pipeline.
 
 Designed to be the fast-feedback loop so the Live SSE path doesn't have to be

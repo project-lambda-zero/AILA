@@ -1,9 +1,9 @@
-"""M3.R-2 — HonestVulnResearcher unit tests.
+"""M3.R-2 -- HonestVulnResearcher unit tests.
 
 Pure-helper tests (no DB, no LLM). The full DB-round-trip test for
 ``run_turn`` requires fixtures that stand up the schema + insert a
 target / investigation / branch, which is more work than warranted
-here — that path will get its integration test once the workflow
+here -- that path will get its integration test once the workflow
 state machine (M3.R-7) is wired.
 """
 from __future__ import annotations
@@ -268,11 +268,11 @@ class TestRenderAvailableToolsSection:
     def test_includes_tool_count_per_server(self) -> None:
         out = _render_available_tools_section()
         # Headers carry the count and a schema-availability suffix
-        # (``— live schema`` or ``— schema unavailable``). The exact
-        # count is intentionally elastic — bumping a tool catalog
+        # (``-- live schema`` or ``-- schema unavailable``). The exact
+        # count is intentionally elastic -- bumping a tool catalog
         # shouldn't churn this test.
-        assert re.search(r"## ida_headless \(\d+ tools — ", out)
-        assert re.search(r"## audit_mcp \(\d+ tools — ", out)
+        assert re.search(r"## ida_headless \(\d+ tools -- ", out)
+        assert re.search(r"## audit_mcp \(\d+ tools -- ", out)
 
 
 class TestFormatParam:
@@ -298,7 +298,7 @@ class TestFormatParam:
             "required": False,
             "default": "fast",
         })
-        # json.dumps quotes strings — so the agent sees mode: string = "fast"
+        # json.dumps quotes strings -- so the agent sees mode: string = "fast"
         assert out == 'mode: string = "fast"'
 
     def test_optional_no_default(self) -> None:
@@ -318,7 +318,7 @@ class TestFormatParam:
 
 class TestRenderAvailableToolsWithSchemas:
     """When tool_specs is provided, each tool renders with its full
-    signature so the agent never has to guess parameter names — which
+    signature so the agent never has to guess parameter names -- which
     is the bug that produced read_function(file_hint=...) etc.
     """
 
@@ -364,7 +364,7 @@ class TestRenderAvailableToolsWithSchemas:
             "offset: integer = 0)" in out
         )
         # Header announces live schema
-        assert "— live schema" in out
+        assert "-- live schema" in out
 
     def test_schema_fallback_when_specs_missing(self) -> None:
         """Empty specs => name-only listing with `schema unavailable` header."""
@@ -372,7 +372,7 @@ class TestRenderAvailableToolsWithSchemas:
             target_kind="source_repo",
             tool_specs={"audit_mcp": []},
         )
-        assert "— schema unavailable" in out
+        assert "-- schema unavailable" in out
         # Still lists tools by name from KNOWN_TOOLS
         assert "`audit_mcp." in out
 
@@ -518,7 +518,7 @@ class TestApplicableServersForKind:
 
     def test_legacy_apk_still_routes_to_ida(self) -> None:
         # Pre-existing "apk" kind ingests through ida_headless via the
-        # _ingest_binary path. F-2 must NOT widen this kind — only the
+        # _ingest_binary path. F-2 must NOT widen this kind -- only the
         # new "android_apk" gets the dual-bridge treatment.
         assert _applicable_servers_for_kind("apk") == {"ida_headless"}
 
@@ -633,7 +633,7 @@ class TestSnapshotTargetAndroidApk:
         snap = HonestVulnResearcher._snapshot_target(target)  # noqa: SLF001
 
         # apk_path from descriptor must NOT bleed into handles for
-        # other kinds — the synthesis is gated on kind == android_apk.
+        # other kinds -- the synthesis is gated on kind == android_apk.
         assert "android_mcp_apk_path" not in snap["mcp_handles"]
 
     def test_android_apk_with_missing_descriptor_apk_path_is_noop(self) -> None:
@@ -651,7 +651,7 @@ class TestSnapshotTargetAndroidApk:
 
 
 class TestRenderTargetSnapshotSectionAndroidApk:
-    """F-4: end-to-end smoke — the rendered snapshot text for an
+    """F-4: end-to-end smoke -- the rendered snapshot text for an
     android_apk target must surface both the apk_path and the
     decompiled audit-mcp index id so the agent prompt grounds on
     both bridges.

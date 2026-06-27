@@ -7,7 +7,7 @@ so callers do not need to manage the transaction boundary.
 
 cached_fetch() wraps the check-fetch-write cache pattern used by intelligence
 tools (NVD, EPSS/KEV, OSV) into a generic helper.  Callers provide three
-callables — get, fetch, set — and receive the result plus a "cache"/"live" label.
+callables -- get, fetch, set -- and receive the result plus a "cache"/"live" label.
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ def is_cache_fresh(payload: dict | None, *, force_refresh: bool = False) -> bool
     """Return True when cached data should be used.
 
     Platform cache policy: keep-forever. Cached data is always considered fresh
-    unless force_refresh is explicitly True. Any module can use this — the
+    unless force_refresh is explicitly True. Any module can use this -- the
     policy is platform-level, not module-specific.
     """
     if not payload:

@@ -46,12 +46,12 @@ export type AilaCardVariants = VariantProps<typeof ailaCardVariants>
 
 /**
  * Visual decorations layered on the card surface. Each decoration is
- * orthogonal — pass any combination (`["glass", "corners", "glow"]`).
+ * orthogonal -- pass any combination (`["glass", "corners", "glow"]`).
  *
- * - `glass` — 10px backdrop blur + theme-tinted gradient fill
- * - `corners` — L-shaped accent brackets in all four corners
- * - `tech-border` — animated 1px accent hairline along the top edge
- * - `glow` — soft accent-coloured shadow on hover
+ * - `glass` -- 10px backdrop blur + theme-tinted gradient fill
+ * - `corners` -- L-shaped accent brackets in all four corners
+ * - `tech-border` -- animated 1px accent hairline along the top edge
+ * - `glow` -- soft accent-coloured shadow on hover
  */
 export type AilaCardDecoration = "glass" | "corners" | "tech-border" | "glow"
 
@@ -60,7 +60,7 @@ export interface AilaCardProps
     AilaCardVariants {
   /**
    * When true, the card animates in on scroll entry (fade-up, D-21).
-   * Defaults to false — opt-in to avoid unnecessary motion on static cards.
+   * Defaults to false -- opt-in to avoid unnecessary motion on static cards.
    */
   animate?: boolean
   /**
@@ -70,7 +70,7 @@ export interface AilaCardProps
   delay?: number
   /**
    * Visual decorations to layer on the card surface. Canonical API as
-   * of D21 — replaces the four legacy boolean props below. Order is
+   * of D21 -- replaces the four legacy boolean props below. Order is
    * irrelevant; the component dedupes internally.
    */
   decorations?: readonly AilaCardDecoration[]
@@ -97,7 +97,7 @@ export interface AilaCardProps
 }
 
 // One-time per-session warning when any deprecated boolean prop is
-// passed in. Dev-only — production builds elide the `console.warn`.
+// passed in. Dev-only -- production builds elide the `console.warn`.
 type DeprecatedDecorationFlag = "glass" | "cornerAccents" | "techBorder" | "glow"
 const deprecatedDecoSeen: Record<DeprecatedDecorationFlag, boolean> = {
   glass: false,
@@ -118,7 +118,7 @@ function warnDeprecatedDecoration(prop: DeprecatedDecorationFlag, replacement: A
 }
 
 /**
- * AilaCard — surface container with cyberpunk border elevation.
+ * AilaCard -- surface container with cyberpunk border elevation.
  *
  * Uses 4px sharp radius (D-05), border-based elevation with no drop shadows (D-06),
  * and amber border glow on interactive hover.

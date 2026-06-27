@@ -109,10 +109,10 @@ export function usePauseInvestigation(investigationId: string) {
  * `isPending` so the UI does not flicker from 'paused' → 'running' in
  * one frame.
  *
- * fix §54 — frontend status display when an investigation is freshly
+ * fix §54 -- frontend status display when an investigation is freshly
  * RESUMED. The previous hook invalidated the investigation cache
  * immediately on success, so the refetch returned `status='running'`
- * a few hundred ms after the click — visually the stepper jumped
+ * a few hundred ms after the click -- visually the stepper jumped
  * from 'paused' to 'investigation_loop' instantly, even though the
  * worker had not yet picked the task up. The 2s hold gives the
  * operator visual confirmation that resume actually fired AND lines
@@ -133,7 +133,7 @@ export function useResumeInvestigation(investigationId: string) {
 
   // Clear any pending timer when the consumer unmounts so the
   // setPostSuccessHold(false) below does not run on a torn-down
-  // component. invalidateQueries is fine to call post-unmount —
+  // component. invalidateQueries is fine to call post-unmount --
   // queryClient outlives the component.
   useEffect(
     () => () => {
@@ -187,14 +187,14 @@ export function useResetInvestigation(investigationId: string) {
         { method: "POST" },
       ),
     onSuccess: () => {
-      // Wipe every cache touching this investigation — messages,
-      // branches, outcomes — so the page re-fetches the empty state.
+      // Wipe every cache touching this investigation -- messages,
+      // branches, outcomes -- so the page re-fetches the empty state.
       queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
       queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
       queryClient.invalidateQueries({ queryKey: ["vr", "messages", investigationId] });
       queryClient.invalidateQueries({ queryKey: ["vr", "branches", investigationId] });
       queryClient.invalidateQueries({ queryKey: ["vr", "outcomes", investigationId] });
-      toast.success("Investigation reset to start — re-enqueue to run again");
+      toast.success("Investigation reset to start -- re-enqueue to run again");
     },
     onError: (err: Error) => {
       toast.error(`Reset failed: ${err.message}`);
@@ -217,13 +217,13 @@ export function useReopenInvestigation(investigationId: string) {
         { method: "POST" },
       ),
     onSuccess: () => {
-      // Invalidate everything that renders investigation state — the
+      // Invalidate everything that renders investigation state -- the
       // status flip + new branch + new task all need fresh fetches.
       queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
       queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
       queryClient.invalidateQueries({ queryKey: ["vr", "branches", investigationId] });
       queryClient.invalidateQueries({ queryKey: ["vr", "messages", investigationId] });
-      toast.success("Investigation reopened — new branch dispatched");
+      toast.success("Investigation reopened -- new branch dispatched");
     },
     onError: (err: Error) => {
       toast.error(`Reopen failed: ${err.message}`);
@@ -239,7 +239,7 @@ export type InvestigationKindOverride =
   | "audit";
 
 export interface ReenqueueBody {
-  /** Optional kind override — backend updates inv.kind +
+  /** Optional kind override -- backend updates inv.kind +
    *  strategy_family before submitting the new task. Omit to keep
    *  the existing kind.
    */
@@ -258,7 +258,7 @@ export function useReenqueueInvestigation(investigationId: string) {
       queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
       queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
       queryClient.invalidateQueries({ queryKey: ["vr", "investigation-messages", investigationId] });
-      toast.success("Investigation re-enqueued — agent resumes from current case state");
+      toast.success("Investigation re-enqueued -- agent resumes from current case state");
     },
     onError: (err: Error) => {
       toast.error(`Re-enqueue failed: ${err.message}`);
@@ -288,7 +288,7 @@ export function useSendOperatorMessage(investigationId: string) {
         queryKey: ["vr", "investigation-messages", investigationId],
       });
       queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
-      toast.success("Message sent — engine will see it next turn");
+      toast.success("Message sent -- engine will see it next turn");
     },
     onError: (err: Error) => {
       toast.error(`Send failed: ${err.message}`);
@@ -322,7 +322,7 @@ export function useCreateInvestigation() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
       toast.success(
-        `Investigation "${result.data.title}" started — workflow firing`,
+        `Investigation "${result.data.title}" started -- workflow firing`,
       );
     },
     onError: (err: Error) => {
@@ -367,8 +367,8 @@ export function useReverifyInvestigation() {
       queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
       toast.success(
         result.cleared_prior_report
-          ? "Re-verify started (prior report cleared) — verdict in ~30s"
-          : "Verifier started — verdict in ~30s",
+          ? "Re-verify started (prior report cleared) -- verdict in ~30s"
+          : "Verifier started -- verdict in ~30s",
       );
     },
     onError: (err: Error) => {
@@ -470,7 +470,7 @@ export function useCreateTarget() {
   });
 }
 
-/** Multipart POST to /vr/targets/upload-apk — creates a new
+/** Multipart POST to /vr/targets/upload-apk -- creates a new
  * `android_apk` target with the uploaded .apk file. Backend:
  *  1. validates workspace ownership
  *  2. content-addresses the bytes (SHA-256) to
@@ -508,7 +508,7 @@ export function useUploadApkTarget() {
   });
 }
 
-/** Multipart POST to /vr/targets/{id}/upload — uploads a binary file
+/** Multipart POST to /vr/targets/{id}/upload -- uploads a binary file
  * to an existing target (native_binary / kernel_image / kernel_module /
  * hypervisor_image / ipa / jar / dotnet_assembly). For android_apk use
  * `useUploadApkTarget` instead (different endpoint, different lifecycle).
@@ -545,7 +545,7 @@ export function useRankTarget(targetId: string) {
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["vr", "target", targetId] });
-      toast.success("Function ranking enqueued — refresh in 30-60s");
+      toast.success("Function ranking enqueued -- refresh in 30-60s");
     },
     onError: (err: Error) => {
       toast.error(`Rank failed: ${err.message}`);
@@ -615,7 +615,7 @@ export function useRefreshTargetSource(targetId: string) {
           `Source current (${(r.new_sha ?? "?").slice(0, 8)})`,
         );
       } else if (r.status === "refreshing") {
-        const oldS = (r.old_sha ?? "—").slice(0, 8);
+        const oldS = (r.old_sha ?? "--").slice(0, 8);
         const newS = (r.new_sha ?? "?").slice(0, 8);
         toast.success(
           `Refreshing ${r.display_name}: ${oldS} → ${newS}`,
@@ -971,7 +971,7 @@ export function useUploadTargetArtifact(targetId: string) {
     },
     onSuccess: (resp) => {
       queryClient.invalidateQueries({ queryKey: ["vr", "target", targetId] });
-      toast.success(`Uploaded ${resp.data.uploaded_filename} — re-analyzing`);
+      toast.success(`Uploaded ${resp.data.uploaded_filename} -- re-analyzing`);
     },
     onError: (err: Error) => {
       toast.error(`Upload failed: ${err.message}`);
@@ -1129,11 +1129,11 @@ export function useRejectFuzzProposal(proposalId: string) {
 // an active parent returns HTTP 200 + idempotent_reuse=true and reuses
 // the prior ids verbatim. Fresh dispatches return HTTP 201. Per-child
 // ARQ submit failures land in `enqueue_errors` keyed by child
-// investigation id — the row exists, the operator retries via
+// investigation id -- the row exists, the operator retries via
 // POST /vr/investigations/{id}/re-enqueue.
 
 /** Frontend-side estimate for the pre-confirm "expected spend" UI.
- *  The backend is authoritative — `cost_budget_total_usd` in the
+ *  The backend is authoritative -- `cost_budget_total_usd` in the
  *  dispatch response carries the real total, computed from the live
  *  catalog. These constants exist only so the operator sees a
  *  reasonable number BEFORE clicking, without forcing a round-trip.
@@ -1185,7 +1185,7 @@ export function useMasvsAudit(targetId: string) {
         );
       } else if (failedCount > 0) {
         toast.warning(
-          `MASVS audit dispatched (${r.total_controls} controls) — ${failedCount} child${
+          `MASVS audit dispatched (${r.total_controls} controls) -- ${failedCount} child${
             failedCount === 1 ? "" : "ren"
           } failed to enqueue, retry via /re-enqueue`,
         );

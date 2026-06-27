@@ -1,4 +1,4 @@
-"""Function ranking contract — unified schema for source + binary targets.
+"""Function ranking contract -- unified schema for source + binary targets.
 
 The ranker dispatches to audit-mcp (source targets) OR IDA Headless MCP
 (binary targets) and normalizes both into ``FunctionRanking``. The

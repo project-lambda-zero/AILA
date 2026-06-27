@@ -2,12 +2,12 @@ import { useState } from "react";
 
 import type { useReenqueueInvestigation, InvestigationKindOverride } from "../mutations";
 
-/** Re-enqueue picker — kind dropdown + submit button as one unit.
+/** Re-enqueue picker -- kind dropdown + submit button as one unit.
  *
  *  When the operator leaves the dropdown at "keep current", the
  *  request goes out with no kind override (preserves inv.kind). When
  *  they pick a different kind, the backend updates inv.kind +
- *  strategy_family before submitting the task — turning a finished
+ *  strategy_family before submitting the task -- turning a finished
  *  discovery into a variant_hunt (or vice versa) in one click.
  *
  *  Kind affects the system prompt (variant_hunt mandates emitting
@@ -17,11 +17,11 @@ import type { useReenqueueInvestigation, InvestigationKindOverride } from "../mu
  *  selector is deliberately visible (not buried in a modal).
  */
 const KIND_OPTIONS: { value: InvestigationKindOverride; label: string }[] = [
-  { value: "discovery",    label: "Discovery — find one bug" },
-  { value: "variant_hunt", label: "Variant hunt — spawn child investigations" },
-  { value: "triage",       label: "Triage — classify a reported issue" },
-  { value: "n_day",        label: "N-day — assess a known patch" },
-  { value: "audit",        label: "Audit — broad source review" },
+  { value: "discovery",    label: "Discovery -- find one bug" },
+  { value: "variant_hunt", label: "Variant hunt -- spawn child investigations" },
+  { value: "triage",       label: "Triage -- classify a reported issue" },
+  { value: "n_day",        label: "N-day -- assess a known patch" },
+  { value: "audit",        label: "Audit -- broad source review" },
 ];
 
 export function ReenqueuePicker({
@@ -41,7 +41,7 @@ export function ReenqueuePicker({
       : "Re-enqueue ↻";
   const tooltip = willConvert
     ? `Update inv.kind from "${currentKind}" to "${picked}" + strategy_family, then submit a fresh run_vr_investigate task. Case state (hypotheses, observables) is preserved.`
-    : `Reset to created + submit a fresh run_vr_investigate task. Case state (hypotheses, observables) is preserved — the agent resumes from where it left off, not from turn 1.`;
+    : `Reset to created + submit a fresh run_vr_investigate task. Case state (hypotheses, observables) is preserved -- the agent resumes from where it left off, not from turn 1.`;
 
   return (
     <div className="flex items-center gap-1 flex-wrap min-w-0 max-w-full">

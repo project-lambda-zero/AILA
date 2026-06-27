@@ -1,12 +1,12 @@
-"""Phase 143 findings enrichment — add is_kev + current_workflow_state to LatestFindingRecord.
+"""Phase 143 findings enrichment -- add is_kev + current_workflow_state to LatestFindingRecord.
 
 Revision ID: 005_plan_143_findings_kev_workflow
 Revises: 004_plan_d_network_tables
 Create Date: 2026-04-10
 
 Adds:
-- is_kev BOOLEAN NOT NULL DEFAULT FALSE — CISA KEV catalog flag (FIND-04)
-- current_workflow_state TEXT NOT NULL DEFAULT 'new' — triage workflow state (FIND-08)
+- is_kev BOOLEAN NOT NULL DEFAULT FALSE -- CISA KEV catalog flag (FIND-04)
+- current_workflow_state TEXT NOT NULL DEFAULT 'new' -- triage workflow state (FIND-08)
 
 Workflow states: new | investigating | mitigated | verified | closed
 """

@@ -20,7 +20,7 @@ function checkDotColor(status: string): string {
 }
 
 /**
- * HealthStatusWidget — platform health overview with per-check status.
+ * HealthStatusWidget -- platform health overview with per-check status.
  *
  * Shows overall health badge (healthy / degraded / unhealthy) plus
  * individual service checks with status dots and latency.

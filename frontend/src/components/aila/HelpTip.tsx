@@ -21,7 +21,7 @@ export interface HelpTipProps {
 // ---------------------------------------------------------------------------
 
 /**
- * HelpTip — inline contextual help tooltip.
+ * HelpTip -- inline contextual help tooltip.
  *
  * Renders a small clickable/hoverable "?" icon that shows a tooltip with
  * a title and description. Use next to field labels to explain technical terms.
@@ -32,7 +32,7 @@ export interface HelpTipProps {
  *   EPSS Score
  *   <HelpTip
  *     title="EPSS"
- *     description="Exploit Prediction Scoring System — probability a CVE will be exploited in the next 30 days."
+ *     description="Exploit Prediction Scoring System -- probability a CVE will be exploited in the next 30 days."
  *   />
  * </label>
  * ```

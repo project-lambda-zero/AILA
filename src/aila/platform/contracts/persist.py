@@ -37,7 +37,7 @@ class PersistContract:
         model_class = type(record)
         natural_key: tuple[str, ...] | None = getattr(model_class, "__natural_key__", None)
         data = record.model_dump(exclude_unset=False)
-        # Exclude id when None — let DB sequence generate it
+        # Exclude id when None -- let DB sequence generate it
         if data.get("id") is None:
             data.pop("id", None)
 

@@ -6,7 +6,7 @@ optional secondary references. Per D-43 it produces typed outcomes
 (DirectFinding / VariantHuntOrder / AuditMemo / etc.) consumed by
 downstream dispatchers.
 
-Variant hunts are sibling investigations (D-43 GA-28) — separate
+Variant hunts are sibling investigations (D-43 GA-28) -- separate
 investigations linked by ``parent_investigation_id``, not branches.
 Branches stay inside one investigation.
 
@@ -35,7 +35,7 @@ class InvestigationKind(StrEnum):
     DISCOVERY/VARIANT_HUNT/TRIAGE/N_DAY/AUDIT drive default strategy +
     budget through ``_KIND_DEFAULT_STRATEGY``. MASVS_AUDIT is a
     batch-orchestration tag carried only by the parent investigation in
-    a MASVS audit — its children are regular ``AUDIT`` investigations
+    a MASVS audit -- its children are regular ``AUDIT`` investigations
     that run the standard vuln_researcher dispatch unchanged. The
     parent's ``strategy_family`` is set explicitly by the MASVS
     dispatcher; it never resolves through the default-strategy map.
@@ -78,7 +78,7 @@ class InvestigationPauseReason(StrEnum):
 class VRInvestigationCreate(BaseModel):
     """Input payload for creating a new investigation.
 
-    Most fields default sensibly — operator only has to provide the
+    Most fields default sensibly -- operator only has to provide the
     target_id and a question. Workspace is inferred from target.
     """
 

@@ -120,9 +120,9 @@ APP_INFO = Info("aila", "AILA platform metadata")
 # API error envelope counter (Phase 176a, D-25)
 # ---------------------------------------------------------------------------
 # Labels locked per D-25: (code, status, module).
-#   - code   — the ErrorEnvelope.code (e.g. "MISSING_API_KEY", "INTERNAL_ERROR").
-#   - status — the HTTP status code as a string (e.g. "503", "422", "500").
-#   - module — the originating aila.* module bucket (e.g. "vulnerability",
+#   - code   -- the ErrorEnvelope.code (e.g. "MISSING_API_KEY", "INTERNAL_ERROR").
+#   - status -- the HTTP status code as a string (e.g. "503", "422", "500").
+#   - module -- the originating aila.* module bucket (e.g. "vulnerability",
 #              "platform", "api"). Derived via _derive_module_label in handlers.
 # Name "aila_api_error_total" verified free by preflight BE-C (no collision with
 # any existing counter in src/aila/api/metrics.py as of 2026-04-12).

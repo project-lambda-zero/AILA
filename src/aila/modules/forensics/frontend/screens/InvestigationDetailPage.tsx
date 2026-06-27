@@ -83,7 +83,7 @@ function CaseModelPanel({ step }: { step: AgentStep }) {
                 <span className="font-mono text-text-muted">{h.id ?? `H${i + 1}`}:</span>{" "}
                 {h.claim}
                 {h.kill_criterion && (
-                  <span className="text-text-muted italic"> — kill: {h.kill_criterion}</span>
+                  <span className="text-text-muted italic"> -- kill: {h.kill_criterion}</span>
                 )}
               </li>
             ))}
@@ -625,13 +625,13 @@ export function InvestigationDetailPage() {
         </div></AilaCard>
       )}
 
-      {/* Analyst directives — readable on every turn by AILA */}
+      {/* Analyst directives -- readable on every turn by AILA */}
       <AnalystDirectivesPanel
         projectId={projectId}
         investigationId={investigationId}
       />
 
-      {/* Retrieve-File — pull any artefact out of the disk image */}
+      {/* Retrieve-File -- pull any artefact out of the disk image */}
       <RetrieveFilePanel projectId={projectId} />
 
       {/* Tabs */}
@@ -679,13 +679,13 @@ export function InvestigationDetailPage() {
                 <p className="text-text-muted">Waiting for events…</p>
               )}
               {liveEvents.map((ev, i) => {
-                const stage = ev.stage ?? "—";
+                const stage = ev.stage ?? "--";
                 let payload: Record<string, unknown> = {};
                 if (ev.data_json) {
                   try {
                     payload = JSON.parse(ev.data_json);
                   } catch {
-                    // ignore — render raw message only
+                    // ignore -- render raw message only
                   }
                 }
                 const color =
@@ -757,7 +757,7 @@ export function InvestigationDetailPage() {
                     {command && (
                       <details className="pl-14 mt-1">
                         <summary className="cursor-pointer text-3xs text-amber-400/80 hover:text-amber-300">
-                          shell command ({command.length} chars) — click to expand
+                          shell command ({command.length} chars) -- click to expand
                         </summary>
                         <pre className="mt-1 text-2xs bg-black/40 border border-amber-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
                           {command}
@@ -767,7 +767,7 @@ export function InvestigationDetailPage() {
                     {script && (
                       <details className="pl-14 mt-1">
                         <summary className="cursor-pointer text-3xs text-amber-400/80 hover:text-amber-300">
-                          python script ({script.length} chars) — click to expand
+                          python script ({script.length} chars) -- click to expand
                         </summary>
                         <pre className="mt-1 text-2xs bg-black/40 border border-amber-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
                           {script}
@@ -779,8 +779,8 @@ export function InvestigationDetailPage() {
                         <summary className="cursor-pointer text-3xs text-green-400/80 hover:text-green-300">
                           output {exitCode !== undefined ? `(exit=${exitCode})` : ""}
                           {stdoutBytes !== undefined && stdout && stdoutBytes > stdout.length
-                            ? ` — showing last ${stdout.length.toLocaleString()} of ${stdoutBytes.toLocaleString()} bytes`
-                            : stdout ? ` — ${stdout.length.toLocaleString()} bytes` : ""}
+                            ? ` -- showing last ${stdout.length.toLocaleString()} of ${stdoutBytes.toLocaleString()} bytes`
+                            : stdout ? ` -- ${stdout.length.toLocaleString()} bytes` : ""}
                         </summary>
                         {stdout && (
                           <pre

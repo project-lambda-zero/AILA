@@ -1,6 +1,6 @@
 """Workspace contracts for the vulnerability research module.
 
-A VRWorkspace is a thematic project (D-49) — e.g. "Browser engines",
+A VRWorkspace is a thematic project (D-49) -- e.g. "Browser engines",
 "Linux kernel", "Industrial controllers". It owns one or more VRTargets
 and is the unit at which patterns/audit-memos can be scoped above the
 single-investigation level.
@@ -30,7 +30,7 @@ class WorkspaceStatus(StrEnum):
 class WorkspaceTheme(StrEnum):
     """Suggested theme buckets for grouping related targets (D-49).
 
-    The set is open — operators can create CUSTOM workspaces for any
+    The set is open -- operators can create CUSTOM workspaces for any
     thematic area. The pre-seeded themes match the default workspace
     suggestions in D-49 so the UI can pre-fill icons/colors.
     """

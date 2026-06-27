@@ -2,8 +2,8 @@ from __future__ import annotations
 
 """Tests for thread-safe engine cache (_ENGINE_LOCK) in aila.storage.database.
 
-RED phase — these tests MUST fail before the implementation is in place.
-GREEN phase — all tests pass after _ENGINE_LOCK is added and used.
+RED phase -- these tests MUST fail before the implementation is in place.
+GREEN phase -- all tests pass after _ENGINE_LOCK is added and used.
 """
 
 import inspect

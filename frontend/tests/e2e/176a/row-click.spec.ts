@@ -1,11 +1,11 @@
 /**
- * row-click.spec.ts — D-04, D-14, D-32.
+ * row-click.spec.ts -- D-04, D-14, D-32.
  *
  * - D-04: clicking a task/scan row navigates to its detail route.
  * - D-14: /scans → /console redirect.
  * - D-32: clicks on inline buttons inside a row do NOT trigger row navigation.
  *
- * Falls back to test.skip(true, reason) when the API will not let us seed —
+ * Falls back to test.skip(true, reason) when the API will not let us seed --
  * never asserts against fake data (project rule no-mock-data).
  */
 import { test, expect } from "./helpers/fixtures";
@@ -36,7 +36,7 @@ test.describe("Row click (D-04, D-14, D-32)", () => {
     ).toBeVisible({ timeout: 10_000 });
 
     // Row presence is data-dependent. If there is at least one row, click it
-    // and confirm navigation. Otherwise note the empty state and finish — the
+    // and confirm navigation. Otherwise note the empty state and finish -- the
     // page rendering empty is itself a valid pass for D-04 (the click handler
     // wiring is asserted by a unit test in 176a-02).
     const rows = page.locator('[data-testid="task-row"]');
@@ -45,7 +45,7 @@ test.describe("Row click (D-04, D-14, D-32)", () => {
       await rows.first().click();
       await expect(page).toHaveURL(/\/tasks\/.+/, { timeout: 5_000 });
     } else {
-      // Honest empty state — ensure the page didn't crash.
+      // Honest empty state -- ensure the page didn't crash.
       await expect(page.getByText(/internal server error/i)).toHaveCount(0);
     }
 
@@ -93,7 +93,7 @@ test.describe("Row click (D-04, D-14, D-32)", () => {
     const rows = page.locator('[data-testid="task-row"]');
     const rowCount = await rows.count();
     if (rowCount === 0) {
-      test.skip(true, "no task rows seeded in this env — D-32 covered by AilaTable unit test");
+      test.skip(true, "no task rows seeded in this env -- D-32 covered by AilaTable unit test");
       return;
     }
 
@@ -101,7 +101,7 @@ test.describe("Row click (D-04, D-14, D-32)", () => {
     const firstRow = rows.first();
     const button = firstRow.locator("button").first();
     if ((await button.count()) === 0) {
-      test.skip(true, "no inline button in first row — D-32 covered by AilaTable unit test");
+      test.skip(true, "no inline button in first row -- D-32 covered by AilaTable unit test");
       return;
     }
 

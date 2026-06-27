@@ -1,7 +1,7 @@
 """Health and status endpoints for the AILA REST API.
 
-GET /health  — DB + module checks, no auth required (D-15: never 503)
-GET /status  — version + uptime, no auth required
+GET /health  -- DB + module checks, no auth required (D-15: never 503)
+GET /status  -- version + uptime, no auth required
 
 These endpoints are intentionally on an unprotected router. Load balancers
 and monitoring tools must be able to check health without an API key.
@@ -42,7 +42,7 @@ def _module_registry_from(request: Request) -> Any | None:
 
     The platform is created in the FastAPI lifespan (api/app.py) and
     exposes ``runtime.module_registry``. Returns None when the
-    platform hasn't initialized yet (rare — early-request race during
+    platform hasn't initialized yet (rare -- early-request race during
     boot). Keeping the access tolerant means the probe degrades to
     "unknown" instead of 500.
     """
@@ -56,7 +56,7 @@ def _module_registry_from(request: Request) -> Any | None:
 
 _AILA_VERSION: str = _importlib_metadata.version("aila")
 
-# Unprotected router — NO dependencies=[Depends(require_api_key)] here
+# Unprotected router -- NO dependencies=[Depends(require_api_key)] here
 router = APIRouter(tags=["health"])
 
 
@@ -166,12 +166,12 @@ async def get_health(
     workers_result = await _check_workers()
     checks["workers"] = workers_result
 
-    # D-13: Module health checks — optional, no error if module lacks the method
+    # D-13: Module health checks -- optional, no error if module lacks the method
     module_checks_map = await _collect_module_health_checks(platform)
     checks.update(module_checks_map)
 
-    # D-15: Aggregate status — HTTP 200 always; body is truthful
-    # Critical checks: DB, Redis, workers — any down -> unhealthy
+    # D-15: Aggregate status -- HTTP 200 always; body is truthful
+    # Critical checks: DB, Redis, workers -- any down -> unhealthy
     critical_names = {"database", "redis", "workers"}
     critical_statuses = {k: c.status for k, c in checks.items() if k in critical_names}
     if any(s == "down" for s in critical_statuses.values()):
@@ -200,7 +200,7 @@ async def _collect_module_health_checks(platform: AILAPlatform) -> dict[str, Hea
     try:
         module_registry = platform.runtime.module_registry
     except AttributeError:
-        # platform.runtime.module_registry not available in test doubles — skip
+        # platform.runtime.module_registry not available in test doubles -- skip
         return results
 
     for module in module_registry.modules:
@@ -426,7 +426,7 @@ async def get_status(request: Request) -> StatusResponse:
     reflects true server start time, not module import time.
 
     Args:
-        request: FastAPI Request object — provides access to app.state.
+        request: FastAPI Request object -- provides access to app.state.
 
     Returns:
         StatusResponse with version string and uptime_seconds integer.

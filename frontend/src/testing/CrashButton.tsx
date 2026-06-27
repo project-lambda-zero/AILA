@@ -1,5 +1,5 @@
 /**
- * CrashButton / CrashNow — test-only component used by 176a-03 e2e to exercise
+ * CrashButton / CrashNow -- test-only component used by 176a-03 e2e to exercise
  * AppErrorBoundary placement (D-23 / T-176a-02-02).
  *
  * Gated at the router level via `import.meta.env.DEV` (preflight FE-H) so it

@@ -1,4 +1,4 @@
-// DecompileFunction.java — Ghidra headless post-analysis script.
+// DecompileFunction.java -- Ghidra headless post-analysis script.
 // Decompiles a single function by name (passed as script argument).
 // Usage: analyzeHeadless <project> <name> -process <binary> -postScript DecompileFunction.java <funcName>
 //

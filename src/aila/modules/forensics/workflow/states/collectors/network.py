@@ -1,10 +1,10 @@
-"""PCAP collector — runs tshark, parses rows, emits structured artifacts.
+"""PCAP collector -- runs tshark, parses rows, emits structured artifacts.
 
 This replaced the original "dump raw stdout into a text blob" design. Every
 collected category is a parsed list of typed dicts that the API hands to
 the frontend verbatim. An optional LLM commentary pass runs at the end to
 narrate the findings per subject (hosts, DNS, HTTP, TLS, beacons,
-anomalies) — when the LLM is disabled, the structured data still stands
+anomalies) -- when the LLM is disabled, the structured data still stands
 on its own.
 
 Honest scope:
@@ -63,7 +63,7 @@ async def _resolve_tshark_cmd(
     try:
         out = await ssh.run_command(integration, probe, timeout_seconds=15.0)
     except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
-        _log.debug("tshark path probe failed: %s — falling back to bare tshark", exc)
+        _log.debug("tshark path probe failed: %s -- falling back to bare tshark", exc)
         return "tshark"
     first = next((line.strip() for line in out.splitlines() if line.strip()), "")
     return f'"{first}"' if first else "tshark"
@@ -469,14 +469,14 @@ async def _run_zeek_carve(
 
     Returns ``(carved_artifacts, mime_histogram)``. When Zeek is not
     installed on the analyzer the function emits a ``zeek_skipped``
-    event and returns empty values — the overall pcap collection still
+    event and returns empty values -- the overall pcap collection still
     completes with tshark-only output.
     """
     zeek_cmd = await _resolve_zeek_cmd(ssh, integration, analyzer_os)
     if not zeek_cmd:
         await safe_emit(
             emitter, "zeek_skipped",
-            "network: zeek not installed on analyzer — pcap file-carving skipped",
+            "network: zeek not installed on analyzer -- pcap file-carving skipped",
             {"path": path, "reason": "zeek_not_installed"},
         )
         return [], {}
@@ -522,7 +522,7 @@ async def _run_zeek_carve(
     except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
         await safe_emit(
             emitter, "zeek_scratch_failed",
-            f"network: zeek scratch dir creation failed — {exc}",
+            f"network: zeek scratch dir creation failed -- {exc}",
             {"path": path, "scratch": scratch, "error": str(exc)[:200]},
         )
         return [], {}
@@ -555,7 +555,7 @@ async def _run_zeek_carve(
     except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
         await safe_emit(
             emitter, "zeek_failed",
-            f"network: zeek run failed — {exc}",
+            f"network: zeek run failed -- {exc}",
             {"path": path, "error": str(exc)[:300]},
         )
         return [], {}
@@ -604,7 +604,7 @@ async def _run_zeek_carve(
     except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
         await safe_emit(
             emitter, "zeek_list_failed",
-            f"network: cannot list carved files — {exc}",
+            f"network: cannot list carved files -- {exc}",
             {"path": path, "error": str(exc)[:200]},
         )
         return [], {}
@@ -654,7 +654,7 @@ async def _try_llm_commentary(
     """Ask the LLM to narrate the summary as structured commentary.
 
     Returns a list of commentary objects: ``{subject, narrative, severity}``.
-    Fails soft — on any error we emit a ``commentary_skipped`` event and
+    Fails soft -- on any error we emit a ``commentary_skipped`` event and
     return an empty list so the overall collection run does not fail.
     """
     system = (
@@ -708,7 +708,7 @@ async def _try_llm_commentary(
         if resp.disabled:
             await safe_emit(
                 emitter, "commentary_skipped",
-                "LLM disabled — skipping pcap commentary",
+                "LLM disabled -- skipping pcap commentary",
                 {"reason": "disabled"},
             )
             return []

@@ -104,9 +104,9 @@ function PreviewTable({ rows }: { rows: ParsedRow[] }) {
               className={row.valid ? "" : "bg-destructive/10"}
             >
               <td className="px-2 py-1.5 text-text-muted">{row.rowIndex + 1}</td>
-              <td className="px-2 py-1.5 text-text">{row.name || "—"}</td>
-              <td className="px-2 py-1.5 text-text">{row.host || "—"}</td>
-              <td className="px-2 py-1.5 text-text">{row.port || "—"}</td>
+              <td className="px-2 py-1.5 text-text">{row.name || "--"}</td>
+              <td className="px-2 py-1.5 text-text">{row.host || "--"}</td>
+              <td className="px-2 py-1.5 text-text">{row.port || "--"}</td>
               <td className="px-2 py-1.5 text-text">{row.username}</td>
               <td className="px-2 py-1.5 text-text">{row.distro}</td>
               <td className="px-2 py-1.5">
@@ -131,7 +131,7 @@ function PreviewTable({ rows }: { rows: ParsedRow[] }) {
 // ---------------------------------------------------------------------------
 
 /**
- * SystemCSVImport — CSV import dialog with papaparse parsing, preview, and import action.
+ * SystemCSVImport -- CSV import dialog with papaparse parsing, preview, and import action.
  *
  * Implements D-07 (CSV UX flow) and D-08 (column spec, injection prevention).
  * Security: all cell values rendered as React text nodes (no dangerouslySetInnerHTML).
@@ -243,7 +243,7 @@ export function SystemCSVImport({ open, onOpenChange }: SystemCSVImportProps) {
         onSuccess: (data) => {
           setImportResult(data);
           if (data.errors.length === 0) {
-            // All imported successfully — close after short delay
+            // All imported successfully -- close after short delay
             setTimeout(() => {
               onOpenChange(false);
               resetState();
@@ -320,7 +320,7 @@ export function SystemCSVImport({ open, onOpenChange }: SystemCSVImportProps) {
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <p className="font-mono text-xs text-text-muted">
-                Preview (first {PREVIEW_MAX_ROWS} rows) — {validRows.length} valid,{" "}
+                Preview (first {PREVIEW_MAX_ROWS} rows) -- {validRows.length} valid,{" "}
                 {parsedRows.length - validRows.length} invalid
               </p>
             </div>

@@ -11,24 +11,24 @@ import type { HypothesisProjection } from "../queries";
  * Right-rail panel that surfaces live + rejected hypotheses for the
  * investigation (08_FRONTEND_UX.md §2.3).
  *
- * Reads from `/vr/investigations/:id/hypotheses` — an aggregate
+ * Reads from `/vr/investigations/:id/hypotheses` -- an aggregate
  * projection across branches. Each row shows the hypothesis claim,
  * its lifecycle state (live / rejected / mixed across branches), the
  * kill criterion, why it was plausible, and per-branch attribution.
  *
  * Collapse model (added 2026-05-28 after operator reported the rail
- * gets heavy on long-running investigations — up to 53 hypotheses
+ * gets heavy on long-running investigations -- up to 53 hypotheses
  * per branch observed live):
  *
- *   * Whole-rail collapse — chevron in card header hides every row.
+ *   * Whole-rail collapse -- chevron in card header hides every row.
  *     Default: open.
- *   * Per-row collapse — chevron on each row toggles between compact
+ *   * Per-row collapse -- chevron on each row toggles between compact
  *     (claim + state badge + branch-count tail) and full (current
  *     why_plausible / kill_criterion / rejection_reason rendering).
  *     Default: collapsed when the rail holds more than
  *     ``AUTO_COLLAPSE_THRESHOLD`` rows; otherwise expanded.
- *   * Expand-all / Collapse-all — bulk toggles all rows at once.
- *   * Persistence — state lives in localStorage keyed by
+ *   * Expand-all / Collapse-all -- bulk toggles all rows at once.
+ *   * Persistence -- state lives in localStorage keyed by
  *     ``vr-hypothesis-rail:<investigation_id>`` so navigating away
  *     + back preserves what the operator opened/closed.
  *
@@ -71,7 +71,7 @@ function saveState(investigationId: string, next: RailState): void {
   try {
     window.localStorage.setItem(storageKey(investigationId), JSON.stringify(next));
   } catch {
-    // localStorage can throw (quota / private mode) — non-fatal; UI just
+    // localStorage can throw (quota / private mode) -- non-fatal; UI just
     // loses persistence for this session.
   }
 }
@@ -81,7 +81,7 @@ export function HypothesisDetailRail({
   live = true,
 }: {
   investigationId: string;
-  /** Forwarded to `useInvestigationHypotheses` — false stops the 8s
+  /** Forwarded to `useInvestigationHypotheses` -- false stops the 8s
    *  polling on paused / completed / failed investigations. The
    *  parent page derives this from `isInvestigationLive(inv?.status)`. */
   live?: boolean;
@@ -170,7 +170,7 @@ export function HypothesisDetailRail({
   }, [items]);
 
   // Are all currently-visible rows expanded? Used to choose between
-  // showing the "Expand all" or the "Collapse all" affordance only —
+  // showing the "Expand all" or the "Collapse all" affordance only --
   // saves clicks on the common case.
   const allExpanded = useMemo(() => {
     if (items.length === 0) return false;

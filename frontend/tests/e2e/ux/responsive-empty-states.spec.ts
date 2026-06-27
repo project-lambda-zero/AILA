@@ -1,8 +1,8 @@
 /**
- * responsive-empty-states.spec.ts — E2E tests for responsive layout (UX-03)
+ * responsive-empty-states.spec.ts -- E2E tests for responsive layout (UX-03)
  * and contextual empty states (UX-04).
  *
- * Uses REAL PostgreSQL backend — no mocks.
+ * Uses REAL PostgreSQL backend -- no mocks.
  * Auth injected via localStorage per established project pattern.
  */
 import { test, expect } from "@playwright/test";
@@ -72,7 +72,7 @@ test.describe("Empty States (UX-04)", () => {
     await injectAuthState(page, tokens);
     await page.goto("/systems");
 
-    // Page must render a heading — either table or empty state
+    // Page must render a heading -- either table or empty state
     await expect(
       page.getByRole("heading", { name: "Systems" }),
     ).toBeVisible({ timeout: 10_000 });
@@ -87,7 +87,7 @@ test.describe("Empty States (UX-04)", () => {
       await page.goto("/");
       await page.waitForTimeout(1_000);
 
-      // No JS errors — page renders heading
+      // No JS errors -- page renders heading
       await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({
         timeout: 10_000,
       });

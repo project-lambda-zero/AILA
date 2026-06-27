@@ -2,11 +2,11 @@ import { useCallback, useState } from "react";
 
 /**
  * Drag-drop file uploader for binary target artifacts
- * (08_FRONTEND_UX.md §1.2 promise — wizard step 1 + TargetDetailPage).
+ * (08_FRONTEND_UX.md §1.2 promise -- wizard step 1 + TargetDetailPage).
  *
  * Renders a dashed-border drop zone. Accepts files via drag-drop OR a
  * regular file picker button. On selection it surfaces the picked file
- * to the parent (`onFile`) — the parent decides whether to upload
+ * to the parent (`onFile`) -- the parent decides whether to upload
  * immediately (TargetDetailPage) or stash the filename and upload after
  * project create (Wizard).
  *

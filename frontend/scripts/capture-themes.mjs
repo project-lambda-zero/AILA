@@ -1,4 +1,4 @@
-// 176b theme verification — captures one screenshot per theme by setting
+// 176b theme verification -- captures one screenshot per theme by setting
 // localStorage directly then navigating to the login page. No auth needed
 // for the atmospheric signature check; the login screen renders all the
 // decorative CSS we care about (body atmosphere, cards, buttons).

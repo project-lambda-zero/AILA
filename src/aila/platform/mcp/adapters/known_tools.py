@@ -6,7 +6,7 @@ Derived directly from:
   - android_mcp server (24 tools as of 2026-06-08)
 
 Reasons to enumerate explicitly rather than auto-discover at runtime:
-  1. Unknown tool names should fail loud — typos in engine output, not
+  1. Unknown tool names should fail loud -- typos in engine output, not
      silent network errors at dispatch time.
   2. The system prompt enumerates available tools per turn (so the
      engine doesn't guess names). That enumeration MUST be deterministic
@@ -99,9 +99,9 @@ IDA_HEADLESS_TOOLS: frozenset[str] = frozenset({
     # and buckets by regex against URL / IP / path / base64. Misses
     # everything on Delphi / Pascal AnsiString, .NET BSTR, VB6, Go,
     # and UTF-16LE in .rsrc -- which is most modern malware. On
-    # masson it returned ``0 categorized / 19 unique`` while the
-    # binary actually holds 10,254 strings (1952 in .rsrc UTF-16LE
-    # including the second-stage C2). Agents read 0/19 as 'binary
+    # a Delphi-packed sample it returned ``0 categorized / 19 unique``
+    # even though the binary actually held 10,254 strings (1952 in .rsrc
+    # UTF-16LE including the second-stage C2). Agents read 0/19 as 'binary
     # has nothing to look at' and derail. list_strings is the
     # correct surface for string enumeration; classify_strings has
     # no remaining purpose for the agent.
@@ -177,13 +177,13 @@ AUDIT_MCP_TOOLS: frozenset[str] = frozenset({
     "fuzzing_targets",
     "fuzz_generators",
     "attack_surface_diff",
-    # Semble — hybrid semantic + BM25 chunk retrieval (PREFERRED over
+    # Semble -- hybrid semantic + BM25 chunk retrieval (PREFERRED over
     # search_source for natural-language / intent queries; falls back
     # to literal search_* when you need exact regex / symbol matching)
     "semantic_search",
     "find_related",
     "semble_stats",
-    # Search — literal / symbol / regex
+    # Search -- literal / symbol / regex
     "search_functions",
     "search_constants",
     "search_types",
@@ -251,7 +251,7 @@ ANDROID_MCP_TOOLS: frozenset[str] = frozenset({
     "adb_uninstall",
     "adb_logcat_capture",
     "adb_dumpsys",
-    # Composite handlers — mirror audit-mcp's higher-level layer
+    # Composite handlers -- mirror audit-mcp's higher-level layer
     "verify_capabilities",
     "classify_behavior",
     "compute_risk_score",
@@ -294,10 +294,10 @@ _DYNAMIC_DISPATCH_HEAVY_LANGUAGES: frozenset[str] = frozenset({
     "swift",  # class methods virtual by default; structs are static
     "objective-c", "objc", "objectivec",
     "scala",
-    # NOT included: rust (static dispatch + monomorphization by default —
+    # NOT included: rust (static dispatch + monomorphization by default --
     # cargo's own dead_code lint works reliably), go (interfaces are
     # vtable-dispatched but concrete-type calls dominate), c (only direct
-    # calls and function pointers — the latter is a small minority).
+    # calls and function pointers -- the latter is a small minority).
 })
 
 _CALL_GRAPH_FRAGILE_TOOLS: frozenset[str] = frozenset({

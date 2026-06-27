@@ -26,7 +26,7 @@ __all__ = [
 class DisclosureKind(StrEnum):
     """Catalog of track families (GA-31).
 
-    Track _ids_ live in the track registry — this enum classifies them
+    Track _ids_ live in the track registry -- this enum classifies them
     by kind so the UI can group / filter.
     """
 
@@ -42,16 +42,16 @@ class DisclosureKind(StrEnum):
 class DisclosureSubmissionStatus(StrEnum):
     """Per-track lifecycle states.
 
-    Drafted     — submission rendered, not yet sent
-    Submitted   — handed to vendor/program
-    Acknowledged— vendor confirmed receipt
-    Triaging    — vendor working it
-    Accepted    — vendor confirmed valid finding (bounty programs)
-    Rejected    — vendor declined (dup / out-of-scope / not-a-bug)
-    Patched     — fix shipped
-    Published   — public disclosure released (blog_post / advisory / CVE published)
-    Closed      — terminal (rewarded + paid; or rejection with no appeal; or withdrawn)
-    Withdrawn   — operator pulled submission
+    Drafted     -- submission rendered, not yet sent
+    Submitted   -- handed to vendor/program
+    Acknowledged-- vendor confirmed receipt
+    Triaging    -- vendor working it
+    Accepted    -- vendor confirmed valid finding (bounty programs)
+    Rejected    -- vendor declined (dup / out-of-scope / not-a-bug)
+    Patched     -- fix shipped
+    Published   -- public disclosure released (blog_post / advisory / CVE published)
+    Closed      -- terminal (rewarded + paid; or rejection with no appeal; or withdrawn)
+    Withdrawn   -- operator pulled submission
     """
 
     DRAFTED = "drafted"
@@ -102,9 +102,9 @@ class VRDisclosureSubmissionCreate(BaseModel):
     through PATCH.
 
     The submission can be anchored on EITHER:
-      * an existing finding (`finding_id`) — the original path; the
+      * an existing finding (`finding_id`) -- the original path; the
         service binds the disclosure to that finding row, OR
-      * an investigation (`investigation_id`) — the operator-friendly
+      * an investigation (`investigation_id`) -- the operator-friendly
         path: the service resolves the investigation's
         ``linked_finding_ids``. Exactly one linked finding promotes to
         the disclosure; zero auto-creates a stub finding from the
@@ -217,7 +217,7 @@ class VRDisclosureSubmissionSummary(BaseModel):
     sections: dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "Named sections of the advisory — keys: summary, "
+            "Named sections of the advisory -- keys: summary, "
             "technical_details, reproduction, patches, references. "
             "Empty until the operator runs regenerate or edits in the "
             "structured editor (08_FRONTEND_UX.md §1.8)."
@@ -227,7 +227,7 @@ class VRDisclosureSubmissionSummary(BaseModel):
 
 
 class RenderedSubmission(BaseModel):
-    """Output of DisclosureService.render() — what the operator sends."""
+    """Output of DisclosureService.render() -- what the operator sends."""
 
     model_config = ConfigDict(extra="forbid")
 

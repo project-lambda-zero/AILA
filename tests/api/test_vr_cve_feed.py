@@ -49,7 +49,7 @@ async def test_ingest_cve_is_idempotent_on_cve_id(
     assert r1.status_code == 201
     assert r1.json()["data"]["inserted"] is True
 
-    # Re-ingest with updated description — should update, not insert
+    # Re-ingest with updated description -- should update, not insert
     payload["description"] = "second description"
     payload["cvss_score"] = 7.5
     r2 = await async_client.post(

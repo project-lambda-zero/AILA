@@ -20,7 +20,7 @@ import type { AnalysisState, TargetKind, TargetStatus, VRTargetSummary } from ".
 
 // Per-kind input-field schema. Each field becomes a labeled <input>
 // in the create form; values get assembled into the descriptor JSON
-// the backend expects. android_apk has no fields here — it uses the
+// the backend expects. android_apk has no fields here -- it uses the
 // multipart upload-apk endpoint with a file picker, handled separately.
 // Per-kind input-field schema. Each field is either a labeled <input>
 // (type="text") or a <input type="file"> file picker. The submit
@@ -39,7 +39,7 @@ interface DescriptorField {
 
 const DESCRIPTOR_SCHEMA: Record<TargetKind, DescriptorField[]> = {
   // Binary kinds: file picker is the primary input. No more
-  // server-side path text boxes — the operator never knew what
+  // server-side path text boxes -- the operator never knew what
   // paths exist on the backend filesystem.
   native_binary: [
     { key: "file", label: "Binary file", type: "file", required: true },
@@ -152,7 +152,7 @@ function analysisLabel(state: AnalysisState): string {
 }
 
 function formatDate(value?: string | null): string {
-  if (!value) return "—";
+  if (!value) return "--";
   try {
     return new Date(value).toLocaleString();
   } catch {
@@ -160,7 +160,7 @@ function formatDate(value?: string | null): string {
   }
 }
 
-// Per-kind icon glyph. Empty for kinds without a curated icon — keeps
+// Per-kind icon glyph. Empty for kinds without a curated icon -- keeps
 // the column compact rather than padding every row with a default
 // shape. `android_apk` is the first kind with its own icon; future
 // kinds can extend this map without growing the row signature.
@@ -222,7 +222,7 @@ export function TargetsPage() {
   // Helper: assemble the descriptor object from per-TEXT-field values,
   // dropping empty strings so the backend's strict descriptor shape
   // doesn't reject them as "unexpected empty string". File fields are
-  // NOT included here — they're posted to the matching upload endpoint
+  // NOT included here -- they're posted to the matching upload endpoint
   // in the submit handler.
   function assembleDescriptor(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
@@ -287,7 +287,7 @@ export function TargetsPage() {
               aria-label="Workspace"
               className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
             >
-              <option value="">— select workspace —</option>
+              <option value="">-- select workspace --</option>
               {workspaces.map((ws) => (
                 <option key={ws.id} value={ws.id}>
                   {ws.name} ({ws.slug})
@@ -508,7 +508,7 @@ export function TargetsPage() {
           onChange={(e) => setWorkspaceFilter(e.target.value)}
           className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
         >
-          <option value="">— all —</option>
+          <option value="">-- all --</option>
           {workspaces.map((ws) => (
             <option key={ws.id} value={ws.id}>
               {ws.name}
@@ -559,7 +559,7 @@ export function TargetsPage() {
                   {t.kind}
                 </td>
                 <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  {t.primary_language ?? "—"}
+                  {t.primary_language ?? "--"}
                 </td>
                 <td className="px-4 py-2">
                   <AilaBadge
@@ -611,7 +611,7 @@ export function TargetsPage() {
 //
 // Per-row action: re-run a target's ingestion. For git-backed kinds
 // (source_repo / patch_diff / cve) this hits audit-mcp's refresh_index
-// — idempotent when upstream did not move. For android_apk targets
+// -- idempotent when upstream did not move. For android_apk targets
 // it resets the apktool / jadx / index-decompiled / static-summary /
 // mobsf stages back to PENDING and re-enqueues the staged-analysis
 // worker. Only enabled when analysis_state == "ready". Backend
@@ -620,7 +620,7 @@ export function TargetsPage() {
 //
 // Shift-click forces a full rebuild even when the SHA didn't change
 // (use after a trailmark/semble upgrade where the on-disk format
-// shifted). For android_apk the force flag is informational only —
+// shifted). For android_apk the force flag is informational only --
 // the staged-analysis worker always re-runs every reset stage.
 
 const GIT_BACKED_KINDS: ReadonlySet<TargetKind> = new Set([

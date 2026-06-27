@@ -5,7 +5,7 @@ Pydantic models for the task queue REST API surface:
 - TaskListResponse: Scoped list of tasks with total count
 - TaskEventData: SSE event payload for progress streaming (TASK-08/09)
 
-Ownership: Platform API layer — not module-specific.
+Ownership: Platform API layer -- not module-specific.
 """
 
 from __future__ import annotations

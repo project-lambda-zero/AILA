@@ -29,7 +29,7 @@ class HealthCheckResult(APIModel):
 class HealthCheckResponse(APIModel):
     """Response from GET /health.
 
-    Returns 200 always — never 503 (D-15). Callers check the top-level
+    Returns 200 always -- never 503 (D-15). Callers check the top-level
     'status' field for overall health and the per-check 'checks' dict for
     granular status.
 

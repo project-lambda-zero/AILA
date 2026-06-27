@@ -111,7 +111,7 @@ async def state_freeflow(
 
     # Hard failure surface: if the agent produced zero steps, every turn
     # either crashed before writing or the loop never ran. That must not
-    # be treated as "completed successfully" — it's a failure the UI has
+    # be treated as "completed successfully" -- it's a failure the UI has
     # to reflect so the operator knows to retry / inspect worker logs.
     #
     # Exception: when the analyst cancelled via the Stop button, the
@@ -120,8 +120,8 @@ async def state_freeflow(
     steps_list = result.get("steps", []) or []
     cancelled = bool(result.get("cancelled"))
     if not steps_list and not cancelled:
-        reason = "agent produced zero steps — see worker log"
-        _log.error("state_freeflow zero-step result inv_id=%s — marking FAILED", data.investigation_id)
+        reason = "agent produced zero steps -- see worker log"
+        _log.error("state_freeflow zero-step result inv_id=%s -- marking FAILED", data.investigation_id)
         await services.emitter.emit(
             "freeflow",
             f"Investigation FAILED: {reason}",

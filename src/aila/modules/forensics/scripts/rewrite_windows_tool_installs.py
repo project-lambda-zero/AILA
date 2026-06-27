@@ -1,7 +1,7 @@
 """Rewrite Windows install_commands + check_commands for every required tool.
 
 Design rules:
-  * Install to C:\\Tools\\<name>\\ — no reliance on PATH which SSH sessions don't refresh.
+  * Install to C:\\Tools\\<name>\\ -- no reliance on PATH which SSH sessions don't refresh.
   * Check_command probes the install path directly, not `where <name>`.
   * Each install uses PowerShell with $ErrorActionPreference='Stop' and is idempotent
     (short-circuits if the binary is already present).
@@ -20,7 +20,7 @@ TOOLS_JSON = Path(__file__).resolve().parent.parent / "data" / "tool_requirement
 def ps(script: str) -> str:
     """Wrap a PowerShell script body as an invocable command string.
 
-    Strips `#` comments before flattening the script onto a single line —
+    Strips `#` comments before flattening the script onto a single line --
     PowerShell `#` comments extend to end-of-line, so any inline comment that
     survives the join would silently comment out every subsequent statement
     on the combined single line (swallowed flatten + verify logic, producing
@@ -43,7 +43,7 @@ def ps(script: str) -> str:
 def dl_and_extract_zip(name: str, url: str, verify_rel_path: str, verify_args: str = "--version") -> dict:
     """Install pattern: download .zip, expand into C:\\Tools\\<name>\\, flatten nested folder, verify.
 
-    Most GitHub release zips have a single version-named top folder — we flatten
+    Most GitHub release zips have a single version-named top folder -- we flatten
     it so checks see a stable C:\\Tools\\<name>\\<verify_rel_path> layout. Checks
     also fall back to recursive search for resilience against layout changes.
     """
@@ -134,7 +134,7 @@ WINDOWS_OVERRIDES: dict[str, dict] = {
         "offline_bundle": "apktool.zip",
     },
     "zeek": {
-        # WSL install — verbose, plain sudo (not -n), per-step echoes so the xray log
+        # WSL install -- verbose, plain sudo (not -n), per-step echoes so the xray log
         # shows exactly which apt-get/curl/gpg step failed. Drops `-qq` so apt errors
         # reach stdout.
         "check_command": (
@@ -197,7 +197,7 @@ WINDOWS_OVERRIDES: dict[str, dict] = {
         "offline_bundle": "strings.zip",
     },
     "hashcat": {
-        # 7z format — 7zr.exe extracts into a nested hashcat-<ver>/ folder whose name
+        # 7z format -- 7zr.exe extracts into a nested hashcat-<ver>/ folder whose name
         # changes per release. Auto-detect the single subfolder and flatten instead of
         # hardcoding hashcat-6.2.6/*. Uses a robust extract directory (-o<dir>) passed
         # without embedded quotes so the one-line PowerShell argument parses cleanly.
@@ -309,7 +309,7 @@ WINDOWS_OVERRIDES: dict[str, dict] = {
     },
     "rizin": dl_and_extract_zip(
         "rizin",
-        # v0.7.4 returned 404 — the correct URL pattern shipped on v0.8+ is
+        # v0.7.4 returned 404 -- the correct URL pattern shipped on v0.8+ is
         # rizin-windows-shared64-v<version>.zip (not rizin-v<version>-windows-x86_64.zip).
         "https://github.com/rizinorg/rizin/releases/download/v0.8.2/rizin-windows-shared64-v0.8.2.zip",
         "bin/rizin.exe",
@@ -319,7 +319,7 @@ WINDOWS_OVERRIDES: dict[str, dict] = {
     "floss": pip_user_install("flare-floss", python_module="floss"),
     # binwalk 2.1.0 (pip) has broken package layout on Python 3.13
     # (ModuleNotFoundError: binwalk.core). Use the Rust v3 rewrite via cargo
-    # instead — ships a self-contained binary in %USERPROFILE%\.cargo\bin.
+    # instead -- ships a self-contained binary in %USERPROFILE%\.cargo\bin.
     "binwalk": {
         # SSH sessions do not inherit the interactive PATH, so `cargo` on its own
         # fails with "'cargo' is not recognized". Call cargo by full path under
@@ -339,7 +339,7 @@ WINDOWS_OVERRIDES: dict[str, dict] = {
             "(binwalk 2.1.0) is unmaintained and does not import on Python 3.13."
         ),
         "offline_type": "unsupported",
-        "offline_note": "No prebuilt Windows binwalk binary is shipped — install via cargo.",
+        "offline_note": "No prebuilt Windows binwalk binary is shipped -- install via cargo.",
     },
     "capa": pip_user_install("flare-capa", python_module="capa"),
     "impacket": pip_user_install("impacket", python_module="impacket"),

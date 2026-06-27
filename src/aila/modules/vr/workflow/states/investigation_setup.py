@@ -43,9 +43,9 @@ from aila.platform.workflows.types import StateResult
 # enqueues a separate run_vr_investigate task per sibling so each
 # persona reasons independently against its own task_type-routed
 # LLM. Set VR_AUTO_PERSONA_DELIBERATION=0 to disable (single-branch
-# fallback — operator forks personas manually).
+# fallback -- operator forks personas manually).
 #
-# fix §295 — lazy getter (was module-load `_AUTO_DELIBERATION`).
+# fix §295 -- lazy getter (was module-load `_AUTO_DELIBERATION`).
 # Reading env at module load makes the toggle unchangeable for the
 # worker lifetime; operator-flipped env after a worker restart never
 # took effect until full process bounce. Lazy getter is read each
@@ -58,9 +58,9 @@ def _is_auto_deliberation_enabled() -> bool:
 # becomes the first researcher; each entry below spawns a sibling.
 #
 # Full 6-persona panel (2 researchers + 2 critics + 2 implementers):
-#   halvar (primary) + noor  = researchers — propose hypotheses
-#   maddie + yuki            = critics — falsify, demand evidence
-#   renzo + wei              = implementers — build PoCs, settle disputes
+#   halvar (primary) + noor  = researchers -- propose hypotheses
+#   maddie + yuki            = critics -- falsify, demand evidence
+#   renzo + wei              = implementers -- build PoCs, settle disputes
 _DELIBERATION_SIBLINGS: tuple[PersonaVoice, ...] = (
     PersonaVoice.NOOR,    # researcher (alternative style to halvar)
     PersonaVoice.MADDIE,  # critic (aggressive falsifier)
@@ -74,7 +74,7 @@ __all__ = ["state_investigation_setup"]
 
 _log = logging.getLogger(__name__)
 
-# Branches in any of these statuses are "dead" — investigation_loop
+# Branches in any of these statuses are "dead" -- investigation_loop
 # cannot make meaningful progress against them. ACTIVE + PAUSED are
 # the only resumable states; everything else has already reached a
 # terminal disposition. Used by state_investigation_setup to self-heal
@@ -99,7 +99,7 @@ _STATUS_LOCKED: frozenset[str] = frozenset({
     InvestigationStatus.FAILED.value,
 })
 
-# fix §293 — module-level consecutive failure counters for the two
+# fix §293 -- module-level consecutive failure counters for the two
 # best-effort lookups (CVE intel, knowledge-transfer pattern store)
 # that surround the main UoW. The prior bare `except Exception` +
 # `_log.warning(...)` swallowed silent infrastructure rot: a broken
@@ -108,7 +108,7 @@ _STATUS_LOCKED: frozenset[str] = frozenset({
 # producing WARN noise. After 5 consecutive failures on either path,
 # escalate to _log.error so log destinations (Grafana / Loki) can
 # page on it. Reset to 0 on each success. Module-level state is
-# correct here — counters are per-worker-process and reset on
+# correct here -- counters are per-worker-process and reset on
 # restart, which is the right granularity (an operator that
 # restarts a worker has actively re-checked the integration).
 _CONSECUTIVE_CVE_INTEL_FAILURES: int = 0
@@ -126,8 +126,8 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
         primary branch via ``parent_branch_id IS NULL``, filter to
         ``status IN (ACTIVE, PAUSED)`` AND order by ``created_at ASC``
         for determinism. If ALL prior primary branches are terminal
-        (COMPLETED / MERGED / PROMOTED / ABANDONED) — which is the
-        post-completion / post-failure re-enqueue case — fork a fresh
+        (COMPLETED / MERGED / PROMOTED / ABANDONED) -- which is the
+        post-completion / post-failure re-enqueue case -- fork a fresh
         primary branch instead of resuming a closed one. Without this,
         ``re-enqueue`` after a successful or failed run silently
         operates on the prior terminal branch, drives investigation_loop
@@ -145,7 +145,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     Both paths leave a structured log line so the operator can audit
     when the self-heal fired.
 
-    UoW contract (fix §291 — explicit doc of the all-or-nothing
+    UoW contract (fix §291 -- explicit doc of the all-or-nothing
     invariant that already holds structurally):
 
     The single ``async with UnitOfWork() as uow`` block that wraps
@@ -156,17 +156,17 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     ``superseded_by_reenqueue_self_heal:<new>``) and the fresh
     primary INSERT MUST commit together. If any pre-commit step
     raises (engine error, integrity violation, transient DB hiccup),
-    the surrounding ``with`` block rolls everything back — orphan
+    the surrounding ``with`` block rolls everything back -- orphan
     rows stay ACTIVE, no fresh primary row leaks, the cursor
     re-fires next ARQ task wakeup.
 
     Anyone editing this block: do NOT split the orphan-abandon and
     fresh-primary INSERT into separate UoWs. The whole point is
     that a half-applied self-heal (new primary lives, orphans stay
-    racing) is worse than no self-heal — it produces exactly the
+    racing) is worse than no self-heal -- it produces exactly the
     "6 branches instead of 3" state we just fixed in 2026-05-28.
     """
-    # fix §297 — was \`del services\` (orphaning the bag). The handler
+    # fix §297 -- was \`del services\` (orphaning the bag). The handler
     # signature is fixed by HandlerFn; keep the bag accessible so
     # downstream code paths can reach \`services.llm_client\` /
     # \`services.config\` etc. The current setup-time operations
@@ -180,7 +180,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     if not investigation_id:
         raise ValueError("investigation_setup: missing investigation_id")
 
-    # When set, we are a sibling task spawned by the primary's setup —
+    # When set, we are a sibling task spawned by the primary's setup --
     # skip the auto-spawn block and just hydrate the named branch.
     explicit_branch_id = str(input.get("branch_id") or "")
 
@@ -199,12 +199,12 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
         # _STATUS_LOCKED at module top for the comment block; surface
         # the skip loudly so the operator can see WHY their pause held.
         if inv.status in _STATUS_LOCKED:
-            # fix §290 — re-resolve cve_intel from the (possibly
+            # fix §290 -- re-resolve cve_intel from the (possibly
             # operator-edited) initial_question before the early-exit
             # so investigation_emit + downstream renderers don't lose
             # CVE context when a paused investigation resumes via
             # /reopen. Failing intel resolve NEVER blocks the early
-            # exit — empty list is the existing degraded default.
+            # exit -- empty list is the existing degraded default.
             locked_initial_question = inv.initial_question or ""
             await uow.commit()  # flush nothing; release UoW cleanly
             locked_cve_intel: list[dict[str, Any]] = []
@@ -214,7 +214,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                     resolutions = await resolve_cve_intel(locked_cve_ids)
                     locked_cve_intel = [r.to_dict() for r in resolutions]
             except (ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:
-                # fix §350 — surface traceback so a CVE re-fetch failure
+                # fix §350 -- surface traceback so a CVE re-fetch failure
                 # on a locked exit is debuggable on first occurrence.
                 _log.warning(
                     "investigation_setup STATUS_LOCKED cve_intel re-fetch "
@@ -223,7 +223,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 )
             _log.info(
                 "investigation_setup STATUS_LOCKED inv=%s status=%s "
-                "pause_reason=%s cve_intel=%d — skipping setup + loop, "
+                "pause_reason=%s cve_intel=%d -- skipping setup + loop, "
                 "emitting clean exit",
                 investigation_id, inv.status, inv.pause_reason,
                 len(locked_cve_intel),
@@ -264,7 +264,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 _log.warning(
                     "investigation_setup: sibling task targeted terminal "
                     "branch inv=%s branch=%s status=%s closed_reason=%r "
-                    "— skipping investigation_loop and emitting clean exit",
+                    "-- skipping investigation_loop and emitting clean exit",
                     investigation_id, branch.id, branch.status,
                     branch.closed_reason,
                 )
@@ -285,7 +285,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                     },
                 )
         else:
-            # Pick the OLDEST resumable primary branch — deterministic
+            # Pick the OLDEST resumable primary branch -- deterministic
             # across re-enqueues. The prior LIMIT 1 with no filter and
             # no ORDER BY would silently pick a terminal branch when
             # one happened to sort first under PG's storage order, then
@@ -299,7 +299,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
             )).first()
             if branch is None:
                 # Either the investigation row was created without its
-                # initial primary branch (defensive — API contract says
+                # initial primary branch (defensive -- API contract says
                 # this can't happen) OR all prior primaries reached
                 # terminal disposition and re-enqueue wants a fresh
                 # round. Fork a new ACTIVE primary so the run has
@@ -309,7 +309,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 # the investigation, not from a single branch).
                 _log.warning(
                     "investigation_setup: no live primary branch for "
-                    "inv=%s — forking fresh primary (persona=%s); prior "
+                    "inv=%s -- forking fresh primary (persona=%s); prior "
                     "primaries were terminal or absent",
                     investigation_id, _PRIMARY_PERSONA.value,
                 )
@@ -325,7 +325,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
 
                 # When the self-heal forks a fresh primary, ANY other
                 # branches in this investigation that are still ACTIVE
-                # (or PAUSED) are orphans from the prior round — their
+                # (or PAUSED) are orphans from the prior round -- their
                 # parent primary is COMPLETED / MERGED / etc., they
                 # were never explicitly closed when the primary
                 # terminal-submitted, and now they will race the fresh
@@ -366,9 +366,9 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                         len(orphans), investigation_id, branch.id,
                         [o.id for o in orphans],
                     )
-            # Primary persona: researcher. Idempotent — only set when
+            # Primary persona: researcher. Idempotent -- only set when
             # the operator didn't pick a persona explicitly.
-            # fix §177/§178 — promote primary branches with no persona OR
+            # fix §177/§178 -- promote primary branches with no persona OR
             # alembic-064's 'unspecified' default to the lead-researcher
             # persona so the frontend renders 'Halvar' instead of
             # 'Unnamed branch'.
@@ -379,7 +379,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 branch.persona_voice = _PRIMARY_PERSONA.value
                 uow.session.add(branch)
 
-        # fix §296 — whitelist allowable prior status before flipping
+        # fix §296 -- whitelist allowable prior status before flipping
         # to RUNNING. The prior unconditional flip silently overrode
         # operator-paused investigations that re-entered setup via a
         # racing dispatcher. Phase B's cursor SSOT writes '__paused__'
@@ -395,7 +395,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
         if inv.status not in allowed_prior_statuses:
             _log.warning(
                 "investigation_setup REFUSE_FLIP inv=%s prior_status=%s "
-                "(allowed=%s) — operator likely paused mid-setup; preserving",
+                "(allowed=%s) -- operator likely paused mid-setup; preserving",
                 investigation_id, inv.status, sorted(allowed_prior_statuses),
             )
         else:
@@ -421,7 +421,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     # first task got killed mid-setup) skipped panel spawn entirely.
     # The investigation got stuck single-persona forever even though
     # the operator-configured auto_deliberation panel was supposed to
-    # land. Diagnosed on MASVS inv df6345ce / 4b831a74 / 2c527537 —
+    # land. Diagnosed on MASVS inv df6345ce / 4b831a74 / 2c527537 --
     # all three stuck at 1 branch (halvar) after stall-recovery
     # re-enqueued them with branch_id.
     if _is_auto_deliberation_enabled():
@@ -444,22 +444,22 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
         try:
             resolutions = await resolve_cve_intel(cve_ids)
             cve_intel = [r.to_dict() for r in resolutions]
-            _CONSECUTIVE_CVE_INTEL_FAILURES = 0  # fix §293 — reset on success
+            _CONSECUTIVE_CVE_INTEL_FAILURES = 0  # fix §293 -- reset on success
         except (ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:
             _CONSECUTIVE_CVE_INTEL_FAILURES += 1
             if _CONSECUTIVE_CVE_INTEL_FAILURES >= _FAILURE_ESCALATION_THRESHOLD:
-                # fix §350 — escalation now carries the traceback so the
+                # fix §350 -- escalation now carries the traceback so the
                 # on-call line names the failure shape (httpx vs registry
                 # vs schema) without grepping deeper.
                 _log.error(
                     "investigation_setup: CVE intel resolve failed %d times in "
-                    "a row (last err: %s) — escalating; check NVD mirror + "
+                    "a row (last err: %s) -- escalating; check NVD mirror + "
                     "cve_intel_resolver IntelService dependency",
                     _CONSECUTIVE_CVE_INTEL_FAILURES, exc,
                     exc_info=True,
                 )
             else:
-                # fix §350 — per-occurrence warning includes traceback so
+                # fix §350 -- per-occurrence warning includes traceback so
                 # the first transient failure already has its stack on
                 # record (no need to wait for escalation).
                 _log.warning(
@@ -473,17 +473,17 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     # extracted from prior investigations on similar targets. Store
     # JSON-serialisable dicts in the run context so investigation_loop
     # can thread them into the per-turn user prompt. Failure to load
-    # patterns NEVER blocks setup — every new investigation must still
+    # patterns NEVER blocks setup -- every new investigation must still
     # boot even if the pattern store is empty / broken.
     applicable_patterns: list[dict[str, Any]] = []
     global _CONSECUTIVE_PATTERN_LOOKUP_FAILURES
     try:
-        # fix §294 — read every needed target column into local vars
+        # fix §294 -- read every needed target column into local vars
         # BEFORE the UoW closes. The prior code dereferenced
         # target.workspace_id / target.kind / target.primary_language
         # AFTER the `async with UnitOfWork()` block exited, which
         # works today (sqlmodel attaches loaded columns to the
-        # detached instance) but is silently fragile — any future
+        # detached instance) but is silently fragile -- any future
         # lazy-load relationship on VRTargetRecord, expire_on_commit
         # flip, or SQLAlchemy version bump turns those accesses into
         # DetachedInstanceError. Pull primitives out while the
@@ -513,22 +513,22 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 )
                 for r in results:
                     applicable_patterns.append(r.pattern.model_dump(mode="json"))
-        _CONSECUTIVE_PATTERN_LOOKUP_FAILURES = 0  # fix §293 — reset on success
+        _CONSECUTIVE_PATTERN_LOOKUP_FAILURES = 0  # fix §293 -- reset on success
     except (SQLAlchemyError, ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:
         _CONSECUTIVE_PATTERN_LOOKUP_FAILURES += 1
         if _CONSECUTIVE_PATTERN_LOOKUP_FAILURES >= _FAILURE_ESCALATION_THRESHOLD:
-            # fix §350 — escalation now carries the traceback so on-call
+            # fix §350 -- escalation now carries the traceback so on-call
             # sees the failure shape (KnowledgeService, store, DB) in
             # one line.
             _log.error(
                 "investigation_setup: pattern lookup failed %d times in a "
-                "row (last err: %s) — escalating; check pattern_store + "
+                "row (last err: %s) -- escalating; check pattern_store + "
                 "KnowledgeService dependency",
                 _CONSECUTIVE_PATTERN_LOOKUP_FAILURES, exc,
                 exc_info=True,
             )
         else:
-            # fix §350 — per-occurrence warning includes traceback.
+            # fix §350 -- per-occurrence warning includes traceback.
             _log.warning(
                 "investigation_setup: pattern lookup failed "
                 "(consecutive=%d): %s",
@@ -565,7 +565,7 @@ async def _spawn_persona_siblings_and_enqueue(
 ) -> None:
     """Fork one sibling branch per persona and enqueue tasks.
 
-    Searches ALL branches of the investigation by persona_voice — not
+    Searches ALL branches of the investigation by persona_voice -- not
     just children of the current primary. This survives re-enqueue:
 
     - Persona has a branch with turns → reuse it, enqueue task to continue
@@ -579,14 +579,14 @@ async def _spawn_persona_siblings_and_enqueue(
 
     * **Phase 1 (atomic UoW):** reactivate winners, abandon duplicates,
       AND INSERT new branches for personas without an existing branch
-      — all in ONE `async with UnitOfWork()` block, one commit. If any
+      -- all in ONE `async with UnitOfWork()` block, one commit. If any
       step raises (cap check, integrity violation, parent load failure,
       transient DB hiccup), the surrounding `with` block rolls back
       every pending change. No half-spawned panel: either all 5
       sibling branches resolve to a stable id, or none do.
 
     * **Phase 2 (best-effort):** enqueue one ARQ task per resolved
-      sibling branch_id. Per-task try/except — a single enqueue failure
+      sibling branch_id. Per-task try/except -- a single enqueue failure
       logs + continues; the branch row already persists from phase 1,
       so a reaper-on-cursor sweep can submit it later. Phase 2 NEVER
       rolls back phase 1 (the branches are real even if their tasks
@@ -600,7 +600,7 @@ async def _spawn_persona_siblings_and_enqueue(
     """
     from aila.modules.vr.workflow.task import run_vr_investigate
 
-    # Phase 1 — atomic dedup + reactivate + insert new branches.
+    # Phase 1 -- atomic dedup + reactivate + insert new branches.
     # On any exception inside the `async with` block, the UoW rolls
     # back: no branch INSERT survives, no status flip persists, and
     # the operator's next /reopen retries cleanly.
@@ -627,7 +627,7 @@ async def _spawn_persona_siblings_and_enqueue(
             )
         )).all()
 
-        # Group by persona — pick the one the operator most recently
+        # Group by persona -- pick the one the operator most recently
         # asked to drive. An ``operator_reopen:<userid>`` branch ALWAYS
         # wins regardless of turn_count: the operator explicitly created
         # it via POST /investigations/{id}/reopen to drive a fresh pass,
@@ -666,13 +666,13 @@ async def _spawn_persona_siblings_and_enqueue(
             if best is None:
                 continue
             if b.id == best.id:
-                # This is the winner — reactivate if needed AND reset
+                # This is the winner -- reactivate if needed AND reset
                 # the per-branch run state. Treating reactivation as
                 # "fresh start with this persona slot" instead of
                 # "resume yesterday's run" prevents three failure modes
                 # observed on PRIVACY-1 (5a358890):
                 #   (1) the historical turn_count accumulates against
-                #       _INVESTIGATION_TURN_CAP — 6 personas restored
+                #       _INVESTIGATION_TURN_CAP -- 6 personas restored
                 #       at 9/25/40/63/79/84 turns = 300 total trips the
                 #       cap immediately on the next emit pass.
                 #   (2) _directive.sibling_consensus_rejection +
@@ -703,7 +703,7 @@ async def _spawn_persona_siblings_and_enqueue(
                     # tool_executor's repeat-failure circuit breaker
                     # (_count_prior_failures, line 849 of tool_executor)
                     # keeps counting yesterday's tool failures against
-                    # today's tries — every reactivated branch is
+                    # today's tries -- every reactivated branch is
                     # already at 3+ failures for the bridge calls that
                     # were broken in the prior round, so any retry of
                     # those same calls returns HARD-BLOCKED before
@@ -711,7 +711,7 @@ async def _spawn_persona_siblings_and_enqueue(
                     # (apk_path auto-resolver, etc.) then can't help
                     # because the call short-circuits at the executor.
                     # Reactivation = "fresh start with this persona
-                    # slot" — the per-message round history goes with
+                    # slot" -- the per-message round history goes with
                     # it. Branch row stays (id, fork_reason,
                     # created_at, parent_branch_id preserved) so the
                     # audit trail of WHICH rounds this slot participated
@@ -728,7 +728,7 @@ async def _spawn_persona_siblings_and_enqueue(
                         b.persona_voice, b.id,
                     )
             else:
-                # This is a duplicate — abandon it
+                # This is a duplicate -- abandon it
                 if b.status not in ("abandoned",):
                     b.status = "abandoned"
                     b.closed_reason = "duplicate_persona_cleanup"
@@ -739,7 +739,7 @@ async def _spawn_persona_siblings_and_enqueue(
                         b.persona_voice, b.id, b.turn_count, best.id,
                     )
 
-        # Phase 1 — INSERT new branches for personas without one. Done
+        # Phase 1 -- INSERT new branches for personas without one. Done
         # INSIDE this same UoW so the entire panel is all-or-nothing.
         # Load the primary's case_state once for inheritance via the
         # strip helpers (matches BranchManager.fork's behaviour).
@@ -775,7 +775,7 @@ async def _spawn_persona_siblings_and_enqueue(
 
         await uow.commit()
 
-    # Phase 2 — best-effort enqueue per resolved branch. A single
+    # Phase 2 -- best-effort enqueue per resolved branch. A single
     # enqueue failure logs + continues; the branch row persists from
     # phase 1, so a future reaper-on-cursor sweep can pick it up.
     task_queue = default_task_queue()
@@ -798,7 +798,7 @@ async def _spawn_persona_siblings_and_enqueue(
             )
             enqueued.append(f"{persona.value}={sibling_branch_id[:8]}")
         except (WorkerUnreachableError, OSError, RuntimeError, ValueError, TypeError) as exc:
-            # fix §350 — reaper-on-cursor can resubmit, but the stack
+            # fix §350 -- reaper-on-cursor can resubmit, but the stack
             # here distinguishes a structural enqueue regression from a
             # transient Redis blip.
             _log.warning(

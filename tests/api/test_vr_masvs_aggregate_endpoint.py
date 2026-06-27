@@ -1,26 +1,26 @@
-"""U-2 — ``GET /vr/targets/{target_id}/masvs-audit-aggregate`` returns JSON.
+"""U-2 -- ``GET /vr/targets/{target_id}/masvs-audit-aggregate`` returns JSON.
 
 End-to-end smoke coverage for the structured-JSON sibling of the R-3
 PDF report endpoint. The aggregate endpoint reuses
 :func:`aila.modules.vr.reporting.masvs_report.collect_findings` and
 serves the result as :class:`MasvsAuditAggregate`, so the same
-target/parent/cross-target validation tree applies — the tests below
+target/parent/cross-target validation tree applies -- the tests below
 pin each refusal shape so a contract drift in the JSON endpoint can't
 silently diverge from the PDF endpoint.
 
 Tests:
 
-1. **Happy path** — 200, the envelope's ``data`` carries the parent /
+1. **Happy path** -- 200, the envelope's ``data`` carries the parent /
    target / spec version, and ``verdicts`` is a list (empty when the
-   parent has no children — the per-control table renders the empty
+   parent has no children -- the per-control table renders the empty
    state on the client).
-2. **404 unknown target** — pasted target id never returns 500.
-3. **404 unknown audit** — valid target + missing audit id returns 404.
-4. **409 wrong parent kind** — the parent exists but is not a MASVS
+2. **404 unknown target** -- pasted target id never returns 500.
+3. **404 unknown audit** -- valid target + missing audit id returns 404.
+4. **409 wrong parent kind** -- the parent exists but is not a MASVS
    audit batch root.
-5. **404 cross-target** — defensive guard against pasted audit ids
+5. **404 cross-target** -- defensive guard against pasted audit ids
    under the wrong target.
-6. **422 missing audit_id** — FastAPI's own validation runs first.
+6. **422 missing audit_id** -- FastAPI's own validation runs first.
 """
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ async def test_aggregate_happy_path_returns_envelope(
     The aggregate carries parent_id / target_id / masvs_spec_version /
     generated_at / verdicts / by_group / summary_counts. With zero
     children, ``verdicts`` is an empty list and ``summary_counts`` is
-    an empty map — both legal partial-aggregate shapes per the
+    an empty map -- both legal partial-aggregate shapes per the
     contract docstring on :class:`MasvsAuditAggregate`.
     """
     del test_db
@@ -168,7 +168,7 @@ async def test_aggregate_happy_path_returns_envelope(
     assert isinstance(agg["verdicts"], list)
     assert agg["verdicts"] == [], (
         "U-2: parent has no children, so the verdicts list must be "
-        "empty — partial aggregates are valid and a non-empty list "
+        "empty -- partial aggregates are valid and a non-empty list "
         "here would mean the aggregator is fabricating verdicts."
     )
     assert isinstance(agg["by_group"], dict)
@@ -223,7 +223,7 @@ async def test_aggregate_returns_409_when_parent_kind_not_masvs_audit(
     """A non-MASVS parent investigation produces a 409.
 
     Matches the R-3 PDF endpoint's refusal so the JSON / PDF surfaces
-    stay symmetric — a frontend can render the same error UI on either
+    stay symmetric -- a frontend can render the same error UI on either
     code path.
     """
     del test_db

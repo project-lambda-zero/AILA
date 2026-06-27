@@ -1,5 +1,5 @@
 /**
- * ErrorEnvelope — standardised non-2xx error shape emitted by every AILA API
+ * ErrorEnvelope -- standardised non-2xx error shape emitted by every AILA API
  * endpoint (Phase 176a-01). Consumed by apiErrorHandler (Phase 176a-02).
  */
 export type ErrorEnvelope = {
@@ -35,7 +35,7 @@ export async function parseErrorEnvelope(response: Response): Promise<ErrorEnvel
     const body = await response.clone().json();
     if (isErrorEnvelope(body)) return body;
   } catch {
-    // Non-JSON body — fall through.
+    // Non-JSON body -- fall through.
   }
   return {
     code: "UNKNOWN",

@@ -101,7 +101,7 @@ async def enqueue_downstream_target_stages(
     """
     stages = await load_target_stages(target_id)
     if stages.ingestion.state != StageState.DONE:
-        # Ingestion not finished yet — caller is responsible for
+        # Ingestion not finished yet -- caller is responsible for
         # enqueuing ingestion itself. Downstream stages depend on the
         # mcp handles produced by ingestion.
         return []

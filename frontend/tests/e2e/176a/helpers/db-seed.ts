@@ -1,5 +1,5 @@
 /**
- * db-seed.ts — Phase 176a Playwright test isolation helpers.
+ * db-seed.ts -- Phase 176a Playwright test isolation helpers.
  *
  * Implements the e2e_<title>_<ts> namespacing scheme described in
  * `tests/e2e/176a/README.md`. Seeds and tears down via the live HTTP API
@@ -110,7 +110,7 @@ export async function teardownNamespace(
       headers: authHeaders(tokens),
     });
   } catch {
-    // Ignore — see docstring.
+    // Ignore -- see docstring.
   }
 }
 

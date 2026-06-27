@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
  * CVA variant definition for AilaBadge.
  * Implements WCAG-compliant severity colors (D-04, D-07) and sharp corners (D-05).
  *
- * WCAG note: All severity backgrounds use transparent bg with colored text —
+ * WCAG note: All severity backgrounds use transparent bg with colored text --
  * text-critical, text-high, text-medium, text-low are bright on dark base.
  * Solid variant uses text-badge-text (dark #131313) on solid colored bg.
  */
@@ -16,26 +16,26 @@ const ailaBadgeVariants = cva(
   {
     variants: {
       /**
-       * Severity level — determines background, text, and border colors.
+       * Severity level -- determines background, text, and border colors.
        * Uses WCAG-compliant text colors for both transparent and solid variants.
        */
       severity: {
-        /** Critical — red, with pulsing animation support */
+        /** Critical -- red, with pulsing animation support */
         critical:
           "bg-critical/15 text-critical border-critical/40",
-        /** High — orange */
+        /** High -- orange */
         high:
           "bg-high/15 text-high border-high/40",
-        /** Medium — yellow */
+        /** Medium -- yellow */
         medium:
           "bg-medium/15 text-medium border-medium/40",
-        /** Low — gray (#9ca3af, WCAG-fixed from #6b7280 per D-04) */
+        /** Low -- gray (#9ca3af, WCAG-fixed from #6b7280 per D-04) */
         low:
           "bg-low/15 text-low border-low/40",
-        /** Info — lavender accent (D-04b midnight-cloud-8) */
+        /** Info -- lavender accent (D-04b midnight-cloud-8) */
         info:
           "bg-lavender/15 text-lavender border-lavender/40",
-        /** Neutral — muted text, no severity */
+        /** Neutral -- muted text, no severity */
         neutral:
           "bg-surface text-text-muted border-border",
       },
@@ -94,7 +94,7 @@ const ailaBadgeVariants = cva(
 export type AilaBadgeVariants = VariantProps<typeof ailaBadgeVariants>
 
 /**
- * Task status namespace — distinct from severity tokens (D-05, D-21, D-22).
+ * Task status namespace -- distinct from severity tokens (D-05, D-21, D-22).
  * Backed by --status-* CSS variables in globals.css.
  */
 export type TaskStatus =
@@ -114,7 +114,7 @@ export interface AilaBadgeProps
    */
   pulse?: boolean
   /**
-   * Task status variant — resolves to `aila-badge-status-${status}` class
+   * Task status variant -- resolves to `aila-badge-status-${status}` class
    * which uses `var(--status-${status})` for colours. Distinct from
    * `severity` so theme palettes don't collide (D-21). When `status` is
    * set, `severity` is ignored.
@@ -131,7 +131,7 @@ export interface AilaBadgeProps
 }
 
 /**
- * AilaBadge — severity indicator with WCAG-compliant colors.
+ * AilaBadge -- severity indicator with WCAG-compliant colors.
  *
  * Implements severity color system (D-04, D-04b), sharp 2px corners (D-05),
  * and optional CSS-only severity pulse animation (D-18).

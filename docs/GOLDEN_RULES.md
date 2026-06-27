@@ -68,7 +68,7 @@ Python side at CI time.
 ---
 
 
-## Linus Torvalds — The Kernel Lord
+## Linus Torvalds -- The Kernel Lord
 
 > *"Talk is cheap. Show me the code."*
 
@@ -83,11 +83,11 @@ Python side at CI time.
 9. **No TODO in committed code.** A TODO is a promise you already broke.
 10. **Configuration belongs in ONE place.** Two sources of truth is zero sources of truth.
 
-## Guido van Rossum — The BDFL
+## Guido van Rossum -- The BDFL
 
-> *"There should be one — and preferably only one — obvious way to do it."*
+> *"There should be one -- and preferably only one -- obvious way to do it."*
 
-11. **Follow PEP 8 without exception.** Not "mostly" — entirely.
+11. **Follow PEP 8 without exception.** Not "mostly" -- entirely.
 12. **Type annotations on every public function.** `-> dict` is not a type, it's an abdication.
 13. **No bare `except Exception`.** Catch what you expect, let the rest propagate.
 14. **Flat is better than nested.** If indentation exceeds 4 levels, refactor.
@@ -98,7 +98,7 @@ Python side at CI time.
 19. **Don't repeat yourself.** Same pattern in 3+ places = extract it.
 20. **`assert` is for tests, not production.** Production asserts are time bombs.
 
-## Richard Stallman — The Freedom Enforcer
+## Richard Stallman -- The Freedom Enforcer
 
 > *"Free software is a matter of liberty, not price."*
 
@@ -125,7 +125,7 @@ Python side at CI time.
 37. **CI/CD or it didn't happen.** If tests only run when a dev remembers, they don't run. *(Deferred: post-MVP.)*
 38. **Dependency pinning.** Unpinned deps are reproducibility roulette.
 39. **No stale artifacts in the repo.** `.pyc`, `.coverage`, cache dirs = sloppy hygiene.
-40. **Docstrings follow ONE format.** Google, NumPy, or Sphinx — pick one, enforce it.
+40. **Docstrings follow ONE format.** Google, NumPy, or Sphinx -- pick one, enforce it.
 
 ## The AI Slop Detector
 
@@ -139,7 +139,7 @@ Python side at CI time.
 46. **Naming must carry meaning.** `process_data`, `handle_request`, `do_thing` are non-names.
 47. **No copy-paste with slight variations.** If two functions differ by one line, parameterize.
 48. **No premature configurability.** A config option used by zero users is dead weight.
-49. **No aspirational comments.** "Phase 43 will handle this" — no, either do it now or delete the comment.
+49. **No aspirational comments.** "Phase 43 will handle this" -- no, either do it now or delete the comment.
 50. **No wrapper functions that add nothing.** If `def foo(x): return bar(x)`, just use `bar`.
 
 ## The Reddit Basher
@@ -152,7 +152,7 @@ Python side at CI time.
 54. **If your ORM model has 15+ fields and no docstring, you wrote a CSV parser not a model.**
 55. **If your "service" class is a bag of static methods, it's not a service, it's a namespace.**
 
-## v1.7 Additions — Architecture Boundary Rules
+## v1.7 Additions -- Architecture Boundary Rules
 
 > Added after 50-phase deep architecture review and quality assurance.
 
@@ -160,13 +160,13 @@ Python side at CI time.
 57. **Module endpoints must enforce platform auth through the platform mount/auth path.** Routes mounted from modules must rely on the platform-owned auth dependency injected at mount time (`spec.auth_required` → platform dependency) or an equivalent platform auth contract. Unprotected routes are security holes, not features.
 58. **Runtime constants come from ConfigRegistry.** If a constant has a corresponding `PlatformConfigSchema` field, read it via `get_task_tuning()` with the constant as fallback. Do not read `os.getenv()` directly for values that have a ConfigRegistry counterpart.
 59. **Platform/API/storage must not import module internals directly.** If platform-owned code needs module-specific behavior, the module injects a callable, contract model, route spec, or adapter. Direct imports from `aila.modules.<id>` into platform-, api-, or storage-owned infrastructure are boundary violations.
-60. **Platform owns reusable reasoning runtime; modules own domain reasoning adapters.** Shared reasoning machinery — turn protocol, graph persistence, operator steering, strategy plumbing — belongs in platform. Domain semantics — evidence interpretation, prompt supplements, domain-specific validation, and tool execution meaning — stay inside the module adapter. Do not hardcode module-specific cyber semantics into platform services.
+60. **Platform owns reusable reasoning runtime; modules own domain reasoning adapters.** Shared reasoning machinery -- turn protocol, graph persistence, operator steering, strategy plumbing -- belongs in platform. Domain semantics -- evidence interpretation, prompt supplements, domain-specific validation, and tool execution meaning -- stay inside the module adapter. Do not hardcode module-specific cyber semantics into platform services.
 
 ---
 
 ## Enforcement
 
-17 of these 60 rules have direct programmatic enforcement by the honesty audit (which contains 33 structural checks total — see `docs/HONESTY_AUDIT.md` for the full rule set):
+17 of these 60 rules have direct programmatic enforcement by the honesty audit (which contains 33 structural checks total -- see `docs/HONESTY_AUDIT.md` for the full rule set):
 
 ```
 python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py

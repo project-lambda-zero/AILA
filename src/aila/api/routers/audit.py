@@ -122,7 +122,7 @@ async def get_run_audit_events(
 ) -> AuditListResponse:
     """Return all audit events for a specific workflow run.
 
-    Returns all events without additional pagination — use GET /audit/events
+    Returns all events without additional pagination -- use GET /audit/events
     with run_id query param for paginated access to large runs.
     """
 

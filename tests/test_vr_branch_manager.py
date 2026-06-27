@@ -1,4 +1,4 @@
-"""M3.R-5 — Branch manager unit tests.
+"""M3.R-5 -- Branch manager unit tests.
 
 Tests cover the pure case-state merge helpers + the BranchOpResult /
 BranchOperation enum coverage. DB-bound state transition paths are

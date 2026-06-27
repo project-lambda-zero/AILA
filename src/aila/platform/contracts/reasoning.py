@@ -101,7 +101,7 @@ class ResolvedHypothesis(BaseModel):
     confirmed or rejected.
 
     Distinct from ``RejectedHypothesis`` because we DON'T know whether
-    the claim was disproved or supported by the terminal — it may have
+    the claim was disproved or supported by the terminal -- it may have
     been the basis of the finding (confirmed) or an unaddressed
     competing explanation (effectively rejected) or simply abandoned
     as the agent ran out of turns. The frontend renders ``resolved``
@@ -228,7 +228,7 @@ class ReasoningTurnDecision(BaseModel):
     # for vuln-research investigations places affected_components,
     # variant_hunt_orders, crash_type, poc_code, etc. under a `payload`
     # key on the submit action. Without this field on the schema,
-    # Pydantic silently dropped everything inside `payload` — the agent
+    # Pydantic silently dropped everything inside `payload` -- the agent
     # emitted the right structure but the dispatcher saw empty lists
     # everywhere. Stored as a free-form dict so the schema doesn't have
     # to enumerate every submit-payload variant per module.
@@ -286,10 +286,10 @@ class ReasoningTurnDecision(BaseModel):
         response is returned to the caller. That triggers
         ``chat_structured``'s built-in retry-with-correction prompt
         (client.py:360-446) so the agent gets one shot to fix the
-        emission on the same LLM round trip — much cheaper than burning
+        emission on the same LLM round trip -- much cheaper than burning
         a full investigation turn on a parse failure.
 
-        Validation rules (lenient on purpose — we want to catch broken
+        Validation rules (lenient on purpose -- we want to catch broken
         emissions, not gatekeep the schema):
 
           * ``action='tool_run'`` AND ``command`` is None/empty/blank

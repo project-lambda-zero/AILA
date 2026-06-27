@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { ShieldSlash } from "@phosphor-icons/react/dist/csr/ShieldSlash";
 
 /**
- * 403 ACCESS DENIED — cyberpunk forbidden page (D-16).
+ * 403 ACCESS DENIED -- cyberpunk forbidden page (D-16).
  *
  * Rendered by ProtectedRoute when the user's role is insufficient.
  * Uses AILA design tokens. No glitch animation (reserved for 404).

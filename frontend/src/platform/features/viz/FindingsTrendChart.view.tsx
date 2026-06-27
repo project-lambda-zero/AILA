@@ -1,5 +1,5 @@
 /**
- * FindingsTrendChart.view — recharts-using inner JSX for the area chart.
+ * FindingsTrendChart.view -- recharts-using inner JSX for the area chart.
  *
  * Loaded lazily from the wrapper so recharts stays out of the root entry.
  * Receives already-fetched trend data and theme-resolved colors as

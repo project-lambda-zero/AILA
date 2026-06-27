@@ -120,7 +120,7 @@ class SSHService:
         pool: SSHConnectionPool | None,
         connect_kwargs: dict,
     ) -> str:
-        """Blocking SSH execution — runs inside asyncio.to_thread."""
+        """Blocking SSH execution -- runs inside asyncio.to_thread."""
         if pool is not None:
             client = pool.get_or_connect(payload, connect_kwargs)
             SSHService._verify_fingerprint(client, payload)
@@ -176,7 +176,7 @@ class SSHService:
     ) -> str:
         try:
             _, stdout, stderr = client.exec_command(command)
-            # `timeout_seconds` is an IDLE timeout applied to each recv() —
+            # `timeout_seconds` is an IDLE timeout applied to each recv() --
             # paramiko resets the timer every time data arrives, so a slow but
             # steady stream (dissect on a huge disk) never trips it. A genuine
             # hang (zero bytes for N seconds) raises builtins.TimeoutError.
@@ -188,7 +188,7 @@ class SSHService:
                 # buffer and waits for a reader before exiting.
                 output = stdout.read().decode("utf-8", errors="ignore")
                 error_output = stderr.read().decode("utf-8", errors="ignore")
-                # Streams have closed — the remote is either already exited or
+                # Streams have closed -- the remote is either already exited or
                 # imminent. Poll for exit status with a tight grace (30s) so we
                 # don't hang forever on a detached child that closed stdout but
                 # didn't actually exit.
@@ -282,7 +282,7 @@ class SSHService:
         timeout_seconds: float | None,
         connect_kwargs: dict,
     ) -> None:
-        """Blocking SFTP upload — runs inside asyncio.to_thread."""
+        """Blocking SFTP upload -- runs inside asyncio.to_thread."""
         client = paramiko.SSHClient()
         client.load_system_host_keys()
         if payload.known_hosts_path:
@@ -331,7 +331,7 @@ class SSHService:
         """Download a remote file to the local machine via SFTP.
 
         Counterpart to ``upload_file``. Used by collectors that need to run
-        commands whose output exceeds paramiko's ~2 MB stdout window — they
+        commands whose output exceeds paramiko's ~2 MB stdout window -- they
         redirect to a remote temp file and download it here instead of
         streaming stdout through the deadlock-prone channel path.
         """

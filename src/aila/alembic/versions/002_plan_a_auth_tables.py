@@ -1,4 +1,4 @@
-"""Plan A auth tables — user accounts, groups, OIDC provider, refresh tokens.
+"""Plan A auth tables -- user accounts, groups, OIDC provider, refresh tokens.
 
 Revision ID: 002_plan_a_auth_tables
 Revises: 001_baseline

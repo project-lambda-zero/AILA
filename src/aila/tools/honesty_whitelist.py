@@ -1,4 +1,4 @@
-"""Honesty audit whitelist — central registry for accepted rule suppressions.
+"""Honesty audit whitelist -- central registry for accepted rule suppressions.
 
 Each entry is a tuple of (filename_suffix, rule_id, justification):
   - filename_suffix: matches the END of the file path (forward slashes; cross-platform).
@@ -13,7 +13,7 @@ Validation contract:
 Maintenance:
   - To add a new suppression: append a tuple here with a meaningful justification.
   - To remove a suppression: delete the tuple and fix the underlying code.
-  - Do NOT add # noqa: <rule> inline in source files — use this registry instead.
+  - Do NOT add # noqa: <rule> inline in source files -- use this registry instead.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def _validate(entries: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]
 HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
 
     # ---------------------------------------------------------------------------
-    # N802 — function name not lowercase
+    # N802 -- function name not lowercase
     # These are required by ast.NodeVisitor which mandates visit_<NodeType> names.
     # ---------------------------------------------------------------------------
     (
@@ -52,7 +52,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
     ),
 
     # ---------------------------------------------------------------------------
-    # BLE001 — broad exception catches at isolation boundaries
+    # BLE001 -- broad exception catches at isolation boundaries
     # Each site is the outermost handler for an unbounded call surface.
     # Narrowing is not feasible because the raise surface is unbounded.
     # ---------------------------------------------------------------------------
@@ -60,33 +60,33 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "aila/api/routers/health.py",
         "BLE001",
         "BOUNDARY: health.py catch-all at line 192 wraps arbitrary module.health_check() "
-        "callables — modules can raise any exception type. Catching Exception here prevents "
+        "callables -- modules can raise any exception type. Catching Exception here prevents "
         "one broken module from killing the health endpoint for all others. "
         "_log.exception() preserves the trace for audit.",
     ),
     (
         "aila/api/routers/health.py",
         "BLE001",
-        "BOUNDARY: health.py catch-all at line 238 is the same pattern — outermost guard "
+        "BOUNDARY: health.py catch-all at line 238 is the same pattern -- outermost guard "
         "for dynamic module health callables whose raise surface is unbounded.",
     ),
     (
         "aila/modules/vulnerability/adapters/ghsa.py",
         "BLE001",
-        "BOUNDARY: __del__ destructor — silent cleanup is idiomatic in Python destructors. "
+        "BOUNDARY: __del__ destructor -- silent cleanup is idiomatic in Python destructors. "
         "Propagating exceptions from __del__ causes RuntimeError and is explicitly warned "
         "against in CPython docs. The resource is best-effort closed.",
     ),
     (
         "aila/modules/vulnerability/providers/_base_client.py",
         "BLE001",
-        "BOUNDARY: __del__ destructor — same rationale as ghsa.py: silent cleanup in "
+        "BOUNDARY: __del__ destructor -- same rationale as ghsa.py: silent cleanup in "
         "__del__ is idiomatic; exceptions from __del__ propagate as RuntimeError warnings.",
     ),
     (
         "aila/platform/llm/client.py",
         "BLE001",
-        "BOUNDARY: Prometheus counter increment — PrometheusException hierarchy is not "
+        "BOUNDARY: Prometheus counter increment -- PrometheusException hierarchy is not "
         "documented and can vary by registry state; broad catch prevents metric errors "
         "from surfacing to the caller. Failures are suppressed silently (counter is "
         "best-effort instrumentation, not business logic).",
@@ -94,20 +94,20 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
     (
         "aila/platform/workflows/engine.py",
         "BLE001",
-        "BOUNDARY: ARQ worker outermost BaseException handler at line 569 — the ARQ "
+        "BOUNDARY: ARQ worker outermost BaseException handler at line 569 -- the ARQ "
         "job runner submits arbitrary async callables and cannot know their raise surface. "
         "Catching BaseException here prevents worker death on unexpected errors. "
         "_log.exception() preserves the full trace. Narrower types are not feasible.",
     ),
 
     # ---------------------------------------------------------------------------
-    # E712 — comparison to True/False using == instead of is
+    # E712 -- comparison to True/False using == instead of is
     # SQLAlchemy ORM column expressions (col == True) produce a SQL boolean clause,
     # not a Python equality. Using `is True` would produce a Python bool, breaking
     # the SQL query generation. Each entry cites the exact model and column.
     # ---------------------------------------------------------------------------
 
-    # api/routers/notifications.py — NotificationRecord.is_read
+    # api/routers/notifications.py -- NotificationRecord.is_read
     (
         "aila/api/routers/notifications.py",
         "E712",
@@ -116,7 +116,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "Replacing with `is False` would break ORM query generation.",
     ),
 
-    # api/routers/oidc.py — OIDCProviderRecord.is_enabled
+    # api/routers/oidc.py -- OIDCProviderRecord.is_enabled
     (
         "aila/api/routers/oidc.py",
         "E712",
@@ -124,7 +124,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "a SQL WHERE clause; `is True` would break ORM query generation.",
     ),
 
-    # api/routers/saved_filters.py — SavedFilterRecord.shared_with_team
+    # api/routers/saved_filters.py -- SavedFilterRecord.shared_with_team
     (
         "aila/api/routers/saved_filters.py",
         "E712",
@@ -140,7 +140,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "a SQL WHERE clause; `is True` would break ORM query generation.",
     ),
 
-    # platform/automation/runner.py — AutomationScheduleRecord.enabled
+    # platform/automation/runner.py -- AutomationScheduleRecord.enabled
     (
         "aila/platform/automation/runner.py",
         "E712",
@@ -149,14 +149,14 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
     ),
 
     # ---------------------------------------------------------------------------
-    # PLC0415 — import not at top-level of file
+    # PLC0415 -- import not at top-level of file
     # All entries below are genuine circular-import deferrals or intentional
     # lazy-load patterns (startup functions, optional dependencies, script CLI).
     # The per-file-ignores in pyproject.toml suppresses ruff for these files;
     # this whitelist documents the justification for the honesty audit.
     # ---------------------------------------------------------------------------
 
-    # api/app.py — lazy router imports inside factory/startup functions
+    # api/app.py -- lazy router imports inside factory/startup functions
     (
         "aila/api/app.py",
         "PLC0415",
@@ -166,7 +166,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "circular dependencies through the platform singleton).",
     ),
 
-    # api/deps.py — lazy platform imports
+    # api/deps.py -- lazy platform imports
     (
         "aila/api/deps.py",
         "PLC0415",
@@ -174,7 +174,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "functions to avoid circular import at module load time.",
     ),
 
-    # api/routers/* — lazy platform/storage imports in endpoint handlers
+    # api/routers/* -- lazy platform/storage imports in endpoint handlers
     (
         "aila/api/routers/cost.py",
         "PLC0415",
@@ -214,7 +214,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "import chain.",
     ),
 
-    # cli.py — click command functions with lazy imports
+    # cli.py -- click command functions with lazy imports
     (
         "aila/cli.py",
         "PLC0415",
@@ -223,7 +223,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "imports only what it needs at invocation time.",
     ),
 
-    # modules/_template/module.py — template module lazy imports
+    # modules/_template/module.py -- template module lazy imports
     (
         "aila/modules/_template/module.py",
         "PLC0415",
@@ -265,7 +265,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "to break circular import cycle (evidence_validator -> db_models -> evidence_validator).",
     ),
 
-    # modules/vulnerability/module.py — large module with deferred db_model imports
+    # modules/vulnerability/module.py -- large module with deferred db_model imports
     (
         "aila/modules/vulnerability/module.py",
         "PLC0415",
@@ -281,12 +281,12 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "aila/modules/vulnerability/reporting/pdf.py",
         "PLC0415",
         "Intentional lazy-load: weasyprint, jinja2, and db_model imports deferred inside "
-        "render functions — weasyprint is an optional heavy dependency; db_model import "
+        "render functions -- weasyprint is an optional heavy dependency; db_model import "
         "breaks circular import cycle (pdf.py -> db_models.py -> pdf.py via "
         "PrioritizedFindingRecord references).",
     ),
 
-    # modules/vulnerability/tools/* — all tool files use lazy db_model imports
+    # modules/vulnerability/tools/* -- all tool files use lazy db_model imports
     (
         "aila/modules/vulnerability/tools/asset_tags.py",
         "PLC0415",
@@ -448,7 +448,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "to break circular import cycle (emitter -> storage -> emitter via event records).",
     ),
 
-    # platform/llm/* — heavy LLM platform files
+    # platform/llm/* -- heavy LLM platform files
     (
         "aila/platform/llm/classify.py",
         "PLC0415",
@@ -531,7 +531,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "aila/platform/services/embedding.py",
         "PLC0415",
         "Intentional lazy-load: sentence_transformers import deferred inside embedding "
-        "function — optional heavy ML dependency; module remains importable without it.",
+        "function -- optional heavy ML dependency; module remains importable without it.",
     ),
     (
         "aila/platform/services/knowledge.py",
@@ -585,7 +585,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "aila/platform/tools/knowledge.py",
         "PLC0415",
         "Intentional lazy-load: sentence_transformers import deferred inside embedding "
-        "function — optional heavy ML dependency.",
+        "function -- optional heavy ML dependency.",
     ),
 
     # storage/*
@@ -609,7 +609,7 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
     ),
 
     # -------------------------------------------------------------------------
-    # Rule 18: asyncio_in_module — designated threading bridge files
+    # Rule 18: asyncio_in_module -- designated threading bridge files
     #
     # These files ARE the threading boundary for their respective sync libraries.
     # They expose async def wrappers to callers; the asyncio.to_thread call is

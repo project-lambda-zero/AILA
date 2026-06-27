@@ -23,7 +23,7 @@ const meta = {
     variant: {
       control: "select",
       options: ["default", "elevated", "interactive"],
-      description: "Visual variant — controls background and hover behavior",
+      description: "Visual variant -- controls background and hover behavior",
     },
     padding: {
       control: "select",
@@ -49,7 +49,7 @@ export const Default: Story = {
     variant: "default",
     padding: "md",
     animate: false,
-    children: "Default card — surface background with static border",
+    children: "Default card -- surface background with static border",
   },
 }
 
@@ -58,7 +58,7 @@ export const Elevated: Story = {
     variant: "elevated",
     padding: "md",
     animate: false,
-    children: "Elevated card — slightly lighter background",
+    children: "Elevated card -- slightly lighter background",
   },
 }
 
@@ -67,7 +67,7 @@ export const Interactive: Story = {
     variant: "interactive",
     padding: "md",
     animate: false,
-    children: "Interactive card — hover to see amber border glow",
+    children: "Interactive card -- hover to see amber border glow",
   },
 }
 
@@ -121,9 +121,9 @@ export const AllVariants: Story = {
   name: "All Variants",
   render: () => (
     <div className="flex flex-col gap-4">
-      <AilaCard variant="default" padding="md" techBorder glow><p className="text-text font-sans text-sm">default — static border</p></AilaCard>
-      <AilaCard variant="elevated" padding="md" techBorder glow><p className="text-text font-sans text-sm">elevated — elevated bg</p></AilaCard>
-      <AilaCard variant="interactive" padding="md" techBorder glow><p className="text-text font-sans text-sm">interactive — hover for amber glow</p></AilaCard>
+      <AilaCard variant="default" padding="md" techBorder glow><p className="text-text font-sans text-sm">default -- static border</p></AilaCard>
+      <AilaCard variant="elevated" padding="md" techBorder glow><p className="text-text font-sans text-sm">elevated -- elevated bg</p></AilaCard>
+      <AilaCard variant="interactive" padding="md" techBorder glow><p className="text-text font-sans text-sm">interactive -- hover for amber glow</p></AilaCard>
     </div>
   ),
 }
@@ -170,14 +170,14 @@ export const WithSecurityIcons: Story = {
         <Shield size={20} className="text-text-muted" weight="regular" />
         <div>
           <p className="font-mono text-text text-sm font-medium">Security Monitoring</p>
-          <p className="font-mono text-text-muted text-xs">Regular weight — inactive state</p>
+          <p className="font-mono text-text-muted text-xs">Regular weight -- inactive state</p>
         </div>
       </div></AilaCard>
       <AilaCard variant="interactive" padding="md" techBorder glow><div className="flex items-center gap-3">
         <Shield size={20} className="text-accent" weight="fill" />
         <div>
           <p className="font-mono text-text text-sm font-medium">Shield Active</p>
-          <p className="font-mono text-text-muted text-xs">Fill weight — active/selected state (D-08)</p>
+          <p className="font-mono text-text-muted text-xs">Fill weight -- active/selected state (D-08)</p>
         </div>
       </div></AilaCard>
       <AilaCard variant="elevated" padding="md" techBorder glow><div className="flex items-center gap-3">

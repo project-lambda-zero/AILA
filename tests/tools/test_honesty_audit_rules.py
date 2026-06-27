@@ -5,7 +5,7 @@ Each rule has:
   - negative test: source without the violation → rule is silent.
   - whitelist test: violation present but suppressed by HONESTY_WHITELIST.
 
-Tests use real temporary file fixtures written to tmp_path — no mocks on
+Tests use real temporary file fixtures written to tmp_path -- no mocks on
 production paths.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ def _rules(findings: list[Finding]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Rule 18 — asyncio_in_module
+# Rule 18 -- asyncio_in_module
 # ---------------------------------------------------------------------------
 
 
@@ -142,7 +142,7 @@ class TestAsyncioInModule:
 
 
 # ---------------------------------------------------------------------------
-# Rule 19 — response_model_dict
+# Rule 19 -- response_model_dict
 # ---------------------------------------------------------------------------
 
 
@@ -251,7 +251,7 @@ class TestResponseModelDict:
 
 
 # ---------------------------------------------------------------------------
-# Rule 20 — bare_dict_return_endpoint
+# Rule 20 -- bare_dict_return_endpoint
 # ---------------------------------------------------------------------------
 
 
@@ -356,7 +356,7 @@ class TestBareDictReturnEndpoint:
 
 
 # ---------------------------------------------------------------------------
-# Rule 21 — noqa_inline
+# Rule 21 -- noqa_inline
 # ---------------------------------------------------------------------------
 
 
@@ -408,7 +408,7 @@ class TestNoqaInline:
         src = _write(
             tmp_path,
             "aila/tools/honesty_whitelist.py",
-            "# noqa: some-rule — this file may reference suppression codes\nx = 1\n",
+            "# noqa: some-rule -- this file may reference suppression codes\nx = 1\n",
         )
         findings = _audit(src)
         assert not any(f.rule == "noqa_inline" for f in findings)
@@ -418,7 +418,7 @@ class TestNoqaInline:
         src = _write(
             tmp_path,
             "alembic/versions/0001_init.py",
-            "x = 1  # noqa: E501 — generated migration\n",
+            "x = 1  # noqa: E501 -- generated migration\n",
         )
         findings = _audit(src)
         assert not any(f.rule == "noqa_inline" for f in findings)

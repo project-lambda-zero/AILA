@@ -27,7 +27,7 @@ export const Static: Story = {
     motionKey: "static-page",
     children: (
       <AilaCard variant="default" padding="lg" techBorder glow><p className="font-mono text-text text-sm">
-        PageTransition wrapper — this content fades + slides in when motionKey changes.
+        PageTransition wrapper -- this content fades + slides in when motionKey changes.
       </p></AilaCard>
     ),
   },
@@ -62,12 +62,12 @@ function SwappableDemo() {
           {page === "a" ? (
             <AilaCard variant="elevated" padding="lg" techBorder glow><h2 className="font-mono text-text font-bold text-sm uppercase tracking-wider">Page A</h2>
             <p className="font-mono text-text-muted text-xs mt-2">
-              Vulnerability Overview — 247 total findings across 4 systems.
+              Vulnerability Overview -- 247 total findings across 4 systems.
             </p></AilaCard>
           ) : (
             <AilaCard variant="elevated" padding="lg" techBorder glow><h2 className="font-mono text-text font-bold text-sm uppercase tracking-wider">Page B</h2>
             <p className="font-mono text-text-muted text-xs mt-2">
-              System Detail — arch-vm — 45 active vulnerabilities, 12 critical.
+              System Detail -- arch-vm -- 45 active vulnerabilities, 12 critical.
             </p></AilaCard>
           )}
         </PageTransition>
@@ -102,11 +102,11 @@ export const WithReducedMotion: Story = {
     <div className="flex flex-col gap-2">
       <p className="font-mono text-text-muted text-xs">
         When prefers-reduced-motion is set, duration=0 and y offsets are removed.
-        The component still renders children — animation is gracefully disabled.
+        The component still renders children -- animation is gracefully disabled.
       </p>
       <PageTransition motionKey="reduced-motion-demo">
         <AilaCard variant="default" padding="md" techBorder glow><p className="font-mono text-text text-sm">
-          Content renders normally — motion removed for accessibility.
+          Content renders normally -- motion removed for accessibility.
         </p></AilaCard>
       </PageTransition>
     </div>

@@ -1,5 +1,5 @@
 /**
- * useChartExport — VIZ-05 chart export hook.
+ * useChartExport -- VIZ-05 chart export hook.
  *
  * Exports a DOM element as PNG (via html2canvas) or SVG (via XMLSerializer).
  * html2canvas is loaded dynamically to avoid blocking initial page load.
@@ -33,7 +33,7 @@ export function useChartExport(): UseChartExportReturn {
     setError(null);
     try {
       if (format === "png") {
-        // Dynamic import — avoid loading html2canvas on initial page render
+        // Dynamic import -- avoid loading html2canvas on initial page render
         const html2canvas = (await import("html2canvas")).default;
         const canvas = await html2canvas(element, {
           scale: 2, // 2x quality for retina displays
@@ -47,7 +47,7 @@ export function useChartExport(): UseChartExportReturn {
         link.click();
         document.body.removeChild(link);
       } else {
-        // SVG export — find SVG element inside the chart container
+        // SVG export -- find SVG element inside the chart container
         const svgEl = element.querySelector("svg");
         if (!svgEl) {
           setError("No SVG found in chart. Use PNG export instead.");

@@ -5,7 +5,7 @@ import { toast } from "@/components/ui/sonner";
 import { useVRProjects } from "../queries";
 
 /** Browser/toast notification when a VR project transitions to a
- *  terminal state (08_FRONTEND_UX.md §Topic 6 — Kenji's quote on
+ *  terminal state (08_FRONTEND_UX.md §Topic 6 -- Kenji's quote on
  *  toast-on-complete). Mount at the shell-level once.
  *
  *  Tracks a per-project status snapshot in a ref. On poll diff, fires
@@ -22,7 +22,7 @@ export function useProjectCompleteNotifier() {
     for (const p of projects) current.set(p.id, p.status);
 
     if (prevStatusByProject.current.size === 0) {
-      // First render — seed the snapshot, don't notify.
+      // First render -- seed the snapshot, don't notify.
       prevStatusByProject.current = current;
       return;
     }
@@ -50,7 +50,7 @@ export function useProjectCompleteNotifier() {
           Notification.permission === "granted" &&
           document.hidden
         ) {
-          new Notification("AILA — VR", { body: msg });
+          new Notification("AILA -- VR", { body: msg });
         }
       }
     }

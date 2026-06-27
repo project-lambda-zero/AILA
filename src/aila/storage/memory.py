@@ -1,6 +1,6 @@
 """Per-run session memory and permanent cross-run memory for AILA agents.
 
-Session memory (RunState.events) is ephemeral and held in-process — it is
+Session memory (RunState.events) is ephemeral and held in-process -- it is
 cleared automatically when the run ends and never written to the database.
 
 Permanent memory (PermanentMemoryStore) persists key-value payloads across
@@ -46,7 +46,7 @@ class PermanentMemoryStore:
     class name; key is an arbitrary string identifying the piece of memory.
 
     Memory written here survives process restarts.  It must be explicitly deleted
-    via forget() — the platform does not automatically prune entries when a run ends.
+    via forget() -- the platform does not automatically prune entries when a run ends.
     For run-scoped ephemeral state, use RunState.events (in-process only).
     """
 
@@ -54,7 +54,7 @@ class PermanentMemoryStore:
         """Upsert a memory entry.  Creates a new row or updates the payload if one exists.
 
         Uses an optimistic insert with IntegrityError rollback to handle concurrent
-        writers safely — races are rare but possible when multiple agents write to
+        writers safely -- races are rare but possible when multiple agents write to
         the same namespace/key in a single run.
 
         Args:
@@ -67,7 +67,7 @@ class PermanentMemoryStore:
 
         Raises:
             RuntimeError: If the entry could not be created or reloaded after
-                an IntegrityError — indicates a DB-level consistency issue.
+                an IntegrityError -- indicates a DB-level consistency issue.
         """
         payload_json = json.dumps(payload, sort_keys=True)
         existing = (await session.exec(
@@ -154,7 +154,7 @@ class PermanentMemoryStore:
 def append_run_event(run_state: RunState, state: str, note: str) -> None:
     """Append a workflow event to the in-process run state event log.
 
-    Events are ephemeral session memory — they live in the RunState object for
+    Events are ephemeral session memory -- they live in the RunState object for
     the duration of the run and are never written to the database.  They are
     used for agent observation and progress reporting within a single run.
 

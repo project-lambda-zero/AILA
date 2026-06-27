@@ -6,7 +6,7 @@
    workspace symlinks in node_modules/@aila/*. Tailwind v4's default
    content scan starts at the directory containing this CSS file
    (frontend/src/) and ignores node_modules entirely, so module-side
-   classes had NO CSS rules generated — e.g. fixed/bottom-6/right-6/
+   classes had NO CSS rules generated -- e.g. fixed/bottom-6/right-6/
    z-[60] on the InvestigationDetailPage floating pills computed to
    position:fixed with no inset rules, anchoring at flow position
    instead of the viewport. Explicit @source paths fix that.
@@ -24,17 +24,17 @@
    --font-display / --font-sans / --font-mono in its [data-theme]
    block below. */
 
-/* Dark variant — targets .dark class on <html> */
+/* Dark variant -- targets .dark class on <html> */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* =====================================================================
-   PHASE 176b REBUILD — THREE THEMES, UNAMBIGUOUSLY IDENTIFIABLE
+   PHASE 176b REBUILD -- THREE THEMES, UNAMBIGUOUSLY IDENTIFIABLE
    =====================================================================
    Themes: frutiger-aero | synthwave | vaporwave
    Goal:   Upon seeing any surface, the user should name the theme
            within 1 second without reading a label.
 
-   Signature checklist — each theme MUST hit these:
+   Signature checklist -- each theme MUST hit these:
      - A body-level atmosphere that reads at first glance
      - Distinct heading treatment (chromatic, glow, or sticker)
      - A BUTTON shape+fill recognizable to the theme era
@@ -43,9 +43,9 @@
    ===================================================================== */
 
 /* =====================================================================
-   SELF-HOSTED FONTS — Syne (display) + Fira Code (mono).
+   SELF-HOSTED FONTS -- Syne (display) + Fira Code (mono).
    Body sans (Bricolage Grotesque) loads via the Google Fonts <link>
-   in index.html — already preconnected.
+   in index.html -- already preconnected.
    ===================================================================== */
 
 @font-face {
@@ -74,7 +74,7 @@
   --font-sans: "Bricolage Grotesque", system-ui, sans-serif;
   --font-mono: "Fira Code", ui-monospace, "Cascadia Code", monospace;
 
-  /* STATUS tokens (Phase 176a-02) — theme-neutral defaults, kept unchanged */
+  /* STATUS tokens (Phase 176a-02) -- theme-neutral defaults, kept unchanged */
   --status-completed: #4ade80;
   --status-running: #fbbf24;
   --status-failed: #ef4444;
@@ -111,7 +111,7 @@
   --color-lavender: #b892ff;
   --color-mint: #00f0ff;
 
-  /* Severity — neon spectrum */
+  /* Severity -- neon spectrum */
   --color-critical: #ff1744;
   --color-high: #ff6d00;
   --color-medium: #ffea00;
@@ -126,7 +126,7 @@
   --color-focus-ring: #00f0ff;
   --color-badge-text: #070714;
 
-  /* Sharp-edged radii — 80s arcade */
+  /* Sharp-edged radii -- 80s arcade */
   --radius-sm: 2px;
   --radius-md: 4px;
   --radius-lg: 6px;
@@ -139,7 +139,7 @@
   --popover: #12122a;
   --popover-foreground: #f4f0ff;
   --primary: #ff2d95;
-  --primary-foreground: #1f1f1f;   /* WCAG: dark text on pink — keeps the neon brand for the fill */
+  --primary-foreground: #1f1f1f;   /* WCAG: dark text on pink -- keeps the neon brand for the fill */
   --secondary: #1a1a3e;
   --secondary-foreground: #f4f0ff;
   --muted: #1a1a3e;
@@ -166,7 +166,7 @@
   --grid-color: rgba(0, 240, 255, 0.04);
 }
 
-/* Synthwave light mode — keep neon personality but flip surfaces */
+/* Synthwave light mode -- keep neon personality but flip surfaces */
 [data-theme="synthwave"][data-mode="light"] {
   --color-base: #fdf4ff;
   --color-surface: #ffffff;
@@ -213,8 +213,8 @@
    ===================================================================== */
 
 [data-theme="vaporwave"] {
-  /* Win95/98 desktop palette — teal desktop, gray dialogs, navy title bars */
-  /* Win95 system fonts — NOT the default Syne/Bricolage stack */
+  /* Win95/98 desktop palette -- teal desktop, gray dialogs, navy title bars */
+  /* Win95 system fonts -- NOT the default Syne/Bricolage stack */
   --font-display: "Tahoma", "MS Sans Serif", system-ui, sans-serif;
   --font-sans: "Tahoma", "MS Sans Serif", system-ui, sans-serif;
   --font-mono: "Fixedsys", "Terminal", "Courier New", monospace;
@@ -231,13 +231,13 @@
   --color-lavender: #d2a8ff;
   --color-mint: #00CED1;
 
-  /* Severity — Win95 system signal colors */
+  /* Severity -- Win95 system signal colors */
   --color-critical: #ff0000;
   --color-high: #ff8c00;
   --color-medium: #ffff00;
   --color-low: #808080;
 
-  /* TEXT — black on gray */
+  /* TEXT -- black on gray */
   --color-text: #000000;
   --color-text-muted: #444444;
   --color-text-peach: #a06840;
@@ -245,7 +245,7 @@
   --color-focus-ring: #000080;
   --color-badge-text: #ffffff;
 
-  /* Pixel-perfect — Win95 has NO rounded corners */
+  /* Pixel-perfect -- Win95 has NO rounded corners */
   --radius-sm: 0px;
   --radius-md: 0px;
   --radius-lg: 0px;
@@ -287,7 +287,7 @@
   --color-hotpink: #f0a8c7;
 }
 
-/* Vaporwave light mode — Windows 2000 "bliss" blue desktop with XP-warm dialogs */
+/* Vaporwave light mode -- Windows 2000 "bliss" blue desktop with XP-warm dialogs */
 [data-theme="vaporwave"][data-mode="light"] {
   --color-base: #3a6ea5;
   --color-surface: #ece9d8;
@@ -326,19 +326,19 @@
 }
 
 /* =====================================================================
-   THEME: FRUTIGER AERO  (naturally light) — TASTE-AUTHENTIC REBUILD
-   Signature A: Bliss-style sky gradient — cerulean -> cyan -> pale teal
+   THEME: FRUTIGER AERO  (naturally light) -- TASTE-AUTHENTIC REBUILD
+   Signature A: Bliss-style sky gradient -- cerulean -> cyan -> pale teal
                 with a low grassy horizon band + floating soft bokeh
-   Signature B: REAL aqua glass panels — triple-stop top gloss, inner
+   Signature B: REAL aqua glass panels -- triple-stop top gloss, inner
                 white ring, outer cool drop, backdrop blur+saturate
-   Signature C: Chicklet buttons — rounded 999px, vertical specular
+   Signature C: Chicklet buttons -- rounded 999px, vertical specular
                 highlight that catches on the top 40%, fat underbevel
    Signature D: "Segoe UI"-era headings in Corbel/Candara stack
    Signature E: Foliage + fish SVG silhouettes + floating bubble layer
    ===================================================================== */
 
 [data-theme="frutiger-aero"] {
-  /* Per-theme typography — DM Serif Display (mid-2000s editorial
+  /* Per-theme typography -- DM Serif Display (mid-2000s editorial
      contrast for the Vista/iPod aqua headlines), Quicksand (the
      rounded humanist sans 2006-2010 product UIs leaned on heavily),
      Cascadia Code for the few mono callouts. */
@@ -346,7 +346,7 @@
   --font-sans: "Quicksand", "Segoe UI", "Calibri", system-ui, sans-serif;
   --font-mono: "Cascadia Code", "Consolas", monospace;
 
-  /* Surfaces — Bliss sky with translucent glass panels */
+  /* Surfaces -- Bliss sky with translucent glass panels */
   --color-base: #b8dff0;
   --color-surface: rgba(255, 255, 255, 0.72);
   --color-elevated: rgba(255, 255, 255, 0.85);
@@ -364,13 +364,13 @@
   --color-mint: #8ec582;
   --color-grass: #4fae5f;
 
-  /* Severity — darkened for light bg */
+  /* Severity -- darkened for light bg */
   --color-critical: #c41e3a;
   --color-high: #cc5500;
   --color-medium: #b38f00;
   --color-low: #6b7280;
 
-  /* Typography — deep Prussian for contrast */
+  /* Typography -- deep Prussian for contrast */
   --color-text: #0a2133;
   --color-text-muted: #3e627c;
   --color-text-peach: #c47a50;
@@ -383,7 +383,7 @@
   --radius-md: 10px;
   --radius-lg: 14px;
 
-  /* Fonts — Aero-era specifier: Segoe UI / Calibri / Corbel stack */
+  /* Fonts -- Aero-era specifier: Segoe UI / Calibri / Corbel stack */
   --font-display: "DM Serif Display", "Segoe UI", "Calibri", serif;
   --font-sans: "Quicksand", "Segoe UI", "Calibri", system-ui, sans-serif;
 
@@ -406,7 +406,7 @@
   --ring: #2972b6;
   --radius: 0.625rem;
 
-  /* Sidebar — translucent aqua glass */
+  /* Sidebar -- translucent aqua glass */
   --sidebar-background: rgba(255, 255, 255, 0.62);
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-accent);
@@ -421,7 +421,7 @@
   --grid-color: transparent;
 }
 
-/* Frutiger Aero dark mode — "night aquarium" variant, keeps the glass
+/* Frutiger Aero dark mode -- "night aquarium" variant, keeps the glass
    but swaps sky for deep cerulean water with bioluminescent bokeh. */
 [data-theme="frutiger-aero"][data-mode="dark"] {
   --color-base: #041526;
@@ -453,7 +453,7 @@
 }
 
 /* =====================================================================
-   PS1 THEME — 1994 PlayStation gray console, BIOS menu aesthetic
+   PS1 THEME -- 1994 PlayStation gray console, BIOS menu aesthetic
    ===================================================================== */
 [data-theme="ps1"] {
   --color-base: #b4b4b4;
@@ -508,7 +508,7 @@
   --grid-color: rgba(0,0,0,0.03);
 }
 
-/* PS1 dark mode — BIOS boot screen black, memory card menu aesthetic */
+/* PS1 dark mode -- BIOS boot screen black, memory card menu aesthetic */
 [data-theme="ps1"][data-mode="dark"] {
   --color-base: #1a1a1a;
   --color-surface: #2a2a2a;
@@ -535,7 +535,7 @@
   --sidebar-border: #444444;
 }
 
-/* PS1 body — flat console plastic + subtle BIOS checkerboard */
+/* PS1 body -- flat console plastic + subtle BIOS checkerboard */
 [data-theme="ps1"] body {
   background: var(--color-base);
   position: relative;
@@ -551,7 +551,7 @@
   pointer-events: none;
 }
 
-/* PS1 dark mode body — BIOS boot screen */
+/* PS1 dark mode body -- BIOS boot screen */
 [data-theme="ps1"][data-mode="dark"] body {
   background: #1a1a1a;
 }
@@ -561,7 +561,7 @@
   ) 0 0 / 20px 20px;
 }
 
-/* PS1 card — flat console plastic with subtle 1px inset bevel */
+/* PS1 card -- flat console plastic with subtle 1px inset bevel */
 [data-theme="ps1"] .bg-surface,
 [data-theme="ps1"] .bg-card,
 [data-theme="ps1"] .bg-elevated {
@@ -570,7 +570,7 @@
 }
 
 /* =====================================================================
-   BODY ATMOSPHERICS — this is what makes each theme UNMISTAKABLE
+   BODY ATMOSPHERICS -- this is what makes each theme UNMISTAKABLE
    ===================================================================== */
 
 html {
@@ -584,7 +584,7 @@ body {
   min-height: 100vh;
 }
 
-/* Base typography — pull --font-display for headings, --font-mono for code-shaped
+/* Base typography -- pull --font-display for headings, --font-mono for code-shaped
    elements. Each theme overrides these tokens (see per-theme blocks below) so
    midnight-cloud-8 reaches Bricolage Grotesque, vendetta reaches UnifrakturMaguntia,
    y2k-fever reaches Pacifico, etc. without per-element overrides. */
@@ -629,7 +629,7 @@ code, kbd, samp, pre, .font-mono {
     );
 }
 
-/* Perspective grid floor — THE iconic synthwave element */
+/* Perspective grid floor -- THE iconic synthwave element */
 @keyframes synthwave-grid-pulse {
   0%, 100% { opacity: 0.5; }
   50%      { opacity: 0.7; }
@@ -713,7 +713,7 @@ code, kbd, samp, pre, .font-mono {
     );
 }
 
-/* No perspective floor — Win95 desktop is flat. Disable the inherited ::after. */
+/* No perspective floor -- Win95 desktop is flat. Disable the inherited ::after. */
 [data-theme="vaporwave"] body::after {
   content: none;
 }
@@ -759,7 +759,7 @@ code, kbd, samp, pre, .font-mono {
   background-attachment: fixed;
 }
 
-/* Bokeh droplets — varied sizes, soft blur, gently drifting */
+/* Bokeh droplets -- varied sizes, soft blur, gently drifting */
 [data-theme="frutiger-aero"] body::before {
   content: "";
   position: fixed;
@@ -781,7 +781,7 @@ code, kbd, samp, pre, .font-mono {
   animation: aero-bokeh-drift 22s ease-in-out infinite;
 }
 
-/* SVG decoration — dragonflies, ferns, water droplet, and rising bubbles */
+/* SVG decoration -- dragonflies, ferns, water droplet, and rising bubbles */
 [data-theme="frutiger-aero"] body::after {
   content: "";
   position: fixed;
@@ -793,7 +793,7 @@ code, kbd, samp, pre, .font-mono {
   opacity: 1;
 }
 
-/* Rising-bubble column — purely decorative, animates upward.
+/* Rising-bubble column -- purely decorative, animates upward.
    Attached to html so it's always on-screen regardless of content height. */
 html[data-theme="frutiger-aero"]::before {
   content: "";
@@ -839,7 +839,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 }
 
 /* =====================================================================
-   CARDS — each theme's most-visible surface treatment
+   CARDS -- each theme's most-visible surface treatment
    ===================================================================== */
 
 /* -------- SYNTHWAVE cards: double pink-stroke neon border + inner glow -------- */
@@ -873,7 +873,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
   background-image: none;
 }
 
-/* Win95 active title bar — navy gradient, white text, on h3 inside cards */
+/* Win95 active title bar -- navy gradient, white text, on h3 inside cards */
 [data-theme="vaporwave"] .bg-surface h3,
 [data-theme="vaporwave"] .bg-card h3,
 [data-theme="vaporwave"] .bg-elevated h3 {
@@ -900,7 +900,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 
 /* -------- FRUTIGER AERO cards: real aqua glass (triple specular, blur, cool drop) --
 
-   Aero glass has four defining visual cues — present ALL of them:
+   Aero glass has four defining visual cues -- present ALL of them:
      1. A bright white-to-translucent GLASS specular on the top edge
      2. A triple-stop vertical tint (crisp top, glassy middle, faint bottom mist)
      3. An inner hair-line white ring (glass meniscus)
@@ -943,12 +943,12 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 }
 
 /* =====================================================================
-   HEADINGS — each theme's typographic signature
+   HEADINGS -- each theme's typographic signature
    ===================================================================== */
 
 /* Synthwave: chromatic aberration (cyan/magenta split) + letter-spacing.
    Heading text itself is near-white so it stays legible on the dark sun-
-   gradient body — the coloured offsets ride around it as a glow, they do
+   gradient body -- the coloured offsets ride around it as a glow, they do
    NOT form the fill. */
 [data-theme="synthwave"] h1,
 [data-theme="synthwave"] h2 {
@@ -1044,7 +1044,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 }
 
 /* =====================================================================
-   BUTTONS — each theme's primary button is UNAMBIGUOUS
+   BUTTONS -- each theme's primary button is UNAMBIGUOUS
    ===================================================================== */
 
 /* -------- SYNTHWAVE: transparent fill, neon outline stroke, hover = filled glow -------- */
@@ -1075,7 +1075,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
     0 0 48px rgba(0, 240, 255, 0.35);
 }
 
-/* -------- VAPORWAVE: Win95 chunky bevel — press-in on :active -------- */
+/* -------- VAPORWAVE: Win95 chunky bevel -- press-in on :active -------- */
 
 [data-theme="vaporwave"] button[type="submit"],
 [data-theme="vaporwave"] .btn-primary,
@@ -1176,7 +1176,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 }
 
 /* =====================================================================
-   INPUTS — theme-specific focus personality
+   INPUTS -- theme-specific focus personality
    ===================================================================== */
 
 [data-theme="synthwave"] input:focus,
@@ -1228,7 +1228,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 }
 
 /* =====================================================================
-   NAV / SIDEBAR / DIALOGS — glassy blur in Aero, neon border in Synthwave,
+   NAV / SIDEBAR / DIALOGS -- glassy blur in Aero, neon border in Synthwave,
    Win98 panel in Vaporwave
    ===================================================================== */
 
@@ -1272,7 +1272,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 }
 
 /* =====================================================================
-   SCROLLBARS — each theme has its own signature
+   SCROLLBARS -- each theme has its own signature
    ===================================================================== */
 
 ::-webkit-scrollbar {
@@ -1366,7 +1366,7 @@ a:hover {
 }
 
 /* =====================================================================
-   TABLES — theme-specific row hover
+   TABLES -- theme-specific row hover
    ===================================================================== */
 
 [data-theme="synthwave"] tbody tr:hover {
@@ -1398,7 +1398,7 @@ a:hover {
 }
 
 /* =====================================================================
-   BADGES — theme-specific
+   BADGES -- theme-specific
    ===================================================================== */
 
 [data-theme="synthwave"] [data-slot="badge"][data-variant="critical"] {
@@ -1488,7 +1488,7 @@ a:hover {
 }
 
 /* =====================================================================
-   SIDEBAR INSET — stays transparent so atmospherics show through
+   SIDEBAR INSET -- stays transparent so atmospherics show through
    ===================================================================== */
 
 [data-slot="sidebar-inset"] {
@@ -1530,7 +1530,7 @@ a:hover {
     0 0 4px rgba(255, 255, 255, 0.85),
     0 1px 2px rgba(255, 255, 255, 0.65);
 }
-/* Themes managing their own heading shadows — don't double-stack */
+/* Themes managing their own heading shadows -- don't double-stack */
 [data-theme="synthwave"] [data-slot="sidebar-inset"] > main > h1,
 [data-theme="synthwave"] [data-slot="sidebar-inset"] > main > h2,
 [data-theme="vaporwave"] [data-slot="sidebar-inset"] > main > h1,
@@ -1539,14 +1539,14 @@ a:hover {
 }
 
 /* =====================================================================
-   LOGIN PAGE — theme-specific panel backgrounds so the signature shows
+   LOGIN PAGE -- theme-specific panel backgrounds so the signature shows
    even on the un-authenticated screen. The LoginPage component uses
    .login-root / .login-left / .login-right wrappers that hardcode
    var(--color-base)/var(--color-surface). We override those per theme
    so the atmospheric signature is visible BEFORE sign-in.
    ===================================================================== */
 
-/* Base login layout — restored (was stripped in 176b CSS trim).
+/* Base login layout -- restored (was stripped in 176b CSS trim).
    Without these rules the LoginPage renders unstyled inline HTML. */
 .login-root {
   display: grid;
@@ -1874,7 +1874,7 @@ a:hover {
   filter: drop-shadow(0 2px 4px rgba(60, 185, 255, 0.4));
 }
 
-/* Login input box styling per theme — respect the primary signature */
+/* Login input box styling per theme -- respect the primary signature */
 [data-theme="frutiger-aero"] .login-field__input {
   background-color: rgba(255, 255, 255, 0.85) !important;
   border: 1px solid rgba(184, 212, 232, 0.8) !important;
@@ -1900,7 +1900,7 @@ a:hover {
     -1px -1px 0 #ffffff inset !important;
 }
 
-/* Login submit button — inherit theme's primary button style.
+/* Login submit button -- inherit theme's primary button style.
    Use .login-submit selector from component if needed. */
 [data-theme="synthwave"] .login-right button[type="submit"],
 [data-theme="synthwave"] .login-right .btn-primary {
@@ -1940,7 +1940,7 @@ a:hover {
 }
 
 /* =====================================================================
-   TAILWIND v4 @theme inline — expose tokens as utilities
+   TAILWIND v4 @theme inline -- expose tokens as utilities
    ===================================================================== */
 
 @theme inline {
@@ -1999,11 +1999,11 @@ a:hover {
 }
 
 /* =====================================================================
-   THEME-INVARIANT SHARP RADII — Phase 176 follow-on (E27d)
+   THEME-INVARIANT SHARP RADII -- Phase 176 follow-on (E27d)
    Most themes override --radius-sm / --radius-md to fit their era
    (Win95 = 0, frutiger-aero = 10px, y2k-plus = 18px). When a UI
-   surface needs a CRT-flat 2px or 4px regardless of theme — wrapper
-   borders, neutral filter pills, dropzones — use these named
+   surface needs a CRT-flat 2px or 4px regardless of theme -- wrapper
+   borders, neutral filter pills, dropzones -- use these named
    utilities instead of the now-banned arbitrary values.
    ===================================================================== */
 
@@ -2016,7 +2016,7 @@ a:hover {
 }
 
 /* =====================================================================
-   SUB-XS TEXT SIZES — E27a follow-on
+   SUB-XS TEXT SIZES -- E27a follow-on
    Tailwind v4 ships text-xs at 12px. The forensics / vr
    dense-data surfaces (timeline rows, finding badges, registry
    tables) reach for 9–11px metadata text and previously wrote it
@@ -2039,7 +2039,7 @@ a:hover {
   font-size: 9px;
 }
 
-/* Cyber-tracking — 0.2em letter-spacing for the all-caps mono labels
+/* Cyber-tracking -- 0.2em letter-spacing for the all-caps mono labels
    used across vr surfaces. Tailwind v4's `tracking-widest`
    is 0.1em; this widens it for the typewriter-meta aesthetic. */
 
@@ -2047,7 +2047,7 @@ a:hover {
 @utility tracking-cyber-sm { letter-spacing: 0.14em; }
 
 /* =====================================================================
-   RESPONSIVE GRID UTILITIES — variant-aware via @utility.
+   RESPONSIVE GRID UTILITIES -- variant-aware via @utility.
    `grid-cols-rail` produces `grid-template-columns: 1fr 280px;` for the
    evidence-graph two-column layout (content + 280px right rail), used
    only at the lg breakpoint via `lg:grid-cols-rail`.
@@ -2062,10 +2062,10 @@ a:hover {
 @utility grid-cols-key-value { grid-template-columns: max-content 1fr; }
 
 /* =====================================================================
-   TOUCH TARGET — extend the click area to WCAG 2.5.5 (44×44 CSS px)
+   TOUCH TARGET -- extend the click area to WCAG 2.5.5 (44×44 CSS px)
    without changing the visible button. The `::after` pseudo-element is
    absolutely positioned, centred on the host, and sized to `max(100%,
-   44px)` in both axes — a host that is already ≥ 44 px keeps its own
+   44px)` in both axes -- a host that is already ≥ 44 px keeps its own
    bounds, and a host smaller than that grows its hit area to 44×44 while
    the visible chrome stays put. The pseudo is transparent (no background,
    no border) so it never paints, but Chromium and Firefox both honour
@@ -2094,13 +2094,13 @@ a:hover {
 }
 
 /* =====================================================================
-   CONTENT VISIBILITY — incremental render skip for long-scroll lists (C20)
+   CONTENT VISIBILITY -- incremental render skip for long-scroll lists (C20)
    ---------------------------------------------------------------------
    `content-visibility: auto` lets the browser skip layout + paint for
    off-screen children of the marked container, cutting TBT on the busy
    investigation detail page when 50–1000 turn cards, table rows, or
    list items accumulate. Applied to immediate children via `& > *`,
-   not the host, so each row is its own skip unit — a parent-level
+   not the host, so each row is its own skip unit -- a parent-level
    `content-visibility: auto` would be all-or-nothing per container,
    defeating the point on a long list that scrolls within itself.
 
@@ -2109,10 +2109,10 @@ a:hover {
    replaces the estimate with the actual measured size the next time the
    row falls off-screen and back on.
 
-   `scroll-virtual` — `480px` estimate for medium-tall items
+   `scroll-virtual` -- `480px` estimate for medium-tall items
    (`<TurnCard>` articles, mixed-height list rows). Apply to the
    message timeline wrapper.
-   `scroll-virtual-row` — `56px` estimate for dense table rows / compact
+   `scroll-virtual-row` -- `56px` estimate for dense table rows / compact
    list items. Apply to `<tbody>` wrappers + tight `<ul>` lists.
    ===================================================================== */
 
@@ -2131,17 +2131,17 @@ a:hover {
 }
 
 /* =====================================================================
-   AMBIENT DEPTH — soft radial-gradient mesh (A4)
+   AMBIENT DEPTH -- soft radial-gradient mesh (A4)
    ---------------------------------------------------------------------
    Wrap a page-level surface in `.depth-mesh` to paint a faint
    radial-gradient field behind its children. The mesh uses the active
    theme's `--color-accent`, `--color-primary`, and `--color-accent-muted`
-   so every theme lights its own atmosphere automatically — synthwave
+   so every theme lights its own atmosphere automatically -- synthwave
    gets a pink/cyan haze, matrix glows green, vendetta bleeds soft red.
    Scoped to a `.depth-mesh::before` pseudo-element so it cannot collide
    with the body-level theme decorations (synthwave scanline, vaporwave
    stipple, matrix rain, etc.) which already claim `body::before` /
-   `body::after` per-theme. Static — no animation, no reduced-motion
+   `body::after` per-theme. Static -- no animation, no reduced-motion
    concern. Light mode gets a weaker opacity so the cards still lift
    visibly off the surface.
    ===================================================================== */
@@ -2174,7 +2174,7 @@ a:hover {
 
 
 /* =====================================================================
-   UTILITIES — loading skeleton, focus ring, severity pulse
+   UTILITIES -- loading skeleton, focus ring, severity pulse
    ===================================================================== */
 
 @keyframes severity-pulse {
@@ -2316,7 +2316,7 @@ a:hover {
 }
 
 /* =====================================================================
-   STATUS BADGE CLASSES (Phase 176a — unchanged)
+   STATUS BADGE CLASSES (Phase 176a -- unchanged)
    ===================================================================== */
 
 .aila-badge-status-completed {
@@ -2356,7 +2356,7 @@ a:hover {
 
 /* =====================================================================
    ██████████████████████████████████████████████████████████████████████
-   EXTENDED THEME PACK — 8 NEW THEMES
+   EXTENDED THEME PACK -- 8 NEW THEMES
    ██████████████████████████████████████████████████████████████████████
    Every theme below ships these slots:
      (A) tokens light  (B) tokens dark   (C) body atmosphere
@@ -2371,7 +2371,7 @@ a:hover {
 /* =====================================================================
    THEME: PLAYSTATION 1  (naturally light / cool gray console chassis)
    Signature A: PS1 console-gray chassis, CD-tray slot, ventilation grid
-   Signature B: PS logo palette — red / yellow / green / blue blocks
+   Signature B: PS logo palette -- red / yellow / green / blue blocks
    Signature C: Low-poly wobble on hover (geometric jitter like untextured
                 PS1 polygon warping), dither banding, 240p scanlines
    Signature D: FF7 menu blue dialog for popovers
@@ -2379,7 +2379,7 @@ a:hover {
    ===================================================================== */
 
 [data-theme="ps1"] {
-  /* Per-theme typography — Press Start 2P (8-bit pixel headlines),
+  /* Per-theme typography -- Press Start 2P (8-bit pixel headlines),
      VT323 (CRT terminal body), VT323 (same for code). */
   --font-display: "Press Start 2P", "Courier New", monospace;
   --font-sans: "VT323", "Courier New", monospace;
@@ -2671,7 +2671,7 @@ a:hover {
    ===================================================================== */
 
 [data-theme="ps2"] {
-  /* Per-theme typography — Michroma (wide aerospace display for the
+  /* Per-theme typography -- Michroma (wide aerospace display for the
      PS2 sleek-black aesthetic), Geist (clean body), Share Tech Mono. */
   --font-display: "Michroma", "Eurostile", "Geist", sans-serif;
   --font-sans: "Geist", system-ui, sans-serif;
@@ -2779,7 +2779,7 @@ a:hover {
   inset: 0;
   pointer-events: none;
   z-index: -1;
-  /* Rising translucent cubes — the PS2 boot identity */
+  /* Rising translucent cubes -- the PS2 boot identity */
   background:
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60'><rect x='16' y='16' width='28' height='28' fill='rgba(79,216,255,0.18)' stroke='rgba(120,230,255,0.45)'/></svg>") 0 100vh,
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><rect x='22' y='22' width='36' height='36' fill='rgba(120,90,255,0.15)' stroke='rgba(160,130,255,0.5)'/></svg>") 40px 120vh,
@@ -2908,7 +2908,7 @@ a:hover {
    ===================================================================== */
 
 [data-theme="cyberpunk-2077"] {
-  /* Per-theme typography — Orbitron (sharp angular display for NCPD
+  /* Per-theme typography -- Orbitron (sharp angular display for NCPD
      panels), Rajdhani (technical condensed sans body), Share Tech Mono. */
   --font-display: "Orbitron", "Michroma", system-ui, sans-serif;
   --font-sans: "Rajdhani", system-ui, sans-serif;
@@ -3057,7 +3057,7 @@ a:hover {
     repeating-linear-gradient(90deg, transparent 0 38px, rgba(0, 120, 170, 0.05) 38px 39px);
 }
 
-/* Clipped corner card — the "chiseled" cyberpunk card edge */
+/* Clipped corner card -- the "chiseled" cyberpunk card edge */
 [data-theme="cyberpunk-2077"] .bg-surface,
 [data-theme="cyberpunk-2077"] .bg-card,
 [data-theme="cyberpunk-2077"] .bg-elevated,
@@ -3162,7 +3162,7 @@ a:hover {
    ===================================================================== */
 
 [data-theme="matrix"] {
-  /* Per-theme typography — VT323 monoculture. Phosphor CRT
+  /* Per-theme typography -- VT323 monoculture. Phosphor CRT
      terminal aesthetic; no sans, no display separation. The whole
      interface IS the terminal. */
   --font-display: "VT323", "Courier New", monospace;
@@ -3265,7 +3265,7 @@ a:hover {
 [data-theme="matrix"] body {
   background: #000000;
 }
-/* Digital rain — 5 columns of shifting katakana/numeric SVG */
+/* Digital rain -- 5 columns of shifting katakana/numeric SVG */
 [data-theme="matrix"] body::before {
   content: "";
   position: fixed;
@@ -3401,13 +3401,13 @@ a:hover {
    THEME: TRUMAN SHOW  (naturally light / 50s suburbia too-perfect pastels)
    Signature A: Powdery robin-egg sky + creamy sun lens flare
    Signature B: Hidden camera vignette ring in corners
-   Signature C: White picket pastel palette — mint lawn, warm cream
+   Signature C: White picket pastel palette -- mint lawn, warm cream
    Signature D: Serif display headings (Marcellus SC / Cormorant)
    Signature E: "Good morning, good afternoon, good night" badge arc
    ===================================================================== */
 
 [data-theme="truman-show"] {
-  /* Per-theme typography — Playfair Display (high-contrast 50s
+  /* Per-theme typography -- Playfair Display (high-contrast 50s
      magazine masthead), Lora (warm serif body), Courier Prime
      (the typewriter the network producer reads scripts on). */
   --font-display: "Playfair Display", "Georgia", serif;
@@ -3452,7 +3452,7 @@ a:hover {
   --popover: #fffdf4;
   --popover-foreground: #2a3b40;
   --primary: #4fa8b0;
-  --primary-foreground: #333331;    /* dark text on teal button — WCAG 4.5:1 */
+  --primary-foreground: #333331;    /* dark text on teal button -- WCAG 4.5:1 */
   --secondary: #dceef0;
   --secondary-foreground: #2a3b40;
   --muted: #e5f0ed;
@@ -3511,7 +3511,7 @@ a:hover {
       #b6d9b3 100%);
   background-attachment: fixed;
 }
-/* Hidden-camera vignette — four soft dark corners, hint of watching */
+/* Hidden-camera vignette -- four soft dark corners, hint of watching */
 [data-theme="truman-show"] body::before {
   content: "";
   position: fixed;
@@ -3618,7 +3618,7 @@ a:hover {
    ===================================================================== */
 
 [data-theme="half-life-1"] {
-  /* Per-theme typography — Black Ops One (industrial stenciled
+  /* Per-theme typography -- Black Ops One (industrial stenciled
      hazard-bay signage), Share Tech Mono throughout the rest (1998
      Black Mesa terminal aesthetic). */
   --font-display: "Black Ops One", "Impact", sans-serif;
@@ -3862,7 +3862,7 @@ a:hover {
    ===================================================================== */
 
 [data-theme="y2k-fever"] {
-  /* Per-theme typography — Pacifico (bubble script, classic Y2K
+  /* Per-theme typography -- Pacifico (bubble script, classic Y2K
      iMac branding), Quicksand (rounded sans body), Share Tech Mono. */
   --font-display: "Pacifico", "Comic Sans MS", cursive;
   --font-sans: "Quicksand", system-ui, sans-serif;
@@ -3909,7 +3909,7 @@ a:hover {
   --popover: #ffffff;
   --popover-foreground: #1e1240;
   --primary: #ff5fb1;
-  --primary-foreground: #333333;    /* WCAG: dark text on pink — keeps the neon brand for the fill */
+  --primary-foreground: #333333;    /* WCAG: dark text on pink -- keeps the neon brand for the fill */
   --secondary: #d6f0ff;
   --secondary-foreground: #1e1240;
   --muted: #edf8ff;
@@ -4136,7 +4136,7 @@ a:hover {
    ===================================================================== */
 
 [data-theme="vendetta"] {
-  /* Per-theme typography — UnifrakturMaguntia (blackletter for
+  /* Per-theme typography -- UnifrakturMaguntia (blackletter for
      the V-for-Vendetta propaganda masthead), Crimson Text (warm
      serif body matching old printed propaganda), Courier Prime
      for code (the underground samizdat aesthetic). */
@@ -4355,7 +4355,7 @@ a:hover {
 
 
 /* =====================================================================
-   GLOBAL READABILITY GUARDS — applied to any theme in dark mode
+   GLOBAL READABILITY GUARDS -- applied to any theme in dark mode
    ===================================================================== */
 
 /* Catch-all so heading text never becomes unreadable on any dark theme */
@@ -4378,7 +4378,7 @@ a:hover {
 
 
 /* =====================================================================
-   LOGIN PAGE SIGNATURES — one pass per new theme.
+   LOGIN PAGE SIGNATURES -- one pass per new theme.
    Same selectors as the original 3-theme pack; kept terse.
    ===================================================================== */
 
@@ -4595,12 +4595,12 @@ a:hover {
 
 
 /* =====================================================================
-   MIDNIGHT CLOUD 8 — default theme.
+   MIDNIGHT CLOUD 8 -- default theme.
 
    Source palette: echel0n/midnight-cloud-8-neovim
    (https://github.com/aila-sh/midnight-cloud-8-neovim).
 
-   Reads as "Istanbul at dusk through a CRT" — warm charcoal base,
+   Reads as "Istanbul at dusk through a CRT" -- warm charcoal base,
    warm cream foreground (the signature), hot-pink + lavender accents,
    mint highlights. Distinct from synthwave's pure neon: softer,
    atmospheric, slightly melancholic.
@@ -4615,20 +4615,20 @@ a:hover {
    ===================================================================== */
 
 [data-theme="midnight-cloud-8"] {
-  /* Per-theme typography — Bricolage Grotesque (warm grotesque,
+  /* Per-theme typography -- Bricolage Grotesque (warm grotesque,
      optical sizing), Geist (clean modern sans, inherited body),
      Cascadia Code (Microsoft's open-source retro-flavoured mono). */
   --font-display: "Bricolage Grotesque", "Geist", system-ui, sans-serif;
   --font-sans: "Geist", system-ui, sans-serif;
   --font-mono: "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
 
-  /* Surfaces — true neutral charcoal, matching the upstream
+  /* Surfaces -- true neutral charcoal, matching the upstream
      midnight-cloud-8 vim palette by echel0n
      (github.com/aila-sh/midnight-cloud-8-neovim). The vim theme
      uses #121212 for every surface; on the web we need three
      elevation tiers, so we step up in pure-neutral grays
      (R = G = B) instead of inventing a hue. No warm tint, no cool
-     tint — the only warmth in the theme comes from the cream text
+     tint -- the only warmth in the theme comes from the cream text
      (#ffd7af), the only saturation from the hot-pink accent
      (#ff5f87). The earlier #1c1a18 / #26221f browns were a
      gruvbox-dark elevation ladder, not from this theme. */
@@ -4638,31 +4638,31 @@ a:hover {
   --color-border: #2f2f2f;
   --color-border-hover: #ff5f87;
 
-  /* Foreground — the signature warm cream. Reads as parchment over
+  /* Foreground -- the signature warm cream. Reads as parchment over
      the charcoal, not the neon white most dark themes default to. */
   --color-text: #ffd7af;
   --color-text-muted: #af8c6c;
   --color-text-peach: #f0a8c7;
 
-  /* Accent — hot pink (the source theme's primary). */
+  /* Accent -- hot pink (the source theme's primary). */
   --color-accent: #ff5f87;
   --color-accent-muted: #3d1521;
   --color-accent-deep: #c43b65;
 
-  /* Secondary palette — every colour from the source vim theme. */
-  --color-peach: #f0a8c7;      /* soft pink — types, search */
-  --color-lavender: #af87d7;   /* lilac purple — identifiers */
-  --color-mint: #97dbbe;       /* mint — functions, success */
+  /* Secondary palette -- every colour from the source vim theme. */
+  --color-peach: #f0a8c7;      /* soft pink -- types, search */
+  --color-lavender: #af87d7;   /* lilac purple -- identifiers */
+  --color-mint: #97dbbe;       /* mint -- functions, success */
 
-  /* Severity tokens — mapped to the source palette so they feel
+  /* Severity tokens -- mapped to the source palette so they feel
      native to the theme rather than borrowed from a generic system. */
-  --color-critical: #ff5f87;   /* hot pink — keywords/errors */
-  --color-high: #f0a8c7;       /* soft pink — types */
-  --color-medium: #b092ff;     /* electric lavender — constants */
-  --color-low: #97dbbe;        /* mint — strings */
-  --color-info: #af87d7;       /* lilac — identifiers */
+  --color-critical: #ff5f87;   /* hot pink -- keywords/errors */
+  --color-high: #f0a8c7;       /* soft pink -- types */
+  --color-medium: #b092ff;     /* electric lavender -- constants */
+  --color-low: #97dbbe;        /* mint -- strings */
+  --color-info: #af87d7;       /* lilac -- identifiers */
 
-  /* Status — independent of severity. */
+  /* Status -- independent of severity. */
   --status-completed: #97dbbe;
   --status-running: #b092ff;
   --status-failed: #ff5f87;
@@ -4670,15 +4670,15 @@ a:hover {
   --status-waiting: #808080;
   --status-paused: #d7afd7;
 
-  /* Badge text on solid colored backgrounds — charcoal so cream
+  /* Badge text on solid colored backgrounds -- charcoal so cream
      accents never wash out. */
   --color-badge-text: #121212;
 
-  /* Focus ring — accent at a fixed lightness so it always pops. */
+  /* Focus ring -- accent at a fixed lightness so it always pops. */
   --color-focus-ring: #ff5f87;
   --color-accent-soft: rgba(255, 95, 135, 0.18);
 
-  /* shadcn/ui token mapping — without these, Tailwind utilities like
+  /* shadcn/ui token mapping -- without these, Tailwind utilities like
      `bg-primary` / `bg-destructive` / `bg-card` fall back to the :root
      (synthwave) defaults and paint #ff2d95 magenta instead of this
      theme's #ff5f87 hot pink. Mirrors the half-life-1 and y2k-fever
@@ -4717,7 +4717,7 @@ a:hover {
 }
 
 
-/* Sidebar + header bg under midnight-cloud-8 — direct override.
+/* Sidebar + header bg under midnight-cloud-8 -- direct override.
    The Tailwind v4 `@theme inline` rule that powers `bg-sidebar` /
    `bg-background` bakes the var value at build time and Vite HMR
    does not re-bake when the theme block changes. A higher-specificity
@@ -4729,14 +4729,14 @@ a:hover {
 [data-theme="midnight-cloud-8"] header {
   background-color: var(--background);
 }
-/* Midnight Cloud 8 — atmospheric body: charcoal with subtle horizontal
+/* Midnight Cloud 8 -- atmospheric body: charcoal with subtle horizontal
    scanlines + a soft pink dusk-glow at the bottom of the viewport. */
 [data-theme="midnight-cloud-8"] body {
   background: var(--color-base);
   position: relative;
 }
 [data-theme="midnight-cloud-8"] body::before {
-  /* 1px scanline every 3px — barely visible, sells the CRT vibe
+  /* 1px scanline every 3px -- barely visible, sells the CRT vibe
      without hurting readability. */
   content: "";
   position: fixed;
@@ -4753,7 +4753,7 @@ a:hover {
   mix-blend-mode: overlay;
 }
 [data-theme="midnight-cloud-8"] body::after {
-  /* Dusk glow — soft pink wash at the bottom, fading up. */
+  /* Dusk glow -- soft pink wash at the bottom, fading up. */
   content: "";
   position: fixed;
   inset: auto 0 0 0;
@@ -4774,7 +4774,7 @@ a:hover {
   [data-theme="midnight-cloud-8"] body::before { background-image: none; }
 }
 
-/* Cards — the existing techBorder + glow treatment (from the
+/* Cards -- the existing techBorder + glow treatment (from the
    codemod) already reads --color-accent, so it gets the hot-pink
    hairline + glow for free. Add a barely-visible 1px inner accent
    line at the top of every surface for extra signal. */
@@ -4786,7 +4786,7 @@ a:hover {
     0 1px 0 rgba(0, 0, 0, 0.4);
 }
 
-/* Buttons — cream-on-charcoal outlined, hot-pink filled on hover.
+/* Buttons -- cream-on-charcoal outlined, hot-pink filled on hover.
    Echoes the vim theme's `reverse cterm=reverse` highlight pattern. */
 [data-theme="midnight-cloud-8"] button[type="submit"],
 [data-theme="midnight-cloud-8"] .btn-primary,
@@ -4811,8 +4811,8 @@ a:hover {
     0 0 16px rgba(255, 95, 135, 0.35);
 }
 
-/* Headings — cream with a faint pink halo. The halo is the only
-   "neon" cue — kept very subtle so the theme stays atmospheric
+/* Headings -- cream with a faint pink halo. The halo is the only
+   "neon" cue -- kept very subtle so the theme stays atmospheric
    rather than flashy. */
 [data-theme="midnight-cloud-8"] h1,
 [data-theme="midnight-cloud-8"] h2 {
@@ -4830,7 +4830,7 @@ a:hover {
   text-shadow: 0 0 8px rgba(240, 168, 199, 0.18);
 }
 
-/* Links — soft pink, hot pink on hover. Inherits underline from
+/* Links -- soft pink, hot pink on hover. Inherits underline from
    global a rules so nothing else needs to change. */
 [data-theme="midnight-cloud-8"] a:not(.no-theme-link) {
   color: var(--color-peach);
@@ -4841,7 +4841,7 @@ a:hover {
   text-shadow: 0 0 8px rgba(255, 95, 135, 0.55);
 }
 
-/* Login left-panel branding override — pinks against charcoal,
+/* Login left-panel branding override -- pinks against charcoal,
    keeps the brand identity coherent with the rest of the theme. */
 [data-theme="midnight-cloud-8"] .login-left,
 [data-theme="midnight-cloud-8"] .login-right {
@@ -4857,12 +4857,12 @@ a:hover {
 
 
 /* =====================================================================
-   THEME: SPECIMEN-INDEX  (NATURALLY LIGHT — malware module aesthetic)
+   THEME: SPECIMEN-INDEX  (NATURALLY LIGHT -- malware module aesthetic)
    Signature A: bone-white paper surfaces + india-ink type
-   Signature B: heritage stamp-pad red — the ONLY chromatic accent;
+   Signature B: heritage stamp-pad red -- the ONLY chromatic accent;
                  marks the active record, persona attribution, and
                  supersession cross-references. Never decoration.
-   Signature C: pencil-graphite hairline borders — no drop shadows
+   Signature C: pencil-graphite hairline borders -- no drop shadows
    Signature D: severity colors from classified-document marker-band
                  conventions (cinnabar / jaundice-amber / oxidized-brass /
                  graphite)
@@ -4874,45 +4874,45 @@ a:hover {
    ===================================================================== */
 
 [data-theme="specimen-index"] {
-  /* Per-theme typography — Cormorant Garamond (high-contrast
+  /* Per-theme typography -- Cormorant Garamond (high-contrast
      editorial display, paper-catalog masthead feel), Source Serif 4
      (warm humanist serif body), IBM Plex Mono (hashes + code). */
   --font-display: "Cormorant Garamond", "Source Serif 4", Georgia, serif;
   --font-sans: "Source Serif 4", "Cormorant Garamond", Georgia, serif;
   --font-mono: "IBM Plex Mono", "Fira Code", ui-monospace, monospace;
 
-  /* Surfaces — bone-white paper, card stock, ivory notebook page. */
+  /* Surfaces -- bone-white paper, card stock, ivory notebook page. */
   --color-base: #f7f4ec;         /* bone-white paper */
   --color-surface: #fffef8;      /* card stock */
   --color-elevated: #fbf8ee;     /* ivory notebook page */
   --color-border: #c8c0a8;       /* pencil-graphite hairline */
   --color-border-hover: #b91c1c; /* heritage stamp-pad red on hover */
 
-  /* THE accent — heritage stamp-pad red. Reserved for the active
+  /* THE accent -- heritage stamp-pad red. Reserved for the active
      record, persona attribution, and supersession cross-references.
      NEVER background fill. */
   --color-accent: #b91c1c;
   --color-accent-muted: #f4dcd9;
   --color-accent-deep: #8a1414;
 
-  /* Secondary palette — aged book accents kept available for
+  /* Secondary palette -- aged book accents kept available for
      KpiTile sub-numbers and the family-encyclopedia chrome. */
   --color-peach: #c47a50;        /* aged-tan */
   --color-lavender: #5f5390;     /* lavender ink */
   --color-mint: #2f6b3d;         /* field-guide green */
 
-  /* Severity — classified-document marker-band conventions. */
+  /* Severity -- classified-document marker-band conventions. */
   --color-critical: #c03a2b;     /* cinnabar */
   --color-high: #c99517;         /* jaundice-amber */
   --color-medium: #997022;       /* oxidized-brass */
   --color-low: #6b6358;          /* graphite */
 
-  /* Typography — india-ink on bone-white. */
+  /* Typography -- india-ink on bone-white. */
   --color-text: #14110d;
   --color-text-muted: #6b6358;
   --color-text-peach: #8a5a2b;   /* aged-tan, used by KpiTile sub-numbers */
 
-  /* Status — retoned to the paper palette so it stays coherent. */
+  /* Status -- retoned to the paper palette so it stays coherent. */
   --status-completed: #2f6b3d;   /* field-guide green */
   --status-running: #c99517;     /* jaundice-amber, matches HIGH */
   --status-failed: #c03a2b;      /* cinnabar */
@@ -4926,12 +4926,12 @@ a:hover {
   --color-accent-soft: rgba(185, 28, 28, 0.10);
   --color-badge-text: #fffef8;   /* card-stock on stamp-pad red */
 
-  /* Hairline radii — paper has corners, not pillows. */
+  /* Hairline radii -- paper has corners, not pillows. */
   --radius-sm: 1px;
   --radius-md: 2px;
   --radius-lg: 3px;
 
-  /* shadcn/ui token mapping — without these, Tailwind utilities like
+  /* shadcn/ui token mapping -- without these, Tailwind utilities like
      `bg-primary` / `bg-card` fall back to :root (synthwave) defaults
      and paint neon magenta over the paper palette. */
   --background: #f7f4ec;
@@ -4952,7 +4952,7 @@ a:hover {
   --ring: #b91c1c;
   --radius: 0.125rem;
 
-  /* Sidebar — ivory page tier so the main reading area pops slightly
+  /* Sidebar -- ivory page tier so the main reading area pops slightly
      forward off it (the inverse of midnight-cloud-8's deepest-tier
      sidebar; paper themes read better with the sidebar elevated). */
   --sidebar-background: var(--color-elevated);
@@ -4964,13 +4964,13 @@ a:hover {
   --sidebar-border: var(--color-border);
   --sidebar-ring: var(--color-focus-ring);
 
-  /* Effect knobs — paper has no glow, no grid. */
+  /* Effect knobs -- paper has no glow, no grid. */
   --glow-strength: 0;
   --glow-color: transparent;
   --grid-color: transparent;
 }
 
-/* Specimen Index dark mode — operator-flip variant. Bone-white
+/* Specimen Index dark mode -- operator-flip variant. Bone-white
    inverts to india-ink; the heritage stamp-pad red shifts up one
    step on the lightness scale so it stays distinct on the darker
    ground. */

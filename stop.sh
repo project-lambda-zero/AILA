@@ -3,7 +3,7 @@
 # Usage: bash stop.sh
 #
 # python.exe gets the blunt-force treatment (only AILA uses it on the dev
-# box). node.exe is shared with editors and MCP tooling — we target only
+# box). node.exe is shared with editors and MCP tooling -- we target only
 # the Vite process launched by start.sh, matched via its command line.
 
 echo "[stop] Killing Python processes..."

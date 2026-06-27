@@ -1,9 +1,9 @@
-"""Topology router for AILA REST API — platform-owned network graph endpoint.
+"""Topology router for AILA REST API -- platform-owned network graph endpoint.
 
 Provides:
-- GET /topology      — full network graph: nodes (systems + ports + services +
+- GET /topology      -- full network graph: nodes (systems + ports + services +
                        severity overlay) and edges (active inter-system connections)
-- GET /topology/subnets — subnet groupings for quick filtering
+- GET /topology/subnets -- subnet groupings for quick filtering
 
 Per RADAR-05 / D-12: platform builds the graph from network discovery data;
 vulnerability module decorates nodes with severity counts when data exists.
