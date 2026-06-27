@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs on the same branch when a new commit lands.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (ruff + compile + honesty audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install AILA + dev tools
+        run: pip install -e ".[dev]"
+
+      - name: Ruff
+        run: python -m ruff check src/aila/
+
+      - name: Compile
+        run: python -m compileall -q src/aila
+
+      - name: Honesty audit
+        run: |
+          python -m aila.tools.honesty_audit src/aila \
+            --whitelist honesty_whitelist.py
+
+  frontend:
+    name: Frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Enable corepack (resolves pnpm from package.json packageManager)
+        run: corepack enable
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: Workspace type-check
+        run: pnpm -r run type-check
+
+      - name: Shell production build
+        run: pnpm --filter @aila/shell run build
