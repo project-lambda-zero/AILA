@@ -19,6 +19,16 @@ For production deployment, see [DEPLOYMENT.md](DEPLOYMENT.md). For the full envi
 
 PostgreSQL and Redis must be running locally on their default ports (`5432` and `6379`) before continuing.
 
+**Optional MCP servers** (only if you want to use the `vr` or `malware` modules):
+
+| Server | Default port | Needed for | Repo |
+|--------|--------------|------------|------|
+| audit-mcp | `18822` | `vr` module (all source-repo targets); can also feed `vulnerability` intel workflows | source repo |
+| ida-headless-mcp | `18821` | `vr` binary targets, all `malware` investigations | [github.com/echel0nn/ida-headless-mcp-exp](https://github.com/echel0nn/ida-headless-mcp-exp) |
+| android-mcp | `18823` | `vr` audits against `android_apk` targets (MASVS L1/L2 pipeline) | source repo |
+
+All three are HTTP servers you run alongside AILA on the same host (or reachable over the network). The platform, `vulnerability`, `forensics`, and `hello_world` modules do NOT require any MCP. See section 4 below for install + start.
+
 ---
 
 ## 2. Install
@@ -56,7 +66,7 @@ pip install -e ".[dev]"
 corepack enable && pnpm install
 ```
 
-The frontend is a pnpm workspace at the repo root; `pnpm install` wires up `@aila/shell`, `@aila/typescript-config`, and the four module packages (`@aila/forensics-frontend`, `@aila/hello-world-frontend`, `@aila/vr-frontend`, `@aila/vulnerability-frontend`) in one pass.
+The frontend is a pnpm workspace at the repo root; `pnpm install` wires up `@aila/shell`, `@aila/typescript-config`, and the five module packages (`@aila/forensics-frontend`, `@aila/hello-world-frontend`, `@aila/malware-frontend`, `@aila/vr-frontend`, `@aila/vulnerability-frontend`) in one pass.
 
 > **Verify the venv is activated**: `which uvicorn` should print a path inside `.venv/bin/`. If it prints `~/.local/bin/uvicorn` or `/usr/bin/uvicorn`, your venv is not active and uvicorn will fail to import `aila` (because system Python doesn't have it installed).
 Or:
@@ -99,6 +109,9 @@ Edit `.env` and set at minimum:
 | `AILA_ADMIN_PASSWORD` | a strong password you choose | **Required on first boot only.** Used to create the `admin` user. After first successful startup, REMOVE this variable. |
 | `OPENAI_API_KEY` | your OpenAI-compatible provider key | Required for LLM-backed features. |
 | `AILA_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated; must include the frontend origin. |
+| `AUDIT_MCP_URL` | `http://127.0.0.1:18822` | Only if using `vr`. |
+| `IDA_HEADLESS_URL` | `http://127.0.0.1:18821` | Only if using `malware`, or `vr` on binary targets. |
+| `ANDROID_MCP_URL` | `http://127.0.0.1:18823` | Only if using `vr` on `android_apk` targets. |
 
 For an existing database (any subsequent runs), apply pending migrations:
 
@@ -112,9 +125,60 @@ cd src/aila && alembic upgrade head && cd ../..
 
 ---
 
-## 4. Start Services
+## 4. MCP Servers (only if using `vr` or `malware`)
 
-AILA runs as three processes. Open three terminals.
+Skip this section if you only want the platform, `vulnerability`, `forensics`, and `hello_world` modules.
+
+Each MCP is a separate HTTP server. Install and run each one in its own terminal or under your process supervisor of choice. The AILA backend and workers connect over HTTP using the URLs from `.env`.
+
+### ida-headless-mcp
+
+Required for `malware`; required for `vr` on binary targets.
+
+```bash
+git clone https://github.com/echel0nn/ida-headless-mcp-exp.git
+cd ida-headless-mcp-exp
+pip install -e .
+ida-headless-http --port 18821
+```
+
+This needs a working IDA Pro installation on the same host. See the repo's README for full setup.
+
+### audit-mcp
+
+Required for `vr`. Install from its own source repo and run against port `18822`:
+
+```bash
+audit-mcp serve --port 18822
+```
+
+See [docs/VR_INSTALLATION_GUIDE.md](VR_INSTALLATION_GUIDE.md) for the full install + tuning walkthrough (thread pool caps, per-tool timeouts, semble cache).
+
+### android-mcp
+
+Only required if you point `vr` at an `android_apk` target. Install its host-side deps (`apktool`, `jadx`, `androguard`, optionally `MobSF`), then run:
+
+```bash
+python -m android_mcp --mode http --port 18823
+```
+
+See [docs/VR_INSTALLATION_GUIDE.md](VR_INSTALLATION_GUIDE.md) section 3 for the full Android tooling matrix.
+
+### Verify
+
+```bash
+curl -s http://127.0.0.1:18821/ && echo   # ida-headless
+curl -s http://127.0.0.1:18822/tools/list_indexes && echo   # audit-mcp
+curl -s http://127.0.0.1:18823/ && echo   # android-mcp
+```
+
+All three should return JSON. A connection-refused error means the server is not running or is bound to a different port.
+
+---
+
+## 5. Start Services
+
+AILA runs as three processes (four if you use `malware`, five if you use `vr`). Open a terminal per process.
 
 ```bash
 # Terminal 1 -- Backend API (FastAPI on :8000)
@@ -133,11 +197,11 @@ Or, in one terminal:
 make dev-all
 ```
 
-`make dev-all` brings up dev infra and all six services (backend, frontend, four workers) under one supervisor (Ctrl+C stops everything). `make dev` by itself only prints the canonical workflow above -- it does not start anything.
+`make dev-all` brings up dev infra and all services (backend, frontend, workers) under one supervisor (Ctrl+C stops everything). `make dev` by itself only prints the canonical workflow above -- it does not start anything.
 
 ---
 
-## 5. Verify
+## 6. Verify
 
 | Surface | URL | Notes |
 |---------|-----|-------|
@@ -152,12 +216,13 @@ If the backend health endpoint returns 200 and the frontend renders the login pa
 
 ---
 
-## 6. Module-specific Workers (optional)
+## 7. Module-specific Workers (optional)
 
 The default worker subscribes to the `default` queue. Module-heavy workloads (vulnerability scans, forensics analyses) are dispatched to dedicated queues so they can be scaled independently. Run additional workers per queue track:
 
 ```bash
-python -m aila worker -q vr                  # vulnerability research (audit-mcp + IDA Headless MCP)
+python -m aila worker -q vr                  # vulnerability research (needs audit-mcp; ida-headless for binary targets; android-mcp for APKs)
+python -m aila worker -q malware             # malware reverse engineering (needs ida-headless-mcp)
 python -m aila worker -q vulnerability       # vulnerability scans (CVE, scoring, remediation)
 python -m aila worker -q forensics           # DFIR investigations, evidence analysis
 ```
@@ -167,6 +232,7 @@ Or via Make:
 ```bash
 make worker            # default queue
 make worker-vr         # vr queue
+make worker-malware    # malware queue
 make worker-vuln       # vulnerability queue
 make worker-forensics  # forensics queue
 ```
@@ -175,7 +241,7 @@ Each worker process subscribes to one queue (`arq:queue:<name>`). For multi-modu
 
 ---
 
-## 7. Running Tests
+## 8. Running Tests
 
 ```bash
 make test           # backend unit tests (excludes E2E suites)
