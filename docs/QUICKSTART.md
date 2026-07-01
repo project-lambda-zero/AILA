@@ -23,9 +23,9 @@ PostgreSQL and Redis must be running locally on their default ports (`5432` and 
 
 | Server | Default port | Needed for | Repo |
 |--------|--------------|------------|------|
-| audit-mcp | `18822` | `vr` module (all source-repo targets); can also feed `vulnerability` intel workflows | source repo |
+| audit-mcp | `18822` | `vr` module (all source-repo targets); can also feed `vulnerability` intel workflows | [github.com/echel0nn/audit-mcp](https://github.com/echel0nn/audit-mcp) |
 | ida-headless-mcp | `18821` | `vr` binary targets, all `malware` investigations | [github.com/echel0nn/ida-headless-mcp-exp](https://github.com/echel0nn/ida-headless-mcp-exp) |
-| android-mcp | `18823` | `vr` audits against `android_apk` targets (MASVS L1/L2 pipeline) | source repo |
+| android-mcp | `18823` | `vr` audits against `android_apk` targets (MASVS L1/L2 pipeline) | [github.com/echel0nn/android-mcp](https://github.com/echel0nn/android-mcp) |
 
 All three are HTTP servers you run alongside AILA on the same host (or reachable over the network). The platform, `vulnerability`, `forensics`, and `hello_world` modules do NOT require any MCP. See section 4 below for install + start.
 
@@ -146,23 +146,31 @@ This needs a working IDA Pro installation on the same host. See the repo's READM
 
 ### audit-mcp
 
-Required for `vr`. Install from its own source repo and run against port `18822`:
+Required for `vr`. Needs Python 3.12+ (a separate venv from AILA's 3.11 is fine).
 
 ```bash
-audit-mcp serve --port 18822
+git clone https://github.com/echel0nn/audit-mcp.git
+cd audit-mcp
+pip install -e .            # add .[gpu] for CUDA-accelerated dead-code analysis
+audit-mcp --mode http --port 18822
 ```
 
-See [docs/VR_INSTALLATION_GUIDE.md](VR_INSTALLATION_GUIDE.md) for the full install + tuning walkthrough (thread pool caps, per-tool timeouts, semble cache).
+See [docs/VR_INSTALLATION_GUIDE.md](VR_INSTALLATION_GUIDE.md) for the full tuning walkthrough (thread pool caps, per-tool timeouts, semble cache).
 
 ### android-mcp
 
-Only required if you point `vr` at an `android_apk` target. Install its host-side deps (`apktool`, `jadx`, `androguard`, optionally `MobSF`), then run:
+Only required if you point `vr` at an `android_apk` target.
 
 ```bash
+git clone https://github.com/echel0nn/android-mcp.git
+cd android-mcp
+pip install -e ".[dev,scanners,dynamic]"
 python -m android_mcp --mode http --port 18823
 ```
 
-See [docs/VR_INSTALLATION_GUIDE.md](VR_INSTALLATION_GUIDE.md) section 3 for the full Android tooling matrix.
+This wires the four "ready" composite handlers (`find_secrets`, `classify_behavior`, `verify_capabilities`, `compute_risk_score`) plus the Python-only per-tool wrappers (`androguard_summary`, `analyze_native_libs`, `yara_scan_dir`). Additional host binaries (`apktool`, `jadx`, `apksigner`, `adb`, `drozer`, `frida-server`, MobSF) unlock the rest -- see the android-mcp README's tool matrix for what each one enables. AILA gracefully skips stages whose host tools are missing.
+
+See [docs/VR_INSTALLATION_GUIDE.md](VR_INSTALLATION_GUIDE.md) section 3 for AILA-side integration notes.
 
 ### Verify
 
