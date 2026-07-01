@@ -253,7 +253,7 @@ class ToolExecutor:
         # The circuit-breaker text (line 314+) augments the error
         # message after the call lands, but agents still issue the
         # same call up to 51 times per branch (observed live on
-        # branch 630246f4 → 63× read_function('init')). The
+        # one branch, 63x read_function('init')). The
         # augmented warning is no deterrent because each retry
         # produces a new turn worth of LLM thinking that re-derives
         # 'this might work this time'.

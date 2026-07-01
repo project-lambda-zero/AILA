@@ -232,7 +232,7 @@ def _split_by_category(
 #           agent saw first ~150 lines (the prologue), missed the
 #           body-compile block at line 4067 where complete_lengths=1
 #           is set, submitted a false-positive "missing NULL sentinel"
-#           finding (investigations 179f6db0 + 9f2c0b39)
+#           finding (two observed investigations)
 #   50000 → covers ~600+ lines of typical C, enough for every
 #           in-tree nginx function we've seen the agent need.
 # The FULL body is always preserved in payload.pseudocode (message

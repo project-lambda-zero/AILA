@@ -217,7 +217,7 @@ export function LoginPage() {
            inherits every theme (synthwave, vendetta, matrix, etc.)
            without literal color values. Only borders + input/button
            shells + spacing were adapted; left panel (FaultyTerminal
-           bg) is intentionally untouched per operator constraint. */
+           bg) is intentionally untouched by design. */
         .login-right {
           flex: 1;
           display: flex;

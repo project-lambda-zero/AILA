@@ -931,7 +931,7 @@ class AuditMcpBridgeTool(Tool):
         anything -- they all serialize on the same async loop and just
         multiply the workload the worker has to chew through before
         the agent's REAL tool call gets a slot. That happened on
-        investigation 417b469f: 3 branches simultaneously fired
+        one observed investigation: 3 branches simultaneously fired
         attack_surface/summary on firefox; bridge fired 16 pre-warm
         calls onto a single GIL-bound worker; the worker spent 6+
         minutes thrashing without ever responding to any tool call.
@@ -1337,7 +1337,7 @@ class AuditMcpBridgeTool(Tool):
                 # which doesn't exist. Walk up to the parent and try
                 # `resources/<path>` before declaring the file missing.
                 #
-                # Diagnosed 2026-06-14 from inv 27cf9c85: 124 turns
+                # Diagnosed 2026-06-14 from an investigation: 124 turns
                 # across 6 personas died on this exact gap. Agent
                 # correctly identified read_lines as the right tool
                 # but the index root was wrong for resource files;

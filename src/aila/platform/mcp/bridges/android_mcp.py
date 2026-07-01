@@ -436,10 +436,10 @@ class AndroidMcpBridgeTool(Tool):
         # audit_mcp index id. Letting the agent retry them wastes
         # minutes per call (mobsf re-uploads + re-scans, jadx
         # re-decompiles 14k classes), risks corrupting the canonical
-        # output, and per operator policy mobsf output MUST NOT
+        # output, and by design mobsf output MUST NOT
         # reach prompts.
         #
-        # Observed live on bb5decf2: yuki + 5 siblings looped 50+
+        # Observed live on one investigation: yuki + 5 siblings looped 50+
         # turns each calling apktool_decode with invented `focus=`
         # kwarg, hitting TypeError every time, ignoring the
         # repeat-failure circuit breaker text. Bridge-level enforce-

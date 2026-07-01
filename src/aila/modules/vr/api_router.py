@@ -4617,7 +4617,7 @@ def create_vr_router() -> APIRouter:
             # primary outcome, resolves to COMPLETED with no active
             # siblings (turn_count > 0 excludes the brand-new branch
             # itself), and immediately re-closes the investigation --
-            # observed live on inv 70f454ad-..., 3 seconds between
+            # observed live on one investigation, 3 seconds between
             # /reopen API call and inv.status flipping back to
             # COMPLETED. Operator reopens are explicit intent to
             # discard the prior verdict; the old outcome row stays as

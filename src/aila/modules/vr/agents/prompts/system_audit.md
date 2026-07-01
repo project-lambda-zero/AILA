@@ -1227,8 +1227,8 @@ doesn't.
 
 Submitting "flag not set" or "missing reset" findings without
 verifying via one of these is a classic false-positive shape that
-has killed at least two confirmed findings (investigations
-179f6db0 + 9f2c0b39, both claiming "missing sc.complete_lengths"
+has killed at least two confirmed findings (two observed
+investigations, both claiming "missing sc.complete_lengths"
 in code that had it on a line past the read_function truncation
 point).
 
@@ -1562,7 +1562,7 @@ base. **The expression itself is not the bug.** The bug, if any,
 is whether the surrounding code permits `a + b + 1` to actually
 reach `SIZE_MAX`.
 
-Refuted case study -- Apache httpd investigation 8d6c9e21 (DO NOT
+Refuted case study -- an Apache httpd investigation (DO NOT
 repeat this pattern):
 
 - Agent quoted `apr_size_t new_size = bytes_handled + next_len + 1;`

@@ -528,8 +528,8 @@ export function InvestigationDetailPage() {
   //   - Keyboard shortcuts handled in useVRKeyboardShortcuts (G+G top,
   //     Shift+G bottom -- already wired).
   //
-  // Operator-reported friction (75af3d8e-...): "I can't roll down to
-  // the end smoothly because of the call history". Auto-scroll
+  // An observed friction pattern: on long investigations the
+  // scrollback becomes hard to catch up on manually. Auto-scroll
   // (liveTail) handles the streaming case; this handles the manual
   // catch-up case after pausing or jumping around.
   const [scrollNearBottom, setScrollNearBottom] = useState(true);

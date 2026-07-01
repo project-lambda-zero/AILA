@@ -68,7 +68,7 @@ _log = logging.getLogger(__name__)
 # lifetime. Without these, a 6-branch investigation can theoretically
 # burn 6 * 500 = 3000 turns and tens of thousands of messages before
 # any branch hits its individual cap -- which has happened in production
-# (b4b1e5da: 1202 messages over 24h without convergence). All caps
+# (observed: 1202 messages over 24h without convergence). All caps
 # env-overridable for deep-chase investigations.
 _OVERALL_TURN_CAP = int(__import__("os").environ.get("VR_OVERALL_TURN_CAP", "500"))
 _INVESTIGATION_TURN_CAP = int(
@@ -340,7 +340,7 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 # Using created_at directly would punish investigations
                 # that sat queued during a long target ingestion: the
                 # moment a worker picked them up they'd insta-cap with
-                # zero actual execution time. See the 9e99eda0 incident
+                # zero actual execution time. See the observed incident
                 # (32h queue wait, all branches cap-killed on turn 1).
                 clock_start = inv.started_at or inv.created_at
                 if clock_start.tzinfo is None:

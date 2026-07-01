@@ -119,8 +119,8 @@ _FAILURE_ESCALATION_THRESHOLD: int = 5
 async def state_investigation_setup(input: dict[str, Any], services: Any) -> StateResult:
     """Validate + mark RUNNING. Returns input + resolved branch_id.
 
-    Stale-branch self-healing (added after observing investigation
-    e864f065 polling a closed halvar branch 736ceb58 after re-enqueue):
+    Stale-branch self-healing (added after observing an investigation
+    polling a closed halvar branch after re-enqueue):
 
       * **Primary task path** (no explicit branch_id): when picking the
         primary branch via ``parent_branch_id IS NULL``, filter to
@@ -334,12 +334,12 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
                 # that points back at this fresh primary so the audit
                 # trail is debuggable.
                 #
-                # Observed live on investigation e864f065 after the
+                # Observed live on one investigation after the
                 # 2026-05-28 self-heal: 3 fresh branches got spawned
                 # on top of 2 still-running siblings from days
                 # earlier, leaving 5 active branches plus 1 completed
-                # = 6 total instead of the expected 3. Operator
-                # noticed in the UI before this cleanup landed.
+                # = 6 total instead of the expected 3. Noticed
+                # in the UI before this cleanup landed.
                 orphans = (await uow.session.exec(
                     _select(VRInvestigationBranchRecord).where(
                         VRInvestigationBranchRecord.investigation_id == investigation_id,
@@ -421,7 +421,7 @@ async def state_investigation_setup(input: dict[str, Any], services: Any) -> Sta
     # first task got killed mid-setup) skipped panel spawn entirely.
     # The investigation got stuck single-persona forever even though
     # the operator-configured auto_deliberation panel was supposed to
-    # land. Diagnosed on MASVS inv df6345ce / 4b831a74 / 2c527537 --
+    # land. Diagnosed on three MASVS investigations --
     # all three stuck at 1 branch (halvar) after stall-recovery
     # re-enqueued them with branch_id.
     if _is_auto_deliberation_enabled():

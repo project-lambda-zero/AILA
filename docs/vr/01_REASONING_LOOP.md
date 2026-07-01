@@ -987,8 +987,8 @@ See `docs/LLM_INTEGRATION.md §13`.
 
 The wall-clock cap clocks from `coalesce(started_at, created_at)` so
 investigations whose only "age" is queue-wait time during long target
-ingestion are not prematurely killed. Caught by the WebKit JSC
-incident (`9e99eda0`) where every branch died at turn 1 with
+ingestion are not prematurely killed. Caught by an observed WebKit JSC
+incident where every branch died at turn 1 with
 `cap_exceeded:investigation_wall_clock`. Default `6 h` after the
 worker stamps `started_at`.
 
@@ -1016,7 +1016,7 @@ survivors.
 `post_draft_review_request` is idempotent. Dedupe keys on
 `auto_steering_key='draft_review_request:<outcome_id>'`; if a prior
 post exists, returns its id as a no-op. Observed 12 duplicate posts
-on a single outcome (`b3eebd6b`) before the fix.
+on a single outcome before the fix.
 
 ### 8.bis.13 Branch reaper uses ORM update
 
