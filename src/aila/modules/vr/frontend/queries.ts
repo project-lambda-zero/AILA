@@ -35,11 +35,10 @@ import { formatBranchDisplayName } from "./branchDisplay";
  *  action's mutation already invalidates the affected query keys.
  *
  *  Treating `paused` as non-live is deliberate: when the operator
- *  pauses, they want the UI to settle, not keep hammering the
- *  backend at 3-5s cadence (D-310 -- operator reported "it cant
- *  stop calling" on a paused investigation; backend access log
- *  showed 99 GETs to /vr/investigations/{id} in the recent
- *  window). The Resume mutation invalidates the investigation
+ *  pauses, the UI should settle, not keep hammering the
+ *  backend at 3-5s cadence (D-310 -- an observed regression on a
+ *  paused investigation left the backend access log showing 99
+ *  GETs to /vr/investigations/{id} in the recent window). The Resume mutation invalidates the investigation
  *  query, which triggers one refetch; the next refetch sees
  *  status=running and polling resumes automatically. */
 const _LIVE_INVESTIGATION_STATUSES: ReadonlySet<InvestigationStatus> = new Set([

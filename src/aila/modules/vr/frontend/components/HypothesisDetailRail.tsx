@@ -16,9 +16,9 @@ import type { HypothesisProjection } from "../queries";
  * its lifecycle state (live / rejected / mixed across branches), the
  * kill criterion, why it was plausible, and per-branch attribution.
  *
- * Collapse model (added 2026-05-28 after operator reported the rail
- * gets heavy on long-running investigations -- up to 53 hypotheses
- * per branch observed live):
+ * Collapse model (added 2026-05-28 after the rail was observed
+ * getting heavy on long-running investigations -- up to 53
+ * hypotheses per branch observed live):
  *
  *   * Whole-rail collapse -- chevron in card header hides every row.
  *     Default: open.

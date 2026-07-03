@@ -388,10 +388,10 @@ class TestRenderAvailableToolsWithSchemas:
             tool_specs=specs,
         )
         # Server section for a non-applicable kind is silently
-        # suppressed entirely; the operator complained that surfacing
-        # "NOT APPLICABLE: ida_headless" still gave the agent a hook
-        # to think about IDA tools on a source_repo target. Contract
-        # is now total absence.
+        # suppressed entirely; an observed regression was that
+        # surfacing "NOT APPLICABLE: ida_headless" still gave the agent
+        # a hook to think about IDA tools on a source_repo target.
+        # Contract is now total absence.
         assert "## ida_headless" not in out
         # Don't render the signature for a suppressed server
         assert "ida_headless.decompile(" not in out
