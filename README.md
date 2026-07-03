@@ -234,34 +234,6 @@ Target ingestion is split into three independently-tracked stages with per-stage
 
 Operator can resume a stuck target via `POST /vr/targets/{id}/resume-analysis`; the endpoint fans out per non-DONE stage. Reaper runs every minute via ARQ cron, flips RUNNING stages past their timeout to FAILED with `"reaper: RUNNING for Xs > Ys timeout"`.
 
-### Statistics (current deployment)
-
-| Measurement | Value |
-|---|---|
-| audit-mcp tools available | **58** (incl. 3 semble tools, 8 graph tools, 7 specialised search, 5 deep-audit, etc.) |
-| ida-headless-mcp tools | **81** |
-| Trailmark graph -- nginx | ~10k functions, ~100k call edges |
-| Trailmark graph -- firefox | **742,335 functions, 5M+ call edges** |
-| Semble index -- nginx | 16 MB pickle, ~250ms cold build |
-| Semble index -- openjpeg | 26 MB pickle, ~3s cold build |
-| Semble index -- firefox | **3.4 GB pickle, ~85 min cold build, ~9s warm restore** |
-| Semble chunks -- firefox | 700k+ across 17 languages (cpp 234k, c 221k, js 425k, rust 165k, ...) |
-| Read-function on firefox | 15+ min hang **->** ~30s first call + cached, <100ms subsequent |
-| Semantic search latency | ~250ms (nginx) / ~5ms in-process, ~200ms via MCP HTTP |
-| Cold start (3 indexes recovered) | ~30s including all semble pickle loads |
-
-### Bug-fix scorecard (recent)
-
-| Issue | Fix |
-|---|---|
-| firefox `read_function` 15-min hang | TypeResolver cached on `IndexEntry`; reused across calls (`audit-mcp d091d94`) |
-| audit-mcp full-server hang during semble build | Cold builds moved to a separate Python process (`audit-mcp 13dc2d6`) |
-| `attack_surface` returning 0 entries on every call | Adapter was looking up wrong response key (`surfaces` vs actual `entrypoints`); fixed (`AILA ec1b4f3`) |
-| `fuzzing_targets(threshold=...)` infinite loop | Per-action kwarg synonyms (was: global map rewrote correct `min_complexity` -> broken `threshold`) (`AILA ef1ca59`) |
-| Agent surveying 10+ turns without reading source | Survey-streak pivot circuit breaker (`AILA b8aa54f`) |
-| firefox classified as `python` (trailmark iteration order) | Byte-weighted language detection by walking `mcp_path` ourselves (`AILA c29d82b`) |
-| Module-side Tailwind classes had no CSS | Explicit `@source` directives in `globals.css` for every module path (`AILA 02ef955`) |
-
 For day-to-day MCP operations and the full VR agent design see [docs/vr/](docs/vr/).
 
 ## Malware Module
@@ -368,36 +340,6 @@ row count + the exact follow-up call shape
 access. The full xref array is preserved verbatim in `payload.xrefs`
 regardless of length; only the per-turn observable preview is trimmed.
 
-### Three tools added to ida-headless-mcp-exp (commit `f3d4147`+)
-
-The agent had no static path to constant strings outside the
-classifier-bucketed subset that `classify_strings` returns. Three
-synchronous tools fix the gap (full PE reader, no IDA round-trip):
-
-- **`list_strings(binary_id, min_length=4, filter_text="", section=None, count_only=False, ...)`** --
-  enumerates every printable ASCII + UTF-16LE run across all sections
-  with non-zero raw size. Returns per-section / per-encoding
-  breakdown always; `count_only=True` is the cheap pre-flight that
-  returns ONLY totals (no payload) so the agent can size unknown
-  binaries before paging.
-- **`read_memory(binary_id, address, size=64)`** -- VA -> file offset
-  via the PE section table, returns hex + ascii rendering. Clipped
-  at section boundaries so reads never bleed across sections.
-- **`get_string_at(binary_id, address, max_length=512, encoding="ascii")`** --
-  convenience wrapper around `read_memory` for resolving
-  null-terminated C-strings or UTF-16LE strings at a known VA.
-
-On a 813KB Delphi PE, `list_strings` returns 10,254 ASCII strings
-with `min_length=4` -- enough to surface every hardcoded C2 URL,
-embedded second-stage RAT config block in `.rsrc` UTF-16LE, and the
-full IOC surface (brand strings, AES keys, mutex names, persistence
-commands). The older `classify_strings` tool that bucketed strings
-by regex returned only 19 entries on the same binary; it has been
-added to `_ALWAYS_SUPPRESS` and is unreachable from the agent
-surface (the empty buckets convinced agents the binary held no
-strings worth looking at -- a load-bearing wrong inference that
-derailed entire investigations).
-
 ### Agent prompt: deterministic C2 config extraction
 
 The system prompt teaches a four-stage extraction workflow instead
@@ -497,65 +439,68 @@ state.json that the HTTP server's already-completed sweep missed).
 
 **Prerequisites**
 
+Required:
+
 - Python 3.11+
-- Node.js 20+
-- PostgreSQL 15+ with the `pgvector` extension available
-- Redis 6+
+- Node.js 20+ (`corepack enable` to activate pnpm)
+- PostgreSQL 15+ with `pgvector`
+- Redis 7+
+- An OpenAI-compatible LLM endpoint (OpenAI, Anthropic via LiteLLM, Ollama, vLLM, ...)
+
+Optional MCP servers (only if you want the `vr` or `malware` modules):
+
+- [audit-mcp](https://github.com/echel0nn/audit-mcp) on `:18822` -- `vr` source-repo targets
+- [ida-headless-mcp-exp](https://github.com/echel0nn/ida-headless-mcp-exp) on `:18821` -- `malware`, and `vr` on binary targets
+- [android-mcp](https://github.com/echel0nn/android-mcp) on `:18823` -- `vr` on `android_apk` targets
+
+The platform, `vulnerability`, `forensics`, and `hello_world` modules run without any MCP.
 
 **Steps**
 
-1. Clone the repository.
+1. Clone and install.
 
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/project-lambda-zero/AILA.git
    cd AILA
+   make install    # pip install -e ".[dev]"  +  corepack enable && pnpm install
    ```
 
-2. Install backend and frontend dependencies.
-
-   ```bash
-   make install
-   ```
-
-   Equivalent to `pip install -e ".[dev]"` plus `corepack enable && pnpm install`. The frontend is a pnpm workspace at the repo root; one install wires the shell, `@aila/typescript-config`, and all module packages.
-
-3. Copy the environment template and fill in real values.
+2. Configure environment.
 
    ```bash
    cp .env.example .env
    ```
 
-   At minimum, set `AILA_DATABASE_URL`, `AILA_PLATFORM_REDIS_URL`, `AILA_JWT_SECRET_KEY`, `AILA_ADMIN_PASSWORD` (first-boot bootstrap, removed afterward), and the `AILA_PLATFORM_LLM_*` group. Generate the JWT secret with `openssl rand -hex 32`. See [docs/ENV_VARS.md](docs/ENV_VARS.md) for the full reference.
+   Set at minimum `AILA_DATABASE_URL`, `AILA_PLATFORM_REDIS_URL`, `AILA_JWT_SECRET_KEY` (`openssl rand -hex 32`), `AILA_ADMIN_PASSWORD` (first-boot bootstrap, remove after), and the `AILA_PLATFORM_LLM_*` group. If you plan to use MCPs, uncomment the `AUDIT_MCP_URL` / `IDA_HEADLESS_URL` / `ANDROID_MCP_URL` block in `.env.example`. Full reference: [docs/ENV_VARS.md](docs/ENV_VARS.md).
 
-4. Bring up Postgres (pgvector) and Redis via Docker Compose.
+3. Bring up Postgres + Redis and initialize the schema.
 
    ```bash
    make dev-up
+   make db-init          # first run only: create tables + stamp Alembic head
+   # subsequent runs:
+   # make migrate
    ```
 
-   This launches `pgvector/pgvector:pg16` on `:5432` and `redis:7-alpine` on `127.0.0.1:6379`, defined in `infra/utilities/docker-compose.yml`. Idempotent. Use `make dev-down` to stop (keeps volumes), `make dev-reset` to wipe.
-
-5. Initialize or migrate the schema.
+4. Start MCP servers (skip if not using `vr` or `malware`). Each in its own terminal:
 
    ```bash
-   make db-init        # FIRST RUN ONLY: create tables + stamp Alembic head
-   make migrate        # subsequent runs: alembic upgrade head
+   audit-mcp --mode http --port 18822              # vr
+   ida-headless-http --port 18821                  # malware, and vr on binary targets
+   python -m android_mcp --mode http --port 18823  # vr on android_apk
    ```
 
-6. Start the services in three terminals.
+   See [docs/QUICKSTART.md](docs/QUICKSTART.md) section 4 for clone + install of each MCP.
+
+5. Start AILA in three terminals.
 
    ```bash
-   # Terminal 1 -- REST API on :8000
-   make backend
-
-   # Terminal 2 -- Vite dev server on :3000 (single SPA, all module UIs)
-   make frontend
-
-   # Terminal 3 -- ARQ worker, default queue
-   make worker
+   make backend      # REST API on :8000
+   make frontend     # Vite dev server on :3000 (single SPA, all module UIs)
+   make worker       # default ARQ queue
    ```
 
-   For per-module queue tracks, run additional workers:
+   Per-module workers when the corresponding module is in play:
 
    ```bash
    make worker-vr           # vulnerability research
@@ -564,10 +509,7 @@ state.json that the HTTP server's already-completed sweep missed).
    make worker-malware      # malware reverse engineering
    ```
 
-   On Windows, `bash start.sh` brings up audit-mcp + backend + 4 workers + frontend in a single command. Per-queue worker pool size is set via `WORKER_COUNT_<QUEUE>` env vars (e.g. `WORKER_COUNT_VR=3`, `WORKER_COUNT_MALWARE=2`, `WORKER_COUNT_SBD_NFR=0` to disable a queue). Defaults to 1 per queue. Bounce one queue's pool with `bash start.sh restart-worker <queue>`.
-
-For the expanded walkthrough including admin user creation, smoke tests, and
-common pitfalls, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
+For the full walkthrough (admin user creation, MCP install details, smoke tests, common pitfalls), see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ## Module Inventory
 
