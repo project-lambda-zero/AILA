@@ -23,9 +23,9 @@ PostgreSQL and Redis must be running locally on their default ports (`5432` and 
 
 | Server | Default port | Needed for | Repo |
 |--------|--------------|------------|------|
-| audit-mcp | `18822` | `vr` module (all source-repo targets); can also feed `vulnerability` intel workflows | [github.com/echel0nn/audit-mcp](https://github.com/echel0nn/audit-mcp) |
-| ida-headless-mcp | `18821` | `vr` binary targets, all `malware` investigations | [github.com/echel0nn/ida-headless-mcp-exp](https://github.com/echel0nn/ida-headless-mcp-exp) |
-| android-mcp | `18823` | `vr` audits against `android_apk` targets (MASVS L1/L2 pipeline) | [github.com/echel0nn/android-mcp](https://github.com/echel0nn/android-mcp) |
+| audit-mcp | `18822` | `vr` module (all source-repo targets); can also feed `vulnerability` intel workflows | [github.com/project-lambda-zero/audit-mcp](https://github.com/project-lambda-zero/audit-mcp) |
+| ida-headless-mcp | `18821` | `vr` binary targets, all `malware` investigations | [github.com/project-lambda-zero/ida-headless-mcp-exp](https://github.com/project-lambda-zero/ida-headless-mcp-exp) |
+| android-mcp | `18823` | `vr` audits against `android_apk` targets (MASVS L1/L2 pipeline) | [github.com/project-lambda-zero/android-mcp](https://github.com/project-lambda-zero/android-mcp) |
 
 All three are HTTP servers you run alongside AILA on the same host (or reachable over the network). The platform, `vulnerability`, `forensics`, and `hello_world` modules do NOT require any MCP. See section 4 below for install + start.
 
@@ -136,7 +136,7 @@ Each MCP is a separate HTTP server. Install and run each one in its own terminal
 Required for `malware`; required for `vr` on binary targets.
 
 ```bash
-git clone https://github.com/echel0nn/ida-headless-mcp-exp.git
+git clone https://github.com/project-lambda-zero/ida-headless-mcp-exp.git
 cd ida-headless-mcp-exp
 pip install -e .
 ida-headless-http --port 18821
@@ -149,7 +149,7 @@ This needs a working IDA Pro installation on the same host. See the repo's READM
 Required for `vr`. Needs Python 3.12+ (a separate venv from AILA's 3.11 is fine).
 
 ```bash
-git clone https://github.com/echel0nn/audit-mcp.git
+git clone https://github.com/project-lambda-zero/audit-mcp.git
 cd audit-mcp
 pip install -e .            # add .[gpu] for CUDA-accelerated dead-code analysis
 audit-mcp --mode http --port 18822
@@ -162,7 +162,7 @@ See [docs/VR_INSTALLATION_GUIDE.md](VR_INSTALLATION_GUIDE.md) for the full tunin
 Only required if you point `vr` at an `android_apk` target.
 
 ```bash
-git clone https://github.com/echel0nn/android-mcp.git
+git clone https://github.com/project-lambda-zero/android-mcp.git
 cd android-mcp
 pip install -e ".[dev,scanners,dynamic]"
 python -m android_mcp --mode http --port 18823

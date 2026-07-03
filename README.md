@@ -449,9 +449,9 @@ Required:
 
 Optional MCP servers (only if you want the `vr` or `malware` modules):
 
-- [audit-mcp](https://github.com/echel0nn/audit-mcp) on `:18822` -- `vr` source-repo targets
-- [ida-headless-mcp-exp](https://github.com/echel0nn/ida-headless-mcp-exp) on `:18821` -- `malware`, and `vr` on binary targets
-- [android-mcp](https://github.com/echel0nn/android-mcp) on `:18823` -- `vr` on `android_apk` targets
+- [audit-mcp](https://github.com/project-lambda-zero/audit-mcp) on `:18822` -- `vr` source-repo targets
+- [ida-headless-mcp-exp](https://github.com/project-lambda-zero/ida-headless-mcp-exp) on `:18821` -- `malware`, and `vr` on binary targets
+- [android-mcp](https://github.com/project-lambda-zero/android-mcp) on `:18823` -- `vr` on `android_apk` targets
 
 The platform, `vulnerability`, `forensics`, and `hello_world` modules run without any MCP.
 
