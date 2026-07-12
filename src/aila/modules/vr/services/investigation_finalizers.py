@@ -100,6 +100,20 @@ async def synthesize_no_finding_outcomes(
 
     Returns count of investigations resolved this tick.
     """
+    # Do not synthesize "no finding" outcomes while the LLM is
+    # unhealthy. During an outage every branch fails its turn and
+    # gets driven terminal with zero real work; synthesizing a
+    # no_finding memo then masks an infra failure as a clean audit.
+    # Mirror the guard in abandon_stale_branches_impl -- skip this
+    # tick and let the branches resume once the LLM recovers.
+    if is_llm_recently_unhealthy(600.0):
+        _log.info(
+            "synthesize_no_finding: skipping (LLM unhealthy within last "
+            "10 min -- orphaned branches are outage fallout, not a real "
+            "no-finding result)",
+        )
+        return 0
+
     inv = VRInvestigationRecord
     branch = VRInvestigationBranchRecord
 
@@ -210,6 +224,43 @@ async def synthesize_no_finding_outcomes(
 
         proposer_branch_id = unwrapped[0][0]
         total_turns = sum(r[2] for r in unwrapped)
+        # A zero-turn investigation never actually ran -- every branch
+        # reached terminal without completing a single reasoning turn
+        # (LLM outage, dispatch crash, or immediate abandonment). This
+        # is a failure, not a "we audited and found nothing" result.
+        # Mark it FAILED (retryable via reopen / re-enqueue) instead of
+        # synthesizing a hollow no_finding audit_memo that reads as a
+        # clean completion.
+        if total_turns == 0:
+            try:
+                await uow.session.exec(
+                    update(inv)
+                    .where(inv.id == inv_id)
+                    .where(inv.status == InvestigationStatus.RUNNING.value)
+                    .values(
+                        status=InvestigationStatus.FAILED.value,
+                        stopped_at=now,
+                        updated_at=now,
+                    ),
+                )
+                from aila.modules.vr.services.branch_cleanup import (
+                    close_orphan_branches_on_terminal,
+                )
+                await close_orphan_branches_on_terminal(
+                    uow, inv_id, reason="zero_turn_no_progress", now=now,
+                )
+                synthesized += 1
+                _log.info(
+                    "synthesize_no_finding: inv=%s marked FAILED (0 turns "
+                    "across %d branches -- never ran, not synthesizing a "
+                    "no_finding memo)", inv_id, len(unwrapped),
+                )
+            except (SQLAlchemyError, ImportError, RuntimeError) as exc:
+                _log.warning(
+                    "zero-turn FAILED close failed inv=%s: %s",
+                    inv_id, exc, exc_info=True,
+                )
+            continue
         summary_text = (
             "Investigation auto-closed by reconciler: every branch "
             "reached a terminal state without proposing a finding. "

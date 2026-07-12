@@ -5,6 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.1] - 2026-07-12 -- Reconciler no longer fabricates completions
+
+### Fixed
+
+- `synthesize_no_finding_outcomes` (the reconciler sweep that ensures
+  every investigation terminates with an outcome) could mark an
+  investigation `completed` with a synthetic `no_finding` audit_memo
+  even when it ran zero reasoning turns. During an LLM outage every
+  branch fails its turn and is driven terminal with no real work, so
+  the reconciler was reporting infrastructure failures as clean
+  "audited, found nothing" results. Two guards added:
+  - Skip the whole sweep while the LLM is unhealthy
+    (`is_llm_recently_unhealthy(600.0)`), matching the existing guard
+    in `abandon_stale_branches_impl`.
+  - When an orphaned investigation has zero turns across all branches,
+    mark it `failed` (retryable via reopen / re-enqueue) instead of
+    synthesizing a hollow audit_memo.
+
+---
+
 ## [0.2.0] - 2026-07-12 -- Retrieval-augmented reasoning case model
 
 The platform reasoning engine (shared by the vulnerability-research
