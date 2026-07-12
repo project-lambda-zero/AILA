@@ -5,6 +5,71 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.1] - 2026-07-12 -- Reconciler no longer fabricates completions
+
+### Fixed
+
+- `synthesize_no_finding_outcomes` (the reconciler sweep that ensures
+  every investigation terminates with an outcome) could mark an
+  investigation `completed` with a synthetic `no_finding` audit_memo
+  even when it ran zero reasoning turns. During an LLM outage every
+  branch fails its turn and is driven terminal with no real work, so
+  the reconciler was reporting infrastructure failures as clean
+  "audited, found nothing" results. Two guards added:
+  - Skip the whole sweep while the LLM is unhealthy
+    (`is_llm_recently_unhealthy(600.0)`), matching the existing guard
+    in `abandon_stale_branches_impl`.
+  - When an orphaned investigation has zero turns across all branches,
+    mark it `failed` (retryable via reopen / re-enqueue) instead of
+    synthesizing a hollow audit_memo.
+
+---
+
+## [0.2.0] - 2026-07-12 -- Retrieval-augmented reasoning case model
+
+The platform reasoning engine (shared by the vulnerability-research
+and malware modules) previously trimmed cumulative case state by
+blindly slicing it every turn: only the first 10 live hypotheses,
+the last 80 tool readings, and the last 15 agent scratchpad entries
+reached the model's prompt. On long investigations this silently
+dropped the agent's own state mid-run and degraded outcome quality.
+This release replaces blind slicing with a retrieval model: state
+the agent needs is always indexed and available on demand.
+
+### Added
+
+- New `recall` reasoning action with a `recall_keys` field on
+  `ReasoningTurnDecision`. The agent names tool-reading keys from the
+  always-visible index and the engine renders those bodies in full
+  on the next turn. Up to 8 keys stay pinned; a validator rejects an
+  empty `recall_keys`. Backward compatible: the field defaults to an
+  empty list and existing actions are unchanged.
+- Tool-readings INDEX in the case model: every stored reading renders
+  as `key (N lines / ~T tok) preview` each turn, so the agent can see
+  what is available to recall without the full body cost.
+- Recall guidance documented in the vr audit / kernel / hypervisor
+  system prompts and the malware analysis system prompt.
+
+### Changed
+
+- Live hypotheses now render in full (ceiling 60) instead of the
+  first 10, so an investigation's open threads are never hidden from
+  the agent.
+- Agent scratchpad now renders as a full index (ceiling 150) instead
+  of only the last 15 entries.
+- Tool readings render the most recent 12 in full plus any recalled
+  keys; older readings remain reachable through the index + recall
+  rather than being dropped.
+- Per-branch observable storage cap raised from 200 to 400 in the vr
+  and malware tool executors; the engine agent-key cap raised from 50
+  to 150. The `_recall.pinned` list is preserved across eviction
+  alongside `_directive.*`.
+
+No schema change: case state already persists in the existing
+`case_state_json` column, so this release needs no Alembic migration.
+
+---
+
 ## [0.1.0] - 2026-06-27 -- Initial public release
 
 AILA is a modular AI security platform. This first public release

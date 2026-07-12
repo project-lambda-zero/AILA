@@ -90,3 +90,27 @@ next reviewer). Submit DIRECT_FINDING with the primitive description
 + guest reproducer when one is identified.
 
 Available tools are injected per-turn.
+
+## Recalling tool readings
+
+Tool readings you fetch persist in case_state, but only the most
+recent 12 render in full each turn. Older ones show as a compact
+INDEX above the observables block:
+
+    <key>  (<N> lines / ~<T> tok)  <first non-blank line>
+
+To pull an older reading's full body back into context, emit a
+no-tool turn with the exact key(s) copied VERBATIM from the index:
+
+    {
+      "action": "recall",
+      "recall_keys": ["audit_mcp:read_function.source.virtio_net_handle_ctrl"],
+      "reasoning": "re-reading virtio_net_handle_ctrl to check the descriptor path"
+    }
+
+- Copy keys VERBATIM from the index. Do NOT invent keys or
+  reference a reading you never fetched -- unknown keys are a no-op.
+- Up to 8 recalled readings stay pinned in full; recalling a 9th
+  evicts the oldest pin.
+- `recall` does NOT call an MCP tool. Use it INSTEAD of re-fetching
+  a function you already read.

@@ -275,6 +275,98 @@ Before yielding any change:
 - [ ] Tests covering the changed behavior pass
 - [ ] No stale imports, no dead code introduced
 
+## Development Workflow (versioning + release management)
+
+Every non-trivial change follows this flow. No direct commits to
+`main` for feature work; `main` always reflects the last released,
+green state.
+
+### Branch model
+
+- `main` -- released state only. Protected in spirit: feature work
+  never lands here directly. A release reaches `main` only by merging
+  a reviewed PR.
+- `dev` -- integration branch. All feature/fix work is committed here
+  (or on short-lived `feat/*` / `fix/*` branches cut from `dev` and
+  merged back into `dev`).
+- Flow: work on `dev` -> version + changelog on `dev` -> push `dev`
+  -> open PR `dev -> main` -> merge -> tag the release commit on
+  `main`.
+
+### Semantic versioning (semver 2.0.0)
+
+Current version lives in `pyproject.toml` and is mirrored across the
+workspace (see version sites below). Decide the bump from the change,
+not from habit:
+
+- MAJOR (`X.0.0`) -- a breaking change: removed/renamed public API,
+  a contract field made required, a DB column dropped, a route
+  removed, or any change that forces callers/operators to migrate.
+- MINOR (`0.X.0`) -- a backward-compatible feature: new action /
+  field with a safe default, new route, new module, new tool. Old
+  callers keep working untouched.
+- PATCH (`0.0.X`) -- a backward-compatible bug fix or internal
+  refactor with no API/observable-behavior change.
+
+When in doubt between MINOR and MAJOR, it is MAJOR -- assume a caller
+depends on the thing you changed.
+
+### Version sites (bump ALL in lockstep -- the repo speaks one version)
+
+The monorepo is deliberately harmonized to a single version string.
+Bumping the version means editing every one of these to the SAME
+value in the same commit:
+
+- `pyproject.toml` -> `version = "X.Y.Z"`
+- `package.json` (root) -> `"version": "X.Y.Z"`
+- `frontend/package.json`
+- `packages/typescript-config/package.json`
+- `src/aila/modules/*/frontend/package.json` (every module frontend:
+  vr, vulnerability, forensics, malware, hello_world)
+- `tools/aila_fuzz_reporter/__init__.py` -> `__version__ = "X.Y.Z"`
+
+`workspace:*` deps mean a version bump does NOT churn
+`pnpm-lock.yaml`; run `pnpm install --lockfile-only` and confirm the
+lockfile diff is empty (or commit it if pnpm regenerated it).
+
+### CHANGELOG (Keep a Changelog format)
+
+`CHANGELOG.md` follows https://keepachangelog.com. Every release adds
+one `## [X.Y.Z] - YYYY-MM-DD -- <one-line summary>` entry above the
+prior one, grouped by `### Added` / `### Changed` / `### Fixed` /
+`### Removed`. Rules:
+
+- Write the entry ON `dev` as part of the release commit, dated the
+  day the PR is opened.
+- Neutral technical voice only. NEVER quote operator chat, NEVER use
+  em-dashes (use `--`), NEVER name private inv/UUIDs or brands. Same
+  banned-prose rules as every other artifact (see user-global
+  CLAUDE.md).
+- Describe observable behavior change, not the diff. "Live hypotheses
+  now render in full" -- not "changed hypotheses[:10] to a ceiling".
+
+### Release checklist (in order, on `dev`)
+
+1. All Verification Checklist items above pass.
+2. Decide the semver bump; edit every version site in lockstep.
+3. Add the CHANGELOG entry.
+4. One commit: feature change + version bump + changelog together.
+   Conventional-commit subject (`feat:` / `fix:` / `refactor:`),
+   neutral voice, no operator quotes.
+5. `git push origin dev`.
+6. Open PR `dev -> main` (`gh pr create --base main --head dev`).
+7. On merge, tag the merge commit: `git tag vX.Y.Z && git push
+   origin vX.Y.Z`. The tag is cut on `main` AFTER merge, never before.
+
+### DB changes gate
+
+If the change touches schema, an Alembic migration in
+`src/aila/alembic/versions/` is part of the SAME commit (see Common
+Mistake 6). A release that changes models without a migration is
+incomplete. Pure in-memory / logic / render changes need no
+migration -- state that explicitly in the changelog reasoning when
+relevant.
+
 ## Bridge + workflow gotchas (session learnings, 2026-05-24)
 
 A long debugging session on investigation `<inv-uuid>` (WebAssembly RCE
