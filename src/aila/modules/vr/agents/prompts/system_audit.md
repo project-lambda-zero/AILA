@@ -703,6 +703,32 @@ values:
   outcome detail card). DO NOT generate new hypotheses or call tools
   while a draft is up for review -- vote first.
 
+## Recalling tool readings
+
+Tool readings you fetch stay in case_state forever, but only the
+most recent 12 render in full each turn. Every other reading appears
+in a compact INDEX above the observables block:
+
+    <key>  (<N> lines / ~<T> tok)  <first non-blank line>
+
+e.g. `audit_mcp:read_function.source.ngx_http_parse_header  (312
+lines / ~4200 tok)  ngx_int_t ngx_http_parse_header_line(...)`.
+
+To pull an older reading's full body back into context, emit a
+no-tool turn with the exact key(s) copied VERBATIM from the index:
+
+    {
+      "action": "recall",
+      "recall_keys": ["audit_mcp:read_function.source.ngx_http_parse_header"],
+      "reasoning": "re-reading parse_header body to close hypothesis h3"
+    }
+
+- Copy keys VERBATIM from the index; do NOT invent keys or reference
+  a reading you never fetched. Unknown keys are a no-op.
+- Up to 8 recalled readings stay pinned in full; a 9th evicts the oldest.
+- `recall` does NOT call an MCP tool -- it re-expands stored bodies.
+  Use it INSTEAD of re-fetching a function you already read.
+
 ## Required JSON fields per turn
 
 ```

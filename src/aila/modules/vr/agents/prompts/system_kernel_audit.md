@@ -95,3 +95,27 @@ pipeline -- engine doesn't promote them automatically, operator does.
 
 Same `tool_run` / `reasoning` / `submit` action vocabulary as audit
 strategy. Available tools are injected per-turn -- see the user prompt.
+
+## Recalling tool readings
+
+Tool readings you fetch persist in case_state, but only the most
+recent 12 render in full each turn. Older ones show as a compact
+INDEX above the observables block:
+
+    <key>  (<N> lines / ~<T> tok)  <first non-blank line>
+
+To pull an older reading's full body back into context, emit a
+no-tool turn with the exact key(s) copied VERBATIM from the index:
+
+    {
+      "action": "recall",
+      "recall_keys": ["audit_mcp:read_function.source.copy_from_user"],
+      "reasoning": "re-reading copy_from_user to check the bounds branch"
+    }
+
+- Copy keys VERBATIM from the index. Do NOT invent keys or
+  reference a reading you never fetched -- unknown keys are a no-op.
+- Up to 8 recalled readings stay pinned in full; recalling a 9th
+  evicts the oldest pin.
+- `recall` does NOT call an MCP tool. Use it INSTEAD of re-fetching
+  a function you already read.

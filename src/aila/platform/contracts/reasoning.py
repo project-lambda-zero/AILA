@@ -29,6 +29,7 @@ ReasoningAction = Literal[
     "script_execute",
     "tool_run",
     "reasoning",
+    "recall",
     "submit",
     "submit_outcome_review",
     "edit_outcome",
@@ -221,6 +222,11 @@ class ReasoningTurnDecision(BaseModel):
     observables: dict[str, Any] = Field(default_factory=dict)
     script_content: str | None = None
     command: str | None = None
+    # Names observable keys the engine MUST pull into the next turn's
+    # prompt with their full uncapped body. Populated only when
+    # ``action == "recall"``. Copy keys verbatim from the tool-readings
+    # INDEX rendered in the prior turn's case_model.
+    recall_keys: list[str] = Field(default_factory=list)
     answer: str | None = None
     confidence: ReasoningConfidence | None = None
     provenance: EvidenceProvenance = Field(default_factory=EvidenceProvenance)
@@ -383,6 +389,42 @@ class ReasoningTurnDecision(BaseModel):
                 "in {approve, reject, request_edit, abstain}. Got: "
                 f"{self.review_vote!r}."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_recall(self) -> ReasoningTurnDecision:
+        """When ``action='recall'``, ``recall_keys`` MUST be a non-empty
+        list of non-empty strings naming observable keys the engine will
+        pin into the next prompt with their full uncapped body.
+
+        Without this check the agent burns a turn on a no-op recall:
+        the engine records the empty recall_keys, ``_recall.pinned`` is
+        unchanged, and the next turn renders the same INDEX with none
+        of the desired bodies pulled through. Catch the malformed
+        emission at the Pydantic boundary so the LLM client's
+        correction retry fires before a full investigation turn is
+        burned.
+        """
+        if self.action != "recall":
+            return self
+        if not isinstance(self.recall_keys, list) or not self.recall_keys:
+            raise ValueError(
+                "action='recall' requires `recall_keys` to be a "
+                "non-empty list of observable keys to pin into the "
+                "next turn's prompt with their full uncapped body. "
+                "Copy each key verbatim from the tool-readings INDEX "
+                "in your current case_model (e.g. "
+                "'audit_mcp:read_function.source.foo'). Got: "
+                f"{self.recall_keys!r}."
+            )
+        for idx, key in enumerate(self.recall_keys):
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError(
+                    "action='recall' requires every entry in "
+                    "`recall_keys` to be a non-empty string naming "
+                    "an observable key from the tool-readings INDEX. "
+                    f"recall_keys[{idx}]={key!r} is invalid."
+                )
         return self
 
     @model_validator(mode="after")

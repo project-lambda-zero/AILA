@@ -25,20 +25,30 @@ _log = logging.getLogger(__name__)
 __all__ = ["CyberReasoningEngine"]
 
 
-# Namespace prefixes the agent must not write to. Tool/directive keys
-# carry external-source metadata that the agent must not overwrite,
-# rename, or shadow via self-set observables.
+# Namespace prefixes the agent must not write to. Tool / directive /
+# recall keys carry external-source metadata (tool bodies, directive
+# lifts, engine-pinned recall list) that the agent must not overwrite,
+# rename, or shadow via self-set observables. ``_recall.pinned`` is
+# written exclusively by :meth:`absorb` when the agent emits
+# ``action="recall"``; blocking the ``_recall.`` prefix here also
+# exempts the pinned-key list from the agent-key eviction cap in the
+# same absorb() pass.
 _TOOL_PREFIXES: tuple[str, ...] = (
     "audit_mcp:", "audit_mcp.",
     "ida_headless:", "ida_headless.",
     "_directive.",
+    "_recall.",
 )
 
 # Hard cap on agent-self-set observable keys across all turns. Anything
-# past this point gets LRU-evicted by insertion order; tool/directive
-# keys are preserved by the partition in render_case_model and live
-# separately from this cap.
-_MAX_AGENT_KEYS_TOTAL: int = 50
+# past this point gets LRU-evicted by insertion order; tool / directive
+# / _recall.pinned keys are preserved by the partition in
+# render_case_model and live separately from this cap. Bumped 50 -> 150
+# alongside the recall-action redesign: the 262K-context runtime no
+# longer needs the old overflow-defense cap, and scratchpad now renders
+# whole up to a 150-key ceiling so the eviction threshold matches the
+# render ceiling.
+_MAX_AGENT_KEYS_TOTAL: int = 150
 
 # fix §131 -- DEFAULT profile table. Operators add new domains without a
 # code deploy by writing the profile JSON to ConfigRegistry under the key
@@ -317,13 +327,44 @@ class CyberReasoningEngine:
                 merged_live.append(new_h)
 
         observables = dict(case_state.observables)
+        # Engine-written pin list for the ``recall`` action. When the
+        # agent emits ``action="recall"`` with ``recall_keys=[...]``,
+        # merge those keys into the existing ``_recall.pinned`` list --
+        # dedup while preserving order and keep the most-recent 8 if
+        # over cap. render_case_model reads this list to render the
+        # named tool bodies FULL + UNCAPPED in the next turn's prompt.
+        # ``recall_keys`` is a first-class decision field; it is NOT
+        # absorbed as normal observables (the ``_recall.`` prefix on
+        # ``_TOOL_PREFIXES`` also blocks any agent attempt to write
+        # ``_recall.pinned`` directly through ``decision.observables``,
+        # so this branch is the only writer).
+        if decision.action == "recall" and decision.recall_keys:
+            pinned_raw = observables.get("_recall.pinned") or []
+            if not isinstance(pinned_raw, list):
+                pinned_raw = []
+            merged_pinned: list[str] = []
+            seen: set[str] = set()
+            for candidate in list(pinned_raw) + list(decision.recall_keys):
+                if not isinstance(candidate, str):
+                    continue
+                key = candidate.strip()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                merged_pinned.append(key)
+            # Keep the most-recent 8 (newest arrivals stay; agent can
+            # re-recall an evicted key any turn).
+            if len(merged_pinned) > 8:
+                merged_pinned = merged_pinned[-8:]
+            observables["_recall.pinned"] = merged_pinned
         # Cap agent-self-set observables to keep case_state bounded:
         #   (1) max 10 NEW keys per turn (anti-spam)
-        #   (2) block writes to tool / directive namespaces
-        #   (3) max 50 TOTAL agent-set keys across all turns -- LRU evict
-        #       oldest by dict-insertion order; tool + directive keys
-        #       are NEVER evicted (they're preserved by the partition
-        #       in render_case_model and live separately from the cap).
+        #   (2) block writes to tool / directive / _recall namespaces
+        #   (3) max _MAX_AGENT_KEYS_TOTAL agent-set keys across all
+        #       turns -- LRU evict oldest by dict-insertion order;
+        #       tool / directive / _recall.pinned keys are NEVER
+        #       evicted (they're preserved by the partition in
+        #       render_case_model and live separately from the cap).
         accepted = 0
         for k, v in decision.observables.items():
             key = str(k).strip()
@@ -358,14 +399,45 @@ class CyberReasoningEngine:
     def render_case_model(self, case_state: ReasoningCaseState) -> str:
         """Render a compact textual case model for the next turn prompt.
 
-        ``_directive.*`` observables are intentionally NOT rendered here.
-        The top-level prompt section ``_render_active_directives_section``
-        (in vuln_researcher) lifts those to PROMPT POSITION 2 so the
-        agent sees them before any framing. Rendering them here too
-        would duplicate the block lower in the prompt, splitting the
-        agent's attention. They're still filtered out of the regular
-        observables block below so they don't appear under that label.
+        ``_directive.*`` and ``_recall.*`` observables are intentionally
+        NOT rendered here as normal observables.
+
+        * ``_directive.*``: the top-level prompt section
+          ``_render_active_directives_section`` (in vuln_researcher)
+          lifts those to PROMPT POSITION 2 so the agent sees them
+          before any framing. Rendering them here too would duplicate
+          the block lower in the prompt, splitting the agent's
+          attention.
+        * ``_recall.*``: engine-internal bookkeeping (``_recall.pinned``
+          is the list of tool-reading keys currently pinned for
+          full-body rendering). It steers which tool_obs values render
+          uncapped below; surfacing it as a raw observable would just
+          confuse the agent.
+
+        Retrieval model (replaces the previous blind ``tool_obs[-80:]`` /
+        ``agent_obs[-15:]`` slice):
+
+        * Tool readings INDEX (all, up to ceiling 400) always renders --
+          one compact line per key with size + first-line preview.
+        * Tool readings shown IN FULL = the last 12 tool_obs keys by
+          insertion order UNION the keys in ``_recall.pinned``. Recalled
+          keys render uncapped; recent-only keys cap at 4000 chars and
+          are flagged so the agent knows it can pull the full body via
+          ``action="recall"``. A key in both renders once, in the
+          recalled (uncapped) form.
+        * Agent scratchpad renders ALL agent-set keys up to ceiling 150,
+          each value previewed at 240 chars.
         """
+        # Render ceilings + preview caps -- centralised so the frozen
+        # spec's numbers appear once each.
+        hyp_ceiling = 60
+        scratchpad_ceiling = 150
+        scratchpad_preview = 240
+        index_ceiling = 400
+        recent_full_count = 12
+        recent_full_cap = 4000
+        index_firstline_cap = 80
+
         parts: list[str] = []
         if self._has_contract(case_state.contract):
             parts.append("Contract:")
@@ -377,44 +449,6 @@ class CyberReasoningEngine:
         else:
             parts.append("Contract: (not parsed yet -- derive it this turn)")
 
-        # Partition observables so tool-generated readings (read_function
-        # bodies, taint_paths_to results, callers_of edges, semantic
-        # search hits) always survive prompt rendering. Without this,
-        # agents bloat their own case_state with self-invented scratchpad
-        # keys (sibling_*, mandatory_*, turns_without_*) and the 40-line
-        # display cap evicts the actual source bodies, so the agent
-        # re-calls read_function on names it already read.
-        #
-        # Tool keys are prefix-anchored: ``audit_mcp:*`` / ``audit_mcp.*``
-        # / ``ida_headless:*`` / ``ida_headless.*`` / ``android_mcp:*``
-        # / ``android_mcp.*``. ``_directive.*`` is already lifted to its
-        # own top-of-prompt section so we drop them. Everything else is
-        # "agent-set scratchpad" -- useful in moderation, hard-capped
-        # here too.
-        tool_prefixes = (
-            "audit_mcp:", "audit_mcp.",
-            "ida_headless:", "ida_headless.",
-            "android_mcp:", "android_mcp.",
-        )
-        tool_obs: list[tuple[str, Any]] = []
-        agent_obs: list[tuple[str, Any]] = []
-        for k, v in case_state.observables.items():
-            if k.startswith("_directive."):
-                continue
-            if any(k.startswith(p) for p in tool_prefixes):
-                tool_obs.append((k, v))
-            else:
-                agent_obs.append((k, v))
-        if tool_obs:
-            parts.append("Observables -- tool readings (cached source / graph data -- DO NOT re-fetch if listed here):")
-            for key, value in tool_obs[-80:]:
-                parts.append(f"  - {key} = {value}")
-        if agent_obs:
-            parts.append("Observables -- agent scratchpad (most recent 15):")
-            for key, value in agent_obs[-15:]:
-                parts.append(f"  - {key} = {value}")
-        if not tool_obs and not agent_obs:
-            parts.append("Observables: (none yet)")
         if case_state.hypotheses:
             live_count = len(case_state.hypotheses)
             header_suffix = ""
@@ -424,7 +458,7 @@ class CyberReasoningEngine:
                 header_suffix = "  (aging - prefer closing over adding)"
             parts.append(f"Live hypotheses ({live_count}):{header_suffix}")
             current_turn = case_state.current_turn or 0
-            for hypothesis in case_state.hypotheses[:10]:
+            for hypothesis in case_state.hypotheses[:hyp_ceiling]:
                 age_marker = ""
                 if hypothesis.opened_at_turn and current_turn:
                     age = current_turn - hypothesis.opened_at_turn
@@ -435,10 +469,15 @@ class CyberReasoningEngine:
                     elif age > 0:
                         age_marker = f" [alive {age} turns]"
                 parts.append(f"  - {hypothesis.id or '?'}: {hypothesis.claim}{age_marker}")
+                if hypothesis.why_plausible:
+                    parts.append(f"      why: {hypothesis.why_plausible}")
                 if hypothesis.kill_criterion:
                     parts.append(f"      kill: {hypothesis.kill_criterion}")
-            if live_count > 10:
-                parts.append(f"  ... and {live_count - 10} more (close them - rendering capped)")
+            if live_count > hyp_ceiling:
+                parts.append(
+                    f"  ... and {live_count - hyp_ceiling} more live hypotheses "
+                    f"(rendering ceiling {hyp_ceiling}; close some)"
+                )
         else:
             parts.append("Live hypotheses: (propose 2-3 this turn)")
 
@@ -446,6 +485,137 @@ class CyberReasoningEngine:
             parts.append(f"Rejected (do not re-propose, {len(case_state.rejected)} total):")
             for rejected in case_state.rejected[:10]:
                 parts.append(f"  - {rejected.id or '?'}: {rejected.claim} ({rejected.reason})")
+
+        # Partition observables so tool-generated readings (read_function
+        # bodies, taint_paths_to results, callers_of edges, semantic
+        # search hits) always survive prompt rendering. Without this,
+        # agents bloat their own case_state with self-invented scratchpad
+        # keys (sibling_*, mandatory_*, turns_without_*) and the render
+        # eviction drops the actual source bodies, so the agent re-calls
+        # read_function on names it already read.
+        #
+        # Tool keys are prefix-anchored: ``audit_mcp:*`` / ``audit_mcp.*``
+        # / ``ida_headless:*`` / ``ida_headless.*`` / ``android_mcp:*``
+        # / ``android_mcp.*``. ``_directive.*`` is already lifted to its
+        # own top-of-prompt section so we drop them. ``_recall.*`` is
+        # engine bookkeeping (drives the pinned-full section below) so
+        # we drop those too. Everything else is agent-set scratchpad.
+        tool_prefixes = (
+            "audit_mcp:", "audit_mcp.",
+            "ida_headless:", "ida_headless.",
+            "android_mcp:", "android_mcp.",
+        )
+        tool_obs: list[tuple[str, Any]] = []
+        agent_obs: list[tuple[str, Any]] = []
+        for k, v in case_state.observables.items():
+            if k.startswith("_directive.") or k.startswith("_recall."):
+                continue
+            if any(k.startswith(p) for p in tool_prefixes):
+                tool_obs.append((k, v))
+            else:
+                agent_obs.append((k, v))
+
+        # Read the engine-written pin list; only entries that actually
+        # exist in tool_obs pin -- a stale key (evicted by storage cap)
+        # is silently dropped from the pin set so the render stays
+        # consistent with the observed state.
+        pinned_raw = case_state.observables.get("_recall.pinned") or []
+        if not isinstance(pinned_raw, list):
+            pinned_raw = []
+        tool_obs_map = dict(tool_obs)
+        pinned_keys: list[str] = []
+        seen_pinned: set[str] = set()
+        for candidate in pinned_raw:
+            if not isinstance(candidate, str):
+                continue
+            key = candidate.strip()
+            if not key or key in seen_pinned:
+                continue
+            if key not in tool_obs_map:
+                # Stale pin (storage evicted the body). Drop silently;
+                # the agent can re-recall if the key reappears.
+                continue
+            seen_pinned.add(key)
+            pinned_keys.append(key)
+
+        if tool_obs:
+            index_total = len(tool_obs)
+            parts.append(
+                f"Observables -- tool readings INDEX ({index_total} total -- "
+                f"emit action=\"recall\" with recall_keys=[...] to pull full bodies):"
+            )
+            for key, value in tool_obs[:index_ceiling]:
+                body = str(value)
+                nlines = body.count("\n") + 1
+                ntok = len(body) // 4
+                first_line = ""
+                for candidate_line in body.split("\n"):
+                    stripped = candidate_line.strip()
+                    if stripped:
+                        first_line = stripped
+                        break
+                if len(first_line) > index_firstline_cap:
+                    first_line = first_line[:index_firstline_cap]
+                parts.append(
+                    f"  - {key}  ({nlines} lines / ~{ntok} tok)  {first_line}"
+                )
+            if index_total > index_ceiling:
+                parts.append(
+                    f"  ... and {index_total - index_ceiling} more tool readings "
+                    f"(indexing ceiling {index_ceiling})"
+                )
+
+            # Full-body section: recent recent_full_count keys by
+            # insertion order UNION the pinned set. Recalled keys
+            # render uncapped; recent-only keys cap at recent_full_cap
+            # chars with a preview tail so the agent knows a recall is
+            # available. A key in both renders once in the recalled form.
+            recent_keys = [k for k, _ in tool_obs[-recent_full_count:]]
+            pinned_set = set(pinned_keys)
+            # Order the full section as: recalled first (pinned order),
+            # then recent keys not already pinned (insertion order).
+            full_render_order: list[tuple[str, bool]] = [
+                (k, True) for k in pinned_keys
+            ]
+            for k in recent_keys:
+                if k not in pinned_set:
+                    full_render_order.append((k, False))
+            if full_render_order:
+                parts.append(
+                    "Observables -- tool readings shown in full (recent 12 + recalled):"
+                )
+                for key, is_recalled in full_render_order:
+                    body = str(tool_obs_map.get(key, ""))
+                    if is_recalled:
+                        parts.append(f"  - {key} =")
+                        parts.append(body)
+                    else:
+                        if len(body) > recent_full_cap:
+                            body = (
+                                body[:recent_full_cap]
+                                + "\n... [preview; recall this key for full body]"
+                            )
+                        parts.append(f"  - {key} =")
+                        parts.append(body)
+
+        if agent_obs:
+            scratchpad_total = len(agent_obs)
+            parts.append(
+                f"Observables -- agent scratchpad ({scratchpad_total} total):"
+            )
+            for key, value in agent_obs[:scratchpad_ceiling]:
+                preview = str(value)
+                if len(preview) > scratchpad_preview:
+                    preview = preview[:scratchpad_preview] + " ..."
+                parts.append(f"  - {key} = {preview}")
+            if scratchpad_total > scratchpad_ceiling:
+                parts.append(
+                    f"  ... and {scratchpad_total - scratchpad_ceiling} more "
+                    f"scratchpad keys (rendering ceiling {scratchpad_ceiling})"
+                )
+
+        if not tool_obs and not agent_obs:
+            parts.append("Observables: (none yet)")
 
         return "\n".join(parts)
 
