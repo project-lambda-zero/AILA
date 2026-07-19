@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 
 from ..platform.contracts._common import utc_now
-from .database import async_session_scope
+from .database import async_session_scope, session_scope
 from .db_models import ConfigEntryRecord
 
 __all__ = ["ConfigRegistry", "SchemaRegistry"]
@@ -150,6 +150,61 @@ class ConfigRegistry:
                     value=default_val,
                     expires_at=time.monotonic() + self._cache_ttl,
                 )
+            return default_val
+        return None
+
+    def get_sync(self, namespace: str, key: str) -> Any:
+        """Synchronous twin of :meth:`get` for sync call sites.
+
+        Same resolution order (env var > cache > DB value > schema default) as
+        the async ``get``, but usable from a plain ``def`` without producing an
+        un-awaited coroutine. Sync call sites (proxy resolution, budget ceiling,
+        worker bootstrap) previously called ``get`` without ``await`` and either
+        guarded with ``hasattr(x, "__await__")`` or -- when they forgot --
+        operated on the coroutine object itself (issue #65/#38).
+
+        The DB read uses the sync engine via ``session_scope`` (psycopg). Cache
+        access is lock-free by design: dict get/set are atomic under the GIL and
+        the check-then-populate race is benign -- at worst a redundant DB read
+        and an idempotent overwrite with the same value. The async ``_cache_lock``
+        cannot be acquired from a sync context, so it is intentionally not used
+        here.
+        """
+        env_name = f"AILA_{namespace.upper()}_{key.upper()}"
+        env_val = os.environ.get(env_name)
+
+        schema = self._schemas.get(namespace)
+        field_info = schema.model_fields.get(key) if schema else None
+
+        if env_val is not None:
+            return _cast_value(env_val, field_info)
+
+        cache_key = (namespace, key)
+        entry = self._cache.get(cache_key)
+        if entry is not None and time.monotonic() < entry.expires_at:
+            return entry.value
+
+        with session_scope() as session:
+            row = session.exec(
+                select(ConfigEntryRecord).where(
+                    ConfigEntryRecord.namespace == namespace,
+                    ConfigEntryRecord.key == key,
+                )
+            ).first()
+            if row is not None:
+                value = _cast_value(row.value, field_info)
+                self._cache[cache_key] = _CacheEntry(
+                    value=value,
+                    expires_at=time.monotonic() + self._cache_ttl,
+                )
+                return value
+
+        if schema and field_info is not None:
+            default_val = field_info.default
+            self._cache[cache_key] = _CacheEntry(
+                value=default_val,
+                expires_at=time.monotonic() + self._cache_ttl,
+            )
             return default_val
         return None
 
