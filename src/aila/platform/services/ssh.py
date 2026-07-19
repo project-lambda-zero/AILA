@@ -14,6 +14,7 @@ from ...storage.secrets import SecretStore
 from ..config import PlatformSettings
 from ..contracts.platform import RegisteredSystem, SSHIntegrationInput
 from ..exceptions import AuthenticationError, TimeoutError, UpstreamError, ValidationError
+from .log_redact import redact_command_line
 
 
 class SSHConnectionPool:
@@ -199,18 +200,19 @@ class SSHService:
                         raise TimeoutError(
                             f"SSH command for {payload.name} ({payload.host}) closed "
                             f"its streams but did not emit an exit status within 30s "
-                            f"(command likely detached a child). Command: {command[:200]}"
+                            f"(command likely detached a child). Command: {redact_command_line(command)[:200]}"
                         )
                     _time.sleep(0.1)
                 exit_code = stdout.channel.recv_exit_status()
             except builtins.TimeoutError as exc:
                 raise TimeoutError(
                     f"SSH command for {payload.name} ({payload.host}) idle "
-                    f">{timeout_seconds}s with no output. Command: {command[:200]}"
+                    f">{timeout_seconds}s with no output. Command: {redact_command_line(command)[:200]}"
                 ) from exc
             if exit_code != 0:
+                redacted_stderr = redact_command_line(error_output)
                 raise UpstreamError(
-                    f"SSH command failed for {payload.name} ({payload.host}) with exit code {exit_code}: {error_output}"
+                    f"SSH command failed for {payload.name} ({payload.host}) with exit code {exit_code}: {redacted_stderr}"
                 )
             return output
         except paramiko.AuthenticationException as exc:
