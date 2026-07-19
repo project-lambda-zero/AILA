@@ -10,6 +10,7 @@ from ...platform.contracts._common import utc_now
 from ...storage.database import async_session_scope
 from ...storage.db_models import KnowledgeEntryRecord
 from ..config import PlatformSettings
+from ..services.runtime import run_blocking_io
 from ._common import Tool, normalize_limit, require_text
 
 __all__ = [
@@ -74,7 +75,7 @@ class KnowledgeStoreTool(Tool):
         model = _get_embedding_model()
         # Embedding computed outside transaction -- keep write lock short (per research pitfall 2)
         # pgvector accepts list[float], not raw bytes (Pitfall 3)
-        embedding_list = model.encode(content).tolist()
+        embedding_list = (await run_blocking_io(model.encode, content)).tolist()
         meta_json = json.dumps(meta)
 
         async with async_session_scope(self.settings) as session:
@@ -166,7 +167,7 @@ class KnowledgeRetrieveTool(Tool):
         limit = normalize_limit(limit, default=10, maximum=50)
         model = _get_embedding_model()
         # pgvector accepts list[float], not raw bytes (Pitfall 3)
-        query_embedding = model.encode(query).tolist()
+        query_embedding = (await run_blocking_io(model.encode, query)).tolist()
         candidate_limit = limit * 10
 
         async with async_session_scope(self.settings) as session:

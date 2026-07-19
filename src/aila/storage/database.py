@@ -16,6 +16,7 @@ a SchemaRegistry is passed to init_db().
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import threading
 from contextlib import asynccontextmanager, contextmanager
@@ -227,7 +228,8 @@ async def backup_database(
     dest.parent.mkdir(parents=True, exist_ok=True)
     # pg_dump requires a libpq-compatible URL (no +asyncpg driver prefix).
     pg_url = url.replace("+asyncpg", "")
-    result = subprocess.run(
+    result = await asyncio.to_thread(
+        subprocess.run,
         ["pg_dump", "--format=custom", f"--file={dest}", pg_url],
         capture_output=True,
         text=True,
