@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 __all__ = [
     "ReasoningAction",
@@ -158,6 +159,23 @@ class ReasoningGraphDiff(BaseModel):
     added_edges: list[ReasoningGraphEdge] = Field(default_factory=list)
     removed_edges: list[ReasoningGraphEdge] = Field(default_factory=list)
 
+def _require_json_serializable(value: dict[str, Any]) -> dict[str, Any]:
+    """Reject an observables dict that cannot round-trip through json.dumps.
+
+    observables is persisted to the DB and passed as task kwargs, both of which
+    json-encode it. A datetime, bytes, set, or custom object passes Pydantic's
+    ``dict[str, Any]`` check but crashes later at serialization time (issue
+    #61). Fail fast at construction with the offending detail instead.
+    """
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"observables must be JSON-serializable (DB + task-kwarg persistence): {exc}"
+        ) from exc
+    return value
+
+
 class ReasoningCaseState(BaseModel):
     """Normalized reasoning state carried across investigation turns."""
 
@@ -171,6 +189,11 @@ class ReasoningCaseState(BaseModel):
     # hypothesis.opened_at_turn). 0 means "never absorbed with a turn
     # number" (legacy rows). Filled in by ``absorb(turn_number=N)``.
     current_turn: int = 0
+
+    @field_validator("observables")
+    @classmethod
+    def _observables_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _require_json_serializable(v)
 
 
 class ReasoningOperatorSteering(BaseModel):
@@ -266,6 +289,11 @@ class ReasoningTurnDecision(BaseModel):
     edit_patches: dict[str, Any] = Field(default_factory=dict)
     edit_comment: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("observables")
+    @classmethod
+    def _observables_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _require_json_serializable(v)
 
     @model_validator(mode="after")
     def _validate_tool_run_command(self) -> ReasoningTurnDecision:

@@ -9,10 +9,13 @@ fields so agents cannot smuggle extra keys.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from pydantic import ValidationError
 
 from aila.platform.contracts.platform import RegisteredSystem, SSHIntegrationInput
+from aila.platform.contracts.reasoning import ReasoningCaseState, ReasoningTurnDecision
 
 
 def test_registered_system_ignores_undeclared_db_columns() -> None:
@@ -61,3 +64,23 @@ def test_ssh_integration_input_accepts_declared_fields() -> None:
     )
     assert payload.port == 22
     assert payload.distro == "unknown"
+
+
+def test_case_state_rejects_non_json_observables() -> None:
+    """A datetime in observables fails at construction, not later at json.dumps."""
+    with pytest.raises(ValidationError):
+        ReasoningCaseState(observables={"when": datetime(2026, 7, 19)})
+
+
+def test_turn_decision_rejects_non_json_observables() -> None:
+    """Bytes in observables fail at construction."""
+    with pytest.raises(ValidationError):
+        ReasoningTurnDecision(reasoning="x", observables={"raw": b"\x00\x01"})
+
+
+def test_observables_accept_plain_json_values() -> None:
+    """JSON-serializable observables still construct (regression guard)."""
+    cs = ReasoningCaseState(observables={"k": "v", "n": 1, "nested": {"a": [1, 2]}})
+    assert cs.observables["n"] == 1
+    td = ReasoningTurnDecision(reasoning="x", observables={"k": "v"})
+    assert td.observables["k"] == "v"
