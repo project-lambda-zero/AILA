@@ -20,6 +20,24 @@ class _StubRegistry:
     def get(self, namespace: str, key: str) -> Any:
         return self._data.get(f"{namespace}.{key}")
 
+    def get_sync(self, namespace: str, key: str) -> Any:
+        return self._data.get(f"{namespace}.{key}")
+
+
+class _AsyncGetStubRegistry:
+    """Registry whose ``get`` is async (like the real ConfigRegistry) and whose
+    ``get_sync`` is the sync twin. Reproduces production shape: calling ``get``
+    without await yields a coroutine, not a value."""
+
+    def __init__(self, data: dict[str, Any] | None = None) -> None:
+        self._data: dict[str, Any] = data or {}
+
+    async def get(self, namespace: str, key: str) -> Any:
+        return self._data.get(f"{namespace}.{key}")
+
+    def get_sync(self, namespace: str, key: str) -> Any:
+        return self._data.get(f"{namespace}.{key}")
+
 
 # ---------------------------------------------------------------------------
 # CostTracker.record
@@ -180,6 +198,20 @@ class TestBudgetConfigRead:
         # Change ceiling to 80
         reg._data["platform.llm_budget_max_total_tokens_scoring"] = 80
         # Second check: 100 >= 80 -> raises
+        with pytest.raises(BudgetExceededError):
+            tracker.check_budget("r1", "scoring")
+
+
+class TestBudgetCeilingUsesSyncResolver:
+    """_resolve_ceiling must use get_sync so the async registry.get does not
+    return an un-awaited coroutine that silently disables the budget (#38)."""
+
+    def test_ceiling_enforced_with_async_registry(self) -> None:
+        reg = _AsyncGetStubRegistry(
+            {"platform.llm_budget_max_total_tokens_scoring": 100}
+        )
+        tracker = CostTracker(RunMemory(), reg)
+        tracker.record("r1", {"prompt_tokens": 60, "completion_tokens": 50})
         with pytest.raises(BudgetExceededError):
             tracker.check_budget("r1", "scoring")
 
