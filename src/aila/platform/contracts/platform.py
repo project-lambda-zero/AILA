@@ -112,7 +112,16 @@ class RegisteredSystem(SSHIntegrationInput):
 
     Extends SSHIntegrationInput with the database-assigned id and timestamps.
     Used as the read shape from SystemRegistryTool list/get actions.
+
+    Unlike the write payload, this read shape sets ``extra="ignore"``: it is
+    constructed from ORM rows that carry columns the contract does not declare
+    (team_id, private_key_secret_id, and any future column). Inheriting the
+    parent's ``extra="forbid"`` would raise at response-serialization time on
+    the next migration that adds a column (issue #54/#61). The write payload
+    keeps ``forbid`` so agents cannot smuggle undeclared fields.
     """
+
+    model_config = ConfigDict(extra="ignore")
 
     id: int | None = None
     created_at: datetime | None = None
