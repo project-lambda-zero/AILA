@@ -17,15 +17,24 @@ import pytest
 
 from aila.platform.exceptions import (
     AILAError,
+    AuthenticationError,
     ConfigValueMissingError,
     MissingApiKeyError,
     ModulePlatformNotReadyError,
+    NotFoundError,
+    RateLimitError,
     RouterError,
     SSHConnectionFailedError,
+    TimeoutError,
+    UpstreamError,
+    ValidationError,
     WorkerUnreachableError,
 )
 
 # The canonical D-20 mapping. Do not mutate without revising phase decisions.
+# Issue #54 (2026-07-19): the six pre-existing AILAError subclasses joined the
+# taxonomy with their own ClassVar code/http_status, so they are now covered
+# by the same locked-contract tests.
 _D20_MAPPING = [
     (MissingApiKeyError, "MISSING_API_KEY", 503),
     (SSHConnectionFailedError, "SSH_CONNECTION_FAILED", 502),
@@ -33,6 +42,12 @@ _D20_MAPPING = [
     (ModulePlatformNotReadyError, "MODULE_PLATFORM_NOT_READY", 503),
     (ConfigValueMissingError, "CONFIG_VALUE_MISSING", 500),
     (WorkerUnreachableError, "WORKER_UNREACHABLE", 503),
+    (AuthenticationError, "AUTHENTICATION_ERROR", 401),
+    (RateLimitError, "RATE_LIMIT_ERROR", 429),
+    (NotFoundError, "NOT_FOUND_ERROR", 404),
+    (ValidationError, "VALIDATION_ERROR", 422),
+    (UpstreamError, "UPSTREAM_ERROR", 502),
+    (TimeoutError, "TIMEOUT_ERROR", 504),
 ]
 
 

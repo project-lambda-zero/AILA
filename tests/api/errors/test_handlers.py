@@ -25,11 +25,17 @@ from aila.platform.exceptions import (
     MissingApiKeyError,
     ModulePlatformNotReadyError,
     NotFoundError,
+    RateLimitError,
     RouterError,
     SSHConnectionFailedError,
+    TimeoutError,
+    UpstreamError,
+    ValidationError,
     WorkerUnreachableError,
 )
 
+# Issue #54 (2026-07-19): the six pre-existing legacy subclasses now carry real
+# ClassVar code/http_status, so they are exercised end-to-end here too.
 _D20_MAPPING = [
     (MissingApiKeyError, "MISSING_API_KEY", 503),
     (SSHConnectionFailedError, "SSH_CONNECTION_FAILED", 502),
@@ -37,6 +43,12 @@ _D20_MAPPING = [
     (ModulePlatformNotReadyError, "MODULE_PLATFORM_NOT_READY", 503),
     (ConfigValueMissingError, "CONFIG_VALUE_MISSING", 500),
     (WorkerUnreachableError, "WORKER_UNREACHABLE", 503),
+    (AuthenticationError, "AUTHENTICATION_ERROR", 401),
+    (RateLimitError, "RATE_LIMIT_ERROR", 429),
+    (NotFoundError, "NOT_FOUND_ERROR", 404),
+    (ValidationError, "VALIDATION_ERROR", 422),
+    (UpstreamError, "UPSTREAM_ERROR", 502),
+    (TimeoutError, "TIMEOUT_ERROR", 504),
 ]
 
 
@@ -71,10 +83,10 @@ def _assert_envelope_shape(body: dict) -> None:
 
 
 @pytest.mark.parametrize("cls,expected_code,expected_status", _D20_MAPPING)
-def test_handler_emits_envelope_for_each_of_six(
+def test_handler_emits_envelope_for_each_typed_error(
     cls: type[AILAError], expected_code: str, expected_status: int
 ) -> None:
-    """Each of the six D-20 typed errors produces the correct envelope + status."""
+    """Each typed error (six D-20 + six legacy per #54) produces the correct envelope + status."""
     app = _build_app({"/raise": cls})
     client = TestClient(app, raise_server_exceptions=False)
 
@@ -102,10 +114,15 @@ def test_handler_emits_envelope_for_typed_error() -> None:
     assert body["trace_id"] is None or isinstance(body["trace_id"], str)
 
 
-def test_handler_handles_pre_existing_aila_error_without_http_status() -> None:
-    """Pre-existing AILAError subclasses lack ClassVar http_status -- handler must
-    fall back to 500 and still emit the envelope shape (preflight BE-E)."""
-    app = _build_app({"/raise": AuthenticationError})
+def test_handler_falls_back_to_500_for_undeclared_subclass() -> None:
+    """An AILAError subclass that declares no ClassVar taxonomy still gets the
+    500 fallback + safe envelope. The fallback path is retained for future
+    subclasses; issue #54 gave the six named legacy classes real statuses."""
+
+    class _UndeclaredError(AILAError):
+        pass
+
+    app = _build_app({"/raise": _UndeclaredError})
     client = TestClient(app, raise_server_exceptions=False)
 
     resp = client.get("/raise")
@@ -118,18 +135,6 @@ def test_handler_handles_pre_existing_aila_error_without_http_status() -> None:
     # message must NOT leak str(exc) ("boom").
     assert "boom" not in body["message"].lower()
     assert "traceback" not in body["message"].lower()
-
-
-def test_handler_handles_notfound_without_classvar() -> None:
-    """NotFoundError (legacy) also goes through the 500 fallback path."""
-    app = _build_app({"/raise": NotFoundError})
-    client = TestClient(app, raise_server_exceptions=False)
-
-    resp = client.get("/raise")
-    body = resp.json()
-
-    assert resp.status_code == 500
-    _assert_envelope_shape(body)
 
 
 def test_handler_fallback_for_generic_exception() -> None:

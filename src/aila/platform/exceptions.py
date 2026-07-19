@@ -35,6 +35,10 @@ class AuthenticationError(AILAError):
     providers. Maps to HTTP 401 at the API layer.
     """
 
+    code: ClassVar[str] = "AUTHENTICATION_ERROR"
+    http_status: ClassVar[int] = 401
+    user_message: ClassVar[str] = "Authentication failed."
+
 
 class RateLimitError(AILAError):
     """Raised when an external service enforces a request rate limit.
@@ -44,6 +48,10 @@ class RateLimitError(AILAError):
     API layer.
     """
 
+    code: ClassVar[str] = "RATE_LIMIT_ERROR"
+    http_status: ClassVar[int] = 429
+    user_message: ClassVar[str] = "Rate limit exceeded; retry after a delay."
+
 
 class NotFoundError(AILAError):
     """Raised when a requested resource does not exist.
@@ -51,6 +59,10 @@ class NotFoundError(AILAError):
     Covers missing DB records (run_id not found, no cached report) and 404
     responses from external APIs. Maps to HTTP 404 at the API layer.
     """
+
+    code: ClassVar[str] = "NOT_FOUND_ERROR"
+    http_status: ClassVar[int] = 404
+    user_message: ClassVar[str] = "The requested resource was not found."
 
 
 class ValidationError(AILAError):
@@ -61,6 +73,10 @@ class ValidationError(AILAError):
     an unsupported operation). Maps to HTTP 422 at the API layer.
     """
 
+    code: ClassVar[str] = "VALIDATION_ERROR"
+    http_status: ClassVar[int] = 422
+    user_message: ClassVar[str] = "The request failed validation."
+
 
 class UpstreamError(AILAError):
     """Raised when an external dependency fails.
@@ -70,6 +86,10 @@ class UpstreamError(AILAError):
     at the API layer.
     """
 
+    code: ClassVar[str] = "UPSTREAM_ERROR"
+    http_status: ClassVar[int] = 502
+    user_message: ClassVar[str] = "An upstream dependency failed."
+
 
 class TimeoutError(AILAError):
     """Raised when an external call exceeds its configured deadline.
@@ -77,6 +97,10 @@ class TimeoutError(AILAError):
     Covers SSH command timeouts and HTTP request timeouts on provider calls.
     Maps to HTTP 504 at the API layer.
     """
+
+    code: ClassVar[str] = "TIMEOUT_ERROR"
+    http_status: ClassVar[int] = 504
+    user_message: ClassVar[str] = "The operation timed out."
 
 
 # ---------------------------------------------------------------------------
