@@ -2753,6 +2753,7 @@ def create_vr_router() -> APIRouter:
                     h["audit_mcp_index_id"] = new_index_id
                     refreshed_row.mcp_handles_json = _json.dumps(h)
                     uow.session.add(refreshed_row)
+                    await uow.commit()
 
         return DataEnvelope(data={
             "target_id": target_id,
