@@ -23,6 +23,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time as _time_mod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -58,7 +59,6 @@ logger = logging.getLogger(__name__)
 # branches may have hit the same outage.
 _LAST_LLM_OK_AT: float = 0.0
 _LAST_LLM_ERROR_AT: float = 0.0
-_LLM_HEALTH_LOCK = asyncio.Lock()
 
 
 def _record_llm_ok() -> None:
@@ -166,9 +166,18 @@ def _get_rejection_markers() -> tuple[str, ...]:
 
 
 def _model_supports_temperature(model_id: str) -> bool:
-    """Return False when the routed model is known to reject ``temperature``."""
+    """Return False when the routed model is known to reject ``temperature``.
+
+    Markers match on alphanumeric boundaries so a short marker like ``o1`` does
+    not spuriously fire inside an unrelated id (``proto1``, ``audio1``); the
+    old ``marker in mid`` substring test stripped temperature from those by
+    accident (issue #44).
+    """
     mid = (model_id or "").lower()
-    return not any(marker in mid for marker in _get_rejection_markers())
+    return not any(
+        re.search(rf"(?<![a-z0-9]){re.escape(marker)}(?![a-z0-9])", mid)
+        for marker in _get_rejection_markers()
+    )
 
 
 def _strip_json_fences(content: str) -> str:
