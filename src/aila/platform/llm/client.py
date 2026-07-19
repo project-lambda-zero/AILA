@@ -250,7 +250,16 @@ class LLMResponse:
     usage: dict[str, int] = field(default_factory=dict)
     disabled: bool = False
     finish_reason: str = ""
-    # Pipeline metadata (Phase 116) -- default None, transparent to existing callers
+    # Pipeline metadata (Phase 116) -- default None, transparent to existing callers.
+    # _enrich_response() populates these from the pipeline ctx after the
+    # classify / gate / seal steps run. Declaring them is required: the
+    # dataclass is frozen + slots, so _enrich_response constructing with these
+    # kwargs raised TypeError the moment any step wrote a non-None value
+    # (issue #44).
+    classification: Any = None
+    confidence: Any = None
+    seal_id: str | None = None
+    pipeline_metadata: dict[str, Any] | None = None
 # Retry budget -- TIGHT BY DESIGN.
 #
 # Background (the change shipped on 2026-06-13 after the maddie /
