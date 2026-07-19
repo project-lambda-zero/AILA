@@ -11,12 +11,23 @@ the real DB, middleware chain, or platform lifespan.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 import structlog
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
+import aila.api.errors as errors_pkg
+from aila.api.app import create_app
 from aila.api.errors import ErrorEnvelope, register_error_handlers
+from aila.api.errors.handlers import (
+    _derive_module_label,
+    generic_error_handler,
+    typed_error_handler,
+    validation_error_handler,
+)
 from aila.api.errors.hints import ERROR_HINTS
 from aila.platform.exceptions import (
     AILAError,
@@ -163,10 +174,6 @@ def test_handler_includes_trace_id_from_structlog() -> None:
     exposes it as ``trace_id``. We call the handler directly (no HTTP) to
     bind contextvars on the same thread the handler reads them from.
     """
-    import asyncio
-
-    from aila.api.errors.handlers import typed_error_handler
-
     async def _drive() -> ErrorEnvelope:
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(correlation_id="trace-xyz-123")
@@ -185,10 +192,6 @@ def test_handler_includes_trace_id_from_structlog() -> None:
 
 def test_handler_handles_middleware_error_with_no_trace_id(monkeypatch) -> None:
     """When contextvars is empty, trace_id is None and no crash occurs (D-26)."""
-    import asyncio
-
-    from aila.api.errors.handlers import typed_error_handler
-
     monkeypatch.setattr(
         "aila.api.errors.handlers.structlog.contextvars.get_contextvars",
         lambda: {},
@@ -208,52 +211,42 @@ def test_handler_handles_middleware_error_with_no_trace_id(monkeypatch) -> None:
 
 def test_handler_module_label_derivation_nested_modules() -> None:
     """aila.modules.X.* → module label ``X`` (preflight algorithm)."""
-    from aila.api.errors.handlers import _derive_module_label
-
-    class _FakeExc(Exception):
+    class _FakeError(Exception):
         pass
 
-    _FakeExc.__module__ = "aila.modules.vulnerability.services.reports"
-    assert _derive_module_label(_FakeExc("x")) == "vulnerability"
+    _FakeError.__module__ = "aila.modules.vulnerability.services.reports"
+    assert _derive_module_label(_FakeError("x")) == "vulnerability"
 
 
 def test_handler_module_label_derivation_platform() -> None:
     """aila.platform.* → module label ``platform``."""
-    from aila.api.errors.handlers import _derive_module_label
-
-    class _FakeExc(Exception):
+    class _FakeError(Exception):
         pass
 
-    _FakeExc.__module__ = "aila.platform.llm.client"
-    assert _derive_module_label(_FakeExc("x")) == "platform"
+    _FakeError.__module__ = "aila.platform.llm.client"
+    assert _derive_module_label(_FakeError("x")) == "platform"
 
 
 def test_handler_module_label_derivation_api() -> None:
     """aila.api.* → module label ``api``."""
-    from aila.api.errors.handlers import _derive_module_label
-
-    class _FakeExc(Exception):
+    class _FakeError(Exception):
         pass
 
-    _FakeExc.__module__ = "aila.api.routers.foo"
-    assert _derive_module_label(_FakeExc("x")) == "api"
+    _FakeError.__module__ = "aila.api.routers.foo"
+    assert _derive_module_label(_FakeError("x")) == "api"
 
 
 def test_handler_module_label_fallback_for_unknown_prefix() -> None:
     """Modules not rooted at ``aila`` fall back to ``platform``."""
-    from aila.api.errors.handlers import _derive_module_label
-
-    class _FakeExc(Exception):
+    class _FakeError(Exception):
         pass
 
-    _FakeExc.__module__ = "some.third.party.lib"
-    assert _derive_module_label(_FakeExc("x")) == "platform"
+    _FakeError.__module__ = "some.third.party.lib"
+    assert _derive_module_label(_FakeError("x")) == "platform"
 
 
 def test_handler_registered_on_app() -> None:
     """After create_app()/register_error_handlers, all three handlers are wired."""
-    from fastapi.exceptions import RequestValidationError
-
     app = FastAPI()
     register_error_handlers(app)
 
@@ -265,24 +258,13 @@ def test_handler_registered_on_app() -> None:
 
 def test_errors_package_phase2_exports() -> None:
     """Phase-2 package exports include register_error_handlers."""
-    import aila.api.errors as errors_pkg
-
     assert hasattr(errors_pkg, "register_error_handlers")
     assert "register_error_handlers" in errors_pkg.__all__
 
 
 def test_handler_registered_in_create_app() -> None:
     """The real create_app() wires the three envelope handlers."""
-    from fastapi.exceptions import RequestValidationError
-
-    from aila.api.app import create_app
-
     app = create_app()
-    from aila.api.errors.handlers import (
-        generic_error_handler,
-        typed_error_handler,
-        validation_error_handler,
-    )
 
     assert app.exception_handlers.get(AILAError) is typed_error_handler
     assert app.exception_handlers.get(RequestValidationError) is validation_error_handler

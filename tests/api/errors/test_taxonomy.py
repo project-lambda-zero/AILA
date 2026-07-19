@@ -15,6 +15,8 @@ from typing import get_type_hints
 
 import pytest
 
+import aila.api.errors
+from aila.api.errors.envelope import ErrorEnvelope
 from aila.platform.exceptions import (
     AILAError,
     AuthenticationError,
@@ -101,8 +103,6 @@ def test_envelope_required_fields() -> None:
 
     code + message required; hint + trace_id optional (default None).
     """
-    from aila.api.errors.envelope import ErrorEnvelope
-
     fields = ErrorEnvelope.model_fields
     assert set(fields.keys()) == {"code", "message", "hint", "trace_id"}
     assert fields["code"].is_required()
@@ -118,10 +118,8 @@ def test_envelope_required_fields() -> None:
 
 def test_errors_package_phase1_exports() -> None:
     """Phase-1 package exports: ErrorEnvelope + ERROR_HINTS only."""
-    import aila.api.errors as errors_pkg
-
     # Force re-import in case another test mutated module state.
-    errors_pkg = importlib.reload(errors_pkg)
+    errors_pkg = importlib.reload(aila.api.errors)
 
     assert hasattr(errors_pkg, "ErrorEnvelope")
     assert hasattr(errors_pkg, "ERROR_HINTS")
