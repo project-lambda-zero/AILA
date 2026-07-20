@@ -33,7 +33,7 @@ from openai import (
 )
 
 from aila.platform.llm import client as client_mod
-from aila.platform.llm.client import AilaLLMClient, _is_retryable
+from aila.platform.llm.client import AilaLLMClient, _AsyncOpenAIPool, _is_retryable
 from aila.platform.llm.errors import LLMError
 
 # --------------------------------------------------------------------
@@ -219,6 +219,9 @@ def _make_stub_client(pipeline: _CountingPipeline) -> AilaLLMClient:
     client._pipeline = pipeline  # type: ignore[attr-defined]
     client.cost_tracker = None
     client.bus = None
+    # __init__ is bypassed here, so the pool that _call_with_retry reads must
+    # be stubbed in explicitly (added with the AsyncOpenAI pool in #44).
+    client._client_pool = _AsyncOpenAIPool()  # type: ignore[attr-defined]
     return client
 
 
