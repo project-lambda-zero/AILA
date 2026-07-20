@@ -15,7 +15,21 @@ from typing import Any
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, Computed, DateTime, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Column,
+    Computed,
+    DateTime,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlmodel import Field, SQLModel
 
@@ -1131,4 +1145,104 @@ class TeamMemberRecord(SQLModel, table=True):
         sa_column=Column(Text, nullable=False, server_default="operator"),
     )
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+
+
+class PlatformJournalRecord(SQLModel, table=True):
+    """One append-only, hash-chained event in the platform journal (C2).
+
+    Rows are immutable: a BEFORE UPDATE OR DELETE trigger (migration 071)
+    raises on any mutation. ``seq`` is monotonic within ``chain_id`` and
+    orders the log; ``row_hash`` chains each row to its predecessor so a
+    post-hoc rewrite is detectable via ``journal.verify_chain``.
+    """
+
+    __tablename__ = "platform_journal"
+    __table_args__ = (
+        UniqueConstraint("journal_id", name="uq_platform_journal_journal_id"),
+        CheckConstraint(
+            "char_length(row_hash) = 64 AND char_length(payload_hash) = 64",
+            name="ck_platform_journal_hash_len",
+        ),
+        CheckConstraint(
+            "chain_id LIKE 'team:%' OR chain_id = 'global'",
+            name="ck_platform_journal_chain_id",
+        ),
+        Index("ix_pj_correlation", "correlation_id", "seq"),
+        Index("ix_pj_kind_written", "kind", "written_at"),
+        Index("ix_pj_team_kind_written", "team_id", "kind", "written_at"),
+    )
+
+    chain_id: str = Field(
+        sa_column=Column(String(64), primary_key=True, nullable=False)
+    )
+    seq: int = Field(
+        sa_column=Column(BigInteger, primary_key=True, autoincrement=False, nullable=False)
+    )
+    journal_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        sa_column=Column(String(36), nullable=False),
+    )
+    team_id: str | None = Field(
+        default=None, sa_column=Column(String(36), nullable=True, index=True)
+    )
+    prev_hash: str | None = Field(default=None, sa_column=Column(String(64), nullable=True))
+    row_hash: str = Field(sa_column=Column(String(64), nullable=False))
+    payload_hash: str = Field(sa_column=Column(String(64), nullable=False))
+    kind: str = Field(sa_column=Column(String(48), nullable=False, index=True))
+    source: str = Field(sa_column=Column(String(128), nullable=False, index=True))
+    actor_kind: str = Field(default="system", sa_column=Column(String(16), nullable=False))
+    actor_id: str = Field(default="system", sa_column=Column(String(128), nullable=False))
+    action: str = Field(sa_column=Column(String(128), nullable=False))
+    status: str = Field(default="ok", sa_column=Column(String(16), nullable=False))
+    run_id: str | None = Field(
+        default=None, sa_column=Column(String(36), nullable=True, index=True)
+    )
+    investigation_id: str | None = Field(
+        default=None, sa_column=Column(String(36), nullable=True, index=True)
+    )
+    branch_id: str | None = Field(
+        default=None, sa_column=Column(String(36), nullable=True, index=True)
+    )
+    turn_number: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
+    correlation_id: str = Field(sa_column=Column(String(64), nullable=False, index=True))
+    parent_journal_id: str | None = Field(
+        default=None, sa_column=Column(String(36), nullable=True)
+    )
+    payload_json: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False)
+    )
+    contains_secret: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default="false"),
+    )
+    schema_version: int = Field(
+        default=1, sa_column=Column(SmallInteger, nullable=False, server_default="1")
+    )
+    occurred_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    written_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
+    )
+
+
+class PlatformJournalDeadletterRecord(SQLModel, table=True):
+    """Fallback destination for journal appends that could not chain (C2 0.2).
+
+    Rows here are NOT chain-linked and NOT tamper-evident; operator review
+    drains them into the main chain. Used only by ``append_or_deadletter``.
+    """
+
+    __tablename__ = "platform_journal_deadletter"
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    chain_id: str = Field(sa_column=Column(String(64), nullable=False))
+    team_id: str | None = Field(default=None, sa_column=Column(String(36), nullable=True))
+    entry_json: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False)
+    )
+    failure_kind: str = Field(sa_column=Column(String(32), nullable=False))
+    failure_detail: str = Field(sa_column=Column(Text, nullable=False))
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    replayed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    replay_seq: int | None = Field(default=None, sa_column=Column(BigInteger, nullable=True))
 
