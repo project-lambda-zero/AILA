@@ -6,6 +6,7 @@ import os
 import tempfile
 
 from aila.config import Settings
+from aila.platform.exceptions import AILAError
 from aila.platform.tools._common import Tool
 
 TOOL_ALIAS = "script_executor"
@@ -53,7 +54,21 @@ class ScriptExecutorTool(Tool):
             analyzer_os: Target OS -- ``"linux"`` or ``"windows"``.
 
         Returns:
-            Dict with 'stdout', 'stderr', 'exit_code', 'script_hash'.
+            Dict with 'stdout', 'stderr', 'exit_code', 'script_hash'. The
+            ``exit_code`` is the real remote exit status; a script that
+            calls ``sys.exit(3)`` yields ``exit_code=3`` (previously the
+            success branch hard-coded ``0`` and the failure branch
+            hard-coded ``1``).
+
+        Raises:
+            AILAError: Connection-level failures propagate --
+                :class:`aila.platform.exceptions.AuthenticationError` for
+                credential rejection, :class:`UpstreamError` for host-key
+                or transport failures, and the platform
+                :class:`TimeoutError` for an idle command. These mean
+                "the script never ran", not "the script exited nonzero",
+                so surfacing them lets the caller emit the right 4xx/5xx
+                mapping instead of a fake ``exit_code=1``.
         """
         if not script_content.strip():
             raise ValueError("script_content must be non-empty.")
@@ -107,25 +122,42 @@ class ScriptExecutorTool(Tool):
             except OSError:
                 pass
 
+        # Use run_command_full so a non-zero remote exit surfaces through
+        # the returned triple instead of being converted to UpstreamError.
+        # The prior ``run_command`` path unconditionally reported
+        # ``exit_code=0`` on the success branch and mapped any raised
+        # exception (including the UpstreamError that ``run_command``
+        # itself raises on non-zero exit) to ``exit_code=1`` with a
+        # generic string, so a script that ran and exited ``sys.exit(3)``
+        # was indistinguishable from clean success in file_retriever's
+        # ``exit_code != 0`` guard.
+        #
+        # Connection-level failures (AuthenticationError, UpstreamError,
+        # platform TimeoutError) now propagate to the caller by design --
+        # they mean "the script never ran", not "the script exited
+        # nonzero", and the callers (investigator._execute_script,
+        # file_retriever._run_script_and_pull) surface them as 5xx.
         try:
-            stdout = await ssh.run_command(integration, exec_cmd, timeout_seconds=effective_timeout)
+            stdout, stderr, exit_code = await ssh.run_command_full(
+                integration, exec_cmd, timeout_seconds=effective_timeout,
+            )
             return {
                 "stdout": stdout,
-                "stderr": "",
-                "exit_code": 0,
-                "script_hash": script_hash,
-            }
-        except (OSError, TimeoutError, ConnectionError, RuntimeError) as exc:
-            return {
-                "stdout": "",
-                "stderr": str(exc),
-                "exit_code": 1,
+                "stderr": stderr,
+                "exit_code": exit_code,
                 "script_hash": script_hash,
             }
         finally:
+            # Cleanup must not mask a real failure from the run above.
+            # Broaden the swallowed set to include AILAError (which
+            # covers UpstreamError from a cleanup non-zero exit and
+            # AuthenticationError if the connection went away between
+            # calls) so a finally-branch exception cannot suppress an
+            # AuthenticationError or UpstreamError produced by
+            # run_command_full.
             try:
                 await ssh.run_command(integration, cleanup_cmd, timeout_seconds=10.0)
-            except (OSError, TimeoutError):
+            except (OSError, TimeoutError, ConnectionError, RuntimeError, AILAError):
                 import logging as _logging
                 _logging.getLogger(__name__).debug("Script cleanup failed for %s", remote_path, exc_info=True)
 

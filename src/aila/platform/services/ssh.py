@@ -199,6 +199,194 @@ class SSHService:
         finally:
             client.close()
 
+    async def run_command_full(
+        self,
+        integration: dict | SSHIntegrationInput | RegisteredSystem,
+        command: str,
+        timeout_seconds: float | None = None,
+        pool: SSHConnectionPool | None = None,
+        connect_timeout: float = 15.0,
+    ) -> tuple[str, str, int]:
+        """Execute command over SSH and return (stdout, stderr, exit_code).
+
+        Unlike :meth:`run_command`, a non-zero exit code is NOT converted to
+        an ``UpstreamError``. Callers receive the full triple and inspect the
+        exit code themselves -- this is the surfacing hook that lets
+        script-executor tools honour a remote ``sys.exit(3)`` instead of
+        reporting a silent ``exit_code=0``.
+
+        What still raises: connection-level failures that mean the command
+        never ran -- authentication rejection (:class:`AuthenticationError`),
+        host-key verification failures, transport errors
+        (:class:`UpstreamError`), and idle timeouts
+        (:class:`aila.platform.exceptions.TimeoutError`). Those propagate
+        because they are not "the script exited nonzero", they are "the
+        script never ran".
+
+        The returned ``stderr`` is passed through
+        :func:`redact_command_line` before being handed back so inline
+        credentials that a remote tool may print never surface in the
+        caller's payload -- this preserves the C6 secret-redaction
+        boundary that :meth:`_exec_command` applies inline in its
+        error message.
+        """
+        if isinstance(integration, dict):
+            payload = self._to_ssh_integration(RegisteredSystem.model_validate(integration))
+        elif isinstance(integration, RegisteredSystem):
+            payload = self._to_ssh_integration(integration)
+        else:
+            payload = integration
+
+        password = await self._resolve_password(payload)
+
+        connect_kwargs: dict = {
+            "hostname": payload.host,
+            "port": payload.port,
+            "username": payload.username,
+            "timeout": connect_timeout,
+        }
+        if payload.private_key_path:
+            connect_kwargs["key_filename"] = payload.private_key_path
+        if password:
+            connect_kwargs["password"] = password
+
+        # `timeout_seconds` remains an IDLE timeout enforced inside
+        # _run_command_full_blocking via channel.settimeout + exit-status
+        # polling, mirroring run_command exactly. No wall-clock wrapper.
+        return await asyncio.to_thread(
+            self._run_command_full_blocking, payload, command, timeout_seconds, pool, connect_kwargs,
+        )
+
+    def _run_command_full_blocking(
+        self,
+        payload: SSHIntegrationInput,
+        command: str,
+        timeout_seconds: float | None,
+        pool: SSHConnectionPool | None,
+        connect_kwargs: dict,
+    ) -> tuple[str, str, int]:
+        """Blocking SSH execution returning the full triple.
+
+        Mirrors :meth:`_run_command_blocking` but calls
+        :meth:`_exec_command_full`, which does not raise on non-zero
+        exit. Runs inside :func:`asyncio.to_thread`.
+        """
+        if pool is not None:
+            client = pool.get_or_connect(payload, connect_kwargs)
+            SSHService._verify_fingerprint(client, payload)
+            return SSHService._exec_command_full(client, command, timeout_seconds, payload)
+
+        client = paramiko.SSHClient()
+        client.load_system_host_keys()
+        if payload.known_hosts_path:
+            known_hosts_path = Path(payload.known_hosts_path).resolve()
+            if not known_hosts_path.exists():
+                raise ValidationError(f"Known hosts file {known_hosts_path} does not exist.")
+            client.load_host_keys(str(known_hosts_path))
+        # AutoAddPolicy for unconfigured known_hosts (lab default); RejectPolicy
+        # once an operator declares a trusted file. Identical policy plumbing
+        # to _run_command_blocking.
+        if payload.known_hosts_path:
+            client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        else:
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            client.connect(**connect_kwargs)
+            transport = client.get_transport()
+            if transport is not None:
+                transport.set_keepalive(60)
+            SSHService._verify_fingerprint(client, payload)
+            return SSHService._exec_command_full(client, command, timeout_seconds, payload)
+        except paramiko.AuthenticationException as exc:
+            raise AuthenticationError(
+                f"SSH authentication failed for {payload.name} ({payload.username}@{payload.host}:{payload.port}). "
+                "Verify the username and the configured stored password or private key."
+            ) from exc
+        except paramiko.BadHostKeyException as exc:
+            raise UpstreamError(
+                f"SSH host key verification failed for {payload.name} ({payload.host}). "
+                "The server host key did not match the trusted known_hosts entry."
+            ) from exc
+        except paramiko.SSHException as exc:
+            message = str(exc)
+            if "not found in known_hosts" in message.lower():
+                raise UpstreamError(
+                    f"SSH host key verification failed for {payload.name} ({payload.host}). "
+                    "Add the host key to a trusted known_hosts file or configure known_hosts_path."
+                ) from exc
+            raise UpstreamError(f"SSH transport error for {payload.name} ({payload.host}): {message}") from exc
+        finally:
+            client.close()
+
+    @staticmethod
+    def _exec_command_full(
+        client: paramiko.SSHClient,
+        command: str,
+        timeout_seconds: float | None,
+        payload: SSHIntegrationInput,
+    ) -> tuple[str, str, int]:
+        """Variant of :meth:`_exec_command` that returns (stdout, stderr, exit_code).
+
+        Non-zero remote exit codes are surfaced through the tuple instead
+        of being converted to :class:`UpstreamError`. Authentication,
+        host-key, and transport-level failures still raise. Stderr is
+        passed through :func:`redact_command_line` before being returned
+        so inline secrets remain masked at the C6 boundary.
+        """
+        try:
+            _, stdout, stderr = client.exec_command(command)
+            # IDLE timeout: paramiko resets the timer on every recv() so a
+            # slow-but-steady stream (dissect on a huge disk) never trips it.
+            # A genuine hang (zero bytes for N seconds) raises
+            # builtins.TimeoutError. Identical semantics to _exec_command.
+            if timeout_seconds is not None:
+                stdout.channel.settimeout(timeout_seconds)
+            try:
+                # Read first, exit-status second -- reversing this order
+                # can deadlock: a remote that fills its stdout buffer will
+                # block waiting for a reader to drain the pipe before it
+                # can exit and emit an exit status.
+                output = stdout.read().decode("utf-8", errors="ignore")
+                error_output = stderr.read().decode("utf-8", errors="ignore")
+                # Streams have closed. Poll for exit status with a tight
+                # 30s grace so a detached child that closed stdout without
+                # exiting cannot hang the caller indefinitely.
+                import time as _time
+                grace_deadline = _time.monotonic() + 30.0
+                while not stdout.channel.exit_status_ready():
+                    if _time.monotonic() > grace_deadline:
+                        raise TimeoutError(
+                            f"SSH command for {payload.name} ({payload.host}) closed "
+                            f"its streams but did not emit an exit status within 30s "
+                            f"(command likely detached a child). Command: {redact_command_line(command)[:200]}"
+                        )
+                    _time.sleep(0.1)
+                exit_code = stdout.channel.recv_exit_status()
+            except builtins.TimeoutError as exc:
+                raise TimeoutError(
+                    f"SSH command for {payload.name} ({payload.host}) idle "
+                    f">{timeout_seconds}s with no output. Command: {redact_command_line(command)[:200]}"
+                ) from exc
+            return output, redact_command_line(error_output), exit_code
+        except paramiko.AuthenticationException as exc:
+            raise AuthenticationError(
+                f"SSH authentication failed for {payload.name} ({payload.username}@{payload.host}:{payload.port}). "
+                "Verify the username and the configured stored password or private key."
+            ) from exc
+        except paramiko.BadHostKeyException as exc:
+            raise UpstreamError(
+                f"SSH host key verification failed for {payload.name} ({payload.host}). "
+                "The server host key did not match the trusted known_hosts entry."
+            ) from exc
+        except paramiko.SSHException as exc:
+            message = str(exc)
+            if "not found in known_hosts" in message.lower():
+                raise UpstreamError(
+                    f"SSH host key verification failed for {payload.name} ({payload.host}). "
+                    "Add the host key to a trusted known_hosts file or configure known_hosts_path."
+                ) from exc
+            raise UpstreamError(f"SSH transport error for {payload.name} ({payload.host}): {message}") from exc
+
     @staticmethod
     def _exec_command(
         client: paramiko.SSHClient,
