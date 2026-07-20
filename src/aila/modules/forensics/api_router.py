@@ -1209,7 +1209,7 @@ def create_forensics_router() -> APIRouter:
         )
 
         if result.ready:
-            task_queue = get_task_queue("forensics", request)
+            enqueue_mode: str | None = None
             async with UnitOfWork() as uow:
                 proj = (await uow.session.exec(
                     select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
@@ -1218,29 +1218,31 @@ def create_forensics_router() -> APIRouter:
                     proj.status = ProjectStatus.READY.value
                     uow.session.add(proj)
                     await uow.session.commit()
-
                     enqueue_mode = (
                         "raw_directory" if project.project_kind == "raw_directory" else "full_analysis"
                     )
-                    await task_queue.submit(
-                        track="forensics",
-                        fn=run_forensics_analysis,
-                        kwargs={
-                            "project_id": project_id,
-                            "mode": enqueue_mode,
-                            "integration": integration,
-                            "analyzer_os": project.analyzer_os,
-                            "evidence_directory": project.evidence_directory,
-                            "project_kind": project.project_kind,
-                        },
-                        user_id=auth.user_id,
-                        group_id=auth.role,
-                        team_id=auth.team_id,
-                    )
-                    _log.info(
-                        "Auto-enqueued %s for project %s",
-                        enqueue_mode, project_id,
-                    )
+
+            # Enqueue OUTSIDE the DB session (#63): the ARQ/Redis submit is a
+            # network await and must not pin the pooled DB connection. The
+            # status flip is already committed above; enqueue only if it fired.
+            if enqueue_mode is not None:
+                task_queue = get_task_queue("forensics", request)
+                await task_queue.submit(
+                    track="forensics",
+                    fn=run_forensics_analysis,
+                    kwargs={
+                        "project_id": project_id,
+                        "mode": enqueue_mode,
+                        "integration": integration,
+                        "analyzer_os": project.analyzer_os,
+                        "evidence_directory": project.evidence_directory,
+                        "project_kind": project.project_kind,
+                    },
+                    user_id=auth.user_id,
+                    group_id=auth.role,
+                    team_id=auth.team_id,
+                )
+                _log.info("Auto-enqueued %s for project %s", enqueue_mode, project_id)
 
         return DataEnvelope(data=result)
 

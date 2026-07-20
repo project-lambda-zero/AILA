@@ -384,3 +384,73 @@ async def test_freeflow_cost_ceiling_triggers_investigation_cancel(test_db) -> N
     # And the operator sees a cost_ceiling_reached SSE event.
     stages = [meta.get("stage") for _, _, meta in emitter.events]
     assert "cost_ceiling_reached" in stages
+
+
+# --------------------------------------------------------------------------
+# #63 Site 5: readiness enqueue runs OUTSIDE the DB session
+# --------------------------------------------------------------------------
+
+
+async def test_readiness_enqueues_analysis_after_flip(test_db) -> None:
+    """A ready machine flips CREATED->READY and enqueues the analysis task.
+
+    The submit (an ARQ/Redis network await) now runs after the UnitOfWork
+    closes; this pins that the status flip still commits and the enqueue still
+    fires with the project id.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    suffix = uuid4().hex[:8]
+    pid = await _seed_project(suffix)
+    submit = AsyncMock()
+    fake_queue = MagicMock()
+    fake_queue.submit = submit
+
+    handler = _endpoint("/projects/{project_id}/readiness-check", "POST")
+    with (
+        patch(
+            "aila.modules.forensics.services.machine_readiness."
+            "MachineReadinessService.check_readiness",
+            new=AsyncMock(return_value=MagicMock(ready=True)),
+        ),
+        patch("aila.api.deps.get_task_queue", return_value=fake_queue),
+    ):
+        await handler(_Req(), pid, auth=_admin())
+
+    async with async_session_scope() as session:
+        proj = (await session.exec(
+            select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == pid)
+        )).first()
+    assert proj.status == "ready"
+    submit.assert_awaited_once()
+    assert submit.await_args.kwargs["track"] == "forensics"
+    assert submit.await_args.kwargs["kwargs"]["project_id"] == pid
+
+
+async def test_readiness_not_ready_does_not_enqueue(test_db) -> None:
+    """A not-ready machine leaves the project CREATED and enqueues nothing."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    suffix = uuid4().hex[:8]
+    pid = await _seed_project(suffix)
+    submit = AsyncMock()
+    fake_queue = MagicMock()
+    fake_queue.submit = submit
+
+    handler = _endpoint("/projects/{project_id}/readiness-check", "POST")
+    with (
+        patch(
+            "aila.modules.forensics.services.machine_readiness."
+            "MachineReadinessService.check_readiness",
+            new=AsyncMock(return_value=MagicMock(ready=False)),
+        ),
+        patch("aila.api.deps.get_task_queue", return_value=fake_queue),
+    ):
+        await handler(_Req(), pid, auth=_admin())
+
+    async with async_session_scope() as session:
+        proj = (await session.exec(
+            select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == pid)
+        )).first()
+    assert proj.status == "created"
+    submit.assert_not_awaited()
