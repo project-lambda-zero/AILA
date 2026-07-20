@@ -33,6 +33,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import psycopg
+from pydantic import ValidationError
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import LETTER
@@ -57,6 +58,10 @@ from sqlmodel import func as _sa_func
 from sqlmodel import select as _select
 
 from aila.config import get_settings
+from aila.modules.vr.contracts.evidence_ref import (
+    EvidenceRefList,
+    PocDraftMetadataRef,
+)
 from aila.modules.vr.db_models import (
     VRFindingRecord,
     VRInvestigationBranchRecord,
@@ -117,6 +122,31 @@ async def render_investigation_pdf(investigation_id: str) -> bytes:
     content = await writer.write(facts)
 
     return _render_pdf(facts=facts, content=content)
+
+
+def _extract_poc_draft_meta(evidence_refs_json: str | None) -> dict[str, Any]:
+    """Return the first ``poc_draft_metadata`` ref as a dict, or ``{}``.
+
+    Validation routes through ``EvidenceRefList`` (same discriminated
+    union the writer uses at ``workflow/task.py::run_vr_draft_poc``) so
+    a malformed list surfaces as a structured warning rather than a
+    silent empty section. Well-formed refs the writer emits today
+    round-trip unchanged.
+    """
+    if not evidence_refs_json:
+        return {}
+    try:
+        parsed = EvidenceRefList.model_validate_json(evidence_refs_json)
+    except ValidationError as exc:
+        _log.warning(
+            "evidence_refs_json failed validation; skipping PoC meta extract: %s",
+            exc,
+        )
+        return {}
+    for ref in parsed.root:
+        if isinstance(ref, PocDraftMetadataRef):
+            return ref.model_dump()
+    return {}
 
 
 async def _draft_poc_inline(facts: dict[str, Any]) -> dict[str, Any] | None:
@@ -316,15 +346,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
                 # Pull PoC draft metadata for this finding (matches
                 # _resolve_poc_drafts shape so the renderer can render
                 # uniformly).
-                meta: dict[str, Any] = {}
-                try:
-                    f_refs = json.loads(f.evidence_refs_json or "[]")
-                    for r in f_refs:
-                        if isinstance(r, dict) and r.get("kind") == "poc_draft_metadata":
-                            meta = r
-                            break
-                except (ValueError, TypeError):
-                    meta = {}
+                meta: dict[str, Any] = _extract_poc_draft_meta(f.evidence_refs_json)
                 variant_entry["findings"].append({
                     "finding_id": f.id,
                     "crash_type": f.crash_type,
@@ -356,15 +378,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         for f in own_findings:
             if not f.poc_code:
                 continue
-            meta: dict[str, Any] = {}
-            try:
-                refs = json.loads(f.evidence_refs_json or "[]")
-                for r in refs:
-                    if isinstance(r, dict) and r.get("kind") == "poc_draft_metadata":
-                        meta = r
-                        break
-            except (ValueError, TypeError):
-                meta = {}
+            meta: dict[str, Any] = _extract_poc_draft_meta(f.evidence_refs_json)
             poc_drafts.append({
                 "finding_id": f.id,
                 "language": f.poc_language,

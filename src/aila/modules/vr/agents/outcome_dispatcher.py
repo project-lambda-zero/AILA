@@ -45,6 +45,7 @@ from aila.modules.vr._task_queue import (
     default_task_queue as _build_default_task_queue,
 )
 from aila.modules.vr.contracts import BranchStatus, OutcomeDispatchStatus, OutcomeKind
+from aila.modules.vr.contracts.evidence_ref import EvidenceRefList
 from aila.modules.vr.contracts.investigation import (
     InvestigationKind,
     InvestigationStatus,
@@ -518,7 +519,9 @@ class OutcomeDispatcher:
                     str(payload.get("poc_language", "python"))[:32]
                     if poc_code else None
                 ),
-                evidence_refs_json=json.dumps(payload.get("evidence_refs") or []),
+                evidence_refs_json=EvidenceRefList.model_validate(
+                    payload.get("evidence_refs") or [],
+                ).model_dump_json(),
             )
             uow.session.add(finding)
             await uow.session.flush()

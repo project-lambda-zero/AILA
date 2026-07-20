@@ -26,6 +26,7 @@ from aila.modules.vr._task_queue import (
 from aila.modules.vr.agents.claim_verifier import ClaimVerifierAgent
 from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
 from aila.modules.vr.agents.synthesis_agent import SynthesisAgent
+from aila.modules.vr.contracts.evidence_ref import EvidenceRefList
 from aila.modules.vr.db_models import VRFindingRecord, VRInvestigationOutcomeRecord
 
 # Re-export enrichment-pipeline tasks so the platform worker bootstrap
@@ -340,7 +341,9 @@ async def run_vr_draft_poc(
             "caveats": draft.caveats,
             "safety_notes": draft.safety_notes,
         })
-        finding.evidence_refs_json = _json.dumps(existing_refs)
+        finding.evidence_refs_json = EvidenceRefList.model_validate(
+            existing_refs,
+        ).model_dump_json()
         uow.session.add(finding)
         await uow.session.commit()
 
