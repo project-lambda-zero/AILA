@@ -1076,11 +1076,15 @@ def create_forensics_router() -> APIRouter:
 
         from aila.modules.forensics.db_models import (
             AgentStepRecord,
+            AnalystDirectiveRecord,
+            AnswerCandidateRecord,
             ArtifactRecord,
+            FindingSuppressionRecord,
             ForensicsProjectRecord,
             InvestigationRunRecord,
             LeadRecord,
             ProjectEvidenceRecord,
+            SolidEvidenceRecord,
             WriteUpRecord,
         )
 
@@ -1102,6 +1106,11 @@ def create_forensics_router() -> APIRouter:
                 await uow.session.exec(
                     sa_delete(AgentStepRecord).where(AgentStepRecord.investigation_id == inv_id)
                 )
+                await uow.session.exec(
+                    sa_delete(AnswerCandidateRecord).where(
+                        AnswerCandidateRecord.investigation_id == inv_id
+                    )
+                )
             await uow.session.exec(
                 sa_delete(InvestigationRunRecord).where(InvestigationRunRecord.project_id == project_id)
             )
@@ -1116,6 +1125,29 @@ def create_forensics_router() -> APIRouter:
             )
             await uow.session.exec(
                 sa_delete(ProjectEvidenceRecord).where(ProjectEvidenceRecord.project_id == project_id)
+            )
+            # Project-scoped children whose FK is project_id -- previously
+            # orphaned on delete. AnswerCandidate can be linked by project_id
+            # without an investigation, so it is swept here as well.
+            await uow.session.exec(
+                sa_delete(AnswerCandidateRecord).where(
+                    AnswerCandidateRecord.project_id == project_id
+                )
+            )
+            await uow.session.exec(
+                sa_delete(AnalystDirectiveRecord).where(
+                    AnalystDirectiveRecord.project_id == project_id
+                )
+            )
+            await uow.session.exec(
+                sa_delete(FindingSuppressionRecord).where(
+                    FindingSuppressionRecord.project_id == project_id
+                )
+            )
+            await uow.session.exec(
+                sa_delete(SolidEvidenceRecord).where(
+                    SolidEvidenceRecord.project_id == project_id
+                )
             )
             await uow.session.delete(project)
             await uow.commit()
