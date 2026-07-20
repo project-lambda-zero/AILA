@@ -77,6 +77,18 @@ def is_secret_config_key(key: str) -> bool:
     return any(token in lower for token in _SECRET_KEY_TOKENS)
 
 
+_REDACTED = "[REDACTED]"
+
+
+def _hash_config_change(old_value: object, new_value: str) -> str:
+    """Return a sha256 of the old -> new transition so a secret rotation stays
+    auditable (did the value change?) without persisting the secret itself."""
+    import hashlib
+
+    old_str = str(old_value) if old_value is not None else ""
+    return hashlib.sha256(f"{old_str}\n{new_value}".encode()).hexdigest()
+
+
 class ConfigRegistry:
     """Central registry for module config schemas. Thread-safe for reads; callers
     are responsible for not calling register() concurrently (registration happens
@@ -287,6 +299,11 @@ class ConfigRegistry:
         if self._emitter is not None and self._is_security_relevant(key):
             from ..platform.events.event import PlatformEvent
 
+            secret = is_secret_config_key(key)
+            old_display = (
+                _REDACTED if secret else (str(old_value) if old_value is not None else "")
+            )
+            new_display = _REDACTED if secret else value
             self._emitter.emit(PlatformEvent(
                 stage="config_security_change",
                 action="update",
@@ -295,8 +312,11 @@ class ConfigRegistry:
                 details={
                     "namespace": namespace,
                     "key": key,
-                    "old_value": str(old_value) if old_value is not None else "",
-                    "new_value": value,
+                    "old_value": old_display,
+                    "new_value": new_display,
+                    "value_hash_sha256": (
+                        _hash_config_change(old_value, value) if secret else None
+                    ),
                     "user_id": "system",
                 },
             ))

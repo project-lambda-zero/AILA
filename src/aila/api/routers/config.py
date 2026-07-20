@@ -167,6 +167,8 @@ async def update_config_value(
             )
             result: ConfigEntryRecord | None = (await session.exec(stmt)).first()
             if result is not None:
+                secret = is_secret_config_key(key)
+                audit_value = _REDACTED_CONFIG_VALUE if secret else body.value
                 record_audit_event(
                     session,
                     run_id=f"{namespace}/{key}",
@@ -175,7 +177,12 @@ async def update_config_value(
                     status=AUDIT_STATUS_COMPLETED,
                     target=f"{namespace}/{key}",
                     user_id=admin.user_id,
-                    details={"namespace": namespace, "key": key, "value": body.value},
+                    details={
+                        "namespace": namespace,
+                        "key": key,
+                        "value": audit_value,
+                        "was_secret": secret,
+                    },
                 )
                 await session.commit()
                 await session.refresh(result)
