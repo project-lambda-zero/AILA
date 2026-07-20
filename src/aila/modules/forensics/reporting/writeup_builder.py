@@ -30,6 +30,28 @@ _PER_SECTION_CAP = 6_000
 _STEP_STDOUT_CAP = 400
 _STEP_REASONING_CAP = 400
 
+# Hard refusal threshold on the assembled user bundle. If the raw sum of
+# every section exceeds this many chars we refuse rather than silently
+# truncating: Decision 8 -- structurally unanswerable work must be raised
+# to the operator so they can narrow the question. Sits at 4x the soft
+# cap so ordinary large investigations still pass; only a runaway pile
+# of artefacts trips it.
+_BUNDLE_HARD_LIMIT = _USER_BUNDLE_CHAR_CAP * 4
+
+# Post-truncate the LLM response to this many chars. A runaway model can
+# emit multi-MB text that ends up in a Postgres TEXT column and a
+# WeasyPrint PDF render; the marker below lets downstream consumers
+# detect truncation instead of silently rendering half a report.
+_OUTPUT_CHAR_CAP = 64_000
+_OUTPUT_TRUNCATION_MARKER = (
+    "\n\n[...output truncated at 64000 chars; contact operator...]"
+)
+
+# Per-call LLM output ceiling passed to chat(); narrows the routing cap so a
+# runaway writeup response is bounded at the model layer in addition to the
+# post-truncation below.
+_LLM_MAX_OUTPUT_TOKENS = 6_000
+
 
 _WRITEUP_SYSTEM_PROMPT = """You are a senior DFIR / malware-analysis engineer writing an incident-response report for a client SOC. The report is graded by a staff-level reviewer AND a CTF organiser; it MUST NOT read like generic LLM output. Every factual claim MUST be traceable to evidence you cite inline by one of: artifact_id, absolute file path, function address (`<function_name>@<0xADDR>`), or a tool-stdout excerpt tagged with the step number that produced it.
 
@@ -274,34 +296,46 @@ async def _generate_writeup_content(
     # Assemble the case bundle the model will reason over. Everything
     # downstream of here is deterministic summarisation of what the
     # investigator actually produced -- no prose, no guesswork.
-    bundle_parts: list[str] = []
-
-    bundle_parts.append(_section_case_header(
-        project_id=project_id,
-        investigation_id=investigation_id,
-        question=question,
-        answer=answer,
-        confidence=confidence,
-        contract=contract,
-        tools_used=tools_used,
-        step_count=len(steps),
-    ))
+    #
+    # Sections are collected as (name, text) so we can hand a per-section
+    # byte breakdown to _check_bundle_size on refusal.
 
     # Pull artefacts snapshot from the project database so the model
     # sees the evidence universe, not just the last 10 steps.
     artefacts_by_family = await _load_artefacts_by_family(project_id)
-    bundle_parts.append(_section_evidence_inventory(artefacts_by_family))
-    bundle_parts.append(_section_artefact_families(artefacts_by_family))
 
-    bundle_parts.append(_section_ghidra_summary(artefacts_by_family))
-    bundle_parts.append(_section_memory_enrich_summary(artefacts_by_family))
-    bundle_parts.append(_section_network_summary(artefacts_by_family))
+    sections: list[tuple[str, str]] = [
+        ("case_header", _section_case_header(
+            project_id=project_id,
+            investigation_id=investigation_id,
+            question=question,
+            answer=answer,
+            confidence=confidence,
+            contract=contract,
+            tools_used=tools_used,
+            step_count=len(steps),
+        )),
+        ("evidence_inventory", _section_evidence_inventory(artefacts_by_family)),
+        ("artefact_families", _section_artefact_families(artefacts_by_family)),
+        ("ghidra_summary", _section_ghidra_summary(artefacts_by_family)),
+        ("memory_enrich", _section_memory_enrich_summary(artefacts_by_family)),
+        ("network_summary", _section_network_summary(artefacts_by_family)),
+        ("observables", _section_observables(observables)),
+        ("hypotheses", _section_hypotheses(hypotheses, rejected)),
+        ("step_log", _section_step_log(steps)),
+    ]
 
-    bundle_parts.append(_section_observables(observables))
-    bundle_parts.append(_section_hypotheses(hypotheses, rejected))
-    bundle_parts.append(_section_step_log(steps))
+    raw_bundle = "\n\n".join(text for _, text in sections)
+    section_sizes = {name: len(text) for name, text in sections}
 
-    user_bundle = _cap_bundle("\n\n".join(bundle_parts), _USER_BUNDLE_CHAR_CAP)
+    # Refuse structurally unanswerable work before we spend LLM tokens
+    # on it (Decision 8). This raises ValueError to the caller with the
+    # per-section byte breakdown so the operator can narrow the question.
+    _check_bundle_size(raw_bundle, section_sizes)
+
+    # Below the hard limit, keep the pre-existing soft cap as a safety
+    # net so the prompt still fits the routed model's context window.
+    user_bundle = _cap_bundle(raw_bundle, _USER_BUNDLE_CHAR_CAP)
 
     client = ServiceFactory().llm_client
     resp = await client.chat(
@@ -310,10 +344,11 @@ async def _generate_writeup_content(
             {"role": "system", "content": _WRITEUP_SYSTEM_PROMPT},
             {"role": "user", "content": user_bundle},
         ],
+        max_output_tokens=_LLM_MAX_OUTPUT_TOKENS,
     )
     if resp.disabled:
         raise RuntimeError("LLM kill-switch active")
-    return resp.content
+    return _truncate_output(resp.content)
 
 
 # ---------------------------------------------------------------------------
@@ -596,7 +631,60 @@ def _cap_section(text: str) -> str:
 def _cap_bundle(text: str, cap: int) -> str:
     if len(text) <= cap:
         return text
-    return text[:cap] + "\n…[bundle truncated to protect context window]…"
+    return text[:cap] + "\n\u2026[bundle truncated to protect context window]\u2026"
+
+
+def _check_bundle_size(
+    bundle: str,
+    section_sizes: dict[str, int] | None = None,
+    *,
+    hard_limit: int = _BUNDLE_HARD_LIMIT,
+) -> None:
+    """Refuse when the assembled user bundle exceeds the hard threshold.
+
+    Decision 8: refuse structurally unanswerable work rather than
+    silently truncating whatever fits into the context window. The
+    error message names the byte overage and, when supplied, the
+    per-section byte breakdown so the operator can narrow the question
+    at the offending sub-report.
+
+    Args:
+        bundle: The joined user-message bundle in bytes-as-chars.
+        section_sizes: Optional {section_name: char_count} rendered into
+            the error message on refusal.
+        hard_limit: The refusal ceiling; injectable for tests.
+
+    Raises:
+        ValueError: When ``len(bundle) > hard_limit``.
+    """
+    size = len(bundle)
+    if size <= hard_limit:
+        return
+    overage = size - hard_limit
+    detail = ""
+    if section_sizes:
+        breakdown = ", ".join(
+            f"{name}={count}"
+            for name, count in sorted(section_sizes.items(), key=lambda kv: -kv[1])
+        )
+        detail = f" per-section chars: {breakdown}."
+    raise ValueError(
+        f"forensics writeup bundle {size} chars exceeds hard limit "
+        f"{hard_limit} chars by {overage}; ask a narrower question.{detail}"
+    )
+
+
+def _truncate_output(content: str, cap: int = _OUTPUT_CHAR_CAP) -> str:
+    """Post-truncate the LLM writeup to ``cap`` chars.
+
+    A shorter string passes through unchanged. When truncation applies,
+    the fixed marker ``_OUTPUT_TRUNCATION_MARKER`` is appended so
+    downstream consumers (PDF rendering, TEXT-column readers) can
+    detect the cut instead of silently rendering half a report.
+    """
+    if len(content) <= cap:
+        return content
+    return content[:cap] + _OUTPUT_TRUNCATION_MARKER
 
 
 def _build_template_writeup(

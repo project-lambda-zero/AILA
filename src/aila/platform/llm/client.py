@@ -393,6 +393,7 @@ class AilaLLMClient:
         tool_executor: Callable[[str, dict[str, Any]], Awaitable[str]] | None = None,
         run_id: str | None = None,
         team_id: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> LLMResponse:
         """Send a chat completion request and return text response.
 
@@ -419,6 +420,13 @@ class AilaLLMClient:
             )
 
         routing = await self._config.resolve_routing(task_type)
+        # §309 -- narrow the routing max_tokens to a per-call ceiling when the
+        # caller supplies one; never raise above the operator-configured cap.
+        if max_output_tokens is not None and max_output_tokens > 0:
+            from dataclasses import replace as _dc_replace
+            effective_max = min(int(max_output_tokens), int(routing.max_tokens))
+            if effective_max != routing.max_tokens:
+                routing = _dc_replace(routing, max_tokens=effective_max)
 
         return await self._call_with_retry(
             routing=routing,
