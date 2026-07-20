@@ -45,6 +45,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Best-effort cost / telemetry recording runs AFTER a successful LLM call. A
+# failure in any of those steps must never propagate into the provider-retry
+# loop and turn a good response into a retried LLMError, so each step swallows
+# this realistic leak set independently (DB, arithmetic, missing metrics import,
+# platform errors) while still logging.
+_COST_TELEMETRY_ERRORS: tuple[type[BaseException], ...] = (
+    ValueError,
+    TypeError,
+    RuntimeError,
+    OSError,
+    AttributeError,
+    ImportError,
+    sqlalchemy.exc.SQLAlchemyError,
+    AILAError,
+)
+
 # ── LLM endpoint health tracking ─────────────────────────────────────
 #
 # Per-process globals updated on every LLM call. Consumed by the masvs
@@ -848,7 +864,7 @@ class AilaLLMClient:
                         routing.model_id, _prompt_tokens, _completion_tokens,
                         self._config._registry,  # LLMConfigProvider._registry is ConfigRegistry
                     )
-                except (ValueError, sqlalchemy.exc.SQLAlchemyError):
+                except _COST_TELEMETRY_ERRORS:
                     import structlog
                     structlog.get_logger(__name__).warning(
                         "cost_calculation_failed", run_id=run_id, model=routing.model_id,
@@ -891,7 +907,7 @@ class AilaLLMClient:
                         duration_ms=int(_call_duration * 1000),
                         status="ok",
                     )
-                except sqlalchemy.exc.SQLAlchemyError:
+                except _COST_TELEMETRY_ERRORS:
                     import structlog
                     structlog.get_logger(__name__).warning(
                         "cost_persistence_failed", run_id=run_id, model=routing.model_id,
@@ -902,17 +918,16 @@ class AilaLLMClient:
                     try:
                         from aila.platform.llm.cost import emit_missing_pricing_notification
                         await emit_missing_pricing_notification(routing.model_id)
-                    except sqlalchemy.exc.SQLAlchemyError:
+                    except _COST_TELEMETRY_ERRORS:
                         pass  # emit_missing_pricing_notification already swallows; belt-and-suspenders
 
                 # Step 4: Prometheus counter (separate try/except)
                 try:
                     from aila.api.metrics import LLM_COST_TOTAL
                     LLM_COST_TOTAL.labels(model=routing.model_id).inc(_cost_usd)
-                except (ImportError, ValueError, AttributeError) as exc:
+                except _COST_TELEMETRY_ERRORS as exc:
                     # Prometheus counter is best-effort telemetry; never fail the LLM call
-                    # because metrics emission failed. Specific types cover missing import,
-                    # invalid label values, and unexpected counter shape.
+                    # because metrics emission failed.
                     logger.debug("LLM cost counter update failed: %s", exc)
 
                 # Step 5: Domain event with real duration (separate try/except)
@@ -928,7 +943,7 @@ class AilaLLMClient:
                                 duration=_call_duration,
                             ),
                         ))
-                except (AILAError, AttributeError):
+                except _COST_TELEMETRY_ERRORS:
                     pass
 
                 _record_llm_ok()
