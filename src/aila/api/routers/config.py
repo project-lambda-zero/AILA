@@ -27,6 +27,7 @@ from aila.api.schemas.config import ConfigEntryResponse, ConfigListResponse, Con
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ConfigEntryRecord
+from aila.storage.registry import is_secret_config_key
 
 __all__ = ["router"]
 
@@ -37,11 +38,17 @@ router = APIRouter(
 )
 
 
-def _entry_to_response(record: ConfigEntryRecord) -> ConfigEntryResponse:
+_REDACTED_CONFIG_VALUE = "[REDACTED]"
+
+
+def _entry_to_response(record: ConfigEntryRecord, *, redact: bool = False) -> ConfigEntryResponse:
+    value = record.value
+    if redact and is_secret_config_key(record.key):
+        value = _REDACTED_CONFIG_VALUE
     return ConfigEntryResponse(
         namespace=record.namespace,
         key=record.key,
-        value=record.value,
+        value=value,
         value_type=record.value_type,
         updated_at=record.updated_at,
     )
@@ -51,8 +58,10 @@ def _entry_to_response(record: ConfigEntryRecord) -> ConfigEntryResponse:
 async def list_all_config(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> ConfigListResponse:
     """List all configuration entries across all namespaces."""
+    redact = auth.role != "admin"
 
     async def _query() -> list[ConfigEntryRecord]:
         async with async_session_scope() as session:
@@ -70,7 +79,7 @@ async def list_all_config(
         page=page,
         page_size=page_size,
         pages=math.ceil(total / page_size) if total > 0 else 0,
-        items=[_entry_to_response(r) for r in page_rows],
+        items=[_entry_to_response(r, redact=redact) for r in page_rows],
     )
 
 
@@ -79,8 +88,10 @@ async def list_namespace_config(
     namespace: str,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> ConfigListResponse:
     """List all configuration entries for a module namespace."""
+    redact = auth.role != "admin"
 
     async def _query() -> list[ConfigEntryRecord]:
         async with async_session_scope() as session:
@@ -100,7 +111,7 @@ async def list_namespace_config(
         page=page,
         page_size=page_size,
         pages=math.ceil(total / page_size) if total > 0 else 0,
-        items=[_entry_to_response(r) for r in page_rows],
+        items=[_entry_to_response(r, redact=redact) for r in page_rows],
     )
 
 
@@ -108,8 +119,10 @@ async def list_namespace_config(
 async def get_config_value(
     namespace: str,
     key: str,
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> ConfigEntryResponse:
     """Get a single configuration value by namespace and key."""
+    redact = auth.role != "admin"
 
     async def _query() -> ConfigEntryRecord | None:
         async with async_session_scope() as session:
@@ -126,7 +139,7 @@ async def get_config_value(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Config key '{namespace}/{key}' not found -- list available keys via GET /config/{namespace}",
         )
-    return _entry_to_response(record)
+    return _entry_to_response(record, redact=redact)
 
 
 @limiter.limit("60/minute")

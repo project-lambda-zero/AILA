@@ -32,7 +32,7 @@ from ..platform.contracts._common import utc_now
 from .database import async_session_scope, session_scope
 from .db_models import ConfigEntryRecord
 
-__all__ = ["ConfigRegistry", "SchemaRegistry"]
+__all__ = ["ConfigRegistry", "SchemaRegistry", "is_secret_config_key"]
 
 _log = logging.getLogger(__name__)
 
@@ -53,6 +53,28 @@ _SECURITY_KEY_PREFIXES: tuple[str, ...] = (
     "llm_pipeline_gate_",
     "llm_seal_hmac_key",
 )
+
+# Config keys whose stored value is a secret and must be redacted on read for
+# non-admin callers (C6). Substring match: any key containing one of these
+# tokens is treated as secret regardless of namespace.
+_SECRET_KEY_TOKENS: tuple[str, ...] = (
+    "api_key",
+    "secret",
+    "password",
+    "hmac_key",
+    "signing_key",
+    "encryption_key",
+    "private_key",
+    "client_secret",
+    "bearer",
+    "token",
+)
+
+
+def is_secret_config_key(key: str) -> bool:
+    """Return True when the value at this config key must be redacted (C6)."""
+    lower = key.lower()
+    return any(token in lower for token in _SECRET_KEY_TOKENS)
 
 
 class ConfigRegistry:
