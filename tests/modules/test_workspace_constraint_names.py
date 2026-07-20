@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from sqlalchemy import UniqueConstraint
 
+from aila.modules.malware.db_models.target import MalwareTargetTagIndexRecord
 from aila.modules.malware.db_models.workspace import MalwareWorkspaceRecord
+from aila.modules.vr.db_models.target import VRTargetTagIndexRecord
 from aila.modules.vr.db_models.workspace import VRWorkspaceRecord
 
 
@@ -31,4 +33,16 @@ def test_malware_workspace_uses_module_prefixed_name() -> None:
 def test_workspace_unique_constraint_names_do_not_collide() -> None:
     mal = _unique_constraint_names(MalwareWorkspaceRecord)
     vr = _unique_constraint_names(VRWorkspaceRecord)
+    assert mal.isdisjoint(vr), f"colliding constraint names: {mal & vr}"
+
+
+def test_malware_tag_index_uses_module_prefixed_name() -> None:
+    names = _unique_constraint_names(MalwareTargetTagIndexRecord)
+    assert "uq_malware_target_tag_source" in names
+    assert "uq_target_tag_source" not in names
+
+
+def test_tag_index_unique_constraint_names_do_not_collide() -> None:
+    mal = _unique_constraint_names(MalwareTargetTagIndexRecord)
+    vr = _unique_constraint_names(VRTargetTagIndexRecord)
     assert mal.isdisjoint(vr), f"colliding constraint names: {mal & vr}"
