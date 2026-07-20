@@ -85,9 +85,10 @@ class KnowledgeStoreTool(Tool):
                     KnowledgeEntryRecord.namespace == self.namespace,
                     KnowledgeEntryRecord.dedup_key == dedup_key,
                 )
+                # exec() of a single-column select yields the scalar id, not a Row
                 row = (await session.exec(stmt)).first()
                 if row is not None:
-                    existing_id = row[0]
+                    existing_id = row
 
             if existing_id is not None:
                 # UPDATE path -- search_vector auto-maintained by PostgreSQL generated column
