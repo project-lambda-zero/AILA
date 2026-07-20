@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from openai import APIConnectionError, APITimeoutError
 from pydantic import BaseModel
 
 from aila.platform.llm.client import (
@@ -42,7 +43,7 @@ class FakeRegistry:
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self._data: dict[str, object] = data or {}
 
-    def get(self, namespace: str, key: str) -> object:
+    async def get(self, namespace: str, key: str) -> object:
         return self._data.get(f"{namespace}.{key}")
 
 
@@ -50,7 +51,7 @@ class FakeSecretStore:
     def __init__(self, secrets: dict[str, str] | None = None) -> None:
         self._secrets: dict[str, str] = secrets or {}
 
-    def resolve_provider_secret(self, secret_key: str) -> str | None:
+    async def resolve_provider_secret(self, secret_key: str) -> str | None:
         return self._secrets.get(secret_key)
 
 
@@ -130,10 +131,10 @@ class TestChat:
     @pytest.mark.asyncio
     async def test_returns_text(self, client: AilaLLMClient) -> None:
         mock_completion = _make_completion(content="The answer is 42")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = await client.chat("scoring", [{"role": "user", "content": "test"}])
 
@@ -171,10 +172,10 @@ class TestChatJson:
     async def test_returns_json(self, client: AilaLLMClient) -> None:
         json_content = json.dumps({"score": 8.5, "reasoning": "critical vuln"})
         mock_completion = _make_completion(content=json_content)
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             schema = ScoringOutput.model_json_schema()
             response = await client.chat_json("scoring", [{"role": "user", "content": "score this"}], schema)
@@ -201,10 +202,10 @@ class TestChatStructured:
     async def test_returns_validated_model(self, client: AilaLLMClient) -> None:
         json_content = json.dumps({"score": 9.0, "reasoning": "exploitable"})
         mock_completion = _make_completion(content=json_content)
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = await client.chat_structured(
                 "scoring",
@@ -224,12 +225,12 @@ class TestChatStructured:
         good_json = json.dumps({"score": 7.0, "reasoning": "medium risk"})
         mock_bad = _make_completion(content=bad_json)
         mock_good = _make_completion(content=good_json)
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(
                 side_effect=[mock_bad, mock_good]
             )
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = await client.chat_structured(
                 "scoring",
@@ -250,10 +251,10 @@ class TestSyncWrappers:
 
     def test_chat_sync(self, client: AilaLLMClient) -> None:
         mock_completion = _make_completion(content="sync result")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = client.chat_sync("scoring", [{"role": "user", "content": "test"}])
 
@@ -262,10 +263,10 @@ class TestSyncWrappers:
     def test_chat_json_sync(self, client: AilaLLMClient) -> None:
         json_content = json.dumps({"score": 5.0, "reasoning": "low"})
         mock_completion = _make_completion(content=json_content)
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             schema = ScoringOutput.model_json_schema()
             response = client.chat_json_sync("scoring", [{"role": "user", "content": "test"}], schema)
@@ -275,10 +276,10 @@ class TestSyncWrappers:
     def test_chat_structured_sync(self, client: AilaLLMClient) -> None:
         json_content = json.dumps({"score": 6.0, "reasoning": "medium"})
         mock_completion = _make_completion(content=json_content)
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = client.chat_structured_sync(
                 "scoring",
@@ -305,9 +306,8 @@ class TestRetry:
 
     @pytest.mark.asyncio
     async def test_retries_on_connection_error(self, client: AilaLLMClient) -> None:
-        from openai import APIConnectionError
         mock_completion = _make_completion(content="recovered")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(
                 side_effect=[
@@ -315,7 +315,7 @@ class TestRetry:
                     mock_completion,
                 ]
             )
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
             with patch("aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock):
                 response = await client.chat("scoring", [{"role": "user", "content": "test"}])
 
@@ -323,25 +323,24 @@ class TestRetry:
 
     @pytest.mark.asyncio
     async def test_permanent_error_no_retry(self, client: AilaLLMClient) -> None:
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(
                 side_effect=ValueError("bad request")
             )
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             with pytest.raises(LLMError, match="bad request"):
                 await client.chat("scoring", [{"role": "user", "content": "test"}])
 
     @pytest.mark.asyncio
     async def test_exhausted_retries(self, client: AilaLLMClient) -> None:
-        from openai import APITimeoutError
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(
                 side_effect=APITimeoutError(request=MagicMock())
             )
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
             with patch("aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock):
                 with pytest.raises(LLMError, match="failed after 3 retries"):
                     await client.chat("scoring", [{"role": "user", "content": "test"}])
@@ -358,10 +357,10 @@ class TestTruncation:
     async def test_truncated_json_raises(self, client: AilaLLMClient) -> None:
         truncated = '{"score": 8.5, "reason'  # incomplete
         mock_completion = _make_completion(content=truncated, finish_reason="length")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             schema = ScoringOutput.model_json_schema()
             with pytest.raises(LLMError, match="truncated"):
@@ -372,10 +371,10 @@ class TestTruncation:
         """If finish_reason=length but JSON is valid, no error."""
         complete = json.dumps({"score": 8.5, "reasoning": "critical"})
         mock_completion = _make_completion(content=complete, finish_reason="length")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             schema = ScoringOutput.model_json_schema()
             response = await client.chat_json("scoring", [{"role": "user", "content": "test"}], schema)
@@ -394,10 +393,10 @@ class TestPydanticFallback:
     async def test_extracts_from_code_block(self, client: AilaLLMClient) -> None:
         wrapped = '```json\n{"score": 7.0, "reasoning": "test"}\n```'
         mock_completion = _make_completion(content=wrapped)
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             schema = ScoringOutput.model_json_schema()
             response = await client.chat_json("scoring", [{"role": "user", "content": "test"}], schema)
@@ -409,10 +408,10 @@ class TestPydanticFallback:
     async def test_invalid_json_raises(self, client: AilaLLMClient) -> None:
         garbage = "this is not json at all"
         mock_completion = _make_completion(content=garbage)
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             schema = ScoringOutput.model_json_schema()
             with pytest.raises(LLMError, match="not valid JSON"):
@@ -441,12 +440,12 @@ class TestToolCalling:
         )
         final_response = _make_completion(content="CVE-2024-0001 is critical")
 
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(
                 side_effect=[tool_response, final_response]
             )
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             async def executor(name: str, args: dict[str, Any]) -> str:
                 return '{"severity": "CRITICAL"}'
@@ -476,10 +475,10 @@ class TestToolCalling:
             tool_calls=[tool_call],
         )
 
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             async def executor(name: str, args: dict[str, Any]) -> str:
                 raise AssertionError("Should not be called")
@@ -605,26 +604,18 @@ class TestLLMResponse:
 # Tool-timeout config resolution (#44)
 # ---------------------------------------------------------------------------
 
-class _AsyncFakeRegistry:
-    def __init__(self, data: dict[str, object] | None = None) -> None:
-        self._data: dict[str, object] = data or {}
-
-    async def get(self, namespace: str, key: str) -> object:
-        return self._data.get(f"{namespace}.{key}")
-
-
 class TestToolTimeoutConfig:
     """resolve_tool_timeout_s precedence: task-specific > global > 300s default."""
 
     @pytest.mark.asyncio
     async def test_default_is_300(self) -> None:
-        p = LLMConfigProvider(_AsyncFakeRegistry(), FakeSecretStore())  # type: ignore[arg-type]
+        p = LLMConfigProvider(FakeRegistry(), FakeSecretStore())  # type: ignore[arg-type]
         assert await p.resolve_tool_timeout_s("scoring") == 300.0
 
     @pytest.mark.asyncio
     async def test_specific_wins_over_global(self) -> None:
         p = LLMConfigProvider(  # type: ignore[arg-type]
-            _AsyncFakeRegistry(
+            FakeRegistry(
                 {
                     "platform.llm_tool_timeout_s": 120.0,
                     "platform.llm_tool_timeout_s_scoring": 15.0,
@@ -638,7 +629,7 @@ class TestToolTimeoutConfig:
     @pytest.mark.asyncio
     async def test_non_numeric_falls_back(self) -> None:
         p = LLMConfigProvider(  # type: ignore[arg-type]
-            _AsyncFakeRegistry({"platform.llm_tool_timeout_s": "not-a-number"}),
+            FakeRegistry({"platform.llm_tool_timeout_s": "not-a-number"}),
             FakeSecretStore(),
         )
         assert await p.resolve_tool_timeout_s("scoring") == 300.0
