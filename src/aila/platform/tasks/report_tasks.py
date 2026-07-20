@@ -11,6 +11,10 @@ SMTP config keys (namespace="platform"):
   smtp_from     -- From address (default: "aila@localhost")
   smtp_username -- SMTP auth username (optional)
   smtp_password -- SMTP auth password (optional)
+  smtp_ca_bundle_path   -- path to an admin-managed CA bundle for server cert
+                           verification (optional; system trust store if unset)
+  smtp_use_implicit_tls -- "true" to use implicit TLS / SMTPS on port 465
+                           instead of STARTTLS (optional; default STARTTLS)
 
 Security:
   T-147-01: SMTP config loaded from ConfigRegistry only, never from request body.
@@ -145,6 +149,12 @@ async def generate_scheduled_report_job(
     smtp_from = await registry.get("platform", "smtp_from") or "aila@localhost"
     smtp_username = await registry.get("platform", "smtp_username")
     smtp_password = await registry.get("platform", "smtp_password")
+    smtp_ca_bundle_path = await registry.get("platform", "smtp_ca_bundle_path")
+    _implicit_raw = await registry.get("platform", "smtp_use_implicit_tls")
+    smtp_use_implicit_tls = _implicit_raw is True or (
+        isinstance(_implicit_raw, str)
+        and _implicit_raw.strip().lower() in ("true", "1", "yes")
+    )
 
     # Send email to each recipient
     date_str = datetime.now(UTC).strftime("%Y-%m-%d")
@@ -169,6 +179,10 @@ async def generate_scheduled_report_job(
                 report_name=report_name,
                 date_str=date_str,
                 pdf_bytes=pdf_bytes,
+                ca_bundle_path=(
+                    str(smtp_ca_bundle_path) if smtp_ca_bundle_path else None
+                ),
+                use_implicit_tls=smtp_use_implicit_tls,
             )
             sent_count += 1
             _log.info(
@@ -241,6 +255,8 @@ def _send_report_email(
     report_name: str,
     date_str: str,
     pdf_bytes: bytes,
+    ca_bundle_path: str | None = None,
+    use_implicit_tls: bool = False,
 ) -> None:
     """Send a report email with the PDF attached.
 
@@ -249,7 +265,8 @@ def _send_report_email(
 
     Args:
         smtp_host: SMTP server hostname.
-        smtp_port: SMTP server port (typically 587 for STARTTLS).
+        smtp_port: SMTP server port (typically 587 for STARTTLS, 465 for
+            implicit TLS).
         smtp_from: From email address.
         smtp_username: SMTP auth username (None = no auth).
         smtp_password: SMTP auth password (None = no auth).
@@ -257,6 +274,12 @@ def _send_report_email(
         report_name: Human-readable report name for the email subject.
         date_str: Date string for the filename (YYYY-MM-DD).
         pdf_bytes: PDF file bytes to attach.
+        ca_bundle_path: Optional path to an admin-managed CA bundle for server
+            certificate verification. None uses the system trust store. An
+            invalid path fails loudly rather than downgrading to no verification.
+        use_implicit_tls: When True, connect with implicit TLS (SMTPS, port 465)
+            instead of plaintext + STARTTLS. Certificate verification is on in
+            both modes.
     """
     msg = MIMEMultipart()
     msg["From"] = smtp_from
@@ -279,10 +302,19 @@ def _send_report_email(
     )
     msg.attach(attachment)
 
-    context = ssl.create_default_context()
-    with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
-        server.ehlo()
-        server.starttls(context=context)
-        if smtp_username and smtp_password:
-            server.login(smtp_username, smtp_password)
-        server.sendmail(smtp_from, [recipient], msg.as_string())
+    context = ssl.create_default_context(cafile=ca_bundle_path or None)
+    if use_implicit_tls:
+        with smtplib.SMTP_SSL(
+            smtp_host, smtp_port, timeout=30, context=context
+        ) as server:
+            server.ehlo()
+            if smtp_username and smtp_password:
+                server.login(smtp_username, smtp_password)
+            server.sendmail(smtp_from, [recipient], msg.as_string())
+    else:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+            server.ehlo()
+            server.starttls(context=context)
+            if smtp_username and smtp_password:
+                server.login(smtp_username, smtp_password)
+            server.sendmail(smtp_from, [recipient], msg.as_string())
