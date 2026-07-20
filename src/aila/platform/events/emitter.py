@@ -195,17 +195,19 @@ def build_emitter(
                 action=event.action,
                 details=event.details or {},
             )
-        except sqlalchemy.exc.SQLAlchemyError:
-            # Session may be in a failed transaction state. Log with traceback
-            # so the failure is visible; the outer drain isolation also counts
-            # this destination via its own metric if we re-raised, but here we
-            # keep the local specific catch because an in-flight failed
-            # transaction is expected on some upstream errors and must not
-            # feed the isolation counter (which is for infra failures).
-            _log.debug(
-                "audit_db emit failed (session may be in failed state)",
-                exc_info=True,
-            )
+        except sqlalchemy.exc.SQLAlchemyError as exc:
+            # #52-3.5: fail-loud. The previous DEBUG swallow hid audit-trail
+            # loss under any in-flight session-transaction failure, so
+            # dropped audit rows never surfaced. Re-raise as RuntimeError so
+            # the emitter's _dispatch guard logs at ERROR with the full
+            # traceback and increments _destination_failures['audit_db']
+            # -- mirroring the redis_stream escalation pattern below.
+            # Full fail-closed rollback + dead-letter destination is on the
+            # #52 journal-migration roadmap and stays out of scope for this
+            # pass (needs infra/migration wiring).
+            raise RuntimeError(
+                f"audit_db emit failed: {exc.__class__.__name__}",
+            ) from exc
 
     def _run_history(event: PlatformEvent) -> None:
         append_run_event(run_state, event.key, event.message)

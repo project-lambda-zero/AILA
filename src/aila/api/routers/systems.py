@@ -899,15 +899,15 @@ async def update_system(
                 setattr(record, field, value)
             record.updated_at = utc_now()
             session.add(record)
-            try:
-                await session.commit()
-            except IntegrityError:
-                await session.rollback()
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"System name '{req.name}' already exists -- choose a different name or update the existing system via PUT /systems/{{id}}",
-                )
-            await session.refresh(record)
+            # #52-3.2: stage the audit row inside the SAME transaction as
+            # the row update. Previously the update committed first and
+            # the audit row was written in a second transaction, so a
+            # crash between the two lost the audit trail. record_audit_event
+            # only stages an INSERT on the session; the single commit
+            # below persists both or neither. An IntegrityError from the
+            # unique-name constraint rolls the audit row back with the
+            # attempted rename -- correct: no change, no audit.
+            audited_fields = list(update_data.keys())
             record_audit_event(
                 session,
                 run_id=str(system_id),
@@ -916,9 +916,16 @@ async def update_system(
                 status=AUDIT_STATUS_COMPLETED,
                 target=record.name,
                 user_id=auth.user_id,
-                details={"fields": list(update_data.keys())},
+                details={"fields": audited_fields},
             )
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"System name '{req.name}' already exists -- choose a different name or update the existing system via PUT /systems/{{id}}",
+                )
             await session.refresh(record)
             return record
 
@@ -950,7 +957,9 @@ async def delete_system(
                 )
             system_name = record.name
             await session.delete(record)
-            await session.commit()
+            # #52-3.2: audit row shares the same transaction as the row
+            # delete. Previously a crash between the two commits lost the
+            # audit trail while the system row was already gone.
             record_audit_event(
                 session,
                 run_id=str(system_id),

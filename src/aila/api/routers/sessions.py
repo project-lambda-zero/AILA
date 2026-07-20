@@ -356,7 +356,11 @@ async def _stream_message(
                 run_id=None,
             )
             db.add(user_msg)
-            await db.commit()
+            # #52-3.2: stage the audit row inside the SAME transaction as
+            # the message insert. Previously the message committed first
+            # and the audit row was written in a second transaction, so a
+            # crash between the two lost the audit trail for the streaming
+            # user turn.
             record_audit_event(
                 db,
                 run_id=session_id,

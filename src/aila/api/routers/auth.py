@@ -337,7 +337,14 @@ async def revoke_api_key(
             )
             if result.rowcount == 0:
                 return "already_revoked"
-            await session.commit()
+            # #52-3.2: write the audit row in the SAME transaction as the
+            # conditional UPDATE. The previous flow (`commit(); audit;
+            # commit()`) opened a crash window where the key was already
+            # revoked but the audit trail row was lost. record_audit_event
+            # only stages an INSERT on the session; both writes commit
+            # atomically below. The atomic conditional-UPDATE contract
+            # above is preserved -- rowcount==0 still short-circuits
+            # before any audit row is staged.
             record_audit_event(
                 session,
                 run_id=key_id,
