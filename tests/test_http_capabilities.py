@@ -110,8 +110,13 @@ class TestBuildProviderHttpClientProxy:
 
     def test_registry_proxy_overrides_env_var(self, monkeypatch):
         monkeypatch.setenv("HTTP_PROXY", "http://env-proxy:3128")
+        # Contract: _resolve_proxy calls ConfigRegistry.get_sync (NOT the async
+        # .get) to avoid the coroutine-truthy trap that made every proxy fall
+        # back to the async get's repr string (see issue #65 comment in
+        # src/aila/modules/vulnerability/providers/_http.py::_resolve_proxy).
+        # The mock must therefore intercept get_sync, not get.
         registry = MagicMock()
-        registry.get.side_effect = lambda ns, key: (
+        registry.get_sync.side_effect = lambda ns, key: (
             "http://registry-proxy:8080" if (ns, key) == ("platform", "https_proxy") else ""
         )
         config = VulnerabilityConfigSchema()

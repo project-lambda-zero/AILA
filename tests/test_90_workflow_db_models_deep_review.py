@@ -24,14 +24,14 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import inspect as sa_inspect
-from sqlalchemy.dialects.sqlite import insert as sa_insert
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlalchemy.dialects.postgresql import insert as sa_insert
+from sqlmodel import select
 
 from aila.modules.vulnerability.contracts.reporting import PrioritizedFinding
 from aila.modules.vulnerability.db_models import LatestFindingRecord, PrioritizedFindingRecord
 from aila.modules.vulnerability.reporting.compliance import tag_finding
 from aila.platform.contracts._common import utc_now
+from aila.storage.database import session_scope
 
 __all__ = [
     "TestStatePersistNoFileWrites",
@@ -44,21 +44,17 @@ __all__ = [
 
 # ---------------------------------------------------------------------------
 # Fixtures
+#
+# Previously this file spun a per-test in-memory SQLite engine + sync Session
+# via the ``engine`` / ``session`` fixtures. SQLite is no longer supported
+# (D-48/D-49): the project now hits PostgreSQL exclusively. The shared
+# ``test_db`` fixture in tests/conftest.py creates the full schema once against
+# aila_test and truncates all tables per-test; DB-touching cases below opt in
+# by taking ``test_db`` as a parameter and using ``session_scope()`` (sync,
+# psycopg-backed) for writes. Schema-inspection cases read the SQLAlchemy
+# metadata off ``LatestFindingRecord.__table__`` directly -- no live engine
+# needed, and the values match the CREATE TABLE emitted against aila_test.
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    SQLModel.metadata.create_all(eng)
-    yield eng
-    SQLModel.metadata.drop_all(eng)
-
-
-@pytest.fixture()
-def session(engine):
-    with Session(engine) as s:
-        yield s
 
 
 def _make_finding(**overrides) -> PrioritizedFinding:
@@ -114,21 +110,39 @@ class TestStatePersistNoFileWrites:
         )
 
     def test_state_persist_uses_session_operations_only(self):
-        """Verify state_persist body references session.add, session.execute, session.commit."""
+        """Verify state_persist body references session.execute and session.commit.
+
+        The atomic finding upsert used to happen inline as
+        ``session.execute(sa_insert(...).on_conflict_do_update(...))`` followed
+        by ``session.commit()``. It has since been factored behind
+        ``services.data.reports.upsert_findings_batch``, which delegates the
+        actual ON CONFLICT DO UPDATE to ``PersistContract.upsert_many`` on the
+        same session (still transactional, still atomic). The only inline
+        ``session.*`` calls left in state_persist are the WorkflowRunRecord
+        status update (``session.execute(...)``) and the transaction close
+        (``session.commit()``). ``session.add`` is legitimately no longer
+        invoked here -- it lives inside the service layer now.
+        """
         from aila.modules.vulnerability.workflow.states import reporting
 
         source = inspect.getsource(reporting.state_persist)
         tree = ast.parse(source)
 
+        # Accepted receivers on state_persist today: a plain ``session``
+        # ``Name`` (bound by ``async with services.session_factory() as session``)
+        # and any historical ``ctx.session`` / ``context.session`` ``Attribute``
+        # chain. Both are legitimate; the previous check only looked at the
+        # nested attribute chain and missed the current plain-Name form.
         session_methods: set[str] = set()
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                if isinstance(node.func.value, ast.Attribute):
-                    # context.session.add / context.session.execute / context.session.commit
-                    if node.func.value.attr == "session":
-                        session_methods.add(node.func.attr)
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            receiver = node.func.value
+            if isinstance(receiver, ast.Name) and receiver.id == "session":
+                session_methods.add(node.func.attr)
+            elif isinstance(receiver, ast.Attribute) and receiver.attr == "session":
+                session_methods.add(node.func.attr)
 
-        assert "add" in session_methods, "state_persist must call session.add()"
         assert "execute" in session_methods, "state_persist must call session.execute()"
         assert "commit" in session_methods, "state_persist must call session.commit()"
 
@@ -194,29 +208,40 @@ class TestWriteBundleSyntheticPaths:
 class TestStatePersistDBWrites:
     """Verify the DB write paths in state_persist produce correct records."""
 
-    def test_upsert_creates_latest_finding_record(self, session):
-        """sa_insert().on_conflict_do_update() creates a LatestFindingRecord row."""
-        finding = _make_finding()
-        compliance_tags = tag_finding(finding.model_dump(mode="json"))
+    def _latest_finding_values(self, finding: PrioritizedFinding) -> dict:
+        """Assemble the column dict used by every LatestFindingRecord upsert here."""
+        return {
+            "host": finding.host,
+            "package_name": finding.package_name,
+            "cve_id": finding.cve_id,
+            "system_id": finding.system_id,
+            "system_name": finding.system_name,
+            "distribution": finding.distribution or "",
+            "criticality": finding.criticality,
+            "score": finding.numeric_score,
+            "rationale": finding.rationale,
+            "fixed_version": finding.fixed_version,
+            "nvd_url": finding.nvd_url,
+            "compliance_tags_json": json.dumps(
+                tag_finding(finding.model_dump(mode="json"))
+            ),
+            "details_json": finding.model_dump_json(),
+            "last_scanned_at": utc_now(),
+        }
 
+    def test_upsert_creates_latest_finding_record(self, test_db):
+        """sa_insert().on_conflict_do_update() creates a LatestFindingRecord row.
+
+        Migrated from an in-memory SQLite session to the shared ``test_db``
+        fixture (aila_test on PostgreSQL). ``sa_insert`` is imported from
+        ``sqlalchemy.dialects.postgresql`` -- the sqlite dialect no longer
+        applies because ``check_same_thread`` and every other SQLite-only
+        kwarg was purged with D-48/D-49.
+        """
+        finding = _make_finding()
         stmt = (
             sa_insert(LatestFindingRecord)
-            .values(
-                host=finding.host,
-                package_name=finding.package_name,
-                cve_id=finding.cve_id,
-                system_id=finding.system_id,
-                system_name=finding.system_name,
-                distribution=finding.distribution or "",
-                criticality=finding.criticality,
-                score=finding.numeric_score,
-                rationale=finding.rationale,
-                fixed_version=finding.fixed_version,
-                nvd_url=finding.nvd_url,
-                compliance_tags_json=json.dumps(compliance_tags),
-                details_json=finding.model_dump_json(),
-                last_scanned_at=utc_now(),
-            )
+            .values(**self._latest_finding_values(finding))
             .on_conflict_do_update(
                 index_elements=["host", "package_name", "cve_id"],
                 set_={
@@ -225,10 +250,12 @@ class TestStatePersistDBWrites:
                 },
             )
         )
-        session.execute(stmt)
-        session.commit()
+        with session_scope() as session:
+            session.execute(stmt)
+            session.commit()
 
-        rows = list(session.exec(select(LatestFindingRecord)))
+            rows = list(session.exec(select(LatestFindingRecord)))
+
         assert len(rows) == 1
         row = rows[0]
         assert row.host == "10.0.0.1"
@@ -238,70 +265,58 @@ class TestStatePersistDBWrites:
         assert row.criticality == "High"
         assert row.nvd_url == "https://nvd.nist.gov/vuln/detail/CVE-2024-0001"
 
-    def test_upsert_updates_existing_latest_finding(self, session):
+    def test_upsert_updates_existing_latest_finding(self, test_db):
         """Second upsert for same (host, package, cve) updates score and criticality."""
         finding1 = _make_finding(numeric_score=7.0, criticality="Moderate")
         finding2 = _make_finding(numeric_score=9.5, criticality="Immediate")
 
-        for finding in (finding1, finding2):
-            compliance_tags = tag_finding(finding.model_dump(mode="json"))
-            stmt = (
-                sa_insert(LatestFindingRecord)
-                .values(
+        with session_scope() as session:
+            for finding in (finding1, finding2):
+                stmt = (
+                    sa_insert(LatestFindingRecord)
+                    .values(**self._latest_finding_values(finding))
+                    .on_conflict_do_update(
+                        index_elements=["host", "package_name", "cve_id"],
+                        set_={
+                            "criticality": finding.criticality,
+                            "score": finding.numeric_score,
+                            "rationale": finding.rationale,
+                            "last_scanned_at": utc_now(),
+                        },
+                    )
+                )
+                session.execute(stmt)
+            session.commit()
+
+            rows = list(session.exec(select(LatestFindingRecord)))
+
+        assert len(rows) == 1, "Upsert should produce exactly one row for same key"
+        assert rows[0].score == 9.5
+        assert rows[0].criticality == "Immediate"
+
+    def test_prioritized_finding_insert(self, test_db):
+        """PrioritizedFindingRecord insert creates a run-scoped history row."""
+        finding = _make_finding()
+        with session_scope() as session:
+            session.add(
+                PrioritizedFindingRecord(
+                    run_id="run-001",
+                    system_id=finding.system_id,
                     host=finding.host,
                     package_name=finding.package_name,
+                    installed_version=finding.installed_version,
                     cve_id=finding.cve_id,
-                    system_id=finding.system_id,
-                    system_name=finding.system_name,
-                    distribution=finding.distribution or "",
                     criticality=finding.criticality,
                     score=finding.numeric_score,
                     rationale=finding.rationale,
                     fixed_version=finding.fixed_version,
                     nvd_url=finding.nvd_url,
-                    compliance_tags_json=json.dumps(compliance_tags),
-                    details_json=finding.model_dump_json(),
-                    last_scanned_at=utc_now(),
-                )
-                .on_conflict_do_update(
-                    index_elements=["host", "package_name", "cve_id"],
-                    set_={
-                        "criticality": finding.criticality,
-                        "score": finding.numeric_score,
-                        "rationale": finding.rationale,
-                        "last_scanned_at": utc_now(),
-                    },
                 )
             )
-            session.execute(stmt)
-        session.commit()
+            session.commit()
 
-        rows = list(session.exec(select(LatestFindingRecord)))
-        assert len(rows) == 1, "Upsert should produce exactly one row for same key"
-        assert rows[0].score == 9.5
-        assert rows[0].criticality == "Immediate"
+            rows = list(session.exec(select(PrioritizedFindingRecord)))
 
-    def test_prioritized_finding_insert(self, session):
-        """PrioritizedFindingRecord insert creates a run-scoped history row."""
-        finding = _make_finding()
-        session.add(
-            PrioritizedFindingRecord(
-                run_id="run-001",
-                system_id=finding.system_id,
-                host=finding.host,
-                package_name=finding.package_name,
-                installed_version=finding.installed_version,
-                cve_id=finding.cve_id,
-                criticality=finding.criticality,
-                score=finding.numeric_score,
-                rationale=finding.rationale,
-                fixed_version=finding.fixed_version,
-                nvd_url=finding.nvd_url,
-            )
-        )
-        session.commit()
-
-        rows = list(session.exec(select(PrioritizedFindingRecord)))
         assert len(rows) == 1
         assert rows[0].run_id == "run-001"
         assert rows[0].installed_version == "3.1.0"
@@ -313,7 +328,23 @@ class TestStatePersistDBWrites:
 
 
 class TestLatestFindingColumns:
-    """LatestFindingRecord has all required columns with correct types."""
+    """LatestFindingRecord has all required columns with correct types.
+
+    Contract drift resolved in this pass:
+
+    * ``team_id`` -- added by ``TeamScopedMixin`` (D-01/D-07). Every
+      team-scoped table carries it and StorageService auto-stamps it at
+      write time.
+    * ``is_kev`` -- Phase 143 (FIND-04/FIND-08) triage enrichment;
+      server-default ``false``.
+    * ``current_workflow_state`` -- Phase 143 triage enrichment;
+      server-default ``'new'`` with a CHECK constraint restricting values
+      to (new|investigating|mitigated|verified|closed).
+
+    These are all real, current columns on ``LatestFindingRecord``
+    (see src/aila/modules/vulnerability/db_models/findings.py); adding
+    them to EXPECTED_COLUMNS reflects the current schema, not a masked bug.
+    """
 
     EXPECTED_COLUMNS = {
         "id", "host", "package_name", "cve_id",
@@ -321,45 +352,73 @@ class TestLatestFindingColumns:
         "criticality", "score", "rationale", "fixed_version", "nvd_url",
         "compliance_tags_json", "details_json",
         "last_scanned_at", "created_at", "status",
+        "team_id", "is_kev", "current_workflow_state",
     }
 
-    def test_all_expected_columns_present(self, engine):
+    def test_all_expected_columns_present(self):
         """LatestFindingRecord table has every expected column."""
-        inspector = sa_inspect(engine)
-        columns = {col["name"] for col in inspector.get_columns("latest_finding_records")}
+        columns = set(LatestFindingRecord.__table__.columns.keys())
         missing = self.EXPECTED_COLUMNS - columns
         assert not missing, f"LatestFindingRecord missing columns: {missing}"
 
-    def test_no_installed_version_column(self, engine):
+    def test_no_installed_version_column(self):
         """LatestFindingRecord intentionally omits installed_version (stored only on PrioritizedFindingRecord)."""
-        inspector = sa_inspect(engine)
-        columns = {col["name"] for col in inspector.get_columns("latest_finding_records")}
+        columns = set(LatestFindingRecord.__table__.columns.keys())
         assert "installed_version" not in columns, (
             "installed_version must not be on LatestFindingRecord -- "
             "it belongs only on PrioritizedFindingRecord"
         )
 
     def test_upsert_keys_match_model_columns(self):
-        """The sa_insert values dict in state_persist uses only columns that exist on the model."""
+        """Every column-name kwarg written by state_persist is a real model column.
+
+        The original assertion parsed ``.values(...)`` calls in the raw
+        ``sa_insert().values(...).on_conflict_do_update(...)`` chain. State
+        persist has since been refactored to build ``LatestFindingRecord`` ORM
+        instances directly and hand them to
+        ``services.data.reports.upsert_findings_batch``, which delegates the
+        atomic ON CONFLICT DO UPDATE to ``PersistContract.upsert`` inside the
+        platform (see src/aila/modules/vulnerability/workflow/states/reporting.py
+        and src/aila/platform/contracts/persist.py). Only the WorkflowRunRecord
+        status update still uses ``.values(...)``.
+
+        Rewritten to walk the ``LatestFindingRecord(...)`` constructor call in
+        the same AST -- that's the surface that carries the finding column
+        kwargs today.
+        """
         from aila.modules.vulnerability.workflow.states import reporting
 
         source = inspect.getsource(reporting.state_persist)
-
-        # Extract column names from the .values() call in the LatestFindingRecord upsert
-        # by parsing the AST and finding keyword arguments
         tree = ast.parse(source)
 
         upsert_keys: set[str] = set()
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                if node.func.attr == "values":
-                    for kw in node.keywords:
-                        if kw.arg is not None:
-                            upsert_keys.add(kw.arg)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "LatestFindingRecord"
+            ):
+                for kw in node.keywords:
+                    if kw.arg is not None:
+                        upsert_keys.add(kw.arg)
+
+        assert upsert_keys, (
+            "state_persist source no longer constructs LatestFindingRecord(...) "
+            "instances -- rewrite this test to track the new persist shape."
+        )
 
         model_columns = set(LatestFindingRecord.model_fields.keys())
-        # id and created_at and status are auto-managed, not in upsert
-        auto_columns = {"id", "created_at", "status"}
+        # Columns that are auto-managed and legitimately not set at persist time:
+        # - id: PK sequence
+        # - created_at: default_factory=utc_now
+        # - status: server_default='open' (remediation lifecycle, Phase 176a)
+        # - is_kev / current_workflow_state: Phase 143 triage enrichment,
+        #   server-defaulted; enriched by later triage stages, not by persist.
+        # - team_id: auto-stamped by StorageService per D-07.
+        auto_columns = {
+            "id", "created_at", "status",
+            "is_kev", "current_workflow_state", "team_id",
+        }
         expected_upsert_columns = model_columns - auto_columns
 
         # Every upsert key must be a valid model column
@@ -384,10 +443,9 @@ class TestPrioritizedFindingColumns:
         "rationale", "fixed_version", "nvd_url", "created_at",
     }
 
-    def test_all_expected_columns_present(self, engine):
+    def test_all_expected_columns_present(self):
         """PrioritizedFindingRecord table has every expected column."""
-        inspector = sa_inspect(engine)
-        columns = {col["name"] for col in inspector.get_columns("prioritizedfindingrecord")}
+        columns = set(PrioritizedFindingRecord.__table__.columns.keys())
         missing = self.EXPECTED_COLUMNS - columns
         assert not missing, f"PrioritizedFindingRecord missing columns: {missing}"
 
@@ -452,10 +510,9 @@ class TestPlatformTablesReachable:
             f"Vulnerability table classes not re-exported from db_models/__init__.py: {missing}"
         )
 
-    def test_no_extra_columns_on_latest_finding(self, engine):
+    def test_no_extra_columns_on_latest_finding(self):
         """LatestFindingRecord has no unexpected columns beyond the documented set."""
-        inspector = sa_inspect(engine)
-        columns = {col["name"] for col in inspector.get_columns("latest_finding_records")}
+        columns = set(LatestFindingRecord.__table__.columns.keys())
         expected = TestLatestFindingColumns.EXPECTED_COLUMNS
         extra = columns - expected
         assert not extra, f"LatestFindingRecord has unexpected columns: {extra}"
