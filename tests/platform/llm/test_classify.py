@@ -34,22 +34,33 @@ from aila.platform.llm.pipeline import PipelineRunner
 # ---------------------------------------------------------------------------
 
 class FakeRegistry:
-    """In-memory ConfigRegistry fake."""
+    """In-memory ConfigRegistry fake.
+
+    ``get`` is async to match the real ConfigRegistry (config resolvers
+    and the classify pipeline step await ``registry.get``).
+    """
 
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self._data: dict[str, object] = data or {}
 
-    def get(self, namespace: str, key: str) -> object:
+    async def get(self, namespace: str, key: str) -> object:
         return self._data.get(f"{namespace}.{key}")
+
+    def set(self, namespace: str, key: str, value: str) -> None:
+        self._data[f"{namespace}.{key}"] = value
 
 
 class FakeSecretStore:
-    """In-memory SecretStore fake."""
+    """In-memory SecretStore fake.
+
+    ``resolve_provider_secret`` is async to match the real SecretStore
+    (LLMConfigProvider.resolve_api_key awaits it).
+    """
 
     def __init__(self, secrets: dict[str, str] | None = None) -> None:
         self._secrets: dict[str, str] = secrets or {}
 
-    def resolve_provider_secret(self, secret_key: str) -> str | None:
+    async def resolve_provider_secret(self, secret_key: str) -> str | None:
         return self._secrets.get(secret_key)
 
 
@@ -583,9 +594,17 @@ class TestPipelineReRaise:
 
     @pytest.mark.asyncio
     async def test_non_classification_error_swallowed_in_fail_open(self, routing: LLMRouting) -> None:
-        """Non-ClassificationBlockedError is still swallowed in fail-open mode (backward compat)."""
+        """Non-ClassificationBlockedError is swallowed when the step is fail-open.
+
+        Per fix \u00a7156, ``classify`` is in ``_SECURITY_CRITICAL_STEPS`` and defaults
+        to fail-closed. To exercise the fail-open behavior an operator would opt into,
+        we set ``llm_pipeline_classify_fail_mode_scoring=open`` explicitly here.
+        """
         provider = LLMConfigProvider(
-            registry=FakeRegistry({"platform.llm_default_model": "test-model"}),  # type: ignore[arg-type]
+            registry=FakeRegistry({
+                "platform.llm_default_model": "test-model",
+                "platform.llm_pipeline_classify_fail_mode_scoring": "open",
+            }),  # type: ignore[arg-type]
             secret_store=FakeSecretStore({"openai_api_key": "sk-test"}),  # type: ignore[arg-type]
         )
         runner = PipelineRunner(config_provider=provider)
@@ -699,10 +718,10 @@ class TestClassifyPipelineIntegration:
     async def test_public_prompt_classified(self, client_with_classify: AilaLLMClient) -> None:
         """Prompt with only CVE IDs -> classification=PUBLIC."""
         mock_completion = _make_completion(content="CVE analysis result")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = await client_with_classify.chat(
                 "scoring",
@@ -716,10 +735,10 @@ class TestClassifyPipelineIntegration:
     async def test_internal_prompt_classified(self, client_with_classify: AilaLLMClient) -> None:
         """Prompt with public IP -> classification=INTERNAL."""
         mock_completion = _make_completion(content="IP scan result")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = await client_with_classify.chat(
                 "scoring",
@@ -765,10 +784,10 @@ class TestClassifyPipelineIntegration:
         client.pipeline.register("classify", step)
 
         mock_completion = _make_completion(content="Redacted analysis")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = await client.chat(
                 "scoring",
@@ -781,7 +800,6 @@ class TestClassifyPipelineIntegration:
         # Verify the messages passed to AsyncOpenAI had the IP redacted
         create_call = mock_instance.chat.completions.create
         call_kwargs = create_call.call_args[1] if create_call.call_args[1] else {}
-        call_args = create_call.call_args[0] if create_call.call_args[0] else ()
         # Messages are passed via call_kwargs from _single_call
         messages_sent = call_kwargs.get("messages", [])
         for msg in messages_sent:
@@ -805,10 +823,10 @@ class TestClassifyPipelineIntegration:
         client.pipeline.register("classify", step)
 
         mock_completion = _make_completion(content="Unclassified response")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = await client.chat(
                 "scoring",
