@@ -28,6 +28,10 @@ __all__ = [
     "test_fuzzilli_poll_parses_stats_and_counts_crashes",
     "test_fuzzilli_poll_returns_none_when_missing",
     "test_fuzzilli_discover_crashes_emits_one_record_per_file",
+    "test_fuzzilli_discover_crashes_rejects_symlink",
+    "test_fuzzilli_discover_crashes_skips_non_regular_entries",
+    "test_fuzzilli_discover_crashes_rejects_oversized_file",
+    "test_fuzzilli_count_excludes_non_regular",
     "test_afl_poll_parses_kv_stats",
     "test_afl_poll_returns_none_when_missing",
     "test_afl_discover_crashes_skips_readme",
@@ -88,6 +92,61 @@ def test_fuzzilli_discover_crashes_emits_one_record_per_file(
     assert all(len(r.stack_hash) == 64 for r in records)
     # Each carries an engine tag.
     assert all(r.extra.get("engine") == "fuzzilli" for r in records)
+
+
+def test_fuzzilli_discover_crashes_rejects_symlink(tmp_path: Path) -> None:
+    # A fuzz output dir is untrusted; a symlink there must not be dereferenced.
+    (tmp_path / "stats.json").write_text("{}")
+    crashes = tmp_path / "crashes"
+    crashes.mkdir()
+    (crashes / "crash-real.js").write_text("var x = 1;")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP SECRET DO NOT LEAK")
+    try:
+        (crashes / "crash-evil.js").symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted on this host")
+
+    records = FuzzilliScraper(tmp_path).discover_crashes()
+    assert {r.crash_signature for r in records} == {"crash-real.js"}
+    # The symlink target's bytes never enter a crash record.
+    assert all(
+        "TOP SECRET" not in r.extra.get("payload_preview", "") for r in records
+    )
+
+
+def test_fuzzilli_discover_crashes_skips_non_regular_entries(tmp_path: Path) -> None:
+    (tmp_path / "stats.json").write_text("{}")
+    crashes = tmp_path / "crashes"
+    crashes.mkdir()
+    (crashes / "crash-real.js").write_text("var x = 1;")
+    (crashes / "a_subdir").mkdir()  # directory -- not a regular file
+
+    records = FuzzilliScraper(tmp_path).discover_crashes()
+    assert {r.crash_signature for r in records} == {"crash-real.js"}
+
+
+def test_fuzzilli_discover_crashes_rejects_oversized_file(tmp_path: Path) -> None:
+    # Files above the hard cap (1 MiB) are refused outright; pre-fix they were
+    # recorded with an empty payload instead of rejected.
+    (tmp_path / "stats.json").write_text("{}")
+    crashes = tmp_path / "crashes"
+    crashes.mkdir()
+    (crashes / "crash-huge.js").write_bytes(b"A" * (2 * 1024 * 1024))
+    (crashes / "crash-ok.js").write_text("var x = 1;")
+
+    records = FuzzilliScraper(tmp_path).discover_crashes()
+    assert {r.crash_signature for r in records} == {"crash-ok.js"}
+
+
+def test_fuzzilli_count_excludes_non_regular(tmp_path: Path) -> None:
+    crashes = tmp_path / "crashes"
+    crashes.mkdir()
+    (crashes / "crash-1.js").write_text("x")
+    (crashes / "crash-2.js").write_text("y")
+    (crashes / "sub").mkdir()
+
+    assert FuzzilliScraper(tmp_path)._count_crash_files() == 2
 
 
 # ── AFL++ ─────────────────────────────────────────────────────────────
