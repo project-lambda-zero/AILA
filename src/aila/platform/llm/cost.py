@@ -291,12 +291,6 @@ async def persist_cost_record(
         async with async_session_scope() as session:
             session.add(record)
             await session.commit()
-
-        # Budget check runs after successful commit (D-03).
-        # check_monthly_budget is fire-and-forget -- handles its own exceptions.
-        if team_id is not None and registry is not None:
-            from aila.platform.llm.budget_alert import check_monthly_budget
-            await check_monthly_budget(team_id, registry)
     except sqlalchemy.exc.SQLAlchemyError:
         _log.warning(
             "persist_cost_record_failed",
@@ -306,6 +300,28 @@ async def persist_cost_record(
                 "task_type": task_type,
             },
         )
+        return
+
+    # Budget check runs after the successful commit (D-03). It is best-effort:
+    # the cost record already committed above, so a leaked exception here must
+    # never fail cost recording. check_monthly_budget handles its own errors,
+    # but this guard keeps the fire-and-forget contract even if one leaks.
+    if team_id is not None and registry is not None:
+        from aila.platform.llm.budget_alert import check_monthly_budget
+        try:
+            await check_monthly_budget(team_id, registry)
+        except (
+            sqlalchemy.exc.SQLAlchemyError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            OSError,
+        ):
+            _log.warning(
+                "check_monthly_budget_failed",
+                extra={"team_id": team_id, "model_id": model_id},
+                exc_info=True,
+            )
 
 
 async def emit_missing_pricing_notification(model_id: str) -> None:
