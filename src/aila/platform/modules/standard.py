@@ -83,8 +83,11 @@ def build_module_factory(package_name: str) -> Callable[[], ModuleProtocol]:
             f"{ENTRYPOINT_MODULE}.{ENTRYPOINT_FACTORY}()."
         )
     _assert_zero_arg_factory(factory, package_name)
-    _assert_factory_returns_module_protocol(factory, package_name)
-    return factory
+    instance = _assert_factory_returns_module_protocol(factory, package_name)
+    # Construct exactly once: every downstream factory() call (validation plus
+    # each load_builtin_modules pass) returns the same instance, so a module's
+    # create_module() side effects fire once, not once per call site (#41).
+    return lambda: instance
 
 
 def _assert_zero_arg_factory(factory: Callable[[], object], package_name: str) -> None:
@@ -103,7 +106,9 @@ def _assert_zero_arg_factory(factory: Callable[[], object], package_name: str) -
         )
 
 
-def _assert_factory_returns_module_protocol(factory: Callable[[], object], package_name: str) -> None:
+def _assert_factory_returns_module_protocol(
+    factory: Callable[[], object], package_name: str
+) -> ModuleProtocol:
     instance = factory()
     if not isinstance(instance, ModuleProtocol):
         raise ValueError(
@@ -116,3 +121,4 @@ def _assert_factory_returns_module_protocol(factory: Callable[[], object], packa
             f"Module package '{package_name}' must declare module_id='{expected_module_id}', "
             f"but got '{module_id}'."
         )
+    return instance
