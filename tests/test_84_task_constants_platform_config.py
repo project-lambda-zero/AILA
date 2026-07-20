@@ -1,8 +1,14 @@
 """Phase 84 -- Task Constants & Platform Config deep review.
 
 FILE-31: tasks/constants.py + tasks/__init__.py
-  - get_task_tuning reads DB directly (ConfigEntryRecord), falls back to constant
-  - Every tuning constant has a PlatformConfigSchema counterpart (same key, type, default)
+  - get_task_tuning is currently a Phase 179 stub that always returns the
+    compiled default. See docstring at src/aila/platform/tasks/__init__.py --
+    the DB-backed override path was disabled because ARQ worker startup on
+    Windows has no event loop for asyncio.run() and stale asyncpg connections
+    crashed the worker. Tests below reflect the stub contract; the DB-read
+    assertions from the pre-stub design were dropped.
+  - Every tuning constant has a PlatformConfigSchema counterpart (same key,
+    type, default).
 
 FILE-32: platform/config.py
   - PlatformConfigSchema has all fields used by get_task_tuning callers
@@ -11,8 +17,7 @@ FILE-32: platform/config.py
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,86 +25,50 @@ from aila.platform.config import PlatformConfigSchema, PlatformSettings, build_p
 from aila.platform.tasks import get_task_tuning
 from aila.platform.tasks.constants import __all__ as const_all
 
-_SESSION_SCOPE_PATH = "aila.storage.database.session_scope"
-
-
-def _fake_session_scope(mock_session: MagicMock):  # type: ignore[no-untyped-def]
-    """Build a context-manager that yields mock_session."""
-
-    @contextmanager
-    def _scope():  # type: ignore[no-untyped-def]
-        yield mock_session
-
-    return _scope
-
-
 # ---------------------------------------------------------------------------
-# FILE-31: get_task_tuning behaviour
+# FILE-31: get_task_tuning behaviour (Phase 179 stub contract)
 # ---------------------------------------------------------------------------
 
 
 class TestGetTaskTuning:
-    """get_task_tuning reads ConfigEntryRecord for namespace='platform', returns int."""
+    """get_task_tuning is currently a stub -- it always returns the caller's
+    default and never touches the DB. When an async-safe override path is
+    wired later, re-add the DB-read assertions removed here.
+    """
 
-    def test_returns_db_value_when_row_exists(self) -> None:
-        """DB row with valid int string -> returns that int."""
-        mock_row = MagicMock()
-        mock_row.value = "42"
+    def test_returns_default_int(self) -> None:
+        """Returns the caller-supplied default as-is."""
+        assert get_task_tuning("heartbeat_interval_s", 30) == 30
 
-        mock_session = MagicMock()
-        mock_session.exec.return_value.first.return_value = mock_row
+    def test_returns_default_for_arbitrary_key(self) -> None:
+        """Any key resolves to its default (no DB, no ConfigRegistry lookup)."""
+        assert get_task_tuning("arq_max_tries", 3) == 3
+        assert get_task_tuning("progress_stream_maxlen", 1000) == 1000
 
-        with patch(_SESSION_SCOPE_PATH, _fake_session_scope(mock_session)):
-            result = get_task_tuning("heartbeat_interval_s", 30)
+    def test_default_is_returned_verbatim(self) -> None:
+        """The stub returns the default object unchanged (identity for ints via
+        Python interning is incidental; equality is the contract)."""
+        sentinel = 4242
+        assert get_task_tuning("heartbeat_interval_s", sentinel) == sentinel
 
-        assert result == 42
+    def test_does_not_touch_session_scope(self) -> None:
+        """Stub path must not open a DB session (would crash ARQ startup).
 
-    def test_returns_default_when_no_db_row(self) -> None:
-        """No DB row -> returns default."""
-        mock_session = MagicMock()
-        mock_session.exec.return_value.first.return_value = None
-
-        with patch(_SESSION_SCOPE_PATH, _fake_session_scope(mock_session)):
-            result = get_task_tuning("heartbeat_interval_s", 30)
-
-        assert result == 30
-
-    def test_returns_default_when_db_raises(self) -> None:
-        """DB exception -> returns default, does not propagate."""
-
-        @contextmanager
-        def _boom():  # type: ignore[no-untyped-def]
-            raise RuntimeError("db down")
-            yield  # noqa: RET503 -- unreachable, keeps generator protocol
-
-        with patch(_SESSION_SCOPE_PATH, _boom):
-            result = get_task_tuning("heartbeat_interval_s", 30)
-
-        assert result == 30
-
-    def test_returns_default_when_value_not_castable(self) -> None:
-        """Row value that cannot be cast to int -> returns default."""
-        mock_row = MagicMock()
-        mock_row.value = "not-a-number"
+        Guards against a regression that reintroduces asyncio.run() or
+        session_scope() inside get_task_tuning.
+        """
+        from unittest.mock import patch
 
         mock_session = MagicMock()
-        mock_session.exec.return_value.first.return_value = mock_row
+        mock_scope = MagicMock()
+        mock_scope.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_scope.return_value.__exit__ = MagicMock(return_value=False)
 
-        with patch(_SESSION_SCOPE_PATH, _fake_session_scope(mock_session)):
-            result = get_task_tuning("heartbeat_interval_s", 30)
+        with patch("aila.storage.database.session_scope", mock_scope):
+            get_task_tuning("heartbeat_interval_s", 30)
 
-        assert result == 30
-
-    def test_queries_correct_namespace_and_key(self) -> None:
-        """Verify the query uses namespace='platform' and the provided key."""
-        mock_session = MagicMock()
-        mock_session.exec.return_value.first.return_value = None
-
-        with patch(_SESSION_SCOPE_PATH, _fake_session_scope(mock_session)):
-            get_task_tuning("arq_max_tries", 3)
-
-        # session.exec was called once with a select statement
-        mock_session.exec.assert_called_once()
+        assert not mock_scope.called
+        assert not mock_session.exec.called
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +103,9 @@ class TestConstantToSchemaMapping:
         expected_type: type,
     ) -> None:
         """Constant default matches PlatformConfigSchema field default."""
-        import aila.platform.tasks.constants as C
+        import aila.platform.tasks.constants as constants_module
 
-        const_value = getattr(C, const_name)
+        const_value = getattr(constants_module, const_name)
         schema_defaults = PlatformConfigSchema()
         schema_value = getattr(schema_defaults, schema_field)
 
