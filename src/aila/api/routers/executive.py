@@ -365,6 +365,13 @@ async def executive_health(
 @router.get(
     "/risk-summary-pdf",
     summary="Download executive risk summary PDF (EXEC-01)",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}},
+            "description": "PDF document",
+        },
+    },
 )
 @limiter.limit("10/minute")
 async def download_risk_summary_pdf(
@@ -410,6 +417,13 @@ async def download_risk_summary_pdf(
 @router.get(
     "/systems/{system_id}/evidence-package",
     summary="Download compliance evidence ZIP for a system (EXEC-03)",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}},
+            "description": "ZIP archive",
+        },
+    },
 )
 @limiter.limit("10/minute")
 async def download_evidence_package(

@@ -3420,6 +3420,13 @@ def create_forensics_router() -> APIRouter:
     @router.post(
         "/projects/{project_id}/retrieve-file",
         summary="Extract an arbitrary file from a project's disk image and stream it back.",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}},
+                "description": "Raw file bytes",
+            },
+        },
     )
     @limiter.limit("10/minute")
     async def retrieve_file(
@@ -3565,6 +3572,13 @@ def create_forensics_router() -> APIRouter:
     @router.post(
         "/projects/{project_id}/fetch-raw",
         summary="Fetch a file or directory from a raw_directory project's evidence.",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}},
+                "description": "Raw file or archive bytes",
+            },
+        },
     )
     @limiter.limit("10/minute")
     async def fetch_raw(
