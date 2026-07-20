@@ -1264,6 +1264,12 @@ class AilaLLMClient:
         Max iterations = routing.max_tool_steps.  If max_tool_steps is 0 or
         not set, tool calling is disabled -- returns whatever the model said.
         """
+        # Deferred import mirrors the sanitize_output pattern at the
+        # bottom of this file -- keeps this module free of a top-level
+        # dependency on the sanitize submodules and matches the file's
+        # existing PLC0415 convention.
+        from .untrusted import sanitize_untrusted
+
         max_steps = routing.max_tool_steps
         if max_steps <= 0:
             # Tool calling disabled for this task_type
@@ -1318,9 +1324,19 @@ class AilaLLMClient:
                 # call is NOT retried from scratch.
                 tool_timeout_s = getattr(routing, "tool_timeout_s", None) or 300.0
                 try:
-                    result = await asyncio.wait_for(
+                    raw_result = await asyncio.wait_for(
                         tool_executor(tc.function.name, args),
                         timeout=tool_timeout_s,
+                    )
+                    # #43-1: tool output is third-party content (MCP bridge,
+                    # HTTP, SSH). Fence-wrap it before appending to the
+                    # message list so injected instructions in the payload
+                    # cannot steer the next model turn -- the wrapper marks
+                    # the block as quoted data and escapes any occurrence
+                    # of the fence sentinel inside the payload.
+                    tool_content = sanitize_untrusted(
+                        str(raw_result),
+                        source=f"tool:{tc.function.name}",
                     )
                 except TimeoutError:
                     logger.warning(
@@ -1328,7 +1344,9 @@ class AilaLLMClient:
                         tc.function.name,
                         tool_timeout_s,
                     )
-                    result = json.dumps({
+                    # Platform-generated timeout notice; not third-party
+                    # content, so no fence needed.
+                    tool_content = json.dumps({
                         "error": "tool_timeout",
                         "tool": tc.function.name,
                         "timeout_s": tool_timeout_s,
@@ -1336,7 +1354,7 @@ class AilaLLMClient:
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": str(result),
+                    "content": tool_content,
                 })
 
             # Call the model again
