@@ -26,6 +26,7 @@ Endpoints (all envelope-wrapped):
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -622,7 +623,10 @@ async def oidc_callback(
     if oidc_state is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing OIDC state cookie")
     state_payload = _validate_state_jwt(oidc_state)
-    if state_payload.get("nonce") != state:
+    # Double-submit CSRF: the state echoed back by the IdP in the query string
+    # must be byte-identical to the signed JWT stored in the httponly cookie.
+    # (_make_state_jwt puts the same token in both the auth URL and the cookie.)
+    if not hmac.compare_digest(oidc_state, state):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OIDC state mismatch")
 
     provider_id = state_payload.get("provider_id")

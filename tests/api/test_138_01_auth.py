@@ -413,18 +413,6 @@ async def test_oidc_authorize_returns_url(auth_client, test_db):
     assert "authorization_url" in body["data"]
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "Production bug: src/aila/api/routers/oidc.py:625 compares "
-        "`state_payload.get('nonce') != state`, but _make_state_jwt "
-        "(same file, line 314) never sets a 'nonce' claim, so the "
-        "comparison is always `None != <state>` and callback "
-        "unconditionally returns 400 'OIDC state mismatch'. The user "
-        "auto-provisioning path is unreachable via GET /auth/oidc/callback "
-        "until the state check is aligned with _make_state_jwt's payload."
-    ),
-)
 @pytest.mark.asyncio
 async def test_oidc_callback_creates_user(auth_client, test_db):
     """GET /auth/oidc/callback with valid code creates user and returns tokens."""
@@ -460,8 +448,14 @@ async def test_oidc_callback_creates_user(auth_client, test_db):
         "access_token": "mock-access-token",
     }
 
-    with patch("aila.api.routers.oidc.msal") as mock_msal:
-        mock_msal.ConfidentialClientApplication.return_value = mock_app
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
+    # msal is imported lazily inside the callback handler, so patch the real
+    # module attribute; stub _decrypt_client_secret (SecretStore is empty in tests).
+    with patch("msal.ConfidentialClientApplication", return_value=mock_app), patch(
+        "aila.api.routers.oidc._decrypt_client_secret",
+        new=AsyncMock(return_value="decrypted-test-secret"),
+    ):
         resp = await auth_client.get(
             "/auth/oidc/callback",
             params={
