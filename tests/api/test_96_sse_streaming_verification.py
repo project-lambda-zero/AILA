@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -73,6 +73,18 @@ def _parse_sse_data_lines(text: str) -> list[dict]:
     """Extract and parse all SSE data lines from response text."""
     lines = [ln for ln in text.splitlines() if ln.startswith("data:")]
     return [json.loads(ln.removeprefix("data:").strip()) for ln in lines]
+
+
+async def _async_iter(items):
+    """Return a real async iterator over ``items``.
+
+    The scan SSE route consumes stream_events with ``async for``, so mocked
+    return values must be async-iterable -- a plain ``iter([...])`` raises
+    TypeError inside the route. Callers set ``instance.stream_events.return_value
+    = _async_iter([...])``.
+    """
+    for item in items:
+        yield item
 
 
 def _make_platform_stub_with_redis() -> MagicMock:
@@ -157,10 +169,17 @@ class TestScanSSECatchupBeforeScan:
             {"stage": "advisory", "message": "Resolving", "percent": "50", "timestamp": "2026-01-01T00:00:02+00:00"},
         ]
 
-        with patch("aila.api.routers.scans.ProgressStream") as MockPS:
-            instance = MockPS.return_value
-            instance.catchup.return_value = preexisting_events
-            instance.stream_events.return_value = iter([])
+        # Route short-circuits when Redis pool is unavailable (returns a single
+        # advisory message with no stage/percent), so force pool_available True
+        # for these mocked tests.
+        with patch("aila.api.routers.scans.pool_available", return_value=True), \
+                patch("aila.api.routers.scans.ProgressStream") as mock_ps:
+            instance = mock_ps.return_value
+            # catchup is awaited by the route -> must be AsyncMock.
+            instance.catchup = AsyncMock(return_value=preexisting_events)
+            # stream_events is consumed with `async for` -> must be a real async
+            # generator, not iter([...]).
+            instance.stream_events.return_value = _async_iter([])
 
             resp = await client.get(
                 "/scans/scan-catchup-001/events",
@@ -169,12 +188,15 @@ class TestScanSSECatchupBeforeScan:
 
         assert resp.status_code == 200
         events = _parse_sse_data_lines(resp.text)
-        assert len(events) == 3, f"Expected 3 catchup events, got {len(events)}"
-        assert events[0]["stage"] == "init"
-        assert events[1]["stage"] == "inventory"
-        assert events[2]["stage"] == "advisory"
-        # Verify catchup was called with correct args
-        instance.catchup.assert_called_once_with("scan-catchup-001", "0")
+        # Route emits a synthetic "Connected" event first, then catchup events.
+        assert len(events) == 1 + 3, f"Expected 1 Connected + 3 catchup events, got {len(events)}"
+        assert events[0]["stage"] == "stream"
+        assert events[0]["message"] == "Connected"
+        assert events[1]["stage"] == "init"
+        assert events[2]["stage"] == "inventory"
+        assert events[3]["stage"] == "advisory"
+        # Verify catchup was called with correct args.
+        instance.catchup.assert_awaited_once_with("scan-catchup-001", "0")
 
 
 class TestScanSSELiveEvents:
@@ -193,10 +215,11 @@ class TestScanSSELiveEvents:
             {"stage": "done", "message": "Complete", "percent": "100", "timestamp": "t3"},
         ]
 
-        with patch("aila.api.routers.scans.ProgressStream") as MockPS:
-            instance = MockPS.return_value
-            instance.catchup.return_value = []
-            instance.stream_events.return_value = iter(live_events)
+        with patch("aila.api.routers.scans.pool_available", return_value=True), \
+                patch("aila.api.routers.scans.ProgressStream") as mock_ps:
+            instance = mock_ps.return_value
+            instance.catchup = AsyncMock(return_value=[])
+            instance.stream_events.return_value = _async_iter(live_events)
 
             resp = await client.get(
                 "/scans/scan-live-001/events",
@@ -204,9 +227,10 @@ class TestScanSSELiveEvents:
             )
 
         events = _parse_sse_data_lines(resp.text)
-        assert len(events) == 3
-        assert [e["stage"] for e in events] == ["scoring", "reporting", "done"]
-        assert events[2]["percent"] == "100"
+        # 1 synthetic Connected event + 3 live events.
+        assert len(events) == 1 + 3
+        assert [e["stage"] for e in events] == ["stream", "scoring", "reporting", "done"]
+        assert events[3]["percent"] == "100"
 
 
 class TestScanSSECompletion:
@@ -219,12 +243,13 @@ class TestScanSSECompletion:
         token, _ = issue_jwt_token(key)
         _seed_task(user_id=key.id, group_id="admin", task_id="scan-done-001")
 
-        with patch("aila.api.routers.scans.ProgressStream") as MockPS:
-            instance = MockPS.return_value
-            instance.catchup.return_value = [
+        with patch("aila.api.routers.scans.pool_available", return_value=True), \
+                patch("aila.api.routers.scans.ProgressStream") as mock_ps:
+            instance = mock_ps.return_value
+            instance.catchup = AsyncMock(return_value=[
                 {"stage": "done", "message": "Complete", "percent": "100", "timestamp": "t"}
-            ]
-            instance.stream_events.return_value = iter([])  # empty = done
+            ])
+            instance.stream_events.return_value = _async_iter([])  # empty = done
 
             resp = await client.get(
                 "/scans/scan-done-001/events",
@@ -233,8 +258,10 @@ class TestScanSSECompletion:
 
         assert resp.status_code == 200
         events = _parse_sse_data_lines(resp.text)
-        assert len(events) == 1  # only the catchup event
-        assert events[0]["percent"] == "100"
+        # 1 synthetic Connected + 1 catchup event; stream_events is empty.
+        assert len(events) == 1 + 1
+        assert events[0]["stage"] == "stream"
+        assert events[1]["percent"] == "100"
 
 
 class TestScanSSELateConnect:
@@ -255,10 +282,11 @@ class TestScanSSELateConnect:
         # 1 live event arrives after connection
         live_event = {"stage": "scoring", "message": "Scoring", "percent": "70", "timestamp": "t2"}
 
-        with patch("aila.api.routers.scans.ProgressStream") as MockPS:
-            instance = MockPS.return_value
-            instance.catchup.return_value = catchup_events
-            instance.stream_events.return_value = iter([live_event])
+        with patch("aila.api.routers.scans.pool_available", return_value=True), \
+                patch("aila.api.routers.scans.ProgressStream") as mock_ps:
+            instance = mock_ps.return_value
+            instance.catchup = AsyncMock(return_value=catchup_events)
+            instance.stream_events.return_value = _async_iter([live_event])
 
             resp = await client.get(
                 "/scans/scan-late-001/events?last_id=0",
@@ -266,12 +294,14 @@ class TestScanSSELateConnect:
             )
 
         events = _parse_sse_data_lines(resp.text)
-        assert len(events) == 3, "Expected 2 catchup + 1 live event"
-        # Catchup comes first
-        assert events[0]["stage"] == "init"
-        assert events[1]["stage"] == "inventory"
+        # 1 synthetic Connected + 2 catchup + 1 live event.
+        assert len(events) == 1 + 2 + 1, "Expected Connected + 2 catchup + 1 live event"
+        assert events[0]["stage"] == "stream"
+        # Catchup comes first (after Connected)
+        assert events[1]["stage"] == "init"
+        assert events[2]["stage"] == "inventory"
         # Then live
-        assert events[2]["stage"] == "scoring"
+        assert events[3]["stage"] == "scoring"
 
     @pytest.mark.asyncio
     async def test_late_connect_default_last_id_is_zero(self, scan_sse_client) -> None:
@@ -280,10 +310,11 @@ class TestScanSSELateConnect:
         token, _ = issue_jwt_token(key)
         _seed_task(user_id=key.id, group_id="admin", task_id="scan-late-default-001")
 
-        with patch("aila.api.routers.scans.ProgressStream") as MockPS:
-            instance = MockPS.return_value
-            instance.catchup.return_value = []
-            instance.stream_events.return_value = iter([])
+        with patch("aila.api.routers.scans.pool_available", return_value=True), \
+                patch("aila.api.routers.scans.ProgressStream") as mock_ps:
+            instance = mock_ps.return_value
+            instance.catchup = AsyncMock(return_value=[])
+            instance.stream_events.return_value = _async_iter([])
 
             resp = await client.get(
                 "/scans/scan-late-default-001/events",  # no ?last_id param
@@ -291,10 +322,14 @@ class TestScanSSELateConnect:
             )
 
         assert resp.status_code == 200
-        # Verify catchup was called with default '0'
-        instance.catchup.assert_called_once_with("scan-late-default-001", "0")
-        # Verify stream_events was called with default '0'
-        instance.stream_events.assert_called_once_with("scan-late-default-001", "0")
+        # Verify catchup was called with default '0'.
+        instance.catchup.assert_awaited_once_with("scan-late-default-001", "0")
+        # After a successful catchup the route resumes stream_events from "$"
+        # (only new events beyond what catchup already replayed) -- see
+        # src/aila/api/routers/scans.py:_sse_generator around the resume_from
+        # assignment. This prevents the duplicate-replay bug catchup returning
+        # events without stream ids would otherwise cause.
+        instance.stream_events.assert_called_once_with("scan-late-default-001", "$")
 
 
 class TestScanSSEDisconnectCleanup:
@@ -314,16 +349,19 @@ class TestScanSSEDisconnectCleanup:
 
         events_yielded = []
 
-        def _tracking_gen():
+        # Must be an async generator: the route consumes stream_events with
+        # `async for`, which rejects a plain sync generator.
+        async def _tracking_agen():
             event = {"stage": "s", "message": "m", "percent": "10", "timestamp": "t"}
             events_yielded.append(event)
             yield event
             # Generator exhausts here -- no infinite loop
 
-        with patch("aila.api.routers.scans.ProgressStream") as MockPS:
-            instance = MockPS.return_value
-            instance.catchup.return_value = []
-            instance.stream_events.return_value = _tracking_gen()
+        with patch("aila.api.routers.scans.pool_available", return_value=True), \
+                patch("aila.api.routers.scans.ProgressStream") as mock_ps:
+            instance = mock_ps.return_value
+            instance.catchup = AsyncMock(return_value=[])
+            instance.stream_events.return_value = _tracking_agen()
 
             resp = await client.get(
                 "/scans/scan-cleanup-001/events",
@@ -333,7 +371,8 @@ class TestScanSSEDisconnectCleanup:
         assert resp.status_code == 200
         assert len(events_yielded) == 1, "Generator should have yielded exactly once then stopped"
         sse_events = _parse_sse_data_lines(resp.text)
-        assert len(sse_events) == 1
+        # 1 synthetic Connected + 1 live event from the tracking generator.
+        assert len(sse_events) == 1 + 1
 
     @pytest.mark.asyncio
     async def test_catchup_exception_does_not_crash(self, scan_sse_client) -> None:
@@ -344,10 +383,11 @@ class TestScanSSEDisconnectCleanup:
 
         live_event = {"stage": "scan", "message": "Scanning", "percent": "50", "timestamp": "t"}
 
-        with patch("aila.api.routers.scans.ProgressStream") as MockPS:
-            instance = MockPS.return_value
-            instance.catchup.side_effect = ConnectionError("Redis connection lost")
-            instance.stream_events.return_value = iter([live_event])
+        with patch("aila.api.routers.scans.pool_available", return_value=True), \
+                patch("aila.api.routers.scans.ProgressStream") as mock_ps:
+            instance = mock_ps.return_value
+            instance.catchup = AsyncMock(side_effect=ConnectionError("Redis connection lost"))
+            instance.stream_events.return_value = _async_iter([live_event])
 
             resp = await client.get(
                 "/scans/scan-catchup-err-001/events",
@@ -356,9 +396,10 @@ class TestScanSSEDisconnectCleanup:
 
         assert resp.status_code == 200
         events = _parse_sse_data_lines(resp.text)
-        # Catchup failed, but live event should still be delivered
-        assert len(events) == 1
-        assert events[0]["stage"] == "scan"
+        # Catchup raised, but Connected event + live event should still land.
+        assert len(events) == 1 + 1
+        assert events[0]["stage"] == "stream"
+        assert events[1]["stage"] == "scan"
 
 
 # ===========================================================================

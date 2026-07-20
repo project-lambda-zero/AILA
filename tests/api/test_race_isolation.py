@@ -169,7 +169,9 @@ async def test_race_bulk_findings_atomicity(
         headers={"Authorization": f"Bearer {operator_token}"},
     )
     assert resp.status_code == 200
-    findings = resp.json()["items"]
+    # DataEnvelope wraps every list response as {"data": {..., "items": [...]}, ...}
+    # per src/aila/api/schemas/envelope.py and PaginatedResponse.
+    findings = resp.json()["data"]["items"]
     for finding in findings:
         if finding["id"] in valid_ids:
             assert finding["status"] == "open", (
@@ -184,4 +186,5 @@ async def test_race_bulk_findings_atomicity(
         headers={"Authorization": f"Bearer {operator_token}"},
     )
     assert resp.status_code == 200, f"All-valid batch should succeed, got {resp.status_code}: {resp.text}"
-    assert resp.json()["count"] == 3
+    # DataEnvelope wraps BulkUpdateResponse under "data": {"data": {"status": ..., "count": ...}}.
+    assert resp.json()["data"]["count"] == 3
