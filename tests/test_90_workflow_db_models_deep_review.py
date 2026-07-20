@@ -31,12 +31,14 @@ from aila.modules.vulnerability.contracts.reporting import PrioritizedFinding
 from aila.modules.vulnerability.db_models import LatestFindingRecord, PrioritizedFindingRecord
 from aila.modules.vulnerability.reporting.compliance import tag_finding
 from aila.platform.contracts._common import utc_now
-from aila.storage.database import session_scope
+from aila.platform.contracts.persist import PersistContract
+from aila.storage.database import async_session_scope, session_scope
 
 __all__ = [
     "TestStatePersistNoFileWrites",
     "TestWriteBundleSyntheticPaths",
     "TestStatePersistDBWrites",
+    "TestUpsertManyBatched",
     "TestLatestFindingColumns",
     "TestPlatformTablesReachable",
 ]
@@ -320,6 +322,69 @@ class TestStatePersistDBWrites:
         assert len(rows) == 1
         assert rows[0].run_id == "run-001"
         assert rows[0].installed_version == "3.1.0"
+
+
+class TestUpsertManyBatched:
+    """PersistContract.upsert_many collapses N inserts into batched ON CONFLICT."""
+
+    @staticmethod
+    def _rec(cve: str, score: float, criticality: str = "High") -> LatestFindingRecord:
+        return LatestFindingRecord(
+            host="10.0.0.9",
+            package_name="openssl",
+            cve_id=cve,
+            system_id=1,
+            criticality=criticality,
+            score=score,
+            nvd_url=f"https://nvd.nist.gov/vuln/detail/{cve}",
+        )
+
+    @pytest.mark.asyncio
+    async def test_upsert_many_inserts_all_records(self, test_db):
+        recs = [self._rec(f"CVE-2024-{i:04d}", 5.0) for i in range(3)]
+        async with async_session_scope() as session:
+            await PersistContract.upsert_many(session, recs)
+            await session.commit()
+        async with async_session_scope() as session:
+            rows = list((await session.exec(select(LatestFindingRecord))).all())
+        assert len(rows) == 3
+
+    @pytest.mark.asyncio
+    async def test_upsert_many_conflicts_update_not_duplicate(self, test_db):
+        async with async_session_scope() as session:
+            await PersistContract.upsert_many(
+                session, [self._rec(f"CVE-2024-{i:04d}", 5.0) for i in range(3)]
+            )
+            await session.commit()
+        # Re-upsert one natural key with new values -> update in place, no new row.
+        async with async_session_scope() as session:
+            await PersistContract.upsert_many(
+                session, [self._rec("CVE-2024-0001", 9.9, "Immediate")]
+            )
+            await session.commit()
+        async with async_session_scope() as session:
+            rows = list((await session.exec(select(LatestFindingRecord))).all())
+            updated = [r for r in rows if r.cve_id == "CVE-2024-0001"]
+        assert len(rows) == 3
+        assert updated[0].score == 9.9
+        assert updated[0].criticality == "Immediate"
+
+    @pytest.mark.asyncio
+    async def test_upsert_many_rejects_heterogeneous_list(self, test_db):
+        with pytest.raises(TypeError):
+            async with async_session_scope() as session:
+                await PersistContract.upsert_many(
+                    session,
+                    [
+                        self._rec("CVE-2024-0001", 5.0),
+                        PrioritizedFindingRecord(
+                            run_id="r", system_id=1, host="h", package_name="p",
+                            installed_version="1", cve_id="c", criticality="High",
+                            score=1.0, rationale="", fixed_version=None,
+                            nvd_url="u",
+                        ),
+                    ],
+                )
 
 
 # ---------------------------------------------------------------------------
