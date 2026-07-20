@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Iterable
+from typing import Any
+
 from ...storage.registry import ConfigRegistry, SchemaRegistry
 from ...storage.secrets import SecretStore
 from ..config import ApplicationSettings, PlatformConfigSchema, PlatformSettings
@@ -29,6 +33,31 @@ from ..tools import (
 from ..tools._common import Tool
 from .platform import PlatformRuntime
 from .tools import ToolRegistry
+
+_log = logging.getLogger(__name__)
+
+
+async def _seed_all_modules(session: Any, modules: Iterable[Any]) -> None:
+    """Seed each registered module in isolation.
+
+    A DB/infra failure in one module is rolled back and logged; the remaining
+    modules still seed, so one degraded module cannot strand platform startup.
+    A programming error outside the caught set surfaces loudly at startup
+    rather than being masked.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    for module in modules:
+        try:
+            await module.seed_data(session)
+        except (SQLAlchemyError, OSError, RuntimeError):
+            await session.rollback()
+            _log.exception(
+                "seed_data failed for module %s; rolled back its partial state "
+                "and continuing with remaining modules",
+                getattr(module, "module_id", type(module).__name__),
+            )
+
 
 PLATFORM_TOOL_KEYS: frozenset[str] = frozenset({
     "registry.systems",
@@ -179,10 +208,11 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     from ...storage.database import async_session_scope, init_db
     await init_db(app_settings, schema_registry)
 
-    # Call seed_data() for each registered module -- idempotent, skips if already seeded.
+    # Call seed_data() for each registered module -- idempotent, skips if already
+    # seeded. Isolation is delegated to _seed_all_modules so a degraded module
+    # cannot strand platform startup.
     async with async_session_scope(app_settings) as _seed_session:
-        for _module in module_registry.modules:
-            await _module.seed_data(_seed_session)
+        await _seed_all_modules(_seed_session, module_registry.modules)
 
     # Pre-resolve all config entries in async context so build_runtime() (sync)
     # can read them from a plain dict without hitting the DB.
