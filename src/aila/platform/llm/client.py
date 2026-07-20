@@ -899,18 +899,26 @@ class AilaLLMClient:
                 _record_llm_error()
                 last_error = exc
                 delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
+                # Deferred import: aila.platform.services.__init__ pulls in
+                # ServiceFactory, which imports back into aila.platform.llm.
+                # Loading redact_secrets at runtime sidesteps the cycle.
+                from ..services.log_redact import redact_secrets
                 logger.warning(
                     "LLM provider error (attempt %d/%d): %s: %s -- retrying in %.1fs",
                     attempt + 1,
                     _MAX_RETRIES,
                     type(exc).__name__,
-                    str(exc)[:200],
+                    redact_secrets(str(exc))[:200],
                     delay,
                 )
                 await asyncio.sleep(delay)
 
+        # Deferred import: see the provider-error branch above for why
+        # redact_secrets is imported at runtime rather than at module load.
+        from ..services.log_redact import redact_secrets
         raise LLMError(
-            f"LLM API failed after {_MAX_RETRIES} retries: {last_error}",
+            f"LLM API failed after {_MAX_RETRIES} retries: "
+            f"{redact_secrets(str(last_error))}",
             retryable=True,
         )
 
