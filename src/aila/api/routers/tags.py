@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
-from aila.api.auth import AuthContext, require_user_or_api_key
+from aila.api.auth import AuthContext, TeamContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN, ROLE_OPERATOR
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import TagAssignRequest, TagResponse, TagVocabCreate, TagVocabResponse
@@ -177,8 +177,10 @@ async def list_system_tags(
             detail="Platform not initialized -- vulnerability module unavailable",
         )
     module = platform.runtime.module_registry.require("vulnerability")
-    async with async_session_scope() as session:
-        sys_record = await session.get(ManagedSystemRecord, system_id)
+    async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+        sys_record = (await session.exec(
+            select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
+        )).first()
         if sys_record is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -212,8 +214,10 @@ async def assign_system_tag(
     auth: AuthContext = Depends(_require_operator),
 ) -> DataEnvelope[TagResponse]:
     """Attach a vocabulary tag to the system, creating the row if absent."""
-    async with async_session_scope() as session:
-        sys_record = await session.get(ManagedSystemRecord, system_id)
+    async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+        sys_record = (await session.exec(
+            select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
+        )).first()
         if sys_record is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
