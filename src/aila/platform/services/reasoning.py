@@ -161,15 +161,14 @@ class CyberReasoningEngine:
             return self._profile_override_cache[domain_id]
         cached: ReasoningDomainProfile | None = None
         try:
-            raw = self._config_registry.get(
+            # get_sync is the sync read path (C3): the async .get() returned a
+            # coroutine this sync helper could never await, so an operator's
+            # profile override was always discarded in favor of the hardcoded
+            # fallback. Async callers can still warm the cache via
+            # set_profile_override().
+            raw = self._config_registry.get_sync(
                 "platform", f"reasoning_domain_profile_{domain_id}",
             )
-            if hasattr(raw, "__await__"):
-                # ConfigRegistry.get may be async; resolving an awaitable
-                # via a sync helper would deadlock. Skip in that case
-                # and rely on the hardcoded fallback. Async callers can
-                # warm the cache directly via :meth:`set_profile_override`.
-                raw = None
             if raw:
                 payload = raw if isinstance(raw, dict) else json.loads(str(raw))
                 cached = ReasoningDomainProfile(**payload)

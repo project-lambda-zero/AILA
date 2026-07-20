@@ -464,13 +464,12 @@ class TaskQueue:
         if env_url:
             return env_url
         try:
-            url = self._config_registry.get(CONFIG_NS_PLATFORM, CONFIG_KEY_REDIS_URL)  # type: ignore[attr-defined]  # ConfigRegistry duck-typed
-            # ConfigRegistry.get is async -- if we got a coroutine, skip it
-            if hasattr(url, "__await__"):
-                _log.debug("ConfigRegistry.get returned coroutine in sync context, using env fallback")
-                return None
+            # get_sync is the sync read path (C3); the async .get() returned a
+            # coroutine that this sync method could never await, so the URL was
+            # always dropped and enqueue silently fell back to env-only.
+            url = self._config_registry.get_sync(CONFIG_NS_PLATFORM, CONFIG_KEY_REDIS_URL)
             return str(url) if url else None
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             _log.debug("ConfigRegistry redis_url lookup failed, treating as unconfigured", exc_info=True)
             return None
 

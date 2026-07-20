@@ -49,15 +49,15 @@ def _make_module_fn(module_name: str, fn_name: str = "do_work"):
 class MockRegistry:
     """Minimal ConfigRegistry stub. Returns None for all keys by default.
 
-    Duck-typed sync ``.get()`` matches what ``TaskQueue._get_redis_url``
-    consumes (that helper is sync and detects coroutines via
-    ``hasattr(..., '__await__')`` on the return value).
+    Duck-typed sync ``.get_sync()`` matches what ``TaskQueue._get_redis_url``
+    consumes (that helper is sync and reads config through the C3 sync read
+    path ``ConfigRegistry.get_sync``).
     """
 
     def __init__(self, redis_url: str | None = None) -> None:
         self._redis_url = redis_url
 
-    def get(self, namespace: str, key: str) -> str | None:
+    def get_sync(self, namespace: str, key: str) -> str | None:
         if namespace == "platform" and key == "redis_url":
             return self._redis_url
         return None
@@ -261,7 +261,7 @@ class TestGetRedisUrl:
         monkeypatch.delenv("AILA_PLATFORM_REDIS_URL", raising=False)
 
         class BrokenRegistry:
-            def get(self, ns, key):
+            def get_sync(self, ns, key):
                 raise RuntimeError("DB unavailable")
 
         tq = TaskQueue(config_registry=BrokenRegistry(), module_id="vulnerability")
