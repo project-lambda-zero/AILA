@@ -356,33 +356,37 @@ async def _load_artefacts_by_family(project_id: str) -> dict[str, list[dict[str,
         from aila.modules.forensics.db_models import ArtifactRecord
         from aila.platform.uow import UnitOfWork
 
-        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
                 select(ArtifactRecord).where(ArtifactRecord.project_id == project_id)
             )).all()
-        for r in rows:
-            family = getattr(r, "family", "unknown") or "unknown"
-            payload = getattr(r, "data", None)
-            if isinstance(payload, str):
-                try:
-                    payload_obj = json.loads(payload)
-                except json.JSONDecodeError:
-                    payload_obj = {}
-            elif isinstance(payload, dict):
-                payload_obj = payload
-            else:
-                payload_obj = {}
-            grouped[family].append({
-                "id": getattr(r, "id", ""),
-                "type": getattr(r, "type", ""),
-                "source_tool": getattr(r, "source_tool", ""),
-                "data": payload_obj,
-            })
-        return dict(grouped)
+        return _group_artefacts(rows)
     except (OSError, RuntimeError, ValueError):
         _log.warning("Failed to load artefacts_by_family for %s", project_id, exc_info=True)
         return {}
+
+
+def _group_artefacts(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
+    """Group ArtifactRecord rows by family, reading the real column names.
+
+    ArtifactRecord stores artifact_family / artifact_type / data_json; the
+    previous loop read phantom attributes (family / type / data), so every
+    row landed under 'unknown' with empty data and writeups rendered blank.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in rows:
+        family = r.artifact_family or "unknown"
+        try:
+            payload_obj = json.loads(r.data_json) if r.data_json else {}
+        except (json.JSONDecodeError, TypeError):
+            payload_obj = {}
+        grouped[family].append({
+            "id": r.id,
+            "type": r.artifact_type or "",
+            "source_tool": r.source_tool or "",
+            "data": payload_obj,
+        })
+    return dict(grouped)
 
 
 def _section_evidence_inventory(artefacts_by_family: dict[str, list[dict[str, Any]]]) -> str:
