@@ -18,6 +18,7 @@ connections (OPS-01).
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncGenerator
 
 from aila.platform.contracts._common import utc_now
@@ -28,9 +29,17 @@ from aila.platform.tasks.constants import (
     XREAD_BLOCK_MS,
 )
 
-__all__ = ["ProgressStream"]
+__all__ = ["MAX_STREAM_LIFETIME_S", "ProgressStream"]
 
 _log = logging.getLogger(__name__)
+
+# Bounded lifetime for stream_events generators (finding 60-3).
+# Mirrors ``aila.api.routers.sse_events.MAX_CONNECTION_S`` (300 seconds).
+# Without a cap, a well-behaved client with an open EventSource pins a
+# Redis connection through the pool indefinitely because the XREAD loop
+# never exits on its own. When the cap fires, the generator returns
+# cleanly and the browser EventSource auto-reconnects.
+MAX_STREAM_LIFETIME_S: int = 300
 
 
 class ProgressStream:
@@ -131,7 +140,13 @@ class ProgressStream:
         """
         key = self._KEY_FMT.format(task_id=task_id)
         current_id = last_id
+        started = time.monotonic()
         while True:
+            # 60-3: bounded lifetime cap. Checked at the top so any XREAD
+            # tick or subsequent iteration will exit once the cap elapses.
+            # The client EventSource auto-reconnects on stream end.
+            if time.monotonic() - started >= MAX_STREAM_LIFETIME_S:
+                return
             async with get_redis() as client:
                 raw_result = await client.xread(
                     {key: current_id}, block=XREAD_BLOCK_MS, count=100,
